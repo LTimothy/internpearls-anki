@@ -1,13 +1,14 @@
 """
-Intern Pearls Deck Tools  —  Anki add-on for history-safe deck sync.
+Intern Pearls Deck Tools: an Anki add-on for history-safe deck sync.
 
-"Sync decks" is the only button most people need: it pulls any changed decks (from the
-private GitHub repo, or a local folder) and applies each one so your REVIEW HISTORY and
-personal NOTES are preserved. Everything else (fix note types, restore notes, single-file
-import) is an automatic part of Sync, exposed under "Advanced" only as a fallback.
+"Sync decks" is the only button most people need. It pulls any changed decks (from the
+private GitHub repo, or a local folder) and applies each one so your review history and
+personal notes are preserved. Everything else (fix note types, restore notes, single-file
+import) runs automatically as part of Sync and is exposed under "Advanced" only as a
+fallback.
 
-Nothing changes your collection except Anki's own import plus safe note-type field
-additions — a pre-import backup makes it fully reversible.
+Before touching the collection, Sync takes its own timestamped backup, so nothing here
+depends on the user remembering to export one first.
 """
 import json
 import os
@@ -18,11 +19,11 @@ import urllib.request
 import zipfile
 
 from aqt import mw, gui_hooks
-from aqt.qt import QAction, QMenu, QMessageBox, Qt
+from aqt.qt import QAction, QLineEdit, QMenu, QMessageBox, Qt
 from aqt.utils import (askUser, getFile, getText, openLink, showInfo,
                        showWarning, tooltip)
 
-ADDON_VERSION = "0.5.1"   # MAJOR.MINOR.PATCH — see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.6.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 FS = "\x1f"
 _DIR = os.path.dirname(__file__)
@@ -100,6 +101,34 @@ def _ensure_notetypes():
     if added:
         mw.reset()
     return added
+
+
+# --------------------------------------------------------------------------- backup
+def _backup():
+    """Take a real, timestamped collection backup before touching anything.
+
+    Uses the same mechanism Anki runs on its own (a .colpkg in the profile's backup
+    folder), so there's nothing for the user to remember and no separate export step.
+    Returns the backup folder path on success, None if it failed for any reason.
+    """
+    try:
+        folder = mw.pm.backupFolder()
+        if mw.col.create_backup(backup_folder=folder, force=True,
+                                 wait_for_completion=True):
+            return folder
+    except Exception:
+        pass
+    return None
+
+
+def _backup_or_confirm_skip():
+    """Back up, or ask the user whether to proceed unprotected if it failed."""
+    folder = _backup()
+    if folder:
+        return True
+    return askUser("Couldn't create an automatic backup.\n\n"
+                   "Proceed anyway? (You can back up manually first: File → Export → "
+                   "Anki Collection Package, with scheduling included.)")
 
 
 # ----------------------------------------------------------------- notes snapshot
@@ -258,9 +287,20 @@ def sync_decks():
     if not todo:
         showInfo(f"All decks are up to date (source: {source}).")
         return
-    if not askUser("Update these decks?\n\n  " +
-                   "\n  ".join(d["name"].split("::")[-1] for d in todo) +
-                   "\n\nBack up first (File → Export → Collection Package). Proceed?"):
+
+    def _line(d):
+        short = d["name"].split("::")[-1]
+        cards = d.get("cards")
+        return f"{short} ({cards} cards)" if cards is not None else short
+
+    if not askUser(
+        "Update these decks?\n\n  " + "\n  ".join(_line(d) for d in todo) +
+        "\n\nYour review history and any personal notes on existing cards are kept "
+        "(matched by card, not overwritten). A backup is taken automatically first, "
+        "so this is safe to undo if anything looks wrong afterward."
+    ):
+        return
+    if not _backup_or_confirm_skip():
         return
 
     aliases = manifest.get("front_aliases", {})   # from the (private) manifest, not config
@@ -281,7 +321,8 @@ def sync_decks():
     restored = _restore(snap)
     mw.reset()
     showInfo(f"Sync complete (source: {source}):\n\n  " + "\n  ".join(results) +
-             f"\n\nNotes restored on {restored} card(s).")
+             f"\n\nNotes restored on {restored} card(s). "
+             f"A pre-sync backup is in your Anki backups folder if you need to revert.")
 
 
 def check_updates():
@@ -312,7 +353,7 @@ def check_updates():
         with open(tmp, "wb") as fh:
             fh.write(data)
         mw.addonManager.install(tmp)
-        showInfo("Updated — please restart Anki.")
+        showInfo("Updated. Please restart Anki.")
     except Exception as e:
         showWarning(f"Auto-install failed ({e}).\nOpening the download page instead.")
         openLink(f"https://github.com/{ANKI_REPO}")
@@ -331,18 +372,26 @@ def import_single():
         manifest, _, _ = _fetch_manifest(cfg)
         if manifest:
             aliases = manifest.get("front_aliases", {})
-    except Exception:
-        pass
+    except Exception as e:
+        if not askUser(f"Couldn't fetch the reworded-front list from your deck source "
+                       f"({e}).\n\nWithout it, any card whose front text changed there "
+                       "will be treated as new instead of matching your existing card, "
+                       "so its history won't carry over. Continue anyway?"):
+            return
     _ensure_notetypes()
     her = _her_front_to_guid(cfg["scope_tag"])
     remap, in_place, as_new = _remap(src, her, aliases)
-    if not askUser(f"{in_place} cards keep history, {as_new} import as new. "
-                   "Back up first. Write personalized .apkg + snapshot Notes?"):
+    if not askUser(f"{in_place} card(s) will keep their history, {as_new} will be added "
+                   "as new. A backup is taken automatically first. Write the "
+                   "personalized .apkg and snapshot your notes?"):
+        return
+    if not _backup_or_confirm_skip():
         return
     _save_json(SNAPSHOT, _snapshot(cfg["protected"], cfg["scope_tag"]))
     out = os.path.splitext(src)[0] + ".forreview.apkg"
     _write_personalized(src, remap, out)
-    showInfo(f"Wrote:\n  {out}\n\nDouble-click it, then Advanced → Restore my notes.")
+    showInfo(f"Wrote:\n  {out}\n\nDouble-click it to import, then run "
+             "Advanced → Restore my notes.")
 
 
 def restore_notes():
@@ -359,35 +408,61 @@ def update_notetypes():
     added = _ensure_notetypes()
     showInfo(("Updated note types (cards & scheduling untouched):\n\n  " +
               "\n  ".join(added)) if added else
-             "Note types already up to date — no changes needed.")
+             "Note types already up to date, no changes needed.")
 
 
 def configure_source():
     """Set where decks come from: a GitHub repo + read-only token, or a local folder."""
     conf = mw.addonManager.getConfig(__name__) or {}
-    if askUser("Sync decks from GitHub?\n\n"
-               "Yes  = a GitHub repo + a read-only access token.\n"
-               "No   = a local folder on this computer."):
-        repo, ok = getText("Decks repo (owner/name):",
+
+    box = QMessageBox(mw)
+    box.setWindowTitle("Configure deck source")
+    box.setText("Where should decks come from?")
+    gh_btn = box.addButton("GitHub repo…", QMessageBox.ButtonRole.AcceptRole)
+    local_btn = box.addButton("Local folder…", QMessageBox.ButtonRole.AcceptRole)
+    box.addButton(QMessageBox.StandardButton.Cancel)
+    box.exec()
+    clicked = box.clickedButton()
+
+    if clicked is gh_btn:
+        repo, ok = getText("GitHub decks repo, as owner/name:",
                            default=conf.get("github_decks_repo", ""))
-        if not ok:
+        if not ok or not repo.strip():
             return
-        token, ok = getText("Read-only access token:",
-                            default=conf.get("github_token", ""))
+        token_edit = QLineEdit()
+        token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        token, ok = getText("Read-only access token (hidden as you type):",
+                            edit=token_edit, default=conf.get("github_token", ""))
         if not ok:
             return
         conf["github_decks_repo"] = repo.strip()
         conf["github_token"] = token.strip()
         conf["decks_dir"] = ""
-    else:
+    elif clicked is local_btn:
         path, ok = getText("Folder with manifest.json + .apkg files:",
                           default=conf.get("decks_dir", ""))
-        if not ok:
+        if not ok or not path.strip():
             return
         conf["decks_dir"] = path.strip()
         conf["github_token"] = ""
+    else:
+        return  # Cancel, or the dialog was closed
+
     mw.addonManager.writeConfig(__name__, conf)
-    showInfo("Saved. Run Intern Pearls → Sync decks.")
+
+    try:
+        manifest, _, source = _fetch_manifest(_cfg())
+    except Exception as e:
+        showWarning(f"Saved, but couldn't connect: {e}\n\n"
+                    "Double-check the repo name and token (or folder path), then run "
+                    "Intern Pearls → Configure deck source… again.")
+        return
+    if not manifest:
+        showWarning("Saved, but nothing was found at that source yet. Check the path "
+                    "or repo and try again.")
+        return
+    showInfo(f"Saved and connected to {source}, found {len(manifest['decks'])} "
+             "deck(s).\n\nRun Intern Pearls → Sync decks whenever you're ready.")
 
 
 def about():
@@ -396,8 +471,8 @@ def about():
     box.setTextFormat(Qt.TextFormat.RichText)
     box.setText(
         f"<b>Intern Pearls Deck Tools</b> &nbsp; v{ADDON_VERSION}<br><br>"
-        "One-click, history-safe deck updates. <b>Sync decks</b> pulls the latest "
-        "decks and applies them while keeping your review history and personal Notes."
+        "Sync decks pulls the latest decks and applies them while keeping your review "
+        "history and personal notes, backing up your collection automatically first."
         "<br><br>Set your deck source under <i>Configure deck source…</i>."
         "<br><br>"
         f'<a href="https://github.com/{ANKI_REPO}">github.com/{ANKI_REPO}</a>')
