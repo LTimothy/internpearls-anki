@@ -10,6 +10,7 @@ fallback.
 Before touching the collection, Sync takes its own timestamped backup, so nothing here
 depends on the user remembering to export one first.
 """
+import datetime
 import json
 import os
 import re
@@ -20,12 +21,13 @@ import zipfile
 
 from aqt import mw, gui_hooks
 from aqt.qt import QAction, QLineEdit, QMenu, QMessageBox, Qt
-from aqt.utils import (askUser, getFile, getText, openLink, showInfo,
-                       showWarning, tooltip)
+from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
+                       showInfo, showWarning, tooltip)
 
-ADDON_VERSION = "0.7.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.8.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
+EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck… scopes to
 FS = "\x1f"
 _DIR = os.path.dirname(__file__)
 
@@ -473,6 +475,43 @@ def restore_from_backup():
     mw.onOpenBackup()
 
 
+def export_deck():
+    """Export just the Intern Pearls deck as a shareable, self-contained .apkg.
+
+    Unlike the automatic pre-sync backup (always the whole collection, meant to undo a
+    bad sync), this is scoped to EXPORT_DECK only, with scheduling, deck options, and
+    media all included, the same as picking that deck in Anki's own File > Export >
+    Anki Deck Package dialog with every checkbox on.
+    """
+    from anki.collection import DeckIdLimit, ExportAnkiPackageOptions
+
+    deck_id = mw.col.decks.id_for_name(EXPORT_DECK)
+    if deck_id is None:
+        _warn(f"Couldn't find the <b>{EXPORT_DECK}</b> deck in this collection, "
+              "so there's nothing to export.")
+        return
+
+    fname = f"Intern Pearls {datetime.date.today().isoformat()}.apkg"
+    path = getSaveFile(mw, "Export Intern Pearls deck", "internPearlsExport",
+                       "Anki Deck Package", ".apkg", fname=fname)
+    if not path:
+        return
+
+    opts = ExportAnkiPackageOptions(
+        with_scheduling=True, with_deck_configs=True, with_media=True, legacy=False)
+    try:
+        note_count = mw.col.export_anki_package(
+            out_path=path, options=opts, limit=DeckIdLimit(deck_id=deck_id))
+    except Exception as e:
+        _warn(f"Export failed: {e}")
+        return
+    _info(f"Exported <b>{note_count}</b> note(s) from {EXPORT_DECK} to:"
+          f"<br><code>{path}</code><br><br>"
+          "Review history, deck options, and media are all included, this is a "
+          "complete, standalone copy of just this deck, separate from the automatic "
+          "whole-collection backup.")
+
+
 def update_notetypes():
     added = _ensure_notetypes()
     _info(("<b>Updated note types</b> (cards and scheduling untouched):" +
@@ -574,6 +613,7 @@ def _menu():
     add(adv, "Fix note types", update_notetypes)
     add(adv, "Restore my notes", restore_notes)
     add(adv, "Restore from backup…", restore_from_backup)
+    add(adv, "Export Intern Pearls deck…", export_deck)
     menu.addSeparator()
     add(menu, "About", about)
 

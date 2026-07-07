@@ -60,6 +60,8 @@ These are the individual steps that Sync runs automatically. They are exposed as
 
 **Restore from backup** opens Anki's own backup picker (the same one under File > Switch Profile > Open Backup) pointed at your backups folder, so you can revert if something looks wrong after a sync. This replaces your entire collection, every deck, not just the ones this add-on manages, since that's what a real collection backup contains. Anki asks you to confirm the specific backup file before doing anything.
 
+**Export Intern Pearls deck** writes a standalone `.apkg` of just the Intern Pearls deck, with your review history, deck options, and media all included, the same result as Anki's own File > Export > Anki Deck Package with every checkbox checked. Unlike the automatic backup above, this is scoped to only the Intern Pearls deck and is meant to be kept or shared on its own, not used to undo a sync.
+
 ### About
 
 Shows the installed version and a link to this repo.
@@ -98,8 +100,8 @@ The add-on's own record of which deck versions you've already synced lives in a 
 
 The add-on uses three-part semver: `MAJOR.MINOR.PATCH`.
 
-- PATCH (0.7.0 to 0.7.1): bug fix or internal cleanup, no UI changes.
-- MINOR (0.7.0 to 0.8.0): new feature or menu item, backwards compatible.
+- PATCH (0.8.0 to 0.8.1): bug fix or internal cleanup, no UI changes.
+- MINOR (0.8.0 to 0.9.0): new feature or menu item, backwards compatible.
 - MAJOR (0.x to 1.0.0): breaking change that requires the user to reconfigure.
 
 On each release, bump `ADDON_VERSION` in `internpearls/__init__.py` and `version` in `version.json`, tag the commit `vX.Y.Z`, run `./build.sh`, and push.
