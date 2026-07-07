@@ -4,5 +4,6 @@
   "decks_dir": "",
   "github_decks_repo": "",
   "github_ref": "main",
-  "github_token": ""
+  "github_token": "",
+  "export_deck": "Intern Pearls::Intern Custom"
 }

@@ -1,6 +1,8 @@
 # Intern Pearls Deck Tools (Anki add-on)
 
-Keeps a set of Anki study decks up to date without losing your review history or personal notes. Anki's built-in re-import overwrites fields, which means any notes you added to cards get wiped. This add-on avoids that by matching cards by GUID (so scheduling carries over), snapshotting and restoring the Notes field around each import, and backing up the Intern Pearls deck automatically before it touches anything.
+History-safe deck management for Anki. Keeps a set of study decks up to date without losing your review history or personal notes, and lets you back up, export, or import a deck without leaving Anki. Anki's built-in re-import overwrites fields, which means any notes you added to cards get wiped. This add-on avoids that by matching cards by GUID (so scheduling carries over), snapshotting and restoring the Notes field around each import, and backing up the deck automatically before it touches anything.
+
+This started as the tool behind one specific set of study decks, but nothing about it is specific to that content: point Configure deck source at your own GitHub repo or local folder and it works the same way for any decks that follow the same simple manifest format. See "Using this for your own decks" below.
 
 ## Install
 
@@ -43,6 +45,7 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 | `decks_dir` | Local folder path; if set, GitHub is ignored |
 | `scope_tag` | Root tag identifying cards this add-on manages (default: `InternPearls`). Scopes snapshots and GUID matching so your other decks are never touched. |
 | `protected_fields` | Field names to snapshot and restore (default: `["Notes"]`). Add any field where you keep your own content. |
+| `export_deck` | The deck that Backup/Import/Export intern pearls deck and the automatic pre-sync backup operate on (default: `Intern Pearls::Intern Custom`). |
 
 ### Check for add-on updates
 
@@ -58,11 +61,11 @@ These are the individual steps that Sync runs automatically. They are exposed as
 
 **Restore my notes** reads the last Notes snapshot from disk and writes those values back to your cards. The snapshot is created automatically during Sync. Use this if an import or manual edit accidentally overwrites your personal notes.
 
-**Backup Intern Pearls deck now** is the manual, on-demand version of the automatic pre-sync backup: a fresh `.apkg` of just the Intern Pearls deck, with scheduling included, saved internally and pruned to the most recent 10. Use it right before poking at cards yourself outside the add-on.
+**Backup intern pearls deck now** is the manual, on-demand version of the automatic pre-sync backup: a fresh `.apkg` of just the configured deck (`export_deck`), with scheduling included, saved internally and pruned to the most recent 10. Use it right before poking at cards yourself outside the add-on.
 
-**Import Intern Pearls deck** brings a previous deck backup or export back in. The file picker defaults to the internal backups folder, but you can browse to any Intern Pearls `.apkg`. Since the file's own GUIDs already came from a real collection, this is a plain import with scheduling restored, matching cards update in place and anything missing is added as new; no personalization step is needed the way Sync and Import single deck need it for a spec-authored deck from someone else's collection.
+**Import intern pearls deck** brings a previous deck backup or export back in. The file picker defaults to the internal backups folder, but you can browse to any matching `.apkg`. Since the file's own GUIDs already came from a real collection, this is a plain import with scheduling restored, matching cards update in place and anything missing is added as new; no personalization step is needed the way Sync and Import single deck need it for a spec-authored deck from someone else's collection.
 
-**Export Intern Pearls deck** writes a standalone `.apkg` of just the Intern Pearls deck, with your review history, deck options, and media all included, the same result as Anki's own File > Export > Anki Deck Package with every checkbox checked. This is the same export the automatic backup and Backup Intern Pearls deck now use, just prompting you for where to save it, meant to be kept or shared on its own rather than used purely to undo a sync.
+**Export intern pearls deck** writes a standalone `.apkg` of just the configured deck, with your review history, deck options, and media all included, the same result as Anki's own File > Export > Anki Deck Package with every checkbox checked. This is the same export the automatic backup and Backup intern pearls deck now use, just prompting you for where to save it, meant to be kept or shared on its own rather than used purely to undo a sync.
 
 **Full collection backup now** takes a full, whole-collection backup on demand, the same kind that used to run automatically before every sync. Use this for broader protection than the deck-scoped default covers.
 
@@ -70,7 +73,7 @@ These are the individual steps that Sync runs automatically. They are exposed as
 
 ### About
 
-Shows the installed version and a link to this repo.
+An overview of what the add-on does, a short description of each menu item, and a link to this repo.
 
 ## Updating decks
 
@@ -96,6 +99,32 @@ With the automatic backup in place, any of this is fully reversible even if you 
 
 The add-on's own record of which deck versions you've already synced lives in a `user_files/` subfolder, which Anki preserves across add-on updates (everything else in the add-on's folder gets replaced fresh). Earlier versions kept this file elsewhere, so updating the add-on itself would reset it and make the next Sync treat every deck as new; that's fixed as of v0.7.0.
 
+## Using this for your own decks
+
+Nothing about Sync decks, Configure deck source, or the backup/export/import tools is specific to any particular deck's content. To point this add-on at your own decks, host a `manifest.json` in a GitHub repo (private or public) or a local folder, alongside the `.apkg` files it references:
+
+```json
+{
+  "schema": 1,
+  "decks": [
+    {
+      "name": "Your Deck::Subdeck",
+      "apkg": "your-deck.apkg",
+      "spec": "your-deck.json",
+      "version": "a1b2c3d4",
+      "cards": 42
+    }
+  ],
+  "front_aliases": {}
+}
+```
+
+- `decks` lists every deck Sync should manage. `name` is the deck name as it should appear in Anki; `apkg` is the filename to fetch (relative to the repo/folder root); `spec` is informational only (not read by the add-on); `version` is any string that changes when the deck changes (a hash, a date, a counter) and drives which decks Sync considers "changed"; `cards` is optional, shown as a count in the sync confirmation.
+- `front_aliases` maps a card's current front-field text to its previous wording, for any card whose front changed since the last version someone might be syncing from. Omit entries for cards whose front never changed. See "How history is preserved" above for exactly how this is used and its limits.
+- Each `.apkg`'s notes need a stable GUID scheme of your own choosing (most Anki deck-building tools default to a content hash of the front, which changes whenever you reword it, hence `front_aliases` existing at all). This add-on doesn't generate decks, only syncs pre-built ones; how you build stable GUIDs into your `.apkg` is up to your own tooling.
+
+Point Configure deck source at your repo (with a read-only token if private) or folder, and Sync decks, Configure deck source, and the Advanced tools all work exactly as described above, just against your own content. Set `scope_tag` and `export_deck` in Config to match your own deck's tag and name if they differ from the `InternPearls` / `Intern Pearls::Intern Custom` defaults.
+
 ## For developers
 
 ### Repackage after editing
@@ -108,8 +137,8 @@ The add-on's own record of which deck versions you've already synced lives in a 
 
 The add-on uses three-part semver: `MAJOR.MINOR.PATCH`.
 
-- PATCH (0.9.0 to 0.9.1): bug fix or internal cleanup, no UI changes.
-- MINOR (0.9.0 to 0.10.0): new feature or menu item, backwards compatible.
+- PATCH (0.10.0 to 0.10.1): bug fix or internal cleanup, no UI changes.
+- MINOR (0.10.0 to 0.11.0): new feature or menu item, backwards compatible.
 - MAJOR (0.x to 1.0.0): breaking change that requires the user to reconfigure.
 
 On each release, bump `ADDON_VERSION` in `internpearls/__init__.py` and `version` in `version.json`, tag the commit `vX.Y.Z`, run `./build.sh`, and push.
