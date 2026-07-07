@@ -2,7 +2,7 @@
 
 History-safe deck management for Anki. Keeps a set of study decks up to date without losing your review history or personal notes, and lets you back up, export, or import a deck without leaving Anki. Anki's built-in re-import overwrites fields, which means any notes you added to cards get wiped. This add-on avoids that by matching cards by GUID (so scheduling carries over), snapshotting and restoring the Notes field around each import, and backing up the deck automatically before it touches anything.
 
-This started as the tool behind one specific set of study decks, but nothing about it is specific to that content: point Configure deck source at your own GitHub repo or local folder and it works the same way for any decks that follow the same simple manifest format. See "Using this for your own decks" below.
+The decks that ship with it are one set of anesthesia study material, but the add-on itself doesn't care what's in them. Point Configure deck source at your own GitHub repo or local folder and it works the same way for any decks that follow the same manifest format. See "Using this for your own decks" below.
 
 ## Install
 
@@ -17,7 +17,7 @@ After restarting, an "Intern Pearls" menu appears in the menu bar between Tools 
 
 The main button. It fetches `manifest.json` from your configured deck source, compares each deck's version hash against what you last synced, and only imports decks that changed. The confirmation dialog lists each affected deck with its card count, so you know the scope before anything happens. For each deck it:
 
-1. Takes a fresh, timestamped backup of just the Intern Pearls deck first (a self-contained `.apkg` with scheduling included, saved internally and pruned to the most recent 10). Nothing else runs until this succeeds, or you explicitly choose to continue without one.
+1. Takes a fresh, timestamped backup of just the configured deck first (a self-contained `.apkg` with scheduling included, saved internally and pruned to the most recent 10). Nothing else runs until this succeeds, or you explicitly choose to continue without one.
 2. Adds any missing fields to the note type (never removes or renames existing fields).
 3. Snapshots your Notes field on every card in scope.
 4. Matches each incoming card to your existing card by GUID so review history carries over. If a card's front was reworded since your last sync, it checks the `front_aliases` map in the manifest to find the match.
@@ -53,23 +53,19 @@ Compares your installed version against `version.json` in this repo. If a newer 
 
 ### Advanced submenu
 
-These are the individual steps that Sync runs automatically. They are exposed as fallbacks if something goes wrong or you want to run one piece in isolation.
-
-**Import single deck (manual)** opens a file picker for one `.apkg`. It runs the same GUID matching, personalization, and automatic backup as Sync, writes a `.forreview.apkg` to disk, and tells you to double-click it. After importing, run Advanced > Restore my notes to get your Notes back.
+**Import single deck (manual)** picks one `.apkg` outside your configured source, for a deck someone sent you directly or a build you're testing before pushing it live. It runs the same personalization, automatic backup, and note restore as Sync, just for the one file you choose.
 
 **Fix note types** scans the note types this add-on manages (Study Deck - Basic, Study Deck - Cloze, Study Deck - Image ID) and adds any fields they are missing. It never removes or renames fields, and it does not touch cards or scheduling. Sync runs this before every import.
 
-**Restore my notes** reads the last Notes snapshot from disk and writes those values back to your cards. The snapshot is created automatically during Sync. Use this if an import or manual edit accidentally overwrites your personal notes.
-
-**Backup intern pearls deck now** is the manual, on-demand version of the automatic pre-sync backup: a fresh `.apkg` of just the configured deck (`export_deck`), with scheduling included, saved internally and pruned to the most recent 10. Use it right before poking at cards yourself outside the add-on.
+**Backup intern pearls deck** is the manual, on-demand version of the automatic pre-sync backup: a fresh `.apkg` of just the configured deck (`export_deck`), with scheduling included, saved internally and pruned to the most recent 10. Use it right before poking at cards yourself outside the add-on.
 
 **Import intern pearls deck** brings a previous deck backup or export back in. The file picker defaults to the internal backups folder, but you can browse to any matching `.apkg`. Since the file's own GUIDs already came from a real collection, this is a plain import with scheduling restored, matching cards update in place and anything missing is added as new; no personalization step is needed the way Sync and Import single deck need it for a spec-authored deck from someone else's collection.
 
-**Export intern pearls deck** writes a standalone `.apkg` of just the configured deck, with your review history, deck options, and media all included, the same result as Anki's own File > Export > Anki Deck Package with every checkbox checked. This is the same export the automatic backup and Backup intern pearls deck now use, just prompting you for where to save it, meant to be kept or shared on its own rather than used purely to undo a sync.
+**Export intern pearls deck** writes a standalone `.apkg` of just the configured deck, with your review history, deck options, and media all included, the same result as Anki's own File > Export > Anki Deck Package with every checkbox checked. This is the same export the automatic backup and Backup intern pearls deck use, just prompting you for where to save it, meant to be kept or shared on its own rather than used purely to undo a sync.
 
-**Full collection backup now** takes a full, whole-collection backup on demand, the same kind that used to run automatically before every sync. Use this for broader protection than the deck-scoped default covers.
+**Backup full collection** takes a full, whole-collection backup on demand, the same kind that used to run automatically before every sync. Use this for broader protection than the deck-scoped default covers. Retention for these is whatever Anki's own preferences specify, not this add-on's 10-backup limit, which only applies to the deck-scoped backups above.
 
-**Restore from backup** opens Anki's own backup picker (the same one under File > Switch Profile > Open Backup) pointed at your backups folder, so you can revert a full collection backup if something looks wrong. This replaces your entire collection, every deck, not just the ones this add-on manages, since that's what a real collection backup contains. Anki asks you to confirm the specific backup file before doing anything.
+**Restore full collection** opens Anki's own backup picker (the same one under File > Switch Profile > Open Backup) pointed at your backups folder, so you can revert a full collection backup if something looks wrong. This replaces your entire collection, every deck, not just the ones this add-on manages, since that's what a real collection backup contains. Anki asks you to confirm the specific backup file before doing anything.
 
 ### About
 
@@ -77,11 +73,11 @@ An overview of what the add-on does, a short description of each menu item, and 
 
 ## Updating decks
 
-Just run Intern Pearls > Sync decks. Only changed decks are imported, and the add-on backs up the Intern Pearls deck automatically before touching anything, so there's no separate step to remember. For broader protection on top of that, Advanced > Full collection backup now takes a whole-collection backup on demand.
+Just run Intern Pearls > Sync decks. Only changed decks are imported, and the add-on backs up the deck automatically before touching anything, so there's no separate step to remember. For broader protection on top of that, Advanced > Backup full collection takes a whole-collection backup on demand.
 
 ## How history is preserved
 
-Every sync and manual import starts with a fresh, timestamped backup, by default scoped to just the Intern Pearls deck (fast, self-contained, includes scheduling). A full, whole-collection backup is still one click away under Advanced > Full collection backup now for broader protection, it's just no longer the automatic default, since most syncs only ever need to undo changes to this one deck. If a backup can't be created for some reason, you're asked whether to proceed anyway rather than being blocked or silently continuing; on someone's very first sync, before the Intern Pearls deck exists yet, there's nothing to back up and this step is skipped entirely.
+Every sync and manual import starts with a fresh, timestamped backup, by default scoped to just the configured deck (fast, self-contained, includes scheduling). A full, whole-collection backup is still one click away under Advanced > Backup full collection for broader protection, it's just no longer the automatic default, since most syncs only ever need to undo changes to this one deck. If a backup can't be created for some reason, you're asked whether to proceed anyway rather than being blocked or silently continuing; on someone's very first sync, before the deck exists yet, there's nothing to back up and this step is skipped entirely.
 
 Cards are matched by GUID, not by content, so your intervals, ease factors, and review counts carry over on every sync.
 
@@ -137,8 +133,8 @@ Point Configure deck source at your repo (with a read-only token if private) or 
 
 The add-on uses three-part semver: `MAJOR.MINOR.PATCH`.
 
-- PATCH (0.10.0 to 0.10.1): bug fix or internal cleanup, no UI changes.
-- MINOR (0.10.0 to 0.11.0): new feature or menu item, backwards compatible.
+- PATCH (0.10.1 to 0.10.2): bug fix or internal cleanup, no UI changes.
+- MINOR (0.10.1 to 0.11.0): new feature or menu item, backwards compatible.
 - MAJOR (0.x to 1.0.0): breaking change that requires the user to reconfigure.
 
 On each release, bump `ADDON_VERSION` in `internpearls/__init__.py` and `version` in `version.json`, tag the commit `vX.Y.Z`, run `./build.sh`, and push.

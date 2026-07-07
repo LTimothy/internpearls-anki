@@ -3,9 +3,8 @@ Intern Pearls Deck Tools: an Anki add-on for history-safe deck sync.
 
 "Sync decks" is the only button most people need. It pulls any changed decks (from the
 private GitHub repo, or a local folder) and applies each one so your review history and
-personal notes are preserved. Everything else (fix note types, restore notes, single-file
-import) runs automatically as part of Sync and is exposed under "Advanced" only as a
-fallback.
+personal notes are preserved. Fixing note types and importing a single deck run
+automatically as part of Sync and are exposed under "Advanced" only as a fallback.
 
 Before touching the collection, Sync takes its own timestamped backup, so nothing here
 depends on the user remembering to export one first.
@@ -22,9 +21,9 @@ import zipfile
 from aqt import mw, gui_hooks
 from aqt.qt import QAction, QLineEdit, QMenu, QMessageBox, Qt
 from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
-                       showInfo, showWarning, tooltip)
+                       showInfo, showWarning)
 
-ADDON_VERSION = "0.10.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.10.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -38,13 +37,12 @@ _DIR = os.path.dirname(__file__)
 # resets it, making Sync think every deck is new again.
 _USER_FILES = os.path.join(_DIR, "user_files")
 os.makedirs(_USER_FILES, exist_ok=True)
-SNAPSHOT = os.path.join(_USER_FILES, "notes_snapshot.json")
 INSTALLED = os.path.join(_USER_FILES, "installed.json")
 
-# One-time migration: earlier versions wrote these next to __init__.py, so an add-on
-# update would have already wiped them. Move them over if they're still there from a
+# One-time migration: earlier versions wrote this next to __init__.py, so an add-on
+# update would have already wiped it. Move it over if it's still there from a
 # same-version reinstall.
-for _name in ("notes_snapshot.json", "installed.json"):
+for _name in ("installed.json",):
     _old, _new = os.path.join(_DIR, _name), os.path.join(_USER_FILES, _name)
     if os.path.exists(_old) and not os.path.exists(_new):
         try:
@@ -236,7 +234,7 @@ def _pre_sync_backup_or_confirm_skip(deck_name):
         return True
     return _ask("Couldn't create an automatic backup.\n\n"
                 "Proceed anyway? (You can back up manually first: Advanced → Backup "
-                "intern pearls deck now, or Advanced → Full collection backup now.)")
+                "intern pearls deck, or Advanced → Backup full collection.)")
 
 
 # ----------------------------------------------------------------- notes snapshot
@@ -473,6 +471,12 @@ def check_updates():
 
 
 def import_single():
+    """Import one hand-picked, spec-authored .apkg outside the configured source.
+
+    For a deck someone sent you directly, or a build you're testing before pushing it
+    to the source repo. Does the same personalization, backup, and note-restore Sync
+    does, just for one file you choose instead of everything the manifest lists.
+    """
     cfg = _cfg()
     src = getFile(mw, "Choose an Intern Pearls .apkg", cb=None,
                   filter="*.apkg", key="internpearls")
@@ -495,26 +499,24 @@ def import_single():
     her = _her_front_to_guid(cfg["scope_tag"])
     remap, in_place, as_new = _remap(src, her, aliases)
     if not _ask(f"{in_place} card(s) will keep their history, {as_new} will be added "
-                "as new. A backup is taken automatically first. Write the "
-                "personalized .apkg and snapshot your notes?"):
+                "as new. A backup is taken automatically first. Import now?"):
         return
     if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"]):
         return
-    _save_json(SNAPSHOT, _snapshot(cfg["protected"], cfg["scope_tag"]))
-    out = os.path.splitext(src)[0] + ".forreview.apkg"
+    snap = _snapshot(cfg["protected"], cfg["scope_tag"])
+    out = src + ".sync.apkg"
     _write_personalized(src, remap, out)
-    _info(f"Wrote:<br><code>{out}</code><br><br>Double-click it to import, then run "
-          "<i>Advanced → Restore my notes</i>.")
-
-
-def restore_notes():
-    snap = _load_json(SNAPSHOT, None)
-    if not snap:
-        _warn("No Notes snapshot found.")
-        return
+    try:
+        _import_apkg(out)
+    finally:
+        try:
+            os.remove(out)
+        except OSError:
+            pass
     restored = _restore(snap)
     mw.reset()
-    tooltip(f"Restored notes on {restored} card(s).")
+    _info(f"Imported {os.path.basename(src)}: {in_place} kept history, {as_new} new. "
+          f"Notes restored on {restored} card(s).")
 
 
 def restore_from_backup():
@@ -568,7 +570,7 @@ def import_deck():
     Import single deck need it for a spec-authored deck from someone else's collection.
     """
     src = getFile(mw, "Choose an Intern Pearls .apkg", cb=None,
-                 filter="*.apkg", key="internpearls", dir=_deck_backup_folder())
+                 filter="*.apkg", dir=_deck_backup_folder())
     if not src:
         return
     if isinstance(src, (list, tuple)):
@@ -694,16 +696,17 @@ def about():
         "<br><br><b>Advanced</b> holds the individual pieces Sync runs for you, plus "
         "standalone backup, export, and import tools:"
         + _bullets([
-            "Import single deck / Fix note types / Restore my notes, the manual "
-            "fallback for each step of Sync",
-            "Backup / Import / Export intern pearls deck, a fast, self-contained "
+            "Import single deck, Fix note types: manual fallbacks for one deck "
+            "outside your configured source, or a note-type mismatch",
+            "Backup, Import, Export intern pearls deck: a fast, self-contained "
             "copy of just this deck",
-            "Full collection backup now / Restore from backup, the same "
-            "whole-collection tools Anki uses on its own",
+            "Backup, Restore full collection: the same whole-collection tools "
+            "Anki uses on its own",
         ]) +
-        "This started as a tool for one set of anesthesia study decks, but nothing "
-        "about it is specific to that content. Anyone can point it at their own deck "
-        "source, and more Anki enhancements may live under this same menu over time."
+        "The content this ships with is one set of anesthesia study decks, but the "
+        "add-on itself isn't specific to it: point Configure deck source at your own "
+        "repo or folder and it works the same way for any decks that follow the same "
+        "manifest format."
         "<br><br>"
         f'<a href="https://github.com/{ANKI_REPO}">github.com/{ANKI_REPO}</a>')
     box.setStandardButtons(QMessageBox.StandardButton.Ok)
@@ -727,14 +730,13 @@ def _menu():
     adv = menu.addMenu("Advanced")
     add(adv, "Import single deck (manual)", import_single)
     add(adv, "Fix note types", update_notetypes)
-    add(adv, "Restore my notes", restore_notes)
     adv.addSeparator()
-    add(adv, "Backup intern pearls deck now", backup_deck_now)
+    add(adv, "Backup intern pearls deck", backup_deck_now)
     add(adv, "Import intern pearls deck", import_deck)
     add(adv, "Export intern pearls deck", export_deck)
     adv.addSeparator()
-    add(adv, "Full collection backup now", backup_collection_now)
-    add(adv, "Restore from backup", restore_from_backup)
+    add(adv, "Backup full collection", backup_collection_now)
+    add(adv, "Restore full collection", restore_from_backup)
     menu.addSeparator()
     add(menu, "About", about)
 
