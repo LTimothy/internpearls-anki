@@ -23,13 +23,14 @@ from aqt.qt import QAction, QLineEdit, QMenu, QMessageBox, Qt
 from aqt.utils import (askUser, getFile, getText, openLink, showInfo,
                        showWarning, tooltip)
 
-ADDON_VERSION = "0.7.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.7.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
+APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 FS = "\x1f"
 _DIR = os.path.dirname(__file__)
 
 # Anki's add-on manager wipes and re-extracts everything in this folder on every add-on
-# update, EXCEPT a "user_files" subfolder, which it explicitly backs up and restores
+# update, except a "user_files" subfolder, which it explicitly backs up and restores
 # around the reinstall. Our own sync state has to live there or every add-on update
 # resets it, making Sync think every deck is new again.
 _USER_FILES = os.path.join(_DIR, "user_files")
@@ -79,6 +80,39 @@ def _load_json(path, default):
 def _save_json(path, data):
     with open(path, "w", encoding="utf8") as fh:
         json.dump(data, fh, indent=2)
+
+
+# ---------------------------------------------------------------------------- dialogs
+# Thin wrappers so every dialog carries the "Intern Pearls" title (Anki's helpers
+# default to the generic "Anki") and list-style messages get real HTML formatting
+# instead of hand-indented text. Route any new dialog through these, not the raw
+# aqt.utils calls, so a future addition here stays consistent automatically.
+def _info(text, **kw):
+    kw.setdefault("title", APP_NAME)
+    kw.setdefault("textFormat", "rich")
+    return showInfo(text, **kw)
+
+
+def _warn(text, **kw):
+    kw.setdefault("title", APP_NAME)
+    kw.setdefault("textFormat", "rich")
+    return showWarning(text, **kw)
+
+
+def _ask(text, **kw):
+    kw.setdefault("title", APP_NAME)
+    return askUser(text, **kw)
+
+
+def _prompt(text, **kw):
+    kw.setdefault("title", APP_NAME)
+    return getText(text, **kw)
+
+
+def _bullets(items):
+    """Render a list as clean HTML for use inside _info()/_warn() rich text."""
+    return "<ul style='margin:4px 0 4px 0;'>" + "".join(
+        f"<li>{item}</li>" for item in items) + "</ul>"
 
 
 # ------------------------------------------------------------------------ http/github
@@ -144,9 +178,9 @@ def _backup_or_confirm_skip():
     folder = _backup()
     if folder:
         return True
-    return askUser("Couldn't create an automatic backup.\n\n"
-                   "Proceed anyway? (You can back up manually first: File → Export → "
-                   "Anki Collection Package, with scheduling included.)")
+    return _ask("Couldn't create an automatic backup.\n\n"
+                "Proceed anyway? (You can back up manually first: File → Export → "
+                "Anki Collection Package, with scheduling included.)")
 
 
 # ----------------------------------------------------------------- notes snapshot
@@ -292,18 +326,18 @@ def sync_decks():
     try:
         manifest, fetch, source = _fetch_manifest(cfg)
     except Exception as e:
-        showWarning(f"Couldn't reach the deck source: {e}\n\n"
-                    "Check your GitHub token / decks_dir in Config.")
+        _warn(f"Couldn't reach the deck source: {e}<br><br>"
+              "Check your GitHub token or local folder under Configure deck source.")
         return
     if not manifest:
-        showWarning("No deck source configured yet.\n\n"
-                    "Run Intern Pearls → 'Configure deck source…' first.")
+        _warn("No deck source configured yet.<br><br>"
+              "Run <b>Intern Pearls → Configure deck source…</b> first.")
         return
 
     installed = _load_json(INSTALLED, {})
     todo = [d for d in manifest["decks"] if installed.get(d["name"]) != d["version"]]
     if not todo:
-        showInfo(f"All decks are up to date (source: {source}).")
+        _info(f"All decks are up to date (source: {source}).")
         return
 
     def _line(d):
@@ -311,8 +345,8 @@ def sync_decks():
         cards = d.get("cards")
         return f"{short} ({cards} cards)" if cards is not None else short
 
-    if not askUser(
-        "Update these decks?\n\n  " + "\n  ".join(_line(d) for d in todo) +
+    if not _ask(
+        "Update these decks?\n\n  • " + "\n  • ".join(_line(d) for d in todo) +
         "\n\nYour review history and any personal notes on existing cards are kept "
         "(matched by card, not overwritten). A backup is taken automatically first, "
         "so this is safe to undo if anything looks wrong afterward."
@@ -332,15 +366,16 @@ def sync_decks():
             src = fetch(d)
             in_place, as_new = _apply_deck(src, aliases, her)
             installed[d["name"]] = d["version"]
-            results.append(f"✓ {short}: {in_place} kept history, {as_new} new")
+            results.append(f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new")
         except Exception as e:
-            results.append(f"✗ {short}: {e}")
+            results.append(f"✗ <b>{short}</b>: {e}")
     _save_json(INSTALLED, installed)
     restored = _restore(snap)
     mw.reset()
-    showInfo(f"Sync complete (source: {source}):\n\n  " + "\n  ".join(results) +
-             f"\n\nNotes restored on {restored} card(s). A pre-sync backup was saved; "
-             f"use Advanced → Restore from backup… if you need to revert.")
+    _info(f"<b>Sync complete</b> (source: {source})" + _bullets(results) +
+          f"Notes restored on {restored} card(s).<br><br>"
+          f"A pre-sync backup was saved; use <i>Advanced → Restore from backup…</i> "
+          f"if you need to revert.")
 
 
 def check_updates():
@@ -349,7 +384,7 @@ def check_updates():
     try:
         latest = json.loads(_http_get(url))
     except Exception as e:
-        showWarning(f"Couldn't check for updates: {e}")
+        _warn(f"Couldn't check for updates: {e}")
         return
 
     def nums(v):
@@ -360,10 +395,10 @@ def check_updates():
     latest_n += (0,) * (width - len(latest_n))
     cur_n += (0,) * (width - len(cur_n))
     if latest_n <= cur_n:
-        showInfo(f"Intern Pearls Deck Tools is up to date (v{ADDON_VERSION}).")
+        _info(f"Intern Pearls Deck Tools is up to date (v{ADDON_VERSION}).")
         return
-    if not askUser(f"Update available: v{latest['version']} "
-                   f"(you have v{ADDON_VERSION}). Download and install now?"):
+    if not _ask(f"Update available: v{latest['version']} "
+                f"(you have v{ADDON_VERSION}). Download and install now?"):
         return
     try:
         data = _http_get(latest["download"])
@@ -371,9 +406,9 @@ def check_updates():
         with open(tmp, "wb") as fh:
             fh.write(data)
         mw.addonManager.install(tmp)
-        showInfo("Updated. Please restart Anki.")
+        _info("Updated. Please restart Anki.")
     except Exception as e:
-        showWarning(f"Auto-install failed ({e}).\nOpening the download page instead.")
+        _warn(f"Auto-install failed ({e}).<br>Opening the download page instead.")
         openLink(f"https://github.com/{ANKI_REPO}")
 
 
@@ -391,31 +426,31 @@ def import_single():
         if manifest:
             aliases = manifest.get("front_aliases", {})
     except Exception as e:
-        if not askUser(f"Couldn't fetch the reworded-front list from your deck source "
-                       f"({e}).\n\nWithout it, any card whose front text changed there "
-                       "will be treated as new instead of matching your existing card, "
-                       "so its history won't carry over. Continue anyway?"):
+        if not _ask(f"Couldn't fetch the reworded-front list from your deck source "
+                    f"({e}).\n\nWithout it, any card whose front text changed there "
+                    "will be treated as new instead of matching your existing card, "
+                    "so its history won't carry over. Continue anyway?"):
             return
     _ensure_notetypes()
     her = _her_front_to_guid(cfg["scope_tag"])
     remap, in_place, as_new = _remap(src, her, aliases)
-    if not askUser(f"{in_place} card(s) will keep their history, {as_new} will be added "
-                   "as new. A backup is taken automatically first. Write the "
-                   "personalized .apkg and snapshot your notes?"):
+    if not _ask(f"{in_place} card(s) will keep their history, {as_new} will be added "
+                "as new. A backup is taken automatically first. Write the "
+                "personalized .apkg and snapshot your notes?"):
         return
     if not _backup_or_confirm_skip():
         return
     _save_json(SNAPSHOT, _snapshot(cfg["protected"], cfg["scope_tag"]))
     out = os.path.splitext(src)[0] + ".forreview.apkg"
     _write_personalized(src, remap, out)
-    showInfo(f"Wrote:\n  {out}\n\nDouble-click it to import, then run "
-             "Advanced → Restore my notes.")
+    _info(f"Wrote:<br><code>{out}</code><br><br>Double-click it to import, then run "
+          "<i>Advanced → Restore my notes</i>.")
 
 
 def restore_notes():
     snap = _load_json(SNAPSHOT, None)
     if not snap:
-        showWarning("No Notes snapshot found.")
+        _warn("No Notes snapshot found.")
         return
     restored = _restore(snap)
     mw.reset()
@@ -423,14 +458,14 @@ def restore_notes():
 
 
 def restore_from_backup():
-    """Revert the WHOLE collection to a pre-sync (or any other) backup.
+    """Revert the whole collection to a pre-sync (or any other) backup.
 
     This is Anki's own backup restore, unscoped: it replaces every deck and note in the
     profile, not just the ones this add-on manages, since that's what a real collection
     backup contains. Anki asks for confirmation and reloads the profile itself.
     """
-    if not askUser(
-        "This opens Anki's own backup picker so you can revert your ENTIRE collection "
+    if not _ask(
+        "This opens Anki's own backup picker so you can revert your whole collection "
         "(every deck, not just Intern Pearls ones) to an earlier point. Anki will ask "
         "you to confirm the specific backup before doing anything. Continue?"
     ):
@@ -440,9 +475,9 @@ def restore_from_backup():
 
 def update_notetypes():
     added = _ensure_notetypes()
-    showInfo(("Updated note types (cards & scheduling untouched):\n\n  " +
-              "\n  ".join(added)) if added else
-             "Note types already up to date, no changes needed.")
+    _info(("<b>Updated note types</b> (cards and scheduling untouched):" +
+           _bullets(added)) if added else
+          "Note types are already up to date, no changes needed.")
 
 
 def configure_source():
@@ -450,7 +485,8 @@ def configure_source():
     conf = mw.addonManager.getConfig(__name__) or {}
 
     box = QMessageBox(mw)
-    box.setWindowTitle("Configure deck source")
+    box.setWindowTitle(f"{APP_NAME}: Configure deck source")
+    box.setIcon(QMessageBox.Icon.Question)
     box.setText("Where should decks come from?")
     gh_btn = box.addButton("GitHub repo…", QMessageBox.ButtonRole.AcceptRole)
     local_btn = box.addButton("Local folder…", QMessageBox.ButtonRole.AcceptRole)
@@ -459,13 +495,13 @@ def configure_source():
     clicked = box.clickedButton()
 
     if clicked is gh_btn:
-        repo, ok = getText("GitHub decks repo, as owner/name:",
+        repo, ok = _prompt("GitHub decks repo, as owner/name:",
                            default=conf.get("github_decks_repo", ""))
         if not ok or not repo.strip():
             return
         token_edit = QLineEdit()
         token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        token, ok = getText("Read-only access token (hidden as you type):",
+        token, ok = _prompt("Read-only access token (hidden as you type):",
                             edit=token_edit, default=conf.get("github_token", ""))
         if not ok:
             return
@@ -473,7 +509,7 @@ def configure_source():
         conf["github_token"] = token.strip()
         conf["decks_dir"] = ""
     elif clicked is local_btn:
-        path, ok = getText("Folder with manifest.json + .apkg files:",
+        path, ok = _prompt("Folder with manifest.json + .apkg files:",
                           default=conf.get("decks_dir", ""))
         if not ok or not path.strip():
             return
@@ -487,24 +523,26 @@ def configure_source():
     try:
         manifest, _, source = _fetch_manifest(_cfg())
     except Exception as e:
-        showWarning(f"Saved, but couldn't connect: {e}\n\n"
-                    "Double-check the repo name and token (or folder path), then run "
-                    "Intern Pearls → Configure deck source… again.")
+        _warn(f"Saved, but couldn't connect: {e}<br><br>"
+              "Double-check the repo name and token (or folder path), then run "
+              "<i>Intern Pearls → Configure deck source…</i> again.")
         return
     if not manifest:
-        showWarning("Saved, but nothing was found at that source yet. Check the path "
-                    "or repo and try again.")
+        _warn("Saved, but nothing was found at that source yet. Check the path "
+              "or repo and try again.")
         return
-    showInfo(f"Saved and connected to {source}, found {len(manifest['decks'])} "
-             "deck(s).\n\nRun Intern Pearls → Sync decks whenever you're ready.")
+    _info(f"Saved and connected to <b>{source}</b>, found {len(manifest['decks'])} "
+          "deck(s).<br><br>Run <i>Intern Pearls → Sync decks</i> whenever you're ready.")
 
 
 def about():
     box = QMessageBox(mw)
-    box.setWindowTitle("Intern Pearls Deck Tools")
+    box.setWindowTitle(f"{APP_NAME}: About")
+    box.setIcon(QMessageBox.Icon.Information)
     box.setTextFormat(Qt.TextFormat.RichText)
     box.setText(
-        f"<b>Intern Pearls Deck Tools</b> &nbsp; v{ADDON_VERSION}<br><br>"
+        f"<b>Intern Pearls Deck Tools</b> &nbsp;<span style='color:gray;'>v{ADDON_VERSION}"
+        "</span><br><br>"
         "Sync decks pulls the latest decks and applies them while keeping your review "
         "history and personal notes, backing up your collection automatically first."
         "<br><br>Set your deck source under <i>Configure deck source…</i>."
@@ -520,10 +558,13 @@ def _menu():
 
     def add(target, label, fn):
         act = QAction(label, mw)
-        act.setMenuRole(QAction.MenuRole.NoRole)  # macOS Qt auto-moves "Configure…"/"About…"
-        act.triggered.connect(fn)                 # into the app menu unless told not to
-        target.addAction(act)
+        act.setMenuRole(QAction.MenuRole.NoRole)  # macOS Qt auto-moves items whose label
+        act.triggered.connect(fn)                 # matches "Configure"/"About"/etc. into
+        target.addAction(act)                     # the app menu unless told not to
 
+    # "…" marks items that open a dialog needing more input before anything happens
+    # (a file picker, a multi-step form). Items that act immediately, even if they show
+    # a plain yes/no confirmation first, don't get one.
     add(menu, "Sync decks", sync_decks)
     add(menu, "Configure deck source…", configure_source)
     add(menu, "Check for add-on updates", check_updates)
@@ -534,7 +575,7 @@ def _menu():
     add(adv, "Restore my notes", restore_notes)
     add(adv, "Restore from backup…", restore_from_backup)
     menu.addSeparator()
-    add(menu, "About…", about)
+    add(menu, "About", about)
 
     try:
         mw.form.menubar.insertMenu(mw.form.menuHelp.menuAction(), menu)
