@@ -24,10 +24,11 @@ from aqt.qt import QAction, QLineEdit, QMenu, QMessageBox, Qt
 from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
                        showInfo, showWarning, tooltip)
 
-ADDON_VERSION = "0.8.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.9.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck… scopes to
+DECK_BACKUPS_KEEP = 10   # how many automatic Intern Pearls deck backups to retain
 FS = "\x1f"
 _DIR = os.path.dirname(__file__)
 
@@ -158,12 +159,12 @@ def _ensure_notetypes():
 
 
 # --------------------------------------------------------------------------- backup
-def _backup():
-    """Take a real, timestamped collection backup before touching anything.
+def _backup_collection():
+    """Take a real, timestamped WHOLE-COLLECTION backup (every deck, not just ours).
 
     Uses the same mechanism Anki runs on its own (a .colpkg in the profile's backup
-    folder), so there's nothing for the user to remember and no separate export step.
-    Returns the backup folder path on success, None if it failed for any reason.
+    folder). Returns the backup folder path on success, None if it failed for any
+    reason.
     """
     try:
         folder = mw.pm.backupFolder()
@@ -175,14 +176,66 @@ def _backup():
     return None
 
 
-def _backup_or_confirm_skip():
-    """Back up, or ask the user whether to proceed unprotected if it failed."""
-    folder = _backup()
-    if folder:
+def _deck_backup_folder():
+    folder = os.path.join(_USER_FILES, "deck_backups")
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def _export_deck_to(path):
+    """Write EXPORT_DECK to `path` as a self-contained .apkg (history, deck options,
+    and media all included). Returns the note count. Raises if the deck doesn't exist.
+    """
+    from anki.collection import DeckIdLimit, ExportAnkiPackageOptions
+
+    deck_id = mw.col.decks.id_for_name(EXPORT_DECK)
+    if deck_id is None:
+        raise RuntimeError(f"Couldn't find the {EXPORT_DECK} deck in this collection.")
+    opts = ExportAnkiPackageOptions(
+        with_scheduling=True, with_deck_configs=True, with_media=True, legacy=False)
+    return mw.col.export_anki_package(
+        out_path=path, options=opts, limit=DeckIdLimit(deck_id=deck_id))
+
+
+def _backup_deck():
+    """Write a timestamped Intern Pearls deck backup, pruning old ones.
+
+    This is the fast, targeted counterpart to _backup_collection(): a self-contained
+    .apkg of just our deck (with history), not the whole profile. Returns the backup's
+    path on success, None if it failed (e.g. the deck doesn't exist in this collection
+    yet, which is normal on someone's very first sync).
+    """
+    folder = _deck_backup_folder()
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    path = os.path.join(folder, f"Intern Pearls {stamp}.apkg")
+    try:
+        _export_deck_to(path)
+    except Exception:
+        return None
+    backups = sorted((f for f in os.listdir(folder) if f.endswith(".apkg")),
+                     reverse=True)
+    for old in backups[DECK_BACKUPS_KEEP:]:
+        try:
+            os.remove(os.path.join(folder, old))
+        except OSError:
+            pass
+    return path
+
+
+def _pre_sync_backup_or_confirm_skip():
+    """Back up before Sync/Import touch the collection, or ask to proceed if it failed.
+
+    Defaults to the fast, deck-scoped backup rather than a whole-collection one, since
+    that's what most syncs actually need protection against. A full collection backup
+    is still one click away under Advanced whenever extra protection is wanted.
+    """
+    if mw.col.decks.id_for_name(EXPORT_DECK) is None:
+        return True   # nothing to back up yet, e.g. someone's very first sync
+    if _backup_deck():
         return True
     return _ask("Couldn't create an automatic backup.\n\n"
-                "Proceed anyway? (You can back up manually first: File → Export → "
-                "Anki Collection Package, with scheduling included.)")
+                "Proceed anyway? (You can back up manually first: Advanced → Backup "
+                "Intern Pearls deck now, or Advanced → Full collection backup now.)")
 
 
 # ----------------------------------------------------------------- notes snapshot
@@ -245,10 +298,14 @@ def _write_personalized(src, remap, out):
                     z.write(full, os.path.relpath(full, d))
 
 
-def _import_apkg(path):
+def _import_apkg(path, with_scheduling=False):
+    """with_scheduling=False for a spec-authored deck matched onto existing cards (the
+    learner's own scheduling should win); True for reimporting our own previously
+    exported/backed-up package, where the file's scheduling IS the thing being restored.
+    """
     from anki.collection import ImportAnkiPackageRequest, ImportAnkiPackageOptions
     opts = ImportAnkiPackageOptions()
-    for attr, val in (("with_scheduling", False), ("merge_notetypes", True)):
+    for attr, val in (("with_scheduling", with_scheduling), ("merge_notetypes", True)):
         try:
             setattr(opts, attr, val)
         except Exception:
@@ -354,7 +411,7 @@ def sync_decks():
         "so this is safe to undo if anything looks wrong afterward."
     ):
         return
-    if not _backup_or_confirm_skip():
+    if not _pre_sync_backup_or_confirm_skip():
         return
 
     aliases = manifest.get("front_aliases", {})   # from the (private) manifest, not config
@@ -376,8 +433,8 @@ def sync_decks():
     mw.reset()
     _info(f"<b>Sync complete</b> (source: {source})" + _bullets(results) +
           f"Notes restored on {restored} card(s).<br><br>"
-          f"A pre-sync backup was saved; use <i>Advanced → Restore from backup…</i> "
-          f"if you need to revert.")
+          f"A pre-sync backup of the Intern Pearls deck was saved; use "
+          f"<i>Advanced → Import Intern Pearls deck…</i> to revert to it if needed.")
 
 
 def check_updates():
@@ -440,7 +497,7 @@ def import_single():
                 "as new. A backup is taken automatically first. Write the "
                 "personalized .apkg and snapshot your notes?"):
         return
-    if not _backup_or_confirm_skip():
+    if not _pre_sync_backup_or_confirm_skip():
         return
     _save_json(SNAPSHOT, _snapshot(cfg["protected"], cfg["scope_tag"]))
     out = os.path.splitext(src)[0] + ".forreview.apkg"
@@ -478,38 +535,79 @@ def restore_from_backup():
 def export_deck():
     """Export just the Intern Pearls deck as a shareable, self-contained .apkg.
 
-    Unlike the automatic pre-sync backup (always the whole collection, meant to undo a
-    bad sync), this is scoped to EXPORT_DECK only, with scheduling, deck options, and
-    media all included, the same as picking that deck in Anki's own File > Export >
-    Anki Deck Package dialog with every checkbox on.
+    Unlike a backup (meant to undo a mistake and never opened otherwise), this prompts
+    for where to save and is meant to be kept or handed to someone else: a standalone
+    copy of just EXPORT_DECK, with scheduling, deck options, and media all included,
+    the same as picking that deck in Anki's own File > Export > Anki Deck Package
+    dialog with every checkbox on.
     """
-    from anki.collection import DeckIdLimit, ExportAnkiPackageOptions
-
-    deck_id = mw.col.decks.id_for_name(EXPORT_DECK)
-    if deck_id is None:
-        _warn(f"Couldn't find the <b>{EXPORT_DECK}</b> deck in this collection, "
-              "so there's nothing to export.")
-        return
-
     fname = f"Intern Pearls {datetime.date.today().isoformat()}.apkg"
     path = getSaveFile(mw, "Export Intern Pearls deck", "internPearlsExport",
                        "Anki Deck Package", ".apkg", fname=fname)
     if not path:
         return
-
-    opts = ExportAnkiPackageOptions(
-        with_scheduling=True, with_deck_configs=True, with_media=True, legacy=False)
     try:
-        note_count = mw.col.export_anki_package(
-            out_path=path, options=opts, limit=DeckIdLimit(deck_id=deck_id))
+        note_count = _export_deck_to(path)
     except Exception as e:
         _warn(f"Export failed: {e}")
         return
     _info(f"Exported <b>{note_count}</b> note(s) from {EXPORT_DECK} to:"
           f"<br><code>{path}</code><br><br>"
           "Review history, deck options, and media are all included, this is a "
-          "complete, standalone copy of just this deck, separate from the automatic "
-          "whole-collection backup.")
+          "complete, standalone copy of just this deck.")
+
+
+def import_deck():
+    """Bring an exported/backed-up Intern Pearls .apkg back into this collection.
+
+    The file already carries this collection's own note GUIDs (it was made by Export
+    Intern Pearls deck or an automatic pre-sync backup), so Anki's importer matches
+    everything by GUID directly: no front-text personalization needed the way Sync and
+    Import single deck need it for a spec-authored deck from someone else's collection.
+    """
+    src = getFile(mw, "Choose an Intern Pearls .apkg", cb=None,
+                 filter="*.apkg", key="internpearls", dir=_deck_backup_folder())
+    if not src:
+        return
+    if isinstance(src, (list, tuple)):
+        src = src[0]
+    if not _ask(f"Import {os.path.basename(src)}? Matching cards are updated in "
+                "place, keeping their scheduling; anything not already here is added "
+                "as new. A backup is taken automatically first."):
+        return
+    if not _pre_sync_backup_or_confirm_skip():
+        return
+    try:
+        _import_apkg(src, with_scheduling=True)
+    except Exception as e:
+        _warn(f"Import failed: {e}")
+        return
+    mw.reset()
+    _info(f"Imported <code>{os.path.basename(src)}</code>.")
+
+
+def backup_deck_now():
+    """Manual, on-demand version of the deck-scoped backup Sync/Import take for you
+    automatically. Useful right before poking at cards yourself outside the add-on.
+    """
+    path = _backup_deck()
+    if not path:
+        _warn(f"Couldn't back up the <b>{EXPORT_DECK}</b> deck. It may not exist in "
+              "this collection yet.")
+        return
+    _info(f"Backed up the Intern Pearls deck to:<br><code>{path}</code>")
+
+
+def backup_collection_now():
+    """Manual, on-demand whole-collection backup, the same kind Sync used to take
+    automatically before every sync. Kept available for anyone who wants that broader
+    protection on top of the faster, deck-scoped default.
+    """
+    folder = _backup_collection()
+    if not folder:
+        _warn("Couldn't create a collection backup.")
+        return
+    _info(f"Backed up your whole collection (every deck) to:<br><code>{folder}</code>")
 
 
 def update_notetypes():
@@ -612,8 +710,13 @@ def _menu():
     add(adv, "Import single deck (manual)…", import_single)
     add(adv, "Fix note types", update_notetypes)
     add(adv, "Restore my notes", restore_notes)
-    add(adv, "Restore from backup…", restore_from_backup)
+    adv.addSeparator()
+    add(adv, "Backup Intern Pearls deck now", backup_deck_now)
+    add(adv, "Import Intern Pearls deck…", import_deck)
     add(adv, "Export Intern Pearls deck…", export_deck)
+    adv.addSeparator()
+    add(adv, "Full collection backup now", backup_collection_now)
+    add(adv, "Restore from backup…", restore_from_backup)
     menu.addSeparator()
     add(menu, "About", about)
 
