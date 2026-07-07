@@ -22,7 +22,7 @@ from aqt.qt import QAction, QMenu, QMessageBox, Qt
 from aqt.utils import (askUser, getFile, getText, openLink, showInfo,
                        showWarning, tooltip)
 
-ADDON_VERSION = "0.5.0"   # MAJOR.MINOR.PATCH — see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.5.1"   # MAJOR.MINOR.PATCH — see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 FS = "\x1f"
 _DIR = os.path.dirname(__file__)
@@ -411,7 +411,8 @@ def _menu():
 
     def add(target, label, fn):
         act = QAction(label, mw)
-        act.triggered.connect(fn)
+        act.setMenuRole(QAction.MenuRole.NoRole)  # macOS Qt auto-moves "Configure…"/"About…"
+        act.triggered.connect(fn)                 # into the app menu unless told not to
         target.addAction(act)
 
     add(menu, "Sync decks", sync_decks)
