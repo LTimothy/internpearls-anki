@@ -1,0 +1,5 @@
+.DS_Store
+__pycache__/
+*.pyc
+internpearls/notes_snapshot.json
+internpearls/installed.json
