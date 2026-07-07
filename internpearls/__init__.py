@@ -22,7 +22,7 @@ from aqt.qt import QAction, QMenu, QMessageBox, Qt
 from aqt.utils import (askUser, getFile, getText, openLink, showInfo,
                        showWarning, tooltip)
 
-ADDON_VERSION = "0.5"
+ADDON_VERSION = "0.5.0"   # MAJOR.MINOR.PATCH — see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 FS = "\x1f"
 _DIR = os.path.dirname(__file__)
@@ -296,7 +296,11 @@ def check_updates():
     def nums(v):
         return tuple(int(x) for x in re.findall(r"\d+", str(v)))
 
-    if nums(latest.get("version", "0")) <= nums(ADDON_VERSION):
+    latest_n, cur_n = nums(latest.get("version", "0")), nums(ADDON_VERSION)
+    width = max(len(latest_n), len(cur_n))          # zero-pad so 0.5 == 0.5.0
+    latest_n += (0,) * (width - len(latest_n))
+    cur_n += (0,) * (width - len(cur_n))
+    if latest_n <= cur_n:
         showInfo(f"Intern Pearls Deck Tools is up to date (v{ADDON_VERSION}).")
         return
     if not askUser(f"Update available: v{latest['version']} "
