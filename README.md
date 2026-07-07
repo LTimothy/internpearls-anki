@@ -58,6 +58,8 @@ These are the individual steps that Sync runs automatically. They are exposed as
 
 **Restore my notes** reads the last Notes snapshot from disk and writes those values back to your cards. The snapshot is created automatically during Sync. Use this if an import or manual edit accidentally overwrites your personal notes.
 
+**Restore from backup** opens Anki's own backup picker (the same one under File > Switch Profile > Open Backup) pointed at your backups folder, so you can revert if something looks wrong after a sync. This replaces your entire collection, every deck, not just the ones this add-on manages, since that's what a real collection backup contains. Anki asks you to confirm the specific backup file before doing anything.
+
 ### About
 
 Shows the installed version and a link to this repo.
@@ -68,7 +70,7 @@ Just run Intern Pearls > Sync decks. Only changed decks are imported, and the ad
 
 ## How history is preserved
 
-Every sync and manual import starts with a fresh, timestamped backup of the whole collection, written to Anki's own backups folder. If a backup can't be created for some reason, you're asked whether to proceed anyway rather than being blocked or silently continuing.
+Every sync and manual import starts with a fresh, timestamped backup of the whole collection, written to Anki's own backups folder. It's a full collection backup, every deck and note type you have, not filtered down to Intern Pearls cards, since that's what Anki's backup mechanism produces and it's what Advanced > Restore from backup restores. If a backup can't be created for some reason, you're asked whether to proceed anyway rather than being blocked or silently continuing.
 
 Cards are matched by GUID, not by content, so your intervals, ease factors, and review counts carry over on every sync.
 
@@ -78,9 +80,11 @@ Note types only gain fields; nothing is removed or renamed. If you have customiz
 
 When a card's front text changes between deck versions, a `front_aliases` entry in the manifest maps the new wording to the old one. The add-on uses this to find your existing card instead of creating a duplicate. If that mapping can't be fetched for some reason, you're warned before anything imports, since any reworded card would otherwise import as new and lose its history silently.
 
-Everything is scoped by `scope_tag` (default `InternPearls`). Cards outside that tag are ignored entirely.
+The Notes snapshot and GUID matching (though not the backup, which is always the whole collection) are scoped by `scope_tag` (default `InternPearls`). Cards outside that tag are ignored entirely.
 
 With the automatic backup in place, any of this is fully reversible even if you skip the manual export step above.
+
+The add-on's own record of which deck versions you've already synced lives in a `user_files/` subfolder, which Anki preserves across add-on updates (everything else in the add-on's folder gets replaced fresh). Earlier versions kept this file elsewhere, so updating the add-on itself would reset it and make the next Sync treat every deck as new; that's fixed as of v0.7.0.
 
 ## For developers
 
@@ -94,8 +98,8 @@ With the automatic backup in place, any of this is fully reversible even if you 
 
 The add-on uses three-part semver: `MAJOR.MINOR.PATCH`.
 
-- PATCH (0.6.0 to 0.6.1): bug fix or internal cleanup, no UI changes.
-- MINOR (0.6.0 to 0.7.0): new feature or menu item, backwards compatible.
+- PATCH (0.7.0 to 0.7.1): bug fix or internal cleanup, no UI changes.
+- MINOR (0.7.0 to 0.8.0): new feature or menu item, backwards compatible.
 - MAJOR (0.x to 1.0.0): breaking change that requires the user to reconfigure.
 
 On each release, bump `ADDON_VERSION` in `internpearls/__init__.py` and `version` in `version.json`, tag the commit `vX.Y.Z`, run `./build.sh`, and push.
