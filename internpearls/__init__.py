@@ -23,12 +23,30 @@ from aqt.qt import QAction, QLineEdit, QMenu, QMessageBox, Qt
 from aqt.utils import (askUser, getFile, getText, openLink, showInfo,
                        showWarning, tooltip)
 
-ADDON_VERSION = "0.6.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.7.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 FS = "\x1f"
 _DIR = os.path.dirname(__file__)
-SNAPSHOT = os.path.join(_DIR, "notes_snapshot.json")
-INSTALLED = os.path.join(_DIR, "installed.json")
+
+# Anki's add-on manager wipes and re-extracts everything in this folder on every add-on
+# update, EXCEPT a "user_files" subfolder, which it explicitly backs up and restores
+# around the reinstall. Our own sync state has to live there or every add-on update
+# resets it, making Sync think every deck is new again.
+_USER_FILES = os.path.join(_DIR, "user_files")
+os.makedirs(_USER_FILES, exist_ok=True)
+SNAPSHOT = os.path.join(_USER_FILES, "notes_snapshot.json")
+INSTALLED = os.path.join(_USER_FILES, "installed.json")
+
+# One-time migration: earlier versions wrote these next to __init__.py, so an add-on
+# update would have already wiped them. Move them over if they're still there from a
+# same-version reinstall.
+for _name in ("notes_snapshot.json", "installed.json"):
+    _old, _new = os.path.join(_DIR, _name), os.path.join(_USER_FILES, _name)
+    if os.path.exists(_old) and not os.path.exists(_new):
+        try:
+            os.rename(_old, _new)
+        except OSError:
+            pass
 
 TARGET_FIELDS = {
     "Study Deck - Basic":    ["Front", "Back", "Why", "Image", "Tag", "Dosing", "Notes"],
@@ -321,8 +339,8 @@ def sync_decks():
     restored = _restore(snap)
     mw.reset()
     showInfo(f"Sync complete (source: {source}):\n\n  " + "\n  ".join(results) +
-             f"\n\nNotes restored on {restored} card(s). "
-             f"A pre-sync backup is in your Anki backups folder if you need to revert.")
+             f"\n\nNotes restored on {restored} card(s). A pre-sync backup was saved; "
+             f"use Advanced → Restore from backup… if you need to revert.")
 
 
 def check_updates():
@@ -402,6 +420,22 @@ def restore_notes():
     restored = _restore(snap)
     mw.reset()
     tooltip(f"Restored notes on {restored} card(s).")
+
+
+def restore_from_backup():
+    """Revert the WHOLE collection to a pre-sync (or any other) backup.
+
+    This is Anki's own backup restore, unscoped: it replaces every deck and note in the
+    profile, not just the ones this add-on manages, since that's what a real collection
+    backup contains. Anki asks for confirmation and reloads the profile itself.
+    """
+    if not askUser(
+        "This opens Anki's own backup picker so you can revert your ENTIRE collection "
+        "(every deck, not just Intern Pearls ones) to an earlier point. Anki will ask "
+        "you to confirm the specific backup before doing anything. Continue?"
+    ):
+        return
+    mw.onOpenBackup()
 
 
 def update_notetypes():
@@ -498,6 +532,7 @@ def _menu():
     add(adv, "Import single deck (manual)…", import_single)
     add(adv, "Fix note types", update_notetypes)
     add(adv, "Restore my notes", restore_notes)
+    add(adv, "Restore from backup…", restore_from_backup)
     menu.addSeparator()
     add(menu, "About…", about)
 
