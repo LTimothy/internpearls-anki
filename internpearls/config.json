@@ -6,5 +6,8 @@
   "github_ref": "main",
   "github_token": "",
   "export_deck": "Intern Pearls::Intern Custom",
-  "excluded_decks": []
+  "excluded_decks": [],
+  "notify_addon_updates": true,
+  "auto_sync_decks": false,
+  "auto_sync_interval_minutes": 60
 }

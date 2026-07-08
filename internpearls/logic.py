@@ -90,6 +90,23 @@ def deck_status(manifest, installed, excluded=None):
     return rows
 
 
+def should_notify_update(current, latest, last_notified=None):
+    """Decide whether the startup check should surface an "update available" notice.
+
+    True only if `latest` is strictly newer than the installed `current` version AND we
+    haven't already notified about `latest` (or anything at least as new) — so each new
+    release nags at most once, even across restarts. A missing/blank `latest` (e.g. a
+    failed fetch) returns False. Pure so the nag policy is unit-tested, not guessed at.
+    """
+    if not latest:
+        return False
+    if version_at_least(current, latest):          # current already >= latest
+        return False
+    if last_notified and version_at_least(last_notified, latest):
+        return False                               # already told them about this one
+    return True
+
+
 def apkg_notes(path):
     """Return (note_id, front_text, guid) for every note in an .apkg file."""
     with zipfile.ZipFile(path) as z:

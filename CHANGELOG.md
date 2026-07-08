@@ -3,6 +3,27 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.15.0
+
+- Startup update notice: once per launch, a silent check compares your version against
+  the public repo's and shows a brief tooltip if a newer one exists — at most once per
+  new release, not every launch. Never auto-installs; "Check for add-on updates" is
+  still the explicit action that does that. Fixes the confusing case where pushing a
+  fix to GitHub doesn't change what's running until you notice and update yourself.
+  Toggle with the new `notify_addon_updates` config key (default on).
+- Auto-sync decks: a new checkbox in Manage decks ("Automatically sync when updates are
+  available", off by default). When on, decks sync in the background — once shortly
+  after startup, then on a repeating poll (default every 60 minutes, floored at 15) —
+  without asking each time. A backup is still taken first, same guarantee as a manual
+  sync; if the backup fails, that round is skipped rather than importing unprotected.
+  Results show as a transient tooltip, never a blocking dialog, since this can fire
+  mid-review. Toggling the checkbox takes effect immediately, no restart needed.
+- The interactive Sync decks and the new background auto-sync now share one
+  implementation of the actual import sequence (`_run_sync`) instead of two, so there's
+  exactly one place the history-preserving logic lives.
+- GitHub load at the default cadence is trivial: one small `manifest.json` fetch per
+  poll, well under the unauthenticated 60-req/hour limit even at the 15-minute floor.
+
 ## v0.14.1
 
 - When every deck in Manage decks is already up to date, the "Check what will sync"
