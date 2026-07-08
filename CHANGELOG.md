@@ -3,6 +3,15 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.12.0
+
+- Added Preview sync: a dry run that shows exactly what Sync would change — per deck,
+  how many cards update in place (history kept) versus get added as new — without
+  taking a backup, importing, or writing anything. The "show me first" companion to
+  Sync decks.
+- Factored the "which decks are pending" decision into `logic.decks_to_update` so Sync
+  and Preview sync compute the identical set and can't drift apart.
+
 ## v0.11.0
 
 - Sync's confirmation dialog now flags any deck you've never synced before as a new
