@@ -23,9 +23,10 @@ from aqt.qt import QAction, QLineEdit, QMenu, QMessageBox, Qt
 from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
                        showInfo, showWarning)
 
-from .logic import bullets, remap_cards, version_at_least, write_personalized
+from .logic import (bullets, decks_to_update, remap_cards, version_at_least,
+                    write_personalized)
 
-ADDON_VERSION = "0.11.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.12.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -383,7 +384,7 @@ def sync_decks():
         return
 
     installed = _load_json(INSTALLED, {})
-    todo = [d for d in manifest["decks"] if installed.get(d["name"]) != d["version"]]
+    todo = decks_to_update(manifest, installed)
     if not todo:
         _info(f"All decks are up to date (source: {source}).")
         return
@@ -427,6 +428,67 @@ def sync_decks():
           notes_line +
           f"A pre-sync backup of the Intern Pearls deck was saved; use "
           f"<i>Advanced → Import intern pearls deck</i> to revert to it if needed.")
+
+
+@_safe
+def preview_sync():
+    """Dry run: show exactly what Sync would change, without touching the collection.
+
+    Fetches the deck source and matches each incoming card against your collection the
+    same way Sync does (via remap_cards), but stops before any backup, import, or note
+    restore. Nothing is written — this is the "show me first" companion to Sync, useful
+    for seeing whether a sync will update cards in place or add a batch as new before
+    committing to it.
+    """
+    cfg = _cfg()
+    try:
+        manifest, fetch, source = _fetch_manifest(cfg)
+    except Exception as e:
+        _warn(f"Couldn't reach the deck source: {e}<br><br>"
+              "Check your GitHub token or local folder under Configure deck source.")
+        return
+    if not manifest:
+        _warn("No deck source configured yet.<br><br>"
+              "Run <b>Intern Pearls → Configure deck source</b> first.")
+        return
+
+    installed = _load_json(INSTALLED, {})
+    todo = decks_to_update(manifest, installed)
+    if not todo:
+        _info(f"Nothing to sync — all decks are up to date (source: {source}).")
+        return
+
+    aliases = manifest.get("front_aliases", {})
+    her = _her_front_to_guid(cfg["scope_tag"])
+    lines, total_keep, total_new = [], 0, 0
+    for d in todo:
+        short = d["name"].split("::")[-1]
+        is_new = d["name"] not in installed
+        src = None
+        try:
+            src = fetch(d)
+            _, in_place, as_new = remap_cards(src, her, aliases)
+            total_keep += in_place
+            total_new += as_new
+            detail = "brand-new deck" if is_new else (
+                f"{in_place} update in place (history kept), {as_new} added as new")
+            lines.append(f"<b>{short}</b>: {detail}")
+        except Exception as e:
+            lines.append(f"<b>{short}</b>: couldn't preview ({e})")
+        finally:
+            # GitHub fetch downloads to a temp file; a local-folder fetch returns the
+            # real source path, which must never be deleted. Only clean up the download.
+            if src and source == "GitHub":
+                try:
+                    os.remove(src)
+                except OSError:
+                    pass
+
+    _info(f"<b>Preview only — nothing has been changed</b> (source: {source}).<br>"
+          f"Running Sync would update {len(todo)} deck(s): "
+          f"{total_keep} card(s) keep their history, {total_new} added as new." +
+          bullets(lines) +
+          "Run <i>Sync decks</i> to apply this (it takes a backup first).")
 
 
 @_safe
@@ -708,6 +770,7 @@ def _menu():
         target.addAction(act)                     # the app menu unless told not to
 
     add(menu, "Sync decks", sync_decks)
+    add(menu, "Preview sync", preview_sync)
     add(menu, "Configure deck source", configure_source)
     add(menu, "Check for add-on updates", check_updates)
     menu.addSeparator()
