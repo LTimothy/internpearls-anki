@@ -20,14 +20,16 @@ import urllib.error
 import urllib.request
 
 from aqt import mw, gui_hooks
-from aqt.qt import QAction, QLineEdit, QMenu, QMessageBox, Qt
+from aqt.qt import (QAction, QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
+                    QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea,
+                    Qt, QVBoxLayout, QWidget)
 from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
                        showInfo, showWarning)
 
-from .logic import (bullets, decks_to_update, remap_cards, version_at_least,
-                    write_personalized)
+from .logic import (bullets, deck_status, decks_to_update, remap_cards,
+                    version_at_least, write_personalized)
 
-ADDON_VERSION = "0.12.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.13.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -71,6 +73,7 @@ def _cfg():
         "gh_ref":      c.get("github_ref", "main"),
         "gh_token":    c.get("github_token", ""),
         "export_deck": c.get("export_deck", EXPORT_DECK),
+        "excluded":    c.get("excluded_decks", []),
     }
 
 
@@ -412,9 +415,9 @@ def sync_decks():
         return
 
     installed = _load_json(INSTALLED, {})
-    todo = decks_to_update(manifest, installed)
+    todo = decks_to_update(manifest, installed, cfg["excluded"])
     if not todo:
-        _info(f"All decks are up to date (source: {source}).")
+        _info(f"All selected decks are up to date (source: {source}).")
         return
 
     def _line(d):
@@ -481,9 +484,9 @@ def preview_sync():
         return
 
     installed = _load_json(INSTALLED, {})
-    todo = decks_to_update(manifest, installed)
+    todo = decks_to_update(manifest, installed, cfg["excluded"])
     if not todo:
-        _info(f"Nothing to sync — all decks are up to date (source: {source}).")
+        _info(f"Nothing to sync — all selected decks are up to date (source: {source}).")
         return
 
     aliases = manifest.get("front_aliases", {})
@@ -763,6 +766,167 @@ def configure_source():
           "deck(s).<br><br>Run <i>Intern Pearls → Sync decks</i> whenever you're ready.")
 
 
+# -------------------------------------------------------------------- deck manager
+# Colors for a deck's sync-state pill. Deliberately readable on both Anki themes: a
+# saturated mid-tone reads fine on light and dark backgrounds alike, so we don't need to
+# branch on night mode.
+_STATE_STYLE = {
+    "new":     ("New",              "#2563eb"),
+    "update":  ("Update available", "#b45309"),
+    "current": ("Up to date",       "#6b7280"),
+}
+
+
+class _DeckManagerDialog(QDialog):
+    """Pick which decks sync and which fields are preserved, in one clean panel.
+
+    Pure-ish view: it's handed already-computed rows (from logic.deck_status) and just
+    renders checkboxes + status pills, then hands back the user's choices via
+    excluded_decks()/protected_fields(). No network or collection access lives here.
+    """
+
+    def __init__(self, parent, rows, protected, source):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME}: Manage decks")
+        self.setMinimumWidth(480)
+        self.sync_requested = False
+        self._checks = {}   # deck name -> QCheckBox
+
+        outer = QVBoxLayout(self)
+        outer.setSpacing(10)
+
+        title = QLabel("Manage decks")
+        title.setStyleSheet("font-size: 17px; font-weight: 600;")
+        outer.addWidget(title)
+        sub = QLabel(f"Source: {source}. Check the decks you want to keep synced. "
+                     "Unchecking one stops future syncs for it; cards already imported "
+                     "stay in your collection until you delete them in Anki.")
+        sub.setWordWrap(True)
+        sub.setStyleSheet("color: gray;")
+        outer.addWidget(sub)
+
+        bar = QHBoxLayout()
+        for label, val in (("Select all", True), ("Select none", False)):
+            b = QPushButton(label)
+            b.setFlat(True)
+            b.setStyleSheet("color: #2563eb; text-align: left;")
+            b.clicked.connect(lambda _=False, v=val: self._set_all(v))
+            bar.addWidget(b)
+        bar.addStretch()
+        outer.addLayout(bar)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setMinimumHeight(230)
+        holder = QWidget()
+        col = QVBoxLayout(holder)
+        col.setSpacing(6)
+        col.setContentsMargins(0, 0, 6, 0)
+        if rows:
+            for r in rows:
+                col.addWidget(self._deck_row(r))
+        else:
+            empty = QLabel("No decks found at this source yet.")
+            empty.setStyleSheet("color: gray;")
+            col.addWidget(empty)
+        col.addStretch()
+        scroll.setWidget(holder)
+        outer.addWidget(scroll, 1)
+
+        pf = QLabel("Preserved fields")
+        pf.setStyleSheet("font-weight: 600;")
+        outer.addWidget(pf)
+        self._pf_edit = QLineEdit(", ".join(protected))
+        self._pf_edit.setPlaceholderText("Notes")
+        outer.addWidget(self._pf_edit)
+        pf_hint = QLabel("Comma-separated fields holding your own annotations. Sync "
+                         "snapshots and restores them, so importing an updated deck "
+                         "never overwrites what you've written.")
+        pf_hint.setWordWrap(True)
+        pf_hint.setStyleSheet("color: gray; font-size: 11px;")
+        outer.addWidget(pf_hint)
+
+        bb = QDialogButtonBox()
+        save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
+        sync = bb.addButton("Save and sync now", QDialogButtonBox.ButtonRole.ApplyRole)
+        bb.addButton(QDialogButtonBox.StandardButton.Cancel)
+        save.clicked.connect(self.accept)
+        sync.clicked.connect(self._save_and_sync)
+        bb.rejected.connect(self.reject)
+        outer.addWidget(bb)
+
+    def _deck_row(self, r):
+        row = QFrame()
+        row.setObjectName("deckRow")
+        row.setStyleSheet(
+            "#deckRow { border: 1px solid rgba(128,128,128,0.35); border-radius: 6px; }")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(11, 8, 11, 8)
+        cb = QCheckBox(r["short"])
+        cb.setChecked(r["enabled"])
+        cb.setStyleSheet("font-weight: 600;")
+        self._checks[r["name"]] = cb
+        h.addWidget(cb)
+        h.addStretch()
+        label, color = _STATE_STYLE[r["state"]]
+        cards = r.get("cards")
+        text = f'{cards} cards · {label}' if cards is not None else label
+        pill = QLabel(text)
+        pill.setStyleSheet(f"color: {color}; font-size: 12px;")
+        h.addWidget(pill)
+        return row
+
+    def _set_all(self, val):
+        for cb in self._checks.values():
+            cb.setChecked(val)
+
+    def _save_and_sync(self):
+        self.sync_requested = True
+        self.accept()
+
+    def excluded_decks(self):
+        return [name for name, cb in self._checks.items() if not cb.isChecked()]
+
+    def protected_fields(self):
+        fields = [f.strip() for f in self._pf_edit.text().split(",") if f.strip()]
+        return fields or ["Notes"]   # never let the safety net be emptied by accident
+
+
+@_safe
+def manage_decks():
+    """Open the deck manager: choose which decks sync and which fields are preserved."""
+    cfg = _cfg()
+    try:
+        manifest, _, source = _fetch_manifest(cfg)
+    except Exception as e:
+        _warn(f"Couldn't reach the deck source: {e}<br><br>"
+              "Check your GitHub token or local folder under Configure deck source.")
+        return
+    if not manifest:
+        _warn("No deck source configured yet.<br><br>"
+              "Run <b>Intern Pearls → Configure deck source</b> first.")
+        return
+
+    installed = _load_json(INSTALLED, {})
+    rows = deck_status(manifest, installed, cfg["excluded"])
+    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source)
+    if not dlg.exec():
+        return   # cancelled
+
+    conf = mw.addonManager.getConfig(__name__) or {}
+    conf["excluded_decks"] = dlg.excluded_decks()
+    conf["protected_fields"] = dlg.protected_fields()
+    mw.addonManager.writeConfig(__name__, conf)
+
+    if dlg.sync_requested:
+        sync_decks()
+        return
+    kept = sum(1 for r in rows if r["name"] not in conf["excluded_decks"])
+    _info(f"Saved. {kept} of {len(rows)} deck(s) will sync; preserving "
+          f"{', '.join(conf['protected_fields'])}.")
+
+
 @_safe
 def about():
     box = QMessageBox(mw)
@@ -799,6 +963,7 @@ def _menu():
 
     add(menu, "Sync decks", sync_decks)
     add(menu, "Preview sync", preview_sync)
+    add(menu, "Manage decks", manage_decks)
     add(menu, "Configure deck source", configure_source)
     add(menu, "Check for add-on updates", check_updates)
     menu.addSeparator()

@@ -28,6 +28,15 @@ Defaults to `InternPearls`.
 Field names to snapshot before an import and restore after, so personal annotations
 survive a re-import even though Anki's importer overwrites every field on a matched
 note. Defaults to `["Notes"]`; add any other field name you keep your own content in.
+Editable in Intern Pearls → Manage decks (the "Preserved fields" box).
+
+## excluded_decks
+
+Full names of decks you've opted out of syncing, e.g.
+`["Intern Pearls::Intern Custom::CA1 Handbook"]`. Decks listed here are skipped by Sync
+and Preview sync. Easiest to manage via Intern Pearls → Manage decks (unchecking a deck
+adds it here); an empty list syncs everything the source offers. Unchecking a deck does
+not delete cards you already imported.
 
 ## export_deck
 

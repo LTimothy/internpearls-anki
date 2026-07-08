@@ -3,6 +3,19 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.13.0
+
+- Added Manage decks: a clean panel listing every deck the source offers, each with a
+  checkbox and a status pill (New / Update available / Up to date) and its card count.
+  Uncheck a deck to stop syncing it (already-imported cards are left alone); Select
+  all / none for quick toggling. Sync and Preview sync now honor the selection.
+- The same panel edits Preserved fields (the fields snapshotted and restored around
+  every import so your personal annotations are never overwritten) — previously only
+  reachable by hand-editing the add-on config.
+- Save, or Save and sync now, straight from the panel.
+- New config key `excluded_decks` backs the selection; an empty list (the default)
+  syncs everything, so existing setups are unchanged.
+
 ## v0.12.1
 
 - Fixed the biggest source of post-sync friction: after syncing, AnkiWeb often forced a
