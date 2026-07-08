@@ -22,14 +22,15 @@ import urllib.request
 from aqt import mw, gui_hooks
 from aqt.qt import (QAction, QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
                     QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton,
-                    QScrollArea, Qt, QVBoxLayout, QWidget)
+                    QScrollArea, Qt, QTimer, QVBoxLayout, QWidget)
 from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
-                       showInfo, showWarning)
+                       showInfo, showWarning, tooltip)
 
 from .logic import (bullets, deck_status, decks_to_update, parse_fields,
-                    remap_cards, version_at_least, write_personalized)
+                    remap_cards, should_notify_update, version_at_least,
+                    write_personalized)
 
-ADDON_VERSION = "0.14.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.15.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -43,6 +44,12 @@ _DIR = os.path.dirname(__file__)
 _USER_FILES = os.path.join(_DIR, "user_files")
 os.makedirs(_USER_FILES, exist_ok=True)
 INSTALLED = os.path.join(_USER_FILES, "installed.json")
+# Small add-on state that isn't a user setting (so it doesn't belong in config.json) but
+# must still survive an add-on update — currently just which add-on version we've already
+# nagged about, so the startup notice fires once per release, not every launch.
+STATE = os.path.join(_USER_FILES, "state.json")
+
+AUTO_SYNC_INTERVAL_FLOOR_MIN = 15   # refuse to poll more often than this, however configured
 
 # One-time migration: earlier versions wrote this next to __init__.py, so an add-on
 # update would have already wiped it. Move it over if it's still there from a
@@ -74,6 +81,9 @@ def _cfg():
         "gh_token":    c.get("github_token", ""),
         "export_deck": c.get("export_deck", EXPORT_DECK),
         "excluded":    c.get("excluded_decks", []),
+        "notify_addon_updates": c.get("notify_addon_updates", True),
+        "auto_sync_decks":      c.get("auto_sync_decks", False),
+        "auto_sync_interval_minutes": c.get("auto_sync_interval_minutes", 60),
     }
 
 
@@ -132,6 +142,27 @@ def _safe(fn):
             _warn(f"Something went wrong: {e}<br><br>"
                   "If a backup was taken before this ran, Advanced has tools to "
                   "revert to it: Import intern pearls deck or Restore full collection.")
+    return wrapper
+
+
+def _bg_safe(fn):
+    """Like `_safe`, but for calls that fire on their own (a startup check, a poll timer)
+    rather than from a menu click. A blocking warning dialog is fine for a menu action —
+    the user just clicked something and is looking at the screen — but popping one up
+    unprompted, possibly mid-review, is jarring. Background failures print to console
+    (same as `_safe`) and surface as a transient tooltip instead of a modal.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            print(traceback.format_exc())
+            try:
+                tooltip(f"Intern Pearls: background check failed ({e})",
+                       period=4000, parent=mw)
+            except Exception:
+                pass
     return wrapper
 
 
@@ -289,6 +320,18 @@ def _pre_sync_backup_or_confirm_skip(deck_name):
                 "intern pearls deck, or Advanced → Backup full collection.)")
 
 
+def _pre_sync_backup_or_skip_silently(deck_name):
+    """Background counterpart to `_pre_sync_backup_or_confirm_skip`: never blocks with a
+    dialog. If a backup is needed and fails, the safe default is to abort the auto-sync
+    rather than import unprotected — there's no one watching to answer a prompt, so the
+    background path must never proceed without the safety net the interactive path asks
+    permission to skip.
+    """
+    if mw.col.decks.id_for_name(deck_name) is None:
+        return True   # nothing to back up yet, e.g. this deck's very first sync
+    return _backup_deck(deck_name) is not None
+
+
 # ----------------------------------------------------------------- notes snapshot
 def _snapshot(protected, scope_tag):
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
@@ -437,6 +480,25 @@ def sync_decks():
     if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"]):
         return
 
+    results, restored = _run_sync(cfg, manifest, fetch, todo, installed)
+    notes_line = f"Notes restored on {restored} card(s).<br><br>" if restored else ""
+    _info(f"<b>Sync complete</b> (source: {source})" + bullets(results) +
+          notes_line +
+          f"A pre-sync backup of the Intern Pearls deck was saved; use "
+          f"<i>Advanced → Import intern pearls deck</i> to revert to it if needed.")
+
+
+def _run_sync(cfg, manifest, fetch, todo, installed):
+    """Apply every deck in `todo`: fix note types, snapshot protected fields, remap and
+    import each deck (keeping the learner's scheduling), restore the snapshotted fields,
+    and persist the new installed versions.
+
+    The caller must already have confirmed (if interactive) and taken a backup — this is
+    the one place the actual history-preserving sequence lives, shared by the interactive
+    Sync decks flow and the unattended auto-sync poll, so there's exactly one
+    implementation of the part that matters for not losing anyone's review history.
+    Returns (results, restored): per-deck outcome lines and the note-restore count.
+    """
     aliases = manifest.get("front_aliases", {})   # from the (private) manifest, not config
     _ensure_notetypes()
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
@@ -454,19 +516,24 @@ def sync_decks():
     _save_json(INSTALLED, installed)
     restored = _restore(snap)
     mw.reset()
-    notes_line = f"Notes restored on {restored} card(s).<br><br>" if restored else ""
-    _info(f"<b>Sync complete</b> (source: {source})" + bullets(results) +
-          notes_line +
-          f"A pre-sync backup of the Intern Pearls deck was saved; use "
-          f"<i>Advanced → Import intern pearls deck</i> to revert to it if needed.")
+    return results, restored
+
+
+def _fetch_addon_version_info():
+    """Fetch and parse the public add-on repo's version.json. Raises on any failure.
+
+    Single source of truth for this URL/parse so the manual "Check for add-on updates"
+    action and the silent startup notifier can't drift apart.
+    """
+    url = f"https://raw.githubusercontent.com/{ANKI_REPO}/main/version.json"
+    return json.loads(_http_get(url))
 
 
 @_safe
 def check_updates():
     """Compare our version to version.json in the public add-on repo; offer to update."""
-    url = f"https://raw.githubusercontent.com/{ANKI_REPO}/main/version.json"
     try:
-        latest = json.loads(_http_get(url))
+        latest = _fetch_addon_version_info()
     except Exception as e:
         _warn(f"Couldn't check for updates: {e}")
         return
@@ -487,6 +554,126 @@ def check_updates():
     except Exception as e:
         _warn(f"Auto-install failed ({e}).<br>Opening the download page instead.")
         openLink(f"https://github.com/{ANKI_REPO}")
+
+
+# --------------------------------------------------------------- background checks
+# Two things run on their own, without a menu click: a one-shot "is a newer add-on
+# version out" notice shortly after startup, and (only if the user opted in via Manage
+# decks) a repeating poll that auto-syncs decks. Both are deliberately synchronous on
+# the main thread rather than on a worker thread — this add-on has no existing
+# threading, and adding one just for a startup notice would trade a rare, small,
+# bounded hitch (capped by the fail-fast timeouts) for real thread-safety surface
+# against Qt/`mw.col`. The trade-off is documented here rather than hidden.
+
+@_bg_safe
+def _check_addon_update_silently():
+    """Startup, non-blocking: tooltip if a newer add-on version exists and we haven't
+    already notified about it. Never auto-installs the add-on itself — that stays the
+    explicit, user-confirmed "Check for add-on updates" action; this only makes sure the
+    user finds out a new version exists instead of silently running a stale build.
+    """
+    if not _cfg()["notify_addon_updates"]:
+        return
+    try:
+        latest = _fetch_addon_version_info()
+    except Exception:
+        return   # offline / GitHub hiccup at startup — stay quiet, try again next launch
+    latest_version = latest.get("version", "")
+    state = _load_json(STATE, {})
+    if not should_notify_update(ADDON_VERSION, latest_version,
+                                state.get("last_notified_addon_version")):
+        return
+    state["last_notified_addon_version"] = latest_version
+    _save_json(STATE, state)
+    tooltip(
+        f"Intern Pearls Deck Tools v{latest_version} is available (you have "
+        f"v{ADDON_VERSION}). Intern Pearls → Check for add-on updates to install.",
+        period=8000, parent=mw)
+
+
+_auto_sync_in_progress = False
+
+
+@_bg_safe
+def _auto_sync_check():
+    """Timer-triggered: if auto-sync is on and any deck changed, apply it without asking.
+
+    A backup is still taken first — non-negotiable, same as the interactive path — and
+    if the backup fails, this aborts rather than importing unprotected (there's no user
+    present to ask). The outcome is a transient tooltip, never a blocking dialog, since
+    this can fire while the user is mid-review; a dialog popping up uninvited over a
+    review session would be worse than the sync just quietly happening.
+    """
+    global _auto_sync_in_progress
+    cfg = _cfg()
+    if not cfg["auto_sync_decks"] or _auto_sync_in_progress or mw.col is None:
+        return
+    try:
+        manifest, fetch, source = _fetch_manifest(cfg)
+    except Exception:
+        return   # offline / misconfigured source — stay quiet, retry on the next poll
+    if not manifest:
+        return
+    installed = _load_json(INSTALLED, {})
+    todo = decks_to_update(manifest, installed, cfg["excluded"])
+    if not todo:
+        return
+    if not _pre_sync_backup_or_skip_silently(cfg["export_deck"]):
+        tooltip("Intern Pearls: auto-sync skipped — couldn't create a backup first.",
+               period=6000, parent=mw)
+        return
+
+    _auto_sync_in_progress = True
+    try:
+        results, restored = _run_sync(cfg, manifest, fetch, todo, installed)
+    finally:
+        _auto_sync_in_progress = False
+
+    ok = sum(1 for r in results if r.startswith("✓"))
+    fail = len(results) - ok
+    msg = f"Intern Pearls: auto-synced {ok} deck(s) (source: {source})"
+    if fail:
+        msg += f", {fail} failed — open Sync decks for details"
+    if restored:
+        msg += f", notes restored on {restored} card(s)"
+    tooltip(msg, period=6000, parent=mw)
+
+
+_auto_sync_timer = None
+
+
+def _stop_auto_sync_timer():
+    global _auto_sync_timer
+    if _auto_sync_timer is not None:
+        _auto_sync_timer.stop()
+        _auto_sync_timer = None
+
+
+def _restart_auto_sync_timer(minutes):
+    """(Re)start the repeating poll at `minutes`, floored so it can't be configured into
+    a busy-loop. GitHub load at this cadence is trivial: one manifest.json GET per
+    interval (a few KB), well under even the unauthenticated 60-requests/hour limit at
+    the floor, let alone the 5000/hour a token gets — polling every 15 minutes all day
+    is ~96 requests, nothing GitHub notices.
+    """
+    _stop_auto_sync_timer()
+    global _auto_sync_timer
+    interval_ms = max(AUTO_SYNC_INTERVAL_FLOOR_MIN, int(minutes or 60)) * 60 * 1000
+    _auto_sync_timer = QTimer(mw)
+    _auto_sync_timer.timeout.connect(_auto_sync_check)
+    _auto_sync_timer.start(interval_ms)
+
+
+def _schedule_background_checks():
+    """Run once, a couple seconds after Anki finishes starting up: a silent add-on-update
+    notice, and — only if the user turned on auto-sync in Manage decks — an immediate
+    deck check plus the repeating poll that keeps checking while Anki stays open.
+    """
+    QTimer.singleShot(2000, _check_addon_update_silently)
+    cfg = _cfg()
+    if cfg["auto_sync_decks"]:
+        QTimer.singleShot(4000, _auto_sync_check)
+        _restart_auto_sync_timer(cfg["auto_sync_interval_minutes"])
 
 
 @_safe
@@ -721,10 +908,11 @@ class _DeckManagerDialog(QDialog):
 
     Pure-ish view: it's handed already-computed rows (from logic.deck_status) and just
     renders checkboxes + status pills, then hands back the user's choices via
-    excluded_decks()/protected_fields(). No network or collection access lives here.
+    excluded_decks()/protected_fields()/auto_sync_enabled(). No network or collection
+    access lives here.
     """
 
-    def __init__(self, parent, rows, protected, source, preview_fn):
+    def __init__(self, parent, rows, protected, source, preview_fn, auto_sync):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Manage decks")
         self.setMinimumWidth(480)
@@ -803,6 +991,18 @@ class _DeckManagerDialog(QDialog):
         pf_hint.setWordWrap(True)
         pf_hint.setStyleSheet("color: gray; font-size: 11px;")
         outer.addWidget(pf_hint)
+
+        self._auto_cb = QCheckBox("Automatically sync when updates are available")
+        self._auto_cb.setChecked(auto_sync)
+        self._auto_cb.setStyleSheet("font-weight: 600; margin-top: 6px;")
+        outer.addWidget(self._auto_cb)
+        auto_hint = QLabel("Checks the source about once an hour while Anki is open and "
+                           "applies deck updates without asking — a backup is still "
+                           "taken first, same as a manual sync. Off by default; turn "
+                           "this on once you trust the flow.")
+        auto_hint.setWordWrap(True)
+        auto_hint.setStyleSheet("color: gray; font-size: 11px;")
+        outer.addWidget(auto_hint)
 
         apply_hint = QLabel("Save keeps these choices for your next sync. Save and sync "
                             "now also pulls the selected decks right away.")
@@ -890,6 +1090,9 @@ class _DeckManagerDialog(QDialog):
     def protected_fields(self):
         return parse_fields(self._pf_edit.text())
 
+    def auto_sync_enabled(self):
+        return self._auto_cb.isChecked()
+
 
 @_safe
 def manage_decks():
@@ -934,14 +1137,23 @@ def manage_decks():
                         pass
         return out
 
-    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source, _preview)
+    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source, _preview,
+                             cfg["auto_sync_decks"])
     if not dlg.exec():
         return   # cancelled
 
     conf = mw.addonManager.getConfig(__name__) or {}
     conf["excluded_decks"] = dlg.excluded_decks()
     conf["protected_fields"] = dlg.protected_fields()
+    conf["auto_sync_decks"] = dlg.auto_sync_enabled()
     mw.addonManager.writeConfig(__name__, conf)
+
+    # Apply the auto-sync toggle immediately rather than waiting for a restart, so
+    # turning it on/off in the panel actually takes effect right away.
+    if conf["auto_sync_decks"]:
+        _restart_auto_sync_timer(_cfg()["auto_sync_interval_minutes"])
+    else:
+        _stop_auto_sync_timer()
 
     if dlg.sync_requested:
         sync_decks()
@@ -950,9 +1162,12 @@ def manage_decks():
     excluded_n = len(rows) - kept
     scope = (f"All {kept} deck(s) are set to sync" if not excluded_n
              else f"{kept} of {len(rows)} deck(s) are set to sync ({excluded_n} excluded)")
-    _info(f"Saved. {scope}, preserving {', '.join(conf['protected_fields'])}.<br><br>"
-          "Nothing synced yet — run <b>Sync decks</b> when you're ready to pull them "
-          "(or use <i>Save and sync now</i> next time to do both at once).")
+    auto_line = (" Auto-sync is on, so these will keep applying on their own."
+                if conf["auto_sync_decks"] else
+                " Nothing synced yet — run <b>Sync decks</b> when you're ready to pull "
+                "them (or use <i>Save and sync now</i> next time to do both at once).")
+    _info(f"Saved. {scope}, preserving {', '.join(conf['protected_fields'])}."
+          f"<br><br>{auto_line}")
 
 
 @_safe
@@ -1014,3 +1229,4 @@ def _menu():
 
 
 gui_hooks.main_window_did_init.append(_menu)
+gui_hooks.main_window_did_init.append(_schedule_background_checks)
