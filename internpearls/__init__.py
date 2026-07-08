@@ -23,7 +23,7 @@ from aqt.qt import QAction, QLineEdit, QMenu, QMessageBox, Qt
 from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
                        showInfo, showWarning)
 
-ADDON_VERSION = "0.10.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.10.2"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -430,8 +430,9 @@ def sync_decks():
     _save_json(INSTALLED, installed)
     restored = _restore(snap)
     mw.reset()
+    notes_line = f"Notes restored on {restored} card(s).<br><br>" if restored else ""
     _info(f"<b>Sync complete</b> (source: {source})" + _bullets(results) +
-          f"Notes restored on {restored} card(s).<br><br>"
+          notes_line +
           f"A pre-sync backup of the Intern Pearls deck was saved; use "
           f"<i>Advanced → Import intern pearls deck</i> to revert to it if needed.")
 
@@ -515,8 +516,9 @@ def import_single():
             pass
     restored = _restore(snap)
     mw.reset()
-    _info(f"Imported {os.path.basename(src)}: {in_place} kept history, {as_new} new. "
-          f"Notes restored on {restored} card(s).")
+    notes_line = f" Notes restored on {restored} card(s)." if restored else ""
+    _info(f"Imported {os.path.basename(src)}: {in_place} kept history, {as_new} new."
+          f"{notes_line}")
 
 
 def restore_from_backup():
@@ -685,28 +687,12 @@ def about():
     box.setText(
         f"<b>Intern Pearls Deck Tools</b> &nbsp;<span style='color:gray;'>v{ADDON_VERSION}"
         "</span><br><br>"
-        "History-safe deck management for Anki: sync decks from a repo or folder "
-        "without losing review history or personal notes, and back up, export, or "
-        "import your decks without leaving Anki."
-        "<br><br><b>Sync decks</b> pulls whatever changed at your configured source, "
-        "matches every card to your existing one by ID so scheduling and personal "
-        "notes carry over, and backs up first automatically."
-        "<br><br><b>Configure deck source</b> points Sync at a GitHub repo or a local "
-        "folder containing a <code>manifest.json</code> and the deck files."
-        "<br><br><b>Advanced</b> holds the individual pieces Sync runs for you, plus "
-        "standalone backup, export, and import tools:"
-        + _bullets([
-            "Import single deck, Fix note types: manual fallbacks for one deck "
-            "outside your configured source, or a note-type mismatch",
-            "Backup, Import, Export intern pearls deck: a fast, self-contained "
-            "copy of just this deck",
-            "Backup, Restore full collection: the same whole-collection tools "
-            "Anki uses on its own",
-        ]) +
-        "The content this ships with is one set of anesthesia study decks, but the "
-        "add-on itself isn't specific to it: point Configure deck source at your own "
-        "repo or folder and it works the same way for any decks that follow the same "
-        "manifest format."
+        "Keeps Anki decks in sync with a source you control, without losing review "
+        "history or personal notes: cards are matched by ID, personal note fields are "
+        "snapshotted and restored around every import, and backups run automatically "
+        "before anything changes."
+        "<br><br>No deck content ships with the add-on itself. Set your source under "
+        "<i>Configure deck source</i>, a GitHub repo or a local folder."
         "<br><br>"
         f'<a href="https://github.com/{ANKI_REPO}">github.com/{ANKI_REPO}</a>')
     box.setStandardButtons(QMessageBox.StandardButton.Ok)

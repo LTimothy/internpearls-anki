@@ -2,7 +2,7 @@
 
 History-safe deck management for Anki. Keeps a set of study decks up to date without losing your review history or personal notes, and lets you back up, export, or import a deck without leaving Anki. Anki's built-in re-import overwrites fields, which means any notes you added to cards get wiped. This add-on avoids that by matching cards by GUID (so scheduling carries over), snapshotting and restoring the Notes field around each import, and backing up the deck automatically before it touches anything.
 
-The decks that ship with it are one set of anesthesia study material, but the add-on itself doesn't care what's in them. Point Configure deck source at your own GitHub repo or local folder and it works the same way for any decks that follow the same manifest format. See "Using this for your own decks" below.
+No deck content ships with the add-on itself; it only syncs whatever you point it at. Point Configure deck source at your own GitHub repo or local folder and it works the same way for any decks that follow the same manifest format. See "Using this for your own decks" below.
 
 ## Install
 
@@ -69,7 +69,7 @@ Compares your installed version against `version.json` in this repo. If a newer 
 
 ### About
 
-An overview of what the add-on does, a short description of each menu item, and a link to this repo.
+A short description of what the add-on does, a reminder that no deck content ships with it, and a link to this repo.
 
 ## Updating decks
 
@@ -133,8 +133,8 @@ Point Configure deck source at your repo (with a read-only token if private) or 
 
 The add-on uses three-part semver: `MAJOR.MINOR.PATCH`.
 
-- PATCH (0.10.1 to 0.10.2): bug fix or internal cleanup, no UI changes.
-- MINOR (0.10.1 to 0.11.0): new feature or menu item, backwards compatible.
+- PATCH (0.10.2 to 0.10.3): bug fix or internal cleanup, no UI changes.
+- MINOR (0.10.2 to 0.11.0): new feature or menu item, backwards compatible.
 - MAJOR (0.x to 1.0.0): breaking change that requires the user to reconfigure.
 
 On each release, bump `ADDON_VERSION` in `internpearls/__init__.py` and `version` in `version.json`, tag the commit `vX.Y.Z`, run `./build.sh`, and push.
