@@ -3,6 +3,12 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.14.1
+
+- When every deck in Manage decks is already up to date, the "Check what will sync"
+  button now shows "All decks up to date" and is disabled, instead of looking like
+  there's something to check and then reporting nothing on click.
+
 ## v0.14.0
 
 - Manage decks can now preview changes in place: a "Check what will sync" button
