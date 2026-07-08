@@ -93,6 +93,76 @@ def test_should_notify_handles_v_prefix_and_blank_latest():
     assert logic.should_notify_update("0.14.1", None, None) is False
 
 
+# --------------------------------------------------------------- clamp_interval_minutes
+def test_clamp_interval_keeps_a_valid_value():
+    assert logic.clamp_interval_minutes(30) == 30
+
+
+def test_clamp_interval_raises_below_floor():
+    assert logic.clamp_interval_minutes(0, floor_minutes=1) == 1
+    assert logic.clamp_interval_minutes(-5, floor_minutes=1) == 1
+    assert logic.clamp_interval_minutes(1, floor_minutes=15) == 15
+
+
+def test_clamp_interval_falls_back_to_default_on_garbage():
+    assert logic.clamp_interval_minutes(None, default_minutes=15) == 15
+    assert logic.clamp_interval_minutes("", default_minutes=15) == 15
+    assert logic.clamp_interval_minutes("not a number", default_minutes=15) == 15
+
+
+def test_clamp_interval_accepts_numeric_strings():
+    assert logic.clamp_interval_minutes("45") == 45
+
+
+# ----------------------------------------------------------- decide_addon_update_action
+def test_decide_update_action_none_when_current():
+    assert logic.decide_addon_update_action(
+        "0.16.0", "0.16.0", auto_update=False, notify=True) == "none"
+    assert logic.decide_addon_update_action(
+        "0.16.0", "0.15.0", auto_update=True, notify=True) == "none"
+
+
+def test_decide_update_action_auto_update_when_enabled():
+    assert logic.decide_addon_update_action(
+        "0.14.1", "0.16.0", auto_update=True, notify=False) == "auto_update"
+
+
+def test_decide_update_action_auto_update_beats_notify_when_both_on():
+    assert logic.decide_addon_update_action(
+        "0.14.1", "0.16.0", auto_update=True, notify=True) == "auto_update"
+
+
+def test_decide_update_action_notify_when_auto_update_off():
+    assert logic.decide_addon_update_action(
+        "0.14.1", "0.16.0", auto_update=False, notify=True) == "notify"
+
+
+def test_decide_update_action_none_when_both_toggles_off():
+    assert logic.decide_addon_update_action(
+        "0.14.1", "0.16.0", auto_update=False, notify=False) == "none"
+
+
+def test_decide_update_action_notify_respects_once_per_release():
+    # Already notified about 0.16.0 -> a plain notify stays quiet on the next check.
+    assert logic.decide_addon_update_action(
+        "0.14.1", "0.16.0", auto_update=False, notify=True,
+        last_notified="0.16.0") == "none"
+
+
+def test_decide_update_action_auto_update_ignores_last_notified():
+    # Auto-update isn't a nag, so it isn't suppressed by a prior notify record.
+    assert logic.decide_addon_update_action(
+        "0.14.1", "0.16.0", auto_update=True, notify=True,
+        last_notified="0.16.0") == "auto_update"
+
+
+def test_decide_update_action_none_on_blank_latest():
+    assert logic.decide_addon_update_action(
+        "0.14.1", "", auto_update=True, notify=True) == "none"
+    assert logic.decide_addon_update_action(
+        "0.14.1", None, auto_update=True, notify=True) == "none"
+
+
 def test_version_at_least_strips_v_prefix_on_latest():
     # version.json / git tags may carry a "v"; the comparator must ignore it.
     assert logic.version_at_least("0.12.0", "v0.12.0") is True
