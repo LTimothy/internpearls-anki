@@ -37,6 +37,20 @@ def version_at_least(current, latest):
     return latest_n <= cur_n
 
 
+def parse_fields(text, default=("Notes",)):
+    """Parse the deck manager's comma-separated "preserved fields" box into a clean list.
+
+    Trims whitespace, drops empties, de-dupes (keeping order). Falls back to `default` if
+    nothing usable is left, so the annotation safety net can't be emptied by accident.
+    """
+    out = []
+    for f in (text or "").split(","):
+        f = f.strip()
+        if f and f not in out:
+            out.append(f)
+    return out or list(default)
+
+
 def decks_to_update(manifest, installed, excluded=None):
     """Decks from the manifest whose version differs from what's already installed.
 
