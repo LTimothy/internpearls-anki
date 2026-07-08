@@ -37,16 +37,43 @@ def version_at_least(current, latest):
     return latest_n <= cur_n
 
 
-def decks_to_update(manifest, installed):
+def decks_to_update(manifest, installed, excluded=None):
     """Decks from the manifest whose version differs from what's already installed.
 
     `installed` is {deck_name: version_last_applied}. A deck missing from it is new; a
-    deck whose version changed needs re-sync; matching versions are skipped. Shared by
-    Sync (to know what to apply) and Preview sync (to report the same set without
-    touching the collection), so the two can never disagree about what's pending.
+    deck whose version changed needs re-sync; matching versions are skipped. `excluded`
+    is an optional collection of deck names the user has opted out of syncing (from the
+    deck manager) — those are skipped regardless of version. Shared by Sync (to know what
+    to apply) and Preview sync (to report the same set without touching the collection),
+    so the two can never disagree about what's pending.
     """
+    excluded = set(excluded or ())
     return [d for d in (manifest or {}).get("decks", [])
-            if installed.get(d["name"]) != d["version"]]
+            if d["name"] not in excluded and installed.get(d["name"]) != d["version"]]
+
+
+def deck_status(manifest, installed, excluded=None):
+    """One row per available deck for the deck-manager UI.
+
+    Returns dicts with the deck's full `name`, a short display label, its `cards` count,
+    whether it's `enabled` (not opted out), and a `state` relative to the collection:
+    "new" (never synced), "update" (a newer version is available), or "current" (already
+    up to date). Pure so the manager dialog stays a thin rendering layer over it.
+    """
+    excluded = set(excluded or ())
+    rows = []
+    for d in (manifest or {}).get("decks", []):
+        name = d["name"]
+        inst, avail = installed.get(name), d.get("version")
+        state = "new" if inst is None else ("current" if inst == avail else "update")
+        rows.append({
+            "name": name,
+            "short": name.split("::")[-1],
+            "cards": d.get("cards"),
+            "enabled": name not in excluded,
+            "state": state,
+        })
+    return rows
 
 
 def apkg_notes(path):

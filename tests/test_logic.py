@@ -106,6 +106,51 @@ def test_decks_to_update_tolerates_missing_manifest():
     assert logic.decks_to_update({}, {"A": "v1"}) == []
 
 
+def test_decks_to_update_skips_excluded_even_when_stale():
+    # An opted-out deck is skipped no matter how out of date it is.
+    manifest = _manifest(("A", "v2"), ("B", "v2"))
+    installed = {"A": "v1", "B": "v1"}          # both would otherwise update
+    todo = [d["name"] for d in logic.decks_to_update(manifest, installed, excluded=["A"])]
+    assert todo == ["B"]
+
+
+def test_decks_to_update_excluded_default_is_backward_compatible():
+    manifest = _manifest(("A", "v1"))
+    # No excluded arg == old behavior: a new deck is still pending.
+    assert len(logic.decks_to_update(manifest, {})) == 1
+
+
+# ----------------------------------------------------------------------- deck_status
+def test_deck_status_reports_new_update_current():
+    manifest = {"decks": [
+        {"name": "X::A", "version": "v1", "cards": 10},
+        {"name": "X::B", "version": "v2", "cards": 20},
+        {"name": "X::C", "version": "v3", "cards": 30},
+    ]}
+    installed = {"X::B": "v1", "X::C": "v3"}     # A unseen, B stale, C current
+    rows = {r["name"]: r for r in logic.deck_status(manifest, installed)}
+    assert rows["X::A"]["state"] == "new"
+    assert rows["X::B"]["state"] == "update"
+    assert rows["X::C"]["state"] == "current"
+    assert rows["X::A"]["short"] == "A"          # last :: segment
+    assert rows["X::A"]["cards"] == 10
+
+
+def test_deck_status_marks_excluded_as_disabled():
+    manifest = {"decks": [{"name": "X::A", "version": "v1", "cards": 5}]}
+    rows = logic.deck_status(manifest, {}, excluded=["X::A"])
+    assert rows[0]["enabled"] is False
+
+
+def test_deck_status_enabled_by_default():
+    manifest = {"decks": [{"name": "X::A", "version": "v1", "cards": 5}]}
+    assert logic.deck_status(manifest, {})[0]["enabled"] is True
+
+
+def test_deck_status_tolerates_empty_manifest():
+    assert logic.deck_status(None, {}) == []
+
+
 # --------------------------------------------------------------------- apkg_notes
 def test_apkg_notes_reads_id_front_guid(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
