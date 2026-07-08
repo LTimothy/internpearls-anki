@@ -29,7 +29,7 @@ from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
 from .logic import (bullets, deck_status, decks_to_update, parse_fields,
                     remap_cards, version_at_least, write_personalized)
 
-ADDON_VERSION = "0.14.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.14.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -762,6 +762,13 @@ class _DeckManagerDialog(QDialog):
             "Download the changed decks and show, per deck, how many cards would update "
             "in place (history kept) vs. be added as new. Nothing is imported.")
         self._preview_btn.clicked.connect(self._run_preview)
+        # Nothing to preview if every deck already matches what's installed — reflect
+        # that on open so the button isn't an inviting dead end when all rows say
+        # "up to date".
+        if not any(r["state"] != "current" for r in rows):
+            self._preview_btn.setText("All decks up to date")
+            self._preview_btn.setEnabled(False)
+            self._preview_btn.setStyleSheet("color: gray;")
         bar.addWidget(self._preview_btn)
         outer.addLayout(bar)
 
