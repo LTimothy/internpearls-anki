@@ -67,6 +67,32 @@ def test_version_at_least_strictly_older_current():
     assert logic.version_at_least("0.10.1", "0.10.2") is False
 
 
+# ------------------------------------------------------------------ should_notify_update
+def test_should_notify_when_newer_and_never_notified():
+    assert logic.should_notify_update("0.14.1", "0.15.0", None) is True
+
+
+def test_should_not_notify_when_up_to_date():
+    assert logic.should_notify_update("0.15.0", "0.15.0", None) is False
+    assert logic.should_notify_update("0.15.0", "0.14.1", None) is False   # latest older
+
+
+def test_should_not_notify_twice_for_same_version():
+    # Already told them about 0.15.0 -> stay quiet on the next startup.
+    assert logic.should_notify_update("0.14.1", "0.15.0", "0.15.0") is False
+
+
+def test_should_notify_again_for_a_newer_release():
+    # We notified about 0.15.0 before; 0.16.0 is newer, so nag once more.
+    assert logic.should_notify_update("0.14.1", "0.16.0", "0.15.0") is True
+
+
+def test_should_notify_handles_v_prefix_and_blank_latest():
+    assert logic.should_notify_update("0.14.1", "v0.15.0", None) is True
+    assert logic.should_notify_update("0.14.1", "", None) is False
+    assert logic.should_notify_update("0.14.1", None, None) is False
+
+
 def test_version_at_least_strips_v_prefix_on_latest():
     # version.json / git tags may carry a "v"; the comparator must ignore it.
     assert logic.version_at_least("0.12.0", "v0.12.0") is True
