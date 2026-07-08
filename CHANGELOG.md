@@ -3,6 +3,24 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.17.0
+
+- Cleaned up the menu bar. Top level is now just Sync decks and Manage decks; everything
+  occasional, including the manual "Check for add-on updates" (most people never need it
+  since the background notice already covers that job), moved under Advanced; Settings
+  and About now sit together at the bottom, in that order.
+- Configure deck source is no longer its own menu item. It lives inside Manage decks now,
+  behind a "Configure source" (nothing set up yet) or "Change source" (something is)
+  button next to the Source line, since it only ever mattered in the context of what
+  decks are available to manage.
+- Manage decks no longer dead-ends when no source is configured or the configured one is
+  unreachable. It still opens, with an empty deck list, the reason shown right in the
+  Source line, and the same button waiting, instead of a warning that sends you off to a
+  different menu item that no longer exists.
+- Tests: full coverage of the new bootstrap paths (nothing configured, source unreachable,
+  source working, and the change-source-then-reopen flow) plus an exact assertion on the
+  new menu structure, exercised against a mocked Anki environment.
+
 ## v0.16.0
 
 - Fixed the root cause of "Check for add-on updates" sometimes not seeing a version

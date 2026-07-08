@@ -1,7 +1,8 @@
 ## github_decks_repo
 
 A GitHub repo to sync decks from, as `owner/name`. Leave empty to use `decks_dir`
-instead. Easier to set via Intern Pearls → Configure deck source in Anki itself.
+instead. Easier to set via the Configure source / Change source button inside Intern
+Pearls → Manage decks.
 
 ## github_token
 

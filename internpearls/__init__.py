@@ -43,7 +43,7 @@ from .logic import (bullets, clamp_interval_minutes, deck_status, decide_addon_u
                     decks_to_update, parse_fields, remap_cards, version_at_least,
                     write_personalized)
 
-ADDON_VERSION = "0.16.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.17.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -490,11 +490,12 @@ def sync_decks():
         manifest, fetch, source = _fetch_manifest(cfg)
     except Exception as e:
         _warn(f"Couldn't reach the deck source: {e}<br><br>"
-              "Check your GitHub token or local folder under Configure deck source.")
+              "Open <b>Intern Pearls → Manage decks</b> and use Change source to check "
+              "your GitHub token or local folder.")
         return
     if not manifest:
         _warn("No deck source configured yet.<br><br>"
-              "Run <b>Intern Pearls → Configure deck source</b> first.")
+              "Open <b>Intern Pearls → Manage decks</b> and use Configure source.")
         return
 
     installed = _load_json(INSTALLED, {})
@@ -688,15 +689,15 @@ def _check_addon_updates_background():
                        "Anki to use it.", period=8000, parent=mw)
             except Exception as e:
                 tooltip(f"Intern Pearls: couldn't install v{latest} automatically ({e}). "
-                       "Try Check for add-on updates.", period=8000, parent=mw)
+                       "Try Advanced → Check for add-on updates.", period=8000, parent=mw)
         else:
             # Either a plain notify, or auto-update was requested but the package
             # didn't download — either way, tell the user a newer version exists rather
             # than doing nothing.
             tooltip(
                 f"Intern Pearls Deck Tools v{latest} is available (you have "
-                f"v{ADDON_VERSION}). Intern Pearls → Check for add-on updates to "
-                "install.", period=8000, parent=mw)
+                f"v{ADDON_VERSION}). Intern Pearls → Advanced → Check for add-on "
+                "updates to install.", period=8000, parent=mw)
 
     _run_in_background(lambda: _addon_update_work(cfg["auto_update_addon"]), _finish)
 
@@ -1002,8 +1003,8 @@ def configure_source():
         manifest, _, source = _fetch_manifest(_cfg())
     except Exception as e:
         _warn(f"Saved, but couldn't connect: {e}<br><br>"
-              "Double-check the repo name and token (or folder path), then run "
-              "<i>Intern Pearls → Configure deck source</i> again.")
+              "Double-check the repo name and token (or folder path), then use "
+              "<i>Change source</i> in Manage decks again.")
         return
     if not manifest:
         _warn("Saved, but nothing was found at that source yet. Check the path "
@@ -1027,19 +1028,26 @@ _STATE_STYLE = {
 class _DeckManagerDialog(QDialog):
     """Pick which decks sync and which fields are preserved, in one clean panel.
 
-    Pure-ish view: it's handed already-computed rows (from logic.deck_status) and just
-    renders checkboxes + status pills, then hands back the user's choices via
-    excluded_decks()/protected_fields(). No network or collection access lives here.
-    Sync automation and add-on update behavior live in a separate Settings dialog: this
-    one answers "which decks, which fields" (what to sync), not "how automatic" (a
-    different kind of choice that doesn't belong in the same panel).
+    Deck-source configuration lives here too, behind a "Configure source" / "Change
+    source" button, rather than its own top-level menu item: the source only matters in
+    the context of what decks are available to manage, so it made the menu bar noisier
+    without adding a use case of its own.
+
+    Mostly a thin rendering layer over already-computed rows (from logic.deck_status):
+    it renders checkboxes and status pills, then hands back the user's choices via
+    excluded_decks()/protected_fields(). No network or collection access lives here,
+    except indirectly through change_source_requested, which the caller acts on after
+    this dialog closes. Sync automation and add-on update behavior live in a separate
+    Settings dialog: this one answers "which decks, which fields, from where," not "how
+    automatic" (a different kind of choice that doesn't belong in the same panel).
     """
 
-    def __init__(self, parent, rows, protected, source, preview_fn):
+    def __init__(self, parent, rows, protected, source, preview_fn, configured):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Manage decks")
         self.setMinimumWidth(480)
         self.sync_requested = False
+        self.change_source_requested = False
         self._rows = rows
         self._preview_fn = preview_fn   # callable() -> {deck_name: (kept, new) | None}
         self._checks = {}   # deck name -> QCheckBox
@@ -1051,9 +1059,22 @@ class _DeckManagerDialog(QDialog):
         title = QLabel("Manage decks")
         title.setStyleSheet("font-size: 17px; font-weight: 600;")
         outer.addWidget(title)
-        sub = QLabel(f"Source: {source}. Check the decks you want to keep synced. "
-                     "Unchecking one stops future syncs for it; cards already imported "
-                     "stay in your collection until you delete them in Anki.")
+
+        source_row = QHBoxLayout()
+        source_label = QLabel(f"Source: {source}")
+        source_label.setStyleSheet("color: gray;")
+        source_row.addWidget(source_label)
+        change_src_btn = QPushButton("Change source" if configured else "Configure source")
+        change_src_btn.setFlat(True)
+        change_src_btn.setStyleSheet("color: #2563eb; font-size: 12px;")
+        change_src_btn.clicked.connect(self._request_change_source)
+        source_row.addWidget(change_src_btn)
+        source_row.addStretch()
+        outer.addLayout(source_row)
+
+        sub = QLabel("Check the decks you want to keep synced. Unchecking one stops "
+                     "future syncs for it; cards already imported stay in your "
+                     "collection until you delete them in Anki.")
         sub.setWordWrap(True)
         sub.setStyleSheet("color: gray;")
         outer.addWidget(sub)
@@ -1073,10 +1094,15 @@ class _DeckManagerDialog(QDialog):
             "Download the changed decks and show, per deck, how many cards would update "
             "in place (history kept) vs. be added as new. Nothing is imported.")
         self._preview_btn.clicked.connect(self._run_preview)
-        # Nothing to preview if every deck already matches what's installed — reflect
-        # that on open so the button isn't an inviting dead end when all rows say
-        # "up to date".
-        if not any(r["state"] != "current" for r in rows):
+        # Reflect why there's nothing to check on open, rather than leaving an inviting
+        # button that just reports "nothing happened" once clicked: no decks at all
+        # (source unreachable or not configured) reads differently from every deck
+        # already matching what's installed.
+        if not rows:
+            self._preview_btn.setText("No decks available")
+            self._preview_btn.setEnabled(False)
+            self._preview_btn.setStyleSheet("color: gray;")
+        elif not any(r["state"] != "current" for r in rows):
             self._preview_btn.setText("All decks up to date")
             self._preview_btn.setEnabled(False)
             self._preview_btn.setStyleSheet("color: gray;")
@@ -1095,7 +1121,9 @@ class _DeckManagerDialog(QDialog):
             for r in rows:
                 col.addWidget(self._deck_row(r))
         else:
-            empty = QLabel("No decks found at this source yet.")
+            empty = QLabel("No decks available yet. Use the button above to set up or "
+                           "fix your deck source.")
+            empty.setWordWrap(True)
             empty.setStyleSheet("color: gray;")
             col.addWidget(empty)
         col.addStretch()
@@ -1195,6 +1223,14 @@ class _DeckManagerDialog(QDialog):
         self.sync_requested = True
         self.accept()
 
+    def _request_change_source(self):
+        # Close without treating this as a save or a plain cancel; the caller checks
+        # change_source_requested first and reopens this same dialog after the source
+        # configuration flow runs, so any in-progress checkbox/field edits here are
+        # simply discarded, same as a Cancel would do.
+        self.change_source_requested = True
+        self.reject()
+
     def excluded_decks(self):
         return [name for name, cb in self._checks.items() if not cb.isChecked()]
 
@@ -1204,26 +1240,31 @@ class _DeckManagerDialog(QDialog):
 
 @_safe
 def manage_decks():
-    """Open the deck manager: choose which decks sync and which fields are preserved."""
+    """Open the deck manager: choose which decks sync, which fields are preserved, and
+    which source to pull from.
+
+    Never dead-ends on a missing or unreachable source; the dialog always opens, with
+    an empty deck list and a "Configure source" / "Change source" button front and
+    center, since that button is now the only way to reach deck-source configuration.
+    """
     cfg = _cfg()
-    try:
-        manifest, fetch, source = _fetch_manifest(cfg)
-    except Exception as e:
-        _warn(f"Couldn't reach the deck source: {e}<br><br>"
-              "Check your GitHub token or local folder under Configure deck source.")
-        return
-    if not manifest:
-        _warn("No deck source configured yet.<br><br>"
-              "Run <b>Intern Pearls → Configure deck source</b> first.")
-        return
+    manifest, fetch, source, error = None, None, None, None
+    if cfg["gh_repo"] or cfg["decks_dir"]:
+        try:
+            manifest, fetch, source = _fetch_manifest(cfg)
+        except Exception as e:
+            error = str(e)
+    source_label = source if manifest else (f"error: {error}" if error else "not configured")
 
     installed = _load_json(INSTALLED, {})
-    rows = deck_status(manifest, installed, cfg["excluded"])
+    rows = deck_status(manifest, installed, cfg["excluded"]) if manifest else []
 
     def _preview():
         """Download every changed deck and match it against the collection, returning
         {deck_name: (kept_in_place, added_new)}. Read-only — imports nothing. Runs when
-        the user clicks "Check what will sync"; the download is why it's on demand."""
+        the user clicks "Check what will sync"; the download is why it's on demand.
+        Only ever called when manifest/fetch exist, since the button stays disabled
+        otherwise."""
         pending = [d for d in manifest["decks"]
                    if installed.get(d["name"]) != d["version"]]
         her = _her_front_to_guid(cfg["scope_tag"])
@@ -1245,8 +1286,15 @@ def manage_decks():
                         pass
         return out
 
-    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source, _preview)
-    if not dlg.exec():
+    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source_label, _preview,
+                             configured=bool(manifest))
+    result = dlg.exec()
+
+    if dlg.change_source_requested:
+        configure_source()
+        manage_decks()   # reopen against whatever the source is now
+        return
+    if not result:
         return   # cancelled
 
     conf = mw.addonManager.getConfig(__name__) or {}
@@ -1256,6 +1304,9 @@ def manage_decks():
 
     if dlg.sync_requested:
         sync_decks()
+        return
+    if not rows:
+        _info("Saved. No decks are available from this source yet.")
         return
     kept = sum(1 for r in rows if r["name"] not in conf["excluded_decks"])
     excluded_n = len(rows) - kept
@@ -1418,10 +1469,10 @@ def about():
             f"Add-on updates: {update_status}",
             f"Preserved fields: {', '.join(cfg['protected']) or 'none set'}",
         ]) +
-        "Change these under <i>Manage decks</i> (which decks, which fields) or "
-        "<i>Settings</i> (how automatic)."
-        "<br><br>No deck content ships with the add-on itself. Set your source under "
-        "<i>Configure deck source</i>, a GitHub repo or a local folder."
+        "Change these under <i>Manage decks</i> (which decks, which fields, and where "
+        "from) or <i>Settings</i> (how automatic)."
+        "<br><br>No deck content ships with the add-on itself. Set your source, a "
+        "GitHub repo or a local folder, from <i>Manage decks</i>."
         "<br><br>"
         f'<a href="https://github.com/{ANKI_REPO}">github.com/{ANKI_REPO}</a>')
     box.setStandardButtons(QMessageBox.StandardButton.Ok)
@@ -1441,11 +1492,13 @@ def _menu():
                                                    # *args wrapper to know that.
         target.addAction(act)                     # the app menu unless told not to
 
+    # Two primary actions up top, everything occasional tucked under Advanced (including
+    # the manual add-on-update check, which most people never need since the background
+    # notice already covers it), and a small Settings/About pair at the bottom. Deck
+    # source configuration lives inside Manage decks itself now, not as its own item,
+    # since it only matters in the context of what decks are available to manage.
     add(menu, "Sync decks", sync_decks)
     add(menu, "Manage decks", manage_decks)
-    add(menu, "Configure deck source", configure_source)
-    add(menu, "Settings", open_settings)
-    add(menu, "Check for add-on updates", check_updates)
     menu.addSeparator()
     adv = menu.addMenu("Advanced")
     add(adv, "Import single deck (manual)", import_single)
@@ -1457,7 +1510,10 @@ def _menu():
     adv.addSeparator()
     add(adv, "Backup full collection", backup_collection_now)
     add(adv, "Restore full collection", restore_from_backup)
+    adv.addSeparator()
+    add(adv, "Check for add-on updates", check_updates)
     menu.addSeparator()
+    add(menu, "Settings", open_settings)
     add(menu, "About", about)
 
     try:
