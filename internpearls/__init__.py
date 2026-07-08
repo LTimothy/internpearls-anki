@@ -3,8 +3,9 @@ Intern Pearls Deck Tools: an Anki add-on for history-safe deck sync.
 
 "Sync decks" is the only button most people need. It pulls any changed decks (from the
 private GitHub repo, or a local folder) and applies each one so your review history and
-personal notes are preserved. Fixing note types and importing a single deck run
-automatically as part of Sync and are exposed under "Advanced" only as a fallback.
+your own annotations in any preserved field are kept. Fixing note types and importing a
+single deck run automatically as part of Sync and are exposed under "Advanced" only as
+a fallback.
 
 Before touching the collection, Sync takes its own timestamped backup, so nothing here
 depends on the user remembering to export one first.
@@ -22,15 +23,27 @@ import urllib.request
 from aqt import mw, gui_hooks
 from aqt.qt import (QAction, QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
                     QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton,
-                    QScrollArea, Qt, QTimer, QVBoxLayout, QWidget)
+                    QScrollArea, QSpinBox, Qt, QTimer, QVBoxLayout, QWidget)
 from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
                        showInfo, showWarning, tooltip)
 
-from .logic import (bullets, deck_status, decks_to_update, parse_fields,
-                    remap_cards, should_notify_update, version_at_least,
+# QueryOp is the standard way modern Anki add-ons run work off the main thread. It has
+# been part of aqt's public surface since 2.1.45 (2021), which is older than the
+# collection APIs this add-on already depends on (ImportAnkiPackageRequest, the
+# with_scheduling/wait_for_completion backend options), so it should be present on any
+# Anki build that can run this add-on at all. The import is still guarded: if it's ever
+# missing, background checks fall back to running inline rather than the whole add-on
+# failing to load.
+try:
+    from aqt.operations import QueryOp
+except Exception:
+    QueryOp = None
+
+from .logic import (bullets, clamp_interval_minutes, deck_status, decide_addon_update_action,
+                    decks_to_update, parse_fields, remap_cards, version_at_least,
                     write_personalized)
 
-ADDON_VERSION = "0.15.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.16.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -49,7 +62,8 @@ INSTALLED = os.path.join(_USER_FILES, "installed.json")
 # nagged about, so the startup notice fires once per release, not every launch.
 STATE = os.path.join(_USER_FILES, "state.json")
 
-AUTO_SYNC_INTERVAL_FLOOR_MIN = 15   # refuse to poll more often than this, however configured
+AUTO_SYNC_INTERVAL_FLOOR_MIN = 1     # refuse to poll more often than this, however configured
+AUTO_SYNC_INTERVAL_DEFAULT_MIN = 15  # used when the setting is missing or unreadable
 
 # One-time migration: earlier versions wrote this next to __init__.py, so an add-on
 # update would have already wiped it. Move it over if it's still there from a
@@ -82,8 +96,10 @@ def _cfg():
         "export_deck": c.get("export_deck", EXPORT_DECK),
         "excluded":    c.get("excluded_decks", []),
         "notify_addon_updates": c.get("notify_addon_updates", True),
+        "auto_update_addon":    c.get("auto_update_addon", False),
         "auto_sync_decks":      c.get("auto_sync_decks", False),
-        "auto_sync_interval_minutes": c.get("auto_sync_interval_minutes", 60),
+        "auto_sync_interval_minutes": c.get("auto_sync_interval_minutes",
+                                            AUTO_SYNC_INTERVAL_DEFAULT_MIN),
     }
 
 
@@ -175,6 +191,12 @@ def _bg_safe(fn):
 # generous timeout so a big deck on a slow link isn't cut off mid-transfer.
 _CONNECT_TIMEOUT = 6     # seconds; fail-fast bound for reaching the source at all
 _DOWNLOAD_TIMEOUT = 60   # seconds; per-read bound for pulling a deck once we're online
+# A tighter bound for the two checks that run on their own, unprompted: the deck-sync
+# poll and the add-on-update check. These can fire as often as once a minute, so a slow
+# or dead host has to fail well before the interactive 6-second bound would. Background
+# checks that use QueryOp (see _run_in_background) run this off the main thread anyway,
+# so the timeout mostly matters for the fallback path on an Anki build without QueryOp.
+_BG_TIMEOUT = 3          # seconds; fail-fast bound for unattended background checks
 
 
 def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT):
@@ -216,6 +238,24 @@ def _gh_raw(repo, path, token, ref, timeout=_CONNECT_TIMEOUT):
     url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={ref}"
     return _http_get(url, token=token, accept="application/vnd.github.raw",
                      timeout=timeout)
+
+
+def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT):
+    """Raw bytes of a file in the public add-on repo, via the Contents API rather than
+    raw.githubusercontent.com.
+
+    raw.githubusercontent.com is served through a CDN that can lag well behind a push.
+    Confirmed directly: right after pushing a new version.json, the Contents API
+    reflected it immediately, while the raw CDN link for the same file and branch still
+    served the previous content more than two minutes later. That gap is exactly why
+    "Check for add-on updates" once failed to see a version that had already been
+    pushed. Anything this add-on fetches about itself now goes through the API instead.
+    No token is needed since this repo is public; version.json still lists the raw CDN
+    URL under "download" as a convenience for a person opening it by hand, where a
+    brief delay is harmless.
+    """
+    url = f"https://api.github.com/repos/{ANKI_REPO}/contents/{path}?ref={ref}"
+    return _http_get(url, accept="application/vnd.github.raw", timeout=timeout)
 
 
 # ---------------------------------------------------------------------- note types
@@ -481,9 +521,10 @@ def sync_decks():
         return
 
     results, restored = _run_sync(cfg, manifest, fetch, todo, installed)
-    notes_line = f"Notes restored on {restored} card(s).<br><br>" if restored else ""
+    fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
+                  if restored else "")
     _info(f"<b>Sync complete</b> (source: {source})" + bullets(results) +
-          notes_line +
+          fields_line +
           f"A pre-sync backup of the Intern Pearls deck was saved; use "
           f"<i>Advanced → Import intern pearls deck</i> to revert to it if needed.")
 
@@ -519,14 +560,23 @@ def _run_sync(cfg, manifest, fetch, todo, installed):
     return results, restored
 
 
-def _fetch_addon_version_info():
-    """Fetch and parse the public add-on repo's version.json. Raises on any failure.
+def _fetch_addon_version_info(timeout=_CONNECT_TIMEOUT):
+    """Fetch and parse the public add-on repo's version.json via the Contents API (see
+    _gh_public_raw for why not the raw CDN link). Raises on any failure.
 
-    Single source of truth for this URL/parse so the manual "Check for add-on updates"
-    action and the silent startup notifier can't drift apart.
+    Single source of truth for this fetch so the manual "Check for add-on updates"
+    action and the background checks can't drift apart.
     """
-    url = f"https://raw.githubusercontent.com/{ANKI_REPO}/main/version.json"
-    return json.loads(_http_get(url))
+    return json.loads(_gh_public_raw("version.json", timeout=timeout))
+
+
+def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT):
+    """Download the current .ankiaddon package to a temp file and return its path."""
+    data = _gh_public_raw("internpearls.ankiaddon", timeout=timeout)
+    path = os.path.join(tempfile.gettempdir(), "internpearls.ankiaddon")
+    with open(path, "wb") as fh:
+        fh.write(data)
+    return path
 
 
 @_safe
@@ -545,11 +595,7 @@ def check_updates():
                 f"(you have v{ADDON_VERSION}). Download and install now?"):
         return
     try:
-        data = _http_get(latest["download"])
-        tmp = os.path.join(tempfile.gettempdir(), "internpearls.ankiaddon")
-        with open(tmp, "wb") as fh:
-            fh.write(data)
-        mw.addonManager.install(tmp)
+        mw.addonManager.install(_download_addon_package())
         _info("Updated. Please restart Anki.")
     except Exception as e:
         _warn(f"Auto-install failed ({e}).<br>Opening the download page instead.")
@@ -557,38 +603,102 @@ def check_updates():
 
 
 # --------------------------------------------------------------- background checks
-# Two things run on their own, without a menu click: a one-shot "is a newer add-on
-# version out" notice shortly after startup, and (only if the user opted in via Manage
-# decks) a repeating poll that auto-syncs decks. Both are deliberately synchronous on
-# the main thread rather than on a worker thread — this add-on has no existing
-# threading, and adding one just for a startup notice would trade a rare, small,
-# bounded hitch (capped by the fail-fast timeouts) for real thread-safety surface
-# against Qt/`mw.col`. The trade-off is documented here rather than hidden.
+# Two things run on their own, without a menu click: an add-on-update check once per
+# launch, and (only if the user turned it on in Settings) a repeating poll that auto-
+# syncs decks. Both dispatch their network work through _run_in_background, which uses
+# Anki's QueryOp to run off the main thread when it's available, so a slow or dead host
+# never freezes Anki, however often the poll fires. The only work that touches mw.col
+# (backing up and importing, once something actually needs to change) still runs on the
+# main thread inside the completion callback, same as it does for a manual Sync decks
+# click today; that part is unaffected by this and isn't the part that could hang.
+
+def _run_in_background(work, on_done):
+    """Run `work()` off the main thread when possible, then call `on_done(result, error)`
+    back on the main thread either way (`error` is None on success, `result` is None on
+    failure). `work` must not touch `mw.col` or any Qt widget, since it may run on a
+    worker thread; it should be pure computation plus network/file I/O.
+
+    Uses QueryOp when available (the normal case; see the import guard near the top of
+    this file) so the caller genuinely never blocks Anki's UI, no matter how often it's
+    invoked. Falls back to calling `work()` directly, bounded by whatever timeout `work`
+    itself uses, on any Anki build old enough to lack QueryOp.
+    """
+    def _safe_on_done(result, error):
+        try:
+            on_done(result, error)
+        except Exception:
+            print(traceback.format_exc())
+
+    if QueryOp is not None:
+        QueryOp(
+            parent=mw,
+            op=lambda _col: work(),
+            success=lambda result: _safe_on_done(result, None),
+        ).failure(lambda exc: _safe_on_done(None, exc)).run_in_background()
+    else:
+        try:
+            result = work()
+        except Exception as e:
+            _safe_on_done(None, e)
+        else:
+            _safe_on_done(result, None)
+
+
+def _addon_update_work(auto_update):
+    """Background-safe: fetch the public repo's version info, and if `auto_update` is on
+    and a newer version exists, also download the package. No Qt or mw.col access, so
+    it's safe to run off the main thread. Raises on a fetch failure; the caller decides
+    what "stay quiet" means for that.
+    """
+    info = _fetch_addon_version_info(timeout=_BG_TIMEOUT)
+    package_path = None
+    latest = info.get("version", "")
+    if auto_update and latest and not version_at_least(ADDON_VERSION, latest):
+        package_path = _download_addon_package(timeout=_DOWNLOAD_TIMEOUT)
+    return {"info": info, "package_path": package_path}
+
 
 @_bg_safe
-def _check_addon_update_silently():
-    """Startup, non-blocking: tooltip if a newer add-on version exists and we haven't
-    already notified about it. Never auto-installs the add-on itself — that stays the
-    explicit, user-confirmed "Check for add-on updates" action; this only makes sure the
-    user finds out a new version exists instead of silently running a stale build.
+def _check_addon_updates_background():
+    """Runs once, shortly after Anki starts: fetch the public repo's version info off the
+    main thread, then act on it per the Settings toggles (notify only, or auto-install).
+    Skips the network call entirely if both toggles are off.
     """
-    if not _cfg()["notify_addon_updates"]:
+    cfg = _cfg()
+    if not (cfg["notify_addon_updates"] or cfg["auto_update_addon"]):
         return
-    try:
-        latest = _fetch_addon_version_info()
-    except Exception:
-        return   # offline / GitHub hiccup at startup — stay quiet, try again next launch
-    latest_version = latest.get("version", "")
-    state = _load_json(STATE, {})
-    if not should_notify_update(ADDON_VERSION, latest_version,
-                                state.get("last_notified_addon_version")):
-        return
-    state["last_notified_addon_version"] = latest_version
-    _save_json(STATE, state)
-    tooltip(
-        f"Intern Pearls Deck Tools v{latest_version} is available (you have "
-        f"v{ADDON_VERSION}). Intern Pearls → Check for add-on updates to install.",
-        period=8000, parent=mw)
+
+    def _finish(result, error):
+        if error or not result:
+            return   # offline / GitHub hiccup — stay quiet, try again next launch
+        latest = result["info"].get("version", "")
+        state = _load_json(STATE, {})
+        action = decide_addon_update_action(
+            ADDON_VERSION, latest, cfg["auto_update_addon"], cfg["notify_addon_updates"],
+            state.get("last_notified_addon_version"))
+        if action == "none":
+            return
+        state["last_notified_addon_version"] = latest
+        _save_json(STATE, state)
+
+        if action == "auto_update" and result["package_path"]:
+            try:
+                mw.addonManager.install(result["package_path"])
+                tooltip(f"Intern Pearls Deck Tools updated itself to v{latest}. Restart "
+                       "Anki to use it.", period=8000, parent=mw)
+            except Exception as e:
+                tooltip(f"Intern Pearls: couldn't install v{latest} automatically ({e}). "
+                       "Try Check for add-on updates.", period=8000, parent=mw)
+        else:
+            # Either a plain notify, or auto-update was requested but the package
+            # didn't download — either way, tell the user a newer version exists rather
+            # than doing nothing.
+            tooltip(
+                f"Intern Pearls Deck Tools v{latest} is available (you have "
+                f"v{ADDON_VERSION}). Intern Pearls → Check for add-on updates to "
+                "install.", period=8000, parent=mw)
+
+    _run_in_background(lambda: _addon_update_work(cfg["auto_update_addon"]), _finish)
 
 
 _auto_sync_in_progress = False
@@ -598,45 +708,56 @@ _auto_sync_in_progress = False
 def _auto_sync_check():
     """Timer-triggered: if auto-sync is on and any deck changed, apply it without asking.
 
-    A backup is still taken first — non-negotiable, same as the interactive path — and
-    if the backup fails, this aborts rather than importing unprotected (there's no user
-    present to ask). The outcome is a transient tooltip, never a blocking dialog, since
-    this can fire while the user is mid-review; a dialog popping up uninvited over a
-    review session would be worse than the sync just quietly happening.
+    The manifest fetch (the part that runs on every poll, most of the time finding
+    nothing new) happens off the main thread via _run_in_background. Backing up and
+    importing (the part that only runs when there's actually something to apply) still
+    happens on the main thread inside the completion callback, matching the cost a
+    manual Sync decks click already pays; only the frequent, usually-empty check is what
+    needed to stop blocking Anki. A backup is still taken first, and if it fails, this
+    aborts rather than importing unprotected, since there's no user to ask. The outcome
+    is always a transient tooltip, never a blocking dialog, since this can fire mid-
+    review.
     """
     global _auto_sync_in_progress
     cfg = _cfg()
     if not cfg["auto_sync_decks"] or _auto_sync_in_progress or mw.col is None:
         return
-    try:
+
+    def _fetch_work():
         manifest, fetch, source = _fetch_manifest(cfg)
-    except Exception:
-        return   # offline / misconfigured source — stay quiet, retry on the next poll
-    if not manifest:
-        return
-    installed = _load_json(INSTALLED, {})
-    todo = decks_to_update(manifest, installed, cfg["excluded"])
-    if not todo:
-        return
-    if not _pre_sync_backup_or_skip_silently(cfg["export_deck"]):
-        tooltip("Intern Pearls: auto-sync skipped — couldn't create a backup first.",
-               period=6000, parent=mw)
-        return
+        if not manifest:
+            return None
+        installed = _load_json(INSTALLED, {})
+        todo = decks_to_update(manifest, installed, cfg["excluded"])
+        if not todo:
+            return None
+        return {"manifest": manifest, "fetch": fetch, "source": source,
+                "todo": todo, "installed": installed}
 
-    _auto_sync_in_progress = True
-    try:
-        results, restored = _run_sync(cfg, manifest, fetch, todo, installed)
-    finally:
-        _auto_sync_in_progress = False
+    def _apply(result, error):
+        global _auto_sync_in_progress
+        if error or not result:
+            return   # offline, misconfigured, or nothing pending — stay quiet
+        _auto_sync_in_progress = True
+        try:
+            if not _pre_sync_backup_or_skip_silently(cfg["export_deck"]):
+                tooltip("Intern Pearls: auto-sync skipped, couldn't create a backup "
+                       "first.", period=6000, parent=mw)
+                return
+            results, restored = _run_sync(cfg, result["manifest"], result["fetch"],
+                                          result["todo"], result["installed"])
+            ok = sum(1 for r in results if r.startswith("✓"))
+            fail = len(results) - ok
+            msg = f"Intern Pearls: auto-synced {ok} deck(s) (source: {result['source']})"
+            if fail:
+                msg += f", {fail} failed, open Sync decks for details"
+            if restored:
+                msg += f", preserved fields restored on {restored} card(s)"
+            tooltip(msg, period=6000, parent=mw)
+        finally:
+            _auto_sync_in_progress = False
 
-    ok = sum(1 for r in results if r.startswith("✓"))
-    fail = len(results) - ok
-    msg = f"Intern Pearls: auto-synced {ok} deck(s) (source: {source})"
-    if fail:
-        msg += f", {fail} failed — open Sync decks for details"
-    if restored:
-        msg += f", notes restored on {restored} card(s)"
-    tooltip(msg, period=6000, parent=mw)
+    _run_in_background(_fetch_work, _apply)
 
 
 _auto_sync_timer = None
@@ -651,25 +772,25 @@ def _stop_auto_sync_timer():
 
 def _restart_auto_sync_timer(minutes):
     """(Re)start the repeating poll at `minutes`, floored so it can't be configured into
-    a busy-loop. GitHub load at this cadence is trivial: one manifest.json GET per
-    interval (a few KB), well under even the unauthenticated 60-requests/hour limit at
-    the floor, let alone the 5000/hour a token gets — polling every 15 minutes all day
-    is ~96 requests, nothing GitHub notices.
+    a busy-loop. GitHub load at this cadence is trivial: one small manifest.json request
+    per interval, well under even the unauthenticated 60-requests-per-hour limit at the
+    one-minute floor, let alone the 5000-per-hour a token gets.
     """
     _stop_auto_sync_timer()
     global _auto_sync_timer
-    interval_ms = max(AUTO_SYNC_INTERVAL_FLOOR_MIN, int(minutes or 60)) * 60 * 1000
+    interval_ms = clamp_interval_minutes(
+        minutes, AUTO_SYNC_INTERVAL_FLOOR_MIN, AUTO_SYNC_INTERVAL_DEFAULT_MIN) * 60 * 1000
     _auto_sync_timer = QTimer(mw)
     _auto_sync_timer.timeout.connect(_auto_sync_check)
     _auto_sync_timer.start(interval_ms)
 
 
 def _schedule_background_checks():
-    """Run once, a couple seconds after Anki finishes starting up: a silent add-on-update
-    notice, and — only if the user turned on auto-sync in Manage decks — an immediate
-    deck check plus the repeating poll that keeps checking while Anki stays open.
+    """Run once, a couple seconds after Anki finishes starting up: the add-on-update
+    check, and, only if auto-sync is on in Settings, an immediate deck check plus the
+    repeating poll that keeps checking while Anki stays open.
     """
-    QTimer.singleShot(2000, _check_addon_update_silently)
+    QTimer.singleShot(2000, _check_addon_updates_background)
     cfg = _cfg()
     if cfg["auto_sync_decks"]:
         QTimer.singleShot(4000, _auto_sync_check)
@@ -722,9 +843,9 @@ def import_single():
             pass
     restored = _restore(snap)
     mw.reset()
-    notes_line = f" Notes restored on {restored} card(s)." if restored else ""
+    fields_line = f" Preserved fields restored on {restored} card(s)." if restored else ""
     _info(f"Imported {os.path.basename(src)}: {in_place} kept history, {as_new} new."
-          f"{notes_line}")
+          f"{fields_line}")
 
 
 @_safe
@@ -908,11 +1029,13 @@ class _DeckManagerDialog(QDialog):
 
     Pure-ish view: it's handed already-computed rows (from logic.deck_status) and just
     renders checkboxes + status pills, then hands back the user's choices via
-    excluded_decks()/protected_fields()/auto_sync_enabled(). No network or collection
-    access lives here.
+    excluded_decks()/protected_fields(). No network or collection access lives here.
+    Sync automation and add-on update behavior live in a separate Settings dialog: this
+    one answers "which decks, which fields" (what to sync), not "how automatic" (a
+    different kind of choice that doesn't belong in the same panel).
     """
 
-    def __init__(self, parent, rows, protected, source, preview_fn, auto_sync):
+    def __init__(self, parent, rows, protected, source, preview_fn):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Manage decks")
         self.setMinimumWidth(480)
@@ -991,18 +1114,6 @@ class _DeckManagerDialog(QDialog):
         pf_hint.setWordWrap(True)
         pf_hint.setStyleSheet("color: gray; font-size: 11px;")
         outer.addWidget(pf_hint)
-
-        self._auto_cb = QCheckBox("Automatically sync when updates are available")
-        self._auto_cb.setChecked(auto_sync)
-        self._auto_cb.setStyleSheet("font-weight: 600; margin-top: 6px;")
-        outer.addWidget(self._auto_cb)
-        auto_hint = QLabel("Checks the source about once an hour while Anki is open and "
-                           "applies deck updates without asking — a backup is still "
-                           "taken first, same as a manual sync. Off by default; turn "
-                           "this on once you trust the flow.")
-        auto_hint.setWordWrap(True)
-        auto_hint.setStyleSheet("color: gray; font-size: 11px;")
-        outer.addWidget(auto_hint)
 
         apply_hint = QLabel("Save keeps these choices for your next sync. Save and sync "
                             "now also pulls the selected decks right away.")
@@ -1090,9 +1201,6 @@ class _DeckManagerDialog(QDialog):
     def protected_fields(self):
         return parse_fields(self._pf_edit.text())
 
-    def auto_sync_enabled(self):
-        return self._auto_cb.isChecked()
-
 
 @_safe
 def manage_decks():
@@ -1137,23 +1245,14 @@ def manage_decks():
                         pass
         return out
 
-    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source, _preview,
-                             cfg["auto_sync_decks"])
+    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source, _preview)
     if not dlg.exec():
         return   # cancelled
 
     conf = mw.addonManager.getConfig(__name__) or {}
     conf["excluded_decks"] = dlg.excluded_decks()
     conf["protected_fields"] = dlg.protected_fields()
-    conf["auto_sync_decks"] = dlg.auto_sync_enabled()
     mw.addonManager.writeConfig(__name__, conf)
-
-    # Apply the auto-sync toggle immediately rather than waiting for a restart, so
-    # turning it on/off in the panel actually takes effect right away.
-    if conf["auto_sync_decks"]:
-        _restart_auto_sync_timer(_cfg()["auto_sync_interval_minutes"])
-    else:
-        _stop_auto_sync_timer()
 
     if dlg.sync_requested:
         sync_decks()
@@ -1162,16 +1261,146 @@ def manage_decks():
     excluded_n = len(rows) - kept
     scope = (f"All {kept} deck(s) are set to sync" if not excluded_n
              else f"{kept} of {len(rows)} deck(s) are set to sync ({excluded_n} excluded)")
-    auto_line = (" Auto-sync is on, so these will keep applying on their own."
-                if conf["auto_sync_decks"] else
-                " Nothing synced yet — run <b>Sync decks</b> when you're ready to pull "
+    # Auto-sync is a separate, independent setting (Intern Pearls -> Settings), so this
+    # dialog only reports whether it's currently on, not whether it changed here.
+    next_step = (" Auto-sync is on, so these will keep applying on their own."
+                if cfg["auto_sync_decks"] else
+                " Nothing synced yet, run <b>Sync decks</b> when you're ready to pull "
                 "them (or use <i>Save and sync now</i> next time to do both at once).")
     _info(f"Saved. {scope}, preserving {', '.join(conf['protected_fields'])}."
-          f"<br><br>{auto_line}")
+          f"<br><br>{next_step}")
+
+
+class _SettingsDialog(QDialog):
+    """Sync automation and add-on update behavior, kept apart from Manage decks.
+
+    Manage decks answers "which decks, which fields" (what gets synced). This dialog
+    answers "how automatic, how often" (whether it happens on its own). Keeping the two
+    separate is what stops either one from turning into a catch-all as more toggles get
+    added.
+    """
+
+    def __init__(self, parent, auto_sync, interval_minutes, notify_updates, auto_update):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME}: Settings")
+        self.setMinimumWidth(440)
+
+        outer = QVBoxLayout(self)
+        outer.setSpacing(10)
+
+        title = QLabel("Settings")
+        title.setStyleSheet("font-size: 17px; font-weight: 600;")
+        outer.addWidget(title)
+
+        sync_head = QLabel("Deck sync")
+        sync_head.setStyleSheet("font-weight: 600; margin-top: 4px;")
+        outer.addWidget(sync_head)
+
+        self._auto_sync_cb = QCheckBox("Sync decks automatically when updates are available")
+        self._auto_sync_cb.setChecked(auto_sync)
+        outer.addWidget(self._auto_sync_cb)
+
+        interval_row = QHBoxLayout()
+        interval_row.addWidget(QLabel("Check every"))
+        self._interval_spin = QSpinBox()
+        self._interval_spin.setRange(AUTO_SYNC_INTERVAL_FLOOR_MIN, 1440)
+        self._interval_spin.setValue(interval_minutes)
+        self._interval_spin.setSuffix(" min")
+        interval_row.addWidget(self._interval_spin)
+        interval_row.addStretch()
+        outer.addLayout(interval_row)
+
+        sync_hint = QLabel(
+            "Checks the source in the background and applies any changed decks without "
+            "asking. A backup is still taken first, the same as a manual sync. The check "
+            "itself is built not to freeze Anki even on a slow or dead connection: it "
+            "fails fast and tries again at the next check.")
+        sync_hint.setWordWrap(True)
+        sync_hint.setStyleSheet("color: gray; font-size: 11px;")
+        outer.addWidget(sync_hint)
+
+        upd_head = QLabel("Add-on updates")
+        upd_head.setStyleSheet("font-weight: 600; margin-top: 14px;")
+        outer.addWidget(upd_head)
+
+        self._notify_cb = QCheckBox("Notify me when a new add-on version is out")
+        self._notify_cb.setChecked(notify_updates)
+        outer.addWidget(self._notify_cb)
+
+        self._auto_update_cb = QCheckBox("Install add-on updates automatically")
+        self._auto_update_cb.setChecked(auto_update)
+        outer.addWidget(self._auto_update_cb)
+
+        upd_hint = QLabel(
+            "Checked once per launch rather than on a repeating timer, since a new "
+            "add-on release isn't as time-sensitive as a new deck. Either way, Anki "
+            "needs a restart to load the new version.")
+        upd_hint.setWordWrap(True)
+        upd_hint.setStyleSheet("color: gray; font-size: 11px;")
+        outer.addWidget(upd_hint)
+
+        bb = QDialogButtonBox()
+        save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
+        bb.addButton(QDialogButtonBox.StandardButton.Cancel)
+        save.clicked.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        outer.addWidget(bb)
+
+    def values(self):
+        return {
+            "auto_sync_decks": self._auto_sync_cb.isChecked(),
+            "auto_sync_interval_minutes": self._interval_spin.value(),
+            "notify_addon_updates": self._notify_cb.isChecked(),
+            "auto_update_addon": self._auto_update_cb.isChecked(),
+        }
+
+
+@_safe
+def open_settings():
+    """Open Settings: sync automation and add-on update behavior."""
+    cfg = _cfg()
+    dlg = _SettingsDialog(mw, cfg["auto_sync_decks"], cfg["auto_sync_interval_minutes"],
+                          cfg["notify_addon_updates"], cfg["auto_update_addon"])
+    if not dlg.exec():
+        return
+
+    values = dlg.values()
+    conf = mw.addonManager.getConfig(__name__) or {}
+    conf.update(values)
+    mw.addonManager.writeConfig(__name__, conf)
+
+    # Apply immediately rather than waiting for a restart.
+    if values["auto_sync_decks"]:
+        _restart_auto_sync_timer(values["auto_sync_interval_minutes"])
+    else:
+        _stop_auto_sync_timer()
+
+    sync_line = (
+        f"Deck sync checks every {values['auto_sync_interval_minutes']} minute(s) and "
+        "applies updates on its own." if values["auto_sync_decks"] else
+        "Deck sync stays manual, use Sync decks when you're ready.")
+    if values["auto_update_addon"]:
+        update_line = "Add-on updates install automatically."
+    elif values["notify_addon_updates"]:
+        update_line = "You'll get a notice when a new add-on version is out."
+    else:
+        update_line = "Add-on update checks are off."
+    _info(f"Settings saved.<br><br>{sync_line}<br>{update_line}")
 
 
 @_safe
 def about():
+    cfg = _cfg()
+    sync_status = (
+        f"on, checking every {cfg['auto_sync_interval_minutes']} minute(s)"
+        if cfg["auto_sync_decks"] else "off")
+    if cfg["auto_update_addon"]:
+        update_status = "installs automatically"
+    elif cfg["notify_addon_updates"]:
+        update_status = "notifies you, you install it"
+    else:
+        update_status = "off"
+
     box = QMessageBox(mw)
     box.setWindowTitle(f"{APP_NAME}: About")
     box.setIcon(QMessageBox.Icon.Information)
@@ -1179,10 +1408,18 @@ def about():
     box.setText(
         f"<b>Intern Pearls Deck Tools</b> &nbsp;<span style='color:gray;'>v{ADDON_VERSION}"
         "</span><br><br>"
-        "Keeps Anki decks in sync with a source you control, without losing review "
-        "history or personal notes: cards are matched by ID, personal note fields are "
-        "snapshotted and restored around every import, and backups run automatically "
-        "before anything changes."
+        "Keeps a set of Anki decks in sync with a source you control, without losing "
+        "review history or the annotations you keep in any preserved field. Cards are "
+        "matched by ID, preserved fields are snapshotted and restored around every "
+        "import, and a backup runs automatically before anything changes."
+        "<br><br><b>Current settings</b>" +
+        bullets([
+            f"Auto-sync: {sync_status}",
+            f"Add-on updates: {update_status}",
+            f"Preserved fields: {', '.join(cfg['protected']) or 'none set'}",
+        ]) +
+        "Change these under <i>Manage decks</i> (which decks, which fields) or "
+        "<i>Settings</i> (how automatic)."
         "<br><br>No deck content ships with the add-on itself. Set your source under "
         "<i>Configure deck source</i>, a GitHub repo or a local folder."
         "<br><br>"
@@ -1207,6 +1444,7 @@ def _menu():
     add(menu, "Sync decks", sync_decks)
     add(menu, "Manage decks", manage_decks)
     add(menu, "Configure deck source", configure_source)
+    add(menu, "Settings", open_settings)
     add(menu, "Check for add-on updates", check_updates)
     menu.addSeparator()
     adv = menu.addMenu("Advanced")

@@ -3,6 +3,39 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.16.0
+
+- Fixed the root cause of "Check for add-on updates" sometimes not seeing a version
+  that had already shipped: the add-on's own version check fetched `version.json` from
+  `raw.githubusercontent.com`, a CDN endpoint that can lag well behind a push. Confirmed
+  directly: right after a push, the GitHub contents API reflected the new file
+  immediately while the raw CDN link for the same file and branch still served the old
+  one more than two minutes later. Both the version check and the package download now
+  go through the contents API instead, the same way deck content already did.
+- Added a Settings dialog (moved out of Manage decks, since "which decks" and "how
+  automatic" are different kinds of choices): sync automation and add-on update
+  behavior in one place, with an interval field instead of a fixed hourly check.
+- Added "Install add-on updates automatically," off by default, alongside the existing
+  notify-only option. When on, a newer version downloads and installs itself as part of
+  the once-per-launch check; a restart is still needed to load it either way.
+- Lowered the auto-sync poll's default to 15 minutes and its floor to 1 minute (previously
+  60 and 15), so decks that need to land within the hour actually can. To make a 1-minute
+  floor safe, both background checks (add-on updates and the deck poll) now run their
+  network fetch through Anki's QueryOp, off the main thread, so neither one can freeze
+  Anki no matter how often it fires. Only backing up and importing, which happens on the
+  main thread just like a manual sync, and only once something actually changed, is
+  unaffected; the check that runs constantly is what needed to stop blocking. Falls back
+  to a short, bounded synchronous call on an Anki build old enough to lack QueryOp.
+- Generalized "Notes restored on N card(s)" to "Preserved fields restored on N card(s)"
+  everywhere it appears, since the add-on has supported any configured field, or
+  several, for a while now, not just Notes.
+- Expanded About: it now shows your current auto-sync, add-on update, and preserved-
+  field settings, not just a static description.
+- Test suite grown to 51: full coverage of the new pure decision logic (interval
+  clamping, which action a version check should take given the notify/auto-update
+  toggles) plus the auto-sync fetch/apply split and the QueryOp/fallback dispatch,
+  exercised with a mocked Anki environment.
+
 ## v0.15.0
 
 - Startup update notice: once per launch, a silent check compares your version against
