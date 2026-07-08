@@ -25,7 +25,7 @@ from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
 
 from .logic import bullets, remap_cards, version_at_least, write_personalized
 
-ADDON_VERSION = "0.11.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.11.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -701,7 +701,10 @@ def _menu():
     def add(target, label, fn):
         act = QAction(label, mw)
         act.setMenuRole(QAction.MenuRole.NoRole)  # macOS Qt auto-moves items whose label
-        act.triggered.connect(fn)                 # matches "Configure"/"About"/etc. into
+        act.triggered.connect(lambda checked=False, fn=fn: fn())  # Qt's triggered signal passes a
+                                                   # checked bool; discard it since these all take
+                                                   # no args and Qt can't introspect through _safe's
+                                                   # *args wrapper to know that.
         target.addAction(act)                     # the app menu unless told not to
 
     add(menu, "Sync decks", sync_decks)
