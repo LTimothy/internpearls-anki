@@ -1,6 +1,6 @@
 # Intern Pearls Deck Tools (Anki add-on)
 
-History-safe deck management for Anki. Keeps a set of study decks up to date without losing your review history or personal notes, and lets you back up, export, or import a deck without leaving Anki. Anki's built-in re-import overwrites fields, which means any notes you added to cards get wiped. This add-on avoids that by matching cards by GUID (so scheduling carries over), snapshotting and restoring the Notes field around each import, and backing up the deck automatically before it touches anything.
+History-safe deck management for Anki. Keeps a set of study decks up to date without losing your review history or the annotations you keep on a card, and lets you back up, export, or import a deck without leaving Anki. Anki's built-in re-import overwrites fields, which means any personal notes you added to cards get wiped. This add-on avoids that by matching cards by GUID (so scheduling carries over) and snapshotting and restoring whichever fields you've configured as preserved (`Notes` by default) around each import, and it backs up the deck automatically before it touches anything. It can also sync and update itself on a schedule, if you turn that on.
 
 No deck content ships with the add-on itself; it only syncs whatever you point it at. Point Configure deck source at your own GitHub repo or local folder and it works the same way for any decks that follow the same manifest format. See "Using this for your own decks" below.
 
@@ -21,12 +21,16 @@ The main button. It fetches `manifest.json` from your configured deck source, co
 
 1. Takes a fresh, timestamped backup of just the configured deck first (a self-contained `.apkg` with scheduling included, saved internally and pruned to the most recent 10). Nothing else runs until this succeeds, or you explicitly choose to continue without one.
 2. Adds any missing fields to the note type (never removes or renames existing fields).
-3. Snapshots your Notes field on every card in scope.
+3. Snapshots your `protected_fields` on every card in scope.
 4. Matches each incoming card to your existing card by GUID so review history carries over. If a card's front was reworded since your last sync, it checks the `front_aliases` map in the manifest to find the match.
 5. Imports through Anki's built-in importer with scheduling disabled, so your intervals and ease factors stay put.
-6. Restores Notes from the snapshot.
+6. Restores the preserved fields from the snapshot.
 
 If no deck source is configured, it tells you to run Configure deck source first.
+
+### Manage decks
+
+A panel listing every deck the source offers, each with a checkbox, a status pill (New, Update available, or Up to date), and its card count. Unchecking a deck stops future syncs for it; cards already imported stay in your collection until you delete them yourself in Anki. A "Check what will sync" button downloads the changed decks and fills in, per deck, how many cards would update in place versus be added as new; nothing is imported by clicking it. The same panel edits `protected_fields`. Save keeps the choices for your next sync; Save and sync now also runs Sync decks right away.
 
 ### Configure deck source
 
@@ -46,12 +50,23 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 | `github_ref` | Branch or tag to pull from (default: `main`) |
 | `decks_dir` | Local folder path; if set, GitHub is ignored |
 | `scope_tag` | Root tag identifying cards this add-on manages (default: `InternPearls`). Scopes snapshots and GUID matching so your other decks are never touched. |
-| `protected_fields` | Field names to snapshot and restore (default: `["Notes"]`). Add any field where you keep your own content. |
+| `protected_fields` | Field names to snapshot and restore (default: `["Notes"]`). Add any field where you keep your own content. Also editable from Manage decks. |
+| `excluded_decks` | Deck names opted out of syncing. Also editable from Manage decks. |
 | `export_deck` | The deck that Backup/Import/Export intern pearls deck and the automatic pre-sync backup operate on (default: `Intern Pearls::Intern Custom`). |
+| `auto_sync_decks`, `auto_sync_interval_minutes`, `notify_addon_updates`, `auto_update_addon` | Sync and update automation, see Settings below and `config.md` for details on each. |
+
+### Settings
+
+Sync automation and add-on update behavior, kept separate from Manage decks since those answer a different question ("which decks, which fields" versus "how automatic, how often"):
+
+- **Sync decks automatically when updates are available**, off by default. When on, the add-on checks the source in the background on the interval below and applies any changed decks without asking, backing up first the same as a manual sync.
+- **Check every N minutes**, default 15, minimum 1. The check runs off the main thread when Anki supports it (essentially all current versions do), so it doesn't freeze Anki even at a short interval; if it can't reach the source, it fails within a few seconds and just tries again next time.
+- **Notify me when a new add-on version is out**, on by default. A tooltip once per new release, no installation.
+- **Install add-on updates automatically**, off by default. Downloads and installs a newer version as part of the same once-per-launch check, no confirmation. A restart is still needed to load it, same as installing by hand.
 
 ### Check for add-on updates
 
-Compares your installed version against `version.json` in this repo. If a newer version exists, it downloads and installs the `.ankiaddon`. You still need to restart Anki afterward.
+Compares your installed version against the public repo's `version.json`. If a newer version exists, it offers to download and install the `.ankiaddon`. You still need to restart Anki afterward. This is the on-demand version of what the Settings toggles above do on their own.
 
 ### Advanced submenu
 
@@ -71,19 +86,19 @@ Compares your installed version against `version.json` in this repo. If a newer 
 
 ### About
 
-A short description of what the add-on does, a reminder that no deck content ships with it, and a link to this repo.
+A short description of what the add-on does, a summary of your current settings (auto-sync, add-on updates, preserved fields), a reminder that no deck content ships with it, and a link to this repo.
 
 ## Updating decks
 
-Just run Intern Pearls > Sync decks. Only changed decks are imported, and the add-on backs up the deck automatically before touching anything, so there's no separate step to remember. For broader protection on top of that, Advanced > Backup full collection takes a whole-collection backup on demand.
+Run Intern Pearls > Sync decks, or turn on "Sync decks automatically when updates are available" in Settings so it happens on its own. Either way, only changed decks are imported, and the add-on backs up the deck automatically before touching anything, so there's no separate step to remember. For broader protection on top of that, Advanced > Backup full collection takes a whole-collection backup on demand.
 
 ## How history is preserved
 
-Every sync and manual import starts with a fresh, timestamped backup, by default scoped to just the configured deck (fast, self-contained, includes scheduling). A full, whole-collection backup is still one click away under Advanced > Backup full collection for broader protection, it's just no longer the automatic default, since most syncs only ever need to undo changes to this one deck. If a backup can't be created for some reason, you're asked whether to proceed anyway rather than being blocked or silently continuing; on someone's very first sync, before the deck exists yet, there's nothing to back up and this step is skipped entirely.
+Every sync and manual import starts with a fresh, timestamped backup, by default scoped to just the configured deck (fast, self-contained, includes scheduling). A full, whole-collection backup is still one click away under Advanced > Backup full collection for broader protection; it's just no longer the automatic default, since most syncs only ever need to undo changes to this one deck. If a backup can't be created for some reason, you're asked whether to proceed anyway rather than being blocked or silently continuing (an automatic background sync skips that round instead of asking, since there's no one there to answer). On someone's very first sync, before the deck exists yet, there's nothing to back up and this step is skipped entirely.
 
 Cards are matched by GUID, not by content, so your intervals, ease factors, and review counts carry over on every sync.
 
-The Notes field is snapshotted before import and restored after, so even if the importer overwrites it, your text comes back. Specifically: before anything runs, every note tagged under `scope_tag` has its `protected_fields` values read and saved by GUID; after the import, whatever note currently holds that GUID gets those exact values written back. It's a read-before, write-after round trip, not a merge, and it only protects notes that keep their GUID through the import. A card that imports as new (see below) has no old snapshot value to restore, since there was nothing recorded for a GUID that didn't exist before.
+Your `protected_fields` (`Notes` by default, configurable to any field name, or several) are snapshotted before import and restored after, so even if the importer overwrites them, your text comes back. Specifically: before anything runs, every note tagged under `scope_tag` has its `protected_fields` values read and saved by GUID; after the import, whatever note currently holds that GUID gets those exact values written back. It's a read-before, write-after round trip, not a merge, and it only protects notes that keep their GUID through the import. A card that imports as new (see below) has no old snapshot value to restore, since there was nothing recorded for a GUID that didn't exist before.
 
 Note types only gain fields; nothing is removed or renamed. If you have customized a note type, those customizations stay.
 
@@ -91,7 +106,7 @@ When a card's front text changes between deck versions, a `front_aliases` entry 
 
 This means `front_aliases` only bridges the *most recent* rename of a given card, not its full history. On a brand new install, whether a specific card's history carries over depends only on whether your current front text matches the live spec wording or that one recorded alias, nothing earlier. Cards whose front has never changed match by plain text equality and need no alias at all, which covers most of them. A card reworded before this tracking convention existed, with no alias entry to bridge the gap, imports as a new, separate card instead of updating your existing one, your old card isn't touched or lost, you'd just end up with both.
 
-The Notes snapshot and GUID matching (though not the backup, which is always a real Anki export/backup regardless of scope) are limited to `scope_tag` (default `InternPearls`). Cards outside that tag are ignored entirely.
+The field snapshot and GUID matching (though not the backup, which is always a real Anki export/backup regardless of scope) are limited to `scope_tag` (default `InternPearls`). Cards outside that tag are ignored entirely.
 
 With the automatic backup in place, any of this is fully reversible even if you skip a manual export.
 
@@ -128,10 +143,18 @@ Point Configure deck source at your repo (with a read-only token if private) or 
 ### Code layout
 
 `internpearls/logic.py` holds everything that doesn't touch `aqt`/`anki`: apkg reading
-and rewriting, GUID matching, version comparison, HTML formatting. Everything else
-(dialogs, menu wiring, the actual Anki API calls) stays in `internpearls/__init__.py`.
-A new function belongs in `logic.py` if it could be tested with plain Python and no
-Anki install; if it needs `mw` or `col`, it belongs in `__init__.py`.
+and rewriting, GUID matching, version comparison, interval clamping, the add-on-update
+decision (`decide_addon_update_action`), HTML formatting. Everything else (dialogs, menu
+wiring, the actual Anki API calls) stays in `internpearls/__init__.py`. A new function
+belongs in `logic.py` if it could be tested with plain Python and no Anki install; if it
+needs `mw` or `col`, it belongs in `__init__.py`.
+
+The two checks that run on their own (the add-on-update check and the deck auto-sync
+poll) dispatch their network work through `_run_in_background()`, which uses Anki's
+`QueryOp` to run off the main thread when it's available, falling back to running
+inline if not. Only the part that actually touches `mw.col` (backing up and importing,
+which only happens when something changed) runs on the main thread; that matches the
+cost a manual Sync decks click already pays, so it isn't the part that needed fixing.
 
 ### Running tests
 
