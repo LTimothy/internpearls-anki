@@ -3,6 +3,20 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.13.1
+
+- Clearer Manage decks flow. After Save (without syncing), the confirmation now says
+  plainly that nothing has synced yet and to run Sync decks when ready, instead of the
+  misleading "N decks will sync". Added an inline hint next to the buttons explaining
+  that Save keeps the choices for the next sync while Save and sync now also pulls right
+  away.
+- Decluttered the top menu: Preview sync moved under Advanced (Sync decks already shows
+  a per-deck confirmation and takes a backup, so a separate dry run is a power-user
+  tool, not a primary action). Top level is now Sync decks, Manage decks, Configure
+  deck source, Check for add-on updates.
+- Field parsing for the preserved-fields box moved into a tested pure helper
+  (`parse_fields`) that also de-dupes.
+
 ## v0.13.0
 
 - Added Manage decks: a clean panel listing every deck the source offers, each with a
