@@ -26,10 +26,10 @@ from aqt.qt import (QAction, QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBox
 from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
                        showInfo, showWarning)
 
-from .logic import (bullets, deck_status, decks_to_update, remap_cards,
-                    version_at_least, write_personalized)
+from .logic import (bullets, deck_status, decks_to_update, parse_fields,
+                    remap_cards, version_at_least, write_personalized)
 
-ADDON_VERSION = "0.13.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.13.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -847,6 +847,12 @@ class _DeckManagerDialog(QDialog):
         pf_hint.setStyleSheet("color: gray; font-size: 11px;")
         outer.addWidget(pf_hint)
 
+        apply_hint = QLabel("Save keeps these choices for your next sync. Save and sync "
+                            "now also pulls the selected decks right away.")
+        apply_hint.setWordWrap(True)
+        apply_hint.setStyleSheet("color: gray; font-size: 11px; margin-top: 4px;")
+        outer.addWidget(apply_hint)
+
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
         sync = bb.addButton("Save and sync now", QDialogButtonBox.ButtonRole.ApplyRole)
@@ -889,8 +895,7 @@ class _DeckManagerDialog(QDialog):
         return [name for name, cb in self._checks.items() if not cb.isChecked()]
 
     def protected_fields(self):
-        fields = [f.strip() for f in self._pf_edit.text().split(",") if f.strip()]
-        return fields or ["Notes"]   # never let the safety net be emptied by accident
+        return parse_fields(self._pf_edit.text())
 
 
 @_safe
@@ -923,8 +928,12 @@ def manage_decks():
         sync_decks()
         return
     kept = sum(1 for r in rows if r["name"] not in conf["excluded_decks"])
-    _info(f"Saved. {kept} of {len(rows)} deck(s) will sync; preserving "
-          f"{', '.join(conf['protected_fields'])}.")
+    excluded_n = len(rows) - kept
+    scope = (f"All {kept} deck(s) are set to sync" if not excluded_n
+             else f"{kept} of {len(rows)} deck(s) are set to sync ({excluded_n} excluded)")
+    _info(f"Saved. {scope}, preserving {', '.join(conf['protected_fields'])}.<br><br>"
+          "Nothing synced yet — run <b>Sync decks</b> when you're ready to pull them "
+          "(or use <i>Save and sync now</i> next time to do both at once).")
 
 
 @_safe
@@ -962,12 +971,12 @@ def _menu():
         target.addAction(act)                     # the app menu unless told not to
 
     add(menu, "Sync decks", sync_decks)
-    add(menu, "Preview sync", preview_sync)
     add(menu, "Manage decks", manage_decks)
     add(menu, "Configure deck source", configure_source)
     add(menu, "Check for add-on updates", check_updates)
     menu.addSeparator()
     adv = menu.addMenu("Advanced")
+    add(adv, "Preview sync (dry run)", preview_sync)
     add(adv, "Import single deck (manual)", import_single)
     add(adv, "Fix note types", update_notetypes)
     adv.addSeparator()

@@ -151,6 +151,39 @@ def test_deck_status_tolerates_empty_manifest():
     assert logic.deck_status(None, {}) == []
 
 
+def test_deck_status_passes_through_missing_card_count():
+    # A manifest deck without a "cards" field must not crash; cards is just None.
+    manifest = {"decks": [{"name": "X::A", "version": "v1"}]}
+    assert logic.deck_status(manifest, {})[0]["cards"] is None
+
+
+def test_deck_status_excluded_deck_still_listed_but_disabled():
+    # Excluding a deck hides it from syncing but it must still appear in the manager so
+    # the user can re-enable it.
+    manifest = {"decks": [{"name": "X::A", "version": "v1", "cards": 3}]}
+    rows = logic.deck_status(manifest, {}, excluded=["X::A"])
+    assert len(rows) == 1 and rows[0]["enabled"] is False
+
+
+# ----------------------------------------------------------------------- parse_fields
+def test_parse_fields_trims_and_drops_empties():
+    assert logic.parse_fields(" Notes , My Field ,, ") == ["Notes", "My Field"]
+
+
+def test_parse_fields_dedupes_preserving_order():
+    assert logic.parse_fields("a, b, a, b") == ["a", "b"]
+
+
+def test_parse_fields_empty_returns_default():
+    assert logic.parse_fields("") == ["Notes"]
+    assert logic.parse_fields("   ,  ") == ["Notes"]
+    assert logic.parse_fields(None) == ["Notes"]
+
+
+def test_parse_fields_custom_default():
+    assert logic.parse_fields("", default=("A", "B")) == ["A", "B"]
+
+
 # --------------------------------------------------------------------- apkg_notes
 def test_apkg_notes_reads_id_front_guid(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
