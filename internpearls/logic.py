@@ -37,6 +37,18 @@ def version_at_least(current, latest):
     return latest_n <= cur_n
 
 
+def decks_to_update(manifest, installed):
+    """Decks from the manifest whose version differs from what's already installed.
+
+    `installed` is {deck_name: version_last_applied}. A deck missing from it is new; a
+    deck whose version changed needs re-sync; matching versions are skipped. Shared by
+    Sync (to know what to apply) and Preview sync (to report the same set without
+    touching the collection), so the two can never disagree about what's pending.
+    """
+    return [d for d in (manifest or {}).get("decks", [])
+            if installed.get(d["name"]) != d["version"]]
+
+
 def apkg_notes(path):
     """Return (note_id, front_text, guid) for every note in an .apkg file."""
     with zipfile.ZipFile(path) as z:
