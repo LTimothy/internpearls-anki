@@ -3,6 +3,16 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.14.0
+
+- Manage decks can now preview changes in place: a "Check what will sync" button
+  downloads the changed decks and fills in each row with how many cards would update in
+  place (history kept) vs. be added as new — read-only, nothing is imported. It runs on
+  click, not on open, so the panel still opens instantly.
+- Retired the separate Preview sync menu item — it's now fully covered by the button
+  above, so there's one place to see what a sync will do instead of two. (Sync decks
+  still shows its own confirmation and backs up before importing.)
+
 ## v0.13.1
 
 - Clearer Manage decks flow. After Save (without syncing), the confirmation now says

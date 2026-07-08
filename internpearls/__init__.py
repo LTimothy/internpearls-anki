@@ -20,16 +20,16 @@ import urllib.error
 import urllib.request
 
 from aqt import mw, gui_hooks
-from aqt.qt import (QAction, QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
-                    QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea,
-                    Qt, QVBoxLayout, QWidget)
+from aqt.qt import (QAction, QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
+                    QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton,
+                    QScrollArea, Qt, QVBoxLayout, QWidget)
 from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
                        showInfo, showWarning)
 
 from .logic import (bullets, deck_status, decks_to_update, parse_fields,
                     remap_cards, version_at_least, write_personalized)
 
-ADDON_VERSION = "0.13.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.14.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -462,67 +462,6 @@ def sync_decks():
 
 
 @_safe
-def preview_sync():
-    """Dry run: show exactly what Sync would change, without touching the collection.
-
-    Fetches the deck source and matches each incoming card against your collection the
-    same way Sync does (via remap_cards), but stops before any backup, import, or note
-    restore. Nothing is written — this is the "show me first" companion to Sync, useful
-    for seeing whether a sync will update cards in place or add a batch as new before
-    committing to it.
-    """
-    cfg = _cfg()
-    try:
-        manifest, fetch, source = _fetch_manifest(cfg)
-    except Exception as e:
-        _warn(f"Couldn't reach the deck source: {e}<br><br>"
-              "Check your GitHub token or local folder under Configure deck source.")
-        return
-    if not manifest:
-        _warn("No deck source configured yet.<br><br>"
-              "Run <b>Intern Pearls → Configure deck source</b> first.")
-        return
-
-    installed = _load_json(INSTALLED, {})
-    todo = decks_to_update(manifest, installed, cfg["excluded"])
-    if not todo:
-        _info(f"Nothing to sync — all selected decks are up to date (source: {source}).")
-        return
-
-    aliases = manifest.get("front_aliases", {})
-    her = _her_front_to_guid(cfg["scope_tag"])
-    lines, total_keep, total_new = [], 0, 0
-    for d in todo:
-        short = d["name"].split("::")[-1]
-        is_new = d["name"] not in installed
-        src = None
-        try:
-            src = fetch(d)
-            _, in_place, as_new = remap_cards(src, her, aliases)
-            total_keep += in_place
-            total_new += as_new
-            detail = "brand-new deck" if is_new else (
-                f"{in_place} update in place (history kept), {as_new} added as new")
-            lines.append(f"<b>{short}</b>: {detail}")
-        except Exception as e:
-            lines.append(f"<b>{short}</b>: couldn't preview ({e})")
-        finally:
-            # GitHub fetch downloads to a temp file; a local-folder fetch returns the
-            # real source path, which must never be deleted. Only clean up the download.
-            if src and source == "GitHub":
-                try:
-                    os.remove(src)
-                except OSError:
-                    pass
-
-    _info(f"<b>Preview only — nothing has been changed</b> (source: {source}).<br>"
-          f"Running Sync would update {len(todo)} deck(s): "
-          f"{total_keep} card(s) keep their history, {total_new} added as new." +
-          bullets(lines) +
-          "Run <i>Sync decks</i> to apply this (it takes a backup first).")
-
-
-@_safe
 def check_updates():
     """Compare our version to version.json in the public add-on repo; offer to update."""
     url = f"https://raw.githubusercontent.com/{ANKI_REPO}/main/version.json"
@@ -785,12 +724,15 @@ class _DeckManagerDialog(QDialog):
     excluded_decks()/protected_fields(). No network or collection access lives here.
     """
 
-    def __init__(self, parent, rows, protected, source):
+    def __init__(self, parent, rows, protected, source, preview_fn):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Manage decks")
         self.setMinimumWidth(480)
         self.sync_requested = False
+        self._rows = rows
+        self._preview_fn = preview_fn   # callable() -> {deck_name: (kept, new) | None}
         self._checks = {}   # deck name -> QCheckBox
+        self._pills = {}    # deck name -> QLabel (status pill, updated after a preview)
 
         outer = QVBoxLayout(self)
         outer.setSpacing(10)
@@ -813,6 +755,14 @@ class _DeckManagerDialog(QDialog):
             b.clicked.connect(lambda _=False, v=val: self._set_all(v))
             bar.addWidget(b)
         bar.addStretch()
+        self._preview_btn = QPushButton("Check what will sync")
+        self._preview_btn.setFlat(True)
+        self._preview_btn.setStyleSheet("color: #2563eb;")
+        self._preview_btn.setToolTip(
+            "Download the changed decks and show, per deck, how many cards would update "
+            "in place (history kept) vs. be added as new. Nothing is imported.")
+        self._preview_btn.clicked.connect(self._run_preview)
+        bar.addWidget(self._preview_btn)
         outer.addLayout(bar)
 
         scroll = QScrollArea()
@@ -880,8 +830,44 @@ class _DeckManagerDialog(QDialog):
         text = f'{cards} cards · {label}' if cards is not None else label
         pill = QLabel(text)
         pill.setStyleSheet(f"color: {color}; font-size: 12px;")
+        self._pills[r["name"]] = pill
         h.addWidget(pill)
         return row
+
+    def _run_preview(self):
+        """Download the changed decks and fill in each row's kept/new breakdown.
+
+        Read-only: it counts how incoming cards match the collection, but imports
+        nothing. Runs on click (not on open) so opening the panel stays fast.
+        """
+        pending = [r for r in self._rows if r["state"] != "current"]
+        if not pending:
+            self._preview_btn.setText("All up to date")
+            self._preview_btn.setEnabled(False)
+            return
+        self._preview_btn.setText("Checking…")
+        self._preview_btn.setEnabled(False)
+        QApplication.processEvents()   # repaint the button before the blocking fetch
+        try:
+            result = self._preview_fn()   # {deck_name: (kept, new) | None}
+        except Exception as e:
+            self._preview_btn.setText("Preview failed")
+            self._preview_btn.setEnabled(True)
+            self._preview_btn.setToolTip(str(e))
+            return
+        for r in pending:
+            pill = self._pills.get(r["name"])
+            if pill is None:
+                continue
+            rc = result.get(r["name"])
+            if rc is None:
+                pill.setText("couldn't preview")
+                pill.setStyleSheet("color: #b45309; font-size: 12px;")
+            else:
+                kept, new = rc
+                pill.setText(f"{kept} kept · {new} new")
+                pill.setStyleSheet("color: #6b7280; font-size: 12px;")
+        self._preview_btn.setText("Preview updated")
 
     def _set_all(self, val):
         for cb in self._checks.values():
@@ -903,7 +889,7 @@ def manage_decks():
     """Open the deck manager: choose which decks sync and which fields are preserved."""
     cfg = _cfg()
     try:
-        manifest, _, source = _fetch_manifest(cfg)
+        manifest, fetch, source = _fetch_manifest(cfg)
     except Exception as e:
         _warn(f"Couldn't reach the deck source: {e}<br><br>"
               "Check your GitHub token or local folder under Configure deck source.")
@@ -915,7 +901,33 @@ def manage_decks():
 
     installed = _load_json(INSTALLED, {})
     rows = deck_status(manifest, installed, cfg["excluded"])
-    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source)
+
+    def _preview():
+        """Download every changed deck and match it against the collection, returning
+        {deck_name: (kept_in_place, added_new)}. Read-only — imports nothing. Runs when
+        the user clicks "Check what will sync"; the download is why it's on demand."""
+        pending = [d for d in manifest["decks"]
+                   if installed.get(d["name"]) != d["version"]]
+        her = _her_front_to_guid(cfg["scope_tag"])
+        aliases = manifest.get("front_aliases", {})
+        out = {}
+        for d in pending:
+            src = None
+            try:
+                src = fetch(d)
+                _, kept, new = remap_cards(src, her, aliases)
+                out[d["name"]] = (kept, new)
+            except Exception:
+                out[d["name"]] = None
+            finally:
+                if src and source == "GitHub":   # only delete our temp download
+                    try:
+                        os.remove(src)
+                    except OSError:
+                        pass
+        return out
+
+    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source, _preview)
     if not dlg.exec():
         return   # cancelled
 
@@ -976,7 +988,6 @@ def _menu():
     add(menu, "Check for add-on updates", check_updates)
     menu.addSeparator()
     adv = menu.addMenu("Advanced")
-    add(adv, "Preview sync (dry run)", preview_sync)
     add(adv, "Import single deck (manual)", import_single)
     add(adv, "Fix note types", update_notetypes)
     adv.addSeparator()
