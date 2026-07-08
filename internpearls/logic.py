@@ -107,6 +107,41 @@ def should_notify_update(current, latest, last_notified=None):
     return True
 
 
+def clamp_interval_minutes(minutes, floor_minutes=1, default_minutes=15):
+    """Sanitize a configured poll interval: a missing or non-numeric value falls back to
+    `default_minutes`; anything below `floor_minutes` is raised to the floor so a typo
+    (or a 0) can't turn into a busy-poll loop against the deck source.
+    """
+    try:
+        m = int(minutes)
+    except (TypeError, ValueError):
+        m = default_minutes
+    return max(floor_minutes, m)
+
+
+def decide_addon_update_action(current, latest, auto_update, notify, last_notified=None):
+    """Decide what the background add-on-update check should do.
+
+    Returns one of:
+      "none"        - current is already up to date, or nothing should happen.
+      "auto_update" - download and install the new version without asking.
+      "notify"      - surface a tooltip only, once per release.
+
+    Auto-update takes priority over notify when both are on, since actually installing
+    the update makes a plain notice redundant. Notify still respects the once-per-release
+    suppression via `should_notify_update`, so turning auto-update off doesn't bring back
+    a notice for a version already reported. Pure so this policy is unit-tested rather
+    than embedded inside code that also touches the network and the collection.
+    """
+    if not latest or version_at_least(current, latest):
+        return "none"
+    if auto_update:
+        return "auto_update"
+    if notify and should_notify_update(current, latest, last_notified):
+        return "notify"
+    return "none"
+
+
 def apkg_notes(path):
     """Return (note_id, front_text, guid) for every note in an .apkg file."""
     with zipfile.ZipFile(path) as z:

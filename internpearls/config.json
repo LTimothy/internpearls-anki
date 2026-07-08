@@ -8,6 +8,7 @@
   "export_deck": "Intern Pearls::Intern Custom",
   "excluded_decks": [],
   "notify_addon_updates": true,
+  "auto_update_addon": false,
   "auto_sync_decks": false,
-  "auto_sync_interval_minutes": 60
+  "auto_sync_interval_minutes": 15
 }
