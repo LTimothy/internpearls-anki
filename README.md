@@ -4,6 +4,8 @@ History-safe deck management for Anki. Keeps a set of study decks up to date wit
 
 No deck content ships with the add-on itself; it only syncs whatever you point it at. Point Configure deck source at your own GitHub repo or local folder and it works the same way for any decks that follow the same manifest format. See "Using this for your own decks" below.
 
+See `CHANGELOG.md` for what changed in each version.
+
 ## Install
 
 1. Download `internpearls.ankiaddon` from this repo.
@@ -15,7 +17,7 @@ After restarting, an "Intern Pearls" menu appears in the menu bar between Tools 
 
 ### Sync decks
 
-The main button. It fetches `manifest.json` from your configured deck source, compares each deck's version hash against what you last synced, and only imports decks that changed. The confirmation dialog lists each affected deck with its card count, so you know the scope before anything happens. For each deck it:
+The main button. It fetches `manifest.json` from your configured deck source, compares each deck's version hash against what you last synced, and only imports decks that changed. The confirmation dialog lists each affected deck with its card count, flagging any deck you've never synced before as a new deck, so you know the scope before anything happens. For each deck it:
 
 1. Takes a fresh, timestamped backup of just the configured deck first (a self-contained `.apkg` with scheduling included, saved internally and pruned to the most recent 10). Nothing else runs until this succeeds, or you explicitly choose to continue without one.
 2. Adds any missing fields to the note type (never removes or renames existing fields).
@@ -105,8 +107,8 @@ Nothing about Sync decks, Configure deck source, or the backup/export/import too
   "decks": [
     {
       "name": "Your Deck::Subdeck",
-      "apkg": "your-deck.apkg",
-      "spec": "your-deck.json",
+      "apkg": "decks/your-deck.apkg",
+      "spec": "specs/your-deck.json",
       "version": "a1b2c3d4",
       "cards": 42
     }
@@ -115,13 +117,32 @@ Nothing about Sync decks, Configure deck source, or the backup/export/import too
 }
 ```
 
-- `decks` lists every deck Sync should manage. `name` is the deck name as it should appear in Anki; `apkg` is the filename to fetch (relative to the repo/folder root); `spec` is informational only (not read by the add-on); `version` is any string that changes when the deck changes (a hash, a date, a counter) and drives which decks Sync considers "changed"; `cards` is optional, shown as a count in the sync confirmation.
+- `decks` lists every deck Sync should manage. `name` is the deck name as it should appear in Anki; `apkg` is the path to fetch, relative to the repo/folder root (a flat filename or nested in a subfolder like `decks/your-deck.apkg`, both work); `spec` is informational only (not read by the add-on); `version` is any string that changes when the deck changes (a hash, a date, a counter) and drives which decks Sync considers "changed"; `cards` is optional, shown as a count in the sync confirmation.
 - `front_aliases` maps a card's current front-field text to its previous wording, for any card whose front changed since the last version someone might be syncing from. Omit entries for cards whose front never changed. See "How history is preserved" above for exactly how this is used and its limits.
 - Each `.apkg`'s notes need a stable GUID scheme of your own choosing (most Anki deck-building tools default to a content hash of the front, which changes whenever you reword it, hence `front_aliases` existing at all). This add-on doesn't generate decks, only syncs pre-built ones; how you build stable GUIDs into your `.apkg` is up to your own tooling.
 
 Point Configure deck source at your repo (with a read-only token if private) or folder, and Sync decks, Configure deck source, and the Advanced tools all work exactly as described above, just against your own content. Set `scope_tag` and `export_deck` in Config to match your own deck's tag and name if they differ from the `InternPearls` / `Intern Pearls::Intern Custom` defaults.
 
 ## For developers
+
+### Code layout
+
+`internpearls/logic.py` holds everything that doesn't touch `aqt`/`anki`: apkg reading
+and rewriting, GUID matching, version comparison, HTML formatting. Everything else
+(dialogs, menu wiring, the actual Anki API calls) stays in `internpearls/__init__.py`.
+A new function belongs in `logic.py` if it could be tested with plain Python and no
+Anki install; if it needs `mw` or `col`, it belongs in `__init__.py`.
+
+### Running tests
+
+```bash
+pip install pytest
+cd addon && pytest tests/ -v
+```
+
+Tests only cover `logic.py`, no Anki install or running Anki instance needed. They
+build a minimal fake `.apkg` (just a `notes` table, the only part this code reads or
+writes) rather than a full Anki collection.
 
 ### Repackage after editing
 
@@ -133,8 +154,8 @@ Point Configure deck source at your repo (with a read-only token if private) or 
 
 The add-on uses three-part semver: `MAJOR.MINOR.PATCH`.
 
-- PATCH (0.10.2 to 0.10.3): bug fix or internal cleanup, no UI changes.
-- MINOR (0.10.2 to 0.11.0): new feature or menu item, backwards compatible.
+- PATCH (0.11.0 to 0.11.1): bug fix or internal cleanup, no UI changes.
+- MINOR (0.11.0 to 0.12.0): new feature or menu item, backwards compatible.
 - MAJOR (0.x to 1.0.0): breaking change that requires the user to reconfigure.
 
-On each release, bump `ADDON_VERSION` in `internpearls/__init__.py` and `version` in `version.json`, tag the commit `vX.Y.Z`, run `./build.sh`, and push.
+On each release, bump `ADDON_VERSION` in `internpearls/__init__.py` and `version` in `version.json`, tag the commit `vX.Y.Z`, add an entry to `CHANGELOG.md`, run `./build.sh`, and push.
