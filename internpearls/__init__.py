@@ -13,6 +13,7 @@ import datetime
 import functools
 import json
 import os
+import socket
 import tempfile
 import traceback
 import urllib.error
@@ -26,7 +27,7 @@ from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
 from .logic import (bullets, decks_to_update, remap_cards, version_at_least,
                     write_personalized)
 
-ADDON_VERSION = "0.12.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.12.1"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -132,7 +133,17 @@ def _safe(fn):
 
 
 # ------------------------------------------------------------------------ http/github
-def _http_get(url, token=None, accept=None):
+# Network calls run on Anki's UI thread, so a slow/unreachable host freezes the app (the
+# macOS beachball) for however long the socket takes to give up. First-contact calls
+# (the manifest, the version check) use a short timeout so an offline machine or captive
+# portal fails fast with a clear dialog instead of hanging. Only the large .apkg
+# downloads — reached only after first contact already proved we're online — get a
+# generous timeout so a big deck on a slow link isn't cut off mid-transfer.
+_CONNECT_TIMEOUT = 6     # seconds; fail-fast bound for reaching the source at all
+_DOWNLOAD_TIMEOUT = 60   # seconds; per-read bound for pulling a deck once we're online
+
+
+def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT):
     """GET `url`, raising a plain RuntimeError with an actionable message on failure.
 
     Every network call in this add-on goes through here, so this is the one place that
@@ -146,7 +157,7 @@ def _http_get(url, token=None, accept=None):
         headers["Accept"] = accept
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read()
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
@@ -157,14 +168,20 @@ def _http_get(url, token=None, accept=None):
             raise RuntimeError(
                 "not found (check the repo name, branch, and file path)") from e
         raise RuntimeError(f"server returned HTTP {e.code}") from e
+    except (TimeoutError, socket.timeout) as e:
+        # Bare socket timeout (isn't always wrapped in URLError); surface it fast.
+        raise RuntimeError(
+            "the network isn't responding (timed out). Check your internet connection "
+            "and try again.") from e
     except urllib.error.URLError as e:
         raise RuntimeError(f"couldn't reach the network ({e.reason})") from e
 
 
-def _gh_raw(repo, path, token, ref):
+def _gh_raw(repo, path, token, ref, timeout=_CONNECT_TIMEOUT):
     """Raw bytes of a file in a (possibly private) repo via the contents API."""
     url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={ref}"
-    return _http_get(url, token=token, accept="application/vnd.github.raw")
+    return _http_get(url, token=token, accept="application/vnd.github.raw",
+                     timeout=timeout)
 
 
 # ---------------------------------------------------------------------- note types
@@ -307,7 +324,17 @@ def _import_apkg(path, with_scheduling=False):
     """
     from anki.collection import ImportAnkiPackageRequest, ImportAnkiPackageOptions
     opts = ImportAnkiPackageOptions()
-    for attr, val in (("with_scheduling", with_scheduling), ("merge_notetypes", True)):
+    # merge_notetypes=False on purpose. Merging note types on import rewrites the
+    # collection's note types, which bumps Anki's *schema* modification time — and any
+    # schema bump forces AnkiWeb into a one-way full sync ("upload from local") on the
+    # learner's very next sync, instead of a normal incremental one. That's the friction
+    # Jessica hit. We reconcile note types the idempotent way instead: _ensure_notetypes()
+    # runs before every import and only touches the schema when it genuinely adds a
+    # missing field (a real one-time event), so steady-state syncs leave the schema alone
+    # and AnkiWeb stays incremental. Trade-off: template/CSS changes in a rebuilt deck no
+    # longer propagate to existing note types automatically — run Advanced → Fix note
+    # types (or accept one full sync) if a card template itself needs updating.
+    for attr, val in (("with_scheduling", with_scheduling), ("merge_notetypes", False)):
         try:
             setattr(opts, attr, val)
         except Exception:
@@ -347,7 +374,8 @@ def _fetch_manifest(cfg):
                                       cfg["gh_token"], cfg["gh_ref"]))
 
         def fetch(d):
-            data = _gh_raw(cfg["gh_repo"], d["apkg"], cfg["gh_token"], cfg["gh_ref"])
+            data = _gh_raw(cfg["gh_repo"], d["apkg"], cfg["gh_token"], cfg["gh_ref"],
+                           timeout=_DOWNLOAD_TIMEOUT)
             # d["apkg"] may include subfolders (e.g. decks/Foo.apkg); flatten to just the
             # filename for the scratch download location, since /tmp/decks/ won't exist.
             tmp = os.path.join(tempfile.gettempdir(), os.path.basename(d["apkg"]))

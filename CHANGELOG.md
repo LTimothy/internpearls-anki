@@ -3,6 +3,24 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.12.1
+
+- Fixed the biggest source of post-sync friction: after syncing, AnkiWeb often forced a
+  one-way "upload from local" full sync instead of a normal incremental one. Cause: the
+  importer ran with `merge_notetypes=True`, which rewrites note types on every import and
+  bumps Anki's schema modification time — and any schema change forces AnkiWeb into a
+  full sync. Imports now run with `merge_notetypes=False`; note types are still kept
+  compatible ahead of time by the existing Fix-note-types step, which only touches the
+  schema when it genuinely adds a missing field. Steady-state syncs now leave the schema
+  alone, so AnkiWeb stays incremental. (Trade-off: a changed card *template/CSS* no
+  longer propagates automatically — run Advanced → Fix note types, or accept one full
+  sync, when a template itself changes.)
+- Fail fast when offline: network calls used a 30-second timeout on Anki's UI thread, so
+  an unreachable host or captive portal froze the app (beachball) for 10+ seconds.
+  First-contact calls (manifest, update check) now use a 6-second timeout and show a
+  clear "network isn't responding" message; only the actual deck download keeps a longer
+  timeout, and it's reached only after connectivity is already confirmed.
+
 ## v0.12.0
 
 - Added Preview sync: a dry run that shows exactly what Sync would change — per deck,
