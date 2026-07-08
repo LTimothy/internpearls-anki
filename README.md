@@ -2,7 +2,7 @@
 
 History-safe deck management for Anki. Keeps a set of study decks up to date without losing your review history or the annotations you keep on a card, and lets you back up, export, or import a deck without leaving Anki. Anki's built-in re-import overwrites fields, which means any personal notes you added to cards get wiped. This add-on avoids that by matching cards by GUID (so scheduling carries over) and snapshotting and restoring whichever fields you've configured as preserved (`Notes` by default) around each import, and it backs up the deck automatically before it touches anything. It can also sync and update itself on a schedule, if you turn that on.
 
-No deck content ships with the add-on itself; it only syncs whatever you point it at. Point Configure deck source at your own GitHub repo or local folder and it works the same way for any decks that follow the same manifest format. See "Using this for your own decks" below.
+No deck content ships with the add-on itself; it only syncs whatever you point it at. Point Manage decks at your own GitHub repo or local folder and it works the same way for any decks that follow the same manifest format. See "Using this for your own decks" below.
 
 See `CHANGELOG.md` for what changed in each version.
 
@@ -11,7 +11,7 @@ See `CHANGELOG.md` for what changed in each version.
 1. Download `internpearls.ankiaddon` from this repo.
 2. In Anki, go to Tools > Add-ons > Install from file, pick the file, and restart Anki.
 
-After restarting, an "Intern Pearls" menu appears in the menu bar between Tools and Help.
+After restarting, an "Intern Pearls" menu appears in the menu bar between Tools and Help. Two primary actions sit at the top (Sync decks, Manage decks); occasional tools live under Advanced; Settings and About sit at the bottom.
 
 ## Menu reference
 
@@ -26,20 +26,18 @@ The main button. It fetches `manifest.json` from your configured deck source, co
 5. Imports through Anki's built-in importer with scheduling disabled, so your intervals and ease factors stay put.
 6. Restores the preserved fields from the snapshot.
 
-If no deck source is configured, it tells you to run Configure deck source first.
+If no deck source is configured, it tells you to open Manage decks and use Configure source.
 
 ### Manage decks
 
 A panel listing every deck the source offers, each with a checkbox, a status pill (New, Update available, or Up to date), and its card count. Unchecking a deck stops future syncs for it; cards already imported stay in your collection until you delete them yourself in Anki. A "Check what will sync" button downloads the changed decks and fills in, per deck, how many cards would update in place versus be added as new; nothing is imported by clicking it. The same panel edits `protected_fields`. Save keeps the choices for your next sync; Save and sync now also runs Sync decks right away.
 
-### Configure deck source
-
-A dialog with two buttons, GitHub repo or Local folder, plus Cancel:
+Deck-source configuration lives here too, behind a button next to the "Source" line at the top: "Configure source" if nothing is set up yet, "Change source" once something is. It opens the same dialog either way, with two buttons, GitHub repo or Local folder, plus Cancel:
 
 - GitHub: enter the repo (`owner/name`) and a read-only personal access token. The token field is masked as you type, and the value is stored only in your local add-on config; it never leaves your machine except in requests to GitHub.
 - Local folder: point it at a directory that contains `manifest.json` and the `.apkg` files.
 
-Either way, as soon as you save, the add-on connects to the source and reports back immediately: how many decks it found, or exactly what went wrong (bad token, unreachable repo, wrong folder) so you're not left guessing until the next Sync.
+Either way, as soon as you save, the add-on connects to the source, and Manage decks reopens against it: how many decks it found, or (shown as an error in the Source line, with an empty deck list and the same button waiting) exactly what went wrong, a bad token, an unreachable repo, or a wrong folder, so you're never left staring at a dead end. If nothing is configured at all, Manage decks still opens; it just shows an empty list and the Configure source button, instead of a warning that sends you hunting for a different menu item.
 
 You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tools > Config:
 
@@ -55,20 +53,9 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 | `export_deck` | The deck that Backup/Import/Export intern pearls deck and the automatic pre-sync backup operate on (default: `Intern Pearls::Intern Custom`). |
 | `auto_sync_decks`, `auto_sync_interval_minutes`, `notify_addon_updates`, `auto_update_addon` | Sync and update automation, see Settings below and `config.md` for details on each. |
 
-### Settings
-
-Sync automation and add-on update behavior, kept separate from Manage decks since those answer a different question ("which decks, which fields" versus "how automatic, how often"):
-
-- **Sync decks automatically when updates are available**, off by default. When on, the add-on checks the source in the background on the interval below and applies any changed decks without asking, backing up first the same as a manual sync.
-- **Check every N minutes**, default 15, minimum 1. The check runs off the main thread when Anki supports it (essentially all current versions do), so it doesn't freeze Anki even at a short interval; if it can't reach the source, it fails within a few seconds and just tries again next time.
-- **Notify me when a new add-on version is out**, on by default. A tooltip once per new release, no installation.
-- **Install add-on updates automatically**, off by default. Downloads and installs a newer version as part of the same once-per-launch check, no confirmation. A restart is still needed to load it, same as installing by hand.
-
-### Check for add-on updates
-
-Compares your installed version against the public repo's `version.json`. If a newer version exists, it offers to download and install the `.ankiaddon`. You still need to restart Anki afterward. This is the on-demand version of what the Settings toggles above do on their own.
-
 ### Advanced submenu
+
+Occasional tools, tucked away from the two primary actions at the top:
 
 **Import single deck (manual)** picks one `.apkg` outside your configured source, for a deck someone sent you directly or a build you're testing before pushing it live. It runs the same personalization, automatic backup, and note restore as Sync, just for the one file you choose.
 
@@ -83,6 +70,17 @@ Compares your installed version against the public repo's `version.json`. If a n
 **Backup full collection** takes a full, whole-collection backup on demand, the same kind that used to run automatically before every sync. Use this for broader protection than the deck-scoped default covers. Retention for these is whatever Anki's own preferences specify, not this add-on's 10-backup limit, which only applies to the deck-scoped backups above.
 
 **Restore full collection** opens Anki's own backup picker (the same one under File > Switch Profile > Open Backup) pointed at your backups folder, so you can revert a full collection backup if something looks wrong. This replaces your entire collection, every deck, not just the ones this add-on manages, since that's what a real collection backup contains. Anki asks you to confirm the specific backup file before doing anything.
+
+**Check for add-on updates** compares your installed version against the public repo's `version.json`. If a newer version exists, it offers to download and install the `.ankiaddon`. You still need to restart Anki afterward. This is the on-demand version of what the Settings toggles below do on their own, which is why most people never need it: it's here as a fallback, not the primary way to stay current.
+
+### Settings
+
+Sync automation and add-on update behavior, kept separate from Manage decks since those answer a different question ("which decks, which fields, from where" versus "how automatic, how often"):
+
+- **Sync decks automatically when updates are available**, off by default. When on, the add-on checks the source in the background on the interval below and applies any changed decks without asking, backing up first the same as a manual sync.
+- **Check every N minutes**, default 15, minimum 1. The check runs off the main thread when Anki supports it (essentially all current versions do), so it doesn't freeze Anki even at a short interval; if it can't reach the source, it fails within a few seconds and just tries again next time.
+- **Notify me when a new add-on version is out**, on by default. A tooltip once per new release, no installation.
+- **Install add-on updates automatically**, off by default. Downloads and installs a newer version as part of the same once-per-launch check, no confirmation. A restart is still needed to load it, same as installing by hand.
 
 ### About
 
@@ -114,7 +112,7 @@ The add-on's own record of which deck versions you've already synced lives in a 
 
 ## Using this for your own decks
 
-Nothing about Sync decks, Configure deck source, or the backup/export/import tools is specific to any particular deck's content. To point this add-on at your own decks, host a `manifest.json` in a GitHub repo (private or public) or a local folder, alongside the `.apkg` files it references:
+Nothing about Sync decks, Manage decks, or the backup/export/import tools is specific to any particular deck's content. To point this add-on at your own decks, host a `manifest.json` in a GitHub repo (private or public) or a local folder, alongside the `.apkg` files it references:
 
 ```json
 {
@@ -136,7 +134,7 @@ Nothing about Sync decks, Configure deck source, or the backup/export/import too
 - `front_aliases` maps a card's current front-field text to its previous wording, for any card whose front changed since the last version someone might be syncing from. Omit entries for cards whose front never changed. See "How history is preserved" above for exactly how this is used and its limits.
 - Each `.apkg`'s notes need a stable GUID scheme of your own choosing (most Anki deck-building tools default to a content hash of the front, which changes whenever you reword it, hence `front_aliases` existing at all). This add-on doesn't generate decks, only syncs pre-built ones; how you build stable GUIDs into your `.apkg` is up to your own tooling.
 
-Point Configure deck source at your repo (with a read-only token if private) or folder, and Sync decks, Configure deck source, and the Advanced tools all work exactly as described above, just against your own content. Set `scope_tag` and `export_deck` in Config to match your own deck's tag and name if they differ from the `InternPearls` / `Intern Pearls::Intern Custom` defaults.
+Use Configure source, inside Manage decks, to point at your repo (with a read-only token if private) or folder, and Sync decks, Manage decks, and the Advanced tools all work exactly as described above, just against your own content. Set `scope_tag` and `export_deck` in Config to match your own deck's tag and name if they differ from the `InternPearls` / `Intern Pearls::Intern Custom` defaults.
 
 ## For developers
 
