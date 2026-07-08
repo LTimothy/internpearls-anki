@@ -10,25 +10,26 @@ Before touching the collection, Sync takes its own timestamped backup, so nothin
 depends on the user remembering to export one first.
 """
 import datetime
+import functools
 import json
 import os
-import re
-import sqlite3
 import tempfile
+import traceback
+import urllib.error
 import urllib.request
-import zipfile
 
 from aqt import mw, gui_hooks
 from aqt.qt import QAction, QLineEdit, QMenu, QMessageBox, Qt
 from aqt.utils import (askUser, getFile, getSaveFile, getText, openLink,
                        showInfo, showWarning)
 
-ADDON_VERSION = "0.10.2"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+from .logic import bullets, remap_cards, version_at_least, write_personalized
+
+ADDON_VERSION = "0.11.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
 DECK_BACKUPS_KEEP = 10   # how many automatic Intern Pearls deck backups to retain
-FS = "\x1f"
 _DIR = os.path.dirname(__file__)
 
 # Anki's add-on manager wipes and re-extracts everything in this folder on every add-on
@@ -111,22 +112,52 @@ def _prompt(text, **kw):
     return getText(text, **kw)
 
 
-def _bullets(items):
-    """Render a list as clean HTML for use inside _info()/_warn() rich text."""
-    return "<ul style='margin:4px 0 4px 0;'>" + "".join(
-        f"<li>{item}</li>" for item in items) + "</ul>"
+def _safe(fn):
+    """Wrap a menu action so a bug here shows a plain warning dialog instead of
+    Anki's raw traceback box. The full traceback still goes to stdout (visible in
+    Anki's debug console) for anyone actually trying to fix it; the dialog only needs
+    enough for a user to describe what happened.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            print(traceback.format_exc())
+            _warn(f"Something went wrong: {e}<br><br>"
+                  "If a backup was taken before this ran, Advanced has tools to "
+                  "revert to it: Import intern pearls deck or Restore full collection.")
+    return wrapper
 
 
 # ------------------------------------------------------------------------ http/github
 def _http_get(url, token=None, accept=None):
+    """GET `url`, raising a plain RuntimeError with an actionable message on failure.
+
+    Every network call in this add-on goes through here, so this is the one place that
+    needs to turn urllib's exceptions into something a non-technical error dialog can
+    show as-is, rather than a Python traceback repr.
+    """
     headers = {"User-Agent": "internpearls-addon"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     if accept:
         headers["Accept"] = accept
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return r.read()
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise RuntimeError(
+                "access denied (check that your token is valid and can read this "
+                "repo)") from e
+        if e.code == 404:
+            raise RuntimeError(
+                "not found (check the repo name, branch, and file path)") from e
+        raise RuntimeError(f"server returned HTTP {e.code}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"couldn't reach the network ({e.reason})") from e
 
 
 def _gh_raw(repo, path, token, ref):
@@ -268,35 +299,6 @@ def _restore(snap):
 
 
 # -------------------------------------------------------------------- apkg helpers
-def _apkg_notes(path):
-    with zipfile.ZipFile(path) as z:
-        if "collection.anki2" not in z.namelist():
-            raise RuntimeError("Unexpected .apkg format (no collection.anki2).")
-        with tempfile.TemporaryDirectory() as d:
-            z.extract("collection.anki2", d)
-            con = sqlite3.connect(os.path.join(d, "collection.anki2"))
-            rows = [(rid, flds.split(FS)[0], guid) for rid, guid, flds in
-                    con.execute("select id, guid, flds from notes")]
-            con.close()
-    return rows
-
-
-def _write_personalized(src, remap, out):
-    with tempfile.TemporaryDirectory() as d:
-        with zipfile.ZipFile(src) as z:
-            z.extractall(d)
-        con = sqlite3.connect(os.path.join(d, "collection.anki2"))
-        for rid, g in remap.items():
-            con.execute("update notes set guid=? where id=?", (g, rid))
-        con.commit()
-        con.close()
-        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-            for root, _, files in os.walk(d):
-                for f in files:
-                    full = os.path.join(root, f)
-                    z.write(full, os.path.relpath(full, d))
-
-
 def _import_apkg(path, with_scheduling=False):
     """with_scheduling=False for a spec-authored deck matched onto existing cards (the
     learner's own scheduling should win); True for reimporting our own previously
@@ -313,21 +315,6 @@ def _import_apkg(path, with_scheduling=False):
         ImportAnkiPackageRequest(package_path=path, options=opts))
 
 
-def _remap(src, her, aliases):
-    remap, in_place, as_new = {}, 0, 0
-    for rid, front, apkg_guid in _apkg_notes(src):
-        her_guid = her.get(front)
-        if her_guid is None and front in aliases:
-            her_guid = her.get(aliases[front])
-        if her_guid is None:
-            as_new += 1
-        else:
-            in_place += 1
-            if her_guid != apkg_guid:
-                remap[rid] = her_guid
-    return remap, in_place, as_new
-
-
 def _her_front_to_guid(scope_tag):
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
     out = {}
@@ -338,9 +325,9 @@ def _her_front_to_guid(scope_tag):
 
 
 def _apply_deck(src, aliases, her):
-    remap, in_place, as_new = _remap(src, her, aliases)
+    remap, in_place, as_new = remap_cards(src, her, aliases)
     out = src + ".sync.apkg"
-    _write_personalized(src, remap, out)
+    write_personalized(src, remap, out)
     try:
         _import_apkg(out)
     finally:
@@ -360,7 +347,9 @@ def _fetch_manifest(cfg):
 
         def fetch(d):
             data = _gh_raw(cfg["gh_repo"], d["apkg"], cfg["gh_token"], cfg["gh_ref"])
-            tmp = os.path.join(tempfile.gettempdir(), d["apkg"])
+            # d["apkg"] may include subfolders (e.g. decks/Foo.apkg); flatten to just the
+            # filename for the scratch download location, since /tmp/decks/ won't exist.
+            tmp = os.path.join(tempfile.gettempdir(), os.path.basename(d["apkg"]))
             with open(tmp, "wb") as fh:
                 fh.write(data)
             return tmp
@@ -379,6 +368,7 @@ def _fetch_manifest(cfg):
 
 
 # ------------------------------------------------------------------------- actions
+@_safe
 def sync_decks():
     cfg = _cfg()
     try:
@@ -401,7 +391,9 @@ def sync_decks():
     def _line(d):
         short = d["name"].split("::")[-1]
         cards = d.get("cards")
-        return f"{short} ({cards} cards)" if cards is not None else short
+        tag = "new deck" if d["name"] not in installed else None
+        detail = ", ".join(x for x in (f"{cards} cards" if cards is not None else None, tag) if x)
+        return f"{short} ({detail})" if detail else short
 
     if not _ask(
         "Update these decks?\n\n  • " + "\n  • ".join(_line(d) for d in todo) +
@@ -431,12 +423,13 @@ def sync_decks():
     restored = _restore(snap)
     mw.reset()
     notes_line = f"Notes restored on {restored} card(s).<br><br>" if restored else ""
-    _info(f"<b>Sync complete</b> (source: {source})" + _bullets(results) +
+    _info(f"<b>Sync complete</b> (source: {source})" + bullets(results) +
           notes_line +
           f"A pre-sync backup of the Intern Pearls deck was saved; use "
           f"<i>Advanced → Import intern pearls deck</i> to revert to it if needed.")
 
 
+@_safe
 def check_updates():
     """Compare our version to version.json in the public add-on repo; offer to update."""
     url = f"https://raw.githubusercontent.com/{ANKI_REPO}/main/version.json"
@@ -446,14 +439,7 @@ def check_updates():
         _warn(f"Couldn't check for updates: {e}")
         return
 
-    def nums(v):
-        return tuple(int(x) for x in re.findall(r"\d+", str(v)))
-
-    latest_n, cur_n = nums(latest.get("version", "0")), nums(ADDON_VERSION)
-    width = max(len(latest_n), len(cur_n))          # zero-pad so 0.5 == 0.5.0
-    latest_n += (0,) * (width - len(latest_n))
-    cur_n += (0,) * (width - len(cur_n))
-    if latest_n <= cur_n:
+    if version_at_least(ADDON_VERSION, latest.get("version", "0")):
         _info(f"Intern Pearls Deck Tools is up to date (v{ADDON_VERSION}).")
         return
     if not _ask(f"Update available: v{latest['version']} "
@@ -471,6 +457,7 @@ def check_updates():
         openLink(f"https://github.com/{ANKI_REPO}")
 
 
+@_safe
 def import_single():
     """Import one hand-picked, spec-authored .apkg outside the configured source.
 
@@ -498,7 +485,7 @@ def import_single():
             return
     _ensure_notetypes()
     her = _her_front_to_guid(cfg["scope_tag"])
-    remap, in_place, as_new = _remap(src, her, aliases)
+    remap, in_place, as_new = remap_cards(src, her, aliases)
     if not _ask(f"{in_place} card(s) will keep their history, {as_new} will be added "
                 "as new. A backup is taken automatically first. Import now?"):
         return
@@ -506,7 +493,7 @@ def import_single():
         return
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
     out = src + ".sync.apkg"
-    _write_personalized(src, remap, out)
+    write_personalized(src, remap, out)
     try:
         _import_apkg(out)
     finally:
@@ -521,6 +508,7 @@ def import_single():
           f"{notes_line}")
 
 
+@_safe
 def restore_from_backup():
     """Revert the whole collection to a pre-sync (or any other) backup.
 
@@ -537,6 +525,7 @@ def restore_from_backup():
     mw.onOpenBackup()
 
 
+@_safe
 def export_deck():
     """Export just the Intern Pearls deck as a shareable, self-contained .apkg.
 
@@ -563,6 +552,7 @@ def export_deck():
           "complete, standalone copy of just this deck.")
 
 
+@_safe
 def import_deck():
     """Bring an exported/backed-up Intern Pearls .apkg back into this collection.
 
@@ -592,6 +582,7 @@ def import_deck():
     _info(f"Imported <code>{os.path.basename(src)}</code>.")
 
 
+@_safe
 def backup_deck_now():
     """Manual, on-demand version of the deck-scoped backup Sync/Import take for you
     automatically. Useful right before poking at cards yourself outside the add-on.
@@ -605,6 +596,7 @@ def backup_deck_now():
     _info(f"Backed up the Intern Pearls deck to:<br><code>{path}</code>")
 
 
+@_safe
 def backup_collection_now():
     """Manual, on-demand whole-collection backup, the same kind Sync used to take
     automatically before every sync. Kept available for anyone who wants that broader
@@ -617,13 +609,15 @@ def backup_collection_now():
     _info(f"Backed up your whole collection (every deck) to:<br><code>{folder}</code>")
 
 
+@_safe
 def update_notetypes():
     added = _ensure_notetypes()
     _info(("<b>Updated note types</b> (cards and scheduling untouched):" +
-           _bullets(added)) if added else
+           bullets(added)) if added else
           "Note types are already up to date, no changes needed.")
 
 
+@_safe
 def configure_source():
     """Set where decks come from: a GitHub repo + read-only token, or a local folder."""
     conf = mw.addonManager.getConfig(__name__) or {}
@@ -679,6 +673,7 @@ def configure_source():
           "deck(s).<br><br>Run <i>Intern Pearls → Sync decks</i> whenever you're ready.")
 
 
+@_safe
 def about():
     box = QMessageBox(mw)
     box.setWindowTitle(f"{APP_NAME}: About")
