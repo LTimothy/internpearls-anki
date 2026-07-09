@@ -33,7 +33,7 @@
   .card { background: var(--panel); border: 1px solid var(--line);
           border-radius: 12px; box-shadow: var(--shadow); }
 
-  /* ---- the fake Anki window ---- */
+  /* ---- the mock Anki window ---- */
   .anki { margin-top: 28px; overflow: visible; position: relative; }
   .titlebar { display: flex; align-items: center; gap: 8px; padding: 9px 12px;
               border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
@@ -206,7 +206,7 @@
     same files shipped inside <span class="kbd">internpearls.ankiaddon</span>) plus the
     example deck repo's real <span class="kbd">manifest.json</span> and
     <span class="kbd">.apkg</span> files, and executes them with Pyodide. Only Anki
-    itself is faked — by the same test harness the project's pytest suite uses. Every
+    itself is mocked — by the same test harness the project's pytest suite uses. Every
     dialog you see is built by the add-on's own code; every count, warning, and menu
     item comes out of it at runtime, so this demo cannot drift from the shipped
     behavior.</p>
@@ -590,7 +590,7 @@
       const files = await (await fetch("addon/files.json")).json();
       await Promise.all(files.map((f) => fetchInto(
         "addon/" + f,
-        f === "fake_anki.py" ? "/app/" + f : "/app/internpearls/" + f)));
+        f === "mock_anki.py" ? "/app/" + f : "/app/internpearls/" + f)));
       await fetchInto("demo_harness.py", "/app/demo_harness.py");
 
       status("Downloading the example deck repo (the same source real Anki syncs)…");

@@ -1,4 +1,4 @@
-"""Wires the fake Anki (see fake_anki.py) in before any internpearls import.
+"""Wires the mock Anki (see mock_anki.py) in before any internpearls import.
 
 The real package __init__.py builds menus and pulls in the Qt-heavy dialogs
 module, none of which these tests exercise — so the package is registered here
@@ -12,9 +12,9 @@ import types
 import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
-import fake_anki  # noqa: E402
+import mock_anki  # noqa: E402
 
-_fake = fake_anki.install()
+_mock = mock_anki.install()
 
 _pkg = types.ModuleType("internpearls")
 _pkg.__path__ = [os.path.abspath(
@@ -24,7 +24,7 @@ sys.modules["internpearls"] = _pkg
 
 @pytest.fixture
 def anki(tmp_path, monkeypatch):
-    """A fresh fake-Anki world per test: empty collection, empty dialog record,
+    """A fresh mock-Anki world per test: empty collection, empty dialog record,
     and all persistent add-on state (installed.json, deck backups) redirected
     into tmp_path so tests never touch the repo's real user_files/."""
     import internpearls.background as background
@@ -32,15 +32,15 @@ def anki(tmp_path, monkeypatch):
     import internpearls.config as config
     import internpearls.sync as sync
 
-    _fake.mw.col = fake_anki.FakeCollection()
-    _fake.mw._config = {}
-    _fake.mw.reset_count = 0
-    _fake.gui.interactive = False
-    for lst in (_fake.gui.infos, _fake.gui.warnings, _fake.gui.tooltips,
-                _fake.gui.asks, _fake.gui.answers, _fake.gui.interactions,
-                _fake.gui.payloads):
+    _mock.mw.col = mock_anki.MockCollection()
+    _mock.mw._config = {}
+    _mock.mw.reset_count = 0
+    _mock.gui.interactive = False
+    for lst in (_mock.gui.infos, _mock.gui.warnings, _mock.gui.tooltips,
+                _mock.gui.asks, _mock.gui.answers, _mock.gui.interactions,
+                _mock.gui.payloads):
         lst.clear()
-    fake_anki.reset_run()
+    mock_anki.reset_run()
 
     installed = str(tmp_path / "installed.json")
     for mod in (config, sync, background):
@@ -48,4 +48,4 @@ def anki(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "STATE", str(tmp_path / "state.json"))
     monkeypatch.setattr(collection, "_USER_FILES", str(tmp_path / "user_files"))
     background._tpl_deferred_notified.clear()
-    return _fake
+    return _mock

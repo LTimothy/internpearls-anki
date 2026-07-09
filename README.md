@@ -205,16 +205,16 @@ cd addon && pytest tests/ -v
 ```
 
 No Anki install or running Anki instance is needed for any of them. Three layers,
-all built on the fake Anki in `tests/fake_anki.py` (stub `aqt`/`anki` modules plus a
-fake collection that emulates the one importer behavior everything here defends
+all built on the mock Anki in `tests/mock_anki.py` (stub `aqt`/`anki` modules plus a
+mock collection that emulates the one importer behavior everything here defends
 against — a GUID-matched import overwrites every field):
 
-- `tests/test_logic.py` unit-tests `logic.py` against minimal fake `.apkg` files.
+- `tests/test_logic.py` unit-tests `logic.py` against minimal mock `.apkg` files.
 - `tests/test_sync_flows.py` drives the real `sync`, `collection`, and `background`
   modules end to end, with dialog answers scripted per test — first sync,
   protected-field restore, reworded fronts, template consent, auto-sync deferral.
 - `tests/test_dialogs.py` drives the real Qt dialog code in `dialogs.py` and the
-  real menu from `__init__.py`: the fake Qt widgets serialize each dialog to a
+  real menu from `__init__.py`: the mock Qt widgets serialize each dialog to a
   tree, tests script clicks and edits against it, and a snapshot-and-replay runner
   re-executes the flow deterministically past each answer. This is the same
   protocol the live demo uses, so the demo executes exactly what these tests cover.
