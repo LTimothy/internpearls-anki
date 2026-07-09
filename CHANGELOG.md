@@ -3,6 +3,16 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.20.1
+
+- "Try the example deck" now scopes its automatic backups to the parent
+  `Example Decks` deck instead of a single subdeck, so all of the example repo's
+  decks (it now ships more than one) are covered by the pre-sync backup.
+- Live demo: the default source is the example GitHub repo (exactly what "Try the
+  example deck" configures in real Anki) instead of a local folder; the demo serves
+  that repo's files from its in-page copy so the maintainer buttons still take
+  effect instantly.
+
 ## v0.20.0
 
 - Cards now match by GUID first, before front text and `front_aliases`. Deck sources
