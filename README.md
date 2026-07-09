@@ -147,10 +147,27 @@ Use Configure source, inside Manage decks, to point at your repo (with a read-on
 
 `internpearls/logic.py` holds everything that doesn't touch `aqt`/`anki`: apkg reading
 and rewriting, GUID matching, version comparison, interval clamping, the add-on-update
-decision (`decide_addon_update_action`), HTML formatting. Everything else (dialogs, menu
-wiring, the actual Anki API calls) stays in `internpearls/__init__.py`. A new function
-belongs in `logic.py` if it could be tested with plain Python and no Anki install; if it
-needs `mw` or `col`, it belongs in `__init__.py`.
+decision (`decide_addon_update_action`), HTML formatting. A new function belongs in
+`logic.py` if it could be tested with plain Python and no Anki install.
+
+Everything that does touch Anki is split by concern:
+
+- `internpearls/__init__.py` — the menu and startup hook wiring only.
+- `internpearls/config.py` — constants (including `ADDON_VERSION`), config access,
+  persistent state under `user_files/`.
+- `internpearls/ui.py` — the `_info`/`_warn`/`_ask`/`_prompt` dialog wrappers, the
+  `_safe`/`_bg_safe` error decorators, and shared label/button styling helpers.
+- `internpearls/net.py` — HTTP and GitHub contents-API fetches, the timeout policy.
+- `internpearls/collection.py` — everything that reads or writes `mw.col`: note-type
+  reconciliation, backups, the protected-fields snapshot/restore, apkg import/export,
+  and the Advanced menu actions over those helpers.
+- `internpearls/sync.py` — the sync flows: source resolution (`_fetch_manifest`),
+  Sync decks, the shared `_run_sync` sequence, Import single deck.
+- `internpearls/updates.py` — add-on self-update: version fetch, package download,
+  the manual check.
+- `internpearls/background.py` — `_run_in_background` (QueryOp dispatch), the startup
+  update check, the auto-sync poll and its timer.
+- `internpearls/dialogs.py` — Manage decks, Settings, About, and source configuration.
 
 The two checks that run on their own (the add-on-update check and the deck auto-sync
 poll) dispatch their network work through `_run_in_background()`, which uses Anki's
@@ -184,4 +201,4 @@ The add-on uses three-part semver: `MAJOR.MINOR.PATCH`.
 - MINOR (0.11.0 to 0.12.0): new feature or menu item, backwards compatible.
 - MAJOR (0.x to 1.0.0): breaking change that requires the user to reconfigure.
 
-On each release, bump `ADDON_VERSION` in `internpearls/__init__.py` and `version` in `version.json`, tag the commit `vX.Y.Z`, add an entry to `CHANGELOG.md`, run `./build.sh`, and push.
+On each release, bump `ADDON_VERSION` in `internpearls/config.py` and `version` in `version.json`, tag the commit `vX.Y.Z`, add an entry to `CHANGELOG.md`, run `./build.sh`, and push.
