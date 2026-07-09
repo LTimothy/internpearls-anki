@@ -567,8 +567,12 @@
 
   // =============================== boot ===============================
   const status = (msg) => { const el = $("bootline"); if (el) el.textContent = msg; };
+  // no-store: GitHub Pages serves everything with max-age=600, so a tab left open
+  // (or reopened from history) across a release would otherwise keep running the
+  // add-on's PREVIOUS code indefinitely from the browser's disk cache — this is the
+  // one fetch that has to always see what's actually deployed.
   async function fetchInto(url, path) {
-    const buf = await (await fetch(url)).arrayBuffer();
+    const buf = await (await fetch(url, { cache: "no-store" })).arrayBuffer();
     py.FS.writeFile(path, new Uint8Array(buf));
   }
 
@@ -587,7 +591,7 @@
       status("Downloading the add-on's real source…");
       py.FS.mkdirTree("/app/internpearls");
       py.FS.mkdirTree("/source/decks");
-      const files = await (await fetch("addon/files.json")).json();
+      const files = await (await fetch("addon/files.json", { cache: "no-store" })).json();
       await Promise.all(files.map((f) => fetchInto(
         "addon/" + f,
         f === "mock_anki.py" ? "/app/" + f : "/app/internpearls/" + f)));
@@ -595,7 +599,7 @@
 
       status("Downloading the example deck repo (the same source real Anki syncs)…");
       const raw = "https://raw.githubusercontent.com/" + EXAMPLE_REPO + "/main/";
-      const manifest = await (await fetch(raw + "manifest.json")).json();
+      const manifest = await (await fetch(raw + "manifest.json", { cache: "no-store" })).json();
       py.FS.writeFile("/source/manifest.json",
                       new TextEncoder().encode(JSON.stringify(manifest)));
       await Promise.all(manifest.decks.map((d) =>
