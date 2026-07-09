@@ -38,17 +38,41 @@ RUNNER = mock_anki.Runner(MOCK, paths=[config.INSTALLED, config.STATE,
                                        collection._USER_FILES])
 
 
-def _install_browser_net():
-    """Route the add-on's real HTTP helper through a synchronous XHR so the
-    GitHub source option and the add-on update check genuinely work in the
-    browser. charset=x-user-defined is the standard trick for binary-safe
-    text responses."""
+def _install_demo_net():
+    """The demo's network. Two layers:
+
+    - The example deck repo's contents-API URLs are served from the in-page copy
+      of the repo (/source) — the very files the maintainer buttons edit — so the
+      add-on's real GitHub fetch path runs, and a "pushed" update is exactly what
+      it downloads. (The page already fetched that copy from the real repo at load.)
+    - Everything else (the add-on's own update check) goes through a synchronous
+      XHR when running under Pyodide. charset=x-user-defined is the standard
+      trick for binary-safe text responses.
+    """
+    example = f"https://api.github.com/repos/{config.EXAMPLE_REPO}/contents/"
+    real_get = net._http_get
+
+    def _from_source(url):
+        path = url[len(example):].split("?")[0]
+        with open(os.path.join(SOURCE, path), "rb") as fh:
+            return fh.read()
+
     try:
         from js import XMLHttpRequest
     except ImportError:
-        return   # not running under Pyodide (e.g. a local smoke test)
+        # Not under Pyodide (a local smoke test): still serve the example repo
+        # from SOURCE; anything else keeps the real urllib path.
+        def _local_get(url, token=None, accept=None, timeout=None):
+            if url.startswith(example):
+                return _from_source(url)
+            return real_get(url, token=token, accept=accept)
+
+        net._http_get = _local_get
+        return
 
     def _http_get(url, token=None, accept=None, timeout=None):
+        if url.startswith(example):
+            return _from_source(url)
         req = XMLHttpRequest.new()
         req.open("GET", url, False)
         req.overrideMimeType("text/plain; charset=x-user-defined")
@@ -69,24 +93,22 @@ def _install_browser_net():
 
 
 def boot():
-    """Configure the add-on the way 'Try the example deck' does, then really
-    sync the example decks into the empty collection and decorate it with a
-    reviewer's state (intervals, a couple of personal annotations)."""
-    _install_browser_net()
+    """Configure the add-on the way 'Try the example deck' does (the GitHub
+    example repo as the source), then really sync the example decks into the
+    empty collection and decorate it with a reviewer's state (intervals, a
+    couple of personal annotations)."""
+    _install_demo_net()
     for hook in sys.modules["aqt"].gui_hooks.main_window_did_init:
         hook()
 
-    MOCK.mw._config = {"decks_dir": SOURCE,
+    MOCK.mw._config = {"github_decks_repo": config.EXAMPLE_REPO,
                        "scope_tag": config.EXAMPLE_SCOPE_TAG,
-                       "export_deck": "Example Decks"}
+                       "export_deck": config.EXAMPLE_DECK_NAME}
     MOCK.col.models._models.clear()   # real note types arrive with the import
 
     cfg = config._cfg()
-    manifest = json.load(open(os.path.join(SOURCE, "manifest.json"),
-                              encoding="utf8"))
-    sync._run_sync(cfg, manifest,
-                   lambda d: os.path.join(SOURCE, d["apkg"]),
-                   manifest["decks"], {})
+    manifest, fetch, _ = sync._fetch_manifest(cfg)
+    sync._run_sync(cfg, manifest, fetch, manifest["decks"], {})
     MOCK.col.decks.names.setdefault("Example Decks", 999)
 
     for i, note in enumerate(sorted(MOCK.col._notes.values(),

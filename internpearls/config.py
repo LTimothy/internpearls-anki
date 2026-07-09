@@ -8,7 +8,7 @@ import os
 
 from aqt import mw
 
-ADDON_VERSION = "0.20.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.20.1"   # MAJOR.MINOR.PATCH, see README "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -17,7 +17,9 @@ _DIR = os.path.dirname(__file__)
 
 EXAMPLE_REPO = "LTimothy/internpearls-example-deck"   # public demo deck source
 EXAMPLE_SCOPE_TAG = "ExampleDeck"                     # the example deck's base_tag
-EXAMPLE_DECK_NAME = "Example Decks::Pharmacology Basics"
+# The parent deck: the example repo ships more than one deck under it, and a deck
+# export scoped to the parent includes the children, so backups cover them all.
+EXAMPLE_DECK_NAME = "Example Decks"
 
 # Anki's add-on manager wipes and re-extracts everything in this folder on every add-on
 # update, except a "user_files" subfolder, which it explicitly backs up and restores
