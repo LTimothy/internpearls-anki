@@ -1,6 +1,19 @@
 # Intern Pearls Deck Tools (Anki add-on)
 
-History-safe deck management for Anki. Keeps a set of study decks up to date without losing your review history or the annotations you keep on a card, and lets you back up, export, or import a deck without leaving Anki. Anki's built-in re-import overwrites fields, which means any personal notes you added to cards get wiped. This add-on avoids that by matching cards by GUID (so scheduling carries over) and snapshotting and restoring whichever fields you've configured as preserved (`Notes` by default) around each import, and it backs up the deck automatically before it touches anything. It can also sync and update itself on a schedule, if you turn that on.
+[![Latest release](https://img.shields.io/github/v/release/LTimothy/internpearls-anki)](https://github.com/LTimothy/internpearls-anki/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/LTimothy/internpearls-anki)](LICENSE)
+
+**Update shared Anki decks without losing your review history or the notes you've written on cards.**
+
+If you maintain a deck for a study group (or subscribe to one someone else maintains), you've hit the problem: re-importing an updated `.apkg` overwrites every field, wiping the personal annotations people keep on their cards, and a reworded card silently loses its scheduling. This add-on fixes both. One click pulls only the decks that changed from a GitHub repo or local folder, matches cards by GUID so intervals and ease factors carry over, snapshots and restores whichever fields you've marked as yours (`Notes` by default), and backs up the deck automatically before touching anything. It can also sync and update itself on a schedule, if you turn that on.
+
+What it does, in short:
+
+- **Sync only what changed** — a manifest hash per deck means editing one deck doesn't re-import ten.
+- **Keep review history** — cards match by GUID (with a rename map for reworded fronts), so scheduling survives every update.
+- **Keep your annotations** — configurable preserved fields are snapshotted before import and restored after.
+- **Back up first, always** — a timestamped `.apkg` of the deck is taken before any import, pruned to the last 10.
+- **Stay current on its own** — optional background auto-sync for decks, and self-update for the add-on.
 
 No deck content ships with the add-on itself; it only syncs whatever you point it at. Point Manage decks at your own GitHub repo or local folder and it works the same way for any decks that follow the same manifest format. See "Using this for your own decks" below.
 
@@ -8,7 +21,7 @@ See `CHANGELOG.md` for what changed in each version.
 
 ## Install
 
-1. Download `internpearls.ankiaddon` from this repo.
+1. Download `internpearls.ankiaddon` from the [latest release](https://github.com/LTimothy/internpearls-anki/releases/latest).
 2. In Anki, go to Tools > Add-ons > Install from file, pick the file, and restart Anki.
 
 After restarting, an "Intern Pearls" menu appears in the menu bar between Tools and Help. Two primary actions sit at the top (Sync decks, Manage decks); occasional tools live under Advanced; Settings and About sit at the bottom.

@@ -11,9 +11,10 @@ dialog carrying its own copy of the stylesheet strings.
 """
 import functools
 import traceback
+from contextlib import contextmanager
 
 from aqt import mw
-from aqt.qt import QLabel, QPushButton
+from aqt.qt import QApplication, QLabel, QPushButton, Qt
 from aqt.utils import askUser, getText, showInfo, showWarning, tooltip
 
 from .config import APP_NAME
@@ -80,6 +81,19 @@ def _bg_safe(fn):
             except Exception:
                 pass
     return wrapper
+
+
+@contextmanager
+def wait_cursor():
+    """Show the busy cursor around a blocking call on the main thread (a manifest
+    fetch, a preview download). The work still blocks; this makes the wait read as
+    "working" instead of "frozen". Restores the cursor even if the call raises.
+    """
+    QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+    try:
+        yield
+    finally:
+        QApplication.restoreOverrideCursor()
 
 
 # ------------------------------------------------------------------ widget helpers
