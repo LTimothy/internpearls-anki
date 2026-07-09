@@ -35,9 +35,12 @@ def anki(tmp_path, monkeypatch):
     _fake.mw.col = fake_anki.FakeCollection()
     _fake.mw._config = {}
     _fake.mw.reset_count = 0
+    _fake.gui.interactive = False
     for lst in (_fake.gui.infos, _fake.gui.warnings, _fake.gui.tooltips,
-                _fake.gui.asks, _fake.gui.answers):
+                _fake.gui.asks, _fake.gui.answers, _fake.gui.interactions,
+                _fake.gui.payloads):
         lst.clear()
+    fake_anki.reset_run()
 
     installed = str(tmp_path / "installed.json")
     for mod in (config, sync, background):
