@@ -18,7 +18,38 @@ from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
 from .logic import bullets, deck_status, parse_fields, remap_cards
 from .sync import _fetch_manifest, sync_decks
 from .ui import (_ask, _info, _prompt, _safe, _warn, hint_label, link_button,
-                 muted_label, section_label, title_label)
+                 muted_label, section_label, title_label, wait_cursor)
+
+
+def _github_source_form(repo_default, token_default):
+    """One form for both GitHub fields, returning (repo, token, ok). The repo and its
+    (optional) token are one decision, so they belong in one dialog: the previous two
+    prompts in a row read as a surprise second question, and Cancel on the token prompt
+    threw away the repo just typed."""
+    dlg = QDialog(mw)
+    dlg.setWindowTitle(f"{APP_NAME}: GitHub deck source")
+    dlg.setMinimumWidth(420)
+    lay = QVBoxLayout(dlg)
+    lay.setSpacing(6)
+    lay.addWidget(section_label("Repo"))
+    repo_edit = QLineEdit(repo_default)
+    repo_edit.setPlaceholderText("owner/name")
+    lay.addWidget(repo_edit)
+    lay.addWidget(section_label("Access token", top_margin=8))
+    token_edit = QLineEdit(token_default)
+    token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+    lay.addWidget(token_edit)
+    lay.addWidget(hint_label(
+        "Leave blank for a public repo. A private one needs a read-only token; "
+        "it's hidden as you type and stored only in this add-on's local config."))
+    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                          | QDialogButtonBox.StandardButton.Cancel)
+    bb.accepted.connect(dlg.accept)
+    bb.rejected.connect(dlg.reject)
+    lay.addWidget(bb)
+    if not dlg.exec():
+        return "", "", False
+    return repo_edit.text().strip(), token_edit.text().strip(), True
 
 
 @_safe
@@ -43,19 +74,12 @@ def configure_source():
     clicked = box.clickedButton()
 
     if clicked is gh_btn:
-        repo, ok = _prompt("GitHub decks repo, as owner/name:",
-                           default=conf.get("github_decks_repo", ""))
-        if not ok or not repo.strip():
+        repo, token, ok = _github_source_form(conf.get("github_decks_repo", ""),
+                                              conf.get("github_token", ""))
+        if not ok or not repo:
             return
-        token_edit = QLineEdit()
-        token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        token, ok = _prompt("Access token (hidden as you type). Leave blank for a "
-                            "public repo; a private one needs a read-only token:",
-                            edit=token_edit, default=conf.get("github_token", ""))
-        if not ok:
-            return
-        conf["github_decks_repo"] = repo.strip()
-        conf["github_token"] = token.strip()
+        conf["github_decks_repo"] = repo
+        conf["github_token"] = token
         conf["decks_dir"] = ""
     elif clicked is example_btn:
         conf["github_decks_repo"] = EXAMPLE_REPO
@@ -94,7 +118,8 @@ def configure_source():
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
     try:
-        manifest, _, source = _fetch_manifest(_cfg())
+        with wait_cursor():
+            manifest, _, source = _fetch_manifest(_cfg())
     except Exception as e:
         _warn(f"Saved, but couldn't connect: {e}<br><br>"
               "Double-check the repo name and token (or folder path), then use "
@@ -276,7 +301,8 @@ class _DeckManagerDialog(QDialog):
         self._preview_btn.setEnabled(False)
         QApplication.processEvents()   # repaint the button before the blocking fetch
         try:
-            result = self._preview_fn()   # {deck_name: (kept, new) | None}
+            with wait_cursor():
+                result = self._preview_fn()   # {deck_name: (kept, new) | None}
         except Exception as e:
             self._preview_btn.setText("Preview failed")
             self._preview_btn.setEnabled(True)
@@ -333,7 +359,8 @@ def manage_decks():
     manifest, fetch, source, error = None, None, None, None
     if cfg["gh_repo"] or cfg["decks_dir"]:
         try:
-            manifest, fetch, source = _fetch_manifest(cfg)
+            with wait_cursor():
+                manifest, fetch, source = _fetch_manifest(cfg)
         except Exception as e:
             error = str(e)
     source_label = source if manifest else (f"error: {error}" if error else "not configured")
