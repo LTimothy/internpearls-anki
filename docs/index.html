@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intern Pearls Deck Tools — live demo</title>
+<meta name="description" content="Update shared Anki decks without losing your review history or personal notes. Free, open source, no server — try the sync flow right here.">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #6b7280;
+    --line: #e2e5ea; --accent: #2563eb; --good: #16803c; --warn: #b45309;
+    --pill-new: #dbeafe; --pill-new-ink: #1d4ed8;
+    --pill-keep: #dcfce7; --pill-keep-ink: #15803d;
+    --shadow: 0 8px 30px rgba(16,24,40,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101418; --panel: #181d23; --ink: #e7eaee; --muted: #9aa4b2;
+      --line: #2a323c; --accent: #60a5fa; --good: #4ade80; --warn: #fbbf24;
+      --pill-new: #1e3a5f; --pill-new-ink: #93c5fd;
+      --pill-keep: #143522; --pill-keep-ink: #86efac;
+      --shadow: 0 8px 30px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI",
+         Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--ink); }
+  a { color: var(--accent); }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 24px 20px 80px; }
+  header h1 { font-size: 28px; margin: 18px 0 6px; }
+  header p.tag { font-size: 17px; color: var(--muted); margin: 0 0 14px; }
+  .links a { margin-right: 16px; font-size: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: 12px; box-shadow: var(--shadow); }
+
+  /* the fake Anki window */
+  .anki { margin-top: 28px; overflow: hidden; }
+  .titlebar { display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+              border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .menubar { display: flex; gap: 2px; padding: 4px 8px; border-bottom: 1px solid var(--line);
+             font-size: 13px; }
+  .menubar span { padding: 3px 9px; border-radius: 6px; color: var(--muted); }
+  .menubar span.ip { color: var(--ink); font-weight: 600; position: relative; cursor: pointer; }
+  .menubar span.ip:hover, .menubar span.ip.open { background: var(--bg); }
+  .menu { position: absolute; top: 28px; left: 0; min-width: 200px; background: var(--panel);
+          border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow);
+          padding: 5px; z-index: 30; display: none; }
+  .menu.show { display: block; }
+  .menu button { display: block; width: 100%; text-align: left; background: none;
+          border: 0; padding: 7px 10px; border-radius: 6px; font: inherit; font-size: 13px;
+          color: var(--ink); cursor: pointer; }
+  .menu button:hover { background: var(--bg); }
+  .menu hr { border: 0; border-top: 1px solid var(--line); margin: 5px 2px; }
+
+  .deckarea { padding: 18px 20px 22px; }
+  .deckname { font-weight: 600; margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;
+       padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td.front { max-width: 320px; }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+          white-space: nowrap; }
+  .pill.interval { background: var(--pill-keep); color: var(--pill-keep-ink); }
+  .pill.new { background: var(--pill-new); color: var(--pill-new-ink); }
+  .note { color: var(--warn); font-style: italic; }
+  .flash { animation: flash 1.2s ease; }
+  @keyframes flash { 0% { background: rgba(37,99,235,.18); } 100% { background: transparent; } }
+
+  /* maintainer panel */
+  .maintainer { margin-top: 20px; padding: 16px 20px 18px; }
+  .maintainer h2, .explain h2 { font-size: 16px; margin: 0 0 4px; }
+  .maintainer p, .explain p { color: var(--muted); font-size: 13.5px; margin: 4px 0 12px; }
+  .btnrow { display: flex; flex-wrap: wrap; gap: 10px; }
+  .btn { font: inherit; font-size: 13.5px; padding: 8px 14px; border-radius: 8px;
+         border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+         cursor: pointer; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .shipped { font-size: 13px; color: var(--good); margin-top: 10px; min-height: 20px; }
+
+  /* dialogs */
+  .overlay { position: fixed; inset: 0; background: rgba(15,18,24,.45); display: none;
+             align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+  .overlay.show { display: flex; }
+  .dialog { width: 480px; max-width: 100%; background: var(--panel); color: var(--ink);
+            border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  .dialog .dtitle { padding: 10px 16px; border-bottom: 1px solid var(--line);
+            font-size: 13px; font-weight: 600; }
+  .dialog .dbody { padding: 16px; font-size: 13.5px; }
+  .dialog .dbody ul { margin: 8px 0; padding-left: 20px; }
+  .dialog .dbtns { display: flex; justify-content: flex-end; gap: 10px; padding: 0 16px 14px; }
+  .steps { list-style: none; padding: 0; margin: 8px 0 0; }
+  .steps li { padding: 3px 0 3px 24px; position: relative; color: var(--muted); }
+  .steps li.done::before { content: "✓"; position: absolute; left: 4px; color: var(--good); }
+  .steps li.doing::before { content: "…"; position: absolute; left: 4px; }
+  .steps li.done { color: var(--ink); }
+
+  .explain { margin-top: 34px; }
+  .explain .card { padding: 16px 20px; margin-top: 12px; }
+  footer { margin-top: 40px; font-size: 13px; color: var(--muted); }
+  .kbd { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px;
+         background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+         padding: 1px 5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Intern Pearls Deck Tools</h1>
+  <p class="tag">Update shared Anki decks without losing your review history or the
+  notes you've written on cards. Free, open source, no server — your decks live in a
+  GitHub repo or a folder.</p>
+  <div class="links">
+    <a href="https://github.com/LTimothy/internpearls-anki">GitHub</a>
+    <a href="https://github.com/LTimothy/internpearls-anki/releases/latest">Download the add-on</a>
+    <a href="https://github.com/LTimothy/internpearls-example-deck">Example deck source</a>
+  </div>
+</header>
+
+<!-- ======================= simulated Anki ======================= -->
+<div class="anki card">
+  <div class="titlebar">
+    <span class="dot" style="background:#f66"></span>
+    <span class="dot" style="background:#fc3"></span>
+    <span class="dot" style="background:#4c4"></span>
+    <span style="margin-left:8px">Anki — simulated, right here in your browser</span>
+  </div>
+  <div class="menubar">
+    <span>File</span><span>Edit</span><span>Tools</span>
+    <span class="ip" id="ipMenuBtn">Intern Pearls
+      <div class="menu" id="ipMenu">
+        <button id="menuSync">Sync decks</button>
+        <button id="menuManage" disabled title="Not part of this demo">Manage decks</button>
+        <hr>
+        <button disabled title="Not part of this demo">Advanced</button>
+        <button disabled title="Not part of this demo">Settings</button>
+        <button disabled title="Not part of this demo">About</button>
+      </div>
+    </span>
+    <span>Help</span>
+  </div>
+  <div class="deckarea">
+    <div class="deckname">Intern Pearls ▸ Intern Custom ▸ Pharmacology
+      <span style="color:var(--muted);font-weight:400;font-size:12.5px"> — your collection</span></div>
+    <table id="collection">
+      <thead><tr><th style="width:46%">Card front</th><th>Scheduling</th><th>Your notes on the card</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ======================= maintainer panel ======================= -->
+<div class="maintainer card">
+  <h2>You are also the deck maintainer</h2>
+  <p>Pick an update to publish to the deck's GitHub repo, then run
+     <b>Intern Pearls → Sync decks</b> in the window above — the same two roles this
+     add-on connects in real life.</p>
+  <div class="btnrow">
+    <button class="btn" id="shipFix">Fix a typo in an answer</button>
+    <button class="btn" id="shipReword">Reword a question</button>
+    <button class="btn" id="shipNew">Add a new card</button>
+    <button class="btn" id="shipCss">Restyle the card template</button>
+  </div>
+  <div class="shipped" id="shipped"></div>
+</div>
+
+<!-- ======================= dialogs ======================= -->
+<div class="overlay" id="overlay">
+  <div class="dialog">
+    <div class="dtitle">Intern Pearls</div>
+    <div class="dbody" id="dbody"></div>
+    <div class="dbtns" id="dbtns"></div>
+  </div>
+</div>
+
+<!-- ======================= explainer ======================= -->
+<div class="explain">
+  <h2>What just happened (and why it's hard)</h2>
+  <div class="card">
+    <p style="margin-top:0">Re-importing an updated <span class="kbd">.apkg</span> into
+    stock Anki overwrites every field — wiping the personal notes people keep on cards —
+    and a reworded question silently loses its scheduling and starts over as a new card.
+    This add-on fixes both, with nothing but a GitHub repo (or folder) as the "server":</p>
+    <ul style="font-size:13.5px; color:var(--muted); padding-left:20px">
+      <li><b style="color:var(--ink)">A backup first, always.</b> Every sync starts with a
+        timestamped backup of the deck, so everything is reversible.</li>
+      <li><b style="color:var(--ink)">History survives edits.</b> Cards match by a stable
+        GUID first (so even a reworded question keeps your intervals and ease), then by
+        front text for older collections.</li>
+      <li><b style="color:var(--ink)">Your annotations survive too.</b> Configurable
+        protected fields are snapshotted before the import and restored after it.</li>
+      <li><b style="color:var(--ink)">Appearance changes ask first.</b> A changed card
+        template means a one-time full AnkiWeb sync, so it's applied only with your
+        consent — never silently, and never by the unattended auto-sync.</li>
+      <li><b style="color:var(--ink)">Only what changed.</b> A version hash per deck means
+        editing one deck doesn't re-import ten.</li>
+    </ul>
+    <p style="margin-bottom:0">Install the
+      <a href="https://github.com/LTimothy/internpearls-anki/releases/latest">add-on</a>,
+      open <b>Manage decks → Configure source → Try the example deck</b>, and you can run
+      the real version of this demo inside Anki in about a minute. Hosting your own decks
+      is a <span class="kbd">manifest.json</span> plus <span class="kbd">.apkg</span> files in
+      any repo — fork the
+      <a href="https://github.com/LTimothy/internpearls-example-deck">example deck source</a>
+      to start.</p>
+  </div>
+</div>
+
+<footer>
+  This page is a self-contained simulation — no Anki, no add-on, no data leaves your
+  browser. MIT licensed, like the add-on itself.
+</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  // ---------- state ----------
+  const cards = [
+    { guid: "g1", front: "First-line drug for anaphylaxis?",
+      back: "Epinephrine IM.", interval: "2.3 mo", note: "ask Dr. P about IV dosing", isNew: false },
+    { guid: "g2", front: "Reversal agent for heparin?",
+      back: "Protamine sulfate.", interval: "11 d", note: "", isNew: false },
+    { guid: "g3", front: "Antidote for acetaminophen overdose?",
+      back: "N-acetylcysteine (NAC).", interval: "27 d", note: "mnemonic: A for A", isNew: false },
+  ];
+  // deck source: starts identical to the collection (version v1, already synced)
+  let source = {
+    version: 1, cssVersion: 1, pendingLabel: null,
+    notes: cards.map(c => ({ guid: c.guid, front: c.front, back: c.back })),
+  };
+  let installedVersion = 1, installedCss = 1;
+
+  // ---------- collection table ----------
+  const tbody = document.querySelector("#collection tbody");
+  function render(flashGuids) {
+    tbody.innerHTML = "";
+    for (const c of cards) {
+      const tr = document.createElement("tr");
+      if (flashGuids && flashGuids.has(c.guid)) tr.className = "flash";
+      const pill = c.isNew ? '<span class="pill new">new card</span>'
+                           : '<span class="pill interval">due in ' + c.interval + "</span>";
+      tr.innerHTML =
+        '<td class="front">' + c.front + '<div style="color:var(--muted);font-size:12px">' +
+        c.back + "</div></td><td>" + pill + "</td><td>" +
+        (c.note ? '<span class="note">“' + c.note + "”</span>"
+                : '<span style="color:var(--muted)">—</span>') + "</td>";
+      tbody.appendChild(tr);
+    }
+  }
+
+  // ---------- maintainer actions ----------
+  const shipped = document.getElementById("shipped");
+  function ship(label) {
+    source.version += 1;
+    source.pendingLabel = label;
+    shipped.textContent = "Pushed to the deck repo: " + label +
+      "  (deck version v" + source.version + ") — now run Intern Pearls → Sync decks above.";
+  }
+  document.getElementById("shipFix").onclick = () => {
+    source.notes[1].back = "Protamine sulfate — 1 mg per ~100 units heparin.";
+    ship("clarified the protamine answer");
+  };
+  document.getElementById("shipReword").onclick = () => {
+    // Same GUID, new wording: the stable-id convention. No alias needed.
+    source.notes[0].front = "Anaphylaxis — first-line drug, route, and why that route?";
+    source.notes[0].back = "Epinephrine IM (vastus lateralis): faster, safer levels than SC/IV bolus.";
+    ship("reworded the anaphylaxis question (GUID kept stable)");
+  };
+  document.getElementById("shipNew").onclick = () => {
+    if (!source.notes.some(n => n.guid === "g4")) {
+      source.notes.push({ guid: "g4", front: "Beta-blocker overdose — antidote?",
+                          back: "Glucagon." });
+    }
+    ship("added a beta-blocker overdose card");
+  };
+  document.getElementById("shipCss").onclick = () => {
+    source.cssVersion += 1;
+    ship("restyled the card template (bigger font, night-mode colors)");
+  };
+
+  // ---------- menu ----------
+  const menuBtn = document.getElementById("ipMenuBtn"), menu = document.getElementById("ipMenu");
+  menuBtn.addEventListener("click", (e) => {
+    menu.classList.toggle("show"); menuBtn.classList.toggle("open");
+    e.stopPropagation();
+  });
+  document.addEventListener("click", () => {
+    menu.classList.remove("show"); menuBtn.classList.remove("open");
+  });
+
+  // ---------- dialogs ----------
+  const overlay = document.getElementById("overlay"),
+        dbody = document.getElementById("dbody"), dbtns = document.getElementById("dbtns");
+  function dialog(html, buttons) {
+    dbody.innerHTML = html; dbtns.innerHTML = "";
+    for (const [label, primary, fn] of buttons) {
+      const b = document.createElement("button");
+      b.className = "btn" + (primary ? " primary" : "");
+      b.textContent = label;
+      b.onclick = () => { overlay.classList.remove("show"); if (fn) fn(); };
+      dbtns.appendChild(b);
+    }
+    overlay.classList.add("show");
+  }
+
+  // ---------- sync flow ----------
+  document.getElementById("menuSync").onclick = () => {
+    if (installedVersion === source.version && installedCss === source.cssVersion) {
+      dialog("All selected decks are up to date (source: GitHub).", [["OK", true]]);
+      return;
+    }
+    const newCount = source.notes.filter(n => !cards.some(c => c.guid === n.guid)).length;
+    dialog(
+      "Update these decks?<ul><li><b>Pharmacology</b> (" + source.notes.length +
+      " cards" + (newCount ? ", " + newCount + " new" : "") + ") — " +
+      (source.pendingLabel || "changed") + "</li></ul>" +
+      "Your review history and any personal notes on existing cards are kept " +
+      "(matched by card, not overwritten). A backup is taken automatically first.",
+      [["Cancel", false], ["Yes", true, runSync]]);
+  };
+
+  function runSync() {
+    const steps = [
+      "Back up the Intern Pearls deck (timestamped .apkg)",
+      "Snapshot your protected fields (Notes)",
+      "Match incoming cards — GUID first, then front text",
+      "Import with scheduling disabled (your intervals win)",
+      "Restore your protected fields",
+    ];
+    dialog('<b>Syncing Pharmacology…</b><ul class="steps" id="steps">' +
+      steps.map(s => "<li>" + s + "</li>").join("") + "</ul>", []);
+    const lis = dbody.querySelectorAll("#steps li");
+    let i = 0;
+    (function tick() {
+      if (i > 0) { lis[i - 1].className = "done"; }
+      if (i < lis.length) { lis[i].className = "doing"; i += 1; setTimeout(tick, 420); }
+      else { setTimeout(finishSync, 250); }
+    })();
+  }
+
+  function finishSync() {
+    // apply the import the way the add-on does: match by GUID, overwrite content,
+    // restore protected notes (which the overwrite would otherwise have wiped)
+    const touched = new Set();
+    let kept = 0, added = 0;
+    for (const n of source.notes) {
+      const mine = cards.find(c => c.guid === n.guid);
+      if (mine) {
+        if (mine.front !== n.front || mine.back !== n.back) touched.add(n.guid);
+        const savedNote = mine.note;          // snapshot …
+        mine.front = n.front; mine.back = n.back;  // import overwrites everything …
+        mine.note = savedNote;                // … restore brings it back
+        kept += 1;
+      } else {
+        cards.push({ guid: n.guid, front: n.front, back: n.back,
+                     interval: "", note: "", isNew: true });
+        touched.add(n.guid); added += 1;
+      }
+    }
+    installedVersion = source.version;
+    const cssChanged = installedCss !== source.cssVersion;
+    render(touched);
+    const summary = "<b>Sync complete</b> (source: GitHub)<ul><li>✓ <b>Pharmacology</b>: " +
+      kept + " kept history, " + added + " new</li></ul>" +
+      "A pre-sync backup was saved; Advanced → Import intern pearls deck reverts it.";
+    if (cssChanged) {
+      dialog(summary, [["OK", true, () => setTimeout(offerTemplate, 150)]]);
+    } else {
+      dialog(summary, [["OK", true]]);
+    }
+    source.pendingLabel = null;
+    shipped.textContent = "";
+  }
+
+  function offerTemplate() {
+    dialog(
+      "This update also changes how some cards look (template or styling) for: " +
+      "<b>Study Deck - Basic</b>.<br><br>Apply the new look now? Anki treats this as " +
+      "a schema change, so your next AnkiWeb sync will be a one-time full sync — " +
+      "choose “Upload to AnkiWeb” when asked.<br><br>Choosing No keeps your " +
+      "current card appearance; your review history and card content are unaffected " +
+      "either way.",
+      [["No", false, () => { /* look kept; will be offered on the next template change */
+          installedCss = source.cssVersion; }],
+       ["Yes", true, () => {
+          installedCss = source.cssVersion;
+          dialog("Card template updated. Remember: your next AnkiWeb sync will ask " +
+                 "for a one-time full sync.", [["OK", true]]);
+       }]]);
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>
