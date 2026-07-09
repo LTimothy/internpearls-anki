@@ -13,6 +13,8 @@ See `CHANGELOG.md` for what changed in each version.
 
 After restarting, an "Intern Pearls" menu appears in the menu bar between Tools and Help. Two primary actions sit at the top (Sync decks, Manage decks); occasional tools live under Advanced; Settings and About sit at the bottom.
 
+No deck source yet? Open Manage decks > Configure source and pick "Try the example deck" — it points the add-on at a small public demo repo so you can watch a sync work end to end, then swap in your own source later.
+
 ## Menu reference
 
 ### Sync decks
@@ -32,10 +34,11 @@ If no deck source is configured, it tells you to open Manage decks and use Confi
 
 A panel listing every deck the source offers, each with a checkbox, a status pill (New, Update available, or Up to date), and its card count. Unchecking a deck stops future syncs for it; cards already imported stay in your collection until you delete them yourself in Anki. A "Check what will sync" button downloads the changed decks and fills in, per deck, how many cards would update in place versus be added as new; nothing is imported by clicking it. The same panel edits `protected_fields`. Save keeps the choices for your next sync; Save and sync now also runs Sync decks right away.
 
-Deck-source configuration lives here too, behind a button next to the "Source" line at the top: "Configure source" if nothing is set up yet, "Change source" once something is. It opens the same dialog either way, with two buttons, GitHub repo or Local folder, plus Cancel:
+Deck-source configuration lives here too, behind a button next to the "Source" line at the top: "Configure source" if nothing is set up yet, "Change source" once something is. It opens the same dialog either way, with three buttons plus Cancel:
 
-- GitHub: enter the repo (`owner/name`) and a read-only personal access token. The token field is masked as you type, and the value is stored only in your local add-on config; it never leaves your machine except in requests to GitHub.
+- GitHub repo: enter the repo (`owner/name`) and, only if the repo is private, a read-only personal access token — leave the token blank for a public repo. The token field is masked as you type, and the value is stored only in your local add-on config; it never leaves your machine except in requests to GitHub.
 - Local folder: point it at a directory that contains `manifest.json` and the `.apkg` files.
+- Try the example deck: points the add-on at [`LTimothy/internpearls-example-deck`](https://github.com/LTimothy/internpearls-example-deck), a small public demo repo, so you can watch a sync work before you have any deck source of your own. Choosing it also points `scope_tag` and `export_deck` at the example deck's values (only if you haven't customized them), so field preservation and the automatic backup work in the demo too; picking a GitHub repo or local folder later resets exactly those injected values.
 
 Either way, as soon as you save, the add-on connects to the source, and Manage decks reopens against it: how many decks it found, or (shown as an error in the Source line, with an empty deck list and the same button waiting) exactly what went wrong, a bad token, an unreachable repo, or a wrong folder, so you're never left staring at a dead end. If nothing is configured at all, Manage decks still opens; it just shows an empty list and the Configure source button, instead of a warning that sends you hunting for a different menu item.
 
@@ -44,9 +47,9 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 | Key | What it does |
 |---|---|
 | `github_decks_repo` | GitHub repo, e.g. `owner/repo-name` |
-| `github_token` | Read-only fine-grained personal access token |
+| `github_token` | Read-only fine-grained personal access token; leave blank for a public repo |
 | `github_ref` | Branch or tag to pull from (default: `main`) |
-| `decks_dir` | Local folder path; if set, GitHub is ignored |
+| `decks_dir` | Local folder path, used when `github_decks_repo` is empty |
 | `scope_tag` | Root tag identifying cards this add-on manages (default: `InternPearls`). Scopes snapshots and GUID matching so your other decks are never touched. |
 | `protected_fields` | Field names to snapshot and restore (default: `["Notes"]`). Add any field where you keep your own content. Also editable from Manage decks. |
 | `excluded_decks` | Deck names opted out of syncing. Also editable from Manage decks. |
@@ -107,6 +110,8 @@ This means `front_aliases` only bridges the *most recent* rename of a given card
 The field snapshot and GUID matching (though not the backup, which is always a real Anki export/backup regardless of scope) are limited to `scope_tag` (default `InternPearls`). Cards outside that tag are ignored entirely.
 
 With the automatic backup in place, any of this is fully reversible even if you skip a manual export.
+
+The automatic deck-scoped backups also live in that `user_files/` subfolder inside the add-on's own directory, so they survive add-on updates but not an add-on *uninstall* — export anything you want to keep long-term (Advanced > Export intern pearls deck) before removing the add-on.
 
 The add-on's own record of which deck versions you've already synced lives in a `user_files/` subfolder, which Anki preserves across add-on updates (everything else in the add-on's folder gets replaced fresh). Earlier versions kept this file elsewhere, so updating the add-on itself would reset it and make the next Sync treat every deck as new; that's fixed as of v0.7.0.
 
