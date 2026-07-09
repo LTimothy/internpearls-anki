@@ -3,6 +3,20 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.18.2
+
+- Internal restructure, no behavior change: the single 1,600-line `__init__.py` is now
+  nine modules split by concern (`config`, `ui`, `net`, `collection`, `sync`,
+  `updates`, `background`, `dialogs`, with `__init__.py` reduced to menu and startup
+  wiring). `ADDON_VERSION` moved to `internpearls/config.py`. See "Code layout" in the
+  README.
+- Dialog headings, hints, and link-style buttons now share styling helpers in `ui.py`
+  instead of per-dialog stylesheet strings; the three link-style buttons in Manage
+  decks now render at one consistent size.
+- `build.sh` packages every `internpearls/*.py` file (the previous hardcoded two-file
+  list would have shipped a broken add-on after this split) and removes the old
+  archive before zipping, so a deleted module can't linger inside the package.
+
 ## v0.18.1
 
 - Auto-sync no longer downloads decks on the main thread. Only the manifest check
