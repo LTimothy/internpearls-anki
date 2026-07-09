@@ -1,7 +1,7 @@
 """Keeps the GitHub Pages live demo generated from the add-on, never drifting.
 
 The demo (docs/index.html + docs/demo_harness.py) doesn't re-implement the
-add-on: it executes the real modules under Pyodide against the same fake-Anki
+add-on: it executes the real modules under Pyodide against the same mock-Anki
 harness pytest uses. Menu structure, dialog layout and wording, version, and
 behavior therefore all come from the code itself at runtime. The only thing
 that CAN drift is the mirrored copy of the source that the static site serves —
@@ -26,7 +26,7 @@ def _read(path):
 def test_docs_addon_mirror_is_current():
     expected = {f: _read(os.path.join(ADDON, f))
                 for f in os.listdir(ADDON) if f.endswith(".py")}
-    expected["fake_anki.py"] = _read(os.path.join(HERE, "fake_anki.py"))
+    expected["mock_anki.py"] = _read(os.path.join(HERE, "mock_anki.py"))
     stale = []
     for name, want in sorted(expected.items()):
         mirrored = os.path.join(DOCS_ADDON, name)
