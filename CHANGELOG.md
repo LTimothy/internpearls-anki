@@ -3,6 +3,16 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.18.1
+
+- Auto-sync no longer downloads decks on the main thread. Only the manifest check
+  moved off-thread in earlier work; the per-deck `.apkg` download (the part that can
+  actually take a while on a big deck or a slow link) still ran inside the completion
+  callback, so it could still freeze Anki mid-review, which is exactly what background
+  sync is supposed to avoid. Downloads now happen alongside the manifest fetch in the
+  background step; a per-deck download failure is still reported per-deck (not a fetch
+  that takes down the whole sync), same as before.
+
 ## v0.18.0
 
 - Fixed public GitHub repos as a deck source: the token is now genuinely optional.
