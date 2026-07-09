@@ -43,7 +43,7 @@ from .logic import (bullets, clamp_interval_minutes, deck_status, decide_addon_u
                     decks_to_update, parse_fields, remap_cards, version_at_least,
                     write_personalized)
 
-ADDON_VERSION = "0.18.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.18.1"   # MAJOR.MINOR.PATCH, see README "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -725,12 +725,14 @@ _auto_sync_in_progress = False
 def _auto_sync_check():
     """Timer-triggered: if auto-sync is on and any deck changed, apply it without asking.
 
-    The manifest fetch (the part that runs on every poll, most of the time finding
-    nothing new) happens off the main thread via _run_in_background. Backing up and
-    importing (the part that only runs when there's actually something to apply) still
-    happens on the main thread inside the completion callback, matching the cost a
-    manual Sync decks click already pays; only the frequent, usually-empty check is what
-    needed to stop blocking Anki. A backup is still taken first, and if it fails, this
+    The manifest fetch and every pending deck's .apkg download (the parts that can
+    actually take a while, and run on every poll even though most polls find nothing
+    new) all happen off the main thread via _run_in_background — fetch() is pure
+    network/file I/O with no mw.col or Qt access, so it's as safe to run there as the
+    manifest check already was. Only backing up and importing (the part that touches
+    mw.col, and only runs when there's actually something to apply) still happens on
+    the main thread inside the completion callback, matching the cost a manual Sync
+    decks click already pays. A backup is still taken first, and if it fails, this
     aborts rather than importing unprotected, since there's no user to ask. The outcome
     is always a transient tooltip, never a blocking dialog, since this can fire mid-
     review.
@@ -750,7 +752,18 @@ def _auto_sync_check():
         todo = decks_to_update(manifest, installed, cfg["excluded"])
         if not todo:
             return None
-        return {"manifest": manifest, "fetch": fetch, "source": source,
+        # Download every pending deck here, off the main thread, so a big deck on a
+        # slow link can't freeze Anki. A per-deck failure is stored, not raised, so one
+        # bad download doesn't take out decks that fetched fine; _run_sync's existing
+        # per-deck try/except (unchanged) reports it the same way a live fetch failure
+        # always has.
+        downloaded = {}
+        for d in todo:
+            try:
+                downloaded[d["name"]] = fetch(d)
+            except Exception as e:
+                downloaded[d["name"]] = e
+        return {"manifest": manifest, "downloaded": downloaded, "source": source,
                 "todo": todo, "installed": installed}
 
     def _apply(result, error):
@@ -763,7 +776,14 @@ def _auto_sync_check():
                 tooltip("Intern Pearls: auto-sync skipped, couldn't create a backup "
                        "first.", period=6000, parent=mw)
                 return
-            results, restored = _run_sync(cfg, result["manifest"], result["fetch"],
+
+            def _already_fetched(d):
+                v = result["downloaded"][d["name"]]
+                if isinstance(v, Exception):
+                    raise v
+                return v
+
+            results, restored = _run_sync(cfg, result["manifest"], _already_fetched,
                                           result["todo"], result["installed"])
             ok = sum(1 for r in results if r.startswith("✓"))
             fail = len(results) - ok
