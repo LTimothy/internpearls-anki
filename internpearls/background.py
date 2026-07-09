@@ -114,6 +114,10 @@ def _check_addon_updates_background():
 
 
 _auto_sync_in_progress = False
+# Decks auto-sync has already said "template update pending, needs a manual sync"
+# about, so the repeating poll doesn't re-announce them every interval. Session-scoped
+# on purpose: a restart is allowed to remind once more.
+_tpl_deferred_notified = set()
 
 
 @_bg_safe
@@ -178,13 +182,24 @@ def _auto_sync_check():
                     raise v
                 return v
 
-            results, restored = _run_sync(cfg, result["manifest"], _already_fetched,
-                                          result["todo"], result["installed"])
+            results, restored, _, deferred = _run_sync(
+                cfg, result["manifest"], _already_fetched,
+                result["todo"], result["installed"], defer_template_changes=True)
             ok = sum(1 for r in results if r.startswith("✓"))
-            fail = len(results) - ok
+            fail = len(results) - ok - len(deferred)
+            # A deferred deck stays pending, so every later poll re-defers it. Only
+            # mention each one once per Anki session, and stay quiet entirely on a
+            # poll where re-deferrals were the only "activity".
+            deferred_new = [n for n in deferred if n not in _tpl_deferred_notified]
+            _tpl_deferred_notified.update(deferred)
+            if not (ok or fail or deferred_new):
+                return
             msg = f"Intern Pearls: auto-synced {ok} deck(s) (source: {result['source']})"
             if fail:
                 msg += f", {fail} failed, open Sync decks for details"
+            if deferred_new:
+                msg += (f", {len(deferred_new)} deck(s) include a card-template "
+                        "update — run Sync decks to review it")
             if restored:
                 msg += f", preserved fields restored on {restored} card(s)"
             tooltip(msg, period=6000, parent=mw)

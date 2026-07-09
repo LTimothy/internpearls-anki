@@ -12,7 +12,8 @@ from aqt import mw
 from aqt.utils import getFile, getSaveFile
 
 from .config import DECK_BACKUPS_KEEP, TARGET_FIELDS, _USER_FILES, _cfg
-from .logic import bullets, remap_cards, write_personalized
+from .logic import (apkg_models, bullets, changed_templates, model_shape,
+                    remap_cards, write_personalized)
 from .ui import _ask, _info, _safe, _warn
 
 
@@ -35,6 +36,48 @@ def _ensure_notetypes():
     if added:
         mw.reset()
     return added
+
+
+def _template_changes(src):
+    """Managed note types whose card templates or CSS differ between the .apkg at
+    `src` and this collection. Returns {name: incoming model_shape}.
+
+    This exists because imports run with merge_notetypes=False (see _import_apkg): a
+    template change in a rebuilt deck never propagates on its own, so sync detects it
+    here and asks, instead of silently shipping cards that render with the old look.
+    Only note types in TARGET_FIELDS are checked — a learner's own types are not our
+    business.
+    """
+    incoming = {n: s for n, s in apkg_models(src).items() if n in TARGET_FIELDS}
+    existing = {m["name"]: model_shape(m) for m in mw.col.models.all()
+                if m["name"] in TARGET_FIELDS}
+    return {n: incoming[n] for n in changed_templates(incoming, existing)}
+
+
+def _apply_template_changes(changes):
+    """Write the incoming CSS and template HTML onto the collection's matching note
+    types. Anki treats this as a schema change, so the caller must have warned the
+    user about the resulting one-time full AnkiWeb sync before calling this.
+
+    Only templates matched by name are updated; templates are never added, removed,
+    or reordered here (all managed note types have exactly one).
+    """
+    mm = mw.col.models
+    applied = []
+    for m in mm.all():
+        inc = changes.get(m["name"])
+        if not inc:
+            continue
+        m["css"] = inc["css"]
+        by_name = {name: (qfmt, afmt) for name, qfmt, afmt in inc["tmpls"]}
+        for t in m["tmpls"]:
+            if t.get("name") in by_name:
+                t["qfmt"], t["afmt"] = by_name[t["name"]]
+        (mm.update_dict if hasattr(mm, "update_dict") else mm.save)(m)
+        applied.append(m["name"])
+    if applied:
+        mw.reset()
+    return applied
 
 
 # --------------------------------------------------------------------------- backup

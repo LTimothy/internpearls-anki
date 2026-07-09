@@ -3,6 +3,24 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.20.0
+
+- Cards now match by GUID first, before front text and `front_aliases`. Deck sources
+  that keep GUIDs stable (an explicit per-card `id` in the spec) can reword a card's
+  front any number of times without an alias entry, and the learner's review history
+  still carries over — the single-hop limit of `front_aliases` no longer applies to
+  those cards. Front-text and alias matching remain as fallbacks for collections whose
+  GUIDs predate stable ids.
+- Sync now detects when an updated deck changes a card template or its CSS (the one
+  thing `merge_notetypes=False` imports deliberately never propagate) and offers to
+  apply the new look, explaining that doing so makes the next AnkiWeb sync a one-time
+  full sync. Declining keeps the current appearance; content and history import
+  either way. Import single deck gets the same offer.
+- The unattended auto-sync poll never applies a template change (no one is there to
+  consent to a full sync): a deck update that includes one is held back, stays
+  pending, and a tooltip points at Sync decks to review it — mentioned once per
+  session, not on every poll.
+
 ## v0.19.0
 
 - Sync decks now shows Anki's progress window while each deck downloads and imports

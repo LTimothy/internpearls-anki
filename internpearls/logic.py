@@ -4,6 +4,7 @@ Nothing here imports aqt or anki, so it's testable with plain pytest, no Anki
 environment needed. If a function starts needing mw/col, it belongs in __init__.py
 instead, not here.
 """
+import json
 import os
 import re
 import sqlite3
@@ -156,6 +157,47 @@ def apkg_notes(path):
     return rows
 
 
+def apkg_models(path):
+    """Return {notetype_name: {"css": str, "tmpls": [(name, qfmt, afmt), ...]}} for
+    every note type carried by the .apkg at `path`.
+
+    Reads the legacy `col.models` JSON column, the format genanki (and Anki's own
+    legacy exporter) writes — the same collection.anki2 assumption apkg_notes makes.
+    """
+    with zipfile.ZipFile(path) as z:
+        if "collection.anki2" not in z.namelist():
+            raise RuntimeError("Unexpected .apkg format (no collection.anki2).")
+        with tempfile.TemporaryDirectory() as d:
+            z.extract("collection.anki2", d)
+            con = sqlite3.connect(os.path.join(d, "collection.anki2"))
+            models_json = con.execute("select models from col").fetchone()[0]
+            con.close()
+    return {m["name"]: model_shape(m) for m in json.loads(models_json).values()}
+
+
+def model_shape(m):
+    """Reduce a note-type dict (apkg JSON or mw.col.models form — same keys) to just
+    what determines how cards LOOK: CSS plus each template's question/answer HTML.
+    Both sides of a template comparison go through this so they can't disagree on
+    incidental keys (ids, mod times, field lists — fields are _ensure_notetypes' job).
+    """
+    return {
+        "css": m.get("css", ""),
+        "tmpls": [(t.get("name", ""), t.get("qfmt", ""), t.get("afmt", ""))
+                  for t in m.get("tmpls", [])],
+    }
+
+
+def changed_templates(incoming, existing):
+    """Note-type names present in both mappings whose template HTML or CSS differ.
+
+    `incoming`/`existing` are {name: model_shape(...)}. A note type only the .apkg has
+    isn't a template *change* (the import creates it as-is), so it's skipped.
+    """
+    return [name for name, shape in incoming.items()
+            if name in existing and existing[name] != shape]
+
+
 def write_personalized(src, remap, out):
     """Copy the .apkg at `src` to `out`, rewriting note GUIDs per `remap`.
 
@@ -177,16 +219,27 @@ def write_personalized(src, remap, out):
 
 
 def remap_cards(src, her, aliases):
-    """Match each note in the .apkg at `src` to an existing card by front text.
+    """Match each note in the .apkg at `src` to one of the learner's existing cards.
 
-    `her` is {front_text: guid} for the learner's existing cards; `aliases` is
-    {current_front: previous_front} for cards whose wording changed. Returns
-    (remap, in_place, as_new): `remap` is {note_id: guid} for notes whose GUID needs
-    rewriting to match an existing card, `in_place`/`as_new` are counts for the
-    confirmation dialogs.
+    Matching order, strongest signal first:
+      1. GUID: the incoming note's GUID already belongs to one of her cards. This is
+         the durable path — deck specs give every card an explicit stable `id`, so a
+         reworded front no longer changes the GUID and needs no alias at all.
+      2. Front text: her card currently shows this exact front (`her` is
+         {front_text: guid}). Covers collections whose GUIDs predate stable ids.
+      3. `aliases` ({current_front: previous_front}): her card still shows the one
+         prior wording of a renamed front.
+
+    Returns (remap, in_place, as_new): `remap` is {note_id: guid} for notes whose GUID
+    needs rewriting to match an existing card, `in_place`/`as_new` are counts for the
+    confirmation dialogs. A GUID match needs no rewrite, so it never lands in `remap`.
     """
     remap, in_place, as_new = {}, 0, 0
+    her_guids = set(her.values())
     for rid, front, apkg_guid in apkg_notes(src):
+        if apkg_guid in her_guids:
+            in_place += 1
+            continue
         her_guid = her.get(front)
         if her_guid is None and front in aliases:
             her_guid = her.get(aliases[front])
