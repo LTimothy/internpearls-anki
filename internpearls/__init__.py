@@ -43,7 +43,7 @@ from .logic import (bullets, clamp_interval_minutes, deck_status, decide_addon_u
                     decks_to_update, parse_fields, remap_cards, version_at_least,
                     write_personalized)
 
-ADDON_VERSION = "0.17.0"   # MAJOR.MINOR.PATCH, see CLAUDE.md "Versioning"
+ADDON_VERSION = "0.18.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -350,14 +350,18 @@ def _pre_sync_backup_or_confirm_skip(deck_name):
     Defaults to the fast, deck-scoped backup rather than a whole-collection one, since
     that's what most syncs actually need protection against. A full collection backup
     is still one click away under Advanced whenever extra protection is wanted.
+
+    Returns (proceed, backed_up): proceed=True with backed_up=False means either there
+    was nothing to back up yet (a first sync) or the backup failed and the user chose
+    to continue anyway — callers must not tell the user a backup was saved in that case.
     """
     if mw.col.decks.id_for_name(deck_name) is None:
-        return True   # nothing to back up yet, e.g. someone's very first sync
+        return True, False   # nothing to back up yet, e.g. someone's very first sync
     if _backup_deck(deck_name):
-        return True
+        return True, True
     return _ask("Couldn't create an automatic backup.\n\n"
                 "Proceed anyway? (You can back up manually first: Advanced → Backup "
-                "intern pearls deck, or Advanced → Backup full collection.)")
+                "intern pearls deck, or Advanced → Backup full collection.)"), False
 
 
 def _pre_sync_backup_or_skip_silently(deck_name):
@@ -453,11 +457,18 @@ def _apply_deck(src, aliases, her):
 
 
 # ------------------------------------------------------------------- deck source
-def _fetch_manifest(cfg):
-    """Return (manifest, fetch_apkg) where fetch_apkg(deck) -> local .apkg path."""
-    if cfg["gh_token"] and cfg["gh_repo"]:
+def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT):
+    """Return (manifest, fetch_apkg, source_label) where fetch_apkg(deck) -> local
+    .apkg path.
+
+    A GitHub source needs only the repo; the token is optional (blank is fine for a
+    public repo — _http_get simply sends no Authorization header). `timeout` bounds the
+    manifest fetch itself; deck downloads always get the generous _DOWNLOAD_TIMEOUT,
+    since they only happen after first contact already proved the source reachable.
+    """
+    if cfg["gh_repo"]:
         manifest = json.loads(_gh_raw(cfg["gh_repo"], "manifest.json",
-                                      cfg["gh_token"], cfg["gh_ref"]))
+                                      cfg["gh_token"], cfg["gh_ref"], timeout=timeout))
 
         def fetch(d):
             data = _gh_raw(cfg["gh_repo"], d["apkg"], cfg["gh_token"], cfg["gh_ref"],
@@ -518,16 +529,21 @@ def sync_decks():
         "so this is safe to undo if anything looks wrong afterward."
     ):
         return
-    if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"]):
+    proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
+    if not proceed:
         return
 
     results, restored = _run_sync(cfg, manifest, fetch, todo, installed)
     fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
                   if restored else "")
+    backup_line = (
+        "A pre-sync backup of the Intern Pearls deck was saved; use "
+        "<i>Advanced → Import intern pearls deck</i> to revert to it if needed."
+        if backed_up else
+        "No pre-sync backup was taken this time (nothing to back up yet, or it "
+        "failed and you chose to continue).")
     _info(f"<b>Sync complete</b> (source: {source})" + bullets(results) +
-          fields_line +
-          f"A pre-sync backup of the Intern Pearls deck was saved; use "
-          f"<i>Advanced → Import intern pearls deck</i> to revert to it if needed.")
+          fields_line + backup_line)
 
 
 def _run_sync(cfg, manifest, fetch, todo, installed):
@@ -725,7 +741,9 @@ def _auto_sync_check():
         return
 
     def _fetch_work():
-        manifest, fetch, source = _fetch_manifest(cfg)
+        # _BG_TIMEOUT, not the interactive default: this fires unattended as often as
+        # once a minute, so a dead host must fail well inside the poll interval.
+        manifest, fetch, source = _fetch_manifest(cfg, timeout=_BG_TIMEOUT)
         if not manifest:
             return None
         installed = _load_json(INSTALLED, {})
@@ -830,7 +848,7 @@ def import_single():
     if not _ask(f"{in_place} card(s) will keep their history, {as_new} will be added "
                 "as new. A backup is taken automatically first. Import now?"):
         return
-    if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"]):
+    if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"])[0]:
         return
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
     out = src + ".sync.apkg"
@@ -912,7 +930,7 @@ def import_deck():
                 "place, keeping their scheduling; anything not already here is added "
                 "as new. A backup is taken automatically first."):
         return
-    if not _pre_sync_backup_or_confirm_skip(_cfg()["export_deck"]):
+    if not _pre_sync_backup_or_confirm_skip(_cfg()["export_deck"])[0]:
         return
     try:
         _import_apkg(src, with_scheduling=True)
@@ -958,17 +976,28 @@ def update_notetypes():
           "Note types are already up to date, no changes needed.")
 
 
+EXAMPLE_REPO = "LTimothy/internpearls-example-deck"   # public demo deck source
+EXAMPLE_SCOPE_TAG = "ExampleDeck"                     # the example deck's base_tag
+EXAMPLE_DECK_NAME = "Example Decks::Pharmacology Basics"
+
+
 @_safe
 def configure_source():
-    """Set where decks come from: a GitHub repo + read-only token, or a local folder."""
+    """Set where decks come from: a GitHub repo (token optional; only needed for a
+    private one), a local folder, or the public example repo for anyone who just wants
+    to see the add-on do something before pointing it at real decks."""
     conf = mw.addonManager.getConfig(__name__) or {}
 
     box = QMessageBox(mw)
     box.setWindowTitle(f"{APP_NAME}: Configure deck source")
     box.setIcon(QMessageBox.Icon.Question)
-    box.setText("Where should decks come from?")
+    box.setText("Where should decks come from?<br><br>"
+                "<span style='color:gray;'>No decks of your own yet? Try the example "
+                "deck: a small public demo repo you can sync right away, and swap out "
+                "later.</span>")
     gh_btn = box.addButton("GitHub repo", QMessageBox.ButtonRole.AcceptRole)
     local_btn = box.addButton("Local folder", QMessageBox.ButtonRole.AcceptRole)
+    example_btn = box.addButton("Try the example deck", QMessageBox.ButtonRole.AcceptRole)
     box.addButton(QMessageBox.StandardButton.Cancel)
     box.exec()
     clicked = box.clickedButton()
@@ -980,13 +1009,27 @@ def configure_source():
             return
         token_edit = QLineEdit()
         token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        token, ok = _prompt("Read-only access token (hidden as you type):",
+        token, ok = _prompt("Access token (hidden as you type). Leave blank for a "
+                            "public repo; a private one needs a read-only token:",
                             edit=token_edit, default=conf.get("github_token", ""))
         if not ok:
             return
         conf["github_decks_repo"] = repo.strip()
         conf["github_token"] = token.strip()
         conf["decks_dir"] = ""
+    elif clicked is example_btn:
+        conf["github_decks_repo"] = EXAMPLE_REPO
+        conf["github_token"] = ""
+        conf["decks_dir"] = ""
+        # Point the scope tag and backup deck at the example deck's own values (but only
+        # if they're still at their defaults — never clobber a deliberate custom value),
+        # so the demo shows the real experience: preserved fields survive re-syncs and
+        # the automatic pre-sync backup finds its deck. Switching to a GitHub/local
+        # source later undoes exactly this (see below).
+        if conf.get("scope_tag", "InternPearls") == "InternPearls":
+            conf["scope_tag"] = EXAMPLE_SCOPE_TAG
+        if conf.get("export_deck", EXPORT_DECK) == EXPORT_DECK:
+            conf["export_deck"] = EXAMPLE_DECK_NAME
     elif clicked is local_btn:
         path, ok = _prompt("Folder with manifest.json + .apkg files:",
                           default=conf.get("decks_dir", ""))
@@ -996,6 +1039,17 @@ def configure_source():
         conf["github_token"] = ""
     else:
         return  # Cancel, or the dialog was closed
+
+    # Undo the example-deck scope/backup override when moving on to a real source: those
+    # two values were set by the example button above, not chosen by the user, so
+    # leaving them behind would silently mis-scope every future sync. A custom value the
+    # user set themselves is never touched (the example button doesn't overwrite one,
+    # and this only resets the exact example values).
+    if clicked is not example_btn:
+        if conf.get("scope_tag") == EXAMPLE_SCOPE_TAG:
+            conf["scope_tag"] = "InternPearls"
+        if conf.get("export_deck") == EXAMPLE_DECK_NAME:
+            conf["export_deck"] = EXPORT_DECK
 
     mw.addonManager.writeConfig(__name__, conf)
 
@@ -1213,7 +1267,8 @@ class _DeckManagerDialog(QDialog):
                 kept, new = rc
                 pill.setText(f"{kept} kept · {new} new")
                 pill.setStyleSheet("color: #6b7280; font-size: 12px;")
-        self._preview_btn.setText("Preview updated")
+        self._preview_btn.setText("Check again")
+        self._preview_btn.setEnabled(True)
 
     def _set_all(self, val):
         for cb in self._checks.values():
