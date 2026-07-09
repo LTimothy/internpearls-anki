@@ -1,0 +1,192 @@
+"""The deck-sync flows: source resolution, Sync decks, and Import single deck.
+
+_run_sync is the one implementation of the history-preserving sequence (fix note
+types, snapshot protected fields, remap and import, restore, persist versions) —
+shared by the interactive Sync decks flow and the unattended auto-sync poll in
+background.py, so the part that matters for not losing anyone's review history
+exists exactly once.
+"""
+import json
+import os
+import tempfile
+
+from aqt import mw
+from aqt.utils import getFile
+
+from .collection import (_apply_deck, _ensure_notetypes, _her_front_to_guid,
+                         _import_apkg, _pre_sync_backup_or_confirm_skip, _restore,
+                         _snapshot)
+from .config import INSTALLED, _cfg, _load_json, _save_json
+from .logic import bullets, decks_to_update, remap_cards, write_personalized
+from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
+from .ui import _ask, _info, _safe, _warn
+
+
+def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT):
+    """Return (manifest, fetch_apkg, source_label) where fetch_apkg(deck) -> local
+    .apkg path.
+
+    A GitHub source needs only the repo; the token is optional (blank is fine for a
+    public repo — _http_get simply sends no Authorization header). `timeout` bounds the
+    manifest fetch itself; deck downloads always get the generous _DOWNLOAD_TIMEOUT,
+    since they only happen after first contact already proved the source reachable.
+    """
+    if cfg["gh_repo"]:
+        manifest = json.loads(_gh_raw(cfg["gh_repo"], "manifest.json",
+                                      cfg["gh_token"], cfg["gh_ref"], timeout=timeout))
+
+        def fetch(d):
+            data = _gh_raw(cfg["gh_repo"], d["apkg"], cfg["gh_token"], cfg["gh_ref"],
+                           timeout=_DOWNLOAD_TIMEOUT)
+            # d["apkg"] may include subfolders (e.g. decks/Foo.apkg); flatten to just the
+            # filename for the scratch download location, since /tmp/decks/ won't exist.
+            tmp = os.path.join(tempfile.gettempdir(), os.path.basename(d["apkg"]))
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+            return tmp
+
+        return manifest, fetch, "GitHub"
+
+    if cfg["decks_dir"] and os.path.isdir(cfg["decks_dir"]):
+        manifest = _load_json(os.path.join(cfg["decks_dir"], "manifest.json"), None)
+
+        def fetch(d):
+            return os.path.join(cfg["decks_dir"], d["apkg"])
+
+        return manifest, fetch, "local folder"
+
+    return None, None, None
+
+
+@_safe
+def sync_decks():
+    cfg = _cfg()
+    try:
+        manifest, fetch, source = _fetch_manifest(cfg)
+    except Exception as e:
+        _warn(f"Couldn't reach the deck source: {e}<br><br>"
+              "Open <b>Intern Pearls → Manage decks</b> and use Change source to check "
+              "your GitHub token or local folder.")
+        return
+    if not manifest:
+        _warn("No deck source configured yet.<br><br>"
+              "Open <b>Intern Pearls → Manage decks</b> and use Configure source.")
+        return
+
+    installed = _load_json(INSTALLED, {})
+    todo = decks_to_update(manifest, installed, cfg["excluded"])
+    if not todo:
+        _info(f"All selected decks are up to date (source: {source}).")
+        return
+
+    def _line(d):
+        short = d["name"].split("::")[-1]
+        cards = d.get("cards")
+        tag = "new deck" if d["name"] not in installed else None
+        detail = ", ".join(x for x in (f"{cards} cards" if cards is not None else None, tag) if x)
+        return f"{short} ({detail})" if detail else short
+
+    if not _ask(
+        "Update these decks?\n\n  • " + "\n  • ".join(_line(d) for d in todo) +
+        "\n\nYour review history and any personal notes on existing cards are kept "
+        "(matched by card, not overwritten). A backup is taken automatically first, "
+        "so this is safe to undo if anything looks wrong afterward."
+    ):
+        return
+    proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
+    if not proceed:
+        return
+
+    results, restored = _run_sync(cfg, manifest, fetch, todo, installed)
+    fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
+                  if restored else "")
+    backup_line = (
+        "A pre-sync backup of the Intern Pearls deck was saved; use "
+        "<i>Advanced → Import intern pearls deck</i> to revert to it if needed."
+        if backed_up else
+        "No pre-sync backup was taken this time (nothing to back up yet, or it "
+        "failed and you chose to continue).")
+    _info(f"<b>Sync complete</b> (source: {source})" + bullets(results) +
+          fields_line + backup_line)
+
+
+def _run_sync(cfg, manifest, fetch, todo, installed):
+    """Apply every deck in `todo`: fix note types, snapshot protected fields, remap and
+    import each deck (keeping the learner's scheduling), restore the snapshotted fields,
+    and persist the new installed versions.
+
+    The caller must already have confirmed (if interactive) and taken a backup — this is
+    the one place the actual history-preserving sequence lives, shared by the interactive
+    Sync decks flow and the unattended auto-sync poll, so there's exactly one
+    implementation of the part that matters for not losing anyone's review history.
+    Returns (results, restored): per-deck outcome lines and the note-restore count.
+    """
+    aliases = manifest.get("front_aliases", {})   # from the (private) manifest, not config
+    _ensure_notetypes()
+    snap = _snapshot(cfg["protected"], cfg["scope_tag"])
+    her = _her_front_to_guid(cfg["scope_tag"])
+    results = []
+    for d in todo:
+        short = d["name"].split("::")[-1]
+        try:
+            src = fetch(d)
+            in_place, as_new = _apply_deck(src, aliases, her)
+            installed[d["name"]] = d["version"]
+            results.append(f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new")
+        except Exception as e:
+            results.append(f"✗ <b>{short}</b>: {e}")
+    _save_json(INSTALLED, installed)
+    restored = _restore(snap)
+    mw.reset()
+    return results, restored
+
+
+@_safe
+def import_single():
+    """Import one hand-picked, spec-authored .apkg outside the configured source.
+
+    For a deck someone sent you directly, or a build you're testing before pushing it
+    to the source repo. Does the same personalization, backup, and note-restore Sync
+    does, just for one file you choose instead of everything the manifest lists.
+    """
+    cfg = _cfg()
+    src = getFile(mw, "Choose an Intern Pearls .apkg", cb=None,
+                  filter="*.apkg", key="internpearls")
+    if not src:
+        return
+    if isinstance(src, (list, tuple)):
+        src = src[0]
+    aliases = {}
+    try:
+        manifest, _, _ = _fetch_manifest(cfg)
+        if manifest:
+            aliases = manifest.get("front_aliases", {})
+    except Exception as e:
+        if not _ask(f"Couldn't fetch the reworded-front list from your deck source "
+                    f"({e}).\n\nWithout it, any card whose front text changed there "
+                    "will be treated as new instead of matching your existing card, "
+                    "so its history won't carry over. Continue anyway?"):
+            return
+    _ensure_notetypes()
+    her = _her_front_to_guid(cfg["scope_tag"])
+    remap, in_place, as_new = remap_cards(src, her, aliases)
+    if not _ask(f"{in_place} card(s) will keep their history, {as_new} will be added "
+                "as new. A backup is taken automatically first. Import now?"):
+        return
+    if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"])[0]:
+        return
+    snap = _snapshot(cfg["protected"], cfg["scope_tag"])
+    out = src + ".sync.apkg"
+    write_personalized(src, remap, out)
+    try:
+        _import_apkg(out)
+    finally:
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+    restored = _restore(snap)
+    mw.reset()
+    fields_line = f" Preserved fields restored on {restored} card(s)." if restored else ""
+    _info(f"Imported {os.path.basename(src)}: {in_place} kept history, {as_new} new."
+          f"{fields_line}")

@@ -22,15 +22,19 @@ Anki after).
 
 The one structural rule: code that could run without Anki goes in
 `internpearls/logic.py` (no `aqt`/`anki` imports — apkg handling, GUID
-matching, version comparison, formatting); anything that touches `mw`, `col`,
-or Qt goes in `internpearls/__init__.py`. If your new function can be tested
+matching, version comparison, formatting). If your new function can be tested
 with plain Python, it belongs in `logic.py`, with a test in
-`tests/test_logic.py`.
+`tests/test_logic.py`. Code that touches `mw`, `col`, or Qt goes in the module
+matching its concern — `collection.py` (collection reads/writes), `sync.py`
+(sync flows), `dialogs.py` (panels), `net.py` (fetches), `ui.py` (dialog
+wrappers and styling), `updates.py` (self-update), `background.py` (unattended
+checks), `config.py` (constants and config) — with `__init__.py` holding only
+the menu and startup wiring. See "Code layout" in the README.
 
 ## Conventions
 
 - **Dialogs** go through the `_info` / `_warn` / `_ask` / `_prompt` wrappers
-  in `__init__.py`, never raw `aqt.utils` calls.
+  in `internpearls/ui.py`, never raw `aqt.utils` calls.
 - **Menu items** are sentence case ("Import single deck", not "Import Single
   Deck") with no trailing ellipses.
 - **Persistent state** (anything that must survive an add-on update) lives
@@ -53,5 +57,5 @@ with plain Python, it belongs in `logic.py`, with a test in
 - Run `pytest tests/ -v` and `./build.sh` before opening the PR.
 - Don't bump the version, edit `CHANGELOG.md`, or rebuild
   `internpearls.ankiaddon` in your PR — releases (semver bump in
-  `__init__.py` + `version.json`, tag, changelog entry, repackage) are done
+  `internpearls/config.py` + `version.json`, tag, changelog entry, repackage) are done
   by the maintainer, as described under "Versioning" in the README.
