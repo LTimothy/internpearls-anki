@@ -37,9 +37,11 @@ The main button. It fetches `manifest.json` from your configured deck source, co
 1. Takes a fresh, timestamped backup of just the configured deck first (a self-contained `.apkg` with scheduling included, saved internally and pruned to the most recent 10). Nothing else runs until this succeeds, or you explicitly choose to continue without one.
 2. Adds any missing fields to the note type (never removes or renames existing fields).
 3. Snapshots your `protected_fields` on every card in scope.
-4. Matches each incoming card to your existing card by GUID so review history carries over. If a card's front was reworded since your last sync, it checks the `front_aliases` map in the manifest to find the match.
+4. Matches each incoming card to your existing card — by GUID first, then by front text, then via the `front_aliases` map in the manifest for a card whose front was reworded since your last sync — so review history carries over.
 5. Imports through Anki's built-in importer with scheduling disabled, so your intervals and ease factors stay put.
 6. Restores the preserved fields from the snapshot.
+
+If an update also changes how cards *look* (a card template or its CSS — the one thing these imports deliberately never touch, see "How history is preserved"), Sync says so afterward and offers to apply the new look. Saying yes updates the note type's templates and styling, which Anki treats as a schema change: your next AnkiWeb sync will be a one-time full sync ("Upload to AnkiWeb"). Saying no keeps your current card appearance; the content update has already imported either way, and the next template change will offer again.
 
 If no deck source is configured, it tells you to open Manage decks and use Configure source.
 
@@ -93,7 +95,7 @@ Occasional tools, tucked away from the two primary actions at the top:
 
 Sync automation and add-on update behavior, kept separate from Manage decks since those answer a different question ("which decks, which fields, from where" versus "how automatic, how often"):
 
-- **Sync decks automatically when updates are available**, off by default. When on, the add-on checks the source in the background on the interval below and applies any changed decks without asking, backing up first the same as a manual sync.
+- **Sync decks automatically when updates are available**, off by default. When on, the add-on checks the source in the background on the interval below and applies any changed decks without asking, backing up first the same as a manual sync. The one thing it never applies unattended is a card-template change (that would force a one-time full AnkiWeb sync without anyone consenting to it): a deck update that includes one is held back and stays pending, and a tooltip points you at Sync decks to review it.
 - **Check every N minutes**, default 15, minimum 1. The check runs off the main thread when Anki supports it (essentially all current versions do), so it doesn't freeze Anki even at a short interval; if it can't reach the source, it fails within a few seconds and just tries again next time.
 - **Notify me when a new add-on version is out**, on by default. A tooltip once per new release, no installation.
 - **Install add-on updates automatically**, off by default. Downloads and installs a newer version as part of the same once-per-launch check, no confirmation. A restart is still needed to load it, same as installing by hand.
@@ -116,9 +118,13 @@ Your `protected_fields` (`Notes` by default, configurable to any field name, or 
 
 Note types only gain fields; nothing is removed or renamed. If you have customized a note type, those customizations stay.
 
-When a card's front text changes between deck versions, a `front_aliases` entry in the manifest maps the new wording to the one immediately before it. The add-on checks your card's current front text against the live spec wording first, then against that one prior wording if the first check fails. If that mapping can't be fetched for some reason, you're warned before anything imports, since any reworded card would otherwise import as new and lose its history silently.
+Matching runs strongest-signal-first. If an incoming note's GUID already belongs to one of your cards, that's the match — no text comparison needed. Deck sources that keep GUIDs stable (an explicit per-card `id` in the deck spec, so rewording a front doesn't re-identify the card) get this for every card, which means a front can be reworded any number of times between your syncs and history still carries over, with no alias bookkeeping at all.
 
-This means `front_aliases` only bridges the *most recent* rename of a given card, not its full history. On a brand new install, whether a specific card's history carries over depends only on whether your current front text matches the live spec wording or that one recorded alias, nothing earlier. Cards whose front has never changed match by plain text equality and need no alias at all, which covers most of them. A card reworded before this tracking convention existed, with no alias entry to bridge the gap, imports as a new, separate card instead of updating your existing one, your old card isn't touched or lost, you'd just end up with both.
+For cards where the GUID doesn't match (typically a collection whose cards predate stable ids), matching falls back to front text: your card's current front is compared against the live spec wording first, then — when a card's front changed between deck versions — against the one prior wording recorded in the manifest's `front_aliases` map. If that mapping can't be fetched for some reason, you're warned before anything imports, since a reworded card would otherwise import as new and lose its history silently.
+
+`front_aliases` only bridges the *most recent* rename of a given card, not its full history. So on the fallback path, whether a specific card's history carries over depends on whether your current front text matches the live spec wording or that one recorded alias, nothing earlier. Cards whose front has never changed match by plain text equality and need no alias at all, which covers most of them. A card that misses on GUID, front, and alias imports as a new, separate card instead of updating your existing one — your old card isn't touched or lost, you'd just end up with both.
+
+Card *appearance* is handled separately from card content. Imports here run with note-type merging off (see the trade-off in "For developers" — it keeps AnkiWeb syncs incremental), so a template or CSS change in a rebuilt deck never applies silently: Sync detects it, tells you, and asks before applying, since applying costs a one-time full AnkiWeb sync. Background auto-sync never applies one; it holds that deck for a manual sync instead.
 
 The field snapshot and GUID matching (though not the backup, which is always a real Anki export/backup regardless of scope) are limited to `scope_tag` (default `InternPearls`). Cards outside that tag are ignored entirely.
 
@@ -150,7 +156,7 @@ Nothing about Sync decks, Manage decks, or the backup/export/import tools is spe
 
 - `decks` lists every deck Sync should manage. `name` is the deck name as it should appear in Anki; `apkg` is the path to fetch, relative to the repo/folder root (a flat filename or nested in a subfolder like `decks/your-deck.apkg`, both work); `spec` is informational only (not read by the add-on); `version` is any string that changes when the deck changes (a hash, a date, a counter) and drives which decks Sync considers "changed"; `cards` is optional, shown as a count in the sync confirmation.
 - `front_aliases` maps a card's current front-field text to its previous wording, for any card whose front changed since the last version someone might be syncing from. Omit entries for cards whose front never changed. See "How history is preserved" above for exactly how this is used and its limits.
-- Each `.apkg`'s notes need a stable GUID scheme of your own choosing (most Anki deck-building tools default to a content hash of the front, which changes whenever you reword it, hence `front_aliases` existing at all). This add-on doesn't generate decks, only syncs pre-built ones; how you build stable GUIDs into your `.apkg` is up to your own tooling.
+- Each `.apkg`'s notes need a stable GUID scheme of your own choosing. Most Anki deck-building tools default to a content hash of the front, which changes whenever you reword it — that's why `front_aliases` exists. The better scheme is a GUID derived from an explicit per-card id that never changes: the add-on matches by GUID before any text comparison, so with stable GUIDs you can reword fronts freely and never touch `front_aliases` again. This add-on doesn't generate decks, only syncs pre-built ones; how you build stable GUIDs into your `.apkg` is up to your own tooling.
 
 Use Configure source, inside Manage decks, to point at your repo (with a read-only token if private) or folder, and Sync decks, Manage decks, and the Advanced tools all work exactly as described above, just against your own content. Set `scope_tag` and `export_deck` in Config to match your own deck's tag and name if they differ from the `InternPearls` / `Intern Pearls::Intern Custom` defaults.
 

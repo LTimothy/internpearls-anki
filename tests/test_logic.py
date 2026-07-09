@@ -14,8 +14,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "internpearls")
 import logic  # noqa: E402
 
 
-def _make_fake_apkg(path, notes):
-    """notes: list of (id, guid, front) tuples. Writes a zip with collection.anki2."""
+def _make_fake_apkg(path, notes, models=None):
+    """notes: list of (id, guid, front) tuples. Writes a zip with collection.anki2.
+    `models`, if given, is the col.models JSON value (a {model_id: model_dict} map,
+    the legacy format genanki writes) so apkg_models has something to read."""
     db_path = path + ".tmp.db"
     if os.path.exists(db_path):
         os.remove(db_path)
@@ -25,6 +27,10 @@ def _make_fake_apkg(path, notes):
         flds = front + logic.FS + "back text"
         con.execute("insert into notes (id, guid, flds) values (?, ?, ?)",
                     (nid, guid, flds))
+    if models is not None:
+        import json
+        con.execute("create table col (models text)")
+        con.execute("insert into col (models) values (?)", (json.dumps(models),))
     con.commit()
     con.close()
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -348,6 +354,73 @@ def test_remap_cards_alias_target_also_missing_is_new(tmp_path):
     aliases = {"New wording": "Old wording"}   # but "Old wording" isn't in her map
     remap, in_place, as_new = logic.remap_cards(apkg, her={}, aliases=aliases)
     assert (remap, in_place, as_new) == ({}, 0, 1)
+
+
+def test_remap_cards_matches_by_guid_before_front(tmp_path):
+    # Stable-id builds keep a card's GUID through a front rewording. A learner whose
+    # card already carries the incoming GUID must match in place with NO remap entry,
+    # even when the front text differs and no alias exists — this is exactly the
+    # "reworded twice, alias only bridges one hop" case that used to strand history.
+    apkg = str(tmp_path / "deck.apkg")
+    _make_fake_apkg(apkg, [(1, "stable-guid", "Reworded front, take three")])
+    her = {"Original front wording": "stable-guid"}
+    remap, in_place, as_new = logic.remap_cards(apkg, her, aliases={})
+    assert (remap, in_place, as_new) == ({}, 1, 0)
+
+
+def test_remap_cards_guid_match_wins_over_front_match(tmp_path):
+    # If the incoming GUID already belongs to her card A, a coincidental front-text
+    # match against her card B must not override it: GUID is the deliberate identity.
+    apkg = str(tmp_path / "deck.apkg")
+    _make_fake_apkg(apkg, [(1, "guid-a", "Front of B")])
+    her = {"Front of A": "guid-a", "Front of B": "guid-b"}
+    remap, in_place, as_new = logic.remap_cards(apkg, her, aliases={})
+    assert (remap, in_place, as_new) == ({}, 1, 0)
+
+
+# ------------------------------------------------------------- apkg_models / templates
+_BASIC_MODEL = {
+    "name": "Study Deck - Basic",
+    "css": ".card { color: black; }",
+    "tmpls": [{"name": "Card 1", "qfmt": "{{Front}}", "afmt": "{{Back}}",
+               "ord": 0, "did": None}],
+    "flds": [{"name": "Front"}, {"name": "Back"}],
+    "id": 123, "mod": 456,
+}
+
+
+def test_apkg_models_reads_name_css_templates(tmp_path):
+    apkg = str(tmp_path / "deck.apkg")
+    _make_fake_apkg(apkg, [(1, "g1", "F")], models={"123": _BASIC_MODEL})
+    out = logic.apkg_models(apkg)
+    assert out == {"Study Deck - Basic": {
+        "css": ".card { color: black; }",
+        "tmpls": [("Card 1", "{{Front}}", "{{Back}}")],
+    }}
+
+
+def test_model_shape_ignores_incidental_keys():
+    # ids, mod times, and field lists must not make two otherwise-identical models
+    # "differ" — fields are _ensure_notetypes' job, not the template comparison's.
+    a = dict(_BASIC_MODEL)
+    b = dict(_BASIC_MODEL, id=999, mod=1, flds=[{"name": "Front"}])
+    assert logic.model_shape(a) == logic.model_shape(b)
+
+
+def test_changed_templates_flags_css_and_template_edits():
+    base = logic.model_shape(_BASIC_MODEL)
+    css_changed = dict(base, css=".card { color: red; }")
+    tmpl_changed = dict(base, tmpls=[("Card 1", "{{Front}}<hr>", "{{Back}}")])
+    assert logic.changed_templates({"X": css_changed}, {"X": base}) == ["X"]
+    assert logic.changed_templates({"X": tmpl_changed}, {"X": base}) == ["X"]
+    assert logic.changed_templates({"X": base}, {"X": base}) == []
+
+
+def test_changed_templates_skips_notetypes_the_collection_lacks():
+    # A note type only the .apkg has isn't a template CHANGE — the import creates it
+    # as-is, so there's nothing to reconcile or warn about.
+    shape = logic.model_shape(_BASIC_MODEL)
+    assert logic.changed_templates({"Only in apkg": shape}, {}) == []
 
 
 # ------------------------------------------------------------------ write_personalized
