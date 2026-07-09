@@ -1,13 +1,13 @@
 """Browser-side glue for the live demo: boots the REAL add-on under Pyodide.
 
-Nothing in here re-implements add-on behavior. It installs the same fake-Anki
-harness pytest uses (fake_anki.py, byte-identical to tests/fake_anki.py),
+Nothing in here re-implements add-on behavior. It installs the same mock-Anki
+harness pytest uses (mock_anki.py, byte-identical to tests/mock_anki.py),
 imports the real internpearls package — which builds the real menu — and
 exposes a thin JSON bridge the page's driver calls:
 
   boot()               seed the collection by really syncing the example decks
   menu()               the menu tree recorded from the real _menu()
-  start(wid)/feed(...) run a real menu action via fake_anki.Runner, pausing at
+  start(wid)/feed(...) run a real menu action via mock_anki.Runner, pausing at
                        each real dialog for the user
   collection_state()   current collection state for rendering
   maintainer(op)       edit the real .apkg/manifest files in the source folder
@@ -23,9 +23,9 @@ import tempfile
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import fake_anki
+import mock_anki
 
-FAKE = fake_anki.install()
+MOCK = mock_anki.install()
 
 import internpearls                     # noqa: E402  (real __init__: builds the menu)
 from internpearls import background, collection, config, net, sync  # noqa: E402
@@ -34,7 +34,7 @@ SOURCE = os.environ.get("DEMO_SOURCE", "/source")   # env override for local smo
 INTERVALS = ["2.3 mo", "11 d", "27 d", "6 d", "3.1 mo", "16 d", "9 d", "1.2 mo"]
 SEED_NOTES = {0: "mnemonic: A for A", 4: "ask Dr. P about IV dosing"}
 
-RUNNER = fake_anki.Runner(FAKE, paths=[config.INSTALLED, config.STATE,
+RUNNER = mock_anki.Runner(MOCK, paths=[config.INSTALLED, config.STATE,
                                        collection._USER_FILES])
 
 
@@ -76,10 +76,10 @@ def boot():
     for hook in sys.modules["aqt"].gui_hooks.main_window_did_init:
         hook()
 
-    FAKE.mw._config = {"decks_dir": SOURCE,
+    MOCK.mw._config = {"decks_dir": SOURCE,
                        "scope_tag": config.EXAMPLE_SCOPE_TAG,
                        "export_deck": "Example Decks"}
-    FAKE.col.models._models.clear()   # real note types arrive with the import
+    MOCK.col.models._models.clear()   # real note types arrive with the import
 
     cfg = config._cfg()
     manifest = json.load(open(os.path.join(SOURCE, "manifest.json"),
@@ -87,14 +87,14 @@ def boot():
     sync._run_sync(cfg, manifest,
                    lambda d: os.path.join(SOURCE, d["apkg"]),
                    manifest["decks"], {})
-    FAKE.col.decks.names.setdefault("Example Decks", 999)
+    MOCK.col.decks.names.setdefault("Example Decks", 999)
 
-    for i, note in enumerate(sorted(FAKE.col._notes.values(),
+    for i, note in enumerate(sorted(MOCK.col._notes.values(),
                                     key=lambda n: (n.deck or "", n.id))):
         note.interval = INTERVALS[i % len(INTERVALS)]
         if i in SEED_NOTES and "Notes" in note:
             note["Notes"] = SEED_NOTES[i]
-    for lst in (FAKE.gui.infos, FAKE.gui.tooltips):
+    for lst in (MOCK.gui.infos, MOCK.gui.tooltips):
         lst.clear()
     return collection_state()
 
@@ -115,7 +115,7 @@ def _note_view(n):
 
 def collection_state():
     groups = {}
-    for n in sorted(FAKE.col._notes.values(), key=lambda n: (n.deck or "", n.id)):
+    for n in sorted(MOCK.col._notes.values(), key=lambda n: (n.deck or "", n.id)):
         top = "::".join((n.deck or "Default").split("::")[:2])
         groups.setdefault(top, []).append(_note_view(n))
     return json.dumps({
@@ -125,14 +125,14 @@ def collection_state():
 
 
 def set_note(guid, text):
-    n = FAKE.col.note_by_guid(guid)
+    n = MOCK.col.note_by_guid(guid)
     if "Notes" in n:
         n["Notes"] = text
     return collection_state()
 
 
 def menu():
-    return json.dumps(FAKE.mw._menus[0].tree())
+    return json.dumps(MOCK.mw._menus[0].tree())
 
 
 def get_config():
@@ -151,7 +151,7 @@ def list_files(folder):
 
 # ------------------------------------------------------------ flows / dialogs
 def start(wid):
-    return json.dumps(RUNNER.start(lambda: fake_anki.trigger_action(wid)))
+    return json.dumps(RUNNER.start(lambda: mock_anki.trigger_action(wid)))
 
 
 def feed(response_json):
@@ -159,14 +159,14 @@ def feed(response_json):
 
 
 def flow_tooltips():
-    return json.dumps(list(FAKE.gui.tooltips))
+    return json.dumps(list(MOCK.gui.tooltips))
 
 
 def auto_sync_tick():
-    FAKE.gui.tooltips.clear()
-    fake_anki.reset_run()
+    MOCK.gui.tooltips.clear()
+    mock_anki.reset_run()
     background._auto_sync_check()
-    return json.dumps(list(FAKE.gui.tooltips))
+    return json.dumps(list(MOCK.gui.tooltips))
 
 
 # --------------------------------------------------------------- maintainer
@@ -204,7 +204,7 @@ def _decks():
 
 
 def _first_basic_note(con):
-    fs = fake_anki.FS
+    fs = mock_anki.FS
     for nid, flds in con.execute("select id, flds from notes order by id"):
         if "{{c" not in flds.split(fs)[0]:
             return nid, flds
@@ -215,7 +215,7 @@ def maintainer(op):
     """Edit the real source .apkg + manifest, exactly like a maintainer pushing
     to the deck repo. GUIDs are never touched — which is precisely why the
     reworded card keeps its history when the add-on syncs it."""
-    fs = fake_anki.FS
+    fs = mock_anki.FS
     decks = _decks()
     deck = decks[min(1, len(decks) - 1)]
     path = os.path.join(SOURCE, deck["apkg"])
