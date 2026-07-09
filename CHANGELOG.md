@@ -3,6 +3,28 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.18.0
+
+- Fixed public GitHub repos as a deck source: the token is now genuinely optional.
+  Previously a GitHub source was only used when a token was set, so following the
+  documented "leave the token blank for a public repo" advice silently fell through to
+  "no source configured".
+- Added "Try the example deck" to the Configure source dialog: one click points the
+  add-on at the public `internpearls-example-deck` demo repo, so someone with no deck
+  source of their own can watch a sync work end to end. It also points `scope_tag` and
+  `export_deck` at the example deck's values (only when they're still at their
+  defaults), so field preservation and the pre-sync backup work in the demo too;
+  configuring a GitHub repo or local folder later resets exactly those injected values.
+- The Sync completion dialog no longer claims a pre-sync backup was saved when none was
+  taken (first sync, or the backup failed and you chose to continue); it now says so.
+- "Check what will sync" can be run again after it completes (the button re-enables as
+  "Check again"), instead of sticking disabled at "Preview updated".
+- The background auto-sync poll's manifest fetch now actually uses the tight unattended
+  timeout the docs already claimed for it, rather than the interactive 6-second one.
+- Docs: token-optional-for-public-repos everywhere the token is mentioned; corrected
+  `decks_dir` precedence (GitHub wins when both are somehow set); noted that deck
+  backups live in `user_files/` and are removed by an add-on uninstall.
+
 ## v0.17.0
 
 - Cleaned up the menu bar. Top level is now just Sync decks and Manage decks; everything
