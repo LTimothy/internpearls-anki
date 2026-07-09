@@ -3,6 +3,18 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.19.0
+
+- Sync decks now shows Anki's progress window while each deck downloads and imports
+  ("Syncing <deck> (2 of 5)"), instead of appearing frozen on a slow connection. The
+  unattended auto-sync poll is unchanged; it already ran its downloads off the main
+  thread and reports through tooltips.
+- The GitHub source setup is one dialog with both fields (repo, optional masked
+  token) instead of two prompts in a row, so cancelling the token question no longer
+  throws away the repo you just typed.
+- The blocking waits that remain on the main thread (opening Manage decks, testing a
+  just-saved source, "Check what will sync") now show the busy cursor while they run.
+
 ## v0.18.2
 
 - Internal restructure, no behavior change: the single 1,600-line `__init__.py` is now

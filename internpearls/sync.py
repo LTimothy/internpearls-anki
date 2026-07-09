@@ -19,7 +19,7 @@ from .collection import (_apply_deck, _ensure_notetypes, _her_front_to_guid,
 from .config import INSTALLED, _cfg, _load_json, _save_json
 from .logic import bullets, decks_to_update, remap_cards, write_personalized
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
-from .ui import _ask, _info, _safe, _warn
+from .ui import _ask, _info, _safe, _warn, wait_cursor
 
 
 def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT):
@@ -62,7 +62,8 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT):
 def sync_decks():
     cfg = _cfg()
     try:
-        manifest, fetch, source = _fetch_manifest(cfg)
+        with wait_cursor():
+            manifest, fetch, source = _fetch_manifest(cfg)
     except Exception as e:
         _warn(f"Couldn't reach the deck source: {e}<br><br>"
               "Open <b>Intern Pearls → Manage decks</b> and use Change source to check "
@@ -97,7 +98,17 @@ def sync_decks():
     if not proceed:
         return
 
-    results, restored = _run_sync(cfg, manifest, fetch, todo, installed)
+    # A visible progress window while each deck downloads and imports: the fetches run
+    # on the main thread here (unlike auto-sync's background poll), and a multi-deck
+    # sync on a slow link otherwise looks like a hang.
+    mw.progress.start(label="Syncing decks", immediate=True)
+    try:
+        results, restored = _run_sync(
+            cfg, manifest, fetch, todo, installed,
+            on_progress=lambda i, n, name: mw.progress.update(
+                label=f"Syncing {name} ({i} of {n})"))
+    finally:
+        mw.progress.finish()
     fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
                   if restored else "")
     backup_line = (
@@ -110,7 +121,7 @@ def sync_decks():
           fields_line + backup_line)
 
 
-def _run_sync(cfg, manifest, fetch, todo, installed):
+def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None):
     """Apply every deck in `todo`: fix note types, snapshot protected fields, remap and
     import each deck (keeping the learner's scheduling), restore the snapshotted fields,
     and persist the new installed versions.
@@ -120,14 +131,19 @@ def _run_sync(cfg, manifest, fetch, todo, installed):
     Sync decks flow and the unattended auto-sync poll, so there's exactly one
     implementation of the part that matters for not losing anyone's review history.
     Returns (results, restored): per-deck outcome lines and the note-restore count.
+    `on_progress(i, total, deck_short_name)`, if given, fires before each deck is
+    fetched and applied; the interactive flow uses it to drive Anki's progress window,
+    the unattended auto-sync poll passes nothing.
     """
     aliases = manifest.get("front_aliases", {})   # from the (private) manifest, not config
     _ensure_notetypes()
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
     her = _her_front_to_guid(cfg["scope_tag"])
     results = []
-    for d in todo:
+    for i, d in enumerate(todo, 1):
         short = d["name"].split("::")[-1]
+        if on_progress:
+            on_progress(i, len(todo), short)
         try:
             src = fetch(d)
             in_place, as_new = _apply_deck(src, aliases, her)

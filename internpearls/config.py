@@ -8,7 +8,7 @@ import os
 
 from aqt import mw
 
-ADDON_VERSION = "0.18.2"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.19.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
