@@ -5,6 +5,8 @@
 
 **Update shared Anki decks without losing your review history or the notes you've written on cards.**
 
+**[Try the live demo](https://ltimothy.github.io/internpearls-anki/)** — a simulated Anki in your browser: publish a deck update, sync it, and watch scheduling and personal notes survive. No install, nothing leaves the page.
+
 If you maintain a deck for a study group (or subscribe to one someone else maintains), you've hit the problem: re-importing an updated `.apkg` overwrites every field, wiping the personal annotations people keep on their cards, and a reworded card silently loses its scheduling. This add-on fixes both. One click pulls only the decks that changed from a GitHub repo or local folder, matches cards by GUID so intervals and ease factors carry over, snapshots and restores whichever fields you've marked as yours (`Notes` by default), and backs up the deck automatically before touching anything. It can also sync and update itself on a schedule, if you turn that on.
 
 What it does, in short:
@@ -202,9 +204,17 @@ pip install pytest
 cd addon && pytest tests/ -v
 ```
 
-Tests only cover `logic.py`, no Anki install or running Anki instance needed. They
-build a minimal fake `.apkg` (just a `notes` table, the only part this code reads or
-writes) rather than a full Anki collection.
+No Anki install or running Anki instance is needed for any of them. Two layers:
+
+- `tests/test_logic.py` unit-tests `logic.py` against minimal fake `.apkg` files.
+- `tests/test_sync_flows.py` drives the real `sync`, `collection`, and `background`
+  modules end to end against a fake Anki (`tests/fake_anki.py`): stub `aqt`/`anki`
+  modules plus a fake collection that emulates the one importer behavior everything
+  here defends against — a GUID-matched import overwrites every field. Dialogs are
+  recorded, and `_ask` answers are scripted per test, so whole flows (first sync,
+  protected-field restore, reworded fronts, template consent, auto-sync deferral)
+  are asserted without Qt or a collection file. `conftest.py` wires the fakes in and
+  redirects all persistent state into pytest temp dirs.
 
 ### Repackage after editing
 
