@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Intern Pearls Deck Tools — live demo</title>
-<meta name="description" content="Update shared Anki decks without losing your review history or personal notes. Free, open source, no server — try the whole add-on right here.">
+<title>Intern Pearls Deck Tools — live demo (real code)</title>
+<meta name="description" content="Update shared Anki decks without losing your review history or personal notes. This demo runs the add-on's actual Python code in your browser.">
 <style>
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #6b7280;
@@ -59,9 +59,9 @@
   .hasSub:hover .submenu, .hasSub.open .submenu { display: block; }
 
   .deckarea { padding: 18px 20px 22px; }
+  .bootline { color: var(--muted); font-size: 13px; }
   .deckname { font-weight: 600; margin: 14px 0 8px; }
-  .deckname:first-child { margin-top: 0; }
-  .deckname .sub { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+  .deckname:first-of-type { margin-top: 0; }
   table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;
        padding: 4px 8px; border-bottom: 1px solid var(--line); }
@@ -75,8 +75,6 @@
   .pill.interval { background: var(--pill-keep); color: var(--pill-keep-ink); }
   .pill.new { background: var(--pill-new); color: var(--pill-new-ink); }
   .note { color: var(--warn); font-style: italic; }
-  .flash { animation: flash 1.2s ease; }
-  @keyframes flash { 0% { background: rgba(37,99,235,.18); } 100% { background: transparent; } }
 
   /* ---- maintainer panel ---- */
   .maintainer { margin-top: 20px; padding: 16px 20px 18px; }
@@ -91,42 +89,37 @@
   .btn:disabled { opacity: .45; cursor: default; }
   .shipped { font-size: 13px; color: var(--good); margin-top: 10px; min-height: 20px; }
 
-  /* ---- dialogs (styled after the add-on's Qt dialogs) ---- */
+  /* ---- dialog shell + rendered Qt trees ---- */
   .overlay { position: fixed; inset: 0; background: rgba(15,18,24,.45); display: none;
              align-items: center; justify-content: center; z-index: 50; padding: 20px; }
   .overlay.show { display: flex; }
-  .dialog { width: 520px; max-width: 100%; max-height: 88vh; overflow: auto;
+  .dialog { width: 540px; max-width: 100%; max-height: 88vh; overflow: auto;
             background: var(--panel); color: var(--ink);
             border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
   .dialog .dtitle { padding: 10px 16px; border-bottom: 1px solid var(--line);
             font-size: 13px; font-weight: 600; position: sticky; top: 0;
-            background: var(--panel); }
+            background: var(--panel); z-index: 2; }
   .dialog .dbody { padding: 16px; font-size: 13.5px; }
   .dialog .dbody ul { margin: 8px 0; padding-left: 20px; }
   .dialog .dbtns { display: flex; justify-content: flex-end; gap: 10px; padding: 0 16px 14px; }
-  .dtitle-big { font-size: 17px; font-weight: 600; margin: 0 0 8px; }
-  .dsection { font-weight: 600; margin: 12px 0 4px; }
-  .dmuted { color: var(--muted); }
-  .dhint { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+  .vstack { display: flex; flex-direction: column; gap: 8px; }
+  .hstack { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .scrollbox { max-height: 260px; overflow: auto; }
+  .qframe { border: 1px solid var(--line); border-radius: 6px; padding: 8px 11px; }
+  .qbuttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
   .dinput { width: 100%; font: inherit; font-size: 13.5px; padding: 7px 9px;
             border: 1px solid var(--line); border-radius: 6px;
             background: var(--bg); color: var(--ink); }
+  input.dspin { width: 90px; }
   .linkbtn { background: none; border: 0; color: var(--accent); font: inherit;
              font-size: 12px; cursor: pointer; padding: 2px 4px; }
   .linkbtn:disabled { color: var(--muted); cursor: default; }
-  .deckrow { display: flex; align-items: center; justify-content: space-between;
-             border: 1px solid var(--line); border-radius: 6px; padding: 8px 11px;
-             margin: 6px 0; }
-  .deckrow label { font-weight: 600; display: flex; gap: 8px; align-items: center;
-                   cursor: pointer; }
-  .statuspill { font-size: 12px; }
-  .steps { list-style: none; padding: 0; margin: 8px 0 0; }
-  .steps li { padding: 3px 0 3px 24px; position: relative; color: var(--muted); }
-  .steps li.done::before { content: "✓"; position: absolute; left: 4px; color: var(--good); }
-  .steps li.doing::before { content: "…"; position: absolute; left: 4px; }
-  .steps li.done { color: var(--ink); }
+  .filelist button { display: block; width: 100%; text-align: left; background: none;
+             border: 0; padding: 6px 8px; border-radius: 6px; font: inherit;
+             font-size: 12.5px; color: var(--ink); cursor: pointer;
+             font-family: ui-monospace, Menlo, monospace; }
+  .filelist button:hover { background: var(--bg); }
 
-  /* ---- Anki-style transient tooltip ---- */
   #toast { position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%);
            background: #2b2f36; color: #f5f6f8; font-size: 13px; padding: 9px 16px;
            border-radius: 8px; box-shadow: var(--shadow); opacity: 0;
@@ -156,58 +149,41 @@
   </div>
 </header>
 
-<!-- ======================= simulated Anki ======================= -->
+<!-- ======================= simulated Anki, real add-on ======================= -->
 <div class="anki card">
   <div class="titlebar">
     <span class="dot" style="background:#f66"></span>
     <span class="dot" style="background:#fc3"></span>
     <span class="dot" style="background:#4c4"></span>
-    <span style="margin-left:8px">Anki — simulated, right here in your browser. The whole
-      Intern Pearls menu works.</span>
+    <span style="margin-left:8px">Anki is simulated — but the Intern Pearls menu runs the
+      add-on's <b>actual Python code</b> (via WebAssembly), against the real example
+      deck repo.</span>
   </div>
   <div class="menubar">
     <span>File</span><span>Edit</span><span>Tools</span>
     <span class="ip" id="ipMenuBtn">Intern Pearls
-      <div class="menu" id="ipMenu">
-        <button class="item" data-action="sync">Sync decks</button>
-        <button class="item" data-action="manage">Manage decks</button>
-        <hr>
-        <div class="item hasSub" id="advItem">Advanced <span style="color:var(--muted)">▸</span>
-          <div class="submenu">
-            <button class="item" data-action="importSingle">Import single deck (manual)</button>
-            <button class="item" data-action="fixNotetypes">Fix note types</button>
-            <hr>
-            <button class="item" data-action="backupDeck">Backup intern pearls deck</button>
-            <button class="item" data-action="importDeck">Import intern pearls deck</button>
-            <button class="item" data-action="exportDeck">Export intern pearls deck</button>
-            <hr>
-            <button class="item" data-action="backupColl">Backup full collection</button>
-            <button class="item" data-action="restoreColl">Restore full collection</button>
-            <hr>
-            <button class="item" data-action="checkUpdates">Check for add-on updates</button>
-          </div>
-        </div>
-        <hr>
-        <button class="item" data-action="settings">Settings</button>
-        <button class="item" data-action="about">About</button>
-      </div>
+      <div class="menu" id="ipMenu"><div class="item" style="color:var(--muted)">loading…</div></div>
     </span>
     <span>Help</span>
   </div>
-  <div class="deckarea" id="deckarea"></div>
+  <div class="deckarea" id="deckarea">
+    <div class="bootline" id="bootline">Booting the add-on's Python in your browser…</div>
+  </div>
 </div>
 
 <!-- ======================= maintainer panel ======================= -->
 <div class="maintainer card">
   <h2>You are also the deck maintainer</h2>
-  <p>Publish an update to the deck repo, then use the <b>Intern Pearls</b> menu above —
-     the same two roles this add-on connects in real life. Tip: click any note in the
-     “your notes” column and type your own annotation first, then watch a sync keep it.</p>
+  <p>Publish an update to the deck repo (these buttons edit the real
+     <span class="kbd">.apkg</span> and <span class="kbd">manifest.json</span> the add-on
+     syncs from), then use the <b>Intern Pearls</b> menu above. Tip: click any note in
+     the “your notes” column and type your own annotation first, then watch a sync keep
+     it.</p>
   <div class="btnrow">
-    <button class="btn" id="shipFix">Fix an answer</button>
-    <button class="btn" id="shipReword">Reword a question</button>
-    <button class="btn" id="shipNew">Add a new card</button>
-    <button class="btn" id="shipCss">Restyle the card template</button>
+    <button class="btn" data-ship="fix" disabled>Fix an answer</button>
+    <button class="btn" data-ship="reword" disabled>Reword a question</button>
+    <button class="btn" data-ship="add" disabled>Add a new card</button>
+    <button class="btn" data-ship="restyle" disabled>Restyle the card template</button>
   </div>
   <div class="shipped" id="shipped"></div>
 </div>
@@ -224,193 +200,296 @@
 
 <!-- ======================= explainer ======================= -->
 <div class="explain">
-  <h2>What this add-on actually does (and why it's hard)</h2>
+  <h2>What you're actually looking at</h2>
   <div class="card">
-    <p style="margin-top:0">Re-importing an updated <span class="kbd">.apkg</span> into
-    stock Anki overwrites every field — wiping the personal notes people keep on cards —
-    and a reworded question silently loses its scheduling and starts over as a new card.
-    This add-on fixes both, with nothing but a GitHub repo (or folder) as the "server":</p>
+    <p style="margin-top:0">This page downloads the add-on's real Python modules (the
+    same files shipped inside <span class="kbd">internpearls.ankiaddon</span>) plus the
+    example deck repo's real <span class="kbd">manifest.json</span> and
+    <span class="kbd">.apkg</span> files, and executes them with Pyodide. Only Anki
+    itself is faked — by the same test harness the project's pytest suite uses. Every
+    dialog you see is built by the add-on's own code; every count, warning, and menu
+    item comes out of it at runtime, so this demo cannot drift from the shipped
+    behavior.</p>
     <ul style="font-size:13.5px; color:var(--muted); padding-left:20px">
       <li><b style="color:var(--ink)">A backup first, always.</b> Every sync starts with a
-        timestamped backup of the deck (try Advanced → Import intern pearls deck here to
-        actually roll one back).</li>
+        timestamped backup (try Advanced → Import intern pearls deck to actually roll one
+        back).</li>
       <li><b style="color:var(--ink)">History survives edits.</b> Cards match by a stable
-        GUID first, then by front text, so a reworded question keeps your intervals.</li>
-      <li><b style="color:var(--ink)">Your annotations survive too.</b> Preserved fields
-        (configurable in Manage decks) are snapshotted before the import and restored
-        after it.</li>
-      <li><b style="color:var(--ink)">Appearance changes ask first.</b> A changed card
-        template means a one-time full AnkiWeb sync, so it's applied only with your
-        consent — and never by the unattended auto-sync (turn it on in Settings and
-        ship an update to see; demo minutes run at 5 seconds).</li>
-      <li><b style="color:var(--ink)">Only what changed.</b> A version hash per deck means
-        editing one deck doesn't re-import the other.</li>
+        GUID first, then by front text — reword a question above and sync to see the
+        interval survive.</li>
+      <li><b style="color:var(--ink)">Your annotations survive too.</b> The notes column is
+        the real protected <span class="kbd">Notes</span> field, snapshotted and restored
+        around every import.</li>
+      <li><b style="color:var(--ink)">Appearance changes ask first.</b> Restyle the
+        template above and sync: the real consent dialog explains the one-time full
+        AnkiWeb sync. Auto-sync (Settings; demo minutes last 5 seconds) refuses to apply
+        it unattended.</li>
     </ul>
     <p style="margin-bottom:0">Install the
       <a href="https://github.com/LTimothy/internpearls-anki/releases/latest">add-on</a>,
-      open <b>Manage decks → Configure source → Try the example deck</b>, and you can do
-      all of this inside real Anki in about a minute. Hosting your own decks is a
-      <span class="kbd">manifest.json</span> plus <span class="kbd">.apkg</span> files in any
-      repo — fork the
-      <a href="https://github.com/LTimothy/internpearls-example-deck">example deck source</a>
-      to start.</p>
+      open <b>Manage decks → Configure source → Try the example deck</b>, and this all
+      works identically inside real Anki. Hosting your own decks is a
+      <span class="kbd">manifest.json</span> plus <span class="kbd">.apkg</span> files in
+      any repo — fork the
+      <a href="https://github.com/LTimothy/internpearls-example-deck">example deck source</a>.</p>
   </div>
 </div>
 
 <footer>
-  This page is a self-contained simulation of add-on v0.20.0 — no Anki, no add-on, no
-  data leaves your browser. Dialog wording mirrors the real thing. MIT licensed.
-  Scriptable via <span class="kbd">window.demo</span> for testing.
+  Runs entirely in your browser; nothing you do here leaves the page. Only Anki is
+  simulated — the add-on code is real and mirrored verbatim from
+  <span class="kbd">internpearls/</span> (enforced by the repo's test suite). MIT
+  licensed. Scriptable via <span class="kbd">window.demo</span>.
 </footer>
 </div>
 
 <script>
 (function () {
   "use strict";
-  const VERSION = "0.20.0";
   const $ = (id) => document.getElementById(id);
-
-  // ============================= state =============================
-  // Card content mirrors the real example deck source. It's fetched live from
-  // LTimothy/internpearls-example-deck at load (the same repo "Try the example
-  // deck" points the real add-on at), with this baked-in copy of the same
-  // content as the offline fallback. Max cards shown per deck, to keep the page
-  // readable:
-  const MAX_CARDS = 4;
   const EXAMPLE_REPO = "LTimothy/internpearls-example-deck";
-  const FALLBACK_SPECS = [
-    { deck_name: "Example Decks::ABG Basics", notes: [
-      { front: "What is the normal range for arterial blood pH?",
-        back: "About 7.35 to 7.45." },
-      { front: "Normal arterial values: pCO₂ about [...] mmHg and bicarbonate (HCO₃⁻) about [...] mEq/L.",
-        back: "pCO₂ 35-45 mmHg; HCO₃⁻ 22-26 mEq/L." },
-      { front: "On a blood gas, how do you tell a respiratory problem from a metabolic one?",
-        back: "Look at which value moved in the direction that explains the pH: pCO₂ explains it → respiratory; bicarbonate explains it → metabolic." },
-      { front: "What question does Winter's formula answer when reading a blood gas?",
-        back: "Whether the lungs are compensating appropriately for a metabolic acidosis: it predicts the expected pCO₂ from the measured bicarbonate." },
-    ]},
-    { deck_name: "Example Decks::Pharmacology Basics", notes: [
-      { front: "What does the drug-name suffix \"-olol\" usually tell you about a medication?",
-        back: "It's a beta blocker (for example metoprolol, atenolol, propranolol)." },
-      { front: "NSAIDs such as ibuprofen and naproxen relieve pain by blocking which family of enzymes?",
-        back: "Cyclooxygenase (COX) enzymes, which lowers prostaglandin production." },
-      { front: "In a severe allergic reaction (anaphylaxis), what is the first-line medication?",
-        back: "Epinephrine, given as an intramuscular injection into the outer thigh." },
-      { front: "Why is it easy to accidentally exceed the daily limit of acetaminophen?",
-        back: "It's hidden inside many combination cold, flu, and pain products, so doses from several products add up without you noticing." },
-    ]},
-  ];
-  const INTERVALS = ["2.3 mo", "11 d", "27 d", "6 d", "3.1 mo", "16 d", "9 d", "1.2 mo"];
-  const NOTE_SEEDS = { 0: "mnemonic: A for A", 4: "ask Dr. P about IV dosing" };
+  let py = null, H = null;          // pyodide + demo_harness proxy
+  let autoTimer = null, busy = false;
 
-  const state = {
-    collection: {},              // deck -> [cards]; each card {guid, front, back, interval, note, isNew}
-    installed: {},               // deck -> synced version
-    installedCss: 1,
-    config: { protected: ["Notes"], excluded: [], auto_sync: false, interval: 15,
-              notify: true, auto_update: false,
-              source: { kind: "github", label: "GitHub", repo: EXAMPLE_REPO } },
-    backups: [],                 // {stamp, snapshot}
-    lastCollBackup: null,
-    tplDeferredNotified: new Set(),
-    contentOrigin: "built-in copy",
-    dirty: false,                // once the user ships/syncs, never swap content under them
-  };
-  const source = { decks: {}, cssVersion: 1 };   // the "repo": deck -> {version, notes[]}
-
-  function loadSpecs(specs, origin) {
-    state.collection = {}; state.installed = {};
-    for (const k of Object.keys(source.decks)) delete source.decks[k];
-    let i = 0;
-    for (const spec of specs) {
-      const name = spec.deck_name;
-      const notes = spec.notes.slice(0, MAX_CARDS).map((n, j) => ({
-        guid: name + "#" + j, front: n.front, back: n.back }));
-      source.decks[name] = { version: 1, notes };
-      state.collection[name] = notes.map(n => {
-        const card = { ...n, interval: INTERVALS[i % INTERVALS.length],
-                       note: NOTE_SEEDS[i] || "", isNew: false };
-        i += 1;
-        return card;
-      });
-      state.installed[name] = 1;
-    }
-    state.contentOrigin = origin;
+  // ============================ generic UI bits ============================
+  function toast(msg, ms) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => t.classList.remove("show"), ms || 6000);
   }
-  loadSpecs(FALLBACK_SPECS, "built-in copy");
 
-  // Cloze text -> a front with blanks and a back with them filled in.
-  const clozeFront = (t) => t.replace(/\{\{c\d+::(.*?)(::.*?)?\}\}/g, "[...]");
-  const clozeBack = (t) => t.replace(/\{\{c\d+::(.*?)(::.*?)?\}\}/g, "$1");
-
-  function specToNotes(spec) {
-    const out = [];
-    const blocks = spec.subdecks || [{ notes: spec.notes || [] }];
-    for (const sd of blocks) {
-      for (const n of sd.notes || []) {
-        if (n.type === "cloze" && n.text) out.push({ front: clozeFront(n.text),
-                                                     back: clozeBack(n.text) });
-        else if (n.front) out.push({ front: n.front, back: n.back || "" });
+  function dialogShell(title, bodyEl, buttons) {
+    return new Promise((resolve) => {
+      $("dtitle").textContent = title || "Intern Pearls";
+      const body = $("dbody");
+      body.innerHTML = "";
+      body.appendChild(bodyEl);
+      const bts = $("dbtns");
+      bts.innerHTML = "";
+      for (const [label, primary, value] of buttons) {
+        const b = document.createElement("button");
+        b.className = "btn" + (primary ? " primary" : "");
+        b.textContent = label;
+        b.onclick = () => { $("overlay").classList.remove("show"); resolve(value()); };
+        bts.appendChild(b);
       }
-    }
-    return out;
+      $("overlay").classList.add("show");
+      window.demo._resolve = (v) => { $("overlay").classList.remove("show"); resolve(v); };
+    });
   }
 
-  const demoReady = (async function fetchLiveContent() {
-    const raw = "https://raw.githubusercontent.com/" + EXAMPLE_REPO + "/main/";
+  const htmlDiv = (html) => { const d = document.createElement("div"); d.innerHTML = html; return d; };
+
+  // ===================== Qt widget-tree -> DOM renderer =====================
+  // The add-on's Qt stylesheets are plain CSS declarations, so they apply
+  // directly — the dialogs literally carry their own styling from dialogs.py.
+  function renderTree(node, ctx) {
+    let el;
+    switch (node.t) {
+      case "label":
+        el = document.createElement("div");
+        el.innerHTML = node.text;
+        break;
+      case "check": {
+        el = document.createElement("label");
+        el.style.display = "flex"; el.style.gap = "7px"; el.style.alignItems = "center";
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.checked = node.checked; cb.dataset.wid = node.id;
+        ctx.inputs.push(cb);
+        el.appendChild(cb);
+        el.appendChild(htmlDiv(node.label));
+        break;
+      }
+      case "line": {
+        el = document.createElement("input");
+        el.className = "dinput";
+        el.type = node.password ? "password" : "text";
+        el.value = node.value; el.placeholder = node.placeholder || "";
+        el.dataset.wid = node.id;
+        ctx.inputs.push(el);
+        break;
+      }
+      case "spin": {
+        el = document.createElement("span");
+        const inp = document.createElement("input");
+        inp.className = "dinput dspin"; inp.type = "number";
+        inp.min = node.min; inp.max = node.max; inp.value = node.value;
+        inp.dataset.wid = node.id; inp.dataset.spin = "1";
+        ctx.inputs.push(inp);
+        el.appendChild(inp);
+        el.appendChild(document.createTextNode(node.suffix || ""));
+        break;
+      }
+      case "button": {
+        el = document.createElement("button");
+        el.textContent = node.label;
+        el.className = /color:\s*#2563eb/.test(node.style) ? "linkbtn" : "btn";
+        el.disabled = !node.enabled;
+        if (node.tooltip) el.title = node.tooltip;
+        el.onclick = () => ctx.click(node.id);
+        break;
+      }
+      case "buttons":
+        el = document.createElement("div");
+        el.className = "qbuttons";
+        for (const c of node.children) el.appendChild(renderTree(c, ctx));
+        return el;
+      case "scroll":
+        el = document.createElement("div");
+        el.className = "scrollbox";
+        for (const c of node.children) el.appendChild(renderTree(c, ctx));
+        return el;
+      case "frame":
+        el = document.createElement("div");
+        el.className = "qframe";
+        for (const c of node.children) el.appendChild(renderTree(c, ctx));
+        return el;
+      case "row": case "col": case "box": {
+        el = document.createElement("div");
+        el.className = node.t === "row" ? "hstack" : "vstack";
+        for (const c of node.children) el.appendChild(renderTree(c, ctx));
+        return el;
+      }
+      default:
+        el = document.createElement("div");
+    }
+    if (node.style) {
+      // Qt stylesheet declarations are CSS; strip selectors like "#deckRow {…}".
+      const css = node.style.includes("{")
+        ? (node.style.match(/\{([^}]*)\}/) || [, ""])[1] : node.style;
+      el.style.cssText += ";" + css;
+      if (/border/.test(css) && node.t !== "button") el.classList.add("qframe");
+    }
+    return el;
+  }
+
+  // ====================== payload -> user -> response ======================
+  async function showPayload(p) {
+    if (p.kind === "info" || p.kind === "warn") {
+      await dialogShell("Intern Pearls", htmlDiv(p.text), [["OK", true, () => ({})]]);
+      return {};
+    }
+    if (p.kind === "ask") {
+      return dialogShell("Intern Pearls", htmlDiv(p.text),
+        [["No", false, () => ({ answer: false })],
+         ["Yes", true, () => ({ answer: true })]]);
+    }
+    if (p.kind === "prompt") {
+      const body = htmlDiv("<div>" + p.text + "</div>");
+      const inp = document.createElement("input");
+      inp.className = "dinput"; inp.value = p.default || "";
+      body.appendChild(inp);
+      return dialogShell("Intern Pearls", body,
+        [["Cancel", false, () => ({ text: "", ok: false })],
+         ["OK", true, () => ({ text: inp.value, ok: true })]]);
+    }
+    if (p.kind === "msgbox") {
+      return dialogShell(p.title || "Intern Pearls", htmlDiv(p.text),
+        p.buttons.map((b) => [b.label, b.label !== "Cancel",
+                              () => ({ events: [{ id: b.id, click: true }] })]));
+    }
+    if (p.kind === "file" || p.kind === "savefile") {
+      if (p.kind === "savefile") {
+        const path = "/exports/" + (p.fname || "export.apkg");
+        const body = htmlDiv("<div>" + p.title + "</div><div class='kbd' " +
+          "style='margin-top:8px'>" + path + "</div>");
+        return dialogShell("Intern Pearls", body,
+          [["Cancel", false, () => ({ path: null })],
+           ["Save", true, () => ({ path })]]);
+      }
+      const files = JSON.parse(H.list_files(p.dir || "/source"));
+      const body = htmlDiv("<div>" + p.title + "</div>");
+      const list = document.createElement("div");
+      list.className = "filelist";
+      return dialogShell("Intern Pearls", (() => {
+        for (const f of files.filter((f) => f.endsWith(".apkg"))) {
+          const b = document.createElement("button");
+          b.textContent = f;
+          b.onclick = () => window.demo._resolve({ path: f });
+          list.appendChild(b);
+        }
+        if (!list.children.length) list.appendChild(htmlDiv(
+          "<span style='color:var(--muted)'>No .apkg files here yet.</span>"));
+        body.appendChild(list);
+        return body;
+      })(), [["Cancel", false, () => ({ path: null })]]);
+    }
+    // p.kind === "dialog": a real Qt dialog tree from dialogs.py
+    return new Promise((resolve) => {
+      const ctx = {
+        inputs: [],
+        click(wid) {
+          const events = ctx.inputs.map((i) => ({
+            id: i.dataset.wid,
+            value: i.type === "checkbox" ? i.checked
+                 : i.dataset.spin ? parseInt(i.value || "0", 10) : i.value,
+          }));
+          events.push({ id: wid, click: true });
+          $("overlay").classList.remove("show");
+          resolve({ events });
+        },
+      };
+      const body = renderTree(p.tree, ctx);
+      $("dtitle").textContent = p.title || "Intern Pearls";
+      $("dbody").innerHTML = "";
+      $("dbody").appendChild(body);
+      $("dbtns").innerHTML = "";
+      $("overlay").classList.add("show");
+    });
+  }
+
+  async function runFlow(wid) {
+    if (busy || !H) return;
+    busy = true;
     try {
-      const manifest = await (await fetch(raw + "manifest.json")).json();
-      const specs = [];
-      for (const d of manifest.decks) {
-        const spec = await (await fetch(raw + d.spec)).json();
-        specs.push({ deck_name: d.name, notes: specToNotes(spec) });
+      let r = JSON.parse(H.start(wid));
+      while (r.status === "need") {
+        const resp = await showPayload(r.payload);
+        r = JSON.parse(H.feed(JSON.stringify(resp)));
       }
-      if (specs.length && !state.dirty) {
-        loadSpecs(specs, "live from " + EXAMPLE_REPO);
-        render();
-      }
-    } catch (e) { /* offline or repo hiccup: the built-in copy stands */ }
-    return state.contentOrigin;
-  })();
+      const tips = JSON.parse(H.flow_tooltips());
+      if (tips.length) toast(tips.join(" · "));
+      refresh();
+    } catch (e) {
+      console.error(e);
+      toast("Demo error: " + e);
+    } finally {
+      busy = false;
+    }
+  }
 
-  const deckNames = () => Object.keys(source.decks);
-  let autoSyncTimer = null;
-
-  // ============================= rendering =============================
-  function render(flashGuids) {
+  // ============================ rendering state ============================
+  const clozeFront = (t) => t.replace(/\{\{c\d+::(.*?)(::.*?)?\}\}/g, "[...]");
+  function refresh() {
+    const state = JSON.parse(H.collection_state());
     const area = $("deckarea");
     area.innerHTML = "";
-    const origin = document.createElement("div");
-    origin.style.cssText = "color:var(--muted);font-size:11.5px;margin-bottom:8px";
-    origin.textContent = "Card content: " + state.contentOrigin +
-      " — the same source “Try the example deck” uses in real Anki.";
-    area.appendChild(origin);
-    for (const [name, cards] of Object.entries(state.collection)) {
+    for (const deck of state.decks) {
       const head = document.createElement("div");
       head.className = "deckname";
-      head.innerHTML = name.split("::").join(" ▸ ") +
-        ' <span class="sub">— your collection</span>';
+      head.textContent = deck.name.split("::").join(" ▸ ");
       area.appendChild(head);
       const table = document.createElement("table");
       table.innerHTML = "<thead><tr><th style='width:48%'>Card front</th>" +
         "<th>Scheduling</th><th>Your notes on the card (click to edit)</th></tr></thead>";
       const tb = document.createElement("tbody");
-      for (const c of cards) {
+      for (const c of deck.cards) {
         const tr = document.createElement("tr");
-        if (flashGuids && flashGuids.has(c.guid)) tr.className = "flash";
-        const pill = c.isNew ? '<span class="pill new">new card</span>'
-                             : '<span class="pill interval">due in ' + c.interval + "</span>";
-        tr.innerHTML = '<td class="front">' + c.front +
+        const pill = c.interval
+          ? '<span class="pill interval">due in ' + c.interval + "</span>"
+          : '<span class="pill new">new card</span>';
+        tr.innerHTML = '<td class="front">' + clozeFront(c.front) +
           '<div style="color:var(--muted);font-size:12px">' + c.back + "</div></td>" +
           "<td>" + pill + "</td>";
         const noteTd = document.createElement("td");
         noteTd.className = "noteCell";
         noteTd.contentEditable = "plaintext-only";
-        noteTd.innerHTML = c.note ? '<span class="note">' + c.note + "</span>" : "";
+        noteTd.innerHTML = c.notes ? '<span class="note">' + c.notes + "</span>" : "";
         noteTd.addEventListener("blur", () => {
-          const v = noteTd.textContent.trim();
-          if (v !== c.note) { c.note = v; state.dirty = true; }
-          render();
+          H.set_note(c.guid, noteTd.textContent.trim());
+          refresh();
         });
         tr.appendChild(noteTd);
         tb.appendChild(tr);
@@ -418,557 +497,128 @@
       table.appendChild(tb);
       area.appendChild(table);
     }
-  }
-
-  function toast(msg, ms) {
-    const t = $("toast");
-    t.textContent = msg;
-    t.classList.add("show");
-    clearTimeout(t._timer);
-    t._timer = setTimeout(() => t.classList.remove("show"), ms || 5000);
-  }
-
-  // dialog framework: buttons = [[label, primary, onClick|null, keepOpen]]
-  function dialog(title, html, buttons) {
-    $("dtitle").textContent = title;
-    $("dbody").innerHTML = html;
-    const bts = $("dbtns");
-    bts.innerHTML = "";
-    for (const [label, primary, fn, keepOpen] of buttons) {
-      const b = document.createElement("button");
-      b.className = "btn" + (primary ? " primary" : "");
-      b.textContent = label;
-      b.onclick = () => { if (!keepOpen) closeDialog(); if (fn) fn(); };
-      bts.appendChild(b);
+    // auto-sync timer follows the REAL config (demo: 1 min ≈ 5 s)
+    const cfg = JSON.parse(H.get_config());
+    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+    if (cfg.auto_sync) {
+      autoTimer = setInterval(() => {
+        if (busy || $("overlay").classList.contains("show")) return;
+        const tips = JSON.parse(H.auto_sync_tick());
+        if (tips.length) { toast(tips.join(" · ")); refresh(); }
+      }, cfg.interval * 5000);
     }
-    $("overlay").classList.add("show");
-  }
-  function closeDialog() { $("overlay").classList.remove("show"); }
-  function info(html, then) { dialog("Intern Pearls", html, [["OK", true, then]]); }
-  function ask(html, onYes, onNo, yes, no) {
-    dialog("Intern Pearls", html,
-      [[no || "No", false, onNo || null], [yes || "Yes", true, onYes]]);
   }
 
-  // ============================= sync engine =============================
-  const short = (name) => name.split("::").pop();
-  function decksToUpdate() {
-    return Object.entries(source.decks)
-      .filter(([n, d]) => !state.config.excluded.includes(n) &&
-                          state.installed[n] !== d.version)
-      .map(([n, d]) => [n, d]);
-  }
-  const templatePending = () => state.installedCss !== source.cssVersion;
-
-  function takeDeckBackup() {
-    const stamp = new Date().toISOString().slice(0, 19).replace("T", "-").replace(/:/g, "");
-    state.backups.unshift({ stamp: "Intern Pearls " + stamp + ".apkg",
-      snapshot: JSON.parse(JSON.stringify(state.collection)) });
-    state.backups = state.backups.slice(0, 10);
-    return state.backups[0];
-  }
-
-  function applyDeck(name, deck) {
-    // the real sequence in miniature: snapshot preserved fields, match GUID-first,
-    // import (which overwrites every field), restore the preserved fields
-    state.dirty = true;
-    const preserveNotes = state.config.protected.includes("Notes");
-    const mine = state.collection[name];
-    const touched = new Set();
-    let kept = 0, added = 0;
-    for (const n of deck.notes) {
-      const c = mine.find(x => x.guid === n.guid) ||
-                mine.find(x => x.front === n.front);           // front-text fallback
-      if (c) {
-        if (c.front !== n.front || c.back !== n.back) touched.add(n.guid);
-        const saved = c.note;                                   // snapshot
-        c.guid = n.guid; c.front = n.front; c.back = n.back;    // import overwrites
-        c.note = preserveNotes ? saved : "";                    // restore (if protected)
-        kept += 1;
-      } else {
-        mine.push({ guid: n.guid, front: n.front, back: n.back,
-                    interval: "", note: "", isNew: true });
-        touched.add(n.guid); added += 1;
+  // =============================== menu ===============================
+  function buildMenu() {
+    const tree = JSON.parse(H.menu());
+    const menu = $("ipMenu");
+    menu.innerHTML = "";
+    const addItems = (items, host) => {
+      for (const n of items) {
+        if (n.t === "sep") { host.appendChild(document.createElement("hr")); continue; }
+        if (n.t === "menu") {
+          const div = document.createElement("div");
+          div.className = "item hasSub";
+          div.innerHTML = n.label + ' <span style="color:var(--muted)">▸</span>';
+          const sub = document.createElement("div");
+          sub.className = "submenu";
+          addItems(n.items, sub);
+          div.appendChild(sub);
+          div.addEventListener("click", (e) => {
+            if (e.target.closest(".submenu")) return;
+            div.classList.toggle("open");
+            e.stopPropagation();
+          });
+          host.appendChild(div);
+          continue;
+        }
+        const b = document.createElement("button");
+        b.className = "item";
+        b.textContent = n.label;
+        b.onclick = (e) => { closeMenu(); e.stopPropagation(); runFlow(n.id); };
+        host.appendChild(b);
       }
-    }
-    state.installed[name] = deck.version;
-    return { kept, added, touched };
-  }
-
-  function previewDeck(name, deck) {
-    const mine = state.collection[name];
-    let kept = 0, added = 0;
-    for (const n of deck.notes) {
-      if (mine.some(x => x.guid === n.guid || x.front === n.front)) kept += 1;
-      else added += 1;
-    }
-    return { kept, added };
-  }
-
-  function syncDecks() {
-    const todo = decksToUpdate();
-    if (!todo.length && !templatePending()) {
-      info("All selected decks are up to date (source: " + state.config.source.label + ").");
-      return;
-    }
-    const lines = todo.map(([n, d]) => {
-      const tag = !(n in state.installed) ? ", new deck" : "";
-      return "<li><b>" + short(n) + "</b> (" + d.notes.length + " cards" + tag + ")</li>";
-    }).join("");
-    ask("Update these decks?<ul>" + lines + "</ul>" +
-        "Your review history and any personal notes on existing cards are kept " +
-        "(matched by card, not overwritten). A backup is taken automatically first, " +
-        "so this is safe to undo if anything looks wrong afterward.",
-        () => runSyncAnimation(todo), null, "Yes", "Cancel");
-  }
-
-  function runSyncAnimation(todo) {
-    takeDeckBackup();
-    const steps = [
-      "Back up the Intern Pearls deck (timestamped .apkg)",
-      "Snapshot your preserved fields (" + state.config.protected.join(", ") + ")",
-      "Match incoming cards — GUID first, then front text",
-      "Import with scheduling disabled (your intervals win)",
-      "Restore your preserved fields",
-    ];
-    dialog("Intern Pearls", "<b>Syncing " + todo.map(([n]) => short(n)).join(", ") +
-      "…</b><ul class='steps' id='steps'>" +
-      steps.map(s => "<li>" + s + "</li>").join("") + "</ul>", []);
-    const lis = $("dbody").querySelectorAll("#steps li");
-    let i = 0;
-    (function tick() {
-      if (i > 0) lis[i - 1].className = "done";
-      if (i < lis.length) { lis[i].className = "doing"; i += 1; setTimeout(tick, 380); }
-      else setTimeout(() => finishSync(todo), 220);
-    })();
-  }
-
-  function finishSync(todo) {
-    const allTouched = new Set();
-    const results = [];
-    for (const [n, d] of todo) {
-      const { kept, added, touched } = applyDeck(n, d);
-      touched.forEach(g => allTouched.add(g));
-      results.push("✓ <b>" + short(n) + "</b>: " + kept + " kept history, " + added + " new");
-    }
-    render(allTouched);
-    $("shipped").textContent = "";
-    const summary = "<b>Sync complete</b> (source: " + state.config.source.label + ")" +
-      "<ul>" + results.map(r => "<li>" + r + "</li>").join("") + "</ul>" +
-      "A pre-sync backup of the Intern Pearls deck was saved; use <i>Advanced → Import " +
-      "intern pearls deck</i> to revert to it if needed.";
-    if (templatePending()) info(summary, () => setTimeout(offerTemplate, 120));
-    else info(summary);
-  }
-
-  function offerTemplate() {
-    ask("This update also changes how some cards look (template or styling) for: " +
-        "<b>Study Deck - Basic</b>.<br><br>Apply the new look now? Anki treats this as " +
-        "a schema change, so your next AnkiWeb sync will be a one-time full sync — " +
-        "choose “Upload to AnkiWeb” when asked.<br><br>Choosing No keeps your current " +
-        "card appearance; your review history and card content are unaffected either way.",
-        () => { state.installedCss = source.cssVersion;
-                info("Card template updated. Remember: your next AnkiWeb sync will ask " +
-                     "for a one-time full sync."); },
-        () => { state.installedCss = source.cssVersion; });
-  }
-
-  // ============================= manage decks =============================
-  const STATE_STYLE = { new: ["New", "var(--accent)"],
-                        update: ["Update available", "var(--warn)"],
-                        current: ["Up to date", "var(--muted)"] };
-
-  function manageDecks() {
-    const rows = Object.entries(source.decks).map(([n, d]) => ({
-      name: n, short: short(n), cards: d.notes.length,
-      enabled: !state.config.excluded.includes(n),
-      state: !(n in state.installed) ? "new"
-             : (state.installed[n] === d.version ? "current" : "update"),
-    }));
-    const anyPending = rows.some(r => r.state !== "current");
-    const deckRows = rows.map((r, i) => {
-      const [label, color] = STATE_STYLE[r.state];
-      return '<div class="deckrow"><label><input type="checkbox" data-deck="' + r.name +
-        '" ' + (r.enabled ? "checked" : "") + "> " + r.short + "</label>" +
-        '<span class="statuspill" id="pill' + i + '" style="color:' + color + '">' +
-        r.cards + " cards · " + label + "</span></div>";
-    }).join("");
-    dialog("Intern Pearls: Manage decks",
-      '<div class="dtitle-big">Manage decks</div>' +
-      '<div style="display:flex;gap:8px;align-items:center">' +
-      '<span class="dmuted">Source: ' + state.config.source.label + "</span>" +
-      '<button class="linkbtn" id="changeSource">Change source</button></div>' +
-      '<p class="dmuted" style="margin:8px 0">Check the decks you want to keep synced. ' +
-      "Unchecking one stops future syncs for it; cards already imported stay in your " +
-      "collection until you delete them in Anki.</p>" +
-      '<div style="display:flex;gap:4px;align-items:center">' +
-      '<button class="linkbtn" id="selAll">Select all</button>' +
-      '<button class="linkbtn" id="selNone">Select none</button>' +
-      '<span style="flex:1"></span>' +
-      '<button class="linkbtn" id="previewBtn"' + (anyPending ? "" : " disabled") + ">" +
-      (anyPending ? "Check what will sync" : "All decks up to date") + "</button></div>" +
-      deckRows +
-      '<div class="dsection">Preserved fields</div>' +
-      '<input class="dinput" id="pfEdit" value="' + state.config.protected.join(", ") + '">' +
-      '<div class="dhint">Comma-separated fields holding your own annotations. Sync ' +
-      "snapshots and restores them, so importing an updated deck never overwrites what " +
-      "you've written.</div>" +
-      '<div class="dhint" style="margin-top:8px">Save keeps these choices for your next ' +
-      "sync. Save and sync now also pulls the selected decks right away.</div>",
-      [["Cancel", false],
-       ["Save and sync now", false, () => { saveManage(rows); syncDecks(); }],
-       ["Save", true, () => { saveManage(rows); reportManageSave(rows); }]]);
-
-    $("changeSource").onclick = () => { closeDialog(); configureSource(() => manageDecks()); };
-    $("selAll").onclick = () => $("dbody").querySelectorAll("input[type=checkbox]")
-      .forEach(cb => { cb.checked = true; });
-    $("selNone").onclick = () => $("dbody").querySelectorAll("input[type=checkbox]")
-      .forEach(cb => { cb.checked = false; });
-    const pv = $("previewBtn");
-    if (anyPending) pv.onclick = () => {
-      rows.forEach((r, i) => {
-        if (r.state === "current") return;
-        const { kept, added } = previewDeck(r.name, source.decks[r.name]);
-        const pill = $("pill" + i);
-        pill.textContent = kept + " kept · " + added + " new";
-        pill.style.color = "var(--muted)";
-      });
-      pv.textContent = "Check again";
     };
+    addItems(tree, menu);
   }
 
-  function saveManage(rows) {
-    const checks = $("dbody").querySelectorAll("input[type=checkbox]");
-    state.config.excluded = [...checks].filter(cb => !cb.checked)
-      .map(cb => cb.dataset.deck);
-    const pf = $("pfEdit").value.split(",").map(s => s.trim()).filter(Boolean);
-    state.config.protected = pf.length ? [...new Set(pf)] : ["Notes"];
-  }
-
-  function reportManageSave(rows) {
-    const kept = rows.length - state.config.excluded.length;
-    const scope = state.config.excluded.length
-      ? kept + " of " + rows.length + " deck(s) are set to sync (" +
-        state.config.excluded.length + " excluded)"
-      : "All " + kept + " deck(s) are set to sync";
-    const next = state.config.auto_sync
-      ? " Auto-sync is on, so these will keep applying on their own."
-      : " Nothing synced yet, run <b>Sync decks</b> when you're ready to pull them " +
-        "(or use <i>Save and sync now</i> next time to do both at once).";
-    info("Saved. " + scope + ", preserving " + state.config.protected.join(", ") +
-         ".<br><br>" + next);
-  }
-
-  // ============================= configure source =============================
-  function configureSource(then) {
-    dialog("Intern Pearls: Configure deck source",
-      "Where should decks come from?<br><br><span class='dmuted'>No decks of your own " +
-      "yet? Try the example deck: a small public demo repo you can sync right away, and " +
-      "swap out later.</span>",
-      [["Cancel", false, then],
-       ["Try the example deck", false, () => {
-          state.config.source = { kind: "github", label: "GitHub",
-                                  repo: "LTimothy/internpearls-example-deck" };
-          info("Saved and connected to <b>GitHub</b>, found " +
-               Object.keys(source.decks).length + " deck(s).<br><br>Run <i>Intern " +
-               "Pearls → Sync decks</i> whenever you're ready.", then);
-        }],
-       ["Local folder", false, () => githubOrFolderForm("folder", then)],
-       ["GitHub repo", true, () => githubOrFolderForm("github", then)]]);
-  }
-
-  function githubOrFolderForm(kind, then) {
-    if (kind === "github") {
-      dialog("Intern Pearls: GitHub deck source",
-        '<div class="dsection" style="margin-top:0">Repo</div>' +
-        '<input class="dinput" id="srcRepo" placeholder="owner/name" value="' +
-        (state.config.source.repo || "") + '">' +
-        '<div class="dsection">Access token</div>' +
-        '<input class="dinput" id="srcToken" type="password">' +
-        '<div class="dhint">Leave blank for a public repo. A private one needs a ' +
-        "read-only token; it's hidden as you type and stored only in this add-on's " +
-        "local config.</div>",
-        [["Cancel", false, then],
-         ["OK", true, () => {
-            const repo = $("srcRepo").value.trim() || "LTimothy/internpearls-example-deck";
-            state.config.source = { kind: "github", label: "GitHub", repo };
-            info("Saved and connected to <b>GitHub</b>, found " +
-                 Object.keys(source.decks).length + " deck(s).<br><br>Run <i>Intern " +
-                 "Pearls → Sync decks</i> whenever you're ready.", then);
-          }, true]]);
-    } else {
-      dialog("Intern Pearls",
-        '<div class="dsection" style="margin-top:0">Folder with manifest.json + .apkg ' +
-        'files:</div><input class="dinput" id="srcDir" value="~/decks">',
-        [["Cancel", false, then],
-         ["OK", true, () => {
-            state.config.source = { kind: "folder", label: "local folder" };
-            info("Saved and connected to <b>local folder</b>, found " +
-                 Object.keys(source.decks).length + " deck(s).<br><br>Run <i>Intern " +
-                 "Pearls → Sync decks</i> whenever you're ready.", then);
-          }, true]]);
-    }
-  }
-
-  // ============================= settings / about =============================
-  function openSettings() {
-    const c = state.config;
-    dialog("Intern Pearls: Settings",
-      '<div class="dtitle-big">Settings</div>' +
-      '<div class="dsection">Deck sync</div>' +
-      '<label style="display:block"><input type="checkbox" id="sAuto"' +
-      (c.auto_sync ? " checked" : "") +
-      "> Sync decks automatically when updates are available</label>" +
-      '<div style="margin:6px 0">Check every <input class="dinput" id="sInt" ' +
-      'type="number" min="1" max="1440" value="' + c.interval +
-      '" style="width:80px;display:inline-block"> min ' +
-      '<span class="dhint" style="display:inline">(demo: a minute lasts 5 seconds)</span></div>' +
-      '<div class="dhint">Checks the source in the background and applies any changed ' +
-      "decks without asking. A backup is still taken first, the same as a manual sync. " +
-      "The check itself is built not to freeze Anki even on a slow or dead connection: " +
-      "it fails fast and tries again at the next check.</div>" +
-      '<div class="dsection" style="margin-top:14px">Add-on updates</div>' +
-      '<label style="display:block"><input type="checkbox" id="sNotify"' +
-      (c.notify ? " checked" : "") + "> Notify me when a new add-on version is out</label>" +
-      '<label style="display:block"><input type="checkbox" id="sAutoUp"' +
-      (c.auto_update ? " checked" : "") + "> Install add-on updates automatically</label>" +
-      '<div class="dhint">Checked once per launch rather than on a repeating timer, ' +
-      "since a new add-on release isn't as time-sensitive as a new deck. Either way, " +
-      "Anki needs a restart to load the new version.</div>",
-      [["Cancel", false],
-       ["Save", true, () => {
-          c.auto_sync = $("sAuto").checked;
-          c.interval = Math.max(1, parseInt($("sInt").value, 10) || 15);
-          c.notify = $("sNotify").checked;
-          c.auto_update = $("sAutoUp").checked;
-          restartAutoSync();
-          const syncLine = c.auto_sync
-            ? "Deck sync checks every " + c.interval + " minute(s) and applies updates " +
-              "on its own."
-            : "Deck sync stays manual, use Sync decks when you're ready.";
-          const upLine = c.auto_update ? "Add-on updates install automatically."
-            : (c.notify ? "You'll get a notice when a new add-on version is out."
-                        : "Add-on update checks are off.");
-          info("Settings saved.<br><br>" + syncLine + "<br>" + upLine);
-        }, true]]);
-  }
-
-  function about() {
-    const c = state.config;
-    const syncStatus = c.auto_sync
-      ? "on, checking every " + c.interval + " minute(s)" : "off";
-    const upStatus = c.auto_update ? "installs automatically"
-      : (c.notify ? "notifies you, you install it" : "off");
-    info("<b>Intern Pearls Deck Tools</b> &nbsp;<span class='dmuted'>v" + VERSION +
-      "</span><br><br>Keeps a set of Anki decks in sync with a source you control, " +
-      "without losing review history or the annotations you keep in any preserved " +
-      "field. Cards are matched by ID, preserved fields are snapshotted and restored " +
-      "around every import, and a backup runs automatically before anything changes." +
-      "<br><br><b>Current settings</b><ul>" +
-      "<li>Auto-sync: " + syncStatus + "</li>" +
-      "<li>Add-on updates: " + upStatus + "</li>" +
-      "<li>Preserved fields: " + (c.protected.join(", ") || "none set") + "</li></ul>" +
-      "Change these under <i>Manage decks</i> (which decks, which fields, and where " +
-      "from) or <i>Settings</i> (how automatic).<br><br>No deck content ships with the " +
-      "add-on itself. Set your source, a GitHub repo or a local folder, from <i>Manage " +
-      "decks</i>.<br><br><a href='https://github.com/LTimothy/internpearls-anki'>" +
-      "github.com/LTimothy/internpearls-anki</a>");
-  }
-
-  // ============================= advanced =============================
-  function backupDeckNow() {
-    const b = takeDeckBackup();
-    info("Backed up the Intern Pearls deck to:<br><code>user_files/deck_backups/" +
-         b.stamp + "</code>");
-  }
-
-  function importDeckBackup() {
-    if (!state.backups.length) {
-      info("No deck backups yet. Sync decks takes one automatically, or use " +
-           "<i>Backup intern pearls deck</i> first.");
-      return;
-    }
-    const b = state.backups[0];
-    ask("Import " + b.stamp + "? Matching cards are updated in place, keeping their " +
-        "scheduling; anything not already here is added as new. A backup is taken " +
-        "automatically first.",
-        () => {
-          takeDeckBackup();
-          state.collection = JSON.parse(JSON.stringify(b.snapshot));
-          for (const name of Object.keys(state.collection)) {
-            // rolling back content means the source may differ again
-            if (source.decks[name] &&
-                JSON.stringify(source.decks[name].notes) !==
-                JSON.stringify(state.collection[name].map(
-                  c => ({ guid: c.guid, front: c.front, back: c.back })))) {
-              delete state.installed[name];
-            }
-          }
-          render();
-          info("Imported <code>" + b.stamp + "</code>.");
-        }, null, "Yes", "Cancel");
-  }
-
-  function exportDeck() {
-    const n = Object.values(state.collection).reduce((a, c) => a + c.length, 0);
-    info("Exported <b>" + n + "</b> note(s) from Intern Pearls::Intern Custom to:<br>" +
-         "<code>~/Intern Pearls " + new Date().toISOString().slice(0, 10) +
-         ".apkg</code><br><br>Review history, deck options, and media are all included, " +
-         "this is a complete, standalone copy of just this deck.");
-  }
-
-  function actions(action) {
-    ({
-      sync: syncDecks,
-      manage: manageDecks,
-      settings: openSettings,
-      about,
-      backupDeck: backupDeckNow,
-      importDeck: importDeckBackup,
-      exportDeck,
-      importSingle: () => {
-        const deck = deckNames()[1] || deckNames()[0];
-        const fname = short(deck).replace(/ /g, "_") + "_test_build.apkg";
-        const pv = previewDeck(deck, source.decks[deck]);
-        ask("This picks one .apkg outside your configured source — a deck someone " +
-            "sent you directly, or a build you're testing. The demo simulates " +
-            "choosing <code>" + fname + "</code>.<br><br>" +
-            pv.kept + " card(s) will keep their history, " + pv.added + " will be " +
-            "added as new. A backup is taken automatically first. Import now?",
-            () => { takeDeckBackup();
-                    const { kept, added, touched } = applyDeck(deck, source.decks[deck]);
-                    render(touched);
-                    info("Imported " + fname + ": " + kept + " kept history, " +
-                         added + " new."); },
-            null, "Yes", "Cancel");
-      },
-      fixNotetypes: () => info(
-        "Note types are already up to date, no changes needed."),
-      backupColl: () => { state.lastCollBackup = JSON.parse(JSON.stringify(state.collection));
-        info("Backed up your whole collection (every deck) to:<br>" +
-             "<code>~/Anki/backups/</code>"); },
-      restoreColl: () => ask(
-        "This opens Anki's own backup picker so you can revert your whole collection " +
-        "(every deck, not just Intern Pearls ones) to an earlier point. Anki will ask " +
-        "you to confirm the specific backup before doing anything. Continue?",
-        () => {
-          if (!state.lastCollBackup) { info("No collection backup in this demo yet — " +
-            "use <i>Backup full collection</i> first."); return; }
-          state.collection = JSON.parse(JSON.stringify(state.lastCollBackup));
-          render();
-          info("Collection restored from backup.");
-        }, null, "Yes", "Cancel"),
-      checkUpdates: () => info(
-        "You're on the latest version (v" + VERSION + ")."),
-    }[action] || (() => {}))();
-  }
-
-  // ============================= auto-sync =============================
-  function restartAutoSync() {
-    if (autoSyncTimer) { clearInterval(autoSyncTimer); autoSyncTimer = null; }
-    if (!state.config.auto_sync) return;
-    autoSyncTimer = setInterval(autoSyncCheck, state.config.interval * 5000);
-  }
-
-  function autoSyncCheck() {
-    if ($("overlay").classList.contains("show")) return;   // don't fight a dialog
-    const todo = decksToUpdate();
-    if (!todo.length) return;
-    const deferred = [], applied = [];
-    takeDeckBackup();
-    const allTouched = new Set();
-    for (const [n, d] of todo) {
-      if (templatePending()) { deferred.push(n); continue; }
-      const { touched } = applyDeck(n, d);
-      touched.forEach(g => allTouched.add(g));
-      applied.push(n);
-    }
-    if (applied.length) { render(allTouched); $("shipped").textContent = ""; }
-    const newDeferred = deferred.filter(n => !state.tplDeferredNotified.has(n));
-    deferred.forEach(n => state.tplDeferredNotified.add(n));
-    if (!applied.length && !newDeferred.length) return;
-    let msg = "Intern Pearls: auto-synced " + applied.length + " deck(s) (source: " +
-      state.config.source.label + ")";
-    if (newDeferred.length) msg += ", " + newDeferred.length + " deck(s) include a " +
-      "card-template update — run Sync decks to review it";
-    toast(msg, 6000);
-  }
-
-  // ============================= maintainer actions =============================
-  // These edit whatever content is loaded (live or fallback), so they work no
-  // matter what the example repo's decks say this week.
-  function ship(deck, label) {
-    state.dirty = true;
-    source.decks[deck].version += 1;
-    $("shipped").textContent = "Pushed to the deck repo: " + label + "  (" +
-      short(deck) + " v" + source.decks[deck].version +
-      ") — now use the Intern Pearls menu above.";
-  }
-  const CLARIFIED = " (Clarified in today's update.)";
-  $("shipFix").onclick = () => {
-    const deck = deckNames()[0], n = source.decks[deck].notes[0];
-    if (!n.back.endsWith(CLARIFIED)) n.back += CLARIFIED;
-    ship(deck, "clarified an answer in " + short(deck));
+  const closeMenu = () => {
+    $("ipMenu").classList.remove("show");
+    $("ipMenuBtn").classList.remove("open");
+    document.querySelectorAll(".hasSub.open").forEach((d) => d.classList.remove("open"));
   };
-  $("shipReword").onclick = () => {
-    const deck = deckNames()[1] || deckNames()[0], n = source.decks[deck].notes[0];
-    if (!/ — and why\?$/.test(n.front)) {
-      n.front = n.front.replace(/\??$/, "") + " — and why?";
-    }
-    ship(deck, "reworded a question in " + short(deck) + " (GUID kept stable)");
-  };
-  $("shipNew").onclick = () => {
-    const deck = deckNames()[1] || deckNames()[0];
-    if (!source.decks[deck].notes.some(n => n.guid === "demo-extra")) {
-      source.decks[deck].notes.push({ guid: "demo-extra",
-        front: "Which route gets epinephrine working fastest in anaphylaxis?",
-        back: "Intramuscular, into the outer thigh." });
-    }
-    ship(deck, "added a new card to " + short(deck));
-  };
-  $("shipCss").onclick = () => {
-    const deck = deckNames()[1] || deckNames()[0];
-    source.cssVersion += 1;
-    source.decks[deck].version += 1;
-    ship(deck, "restyled the card template (bigger font, night-mode colors)");
-  };
-
-  // ============================= menu wiring =============================
-  const menuBtn = $("ipMenuBtn"), menu = $("ipMenu");
-  menuBtn.addEventListener("click", (e) => {
-    if (e.target.closest(".item")) return;   // item clicks handled below
-    menu.classList.toggle("show");
-    menuBtn.classList.toggle("open");
+  $("ipMenuBtn").addEventListener("click", (e) => {
+    if (e.target.closest(".item")) return;
+    $("ipMenu").classList.toggle("show");
+    $("ipMenuBtn").classList.toggle("open");
     e.stopPropagation();
   });
-  $("advItem").addEventListener("click", (e) => {
-    if (e.target.closest(".submenu")) return;
-    $("advItem").classList.toggle("open");
-    e.stopPropagation();
-  });
-  menu.addEventListener("click", (e) => {
-    const item = e.target.closest("[data-action]");
-    if (!item) return;
-    e.stopPropagation();
-    menu.classList.remove("show");
-    menuBtn.classList.remove("open");
-    $("advItem").classList.remove("open");
-    actions(item.dataset.action);
-  });
-  document.addEventListener("click", () => {
-    menu.classList.remove("show");
-    menuBtn.classList.remove("open");
-    $("advItem").classList.remove("open");
+  document.addEventListener("click", closeMenu);
+
+  // ============================ maintainer ============================
+  document.querySelectorAll("[data-ship]").forEach((b) => {
+    b.onclick = () => {
+      const r = JSON.parse(H.maintainer(b.dataset.ship));
+      $("shipped").textContent = "Pushed to the deck repo: " + r.label +
+        " — now use the Intern Pearls menu above.";
+    };
   });
 
-  render();
+  // =============================== boot ===============================
+  const status = (msg) => { const el = $("bootline"); if (el) el.textContent = msg; };
+  async function fetchInto(url, path) {
+    const buf = await (await fetch(url)).arrayBuffer();
+    py.FS.writeFile(path, new Uint8Array(buf));
+  }
 
-  // Scriptable handle: lets automated checks (and future UI prototyping) drive the
-  // simulation the way tests drive the add-on — window.demo.run("manage"), inspect
-  // window.demo.state, etc.
-  window.demo = { state, source, run: actions, sync: syncDecks, render,
-                  autoSyncCheck, ready: demoReady,
-                  dialogOpen: () => $("overlay").classList.contains("show") };
+  async function boot() {
+    try {
+      status("Loading the Python runtime (WebAssembly, ~10 MB, cached after the first visit)…");
+      await new Promise((ok, err) => {
+        const s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js";
+        s.onload = ok; s.onerror = err;
+        document.head.appendChild(s);
+      });
+      py = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/" });
+      await py.loadPackage("sqlite3");   // unvendored from Pyodide's stdlib
+
+      status("Downloading the add-on's real source…");
+      py.FS.mkdirTree("/app/internpearls");
+      py.FS.mkdirTree("/source/decks");
+      const files = await (await fetch("addon/files.json")).json();
+      await Promise.all(files.map((f) => fetchInto(
+        "addon/" + f,
+        f === "fake_anki.py" ? "/app/" + f : "/app/internpearls/" + f)));
+      await fetchInto("demo_harness.py", "/app/demo_harness.py");
+
+      status("Downloading the example deck repo (the same source real Anki syncs)…");
+      const raw = "https://raw.githubusercontent.com/" + EXAMPLE_REPO + "/main/";
+      const manifest = await (await fetch(raw + "manifest.json")).json();
+      py.FS.writeFile("/source/manifest.json",
+                      new TextEncoder().encode(JSON.stringify(manifest)));
+      await Promise.all(manifest.decks.map((d) =>
+        fetchInto(raw + d.apkg, "/source/" + d.apkg)));
+
+      status("Importing the example decks through the add-on's real sync…");
+      py.runPython("import sys; sys.path.insert(0, '/app')");
+      H = py.pyimport("demo_harness");
+      H.boot();
+      buildMenu();
+      refresh();
+      document.querySelectorAll("[data-ship]").forEach((b) => { b.disabled = false; });
+      window.demo.ready = true;
+    } catch (e) {
+      console.error(e);
+      status("Couldn't boot the live demo (" + e + "). The add-on itself is unaffected — " +
+             "see the README for what this page normally shows.");
+    }
+  }
+
+  window.demo = { ready: false, runFlow, refresh: () => refresh(),
+                  harness: () => H, py: () => py };
+  boot();
 })();
 </script>
 </body>
