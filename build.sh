@@ -9,13 +9,13 @@ rm -f ../internpearls.ankiaddon
 zip -j ../internpearls.ankiaddon ./*.py manifest.json config.json config.md >/dev/null
 echo "built internpearls.ankiaddon"
 
-# Mirror the add-on source (plus the shared fake-Anki harness) into docs/addon/
+# Mirror the add-on source (plus the shared mock-Anki harness) into docs/addon/
 # for the GitHub Pages live demo, which executes these exact files under
 # Pyodide. tests/test_demo_parity.py fails if these copies go stale.
 mkdir -p ../docs/addon
 rm -f ../docs/addon/*.py
 cp ./*.py ../docs/addon/
-cp ../tests/fake_anki.py ../docs/addon/fake_anki.py
+cp ../tests/mock_anki.py ../docs/addon/mock_anki.py
 (cd ../docs/addon && ls ./*.py | sed 's|^\./||' | \
   python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))' \
   > files.json)

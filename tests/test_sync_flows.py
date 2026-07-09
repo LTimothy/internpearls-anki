@@ -1,13 +1,13 @@
 """End-to-end flow tests over the real sync/collection/background modules,
-running against the fake Anki from fake_anki.py (see conftest.py for wiring).
+running against the mock Anki from mock_anki.py (see conftest.py for wiring).
 
 These drive the same code paths a click on Sync decks (or the auto-sync timer)
 runs, with a real manifest + .apkg local-folder source built per test — the only
-things faked are Anki itself and the dialogs, which are recorded and scripted.
+things mocked are Anki itself and the dialogs, which are recorded and scripted.
 """
 import json
 
-from fake_anki import make_apkg, make_model
+from mock_anki import make_apkg, make_model
 
 SCOPE = "InternPearls"
 TAGS = f"{SCOPE}::Pharm"

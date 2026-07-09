@@ -1,4 +1,4 @@
-"""Drives the REAL dialogs.py and __init__.py code through fake_anki's widget
+"""Drives the REAL dialogs.py and __init__.py code through mock_anki's widget
 layer — the same replay protocol the GitHub Pages demo uses, so anything green
 here is exactly what the demo (and Anki) executes.
 
@@ -9,15 +9,15 @@ deterministic, so the replay is exact.
 """
 import json
 
-import fake_anki
-from fake_anki import make_apkg
+import mock_anki
+from mock_anki import make_apkg
 
 
 def drive(anki, fn, respond):
     """Run `fn` to completion via the same snapshot-and-replay Runner the demo
     driver uses, answering each surfaced dialog through `respond`."""
     from internpearls import collection, sync
-    runner = fake_anki.Runner(anki, paths=[sync.INSTALLED, collection._USER_FILES])
+    runner = mock_anki.Runner(anki, paths=[sync.INSTALLED, collection._USER_FILES])
     runner.drive(fn, respond)
 
 
@@ -51,7 +51,7 @@ def _write_source(tmp_path, deck="Intern Pearls::Intern Custom::Pharm", version=
 
 # ------------------------------------------------------------------------ menu
 def test_real_menu_structure():
-    menu = fake_anki.load_addon_init()
+    menu = mock_anki.load_addon_init()
     tree = menu.tree()
     labels = [n.get("label") for n in tree if n["t"] == "item"]
     assert labels == ["Sync decks", "Manage decks", "Settings", "About"]
@@ -68,11 +68,11 @@ def test_real_menu_structure():
 
 
 def test_menu_actions_call_real_functions(anki, tmp_path):
-    menu = fake_anki.load_addon_init()
+    menu = mock_anki.load_addon_init()
     tree = menu.tree()
     sync_item = next(n for n in tree if n.get("label") == "Sync decks")
     # no source configured -> the real sync_decks warns about exactly that
-    fake_anki.trigger_action(sync_item["id"])
+    mock_anki.trigger_action(sync_item["id"])
     assert any("No deck source configured" in w for w in anki.gui.warnings)
 
 
