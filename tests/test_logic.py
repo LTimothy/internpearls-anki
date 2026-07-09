@@ -1,7 +1,7 @@
 """Tests for internpearls/logic.py.
 
 Pure Python, no Anki/aqt install required: run with `pytest` from the addon/ directory.
-These build a minimal fake .apkg (a zip with just a "notes" table) since that's all the
+These build a minimal mock .apkg (a zip with just a "notes" table) since that's all the
 logic under test ever reads or writes; the many other tables a real Anki collection
 has are irrelevant to this code.
 """
@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "internpearls")
 import logic  # noqa: E402
 
 
-def _make_fake_apkg(path, notes, models=None):
+def _make_mock_apkg(path, notes, models=None):
     """notes: list of (id, guid, front) tuples. Writes a zip with collection.anki2.
     `models`, if given, is the col.models JSON value (a {model_id: model_dict} map,
     the legacy format genanki writes) so apkg_models has something to read."""
@@ -289,7 +289,7 @@ def test_parse_fields_custom_default():
 # --------------------------------------------------------------------- apkg_notes
 def test_apkg_notes_reads_id_front_guid(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
-    _make_fake_apkg(apkg, [(1, "guid-a", "Front A"), (2, "guid-b", "Front B")])
+    _make_mock_apkg(apkg, [(1, "guid-a", "Front A"), (2, "guid-b", "Front B")])
     rows = logic.apkg_notes(apkg)
     assert sorted(rows) == [(1, "Front A", "guid-a"), (2, "Front B", "guid-b")]
 
@@ -308,7 +308,7 @@ def test_apkg_notes_rejects_non_apkg_zip(tmp_path):
 # ----------------------------------------------------------------------- remap_cards
 def test_remap_cards_end_to_end(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
-    _make_fake_apkg(apkg, [
+    _make_mock_apkg(apkg, [
         (1, "apkg-guid-matched", "Matches directly"),
         (2, "apkg-guid-aliased", "New wording"),
         (3, "apkg-guid-new", "Never seen before"),
@@ -330,7 +330,7 @@ def test_remap_cards_end_to_end(tmp_path):
 
 def test_remap_cards_no_matches_are_all_new(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
-    _make_fake_apkg(apkg, [(1, "g1", "Nobody has this")])
+    _make_mock_apkg(apkg, [(1, "g1", "Nobody has this")])
     remap, in_place, as_new = logic.remap_cards(apkg, her={}, aliases={})
     assert (remap, in_place, as_new) == ({}, 0, 1)
 
@@ -340,7 +340,7 @@ def test_remap_cards_guid_already_matches_needs_no_rewrite(tmp_path):
     # unchanged deck), it counts as in-place but must NOT be added to remap — rewriting
     # it to itself is pointless churn.
     apkg = str(tmp_path / "deck.apkg")
-    _make_fake_apkg(apkg, [(1, "shared-guid", "Same front")])
+    _make_mock_apkg(apkg, [(1, "shared-guid", "Same front")])
     her = {"Same front": "shared-guid"}
     remap, in_place, as_new = logic.remap_cards(apkg, her, aliases={})
     assert (remap, in_place, as_new) == ({}, 1, 0)
@@ -350,7 +350,7 @@ def test_remap_cards_alias_target_also_missing_is_new(tmp_path):
     # An alias records a rename, but if the learner's collection has NEITHER the new
     # wording nor the old one the alias points to, the card is genuinely new to her.
     apkg = str(tmp_path / "deck.apkg")
-    _make_fake_apkg(apkg, [(1, "g1", "New wording")])
+    _make_mock_apkg(apkg, [(1, "g1", "New wording")])
     aliases = {"New wording": "Old wording"}   # but "Old wording" isn't in her map
     remap, in_place, as_new = logic.remap_cards(apkg, her={}, aliases=aliases)
     assert (remap, in_place, as_new) == ({}, 0, 1)
@@ -362,7 +362,7 @@ def test_remap_cards_matches_by_guid_before_front(tmp_path):
     # even when the front text differs and no alias exists — this is exactly the
     # "reworded twice, alias only bridges one hop" case that used to strand history.
     apkg = str(tmp_path / "deck.apkg")
-    _make_fake_apkg(apkg, [(1, "stable-guid", "Reworded front, take three")])
+    _make_mock_apkg(apkg, [(1, "stable-guid", "Reworded front, take three")])
     her = {"Original front wording": "stable-guid"}
     remap, in_place, as_new = logic.remap_cards(apkg, her, aliases={})
     assert (remap, in_place, as_new) == ({}, 1, 0)
@@ -372,7 +372,7 @@ def test_remap_cards_guid_match_wins_over_front_match(tmp_path):
     # If the incoming GUID already belongs to her card A, a coincidental front-text
     # match against her card B must not override it: GUID is the deliberate identity.
     apkg = str(tmp_path / "deck.apkg")
-    _make_fake_apkg(apkg, [(1, "guid-a", "Front of B")])
+    _make_mock_apkg(apkg, [(1, "guid-a", "Front of B")])
     her = {"Front of A": "guid-a", "Front of B": "guid-b"}
     remap, in_place, as_new = logic.remap_cards(apkg, her, aliases={})
     assert (remap, in_place, as_new) == ({}, 1, 0)
@@ -391,7 +391,7 @@ _BASIC_MODEL = {
 
 def test_apkg_models_reads_name_css_templates(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
-    _make_fake_apkg(apkg, [(1, "g1", "F")], models={"123": _BASIC_MODEL})
+    _make_mock_apkg(apkg, [(1, "g1", "F")], models={"123": _BASIC_MODEL})
     out = logic.apkg_models(apkg)
     assert out == {"Study Deck - Basic": {
         "css": ".card { color: black; }",
@@ -427,7 +427,7 @@ def test_changed_templates_skips_notetypes_the_collection_lacks():
 def test_write_personalized_rewrites_only_remapped_guids(tmp_path):
     src = str(tmp_path / "src.apkg")
     out = str(tmp_path / "out.apkg")
-    _make_fake_apkg(src, [
+    _make_mock_apkg(src, [
         (1, "original-guid-1", "Front 1"),
         (2, "original-guid-2", "Front 2"),
     ])
@@ -443,16 +443,16 @@ def test_write_personalized_preserves_media_and_manifest(tmp_path):
     # survive untouched — otherwise images silently vanish from synced cards.
     src = str(tmp_path / "src.apkg")
     out = str(tmp_path / "out.apkg")
-    _make_fake_apkg(src, [(1, "g1", "Front 1")])
+    _make_mock_apkg(src, [(1, "g1", "Front 1")])
     with zipfile.ZipFile(src, "a") as z:      # add media the way a genanki package would
         z.writestr("media", '{"0": "femoral.jpg"}')
-        z.writestr("0", b"\xff\xd8\xff-fake-jpeg-bytes")
+        z.writestr("0", b"\xff\xd8\xff-mock-jpeg-bytes")
     logic.write_personalized(src, {1: "new-guid"}, out)
     with zipfile.ZipFile(out) as z:
         names = set(z.namelist())
         assert {"collection.anki2", "media", "0"} <= names
         assert z.read("media") == b'{"0": "femoral.jpg"}'
-        assert z.read("0") == b"\xff\xd8\xff-fake-jpeg-bytes"
+        assert z.read("0") == b"\xff\xd8\xff-mock-jpeg-bytes"
     # and the GUID rewrite still took effect
     assert logic.apkg_notes(out)[0][2] == "new-guid"
 

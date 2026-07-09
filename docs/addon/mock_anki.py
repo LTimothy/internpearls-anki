@@ -1,7 +1,7 @@
-"""A fake Anki, deep enough to run the add-on's real code without an Anki install.
+"""A mock Anki, deep enough to run the add-on's real code without an Anki install.
 
 `install()` registers stub `aqt` / `anki` modules in sys.modules and returns a
-FakeAnki handle. Two consumers share it, which is the whole point — one fake,
+MockAnki handle. Two consumers share it, which is the whole point — one mock,
 no parallel implementations:
 
 - pytest (tests/conftest.py) drives the real sync/collection/background flows
@@ -103,7 +103,7 @@ def make_model(name="Study Deck - Basic", fields=None, css=".card { color: black
 
 
 def make_apkg(path, notes, model=None):
-    """Write a fake .apkg the add-on can fully process.
+    """Write a mock .apkg the add-on can fully process.
 
     `notes`: list of (guid, fields_list, tags_string). Includes the col.models
     JSON (so _template_changes has something to read) and a tags column (so
@@ -130,7 +130,7 @@ def make_apkg(path, notes, model=None):
 
 
 # ============================== collection ==============================
-class FakeNote:
+class MockNote:
     def __init__(self, nid, guid, model, values, tags, deck=None):
         self.id, self.guid, self.model, self.tags = nid, guid, model, list(tags)
         self.deck = deck
@@ -195,7 +195,7 @@ class _Db:
 
 
 def _read_apkg(path):
-    """(notes, models_by_mid, deck_by_nid) from a real or fake .apkg. Every
+    """(notes, models_by_mid, deck_by_nid) from a real or mock .apkg. Every
     table beyond `notes` is optional so minimal test fixtures keep working."""
     with zipfile.ZipFile(path) as z:
         with tempfile.TemporaryDirectory() as d:
@@ -226,7 +226,7 @@ def _read_apkg(path):
     return rows, models, deck_by_nid
 
 
-class FakeCollection:
+class MockCollection:
     def __init__(self):
         self._notes = {}
         self._next_id = 1
@@ -239,7 +239,7 @@ class FakeCollection:
     # -- helpers for tests and the demo --------------------------------------
     def add_note(self, guid, values, tags, model=None, deck=None):
         model = model or self.models.all()[0]
-        note = FakeNote(self._next_id, guid, model, values, tags, deck)
+        note = MockNote(self._next_id, guid, model, values, tags, deck)
         self._notes[self._next_id] = note
         self._next_id += 1
         return note
@@ -261,7 +261,7 @@ class FakeCollection:
         return self._notes[nid]
 
     def update_note(self, note):
-        pass   # FakeNote is mutated in place
+        pass   # MockNote is mutated in place
 
     def _register_models(self, models_by_mid):
         for m in models_by_mid.values():
@@ -295,7 +295,7 @@ class FakeCollection:
                     self.decks.names.setdefault(deck, len(self.decks.names) + 1)
 
     def export_anki_package(self, out_path, options, limit):
-        """A real (minimal) .apkg of the whole fake collection, so a backup made
+        """A real (minimal) .apkg of the whole mock collection, so a backup made
         here can actually be re-imported through import_anki_package."""
         db = out_path + ".tmp.db"
         if os.path.exists(db):
@@ -784,9 +784,9 @@ def trigger_action(wid):
 
 
 # ============================== mw / modules ==============================
-class FakeMW:
+class MockMW:
     def __init__(self, gui):
-        self.col = FakeCollection()
+        self.col = MockCollection()
         self._config = {}
         self.addonManager = types.SimpleNamespace(
             getConfig=lambda pkg: dict(self._config),
@@ -813,12 +813,12 @@ class FakeMW:
         self._gui.tooltips.append("(Anki's own backup picker would open here)")
 
 
-class FakeAnki:
+class MockAnki:
     """Handle returned by install(): .mw, .col, .gui for driving and asserting."""
 
     def __init__(self):
         self.gui = Gui()
-        self.mw = FakeMW(self.gui)
+        self.mw = MockMW(self.gui)
 
     @property
     def col(self):
@@ -840,8 +840,8 @@ class Runner:
     can act on directly; drive() is the synchronous convenience loop for tests.
     """
 
-    def __init__(self, fake, paths=()):
-        self.fake = fake
+    def __init__(self, mock, paths=()):
+        self.mock = mock
         self.paths = list(paths)
         self._fn = None
         self._snap = None
@@ -859,13 +859,13 @@ class Runner:
         return out
 
     def _take(self):
-        return {"col": copy.deepcopy(self.fake.mw.col),
-                "config": dict(self.fake.mw._config),
+        return {"col": copy.deepcopy(self.mock.mw.col),
+                "config": dict(self.mock.mw._config),
                 "files": self._files()}
 
     def _restore(self):
-        self.fake.mw.col = copy.deepcopy(self._snap["col"])
-        self.fake.mw._config = dict(self._snap["config"])
+        self.mock.mw.col = copy.deepcopy(self._snap["col"])
+        self.mock.mw._config = dict(self._snap["config"])
         for p in list(self._files()):
             if p not in self._snap["files"]:
                 os.remove(p)
@@ -877,12 +877,12 @@ class Runner:
     def start(self, fn):
         self._fn = fn
         self._snap = self._take()
-        self.fake.gui.interactions = []
-        self.fake.gui.interactive = True
+        self.mock.gui.interactions = []
+        self.mock.gui.interactive = True
         return self._go()
 
     def feed(self, response):
-        self.fake.gui.interactions.append(response)
+        self.mock.gui.interactions.append(response)
         return self._go()
 
     def _go(self):
@@ -915,9 +915,9 @@ def load_addon_init():
 
 def install():
     global _gui
-    fake = FakeAnki()
-    _gui = fake.gui
-    gui, mw = fake.gui, fake.mw
+    mock = MockAnki()
+    _gui = mock.gui
+    gui, mw = mock.gui, mock.mw
 
     aqt = types.ModuleType("aqt")
     aqt.mw = mw
@@ -1018,4 +1018,4 @@ def install():
     sys.modules.pop("aqt.operations", None)
     sys.modules["anki"] = anki
     sys.modules["anki.collection"] = anki_collection
-    return fake
+    return mock
