@@ -204,9 +204,9 @@
      the same two roles this add-on connects in real life. Tip: click any note in the
      “your notes” column and type your own annotation first, then watch a sync keep it.</p>
   <div class="btnrow">
-    <button class="btn" id="shipFix">Fix an answer (ABG deck)</button>
-    <button class="btn" id="shipReword">Reword a question (Pharm deck)</button>
-    <button class="btn" id="shipNew">Add a new card (Pharm deck)</button>
+    <button class="btn" id="shipFix">Fix an answer</button>
+    <button class="btn" id="shipReword">Reword a question</button>
+    <button class="btn" id="shipNew">Add a new card</button>
     <button class="btn" id="shipCss">Restyle the card template</button>
   </div>
   <div class="shipped" id="shipped"></div>
@@ -271,23 +271,37 @@
   const $ = (id) => document.getElementById(id);
 
   // ============================= state =============================
-  const DECKS = {
-    "Intern Pearls::Intern Custom::Pharmacology": [
-      { guid: "g1", front: "First-line drug for anaphylaxis?",
-        back: "Epinephrine IM.", interval: "2.3 mo", note: "ask Dr. P about IV dosing" },
-      { guid: "g2", front: "Reversal agent for heparin?",
-        back: "Protamine sulfate.", interval: "11 d", note: "" },
-    ],
-    "Intern Pearls::Intern Custom::ABG Analysis": [
-      { guid: "g3", front: "Normal arterial pH range?",
-        back: "7.35–7.45.", interval: "27 d", note: "mnemonic: A for A" },
-      { guid: "g4", front: "Winter's formula — what does it check?",
-        back: "Expected pCO₂ for a given metabolic acidosis (adequate respiratory compensation).",
-        interval: "6 d", note: "" },
-    ],
-  };
-  const PHARM = "Intern Pearls::Intern Custom::Pharmacology";
-  const ABG = "Intern Pearls::Intern Custom::ABG Analysis";
+  // Card content mirrors the real example deck source. It's fetched live from
+  // LTimothy/internpearls-example-deck at load (the same repo "Try the example
+  // deck" points the real add-on at), with this baked-in copy of the same
+  // content as the offline fallback. Max cards shown per deck, to keep the page
+  // readable:
+  const MAX_CARDS = 4;
+  const EXAMPLE_REPO = "LTimothy/internpearls-example-deck";
+  const FALLBACK_SPECS = [
+    { deck_name: "Example Decks::ABG Basics", notes: [
+      { front: "What is the normal range for arterial blood pH?",
+        back: "About 7.35 to 7.45." },
+      { front: "Normal arterial values: pCO₂ about [...] mmHg and bicarbonate (HCO₃⁻) about [...] mEq/L.",
+        back: "pCO₂ 35-45 mmHg; HCO₃⁻ 22-26 mEq/L." },
+      { front: "On a blood gas, how do you tell a respiratory problem from a metabolic one?",
+        back: "Look at which value moved in the direction that explains the pH: pCO₂ explains it → respiratory; bicarbonate explains it → metabolic." },
+      { front: "What question does Winter's formula answer when reading a blood gas?",
+        back: "Whether the lungs are compensating appropriately for a metabolic acidosis: it predicts the expected pCO₂ from the measured bicarbonate." },
+    ]},
+    { deck_name: "Example Decks::Pharmacology Basics", notes: [
+      { front: "What does the drug-name suffix \"-olol\" usually tell you about a medication?",
+        back: "It's a beta blocker (for example metoprolol, atenolol, propranolol)." },
+      { front: "NSAIDs such as ibuprofen and naproxen relieve pain by blocking which family of enzymes?",
+        back: "Cyclooxygenase (COX) enzymes, which lowers prostaglandin production." },
+      { front: "In a severe allergic reaction (anaphylaxis), what is the first-line medication?",
+        back: "Epinephrine, given as an intramuscular injection into the outer thigh." },
+      { front: "Why is it easy to accidentally exceed the daily limit of acetaminophen?",
+        back: "It's hidden inside many combination cold, flu, and pain products, so doses from several products add up without you noticing." },
+    ]},
+  ];
+  const INTERVALS = ["2.3 mo", "11 d", "27 d", "6 d", "3.1 mo", "16 d", "9 d", "1.2 mo"];
+  const NOTE_SEEDS = { 0: "mnemonic: A for A", 4: "ask Dr. P about IV dosing" };
 
   const state = {
     collection: {},              // deck -> [cards]; each card {guid, front, back, interval, note, isNew}
@@ -295,24 +309,82 @@
     installedCss: 1,
     config: { protected: ["Notes"], excluded: [], auto_sync: false, interval: 15,
               notify: true, auto_update: false,
-              source: { kind: "github", label: "GitHub", repo: "LTimothy/internpearls-example-deck" } },
+              source: { kind: "github", label: "GitHub", repo: EXAMPLE_REPO } },
     backups: [],                 // {stamp, snapshot}
     lastCollBackup: null,
     tplDeferredNotified: new Set(),
+    contentOrigin: "built-in copy",
+    dirty: false,                // once the user ships/syncs, never swap content under them
   };
   const source = { decks: {}, cssVersion: 1 };   // the "repo": deck -> {version, notes[]}
-  for (const [name, cards] of Object.entries(DECKS)) {
-    state.collection[name] = cards.map(c => ({ ...c, isNew: false }));
-    state.installed[name] = 1;
-    source.decks[name] = { version: 1,
-      notes: cards.map(c => ({ guid: c.guid, front: c.front, back: c.back })) };
+
+  function loadSpecs(specs, origin) {
+    state.collection = {}; state.installed = {};
+    for (const k of Object.keys(source.decks)) delete source.decks[k];
+    let i = 0;
+    for (const spec of specs) {
+      const name = spec.deck_name;
+      const notes = spec.notes.slice(0, MAX_CARDS).map((n, j) => ({
+        guid: name + "#" + j, front: n.front, back: n.back }));
+      source.decks[name] = { version: 1, notes };
+      state.collection[name] = notes.map(n => {
+        const card = { ...n, interval: INTERVALS[i % INTERVALS.length],
+                       note: NOTE_SEEDS[i] || "", isNew: false };
+        i += 1;
+        return card;
+      });
+      state.installed[name] = 1;
+    }
+    state.contentOrigin = origin;
   }
+  loadSpecs(FALLBACK_SPECS, "built-in copy");
+
+  // Cloze text -> a front with blanks and a back with them filled in.
+  const clozeFront = (t) => t.replace(/\{\{c\d+::(.*?)(::.*?)?\}\}/g, "[...]");
+  const clozeBack = (t) => t.replace(/\{\{c\d+::(.*?)(::.*?)?\}\}/g, "$1");
+
+  function specToNotes(spec) {
+    const out = [];
+    const blocks = spec.subdecks || [{ notes: spec.notes || [] }];
+    for (const sd of blocks) {
+      for (const n of sd.notes || []) {
+        if (n.type === "cloze" && n.text) out.push({ front: clozeFront(n.text),
+                                                     back: clozeBack(n.text) });
+        else if (n.front) out.push({ front: n.front, back: n.back || "" });
+      }
+    }
+    return out;
+  }
+
+  const demoReady = (async function fetchLiveContent() {
+    const raw = "https://raw.githubusercontent.com/" + EXAMPLE_REPO + "/main/";
+    try {
+      const manifest = await (await fetch(raw + "manifest.json")).json();
+      const specs = [];
+      for (const d of manifest.decks) {
+        const spec = await (await fetch(raw + d.spec)).json();
+        specs.push({ deck_name: d.name, notes: specToNotes(spec) });
+      }
+      if (specs.length && !state.dirty) {
+        loadSpecs(specs, "live from " + EXAMPLE_REPO);
+        render();
+      }
+    } catch (e) { /* offline or repo hiccup: the built-in copy stands */ }
+    return state.contentOrigin;
+  })();
+
+  const deckNames = () => Object.keys(source.decks);
   let autoSyncTimer = null;
 
   // ============================= rendering =============================
   function render(flashGuids) {
     const area = $("deckarea");
     area.innerHTML = "";
+    const origin = document.createElement("div");
+    origin.style.cssText = "color:var(--muted);font-size:11.5px;margin-bottom:8px";
+    origin.textContent = "Card content: " + state.contentOrigin +
+      " — the same source “Try the example deck” uses in real Anki.";
+    area.appendChild(origin);
     for (const [name, cards] of Object.entries(state.collection)) {
       const head = document.createElement("div");
       head.className = "deckname";
@@ -335,7 +407,11 @@
         noteTd.className = "noteCell";
         noteTd.contentEditable = "plaintext-only";
         noteTd.innerHTML = c.note ? '<span class="note">' + c.note + "</span>" : "";
-        noteTd.addEventListener("blur", () => { c.note = noteTd.textContent.trim(); render(); });
+        noteTd.addEventListener("blur", () => {
+          const v = noteTd.textContent.trim();
+          if (v !== c.note) { c.note = v; state.dirty = true; }
+          render();
+        });
         tr.appendChild(noteTd);
         tb.appendChild(tr);
       }
@@ -395,6 +471,7 @@
   function applyDeck(name, deck) {
     // the real sequence in miniature: snapshot preserved fields, match GUID-first,
     // import (which overwrites every field), restore the preserved fields
+    state.dirty = true;
     const preserveNotes = state.config.protected.includes("Notes");
     const mine = state.collection[name];
     const touched = new Set();
@@ -640,8 +717,8 @@
       '<div class="dtitle-big">Settings</div>' +
       '<div class="dsection">Deck sync</div>' +
       '<label style="display:block"><input type="checkbox" id="sAuto"' +
-      (c.auto_sync ? " checked" : "") + "> Sync decks automatically when updates are " +
-      "available</label>" +
+      (c.auto_sync ? " checked" : "") +
+      "> Sync decks automatically when updates are available</label>" +
       '<div style="margin:6px 0">Check every <input class="dinput" id="sInt" ' +
       'type="number" min="1" max="1440" value="' + c.interval +
       '" style="width:80px;display:inline-block"> min ' +
@@ -749,19 +826,22 @@
       backupDeck: backupDeckNow,
       importDeck: importDeckBackup,
       exportDeck,
-      importSingle: () => ask(
-        "This picks one .apkg outside your configured source — a deck someone sent you " +
-        "directly, or a build you're testing. The demo simulates choosing " +
-        "<code>Pharmacology_test_build.apkg</code>.<br><br>" +
-        previewDeck(PHARM, source.decks[PHARM]).kept + " card(s) will keep their " +
-        "history, " + previewDeck(PHARM, source.decks[PHARM]).added + " will be added " +
-        "as new. A backup is taken automatically first. Import now?",
-        () => { takeDeckBackup();
-                const { kept, added, touched } = applyDeck(PHARM, source.decks[PHARM]);
-                render(touched);
-                info("Imported Pharmacology_test_build.apkg: " + kept +
-                     " kept history, " + added + " new."); },
-        null, "Yes", "Cancel"),
+      importSingle: () => {
+        const deck = deckNames()[1] || deckNames()[0];
+        const fname = short(deck).replace(/ /g, "_") + "_test_build.apkg";
+        const pv = previewDeck(deck, source.decks[deck]);
+        ask("This picks one .apkg outside your configured source — a deck someone " +
+            "sent you directly, or a build you're testing. The demo simulates " +
+            "choosing <code>" + fname + "</code>.<br><br>" +
+            pv.kept + " card(s) will keep their history, " + pv.added + " will be " +
+            "added as new. A backup is taken automatically first. Import now?",
+            () => { takeDeckBackup();
+                    const { kept, added, touched } = applyDeck(deck, source.decks[deck]);
+                    render(touched);
+                    info("Imported " + fname + ": " + kept + " kept history, " +
+                         added + " new."); },
+            null, "Yes", "Cancel");
+      },
       fixNotetypes: () => info(
         "Note types are already up to date, no changes needed."),
       backupColl: () => { state.lastCollBackup = JSON.parse(JSON.stringify(state.collection));
@@ -815,34 +895,42 @@
   }
 
   // ============================= maintainer actions =============================
+  // These edit whatever content is loaded (live or fallback), so they work no
+  // matter what the example repo's decks say this week.
   function ship(deck, label) {
+    state.dirty = true;
     source.decks[deck].version += 1;
     $("shipped").textContent = "Pushed to the deck repo: " + label + "  (" +
       short(deck) + " v" + source.decks[deck].version +
       ") — now use the Intern Pearls menu above.";
   }
+  const CLARIFIED = " (Clarified in today's update.)";
   $("shipFix").onclick = () => {
-    source.decks[ABG].notes[0].back = "7.35–7.45 (venous runs ~0.03 lower).";
-    ship(ABG, "clarified the normal pH answer");
+    const deck = deckNames()[0], n = source.decks[deck].notes[0];
+    if (!n.back.endsWith(CLARIFIED)) n.back += CLARIFIED;
+    ship(deck, "clarified an answer in " + short(deck));
   };
   $("shipReword").onclick = () => {
-    source.decks[PHARM].notes[0].front =
-      "Anaphylaxis — first-line drug, route, and why that route?";
-    source.decks[PHARM].notes[0].back =
-      "Epinephrine IM (vastus lateralis): faster, safer levels than SC/IV bolus.";
-    ship(PHARM, "reworded the anaphylaxis question (GUID kept stable)");
+    const deck = deckNames()[1] || deckNames()[0], n = source.decks[deck].notes[0];
+    if (!/ — and why\?$/.test(n.front)) {
+      n.front = n.front.replace(/\??$/, "") + " — and why?";
+    }
+    ship(deck, "reworded a question in " + short(deck) + " (GUID kept stable)");
   };
   $("shipNew").onclick = () => {
-    if (!source.decks[PHARM].notes.some(n => n.guid === "g9")) {
-      source.decks[PHARM].notes.push({ guid: "g9",
-        front: "Beta-blocker overdose — antidote?", back: "Glucagon." });
+    const deck = deckNames()[1] || deckNames()[0];
+    if (!source.decks[deck].notes.some(n => n.guid === "demo-extra")) {
+      source.decks[deck].notes.push({ guid: "demo-extra",
+        front: "Which route gets epinephrine working fastest in anaphylaxis?",
+        back: "Intramuscular, into the outer thigh." });
     }
-    ship(PHARM, "added a beta-blocker overdose card");
+    ship(deck, "added a new card to " + short(deck));
   };
   $("shipCss").onclick = () => {
+    const deck = deckNames()[1] || deckNames()[0];
     source.cssVersion += 1;
-    source.decks[PHARM].version += 1;
-    ship(PHARM, "restyled the card template (bigger font, night-mode colors)");
+    source.decks[deck].version += 1;
+    ship(deck, "restyled the card template (bigger font, night-mode colors)");
   };
 
   // ============================= menu wiring =============================
@@ -879,7 +967,8 @@
   // simulation the way tests drive the add-on — window.demo.run("manage"), inspect
   // window.demo.state, etc.
   window.demo = { state, source, run: actions, sync: syncDecks, render,
-                  autoSyncCheck, dialogOpen: () => $("overlay").classList.contains("show") };
+                  autoSyncCheck, ready: demoReady,
+                  dialogOpen: () => $("overlay").classList.contains("show") };
 })();
 </script>
 </body>
