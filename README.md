@@ -5,7 +5,7 @@
 
 **Update shared Anki decks without losing your review history or the notes you've written on cards.**
 
-**[Try the live demo](https://ltimothy.github.io/internpearls-anki/)** — a simulated Anki in your browser: publish a deck update, sync it, and watch scheduling and personal notes survive. No install, nothing leaves the page.
+**[Try the live demo](https://ltimothy.github.io/internpearls-anki/)** — the add-on's actual Python code running in your browser (only Anki itself is simulated): publish a deck update, sync it through the real dialogs, and watch scheduling and personal notes survive. No install, nothing leaves the page.
 
 If you maintain a deck for a study group (or subscribe to one someone else maintains), you've hit the problem: re-importing an updated `.apkg` overwrites every field, wiping the personal annotations people keep on their cards, and a reworded card silently loses its scheduling. This add-on fixes both. One click pulls only the decks that changed from a GitHub repo or local folder, matches cards by GUID so intervals and ease factors carry over, snapshots and restores whichever fields you've marked as yours (`Notes` by default), and backs up the deck automatically before touching anything. It can also sync and update itself on a schedule, if you turn that on.
 
@@ -204,17 +204,25 @@ pip install pytest
 cd addon && pytest tests/ -v
 ```
 
-No Anki install or running Anki instance is needed for any of them. Two layers:
+No Anki install or running Anki instance is needed for any of them. Three layers,
+all built on the fake Anki in `tests/fake_anki.py` (stub `aqt`/`anki` modules plus a
+fake collection that emulates the one importer behavior everything here defends
+against — a GUID-matched import overwrites every field):
 
 - `tests/test_logic.py` unit-tests `logic.py` against minimal fake `.apkg` files.
 - `tests/test_sync_flows.py` drives the real `sync`, `collection`, and `background`
-  modules end to end against a fake Anki (`tests/fake_anki.py`): stub `aqt`/`anki`
-  modules plus a fake collection that emulates the one importer behavior everything
-  here defends against — a GUID-matched import overwrites every field. Dialogs are
-  recorded, and `_ask` answers are scripted per test, so whole flows (first sync,
-  protected-field restore, reworded fronts, template consent, auto-sync deferral)
-  are asserted without Qt or a collection file. `conftest.py` wires the fakes in and
-  redirects all persistent state into pytest temp dirs.
+  modules end to end, with dialog answers scripted per test — first sync,
+  protected-field restore, reworded fronts, template consent, auto-sync deferral.
+- `tests/test_dialogs.py` drives the real Qt dialog code in `dialogs.py` and the
+  real menu from `__init__.py`: the fake Qt widgets serialize each dialog to a
+  tree, tests script clicks and edits against it, and a snapshot-and-replay runner
+  re-executes the flow deterministically past each answer. This is the same
+  protocol the live demo uses, so the demo executes exactly what these tests cover.
+
+The [live demo](https://ltimothy.github.io/internpearls-anki/) is generated from the
+code, not written alongside it: `./build.sh` mirrors `internpearls/` into
+`docs/addon/` (byte-equality enforced by `tests/test_demo_parity.py`), and the page
+runs those modules under Pyodide against the example deck repo's real files.
 
 ### Repackage after editing
 
