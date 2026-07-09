@@ -7,7 +7,8 @@ Pearls → Manage decks.
 ## github_token
 
 A read-only, fine-grained GitHub personal access token scoped to `github_decks_repo`.
-Stored locally in this config only; never shared or committed anywhere.
+Only needed when that repo is private; leave empty for a public repo. Stored locally in
+this config only; never shared or committed anywhere.
 
 ## github_ref
 
@@ -16,7 +17,8 @@ The branch or tag to pull the manifest and decks from. Defaults to `main`.
 ## decks_dir
 
 A local folder containing `manifest.json` and the `.apkg` files, used instead of GitHub
-when `github_token` is empty.
+when `github_decks_repo` is empty. (Configure source sets one and clears the other, so
+they don't normally both exist.)
 
 ## scope_tag
 
