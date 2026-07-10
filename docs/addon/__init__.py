@@ -29,7 +29,7 @@ from .background import _schedule_background_checks
 from .collection import (backup_collection_now, backup_deck_now, export_deck,
                          import_deck, restore_from_backup, update_notetypes)
 from .dialogs import about, manage_decks, open_settings
-from .sync import import_single, sync_decks
+from .sync import import_single, reconcile_decks, sync_decks
 from .updates import check_updates
 
 
@@ -56,6 +56,7 @@ def _menu():
     adv = menu.addMenu("Advanced")
     add(adv, "Import single deck (manual)", import_single)
     add(adv, "Fix note types", update_notetypes)
+    add(adv, "Reconcile my decks", reconcile_decks)
     adv.addSeparator()
     add(adv, "Backup intern pearls deck", backup_deck_now)
     add(adv, "Import intern pearls deck", import_deck)
