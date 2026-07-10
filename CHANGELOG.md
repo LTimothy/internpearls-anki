@@ -3,6 +3,17 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.21.0
+
+- New Advanced action, "Reconcile my decks": finds retired cards still in your
+  collection — older versions of cards a deck has since split into focused ones or
+  reworded — and archives them so they stop showing up as duplicates in your reviews.
+  Each is moved to an `…::Retired` subdeck, suspended, and tagged; **nothing is
+  deleted**, review history is kept, and anything can be brought back by unsuspending
+  it or moving it out of the Retired deck. A backup is taken automatically first.
+  Reading a new `retired` ledger the deck source ships in its manifest; older add-on
+  versions ignore it.
+
 ## v0.20.1
 
 - "Try the example deck" now scopes its automatic backups to the parent

@@ -59,7 +59,7 @@ def test_real_menu_structure():
     assert sub["label"] == "Advanced"
     sub_labels = [n["label"] for n in sub["items"] if n["t"] == "item"]
     assert sub_labels == [
-        "Import single deck (manual)", "Fix note types",
+        "Import single deck (manual)", "Fix note types", "Reconcile my decks",
         "Backup intern pearls deck", "Import intern pearls deck",
         "Export intern pearls deck", "Backup full collection",
         "Restore full collection", "Check for add-on updates"]
