@@ -472,3 +472,53 @@ def test_apkg_notes_extracts_first_field_from_many(tmp_path):
         z.write(db, "collection.anki2")
     os.remove(db)
     assert logic.apkg_notes(apkg) == [(1, "The Front", "g1")]
+
+
+# ------------------------------------------------ find_retired_in_collection
+_LEDGER = {
+    "Deck A": {
+        "old1": {"identity": "bulky card one", "reason": "split",
+                 "superseded_by": ["new1a", "new1b"]},
+        "old2": {"identity": "reworded card two", "reason": "reworded",
+                 "superseded_by": ["new2"]},
+    },
+    "Deck B": {
+        "old3": {"identity": "removed card three", "reason": "deleted",
+                 "superseded_by": []},
+    },
+}
+
+
+def test_find_retired_returns_only_cards_she_has():
+    # She has old1 and old3 (retired) plus new1a (a replacement) and her own card.
+    her = {"old1", "old3", "new1a", "mine"}
+    found = logic.find_retired_in_collection(_LEDGER, her)
+    guids = {r["guid"] for r in found}
+    assert guids == {"old1", "old3"}   # only retired cards she still holds
+
+
+def test_find_retired_counts_present_replacements():
+    her = {"old1", "new1a"}            # one of old1's two replacements is present
+    (r,) = logic.find_retired_in_collection(_LEDGER, her)
+    assert r["guid"] == "old1"
+    assert r["superseded_by"] == ["new1a", "new1b"]
+    assert r["replacements_present"] == 1
+
+
+def test_find_retired_carries_deck_reason_identity():
+    (r,) = logic.find_retired_in_collection(_LEDGER, {"old2"})
+    assert (r["deck"], r["reason"], r["identity"]) == (
+        "Deck A", "reworded", "reworded card two")
+
+
+def test_find_retired_empty_when_nothing_matches():
+    assert logic.find_retired_in_collection(_LEDGER, {"mine", "new1a"}) == []
+    assert logic.find_retired_in_collection({}, {"old1"}) == []
+    assert logic.find_retired_in_collection(None, {"old1"}) == []
+
+
+def test_find_retired_sorted_by_deck_then_identity():
+    her = {"old1", "old2", "old3"}
+    found = logic.find_retired_in_collection(_LEDGER, her)
+    assert [r["identity"] for r in found] == [
+        "bulky card one", "reworded card two", "removed card three"]

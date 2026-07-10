@@ -8,11 +8,16 @@ import os
 
 from aqt import mw
 
-ADDON_VERSION = "0.20.1"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.21.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
 DECK_BACKUPS_KEEP = 10   # how many automatic Intern Pearls deck backups to retain
+# Where "Reconcile my decks" archives retired cards, and the tag that marks a card as
+# already archived (so a re-run doesn't touch it again). The deck leaf is appended under
+# the configured export_deck root; the tag leaf under the configured scope_tag.
+RETIRED_DECK_LEAF = "Retired"
+RETIRED_TAG_LEAF = "retired"
 _DIR = os.path.dirname(__file__)
 
 EXAMPLE_REPO = "LTimothy/internpearls-example-deck"   # public demo deck source

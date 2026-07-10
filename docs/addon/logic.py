@@ -143,6 +143,44 @@ def decide_addon_update_action(current, latest, auto_update, notify, last_notifi
     return "none"
 
 
+def find_retired_in_collection(retired_ledger, her_guids):
+    """The retired cards a learner still has in her collection.
+
+    When a deck splits, merges, or drops a card, the old card's GUID leaves the
+    canonical set but her copy of it is never touched by a sync (sync only ever adds
+    the replacements), so it lingers in her reviews as a duplicate. The deck repo
+    records every such retirement in `retired.json`, shipped to us inside the manifest.
+
+    `retired_ledger` is that ledger: {deck_name: {guid: {identity, reason,
+    superseded_by, ...}}}. `her_guids` is the set of note GUIDs she has under the scope
+    tag. Returns one dict per retired card she still has, so the reconcile flow can show
+    and archive them:
+        {guid, deck, identity, reason, superseded_by, replacements_present}
+    `replacements_present` is how many of `superseded_by` are already in her collection
+    — so the UI can distinguish "replaced by cards you already have" from "sync first to
+    get the replacements." Sorted by deck then identity for stable display. Pure: the
+    caller supplies her_guids and does anything collection-touching (tag checks, the
+    archive itself).
+    """
+    her_guids = set(her_guids)
+    out = []
+    for deck, entries in (retired_ledger or {}).items():
+        for guid, info in (entries or {}).items():
+            if guid not in her_guids:
+                continue
+            sup = list(info.get("superseded_by") or [])
+            out.append({
+                "guid": guid,
+                "deck": deck,
+                "identity": info.get("identity", ""),
+                "reason": info.get("reason", ""),
+                "superseded_by": sup,
+                "replacements_present": sum(1 for g in sup if g in her_guids),
+            })
+    out.sort(key=lambda r: (r["deck"], r["identity"]))
+    return out
+
+
 def apkg_notes(path):
     """Return (note_id, front_text, guid) for every note in an .apkg file."""
     with zipfile.ZipFile(path) as z:
