@@ -134,7 +134,11 @@ class MockNote:
     def __init__(self, nid, guid, model, values, tags, deck=None):
         self.id, self.guid, self.model, self.tags = nid, guid, model, list(tags)
         self.deck = deck
+        self._card_ids = []   # populated by MockCollection.add_note
         self._resize(values)
+
+    def card_ids(self):
+        return list(self._card_ids)
 
     def _resize(self, values):
         names = [f["name"] for f in self.model["flds"]]
@@ -167,9 +171,12 @@ class _Models:
 
     def add_field(self, model, field):
         model["flds"].append(field)
-        for n in getattr(self, "_col", types.SimpleNamespace(_notes={}))._notes.values():
-            if n.model is model:
-                n._resize(n.fields)
+        col = getattr(self, "_col", None)
+        if col is not None:
+            col.scm += 1   # adding a field is a real schema change (bumps schema mod)
+            for n in col._notes.values():
+                if n.model is model:
+                    n._resize(n.fields)
 
     def update_dict(self, model):
         pass   # dicts are mutated in place
@@ -181,6 +188,14 @@ class _Decks:
 
     def id_for_name(self, name):
         return self.names.get(name)
+
+    def id(self, name, create=True):
+        """Anki's decks.id(): return the deck id, creating the deck if absent."""
+        if name not in self.names:
+            if not create:
+                return None
+            self.names[name] = len(self.names) + 1
+        return self.names[name]
 
 
 class _Db:
@@ -229,12 +244,20 @@ def _read_apkg(path):
 class MockCollection:
     def __init__(self):
         self._notes = {}
+        self._cards = {}    # cid -> SimpleNamespace(nid, did, queue); one card per note
         self._next_id = 1
+        self._next_cid = 1
+        self.scm = 0        # schema modification counter; only real schema changes bump it
         self.models = _Models([make_model()])
         self.models._col = self
         self.decks = _Decks()
         self.db = _Db(self)
         self.imports = []   # paths passed to import_anki_package, for assertions
+        # Anki exposes suspend via col.sched and tag edits via col.tags; the add-on's
+        # archive path (Reconcile) uses set_deck + these two. All are incremental (no
+        # schema bump), which is exactly what the reconcile feature relies on.
+        self.sched = types.SimpleNamespace(suspend_cards=self._suspend_cards)
+        self.tags = types.SimpleNamespace(bulk_add=self._tags_bulk_add)
 
     # -- helpers for tests and the demo --------------------------------------
     def add_note(self, guid, values, tags, model=None, deck=None):
@@ -242,10 +265,31 @@ class MockCollection:
         note = MockNote(self._next_id, guid, model, values, tags, deck)
         self._notes[self._next_id] = note
         self._next_id += 1
+        cid = self._next_cid
+        self._next_cid += 1
+        did = self.decks.id(deck) if deck else None
+        self._cards[cid] = types.SimpleNamespace(nid=note.id, did=did, queue=0)
+        note._card_ids.append(cid)
         return note
 
     def note_by_guid(self, guid):
         return next(n for n in self._notes.values() if n.guid == guid)
+
+    # -- card-level surfaces the archive path uses ----------------------------
+    def set_deck(self, cids, did):
+        for cid in cids:
+            self._cards[cid].did = did
+
+    def _suspend_cards(self, cids):
+        for cid in cids:
+            self._cards[cid].queue = -1   # -1 is Anki's suspended queue
+
+    def _tags_bulk_add(self, nids, tag):
+        for nid in nids:
+            note = self._notes[nid]
+            for t in tag.split():
+                if t not in note.tags:
+                    note.tags.append(t)
 
     # -- surface the add-on calls ---------------------------------------------
     def find_notes(self, search):

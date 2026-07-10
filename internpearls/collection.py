@@ -242,6 +242,37 @@ def _her_front_to_guid(scope_tag):
     return out
 
 
+def _her_guid_to_nid(scope_tag):
+    """{note guid: note id} for every card under the scope tag. The reconcile flow needs
+    to go from a retired card's GUID (what the ledger lists) back to the learner's note
+    to archive it."""
+    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    return {mw.col.get_note(nid).guid: nid for nid in mw.col.find_notes(search)}
+
+
+def archive_notes(nids, retired_deck, tag):
+    """Get retired cards out of the review rotation without deleting anything.
+
+    Moves every card of each note to `retired_deck` (created if absent), suspends those
+    cards, and tags the notes with `tag` so a later reconcile run recognizes them as
+    already handled. Every step is a normal, incremental Anki operation — moving decks,
+    suspending, and tagging do NOT bump the collection's schema modification time, so
+    this never forces the one-way AnkiWeb full sync a note-type change would (the same
+    reason imports use merge_notetypes=False). Fully reversible by hand: unsuspend a
+    card, or move it back out of the Retired deck. Returns the number of notes archived.
+    """
+    nids = list(nids)
+    if not nids:
+        return 0
+    did = mw.col.decks.id(retired_deck)   # creates the deck if it doesn't exist yet
+    cids = [cid for nid in nids for cid in mw.col.get_note(nid).card_ids()]
+    if cids:
+        mw.col.set_deck(cids, did)
+        mw.col.sched.suspend_cards(cids)
+    mw.col.tags.bulk_add(nids, tag)
+    return len(nids)
+
+
 def _apply_deck(src, aliases, her):
     remap, in_place, as_new = remap_cards(src, her, aliases)
     out = src + ".sync.apkg"
