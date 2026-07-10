@@ -207,3 +207,101 @@ def test_auto_sync_defers_a_template_change_and_nags_once(anki, tmp_path):
     sync.sync_decks()
     assert anki.col.models.all()[0]["css"] == NEW_CSS
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
+# -------------------------------------------------------------- reconcile decks
+RETIRED_DECK = "Intern Pearls::Intern Custom::Retired"
+RETIRED_TAG = f"{SCOPE}::retired"
+
+
+def _write_retired_source(tmp_path, retired):
+    """A source folder whose manifest carries a `retired` ledger (schema 2) and no
+    decks — reconcile only reads the ledger, never downloads apkgs."""
+    folder = tmp_path / "source"
+    folder.mkdir(exist_ok=True)
+    manifest = {"schema": 2, "decks": [], "front_aliases": {}, "retired": retired}
+    (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf8")
+    return str(folder)
+
+
+def _her_card(anki, guid, front, deck=DECK):
+    return anki.col.add_note(guid, _fields(front), TAGS.split(), deck=deck)
+
+
+def test_reconcile_archives_retired_cards(anki, tmp_path):
+    from internpearls import sync
+    # She has the retired card old1 plus both its replacements and an unrelated card.
+    old = _her_card(anki, "old1", "bulky crisis card")
+    _her_card(anki, "new1a", "focused card A")
+    _her_card(anki, "new1b", "focused card B")
+    _her_card(anki, "keep", "an untouched card")
+    folder = _write_retired_source(tmp_path, {
+        DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                        "superseded_by": ["new1a", "new1b"]}}})
+    _configure(anki, folder)
+    scm_before, notes_before = anki.col.scm, len(anki.col._notes)
+
+    sync.reconcile_decks()
+
+    # old1 archived: suspended, moved to the Retired deck, tagged — never deleted.
+    cid = old.card_ids()[0]
+    assert anki.col._cards[cid].queue == -1                       # suspended
+    assert anki.col._cards[cid].did == anki.col.decks.id_for_name(RETIRED_DECK)
+    assert RETIRED_TAG in old.tags
+    # replacements and unrelated cards untouched (still in the review queue)
+    for g in ("new1a", "new1b", "keep"):
+        c = anki.col.note_by_guid(g).card_ids()[0]
+        assert anki.col._cards[c].queue == 0
+    # nothing deleted, and no schema bump (so no forced AnkiWeb full sync)
+    assert len(anki.col._notes) == notes_before
+    assert anki.col.scm == scm_before
+    assert any("Archived <b>1</b>" in i for i in anki.gui.infos)
+
+
+def test_reconcile_is_idempotent(anki, tmp_path):
+    from internpearls import sync
+    old = _her_card(anki, "old1", "bulky crisis card")
+    folder = _write_retired_source(tmp_path, {
+        DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                        "superseded_by": []}}})
+    _configure(anki, folder)
+    sync.reconcile_decks()
+    cid = old.card_ids()[0]
+    tags_after_first = list(old.tags)
+
+    anki.gui.infos.clear()
+    sync.reconcile_decks()                       # second run must not re-act
+
+    assert old.tags == tags_after_first          # no duplicate tag
+    assert anki.col._cards[cid].queue == -1       # still suspended, untouched
+    assert any("already archived" in i for i in anki.gui.infos)
+
+
+def test_reconcile_reports_nothing_when_no_retired_cards_present(anki, tmp_path):
+    from internpearls import sync
+    _her_card(anki, "mine", "a card of my own")
+    folder = _write_retired_source(tmp_path, {
+        DECK: {"old1": {"identity": "bulky", "reason": "split",
+                        "superseded_by": []}}})   # she doesn't have old1
+    _configure(anki, folder)
+
+    sync.reconcile_decks()
+
+    assert any("No retired cards found" in i for i in anki.gui.infos)
+    assert not anki.col.imports                   # reconcile never imports
+
+
+def test_reconcile_declined_leaves_everything_untouched(anki, tmp_path):
+    from internpearls import sync
+    old = _her_card(anki, "old1", "bulky crisis card")
+    folder = _write_retired_source(tmp_path, {
+        DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                        "superseded_by": []}}})
+    _configure(anki, folder)
+    anki.gui.answers = [False]                    # decline the archive confirmation
+
+    sync.reconcile_decks()
+
+    cid = old.card_ids()[0]
+    assert anki.col._cards[cid].queue == 0        # not suspended
+    assert RETIRED_TAG not in old.tags            # not tagged

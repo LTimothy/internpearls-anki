@@ -14,11 +14,13 @@ from aqt import mw
 from aqt.utils import getFile
 
 from .collection import (_apply_deck, _apply_template_changes, _ensure_notetypes,
-                         _her_front_to_guid, _import_apkg,
+                         _her_front_to_guid, _her_guid_to_nid, _import_apkg,
                          _pre_sync_backup_or_confirm_skip, _restore, _snapshot,
-                         _template_changes)
-from .config import INSTALLED, _cfg, _load_json, _save_json
-from .logic import bullets, decks_to_update, remap_cards, write_personalized
+                         _template_changes, archive_notes)
+from .config import (INSTALLED, RETIRED_DECK_LEAF, RETIRED_TAG_LEAF, _cfg,
+                     _load_json, _save_json)
+from .logic import (bullets, decks_to_update, find_retired_in_collection,
+                    remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .ui import _ask, _info, _safe, _warn, wait_cursor
 
@@ -194,6 +196,87 @@ def _offer_template_changes(tpl_changes):
         "either way."
     ):
         _apply_template_changes(tpl_changes)
+
+
+@_safe
+def reconcile_decks():
+    """Find retired cards still in the learner's collection and archive them.
+
+    When a deck splits, merges, or reword-replaces a card, the old card's GUID leaves
+    the canonical set — but a sync only ever ADDS the replacements, it never removes her
+    copy of the old one. So the old card lingers, duplicated against its replacements in
+    every review. This reads the retirement ledger (shipped in the manifest), finds the
+    retired cards she still has, and archives them: moved to a Retired subdeck, suspended,
+    tagged. It never deletes anything — the worst a bug here can do is suspend/move a card,
+    which is trivially reversible.
+    """
+    cfg = _cfg()
+    try:
+        with wait_cursor():
+            manifest, _, source = _fetch_manifest(cfg)
+    except Exception as e:
+        _warn(f"Couldn't reach the deck source: {e}<br><br>"
+              "Open <b>Intern Pearls → Manage decks</b> and use Change source to check "
+              "your GitHub token or local folder.")
+        return
+    if not manifest:
+        _warn("No deck source configured yet.<br><br>"
+              "Open <b>Intern Pearls → Manage decks</b> and use Configure source.")
+        return
+
+    her = _her_guid_to_nid(cfg["scope_tag"])
+    found = find_retired_in_collection(manifest.get("retired", {}), set(her))
+    if not found:
+        _info("No retired cards found in your collection — nothing to tidy up. "
+              f"(Source: {source}.)")
+        return
+
+    tag = f'{cfg["scope_tag"]}::{RETIRED_TAG_LEAF}'
+    retired_deck = f'{cfg["export_deck"]}::{RETIRED_DECK_LEAF}'
+    # A previous run tags what it archives; skip those so re-running is a no-op on them.
+    fresh, already = [], 0
+    for r in found:
+        if tag in mw.col.get_note(her[r["guid"]]).tags:
+            already += 1
+        else:
+            fresh.append(r)
+    if not fresh:
+        _info(f"All {already} retired card(s) in your collection are already archived "
+              f"(suspended and moved to <b>{RETIRED_DECK_LEAF}</b>). Nothing more to do.")
+        return
+
+    lines = [f"{r['identity']} <span style='color:gray;'>"
+             f"({r['deck'].split('::')[-1]})</span>" for r in fresh]
+    missing = sum(1 for r in fresh
+                  if r["superseded_by"] and r["replacements_present"] == 0)
+    sync_note = (f"<b>Note:</b> {missing} of these don't have their replacement cards in "
+                 "your collection yet — run <b>Sync decks</b> first if you want the new "
+                 "versions before archiving the old ones.<br><br>") if missing else ""
+    already_note = (f"<br>({already} more were already archived on a previous run.)"
+                    if already else "")
+    if not _ask(
+        f"Found <b>{len(fresh)}</b> retired card(s) still in your collection — older "
+        "cards since split into focused ones or reworded, whose replacements are now "
+        "separate cards. Left alone, they show up as duplicates in your reviews."
+        + bullets(lines) + sync_note +
+        f"Archive them? Each is moved to <b>{RETIRED_DECK_LEAF}</b>, suspended (out of "
+        "your review rotation), and tagged. <b>Nothing is deleted</b> — their review "
+        "history is kept and you can bring any back anytime by unsuspending it or moving "
+        "it out of the Retired deck. A backup is taken automatically first." + already_note
+    ):
+        return
+
+    proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
+    if not proceed:
+        return
+    n = archive_notes([her[r["guid"]] for r in fresh], retired_deck, tag)
+    mw.reset()
+    backup_line = ("" if backed_up else
+                   "<br><br>(No backup was taken this time — nothing to back up yet, or "
+                   "it failed and you chose to continue.)")
+    _info(f"Archived <b>{n}</b> retired card(s) to <b>{retired_deck}</b>: suspended and "
+          f"tagged <code>{tag}</code>, review history kept. Bring any back by "
+          "unsuspending it or moving it out of the Retired deck." + backup_line)
 
 
 @_safe
