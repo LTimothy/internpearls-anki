@@ -17,7 +17,8 @@ from .collection import (_apply_deck, _apply_template_changes, _ensure_notetypes
                          _her_front_to_guid, _her_guid_to_deck, _her_guid_to_nid,
                          _import_apkg, _pre_sync_backup_or_confirm_skip, _restore,
                          _snapshot, _template_changes, apply_deck_moves,
-                         archive_notes, carry_over_protected_fields)
+                         archive_notes, carry_over_protected_fields,
+                         installed_matching_collection)
 from .config import (ADDON_VERSION, INSTALLED, RETIRED_DECK_LEAF, RETIRED_TAG_LEAF,
                      SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json)
 from .logic import (bullets, decks_to_update, find_deck_moves_needed,
@@ -89,7 +90,7 @@ def sync_decks():
         )
         return
 
-    installed = _load_json(INSTALLED, {})
+    installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     todo = decks_to_update(manifest, installed, cfg["excluded"])
     if not todo:
         _info(f"All selected decks are up to date (source: {source}).")
