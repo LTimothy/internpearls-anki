@@ -73,7 +73,7 @@ def _write_source(tmp_path, decks):
     manifest = {"schema": 1, "decks": [], "front_aliases": {}}
     for name, (version, notes, model) in decks.items():
         fn = name.split("::")[-1].replace(" ", "_") + ".apkg"
-        make_apkg(str(folder / fn), notes, model=model)
+        make_apkg(str(folder / fn), notes, model=model, deck=name)
         manifest["decks"].append({"name": name, "apkg": fn, "version": version,
                                   "cards": len(notes)})
     (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf8")
@@ -144,6 +144,38 @@ def test_sync_recovers_after_a_collection_revert_undoes_a_prior_sync(anki, tmp_p
     assert any("Sync complete" in i for i in anki.gui.infos)
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
+def test_sync_recovers_a_single_deck_lost_to_a_partial_collection_revert(anki, tmp_path):
+    """A revert to a backup taken between two syncs only erases the more recent
+    deck's cards, leaving the earlier deck's cards (and its installed.json entry)
+    intact — the common case, and the one an earlier, whole-collection-only version
+    of this fix missed. Only the actually-missing deck should re-sync."""
+    from internpearls import sync
+    deck_b = "Intern Pearls::Intern Custom::Other"
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None),
+        deck_b: ("v1", [("g2", _fields("Front two"), f"{SCOPE}::Other")], None)})
+    _configure(anki, folder)
+    sync.sync_decks()
+    assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 2
+
+    # Only deck_b's card is erased by the revert; DECK's card and installed entry for
+    # DECK survive untouched.
+    lost_nid = next(nid for nid in anki.col.find_notes(f'"tag:{SCOPE}"')
+                    if anki.col.get_note(nid).guid == "g2")
+    del anki.col._notes[lost_nid]
+    anki.gui.infos.clear()
+    anki.gui.answers[:] = [True]
+
+    sync.sync_decks()
+
+    assert not any("up to date" in i for i in anki.gui.infos)
+    assert any("Sync complete" in i for i in anki.gui.infos)
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"   # untouched, not re-imported
+    assert anki.col.note_by_guid("g2")["Front"] == "Front two"   # recovered
+    installed = json.load(open(sync.INSTALLED, encoding="utf8"))
+    assert installed == {DECK: "v1", deck_b: "v1"}
 
 
 def test_sync_overwrites_content_but_restores_protected_notes(anki, tmp_path):

@@ -3,6 +3,16 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.25.2
+
+- Fixed a gap in v0.25.1's collection-revert fix: it only detected a *total* wipe
+  (every synced note gone at once), so a revert that only rolled back part of the
+  collection — the common case, e.g. one deck's cards erased while others stayed
+  intact — still left that one deck wrongly reporting "up to date". The check is now
+  per deck: a deck counts as synced only if the collection currently has a note under
+  it actually sitting in an Anki deck of that name, so a partial revert is caught and
+  recovered the same way a full one is.
+
 ## v0.25.1
 
 - Fixed a real bug: restoring an Anki collection backup ("collection revert") after a
