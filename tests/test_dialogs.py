@@ -36,16 +36,18 @@ def find(tree, **want):
     return None
 
 
-def _write_source(tmp_path, deck="Intern Pearls::Intern Custom::Pharm", version="v1"):
+def _write_source(tmp_path, deck="Intern Pearls::Intern Custom::Pharm", version="v1",
+                  retired=None, deck_moves=None):
     folder = tmp_path / "source"
     folder.mkdir(exist_ok=True)
     make_apkg(str(folder / "Pharm.apkg"),
               [("g1", ["Front one", "back", "", "", "", "", ""],
                 "InternPearls::Pharm")])
     (folder / "manifest.json").write_text(json.dumps({
-        "schema": 1, "front_aliases": {},
+        "schema": 2, "front_aliases": {},
         "decks": [{"name": deck, "apkg": "Pharm.apkg", "version": version,
-                   "cards": 1}]}), encoding="utf8")
+                   "cards": 1}],
+        "retired": retired or {}, "deck_moves": deck_moves or {}}), encoding="utf8")
     return str(folder)
 
 
@@ -124,6 +126,47 @@ def test_manage_decks_preview_then_save_and_sync(anki, tmp_path):
     drive(anki, dialogs.manage_decks, respond)
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
     assert any("Sync complete" in i for i in anki.gui.infos)
+
+
+def test_manage_decks_preview_also_reports_retired_and_moves(anki, tmp_path):
+    """Check what will sync answers a different question than kept/new per deck:
+    whether Reconcile my decks already has something pending. Both a retired card
+    still in her collection and a card sitting in a since-reorganized deck should
+    surface here, not just in the separate Reconcile flow."""
+    from internpearls import dialogs
+    old_deck = "Intern Pearls::Intern Custom::Pharm::Old spot"
+    anki.col.add_note("old1", ["bulky card", "back", "", "", "", "", ""],
+                      ["InternPearls::Pharm"], deck=old_deck)
+    anki.col.add_note("moved1", ["a moved card", "back", "", "", "", "", ""],
+                      ["InternPearls::Pharm"], deck=old_deck)
+    folder = _write_source(
+        tmp_path,
+        retired={"Intern Pearls::Intern Custom::Pharm": {
+            "old1": {"identity": "bulky card", "reason": "split",
+                     "superseded_by": []}}},
+        deck_moves={"moved1": {"from": old_deck,
+                               "to": "Intern Pearls::Intern Custom::Pharm::New spot"}})
+    anki.mw._config = {"decks_dir": folder}
+    anki.gui.interactive = True
+    seen = {"previewed": False}
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            preview = find(p["tree"], t="button", label="Check what will sync")
+            if preview and not seen["previewed"]:
+                seen["previewed"] = True
+                return {"events": [{"id": preview["id"], "click": True}]}
+            label = next((n for n in walk(p["tree"])
+                         if n.get("t") == "label"
+                         and "Reconcile my decks" in (n.get("text") or "")), None)
+            assert label, "expected a retired/moves summary line after the preview"
+            assert "1 retired card" in label["text"]
+            assert "1 card to relocate" in label["text"]
+            cancel = find(p["tree"], t="button", label="Cancel")
+            return {"events": [{"id": cancel["id"], "click": True}]}
+        return {}
+
+    drive(anki, dialogs.manage_decks, respond)
 
 
 # --------------------------------------------------------------------- settings
