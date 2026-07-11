@@ -12,8 +12,8 @@ from aqt import mw
 from aqt.utils import getFile, getSaveFile
 
 from .config import DECK_BACKUPS_KEEP, TARGET_FIELDS, _USER_FILES, _cfg
-from .logic import (apkg_models, bullets, changed_templates, model_shape,
-                    remap_cards, write_personalized)
+from .logic import (apkg_models, bullets, changed_templates, fields_to_carry_over,
+                    model_shape, remap_cards, write_personalized)
 from .ui import _ask, _info, _safe, _warn
 
 
@@ -248,6 +248,81 @@ def _her_guid_to_nid(scope_tag):
     to archive it."""
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
     return {mw.col.get_note(nid).guid: nid for nid in mw.col.find_notes(search)}
+
+
+def _her_guid_to_deck(scope_tag):
+    """{note guid: current deck name} for every note under the scope tag, keyed off
+    its first card's deck (all cards of a note normally share one deck). The deck-move
+    step needs this to tell "still where the source last filed it" (safe to relocate)
+    from "she's moved or customized it herself" (leave it alone)."""
+    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    out = {}
+    for nid in mw.col.find_notes(search):
+        note = mw.col.get_note(nid)
+        cids = note.card_ids()
+        if cids:
+            out[note.guid] = mw.col.decks.name(mw.col.get_card(cids[0]).did)
+    return out
+
+
+def apply_deck_moves(moves, her_guid_to_nid):
+    """Relocate a learner's cards to match a pure deck reorg (Local Anesthetics
+    moving into a new Regional deck, say) without touching content or scheduling.
+
+    `moves` is the already-filtered list from find_deck_moves_needed — every entry
+    is a card confirmed to still be sitting exactly where the source last put it.
+    Just like archive_notes, this is schema-neutral (set_deck only), so it never
+    forces an AnkiWeb full sync, and it's trivially reversible by hand (drag the
+    card back). Returns the number of notes moved.
+    """
+    n = 0
+    for m in moves:
+        nid = her_guid_to_nid.get(m["guid"])
+        if nid is None:
+            continue
+        cids = mw.col.get_note(nid).card_ids()
+        if cids:
+            mw.col.set_deck(cids, mw.col.decks.id(m["to"]))
+            n += 1
+    return n
+
+
+def carry_over_protected_fields(retired, her_guid_to_nid, protected_fields):
+    """Before a retired note is archived, copy her protected-field text (e.g. Notes)
+    onto its replacement(s) so a personal annotation isn't stranded on a card that's
+    about to be suspended out of review.
+
+    `retired` is the fresh (not-yet-archived) entries from find_retired_in_collection
+    — each has `guid` and `superseded_by`. Only fills a replacement's field if it's
+    currently blank (fields_to_carry_over), so this never overwrites something she's
+    already written on the new card, and copies to every replacement she already has
+    (a symmetric split has no single "primary" to prefer). Returns the number of
+    replacement notes updated.
+    """
+    n = 0
+    for r in retired:
+        old_nid = her_guid_to_nid.get(r["guid"])
+        if old_nid is None:
+            continue
+        old_note = mw.col.get_note(old_nid)
+        saved = {f: old_note[f] for f in protected_fields
+                 if f in old_note and old_note[f].strip()}
+        if not saved:
+            continue
+        for target_guid in r["superseded_by"]:
+            target_nid = her_guid_to_nid.get(target_guid)
+            if target_nid is None:
+                continue
+            target_note = mw.col.get_note(target_nid)
+            current = {f: target_note[f] for f in protected_fields if f in target_note}
+            to_write = fields_to_carry_over(saved, current)
+            if not to_write:
+                continue
+            for f, v in to_write.items():
+                target_note[f] = v
+            mw.col.update_note(target_note)
+            n += 1
+    return n
 
 
 def archive_notes(nids, retired_deck, tag):

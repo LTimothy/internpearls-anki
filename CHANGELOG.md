@@ -3,6 +3,22 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.22.0
+
+- "Reconcile my decks" now also relocates cards a deck reorg has moved to a
+  different deck without changing their identity (e.g. a topic getting split
+  into its own deck) — a normal sync updates such a card's content in place but
+  never its deck, since only a brand-new card gets filed into the source's
+  declared deck. Reconcile reads a new `deck_moves` ledger the source ships in
+  its manifest and moves any card still sitting exactly where the source last
+  filed it; a card you've since filed somewhere of your own choosing is left
+  alone. Schema-neutral and trivially reversible, same as the retired-card
+  archiving this action already did.
+- Reconcile also now carries a personal note (or any other protected field) from
+  a retired card onto its replacement(s) before archiving it, as long as the
+  replacement's field is still blank — so annotating a card doesn't get stranded
+  the moment it's superseded by a split or reword.
+
 ## v0.21.0
 
 - New Advanced action, "Reconcile my decks": finds retired cards still in your

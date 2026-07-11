@@ -522,3 +522,62 @@ def test_find_retired_sorted_by_deck_then_identity():
     found = logic.find_retired_in_collection(_LEDGER, her)
     assert [r["identity"] for r in found] == [
         "bulky card one", "reworded card two", "removed card three"]
+
+
+# --------------------------------------------------------------- deck moves
+_MOVES = {
+    "g1": {"from": "Pharm::Local Anesthetics", "to": "Regional::Local Anesthetics"},
+    "g2": {"from": "Pharm::Vaporizers", "to": "Random Facts::Vaporizers"},
+}
+
+
+def test_deck_move_applies_when_card_still_at_recorded_from():
+    her_deck = {"g1": "Pharm::Local Anesthetics"}
+    (m,) = logic.find_deck_moves_needed(_MOVES, her_deck)
+    assert m == {"guid": "g1", "from": "Pharm::Local Anesthetics",
+                 "to": "Regional::Local Anesthetics"}
+
+
+def test_deck_move_skipped_once_she_already_reconciled():
+    # Her card is already at `to` — a previous reconcile already moved it.
+    her_deck = {"g1": "Regional::Local Anesthetics"}
+    assert logic.find_deck_moves_needed(_MOVES, her_deck) == []
+
+
+def test_deck_move_skipped_when_she_filed_it_elsewhere_herself():
+    # Not at `from` and not at `to` — her own organization, never overridden.
+    her_deck = {"g1": "My Own Custom Deck"}
+    assert logic.find_deck_moves_needed(_MOVES, her_deck) == []
+
+
+def test_deck_move_skipped_when_note_missing_from_her_collection():
+    assert logic.find_deck_moves_needed(_MOVES, {}) == []
+
+
+def test_deck_moves_sorted_by_to_then_from():
+    her_deck = {"g1": "Pharm::Local Anesthetics", "g2": "Pharm::Vaporizers"}
+    found = logic.find_deck_moves_needed(_MOVES, her_deck)
+    assert [m["guid"] for m in found] == ["g2", "g1"]   # "Random..." < "Regional..."
+
+
+# ------------------------------------------------------- protected-field carryover
+def test_carry_over_fills_blank_target_field():
+    saved = {"Notes": "her mnemonic"}
+    assert logic.fields_to_carry_over(saved, {"Notes": ""}) == {"Notes": "her mnemonic"}
+
+
+def test_carry_over_never_overwrites_existing_target_text():
+    saved = {"Notes": "old mnemonic"}
+    current = {"Notes": "something she already wrote on the new card"}
+    assert logic.fields_to_carry_over(saved, current) == {}
+
+
+def test_carry_over_handles_whitespace_only_target_as_blank():
+    saved = {"Notes": "her mnemonic"}
+    assert logic.fields_to_carry_over(saved, {"Notes": "   "}) == {"Notes": "her mnemonic"}
+
+
+def test_carry_over_only_touches_fields_with_saved_content():
+    saved = {"Notes": "text", "Dosing": ""}
+    assert logic.fields_to_carry_over(saved, {"Notes": "", "Dosing": ""}) == {
+        "Notes": "text"}
