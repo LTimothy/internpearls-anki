@@ -3,6 +3,13 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.24.0
+
+- "Check what will sync" (Manage decks) now also reports what Reconcile my decks has
+  pending — retired cards still in your collection and cards a deck reorg needs to
+  relocate — not just the per-deck kept/new breakdown. Read-only, same as the rest of
+  the preview; nothing is archived or moved until you actually run Reconcile.
+
 ## v0.23.0
 
 - Sync now refuses to run against a deck source whose `manifest.json` `schema` is

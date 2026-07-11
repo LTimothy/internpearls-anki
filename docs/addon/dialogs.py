@@ -11,11 +11,13 @@ from aqt.qt import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
                     QSpinBox, Qt, QVBoxLayout, QWidget)
 
 from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
-from .collection import _her_front_to_guid
+from .collection import _her_front_to_guid, _her_guid_to_deck, _her_guid_to_nid
 from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, EXAMPLE_DECK_NAME, EXAMPLE_REPO,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, STATE, _cfg, _load_json)
-from .logic import bullets, deck_status, parse_fields, remap_cards, version_at_least
+from .logic import (bullets, deck_status, find_deck_moves_needed,
+                    find_retired_in_collection, parse_fields, remap_cards,
+                    version_at_least)
 from .sync import _fetch_manifest, sync_decks
 from .ui import (_ask, _info, _prompt, _safe, _warn, hint_label, link_button,
                  muted_label, section_label, title_label, wait_cursor)
@@ -172,7 +174,8 @@ class _DeckManagerDialog(QDialog):
         self.sync_requested = False
         self.change_source_requested = False
         self._rows = rows
-        self._preview_fn = preview_fn   # callable() -> {deck_name: (kept, new) | None}
+        # callable() -> ({deck_name: (kept, new) | None}, retired_count, moves_count)
+        self._preview_fn = preview_fn
         self._checks = {}   # deck name -> QCheckBox
         self._pills = {}    # deck name -> QLabel (status pill, updated after a preview)
 
@@ -206,8 +209,10 @@ class _DeckManagerDialog(QDialog):
             "Check what will sync", on_click=self._run_preview,
             tooltip_text=(
                 "Download the changed decks and show, per deck, how many cards would "
-                "update in place (history kept) vs. be added as new. Nothing is "
-                "imported."))
+                "update in place (history kept) vs. be added as new. Also checks "
+                "whether Reconcile my decks has anything pending (retired cards "
+                "still in your collection, or cards a reorg needs to relocate). "
+                "Nothing is imported."))
         # Reflect why there's nothing to check on open, rather than leaving an inviting
         # button that just reports "nothing happened" once clicked: no decks at all
         # (source unreachable or not configured) reads differently from every deck
@@ -222,6 +227,14 @@ class _DeckManagerDialog(QDialog):
             self._preview_btn.setStyleSheet("color: gray;")
         bar.addWidget(self._preview_btn)
         outer.addLayout(bar)
+
+        # Filled in after a preview if Reconcile my decks would have anything to do;
+        # hidden the rest of the time so this dialog doesn't grow a permanent empty row.
+        self._recon_label = QLabel("")
+        self._recon_label.setWordWrap(True)
+        self._recon_label.setStyleSheet("color: #b45309; font-size: 12px;")
+        self._recon_label.setVisible(False)
+        outer.addWidget(self._recon_label)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -287,7 +300,8 @@ class _DeckManagerDialog(QDialog):
         return row
 
     def _run_preview(self):
-        """Download the changed decks and fill in each row's kept/new breakdown.
+        """Download the changed decks and fill in each row's kept/new breakdown, plus a
+        summary line if Reconcile my decks has anything pending.
 
         Read-only: it counts how incoming cards match the collection, but imports
         nothing. Runs on click (not on open) so opening the panel stays fast.
@@ -302,7 +316,7 @@ class _DeckManagerDialog(QDialog):
         QApplication.processEvents()   # repaint the button before the blocking fetch
         try:
             with wait_cursor():
-                result = self._preview_fn()   # {deck_name: (kept, new) | None}
+                result, retired_n, moves_n = self._preview_fn()
         except Exception as e:
             self._preview_btn.setText("Preview failed")
             self._preview_btn.setEnabled(True)
@@ -322,6 +336,20 @@ class _DeckManagerDialog(QDialog):
                 pill.setStyleSheet(_pill_style("#6b7280"))
         self._preview_btn.setText("Check again")
         self._preview_btn.setEnabled(True)
+
+        if retired_n or moves_n:
+            parts = []
+            if retired_n:
+                parts.append(f"{retired_n} retired card"
+                            f"{'s' if retired_n != 1 else ''} still in your collection")
+            if moves_n:
+                parts.append(f"{moves_n} card{'s' if moves_n != 1 else ''} to relocate")
+            self._recon_label.setText(
+                "Also found: " + " and ".join(parts) +
+                " — Advanced → Reconcile my decks to tidy up.")
+            self._recon_label.setVisible(True)
+        else:
+            self._recon_label.setVisible(False)
 
     def _set_all(self, val):
         for cb in self._checks.values():
@@ -370,10 +398,18 @@ def manage_decks():
 
     def _preview():
         """Download every changed deck and match it against the collection, returning
-        {deck_name: (kept_in_place, added_new)}. Read-only — imports nothing. Runs when
-        the user clicks "Check what will sync"; the download is why it's on demand.
-        Only ever called when manifest/fetch exist, since the button stays disabled
-        otherwise."""
+        (per_deck, retired_count, moves_count). per_deck is {deck_name: (kept_in_place,
+        added_new)}. Read-only — imports nothing. Runs when the user clicks "Check what
+        will sync"; the download is why it's on demand. Only ever called when
+        manifest/fetch exist, since the button stays disabled otherwise.
+
+        retired_count/moves_count answer a different question than per_deck: not "what
+        would a sync add," but "what does Reconcile my decks already have pending for
+        you." They're collection-wide facts independent of which decks' versions
+        changed (a retirement or reorg can ship without bumping every deck's version),
+        so they're computed once here rather than folded into the per-deck loop — same
+        checks reconcile_decks() in sync.py runs, reused rather than duplicated.
+        """
         pending = [d for d in manifest["decks"]
                    if installed.get(d["name"]) != d["version"]]
         her = _her_front_to_guid(cfg["scope_tag"])
@@ -393,7 +429,15 @@ def manage_decks():
                         os.remove(src)
                     except OSError:
                         pass
-        return out
+
+        her_nid = _her_guid_to_nid(cfg["scope_tag"])
+        retired_count = len(find_retired_in_collection(
+            manifest.get("retired", {}), set(her_nid)))
+        her_deck = _her_guid_to_deck(cfg["scope_tag"])
+        moves_count = len([
+            m for m in find_deck_moves_needed(manifest.get("deck_moves", {}), her_deck)
+            if m["guid"] in her_nid])
+        return out, retired_count, moves_count
 
     dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source_label, _preview,
                              configured=bool(manifest))

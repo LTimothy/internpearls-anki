@@ -453,6 +453,7 @@ class QWidget:
         self._layout = None
         self._tooltip = ""
         self._enabled = True
+        self._visible = True
 
     def setStyleSheet(self, s):
         self._style = s
@@ -465,6 +466,12 @@ class QWidget:
 
     def setEnabled(self, v):
         self._enabled = v
+
+    def setVisible(self, v):
+        self._visible = v
+
+    def isVisible(self):
+        return self._visible
 
     def setWordWrap(self, v):
         pass
