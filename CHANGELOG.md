@@ -3,6 +3,20 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.23.0
+
+- Sync now refuses to run against a deck source whose `manifest.json` `schema` is
+  newer than this add-on version understands, with a clear message to update first,
+  instead of attempting an import against a manifest shape it can't fully interpret.
+  Auto-sync applies the same check and pauses quietly (one tooltip per session) rather
+  than looping every poll interval. This is a forward-looking safety net — today's
+  manifest schema (2) is unchanged and every existing source keeps syncing normally.
+- Add-on updates are no longer only visible in the 8-second startup tooltip: the
+  "Check for add-on updates" menu item now shows the known-available version right on
+  the label (persists across the tooltip fading and across restarts, seeded from the
+  last check), and About shows the same "latest known" line next to the installed
+  version.
+
 ## v0.22.0
 
 - "Reconcile my decks" now also relocates cards a deck reorg has moved to a

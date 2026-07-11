@@ -30,7 +30,7 @@ from .collection import (backup_collection_now, backup_deck_now, export_deck,
                          import_deck, restore_from_backup, update_notetypes)
 from .dialogs import about, manage_decks, open_settings
 from .sync import import_single, reconcile_decks, sync_decks
-from .updates import check_updates
+from .updates import check_updates, register_update_action
 
 
 def _menu():
@@ -44,6 +44,7 @@ def _menu():
                                                    # no args and Qt can't introspect through _safe's
                                                    # *args wrapper to know that.
         target.addAction(act)                     # the app menu unless told not to
+        return act
 
     # Two primary actions up top, everything occasional tucked under Advanced (including
     # the manual add-on-update check, which most people never need since the background
@@ -65,7 +66,10 @@ def _menu():
     add(adv, "Backup full collection", backup_collection_now)
     add(adv, "Restore full collection", restore_from_backup)
     adv.addSeparator()
-    add(adv, "Check for add-on updates", check_updates)
+    # register_update_action lets this item's own label show a known-available update
+    # (e.g. "Check for add-on updates (v0.24.0 available)") so that news survives past
+    # the startup tooltip's 8 seconds, instead of only living in a notice you can miss.
+    register_update_action(add(adv, "Check for add-on updates", check_updates))
     menu.addSeparator()
     add(menu, "Settings", open_settings)
     add(menu, "About", about)
