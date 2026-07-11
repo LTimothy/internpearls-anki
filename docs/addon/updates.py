@@ -11,10 +11,43 @@ import tempfile
 from aqt import mw
 from aqt.utils import openLink
 
-from .config import ADDON_VERSION, ANKI_REPO
+from .config import ADDON_VERSION, ANKI_REPO, STATE, _load_json
 from .logic import version_at_least
 from .net import _BG_TIMEOUT, _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_public_raw
 from .ui import _ask, _info, _safe, _warn
+
+# The "Check for add-on updates" QAction, set once by __init__.py right after building
+# the menu. Mutated from here and from background.py's startup check so a known
+# update stays visible on the menu item itself after the startup tooltip's 8 seconds
+# pass — previously an update notice had nowhere to live once that tooltip faded short
+# of digging into Advanced, which is the "hidden" problem this exists to fix.
+_update_action = None
+
+
+def register_update_action(action):
+    """Called once by __init__.py right after building the menu. Also seeds the label
+    from whatever version state.json last recorded an update-check learning about, so a
+    pending update discovered on a previous launch is visible immediately on this one,
+    before this session's own background or manual check has even run.
+    """
+    global _update_action
+    _update_action = action
+    cached = _load_json(STATE, {}).get("last_notified_addon_version")
+    if cached:
+        _refresh_update_action_label(cached)
+
+
+def _refresh_update_action_label(latest):
+    """Show the known-latest version on the menu item itself, or reset to the plain
+    label once we're caught up to it. No-op before the menu exists (register_update_action
+    hasn't run yet) — callable safely from anywhere that learns a version number.
+    """
+    if _update_action is None:
+        return
+    if latest and not version_at_least(ADDON_VERSION, latest):
+        _update_action.setText(f"Check for add-on updates (v{latest} available)")
+    else:
+        _update_action.setText("Check for add-on updates")
 
 
 def _fetch_addon_version_info(timeout=_CONNECT_TIMEOUT):
@@ -58,6 +91,7 @@ def check_updates():
     except Exception as e:
         _warn(f"Couldn't check for updates: {e}")
         return
+    _refresh_update_action_label(latest.get("version", ""))
 
     if version_at_least(ADDON_VERSION, latest.get("version", "0")):
         _info(f"Intern Pearls Deck Tools is up to date (v{ADDON_VERSION}).")

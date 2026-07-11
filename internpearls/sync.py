@@ -18,10 +18,11 @@ from .collection import (_apply_deck, _apply_template_changes, _ensure_notetypes
                          _import_apkg, _pre_sync_backup_or_confirm_skip, _restore,
                          _snapshot, _template_changes, apply_deck_moves,
                          archive_notes, carry_over_protected_fields)
-from .config import (INSTALLED, RETIRED_DECK_LEAF, RETIRED_TAG_LEAF, _cfg,
-                     _load_json, _save_json)
+from .config import (ADDON_VERSION, INSTALLED, RETIRED_DECK_LEAF, RETIRED_TAG_LEAF,
+                     SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json)
 from .logic import (bullets, decks_to_update, find_deck_moves_needed,
-                    find_retired_in_collection, remap_cards, write_personalized)
+                    find_retired_in_collection, manifest_needs_newer_addon,
+                    remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .ui import _ask, _info, _safe, _warn, wait_cursor
 
@@ -76,6 +77,16 @@ def sync_decks():
     if not manifest:
         _warn("No deck source configured yet.<br><br>"
               "Open <b>Intern Pearls → Manage decks</b> and use Configure source.")
+        return
+    if manifest_needs_newer_addon(manifest, SUPPORTED_MANIFEST_SCHEMA):
+        _warn(
+            f"This deck source needs a newer version of Intern Pearls Deck Tools than "
+            f"the one installed (v{ADDON_VERSION}).<br><br>"
+            "Update the add-on first — <b>Intern Pearls → Advanced → Check for add-on "
+            "updates</b> — then try Sync decks again. Syncing against a manifest format "
+            "this version doesn't understand is refused rather than attempted, so "
+            "nothing here has been touched."
+        )
         return
 
     installed = _load_json(INSTALLED, {})

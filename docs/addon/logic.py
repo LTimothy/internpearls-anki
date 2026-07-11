@@ -38,6 +38,17 @@ def version_at_least(current, latest):
     return latest_n <= cur_n
 
 
+def manifest_needs_newer_addon(manifest, supported_schema):
+    """True if this manifest's format is newer than this add-on version understands.
+
+    The deck-repo side writes a `schema` int into manifest.json, bumped only when the
+    manifest's shape changes in a way an older add-on can't safely read (see that
+    repo's CLAUDE.md). Missing `schema` means an old manifest predating this field,
+    always readable, so it defaults to 1 (never newer than any real supported_schema).
+    """
+    return bool(manifest) and manifest.get("schema", 1) > supported_schema
+
+
 def parse_fields(text, default=("Notes",)):
     """Parse the deck manager's comma-separated "preserved fields" box into a clean list.
 
