@@ -102,12 +102,15 @@ def make_model(name="Study Deck - Basic", fields=None, css=".card { color: black
     }
 
 
-def make_apkg(path, notes, model=None):
+def make_apkg(path, notes, model=None, deck=None):
     """Write a mock .apkg the add-on can fully process.
 
     `notes`: list of (guid, fields_list, tags_string). Includes the col.models
     JSON (so _template_changes has something to read) and a tags column (so
-    imported notes land under the add-on's scope tag).
+    imported notes land under the add-on's scope tag). `deck`, if given, also writes
+    a `cards`/`decks` table (mirroring a real Anki export) so a fresh import lands
+    each note in a real Anki deck of that name — needed for anything that checks
+    where in the collection a synced note actually sits, not just that it exists.
     """
     model = model or make_model()
     db = path + ".tmp.db"
@@ -119,9 +122,19 @@ def make_apkg(path, notes, model=None):
     for i, (guid, fields, tags) in enumerate(notes, 1):
         con.execute("insert into notes (id, guid, flds, tags) values (?, ?, ?, ?)",
                     (i, guid, FS.join(fields), tags))
-    con.execute("create table col (models text)")
-    con.execute("insert into col (models) values (?)",
-                (json.dumps({str(model["id"]): model}),))
+    if deck:
+        con.execute("create table cards "
+                    "(id integer primary key, nid integer, did integer)")
+        for i in range(1, len(notes) + 1):
+            con.execute("insert into cards (id, nid, did) values (?, ?, 1)", (i, i))
+        con.execute("create table col (models text, decks text)")
+        con.execute("insert into col (models, decks) values (?, ?)",
+                    (json.dumps({str(model["id"]): model}),
+                     json.dumps({"1": {"name": deck}})))
+    else:
+        con.execute("create table col (models text)")
+        con.execute("insert into col (models) values (?)",
+                    (json.dumps({str(model["id"]): model}),))
     con.commit()
     con.close()
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
