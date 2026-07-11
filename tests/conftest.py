@@ -31,6 +31,7 @@ def anki(tmp_path, monkeypatch):
     import internpearls.collection as collection
     import internpearls.config as config
     import internpearls.sync as sync
+    import internpearls.updates as updates
 
     _mock.mw.col = mock_anki.MockCollection()
     _mock.mw._config = {}
@@ -45,7 +46,12 @@ def anki(tmp_path, monkeypatch):
     installed = str(tmp_path / "installed.json")
     for mod in (config, sync, background):
         monkeypatch.setattr(mod, "INSTALLED", installed)
-    monkeypatch.setattr(config, "STATE", str(tmp_path / "state.json"))
+    # Each of these modules does `from .config import STATE` (a direct name import), so
+    # patching config.STATE alone doesn't reach them — every module holding its own
+    # bound copy of the name needs patching individually, same as INSTALLED above.
+    state = str(tmp_path / "state.json")
+    for mod in (config, background, updates):
+        monkeypatch.setattr(mod, "STATE", state)
     monkeypatch.setattr(collection, "_USER_FILES", str(tmp_path / "user_files"))
     background._tpl_deferred_notified.clear()
     return _mock

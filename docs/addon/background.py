@@ -29,13 +29,14 @@ except Exception:
 
 from .collection import _pre_sync_backup_or_skip_silently
 from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
-                     AUTO_SYNC_INTERVAL_FLOOR_MIN, INSTALLED, STATE, _cfg, _load_json,
-                     _save_json)
-from .logic import clamp_interval_minutes, decide_addon_update_action, decks_to_update
+                     AUTO_SYNC_INTERVAL_FLOOR_MIN, INSTALLED, STATE,
+                     SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json)
+from .logic import (clamp_interval_minutes, decide_addon_update_action,
+                    decks_to_update, manifest_needs_newer_addon)
 from .net import _BG_TIMEOUT
 from .sync import _fetch_manifest, _run_sync
 from .ui import _bg_safe
-from .updates import _addon_update_work
+from .updates import _addon_update_work, _refresh_update_action_label
 
 
 def _run_in_background(work, on_done):
@@ -84,6 +85,10 @@ def _check_addon_updates_background():
         if error or not result:
             return   # offline / GitHub hiccup — stay quiet, try again next launch
         latest = result["info"].get("version", "")
+        # Refresh the menu label from this fresh fetch regardless of the notify-once
+        # suppression below — that logic governs the transient tooltip, not what the
+        # persistent menu label should currently show.
+        _refresh_update_action_label(latest)
         state = _load_json(STATE, {})
         action = decide_addon_update_action(
             ADDON_VERSION, latest, cfg["auto_update_addon"], cfg["notify_addon_updates"],
@@ -118,6 +123,10 @@ _auto_sync_in_progress = False
 # about, so the repeating poll doesn't re-announce them every interval. Session-scoped
 # on purpose: a restart is allowed to remind once more.
 _tpl_deferred_notified = set()
+# Manifest schema values auto-sync has already told the user require an add-on update.
+# Same session-scoped-once pattern as _tpl_deferred_notified — otherwise a schema
+# mismatch would re-nag every poll interval until the add-on is updated.
+_schema_blocked_notified = set()
 
 
 @_bg_safe
@@ -147,6 +156,8 @@ def _auto_sync_check():
         manifest, fetch, source = _fetch_manifest(cfg, timeout=_BG_TIMEOUT)
         if not manifest:
             return None
+        if manifest_needs_newer_addon(manifest, SUPPORTED_MANIFEST_SCHEMA):
+            return {"schema_blocked": manifest.get("schema")}
         installed = _load_json(INSTALLED, {})
         todo = decks_to_update(manifest, installed, cfg["excluded"])
         if not todo:
@@ -169,6 +180,15 @@ def _auto_sync_check():
         global _auto_sync_in_progress
         if error or not result:
             return   # offline, misconfigured, or nothing pending — stay quiet
+        if "schema_blocked" in result:
+            schema = result["schema_blocked"]
+            if schema not in _schema_blocked_notified:
+                _schema_blocked_notified.add(schema)
+                tooltip(
+                    "Intern Pearls: the deck source needs a newer add-on version — "
+                    "auto-sync is paused until you update. Advanced → Check for add-on "
+                    "updates.", period=8000, parent=mw)
+            return
         _auto_sync_in_progress = True
         try:
             if not _pre_sync_backup_or_skip_silently(cfg["export_deck"]):
