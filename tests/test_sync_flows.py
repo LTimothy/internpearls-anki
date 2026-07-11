@@ -214,12 +214,14 @@ RETIRED_DECK = "Intern Pearls::Intern Custom::Retired"
 RETIRED_TAG = f"{SCOPE}::retired"
 
 
-def _write_retired_source(tmp_path, retired):
-    """A source folder whose manifest carries a `retired` ledger (schema 2) and no
-    decks — reconcile only reads the ledger, never downloads apkgs."""
+def _write_retired_source(tmp_path, retired, deck_moves=None):
+    """A source folder whose manifest carries a `retired` ledger and/or a
+    `deck_moves` ledger (schema 2) and no decks — reconcile only reads the
+    ledgers, never downloads apkgs."""
     folder = tmp_path / "source"
     folder.mkdir(exist_ok=True)
-    manifest = {"schema": 2, "decks": [], "front_aliases": {}, "retired": retired}
+    manifest = {"schema": 2, "decks": [], "front_aliases": {}, "retired": retired,
+                "deck_moves": deck_moves or {}}
     (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf8")
     return str(folder)
 
@@ -287,7 +289,7 @@ def test_reconcile_reports_nothing_when_no_retired_cards_present(anki, tmp_path)
 
     sync.reconcile_decks()
 
-    assert any("No retired cards found" in i for i in anki.gui.infos)
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
     assert not anki.col.imports                   # reconcile never imports
 
 
@@ -305,3 +307,97 @@ def test_reconcile_declined_leaves_everything_untouched(anki, tmp_path):
     cid = old.card_ids()[0]
     assert anki.col._cards[cid].queue == 0        # not suspended
     assert RETIRED_TAG not in old.tags            # not tagged
+
+
+def test_reconcile_carries_notes_over_to_replacement_before_archiving(anki, tmp_path):
+    from internpearls import sync
+    anki.col.add_note("old1", _fields("bulky crisis card", notes="her mnemonic"), TAGS.split())
+    _her_card(anki, "new1a", "focused card A")
+    folder = _write_retired_source(tmp_path, {
+        DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                        "superseded_by": ["new1a"]}}})
+    _configure(anki, folder)
+
+    sync.reconcile_decks()
+
+    assert anki.col.note_by_guid("new1a")["Notes"] == "her mnemonic"
+    assert any("1 personal note(s) carried over" in i for i in anki.gui.infos)
+
+
+def test_reconcile_does_not_overwrite_replacements_own_notes(anki, tmp_path):
+    from internpearls import sync
+    anki.col.add_note("old1", _fields("bulky crisis card", notes="her old mnemonic"),
+                      TAGS.split())
+    anki.col.add_note("new1a", _fields("focused card A", notes="a note she already wrote"),
+                      TAGS.split(), deck=DECK)
+    folder = _write_retired_source(tmp_path, {
+        DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                        "superseded_by": ["new1a"]}}})
+    _configure(anki, folder)
+
+    sync.reconcile_decks()
+
+    assert anki.col.note_by_guid("new1a")["Notes"] == "a note she already wrote"
+
+
+# ---------------------------------------------------------- reconcile: deck moves
+NEW_DECK = "Intern Pearls::Intern Custom::Regional"
+
+
+def test_reconcile_moves_card_to_reorganized_deck(anki, tmp_path):
+    from internpearls import sync
+    card = _her_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
+    folder = _write_retired_source(tmp_path, {}, deck_moves={
+        "g1": {"from": DECK, "to": NEW_DECK}})
+    _configure(anki, folder)
+    scm_before = anki.col.scm
+
+    sync.reconcile_decks()
+
+    cid = card.card_ids()[0]
+    assert anki.col.decks.name(anki.col._cards[cid].did) == NEW_DECK
+    assert anki.col.scm == scm_before              # schema-neutral, no forced full sync
+    assert any("Moved <b>1</b>" in i for i in anki.gui.infos)
+
+
+def test_reconcile_move_is_idempotent(anki, tmp_path):
+    from internpearls import sync
+    _her_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
+    folder = _write_retired_source(tmp_path, {}, deck_moves={
+        "g1": {"from": DECK, "to": NEW_DECK}})
+    _configure(anki, folder)
+    sync.reconcile_decks()
+
+    anki.gui.infos.clear()
+    sync.reconcile_decks()                        # second run: card is already at `to`
+
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
+
+
+def test_reconcile_does_not_move_a_card_she_relocated_herself(anki, tmp_path):
+    from internpearls import sync
+    her_own_deck = "My Own Custom Deck"
+    card = _her_card(anki, "g1", "Lidocaine — onset time?", deck=her_own_deck)
+    folder = _write_retired_source(tmp_path, {}, deck_moves={
+        "g1": {"from": DECK, "to": NEW_DECK}})
+    _configure(anki, folder)
+
+    sync.reconcile_decks()
+
+    cid = card.card_ids()[0]
+    assert anki.col.decks.name(anki.col._cards[cid].did) == her_own_deck
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
+
+
+def test_reconcile_move_declined_leaves_deck_untouched(anki, tmp_path):
+    from internpearls import sync
+    card = _her_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
+    folder = _write_retired_source(tmp_path, {}, deck_moves={
+        "g1": {"from": DECK, "to": NEW_DECK}})
+    _configure(anki, folder)
+    anki.gui.answers = [False]
+
+    sync.reconcile_decks()
+
+    cid = card.card_ids()[0]
+    assert anki.col.decks.name(anki.col._cards[cid].did) == DECK

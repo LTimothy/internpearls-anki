@@ -14,13 +14,14 @@ from aqt import mw
 from aqt.utils import getFile
 
 from .collection import (_apply_deck, _apply_template_changes, _ensure_notetypes,
-                         _her_front_to_guid, _her_guid_to_nid, _import_apkg,
-                         _pre_sync_backup_or_confirm_skip, _restore, _snapshot,
-                         _template_changes, archive_notes)
+                         _her_front_to_guid, _her_guid_to_deck, _her_guid_to_nid,
+                         _import_apkg, _pre_sync_backup_or_confirm_skip, _restore,
+                         _snapshot, _template_changes, apply_deck_moves,
+                         archive_notes, carry_over_protected_fields)
 from .config import (INSTALLED, RETIRED_DECK_LEAF, RETIRED_TAG_LEAF, _cfg,
                      _load_json, _save_json)
-from .logic import (bullets, decks_to_update, find_retired_in_collection,
-                    remap_cards, write_personalized)
+from .logic import (bullets, decks_to_update, find_deck_moves_needed,
+                    find_retired_in_collection, remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .ui import _ask, _info, _safe, _warn, wait_cursor
 
@@ -200,15 +201,25 @@ def _offer_template_changes(tpl_changes):
 
 @_safe
 def reconcile_decks():
-    """Find retired cards still in the learner's collection and archive them.
+    """Find retired cards still in the learner's collection and archive them, and
+    relocate any cards a pure deck reorg has moved to a new deck.
 
     When a deck splits, merges, or reword-replaces a card, the old card's GUID leaves
     the canonical set — but a sync only ever ADDS the replacements, it never removes her
     copy of the old one. So the old card lingers, duplicated against its replacements in
     every review. This reads the retirement ledger (shipped in the manifest), finds the
-    retired cards she still has, and archives them: moved to a Retired subdeck, suspended,
-    tagged. It never deletes anything — the worst a bug here can do is suspend/move a card,
+    retired cards she still has, carries over any personal notes onto their
+    replacement(s), and archives them: moved to a Retired subdeck, suspended, tagged.
+    It never deletes anything — the worst a bug here can do is suspend/move a card,
     which is trivially reversible.
+
+    Separately, when a deck source reorganizes a card into a different deck without
+    changing its identity (e.g. Local Anesthetics moving into a new Regional deck),
+    a normal sync updates the card's content in place but never relocates it — Anki's
+    importer only assigns a deck to a brand-new note, never an already-existing one.
+    This reads the deck-moves ledger and relocates any card still sitting exactly
+    where the source last filed it (find_deck_moves_needed skips anything she's since
+    moved herself, so her own organization is never overridden).
     """
     cfg = _cfg()
     try:
@@ -226,9 +237,13 @@ def reconcile_decks():
 
     her = _her_guid_to_nid(cfg["scope_tag"])
     found = find_retired_in_collection(manifest.get("retired", {}), set(her))
-    if not found:
-        _info("No retired cards found in your collection — nothing to tidy up. "
-              f"(Source: {source}.)")
+    her_deck = _her_guid_to_deck(cfg["scope_tag"])
+    moves = [m for m in find_deck_moves_needed(manifest.get("deck_moves", {}), her_deck)
+             if m["guid"] in her]
+
+    if not found and not moves:
+        _info("No retired cards or reorganized decks found in your collection — "
+              f"nothing to tidy up. (Source: {source}.)")
         return
 
     tag = f'{cfg["scope_tag"]}::{RETIRED_TAG_LEAF}'
@@ -240,7 +255,7 @@ def reconcile_decks():
             already += 1
         else:
             fresh.append(r)
-    if not fresh:
+    if not fresh and not moves:
         _info(f"All {already} retired card(s) in your collection are already archived "
               f"(suspended and moved to <b>{RETIRED_DECK_LEAF}</b>). Nothing more to do.")
         return
@@ -254,7 +269,7 @@ def reconcile_decks():
                  "versions before archiving the old ones.<br><br>") if missing else ""
     already_note = (f"<br>({already} more were already archived on a previous run.)"
                     if already else "")
-    if not _ask(
+    archive_block = (
         f"Found <b>{len(fresh)}</b> retired card(s) still in your collection — older "
         "cards since split into focused ones or reworded, whose replacements are now "
         "separate cards. Left alone, they show up as duplicates in your reviews."
@@ -262,21 +277,44 @@ def reconcile_decks():
         f"Archive them? Each is moved to <b>{RETIRED_DECK_LEAF}</b>, suspended (out of "
         "your review rotation), and tagged. <b>Nothing is deleted</b> — their review "
         "history is kept and you can bring any back anytime by unsuspending it or moving "
-        "it out of the Retired deck. A backup is taken automatically first." + already_note
-    ):
+        "it out of the Retired deck. Any personal notes on them are copied onto their "
+        "replacement card(s) first." + already_note
+    ) if fresh else ""
+    move_lines = [f"{mw.col.get_note(her[m['guid']]).fields[0]} <span "
+                  f"style='color:gray;'>→ {m['to'].split('::')[-1]}</span>" for m in moves]
+    moves_block = (
+        f"Found <b>{len(moves)}</b> card(s) whose deck was reorganized in the source — "
+        "still live cards, just relocated (e.g. a topic moving into its own deck)."
+        + bullets(move_lines) +
+        "Move them to match? Review history and scheduling are untouched either way."
+    ) if moves else ""
+    sep = "<br><br>" if fresh and moves else ""
+    if not _ask(archive_block + sep + moves_block +
+                "<br><br>A backup is taken automatically first."):
         return
 
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
     if not proceed:
         return
-    n = archive_notes([her[r["guid"]] for r in fresh], retired_deck, tag)
+    carried = carry_over_protected_fields(fresh, her, cfg["protected"])
+    n_archived = archive_notes([her[r["guid"]] for r in fresh], retired_deck, tag)
+    n_moved = apply_deck_moves(moves, her)
     mw.reset()
     backup_line = ("" if backed_up else
                    "<br><br>(No backup was taken this time — nothing to back up yet, or "
                    "it failed and you chose to continue.)")
-    _info(f"Archived <b>{n}</b> retired card(s) to <b>{retired_deck}</b>: suspended and "
-          f"tagged <code>{tag}</code>, review history kept. Bring any back by "
-          "unsuspending it or moving it out of the Retired deck." + backup_line)
+    result_lines = []
+    if n_archived:
+        result_lines.append(
+            f"Archived <b>{n_archived}</b> retired card(s) to <b>{retired_deck}</b>: "
+            f"suspended and tagged <code>{tag}</code>, review history kept"
+            + (f" ({carried} personal note(s) carried over to their replacement)"
+               if carried else "") + ". Bring any back by unsuspending it or moving "
+            "it out of the Retired deck.")
+    if n_moved:
+        result_lines.append(f"Moved <b>{n_moved}</b> card(s) to their reorganized deck — "
+                            "content and scheduling untouched.")
+    _info("<br><br>".join(result_lines) + backup_line)
 
 
 @_safe

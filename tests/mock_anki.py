@@ -197,6 +197,13 @@ class _Decks:
             self.names[name] = len(self.names) + 1
         return self.names[name]
 
+    def name(self, did):
+        """Anki's decks.name(): reverse lookup, deck id -> deck name."""
+        for n, i in self.names.items():
+            if i == did:
+                return n
+        return None
+
 
 class _Db:
     def __init__(self, col):
@@ -303,6 +310,9 @@ class MockCollection:
 
     def get_note(self, nid):
         return self._notes[nid]
+
+    def get_card(self, cid):
+        return self._cards[cid]
 
     def update_note(self, note):
         pass   # MockNote is mutated in place
