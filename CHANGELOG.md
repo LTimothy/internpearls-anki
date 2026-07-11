@@ -3,6 +3,22 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.25.0
+
+- Fixed a real bug: Reconcile my decks' confirmation could become unusable after a
+  large backlog (e.g. dozens of cards relocated by one reorg) — it used a plain
+  message box with no scroll area, so a long enough list pushed the Yes/No buttons
+  off-screen with no way to reach them. The confirmation now scrolls in a fixed-height
+  viewport with the buttons pinned outside it, so they're always reachable regardless
+  of content length, and the card list itself is capped to the first 15 plus a "...and
+  N more" summary so it also reads as a short list rather than a wall of text. A large
+  first run also now says up front that it's a one-time catch-up, since the length
+  alone can otherwise read as something having gone wrong.
+- Tightened the archive/relocate confirmation's copy: one shared "nothing is deleted,
+  here's how to undo it" note instead of repeating the same reassurance once per
+  section, and action-specific buttons ("Archive", "Relocate", "Archive and relocate")
+  instead of a generic Yes/No.
+
 ## v0.24.0
 
 - "Check what will sync" (Manage decks) now also reports what Reconcile my decks has

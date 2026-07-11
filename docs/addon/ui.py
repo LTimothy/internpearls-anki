@@ -14,7 +14,8 @@ import traceback
 from contextlib import contextmanager
 
 from aqt import mw
-from aqt.qt import QApplication, QLabel, QPushButton, Qt
+from aqt.qt import (QApplication, QDialog, QDialogButtonBox, QFrame, QLabel,
+                    QPushButton, QScrollArea, Qt, QVBoxLayout)
 from aqt.utils import askUser, getText, showInfo, showWarning, tooltip
 
 from .config import APP_NAME
@@ -37,6 +38,45 @@ def _warn(text, **kw):
 def _ask(text, **kw):
     kw.setdefault("title", APP_NAME)
     return askUser(text, **kw)
+
+
+def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=340):
+    """Like _ask, but for content whose length isn't bounded by anything short — a
+    bullet list of cards or decks that can grow into the dozens. A plain QMessageBox
+    (what askUser/_ask use) has no scroll area: long text just makes the box taller,
+    and once it's taller than the screen, its Yes/No buttons end up off-screen with no
+    way to reach them — an unusable, undismissable dialog. This scrolls the body in a
+    fixed-height viewport instead, with the buttons pinned outside it, so they're
+    always reachable no matter how long the content is.
+
+    yes_label/no_label default to action-neutral "Continue"/"Cancel" rather than
+    "Yes"/"No" — a caller with a specific action (e.g. "Archive & relocate") should
+    pass its own labels, since a generic Yes/No forces the reader back up to the
+    question to know what they're agreeing to.
+    """
+    dlg = QDialog(mw)
+    dlg.setWindowTitle(APP_NAME)
+    dlg.setMinimumWidth(460)
+    lay = QVBoxLayout(dlg)
+
+    body = QLabel(text)
+    body.setWordWrap(True)
+    body.setTextFormat(Qt.TextFormat.RichText)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setMaximumHeight(max_height)
+    scroll.setWidget(body)
+    lay.addWidget(scroll)
+
+    bb = QDialogButtonBox()
+    yes = bb.addButton(yes_label, QDialogButtonBox.ButtonRole.AcceptRole)
+    bb.addButton(no_label, QDialogButtonBox.ButtonRole.RejectRole)
+    yes.clicked.connect(dlg.accept)
+    bb.rejected.connect(dlg.reject)
+    lay.addWidget(bb)
+
+    return bool(dlg.exec())
 
 
 def _prompt(text, **kw):

@@ -24,7 +24,7 @@ from .logic import (bullets, decks_to_update, find_deck_moves_needed,
                     find_retired_in_collection, manifest_needs_newer_addon,
                     remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
-from .ui import _ask, _info, _safe, _warn, wait_cursor
+from .ui import _ask, _ask_scrollable, _info, _safe, _warn, wait_cursor
 
 
 def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT):
@@ -271,37 +271,61 @@ def reconcile_decks():
               f"(suspended and moved to <b>{RETIRED_DECK_LEAF}</b>). Nothing more to do.")
         return
 
+    # A big first run (a large reorg landed before Reconcile was run even once) reads as
+    # alarming without context — say up front that it's a one-time catch-up, not what to
+    # expect going forward, so the length itself doesn't feel like something went wrong.
+    catch_up_note = (
+        "<i>This looks like a one-time catch-up — likely your first Reconcile since a "
+        "larger update. Future runs should be much shorter.</i><br><br>"
+        if len(fresh) + len(moves) > 20 else "")
+
+    # Both lists are capped for readability, and the confirmation below uses the
+    # scrollable dialog rather than a plain askUser() — a bare QMessageBox has no
+    # scroll area, so a long enough uncapped list (dozens of relocated cards from a
+    # single reorg, as happened here) can push the Yes/No buttons off-screen with no
+    # way to reach them. Capping keeps the dialog itself short in the common case;
+    # the scroll area is the structural guarantee that it can never happen again even
+    # if some future list grows past the cap.
     lines = [f"{r['identity']} <span style='color:gray;'>"
              f"({r['deck'].split('::')[-1]})</span>" for r in fresh]
     missing = sum(1 for r in fresh
                   if r["superseded_by"] and r["replacements_present"] == 0)
-    sync_note = (f"<b>Note:</b> {missing} of these don't have their replacement cards in "
-                 "your collection yet — run <b>Sync decks</b> first if you want the new "
-                 "versions before archiving the old ones.<br><br>") if missing else ""
-    already_note = (f"<br>({already} more were already archived on a previous run.)"
-                    if already else "")
+    sync_note = (f"<br><b>Note:</b> {missing} of these don't have their replacement "
+                 "cards in your collection yet — run <b>Sync decks</b> first if you "
+                 "want the new versions before archiving the old ones."
+                if missing else "")
+    already_note = f" ({already} more were already archived earlier.)" if already else ""
     archive_block = (
-        f"Found <b>{len(fresh)}</b> retired card(s) still in your collection — older "
-        "cards since split into focused ones or reworded, whose replacements are now "
-        "separate cards. Left alone, they show up as duplicates in your reviews."
-        + bullets(lines) + sync_note +
-        f"Archive them? Each is moved to <b>{RETIRED_DECK_LEAF}</b>, suspended (out of "
-        "your review rotation), and tagged. <b>Nothing is deleted</b> — their review "
-        "history is kept and you can bring any back anytime by unsuspending it or moving "
-        "it out of the Retired deck. Any personal notes on them are copied onto their "
-        "replacement card(s) first." + already_note
+        f"<b>{len(fresh)}</b> retired card(s) are still in your collection — split or "
+        "reworded since, with the replacements already added separately, so these "
+        f"just duplicate your reviews now.{already_note}"
+        + bullets(lines, cap=15) + sync_note
     ) if fresh else ""
+
     move_lines = [f"{mw.col.get_note(her[m['guid']]).fields[0]} <span "
                   f"style='color:gray;'>→ {m['to'].split('::')[-1]}</span>" for m in moves]
     moves_block = (
-        f"Found <b>{len(moves)}</b> card(s) whose deck was reorganized in the source — "
-        "still live cards, just relocated (e.g. a topic moving into its own deck)."
-        + bullets(move_lines) +
-        "Move them to match? Review history and scheduling are untouched either way."
+        f"<b>{len(moves)}</b> card(s) belong to a deck that's since been reorganized."
+        + bullets(move_lines, cap=15)
     ) if moves else ""
+
     sep = "<br><br>" if fresh and moves else ""
-    if not _ask(archive_block + sep + moves_block +
-                "<br><br>A backup is taken automatically first."):
+    safety_note = (
+        "<br><br>Nothing is deleted. Archived cards keep their review history and can "
+        "be brought back anytime by unsuspending them or moving them out of the "
+        "Retired deck" +
+        (", and any personal notes on them carry over to the replacement first."
+         if fresh else ".") +
+        " A backup is taken automatically before anything changes."
+    )
+    if fresh and moves:
+        yes_label = "Archive and relocate"
+    elif fresh:
+        yes_label = "Archive"
+    else:
+        yes_label = "Relocate"
+    if not _ask_scrollable(catch_up_note + archive_block + sep + moves_block + safety_note,
+                           yes_label=yes_label):
         return
 
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])

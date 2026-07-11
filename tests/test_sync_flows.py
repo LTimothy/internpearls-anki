@@ -7,10 +7,59 @@ things mocked are Anki itself and the dialogs, which are recorded and scripted.
 """
 import json
 
+import mock_anki
 from mock_anki import make_apkg, make_model
 
 SCOPE = "InternPearls"
 TAGS = f"{SCOPE}::Pharm"
+
+
+def drive(anki, fn, respond):
+    """Run `fn` to completion via the same snapshot-and-replay Runner test_dialogs.py
+    uses — needed here too now that reconcile_decks() confirms through a custom
+    scrollable QDialog rather than the plain askUser() the simple
+    anki.gui.answers=[...] shortcut answers."""
+    from internpearls import collection, sync
+    runner = mock_anki.Runner(anki, paths=[sync.INSTALLED, collection._USER_FILES])
+    runner.drive(fn, respond)
+
+
+def _walk(node, out=None):
+    out = out if out is not None else []
+    out.append(node)
+    for c in node.get("children", []) or []:
+        _walk(c, out)
+    return out
+
+
+def _find(tree, **want):
+    for n in _walk(tree):
+        if all(n.get(k) == v for k, v in want.items()):
+            return n
+    return None
+
+
+def _click_reconcile_button(accept):
+    """respond() for reconcile_decks()'s confirmation dialog: click whichever button
+    isn't labeled "Cancel" to accept (its label varies — "Archive", "Relocate", or
+    "Archive and relocate" — depending on what's pending), or click Cancel to decline.
+
+    Runner.start() flips gui.interactive on for the whole replay, so the info/warn
+    calls reconcile_decks() also makes (e.g. the final "Archived N card(s)..." result)
+    need a response too, not just the confirmation dialog itself — pass those straight
+    through, there's nothing to click.
+    """
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}   # info/warn: nothing to click, just let it continue
+        tree = p["tree"]
+        if accept:
+            btn = next(n for n in _walk(tree)
+                      if n.get("t") == "button" and n.get("label") != "Cancel")
+        else:
+            btn = _find(tree, t="button", label="Cancel")
+        return {"events": [{"id": btn["id"], "click": True}]}
+    return respond
 
 
 def _fields(front, back="the back", notes=""):
@@ -233,7 +282,7 @@ def _her_card(anki, guid, front, deck=DECK):
 def test_reconcile_archives_retired_cards(anki, tmp_path):
     from internpearls import sync
     # She has the retired card old1 plus both its replacements and an unrelated card.
-    old = _her_card(anki, "old1", "bulky crisis card")
+    _her_card(anki, "old1", "bulky crisis card")
     _her_card(anki, "new1a", "focused card A")
     _her_card(anki, "new1b", "focused card B")
     _her_card(anki, "keep", "an untouched card")
@@ -243,9 +292,13 @@ def test_reconcile_archives_retired_cards(anki, tmp_path):
     _configure(anki, folder)
     scm_before, notes_before = anki.col.scm, len(anki.col._notes)
 
-    sync.reconcile_decks()
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
 
     # old1 archived: suspended, moved to the Retired deck, tagged — never deleted.
+    # Looked up fresh via guid rather than a note reference captured before drive():
+    # the Runner's replay deepcopies mw.col on every pass, so a reference from before
+    # drive() points at an orphaned pre-replay collection, not the one actually mutated.
+    old = anki.col.note_by_guid("old1")
     cid = old.card_ids()[0]
     assert anki.col._cards[cid].queue == -1                       # suspended
     assert anki.col._cards[cid].did == anki.col.decks.id_for_name(RETIRED_DECK)
@@ -262,19 +315,22 @@ def test_reconcile_archives_retired_cards(anki, tmp_path):
 
 def test_reconcile_is_idempotent(anki, tmp_path):
     from internpearls import sync
-    old = _her_card(anki, "old1", "bulky crisis card")
+    _her_card(anki, "old1", "bulky crisis card")
     folder = _write_retired_source(tmp_path, {
         DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
                         "superseded_by": []}}})
     _configure(anki, folder)
-    sync.reconcile_decks()
-    cid = old.card_ids()[0]
-    tags_after_first = list(old.tags)
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
+    # Fresh guid lookups throughout, not a note reference from before drive() — see the
+    # comment in test_reconcile_archives_retired_cards for why that reference is stale.
+    cid = anki.col.note_by_guid("old1").card_ids()[0]
+    tags_after_first = list(anki.col.note_by_guid("old1").tags)
 
     anki.gui.infos.clear()
+    anki.gui.interactive = False   # back to the plain shortcut for this simple re-run
     sync.reconcile_decks()                       # second run must not re-act
 
-    assert old.tags == tags_after_first          # no duplicate tag
+    assert anki.col.note_by_guid("old1").tags == tags_after_first  # no duplicate tag
     assert anki.col._cards[cid].queue == -1       # still suspended, untouched
     assert any("already archived" in i for i in anki.gui.infos)
 
@@ -295,15 +351,15 @@ def test_reconcile_reports_nothing_when_no_retired_cards_present(anki, tmp_path)
 
 def test_reconcile_declined_leaves_everything_untouched(anki, tmp_path):
     from internpearls import sync
-    old = _her_card(anki, "old1", "bulky crisis card")
+    _her_card(anki, "old1", "bulky crisis card")
     folder = _write_retired_source(tmp_path, {
         DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
                         "superseded_by": []}}})
     _configure(anki, folder)
-    anki.gui.answers = [False]                    # decline the archive confirmation
 
-    sync.reconcile_decks()
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=False))
 
+    old = anki.col.note_by_guid("old1")   # fresh lookup — see note above about staleness
     cid = old.card_ids()[0]
     assert anki.col._cards[cid].queue == 0        # not suspended
     assert RETIRED_TAG not in old.tags            # not tagged
@@ -318,7 +374,7 @@ def test_reconcile_carries_notes_over_to_replacement_before_archiving(anki, tmp_
                         "superseded_by": ["new1a"]}}})
     _configure(anki, folder)
 
-    sync.reconcile_decks()
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
 
     assert anki.col.note_by_guid("new1a")["Notes"] == "her mnemonic"
     assert any("1 personal note(s) carried over" in i for i in anki.gui.infos)
@@ -335,9 +391,44 @@ def test_reconcile_does_not_overwrite_replacements_own_notes(anki, tmp_path):
                         "superseded_by": ["new1a"]}}})
     _configure(anki, folder)
 
-    sync.reconcile_decks()
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
 
     assert anki.col.note_by_guid("new1a")["Notes"] == "a note she already wrote"
+
+
+def test_reconcile_dialog_caps_a_large_list_and_stays_clickable(anki, tmp_path):
+    """Regression test for the bug this whole scrollable-dialog change exists to fix:
+    a large first-run backlog (e.g. 90 cards relocated by a single reorg) used to build
+    an uncapped bullet list inside a plain askUser() box, which has no scroll area — the
+    dialog could grow taller than the screen with its buttons unreachable. This confirms
+    the list is capped in the rendered text and the accept button is still found and
+    clickable even with a backlog well past the cap."""
+    from internpearls import sync
+    retired = {}
+    for i in range(25):
+        _her_card(anki, f"old{i}", f"bulky card {i}")
+        retired[f"old{i}"] = {"identity": f"bulky card {i}", "reason": "split",
+                              "superseded_by": []}
+    folder = _write_retired_source(tmp_path, {DECK: retired})
+    _configure(anki, folder)
+
+    seen = {}
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            label = next(n for n in _walk(p["tree"]) if n.get("t") == "label")
+            seen["text"] = label["text"]
+            btn = next(n for n in _walk(p["tree"])
+                      if n.get("t") == "button" and n.get("label") != "Cancel")
+            return {"events": [{"id": btn["id"], "click": True}]}
+        return {}
+
+    drive(anki, sync.reconcile_decks, respond)
+
+    assert seen["text"].count("<li>") == 16          # 15 shown + 1 "...and N more" line
+    assert "...and 10 more" in seen["text"]
+    assert "one-time catch-up" in seen["text"]
+    assert any("Archived <b>25</b>" in i for i in anki.gui.infos)
 
 
 # ---------------------------------------------------------- reconcile: deck moves
@@ -352,7 +443,7 @@ def test_reconcile_moves_card_to_reorganized_deck(anki, tmp_path):
     _configure(anki, folder)
     scm_before = anki.col.scm
 
-    sync.reconcile_decks()
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
 
     cid = card.card_ids()[0]
     assert anki.col.decks.name(anki.col._cards[cid].did) == NEW_DECK
@@ -366,9 +457,10 @@ def test_reconcile_move_is_idempotent(anki, tmp_path):
     folder = _write_retired_source(tmp_path, {}, deck_moves={
         "g1": {"from": DECK, "to": NEW_DECK}})
     _configure(anki, folder)
-    sync.reconcile_decks()
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
 
     anki.gui.infos.clear()
+    anki.gui.interactive = False   # back to the plain shortcut for this simple re-run
     sync.reconcile_decks()                        # second run: card is already at `to`
 
     assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
@@ -395,9 +487,8 @@ def test_reconcile_move_declined_leaves_deck_untouched(anki, tmp_path):
     folder = _write_retired_source(tmp_path, {}, deck_moves={
         "g1": {"from": DECK, "to": NEW_DECK}})
     _configure(anki, folder)
-    anki.gui.answers = [False]
 
-    sync.reconcile_decks()
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=False))
 
     cid = card.card_ids()[0]
     assert anki.col.decks.name(anki.col._cards[cid].did) == DECK
