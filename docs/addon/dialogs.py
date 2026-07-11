@@ -14,8 +14,8 @@ from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
 from .collection import _her_front_to_guid
 from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, EXAMPLE_DECK_NAME, EXAMPLE_REPO,
-                     EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, _cfg, _load_json)
-from .logic import bullets, deck_status, parse_fields, remap_cards
+                     EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, STATE, _cfg, _load_json)
+from .logic import bullets, deck_status, parse_fields, remap_cards, version_at_least
 from .sync import _fetch_manifest, sync_decks
 from .ui import (_ask, _info, _prompt, _safe, _warn, hint_label, link_button,
                  muted_label, section_label, title_label, wait_cursor)
@@ -549,13 +549,24 @@ def about():
     else:
         update_status = "off"
 
+    # "Latest known" reads the same cached state.json value the menu label and startup
+    # tooltip already use — no fresh network call here, since About opening shouldn't
+    # block on one. It can be stale (only as fresh as the last background/manual check),
+    # but it's the same staleness the menu label already accepts, and far better than
+    # About only ever showing the installed version with no way to tell an update exists.
+    latest_known = _load_json(STATE, {}).get("last_notified_addon_version")
+    update_suffix = ""
+    if latest_known and not version_at_least(ADDON_VERSION, latest_known):
+        update_suffix = (f" &nbsp;<span style='color:#c0392b;'>(v{latest_known} "
+                         f"available — Advanced → Check for add-on updates)</span>")
+
     box = QMessageBox(mw)
     box.setWindowTitle(f"{APP_NAME}: About")
     box.setIcon(QMessageBox.Icon.Information)
     box.setTextFormat(Qt.TextFormat.RichText)
     box.setText(
         f"<b>Intern Pearls Deck Tools</b> &nbsp;<span style='color:gray;'>v{ADDON_VERSION}"
-        "</span><br><br>"
+        f"</span>{update_suffix}<br><br>"
         "Keeps a set of Anki decks in sync with a source you control, without losing "
         "review history or the annotations you keep in any preserved field. Cards are "
         "matched by ID, preserved fields are snapshotted and restored around every "

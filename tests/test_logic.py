@@ -73,6 +73,26 @@ def test_version_at_least_strictly_older_current():
     assert logic.version_at_least("0.10.1", "0.10.2") is False
 
 
+# ------------------------------------------------------------- manifest_needs_newer_addon
+def test_manifest_schema_within_supported_is_fine():
+    assert logic.manifest_needs_newer_addon({"schema": 2}, supported_schema=2) is False
+    assert logic.manifest_needs_newer_addon({"schema": 1}, supported_schema=2) is False
+
+
+def test_manifest_schema_newer_than_supported_is_blocked():
+    assert logic.manifest_needs_newer_addon({"schema": 3}, supported_schema=2) is True
+
+
+def test_manifest_missing_schema_defaults_to_1_never_blocked():
+    # Manifests written before the `schema` field existed are always readable.
+    assert logic.manifest_needs_newer_addon({}, supported_schema=2) is False
+
+
+def test_manifest_needs_newer_addon_handles_falsy_manifest():
+    assert logic.manifest_needs_newer_addon(None, supported_schema=2) is False
+    assert logic.manifest_needs_newer_addon({}, supported_schema=0) is False
+
+
 # ------------------------------------------------------------------ should_notify_update
 def test_should_notify_when_newer_and_never_notified():
     assert logic.should_notify_update("0.14.1", "0.15.0", None) is True
