@@ -48,6 +48,25 @@ def test_bullets_empty_list():
     assert logic.bullets([]) == "<ul style='margin:4px 0 4px 0;'></ul>"
 
 
+def test_bullets_uncapped_shows_everything_by_default():
+    html = logic.bullets([str(i) for i in range(50)])
+    assert html.count("<li>") == 50
+    assert "more" not in html
+
+
+def test_bullets_cap_truncates_and_summarizes():
+    html = logic.bullets([str(i) for i in range(50)], cap=10)
+    assert html.count("<li>") == 11   # 10 shown + 1 summary line
+    assert "<li>0</li>" in html and "<li>9</li>" in html
+    assert "<li>10</li>" not in html
+    assert "...and 40 more" in html
+
+
+def test_bullets_cap_no_op_when_under_the_limit():
+    html = logic.bullets(["a", "b"], cap=10)
+    assert html == "<ul style='margin:4px 0 4px 0;'><li>a</li><li>b</li></ul>"
+
+
 # ---------------------------------------------------------------- version comparison
 def test_version_tuple_parses_dotted_integers():
     assert logic.version_tuple("0.10.2") == (0, 10, 2)
