@@ -3,6 +3,18 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.25.1
+
+- Fixed a real bug: restoring an Anki collection backup ("collection revert") after a
+  sync could leave Sync decks, Check what will sync, and the Manage decks status pills
+  all reporting "up to date" even though the revert had erased the synced cards. The
+  add-on's own sync bookkeeping (`installed.json`) lives outside the collection file,
+  so it never rolled back along with it — nothing was actually being compared against
+  the collection's real contents. All three now reconcile that bookkeeping against the
+  collection first, so a deck the collection has lost is treated as not-yet-synced
+  again and a normal sync recovers it. Same fix applies to the unattended auto-sync
+  poll.
+
 ## v0.25.0
 
 - Fixed a real bug: Reconcile my decks' confirmation could become unusable after a

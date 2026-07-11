@@ -27,7 +27,7 @@ try:
 except Exception:
     QueryOp = None
 
-from .collection import _pre_sync_backup_or_skip_silently
+from .collection import _pre_sync_backup_or_skip_silently, installed_matching_collection
 from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, INSTALLED, STATE,
                      SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json)
@@ -150,6 +150,13 @@ def _auto_sync_check():
     if not cfg["auto_sync_decks"] or _auto_sync_in_progress or mw.col is None:
         return
 
+    # Reconciled here, on the main thread, before any work is handed to the background
+    # thread below — installed_matching_collection touches mw.col, which _fetch_work
+    # must not do (see _run_in_background's contract). See its docstring for why this
+    # matters: without it, a collection restore that rolled back a prior sync would
+    # leave auto-sync silently believing everything's still up to date.
+    installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
+
     def _fetch_work():
         # _BG_TIMEOUT, not the interactive default: this fires unattended as often as
         # once a minute, so a dead host must fail well inside the poll interval.
@@ -158,7 +165,6 @@ def _auto_sync_check():
             return None
         if manifest_needs_newer_addon(manifest, SUPPORTED_MANIFEST_SCHEMA):
             return {"schema_blocked": manifest.get("schema")}
-        installed = _load_json(INSTALLED, {})
         todo = decks_to_update(manifest, installed, cfg["excluded"])
         if not todo:
             return None
