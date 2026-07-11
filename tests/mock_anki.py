@@ -797,6 +797,12 @@ class QAction:
     def setMenuRole(self, r):
         pass
 
+    def setText(self, t):
+        self._label = t
+
+    def text(self):
+        return self._label
+
 
 class QMenu:
     def __init__(self, label="", parent=None):
