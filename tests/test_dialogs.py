@@ -42,7 +42,7 @@ def _write_source(tmp_path, deck="Intern Pearls::Intern Custom::Pharm", version=
     folder.mkdir(exist_ok=True)
     make_apkg(str(folder / "Pharm.apkg"),
               [("g1", ["Front one", "back", "", "", "", "", ""],
-                "InternPearls::Pharm")])
+                "InternPearls::Pharm")], deck=deck)
     (folder / "manifest.json").write_text(json.dumps({
         "schema": 2, "front_aliases": {},
         "decks": [{"name": deck, "apkg": "Pharm.apkg", "version": version,
