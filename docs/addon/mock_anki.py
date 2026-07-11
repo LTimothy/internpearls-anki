@@ -482,6 +482,12 @@ class QWidget:
     def setMinimumHeight(self, v):
         pass
 
+    def setMaximumWidth(self, v):
+        pass
+
+    def setMaximumHeight(self, v):
+        pass
+
     def setFrameShape(self, s):
         pass   # QScrollArea/QFrame are QFrame subclasses in real Qt
 
@@ -500,6 +506,9 @@ class QLabel(QWidget):
 
     def setText(self, t):
         self._text = t
+
+    def setTextFormat(self, f):
+        pass
 
     def node(self):
         return {"t": "label", "id": self.wid, "text": self._text,
@@ -686,6 +695,14 @@ class QDialogButtonBox(QWidget):
             btn.clicked.connect(self.rejected.emit)
         else:
             btn = QPushButton(str(arg))
+            # Real QDialogButtonBox auto-wires a custom-labeled button's role to the
+            # box's accepted/rejected signal too, same as the standard buttons above —
+            # a caller with its own action label (e.g. "Archive & relocate") still gets
+            # bb.rejected/accepted for free, matching aqt.qt behavior.
+            if role == QDialogButtonBox.ButtonRole.AcceptRole:
+                btn.clicked.connect(self.accepted.emit)
+            elif role == QDialogButtonBox.ButtonRole.RejectRole:
+                btn.clicked.connect(self.rejected.emit)
         self._buttons.append(btn)
         return btn
 
