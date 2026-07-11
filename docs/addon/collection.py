@@ -265,6 +265,35 @@ def _her_guid_to_deck(scope_tag):
     return out
 
 
+def installed_matching_collection(installed, scope_tag):
+    """Reconcile installed.json against what's actually in the collection.
+
+    installed.json lives in user_files/, entirely outside the collection file, so it
+    survives things that don't touch it — most notably restoring an Anki collection
+    backup, which rolls mw.col back to an earlier snapshot without touching this
+    add-on's own bookkeeping. After that, installed.json can still claim every deck is
+    synced when the collection no longer has any of their cards, so Sync decks, Check
+    what will sync, and the Manage decks status pills would all wrongly read "up to
+    date" — nothing looks pending because nothing was ever compared against the
+    collection itself.
+
+    Detects exactly the collapse a collection revert produces: every note under
+    scope_tag gone at once. If installed.json claims decks are synced but the
+    collection has zero of them left, reset to empty so every deck is treated as
+    not-yet-synced and a normal sync re-detects and re-applies all of them. This is
+    deliberately all-or-nothing rather than a per-deck check: a per-deck version would
+    need to match on deck name or a per-deck GUID list, and both are too fragile to
+    trust — deck names change under a legitimate reorg (Reconcile relocates cards on
+    purpose, see apply_deck_moves), and the manifest doesn't ship a per-deck GUID list
+    to check membership against. A whole-collection wipe is also what the reported
+    failure mode actually looks like: a revert rolls back the whole collection, not
+    one deck at a time.
+    """
+    if installed and not _her_guid_to_nid(scope_tag):
+        return {}
+    return installed
+
+
 def apply_deck_moves(moves, her_guid_to_nid):
     """Relocate a learner's cards to match a pure deck reorg (Local Anesthetics
     moving into a new Regional deck, say) without touching content or scheduling.

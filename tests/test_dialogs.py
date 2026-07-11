@@ -128,6 +128,30 @@ def test_manage_decks_preview_then_save_and_sync(anki, tmp_path):
     assert any("Sync complete" in i for i in anki.gui.infos)
 
 
+def test_manage_decks_status_pill_recovers_after_a_collection_revert(anki, tmp_path):
+    """installed.json survives a collection revert (it lives outside the collection
+    file), so without reconciliation the status pill would keep reading "Current" for
+    a deck whose cards the revert just erased. It should read "New" again, same as a
+    deck that was never synced, since that's what's actually true of the collection."""
+    from internpearls import dialogs, sync
+    anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    sync.sync_decks()
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+    anki.col._notes.clear()
+    anki.col._cards.clear()
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        pill = find(p["tree"], t="label", text="1 cards · New")
+        assert pill, "status pill must revert to New once the collection lost the deck"
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+
+
 def test_manage_decks_preview_also_reports_retired_and_moves(anki, tmp_path):
     """Check what will sync answers a different question than kept/new per deck:
     whether Reconcile my decks already has something pending. Both a retired card

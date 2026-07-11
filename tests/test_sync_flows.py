@@ -118,6 +118,34 @@ def test_second_sync_with_same_versions_is_a_no_op(anki, tmp_path):
     assert any("up to date" in i for i in anki.gui.infos)
 
 
+def test_sync_recovers_after_a_collection_revert_undoes_a_prior_sync(anki, tmp_path):
+    """installed.json lives in user_files/, outside the collection file, so restoring
+    an earlier collection backup ("collection revert") rolls the collection back to
+    before a sync while leaving installed.json still claiming that deck is current.
+    Sync decks must notice the collection no longer has anything under the scope tag
+    and re-treat every deck as pending, instead of reporting "up to date" against
+    content that no longer exists (the reported bug)."""
+    from internpearls import sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    _configure(anki, folder)
+    sync.sync_decks()
+    assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
+
+    # Simulate a collection revert: the collection rolls back to before the sync, but
+    # installed.json — outside the collection — is untouched.
+    anki.col._notes.clear()
+    anki.col._cards.clear()
+    anki.gui.infos.clear()
+
+    sync.sync_decks()
+
+    assert not any("up to date" in i for i in anki.gui.infos)
+    assert any("Sync complete" in i for i in anki.gui.infos)
+    assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
 def test_sync_overwrites_content_but_restores_protected_notes(anki, tmp_path):
     from internpearls import sync
     # She has the v1 card with her own annotation in Notes.
@@ -255,6 +283,29 @@ def test_auto_sync_defers_a_template_change_and_nags_once(anki, tmp_path):
     anki.gui.answers[:] = [True, True]
     sync.sync_decks()
     assert anki.col.models.all()[0]["css"] == NEW_CSS
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
+def test_auto_sync_recovers_after_a_collection_revert_undoes_a_prior_sync(anki, tmp_path):
+    """Same collection-revert scenario as the interactive sync test, driven through
+    the unattended auto-sync poll instead — that path reads installed.json on the
+    main thread (see background._auto_sync_check) before handing work to the
+    background-thread-safe closures, so it needs its own regression coverage."""
+    from internpearls import background
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+    background._auto_sync_check()
+    assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
+
+    anki.col._notes.clear()
+    anki.col._cards.clear()
+    anki.gui.tooltips.clear()
+
+    background._auto_sync_check()
+
+    assert any("auto-synced 1 deck(s)" in t for t in anki.gui.tooltips)
+    assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
 
 
