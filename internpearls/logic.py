@@ -14,10 +14,22 @@ import zipfile
 FS = "\x1f"   # Anki's field separator inside a note's flds column
 
 
-def bullets(items):
-    """Render a list as clean HTML for use inside a rich-text dialog."""
-    return "<ul style='margin:4px 0 4px 0;'>" + "".join(
-        f"<li>{item}</li>" for item in items) + "</ul>"
+def bullets(items, cap=None):
+    """Render a list as clean HTML for use inside a rich-text dialog.
+
+    If `cap` is set and there are more items than that, show only the first `cap` plus
+    a one-line "...and N more" summary instead of the full list. A long enough list
+    (dozens of retired or relocated cards) is a wall of text no one reads line by line
+    even when it's technically scrollable — capping is a readability fix, not just a
+    sizing one. `cap=None` (the default) preserves the old uncapped behavior.
+    """
+    shown = items if cap is None or len(items) <= cap else items[:cap]
+    extra = len(items) - len(shown)
+    html = "<ul style='margin:4px 0 4px 0;'>" + "".join(
+        f"<li>{item}</li>" for item in shown)
+    if extra:
+        html += f"<li><i>...and {extra} more</i></li>"
+    return html + "</ul>"
 
 
 def version_tuple(v):
