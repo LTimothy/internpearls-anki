@@ -143,6 +143,45 @@ def decide_addon_update_action(current, latest, auto_update, notify, last_notifi
     return "none"
 
 
+def find_deck_moves_needed(moves_ledger, her_guid_to_deck):
+    """Which of the learner's cards need to move deck to match a pure reorg.
+
+    `moves_ledger` is {guid: {from, to}} — every note the deck repo has ever
+    relocated without changing its GUID (see build_all.py's deck_moves.json).
+    `her_guid_to_deck` is {guid: current deck name} for her collection.
+
+    A move only applies if her card is still sitting exactly where the deck source
+    last put it (`from`). If it's anywhere else — already at `to` (she reconciled a
+    previous move), or somewhere of her own choosing (she filed it into a custom
+    deck) — leave it alone. This is what makes reconciling deck moves both
+    idempotent (nothing to do once she's there) and non-destructive of her own
+    organization (a deliberate move away from `from` is never overwritten).
+
+    Returns [{guid, from, to}], sorted by `to` then `from` for stable display.
+    """
+    out = []
+    for guid, move in (moves_ledger or {}).items():
+        current = her_guid_to_deck.get(guid)
+        if current == move.get("from"):
+            out.append({"guid": guid, "from": move["from"], "to": move["to"]})
+    out.sort(key=lambda m: (m["to"], m["from"]))
+    return out
+
+
+def fields_to_carry_over(saved, target_current):
+    """Which of a retired note's protected-field values to copy onto one of its
+    replacement notes.
+
+    `saved` is {field: value} read off the note being retired; `target_current` is
+    the same shape for the replacement. Never overwrites a field the replacement
+    already has text in — she may have already started annotating it herself, or a
+    previous partial run already carried a value over — so this only ever fills in
+    a field that's currently blank.
+    """
+    return {f: v for f, v in saved.items()
+            if v.strip() and not (target_current.get(f) or "").strip()}
+
+
 def find_retired_in_collection(retired_ledger, her_guids):
     """The retired cards a learner still has in her collection.
 
