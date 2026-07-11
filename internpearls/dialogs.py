@@ -11,7 +11,8 @@ from aqt.qt import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
                     QSpinBox, Qt, QVBoxLayout, QWidget)
 
 from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
-from .collection import _her_front_to_guid, _her_guid_to_deck, _her_guid_to_nid
+from .collection import (_her_front_to_guid, _her_guid_to_deck, _her_guid_to_nid,
+                         installed_matching_collection)
 from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, EXAMPLE_DECK_NAME, EXAMPLE_REPO,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, STATE, _cfg, _load_json)
@@ -393,7 +394,7 @@ def manage_decks():
             error = str(e)
     source_label = source if manifest else (f"error: {error}" if error else "not configured")
 
-    installed = _load_json(INSTALLED, {})
+    installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     rows = deck_status(manifest, installed, cfg["excluded"]) if manifest else []
 
     def _preview():
