@@ -61,10 +61,11 @@ def test_real_menu_structure():
     assert sub["label"] == "Advanced"
     sub_labels = [n["label"] for n in sub["items"] if n["t"] == "item"]
     assert sub_labels == [
-        "Sync decks", "Reconcile my decks", "Import single deck (manual)",
-        "Fix note types", "Backup intern pearls deck", "Import intern pearls deck",
-        "Export intern pearls deck", "Backup full collection",
-        "Restore full collection", "Check for add-on updates"]
+        "Sync decks", "Reconcile my decks", "Clean up duplicate cards",
+        "Import single deck (manual)", "Fix note types", "Backup intern pearls deck",
+        "Import intern pearls deck", "Export intern pearls deck",
+        "Backup full collection", "Restore full collection",
+        "Check for add-on updates"]
     # primary items above the first separator, Settings/About below the last
     assert tree[2]["t"] == "sep" and tree[-3]["t"] == "sep"
 
