@@ -66,11 +66,14 @@ def _fields(front, back="the back", notes=""):
     return [front, back, "why", "", "Pharm", "", notes]
 
 
-def _write_source(tmp_path, decks):
-    """decks: {deck_name: (version, notes, model_or_None)} -> source folder path."""
+def _write_source(tmp_path, decks, retired=None, deck_moves=None):
+    """decks: {deck_name: (version, notes, model_or_None)} -> source folder path.
+    `retired`/`deck_moves`, if given, ride along in the same manifest — update_decks()
+    tests need a source that carries both a content update and a reconcile ledger."""
     folder = tmp_path / "source"
     folder.mkdir(exist_ok=True)
-    manifest = {"schema": 1, "decks": [], "front_aliases": {}}
+    manifest = {"schema": 1, "decks": [], "front_aliases": {},
+                "retired": retired or {}, "deck_moves": deck_moves or {}}
     for name, (version, notes, model) in decks.items():
         fn = name.split("::")[-1].replace(" ", "_") + ".apkg"
         make_apkg(str(folder / fn), notes, model=model, deck=name)
@@ -278,6 +281,17 @@ def test_unchanged_template_never_prompts(anki, tmp_path):
     assert not any("Apply the new look" in a for a in anki.gui.asks)
 
 
+class _StubAction:
+    """Stands in for the real "Reconcile my decks" QAction in tests that don't build
+    the actual menu (conftest.py deliberately never runs __init__.py) — just enough
+    of QAction's surface (setText) for register_reconcile_action's caller."""
+    def __init__(self):
+        self.text = ""
+
+    def setText(self, t):
+        self.text = t
+
+
 # ------------------------------------------------------------------- auto-sync
 def test_auto_sync_applies_decks_inline_and_reports_by_tooltip(anki, tmp_path):
     from internpearls import background
@@ -341,6 +355,74 @@ def test_auto_sync_recovers_after_a_collection_revert_undoes_a_prior_sync(anki, 
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
 
 
+def test_auto_sync_nudges_about_retired_cards_without_touching_them(anki, tmp_path):
+    """Auto-sync never archives or relocates on its own (that stays a consented
+    action — see reconcile_decks), so a retired/reorganized backlog can accumulate
+    even while content stays fully synced, since a retirement or reorg can ship
+    without bumping any deck's version. This is the one place that would ever notice
+    such a backlog between manual checks: it should nudge (menu label + a one-time
+    tooltip), never act on its own."""
+    from internpearls import background, sync
+    stub = _StubAction()
+    sync.register_reconcile_action(stub)
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    folder = _write_source(tmp_path, {}, retired={
+        DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                        "superseded_by": []}}})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+
+    background._auto_sync_check()
+
+    assert stub.text == "Reconcile my decks (1 pending)"
+    assert any("1 card(s) are ready to tidy up" in t for t in anki.gui.tooltips)
+    old = anki.col.note_by_guid("old1")
+    assert anki.col._cards[old.card_ids()[0]].queue == 0   # untouched, not suspended
+    assert not anki.col.imports
+
+
+def test_auto_sync_does_not_renag_at_the_same_pending_count(anki, tmp_path):
+    from internpearls import background, sync
+    stub = _StubAction()
+    sync.register_reconcile_action(stub)
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    folder = _write_source(tmp_path, {}, retired={
+        DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                        "superseded_by": []}}})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+    background._auto_sync_check()
+    assert len(anki.gui.tooltips) == 1
+
+    background._auto_sync_check()
+
+    assert len(anki.gui.tooltips) == 1               # same count, no repeat nag
+    assert stub.text == "Reconcile my decks (1 pending)"   # label still reflects it
+
+
+def test_auto_sync_renags_when_the_pending_count_grows(anki, tmp_path):
+    from internpearls import background, sync
+    stub = _StubAction()
+    sync.register_reconcile_action(stub)
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    folder = _write_source(tmp_path, {}, retired={
+        DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                        "superseded_by": []}}})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+    background._auto_sync_check()
+
+    anki.col.add_note("old2", _fields("another retired card"), TAGS.split())
+    folder2 = _write_source(tmp_path, {}, retired={DECK: {
+        "old1": {"identity": "bulky crisis card", "reason": "split", "superseded_by": []},
+        "old2": {"identity": "another retired card", "reason": "split",
+                 "superseded_by": []}}})
+    anki.mw._config = {"decks_dir": folder2, "auto_sync_decks": True}
+
+    background._auto_sync_check()
+
+    assert len(anki.gui.tooltips) == 2
+    assert "2 card(s)" in anki.gui.tooltips[-1]
+    assert stub.text == "Reconcile my decks (2 pending)"
+
+
 # -------------------------------------------------------------- reconcile decks
 RETIRED_DECK = "Intern Pearls::Intern Custom::Retired"
 RETIRED_TAG = f"{SCOPE}::retired"
@@ -394,6 +476,25 @@ def test_reconcile_archives_retired_cards(anki, tmp_path):
     assert len(anki.col._notes) == notes_before
     assert anki.col.scm == scm_before
     assert any("Archived <b>1</b>" in i for i in anki.gui.infos)
+
+
+def test_reconcile_run_manually_clears_the_auto_sync_nudge_label(anki, tmp_path):
+    """A manual Reconcile run (bypassing auto-sync entirely, e.g. auto-sync is off)
+    should also reset the persistent "N pending" menu label, not leave it stuck
+    showing a stale count until some future auto-sync poll happens to run."""
+    from internpearls import sync
+    stub = _StubAction()
+    sync.register_reconcile_action(stub)
+    stub.setText("Reconcile my decks (1 pending)")
+    _her_card(anki, "old1", "bulky crisis card")
+    folder = _write_retired_source(tmp_path, {
+        DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                        "superseded_by": []}}})
+    _configure(anki, folder)
+
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
+
+    assert stub.text == "Reconcile my decks"
 
 
 def test_reconcile_is_idempotent(anki, tmp_path):
@@ -575,3 +676,91 @@ def test_reconcile_move_declined_leaves_deck_untouched(anki, tmp_path):
 
     cid = card.card_ids()[0]
     assert anki.col.decks.name(anki.col._cards[cid].did) == DECK
+
+
+# ------------------------------------------------------------- update decks (unified)
+def test_update_decks_syncs_and_reconciles_in_one_pass(anki, tmp_path):
+    """The unified flow's whole point: one confirmation, one click, and content sync
+    runs before archiving so a retired card's replacement — synced in during this
+    exact same call — is there to carry her personal note onto, and a reorganized
+    card relocates too. Three independent effects from one accepted dialog."""
+    from internpearls import sync
+    anki.col.add_note("old1", _fields("bulky crisis card", notes="her mnemonic"),
+                      TAGS.split())
+    moved_deck = "Intern Pearls::Intern Custom::Regional (old)"
+    _her_card(anki, "moved1", "a card that moved decks", deck=moved_deck)
+    folder = _write_source(
+        tmp_path, {DECK: ("v1", [("new1a", _fields("focused card A"), TAGS)], None)},
+        retired={DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                                 "superseded_by": ["new1a"]}}},
+        deck_moves={"moved1": {"from": moved_deck, "to": DECK}})
+    _configure(anki, folder)
+
+    drive(anki, sync.update_decks, _click_reconcile_button(accept=True))
+
+    # Content synced.
+    assert anki.col.note_by_guid("new1a")["Front"] == "focused card A"
+    # Retired card archived, and her note carried over onto the replacement that was
+    # only imported moments earlier in this same call.
+    old = anki.col.note_by_guid("old1")
+    assert anki.col._cards[old.card_ids()[0]].queue == -1
+    assert RETIRED_TAG in old.tags
+    assert anki.col.note_by_guid("new1a")["Notes"] == "her mnemonic"
+    # Reorganized card relocated.
+    moved = anki.col.note_by_guid("moved1")
+    assert anki.col.decks.name(anki.col.get_card(moved.card_ids()[0]).did) == DECK
+    assert any("Update complete" in i for i in anki.gui.infos)
+
+
+def test_update_decks_reports_up_to_date_when_nothing_pending(anki, tmp_path):
+    from internpearls import sync
+    folder = _write_source(tmp_path, {})
+    _configure(anki, folder)
+
+    sync.update_decks()
+
+    assert any("up to date" in i for i in anki.gui.infos)
+    assert not anki.col.imports
+
+
+def test_update_decks_with_only_content_pending_skips_reconcile_cleanly(anki, tmp_path):
+    from internpearls import sync
+    folder = _write_source(
+        tmp_path, {DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    _configure(anki, folder)
+
+    drive(anki, sync.update_decks, _click_reconcile_button(accept=True))
+
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+    assert any("Update complete" in i for i in anki.gui.infos)
+
+
+def test_update_decks_with_only_reconcile_pending_skips_sync_cleanly(anki, tmp_path):
+    from internpearls import sync
+    _her_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
+    folder = _write_source(tmp_path, {}, deck_moves={"g1": {"from": DECK, "to": NEW_DECK}})
+    _configure(anki, folder)
+
+    drive(anki, sync.update_decks, _click_reconcile_button(accept=True))
+
+    assert not anki.col.imports
+    cid = anki.col.note_by_guid("g1").card_ids()[0]
+    assert anki.col.decks.name(anki.col._cards[cid].did) == NEW_DECK
+    assert any("Update complete" in i for i in anki.gui.infos)
+
+
+def test_update_decks_declined_leaves_everything_untouched(anki, tmp_path):
+    from internpearls import sync
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    folder = _write_source(
+        tmp_path, {DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)},
+        retired={DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                                 "superseded_by": []}}})
+    _configure(anki, folder)
+
+    drive(anki, sync.update_decks, _click_reconcile_button(accept=False))
+
+    assert not anki.col.imports
+    old = anki.col.note_by_guid("old1")
+    assert anki.col._cards[old.card_ids()[0]].queue == 0
+    assert RETIRED_TAG not in old.tags
