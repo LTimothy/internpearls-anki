@@ -56,13 +56,13 @@ def test_real_menu_structure():
     menu = mock_anki.load_addon_init()
     tree = menu.tree()
     labels = [n.get("label") for n in tree if n["t"] == "item"]
-    assert labels == ["Sync decks", "Manage decks", "Settings", "About"]
+    assert labels == ["Update my decks", "Manage decks", "Settings", "About"]
     sub = next(n for n in tree if n["t"] == "menu")
     assert sub["label"] == "Advanced"
     sub_labels = [n["label"] for n in sub["items"] if n["t"] == "item"]
     assert sub_labels == [
-        "Import single deck (manual)", "Fix note types", "Reconcile my decks",
-        "Backup intern pearls deck", "Import intern pearls deck",
+        "Sync decks", "Reconcile my decks", "Import single deck (manual)",
+        "Fix note types", "Backup intern pearls deck", "Import intern pearls deck",
         "Export intern pearls deck", "Backup full collection",
         "Restore full collection", "Check for add-on updates"]
     # primary items above the first separator, Settings/About below the last
@@ -72,9 +72,9 @@ def test_real_menu_structure():
 def test_menu_actions_call_real_functions(anki, tmp_path):
     menu = mock_anki.load_addon_init()
     tree = menu.tree()
-    sync_item = next(n for n in tree if n.get("label") == "Sync decks")
-    # no source configured -> the real sync_decks warns about exactly that
-    mock_anki.trigger_action(sync_item["id"])
+    update_item = next(n for n in tree if n.get("label") == "Update my decks")
+    # no source configured -> the real update_decks warns about exactly that
+    mock_anki.trigger_action(update_item["id"])
     assert any("No deck source configured" in w for w in anki.gui.warnings)
 
 
@@ -102,30 +102,29 @@ def test_manage_decks_exclude_and_save(anki, tmp_path):
     assert cfg["protected_fields"] == ["Notes"]
 
 
-def test_manage_decks_preview_then_save_and_sync(anki, tmp_path):
+def test_manage_decks_save_and_update_now_runs_update_decks(anki, tmp_path):
+    """Manage decks no longer previews or syncs on its own — "Save and update now"
+    hands off to the real update_decks(), whose own confirmation is where the actual
+    pending-work detail (and the retired/moves summary, covered by update_decks' own
+    tests in test_sync_flows.py) now lives."""
     from internpearls import dialogs
     anki.mw._config = {"decks_dir": _write_source(tmp_path)}
     anki.gui.interactive = True
-    seen = {"previewed": False}
 
     def respond(p):
         if p["kind"] == "dialog":
-            preview = find(p["tree"], t="button", label="Check what will sync")
-            if preview and not seen["previewed"]:
-                seen["previewed"] = True
-                return {"events": [{"id": preview["id"], "click": True}]}
-            # after the preview click, the SAME open dialog shows the counts
-            assert find(p["tree"], t="label", text="0 kept · 1 new")
-            sync_btn = find(p["tree"], t="button", label="Save and sync now")
-            return {"events": [{"id": sync_btn["id"], "click": True}]}
-        if p["kind"] == "ask":   # sync confirmation from the real sync_decks
-            assert "Update these decks?" in p["text"]
-            return {"answer": True}
+            update_btn = find(p["tree"], t="button", label="Save and update now")
+            if update_btn:
+                return {"events": [{"id": update_btn["id"], "click": True}]}
+            # the confirmation from the real update_decks()
+            confirm = find(p["tree"], t="button", label="Update")
+            assert confirm, "expected update_decks' own confirmation dialog"
+            return {"events": [{"id": confirm["id"], "click": True}]}
         return {}   # OK through info dialogs
 
     drive(anki, dialogs.manage_decks, respond)
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
-    assert any("Sync complete" in i for i in anki.gui.infos)
+    assert any("Update complete" in i for i in anki.gui.infos)
 
 
 def test_manage_decks_status_pill_recovers_after_a_collection_revert(anki, tmp_path):
@@ -148,47 +147,6 @@ def test_manage_decks_status_pill_recovers_after_a_collection_revert(anki, tmp_p
         assert pill, "status pill must revert to New once the collection lost the deck"
         cancel = find(p["tree"], t="button", label="Cancel")
         return {"events": [{"id": cancel["id"], "click": True}]}
-
-    drive(anki, dialogs.manage_decks, respond)
-
-
-def test_manage_decks_preview_also_reports_retired_and_moves(anki, tmp_path):
-    """Check what will sync answers a different question than kept/new per deck:
-    whether Reconcile my decks already has something pending. Both a retired card
-    still in her collection and a card sitting in a since-reorganized deck should
-    surface here, not just in the separate Reconcile flow."""
-    from internpearls import dialogs
-    old_deck = "Intern Pearls::Intern Custom::Pharm::Old spot"
-    anki.col.add_note("old1", ["bulky card", "back", "", "", "", "", ""],
-                      ["InternPearls::Pharm"], deck=old_deck)
-    anki.col.add_note("moved1", ["a moved card", "back", "", "", "", "", ""],
-                      ["InternPearls::Pharm"], deck=old_deck)
-    folder = _write_source(
-        tmp_path,
-        retired={"Intern Pearls::Intern Custom::Pharm": {
-            "old1": {"identity": "bulky card", "reason": "split",
-                     "superseded_by": []}}},
-        deck_moves={"moved1": {"from": old_deck,
-                               "to": "Intern Pearls::Intern Custom::Pharm::New spot"}})
-    anki.mw._config = {"decks_dir": folder}
-    anki.gui.interactive = True
-    seen = {"previewed": False}
-
-    def respond(p):
-        if p["kind"] == "dialog":
-            preview = find(p["tree"], t="button", label="Check what will sync")
-            if preview and not seen["previewed"]:
-                seen["previewed"] = True
-                return {"events": [{"id": preview["id"], "click": True}]}
-            label = next((n for n in walk(p["tree"])
-                         if n.get("t") == "label"
-                         and "Reconcile my decks" in (n.get("text") or "")), None)
-            assert label, "expected a retired/moves summary line after the preview"
-            assert "1 retired card" in label["text"]
-            assert "1 card to relocate" in label["text"]
-            cancel = find(p["tree"], t="button", label="Cancel")
-            return {"events": [{"id": cancel["id"], "click": True}]}
-        return {}
 
     drive(anki, dialogs.manage_decks, respond)
 
