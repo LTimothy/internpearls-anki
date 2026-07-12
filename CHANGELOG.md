@@ -3,6 +3,27 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.26.0
+
+- Added **Update my decks**, a new top-level menu item and the recommended way to
+  stay current from now on. It computes everything pending in one pass — deck
+  content changes, retired cards still in your collection, and cards a reorg needs
+  to relocate — and shows one confirmation covering all of it, instead of the old
+  multi-step dance of syncing, then separately digging into Advanced to reconcile.
+  Content updates apply first, then archiving/relocating, so a retired card's
+  replacement is already there before the old card archives out. Sync decks and
+  Reconcile my decks still exist under Advanced for running either half on its own.
+- Manage decks no longer has its own "Check what will sync" preview button — that
+  same preview is now Update my decks' own confirmation, so there was no reason to
+  ask twice. "Save and sync now" is renamed "Save and update now" and routes through
+  the new unified flow.
+- Auto-sync (Settings) still only ever applies deck content on its own, never
+  archives or relocates — but it now keeps the "Reconcile my decks" menu item
+  labeled with a live pending count (e.g. "Reconcile my decks (3 pending)") and
+  shows a one-time tooltip when a backlog first appears or grows, so retired or
+  reorganized cards can no longer pile up silently between manual checks just
+  because auto-sync is unattended.
+
 ## v0.25.2
 
 - Fixed a gap in v0.25.1's collection-revert fix: it only detected a *total* wipe

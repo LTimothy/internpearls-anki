@@ -26,15 +26,17 @@ See `CHANGELOG.md` for what changed in each version.
 1. Download `internpearls.ankiaddon` from the [latest release](https://github.com/LTimothy/internpearls-anki/releases/latest).
 2. In Anki, go to Tools > Add-ons > Install from file, pick the file, and restart Anki.
 
-After restarting, an "Intern Pearls" menu appears in the menu bar between Tools and Help. Two primary actions sit at the top (Sync decks, Manage decks); occasional tools live under Advanced; Settings and About sit at the bottom.
+After restarting, an "Intern Pearls" menu appears in the menu bar between Tools and Help. Two primary actions sit at the top (Update my decks, Manage decks); occasional tools live under Advanced (including Sync decks and Reconcile my decks on their own, for anyone who wants just one half); Settings and About sit at the bottom.
 
 No deck source yet? Open Manage decks > Configure source and pick "Try the example deck" — it points the add-on at a small public demo repo so you can watch a sync work end to end, then swap in your own source later.
 
 ## Menu reference
 
-### Sync decks
+### Update my decks
 
-The main button. It fetches `manifest.json` from your configured deck source, compares each deck's version hash against what you last synced, and only imports decks that changed. The confirmation dialog lists each affected deck with its card count, flagging any deck you've never synced before as a new deck, so you know the scope before anything happens. For each deck it:
+The main button, and the only one most people ever need. It fetches `manifest.json` from your configured deck source and figures out everything pending in one pass: which decks changed (by comparing each deck's version hash against what you last synced), which retired cards are still lingering in your collection, and which cards a deck reorg needs to relocate — the same two kinds of housekeeping "Reconcile my decks" handles on its own (see the Advanced entry below). One confirmation covers all of it, listing affected decks with their card counts, retired cards, and relocations, so you know the full scope before anything happens.
+
+On confirm, content updates apply first, then retired cards archive and reorganized cards relocate — in that order, so a retired card's replacement is already in your collection before the old card gets archived out, instead of you having to remember to run a sync first. For each changed deck it:
 
 1. Takes a fresh, timestamped backup of just the configured deck first (a self-contained `.apkg` with scheduling included, saved internally and pruned to the most recent 10). Nothing else runs until this succeeds, or you explicitly choose to continue without one.
 2. Adds any missing fields to the note type (never removes or renames existing fields).
@@ -43,13 +45,13 @@ The main button. It fetches `manifest.json` from your configured deck source, co
 5. Imports through Anki's built-in importer with scheduling disabled, so your intervals and ease factors stay put.
 6. Restores the preserved fields from the snapshot.
 
-If an update also changes how cards *look* (a card template or its CSS — the one thing these imports deliberately never touch, see "How history is preserved"), Sync says so afterward and offers to apply the new look. Saying yes updates the note type's templates and styling, which Anki treats as a schema change: your next AnkiWeb sync will be a one-time full sync ("Upload to AnkiWeb"). Saying no keeps your current card appearance; the content update has already imported either way, and the next template change will offer again.
+If an update also changes how cards *look* (a card template or its CSS — the one thing these imports deliberately never touch, see "How history is preserved"), it says so afterward and offers to apply the new look. Saying yes updates the note type's templates and styling, which Anki treats as a schema change: your next AnkiWeb sync will be a one-time full sync ("Upload to AnkiWeb"). Saying no keeps your current card appearance; the content update has already imported either way, and the next template change will offer again.
 
-If no deck source is configured, it tells you to open Manage decks and use Configure source.
+If no deck source is configured, it tells you to open Manage decks and use Configure source. If nothing at all is pending, it just says you're up to date.
 
 ### Manage decks
 
-A panel listing every deck the source offers, each with a checkbox, a status pill (New, Update available, or Up to date), and its card count. Unchecking a deck stops future syncs for it; cards already imported stay in your collection until you delete them yourself in Anki. A "Check what will sync" button downloads the changed decks and fills in, per deck, how many cards would update in place versus be added as new; nothing is imported by clicking it. The same panel edits `protected_fields`. Save keeps the choices for your next sync; Save and sync now also runs Sync decks right away.
+A panel listing every deck the source offers, each with a checkbox, a status pill (New, Update available, or Up to date), and its card count. Unchecking a deck stops future syncs for it; cards already imported stay in your collection until you delete them yourself in Anki. The same panel edits `protected_fields`. Save keeps the choices for your next update; Save and update now also runs Update my decks right away. What's actually pending — per-deck card counts, retired cards, relocations — is Update my decks' own confirmation, not something this panel previews separately.
 
 Deck-source configuration lives here too, behind a button next to the "Source" line at the top: "Configure source" if nothing is set up yet, "Change source" once something is. It opens the same dialog either way, with three buttons plus Cancel:
 
@@ -75,18 +77,20 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 
 ### Advanced submenu
 
-Occasional tools, tucked away from the two primary actions at the top:
+Occasional tools, tucked away from the two primary actions at the top — including the two halves Update my decks normally runs together, for anyone who wants just one of them on its own:
 
-**Import single deck (manual)** picks one `.apkg` outside your configured source, for a deck someone sent you directly or a build you're testing before pushing it live. It runs the same personalization, automatic backup, and note restore as Sync, just for the one file you choose.
+**Sync decks** is the content-only half of Update my decks: it fetches `manifest.json`, compares each deck's version hash against what you last synced, and imports only the decks that changed, with the same confirmation, backup, GUID matching, and field preservation described above. It just doesn't also archive retired cards or relocate reorganized ones — use Update my decks for that in one pass, or Reconcile my decks below to run just that half.
 
-**Fix note types** scans the note types this add-on manages (Study Deck - Basic, Study Deck - Cloze, Study Deck - Image ID) and adds any fields they are missing. It never removes or renames fields, and it does not touch cards or scheduling. Sync runs this before every import.
+**Import single deck (manual)** picks one `.apkg` outside your configured source, for a deck someone sent you directly or a build you're testing before pushing it live. It runs the same personalization, automatic backup, and note restore as a sync, just for the one file you choose.
 
-**Reconcile my decks** does two kinds of housekeeping a normal sync can't, both driven by ledgers the deck source ships in its manifest:
+**Fix note types** scans the note types this add-on manages (Study Deck - Basic, Study Deck - Cloze, Study Deck - Image ID) and adds any fields they are missing. It never removes or renames fields, and it does not touch cards or scheduling. Every sync runs this before every import.
 
-- *Retired cards.* When a deck splits one bulky card into several focused ones, or reword-replaces a card, the old version's identity changes — so a sync adds the new cards but never removes your copy of the old one, and it lingers as a duplicate in your reviews. Reconcile finds each retired card you still have, copies any personal text you've written in a protected field (like Notes) onto its replacement(s) — but only if the replacement's field is still blank, so it never overwrites something you've already written there — then moves the old card to an `…::Retired` subdeck, suspends it, and tags it `…::retired`. **It never deletes anything**: your review history is kept, and you can bring any card back by unsuspending it or moving it out of the Retired deck. If some replacements aren't in your collection yet, it says so and suggests running Sync decks first.
+**Reconcile my decks** is the archive/relocate half of Update my decks, runnable on its own. It does two kinds of housekeeping a plain content sync can't, both driven by ledgers the deck source ships in its manifest:
+
+- *Retired cards.* When a deck splits one bulky card into several focused ones, or reword-replaces a card, the old version's identity changes — so a sync adds the new cards but never removes your copy of the old one, and it lingers as a duplicate in your reviews. Reconcile finds each retired card you still have, copies any personal text you've written in a protected field (like Notes) onto its replacement(s) — but only if the replacement's field is still blank, so it never overwrites something you've already written there — then moves the old card to an `…::Retired` subdeck, suspends it, and tags it `…::retired`. **It never deletes anything**: your review history is kept, and you can bring any card back by unsuspending it or moving it out of the Retired deck. Run on its own (not via Update my decks, which always syncs content first), it warns if some replacements aren't in your collection yet and suggests running Sync decks first.
 - *Reorganized decks.* When the deck source moves a card into a different deck without changing its identity (a topic getting its own deck, say), a normal sync updates the card's content in place but never relocates it — only a brand-new card gets filed into the deck the source specifies. Reconcile finds any card still sitting exactly where the source last put it and moves it to match. If you've since filed that card into a deck of your own choosing, it's left alone — Reconcile only ever follows a card that's still where the source's last known location was, never overrides your own organization.
 
-Both are schema-neutral (no forced full AnkiWeb sync) and trivially reversible by hand. A backup is taken automatically first, and re-running it is a no-op on anything already handled.
+Both are schema-neutral (no forced full AnkiWeb sync) and trivially reversible by hand. A backup is taken automatically first, and re-running it is a no-op on anything already handled. If you've turned on background auto-sync (see Settings below), which only ever applies deck content on its own, a pending retired/relocated backlog shows up right on this menu item itself — "Reconcile my decks (3 pending)" — with a one-time tooltip when it first appears or grows, so a backlog auto-sync can't clear by itself never piles up unnoticed.
 
 **Backup intern pearls deck** is the manual, on-demand version of the automatic pre-sync backup: a fresh `.apkg` of just the configured deck (`export_deck`), with scheduling included, saved internally and pruned to the most recent 10. Use it right before poking at cards yourself outside the add-on.
 
@@ -104,7 +108,7 @@ Both are schema-neutral (no forced full AnkiWeb sync) and trivially reversible b
 
 Sync automation and add-on update behavior, kept separate from Manage decks since those answer a different question ("which decks, which fields, from where" versus "how automatic, how often"):
 
-- **Sync decks automatically when updates are available**, off by default. When on, the add-on checks the source in the background on the interval below and applies any changed decks without asking, backing up first the same as a manual sync. The one thing it never applies unattended is a card-template change (that would force a one-time full AnkiWeb sync without anyone consenting to it): a deck update that includes one is held back and stays pending, and a tooltip points you at Sync decks to review it.
+- **Sync decks automatically when updates are available**, off by default. When on, the add-on checks the source in the background on the interval below and applies any changed decks without asking, backing up first the same as a manual sync. The one thing it never applies unattended is a card-template change (that would force a one-time full AnkiWeb sync without anyone consenting to it): a deck update that includes one is held back and stays pending, and a tooltip points you at Sync decks to review it. It also never archives retired cards or relocates reorganized ones on its own — that stays a one-click confirm via Reconcile my decks, which the same check keeps nudged about (see the Advanced entry above) so a backlog can't pile up silently just because content sync is unattended.
 - **Check every N minutes**, default 15, minimum 1. The check runs off the main thread when Anki supports it (essentially all current versions do), so it doesn't freeze Anki even at a short interval; if it can't reach the source, it fails within a few seconds and just tries again next time.
 - **Notify me when a new add-on version is out**, on by default. A tooltip once per new release, no installation.
 - **Install add-on updates automatically**, off by default. Downloads and installs a newer version as part of the same once-per-launch check, no confirmation. A restart is still needed to load it, same as installing by hand.
@@ -115,7 +119,7 @@ A short description of what the add-on does, a summary of your current settings 
 
 ## Updating decks
 
-Run Intern Pearls > Sync decks, or turn on "Sync decks automatically when updates are available" in Settings so it happens on its own. Either way, only changed decks are imported, and the add-on backs up the deck automatically before touching anything, so there's no separate step to remember. For broader protection on top of that, Advanced > Backup full collection takes a whole-collection backup on demand.
+Run Intern Pearls > Update my decks, or turn on "Sync decks automatically when updates are available" in Settings so deck content applies on its own (retiring/relocating cards always stays a manual, one-click confirm — see Reconcile my decks above). Either way, only changed decks are imported, and the add-on backs up the deck automatically before touching anything, so there's no separate step to remember. For broader protection on top of that, Advanced > Backup full collection takes a whole-collection backup on demand.
 
 ## How history is preserved
 
@@ -190,8 +194,10 @@ Everything that does touch Anki is split by concern:
 - `internpearls/collection.py` — everything that reads or writes `mw.col`: note-type
   reconciliation, backups, the protected-fields snapshot/restore, apkg import/export,
   and the Advanced menu actions over those helpers.
-- `internpearls/sync.py` — the sync flows: source resolution (`_fetch_manifest`),
-  Sync decks, the shared `_run_sync` sequence, Import single deck.
+- `internpearls/sync.py` — the sync and reconcile flows: source resolution
+  (`_fetch_manifest`), Sync decks, Reconcile my decks, the unified Update my decks
+  front door, the shared `_run_sync`/`_reconcile_pending` sequences, Import single
+  deck.
 - `internpearls/updates.py` — add-on self-update: version fetch, package download,
   the manual check.
 - `internpearls/background.py` — `_run_in_background` (QueryOp dispatch), the startup

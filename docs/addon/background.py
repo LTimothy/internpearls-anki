@@ -34,7 +34,8 @@ from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
                     decks_to_update, manifest_needs_newer_addon)
 from .net import _BG_TIMEOUT
-from .sync import _fetch_manifest, _run_sync
+from .sync import (_fetch_manifest, _reconcile_pending, _refresh_reconcile_action_label,
+                   _run_sync)
 from .ui import _bg_safe
 from .updates import _addon_update_work, _refresh_update_action_label
 
@@ -127,6 +128,14 @@ _tpl_deferred_notified = set()
 # Same session-scoped-once pattern as _tpl_deferred_notified — otherwise a schema
 # mismatch would re-nag every poll interval until the add-on is updated.
 _schema_blocked_notified = set()
+# The reconcile-pending count (retired + relocated cards) auto-sync last nagged about
+# by tooltip, so it only speaks up when that count first appears or grows — not every
+# poll, and not again once it's already been mentioned at its current size. Auto-sync
+# never archives or relocates on its own (see sync.py's _reconcile_action comment for
+# why), so this tooltip plus the persistent "Reconcile my decks (N pending)" menu
+# label it points at are the only things standing between a real backlog and it
+# silently piling up unnoticed.
+_last_reconcile_notified = 0
 
 
 @_bg_safe
@@ -166,8 +175,10 @@ def _auto_sync_check():
         if manifest_needs_newer_addon(manifest, SUPPORTED_MANIFEST_SCHEMA):
             return {"schema_blocked": manifest.get("schema")}
         todo = decks_to_update(manifest, installed, cfg["excluded"])
-        if not todo:
-            return None
+        # Always returned (even with todo empty) rather than bailing to None here: a
+        # retirement or reorg can ship without bumping any deck's version, so this is
+        # the only place that would ever notice one between manual checks — _apply
+        # needs the manifest regardless of whether content sync has anything to do.
         # Download every pending deck here, off the main thread, so a big deck on a
         # slow link can't freeze Anki. A per-deck failure is stored, not raised, so one
         # bad download doesn't take out decks that fetched fine; _run_sync's existing
@@ -183,9 +194,9 @@ def _auto_sync_check():
                 "todo": todo, "installed": installed}
 
     def _apply(result, error):
-        global _auto_sync_in_progress
+        global _auto_sync_in_progress, _last_reconcile_notified
         if error or not result:
-            return   # offline, misconfigured, or nothing pending — stay quiet
+            return   # offline, misconfigured, or unreachable — stay quiet
         if "schema_blocked" in result:
             schema = result["schema_blocked"]
             if schema not in _schema_blocked_notified:
@@ -195,6 +206,27 @@ def _auto_sync_check():
                     "auto-sync is paused until you update. Advanced → Check for add-on "
                     "updates.", period=8000, parent=mw)
             return
+
+        # Refreshed on every successful fetch, regardless of whether content sync has
+        # anything to do this poll: auto-sync only ever applies content on its own, so
+        # this is the one place that keeps the "Reconcile my decks" menu label (and,
+        # the first time a backlog appears or grows, a one-time tooltip pointing at
+        # it) honest between manual checks.
+        _, fresh, _, moves, _, _ = _reconcile_pending(result["manifest"], cfg)
+        pending = len(fresh) + len(moves)
+        _refresh_reconcile_action_label(pending)
+        if pending and pending != _last_reconcile_notified:
+            _last_reconcile_notified = pending
+            tooltip(
+                f"Intern Pearls: {pending} card(s) are ready to tidy up (retired or "
+                "moved by a deck update) — Advanced → Reconcile my decks.",
+                period=8000, parent=mw)
+        elif not pending:
+            _last_reconcile_notified = 0
+
+        if not result["todo"]:
+            return   # nothing to sync this poll
+
         _auto_sync_in_progress = True
         try:
             if not _pre_sync_backup_or_skip_silently(cfg["export_deck"]):
