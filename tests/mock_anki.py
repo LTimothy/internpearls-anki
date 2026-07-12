@@ -1018,7 +1018,7 @@ def install():
 
     aqt = types.ModuleType("aqt")
     aqt.mw = mw
-    aqt.gui_hooks = types.SimpleNamespace(main_window_did_init=[])
+    aqt.gui_hooks = types.SimpleNamespace(main_window_did_init=[], card_will_show=[])
 
     aqt_qt = types.ModuleType("aqt.qt")
 
