@@ -85,6 +85,16 @@ relax them without understanding why they're there.
   (`docs/demo_harness.py`'s `DEMO_SOURCE` env override lets `boot()` run
   outside Pyodide against a local clone — see `docs/demo_harness.py`'s
   docstring) or add a subdeck-nested fixture to the flow tests.
+- **`docs/index.html`'s busy indicator yields via `setTimeout`, never
+  `requestAnimationFrame`.** Every `H.start()`/`H.feed()` call blocks
+  Pyodide's single JS thread end to end (it's real synchronous Python,
+  including any network fetch inside it), so the page has to force a paint of
+  its "Working…" state *before* making that call. `requestAnimationFrame`
+  looks like the right primitive but silently never fires while the tab is
+  backgrounded or otherwise not visible, which hangs the whole flow forever
+  with no error — found by testing this exact page in an automated,
+  non-foregrounded browser tab. `setTimeout(fn, 0)` yields a real turn of the
+  event loop regardless of tab visibility and doesn't have this failure mode.
 
 ## Releases
 

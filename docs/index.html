@@ -102,6 +102,11 @@
   .dialog .dbody { padding: 16px; font-size: 13.5px; }
   .dialog .dbody ul { margin: 8px 0; padding-left: 20px; }
   .dialog .dbtns { display: flex; justify-content: flex-end; gap: 10px; padding: 0 16px 14px; }
+  .busyline { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+  .spinner { width: 16px; height: 16px; border-radius: 50%; flex: none;
+             border: 2px solid var(--line); border-top-color: var(--accent);
+             animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .vstack { display: flex; flex-direction: column; gap: 8px; }
   .hstack { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .scrollbox { max-height: 260px; overflow: auto; }
@@ -440,13 +445,38 @@
     });
   }
 
+  // Every H.start()/H.feed() call runs real add-on code synchronously — for
+  // Update my decks that includes a live per-deck download-and-diff pass — which
+  // blocks this single-threaded WASM runtime end to end with no chance for the
+  // browser to repaint mid-call. So the best this page can do is paint a busy
+  // state right before each blocking call and let it stand until the call
+  // returns, rather than nothing at all (which reads as a hang, not "working").
+  // A setTimeout yield, not requestAnimationFrame: rAF callbacks never fire in
+  // a backgrounded/non-visible tab, which would hang this indefinitely there.
+  // setTimeout still yields a real turn of the event loop (letting the browser
+  // paint the busy state) without that failure mode.
+  async function paintBusy(label) {
+    $("dtitle").textContent = "Intern Pearls";
+    $("dbody").innerHTML = "";
+    const line = document.createElement("div");
+    line.className = "busyline";
+    line.innerHTML = '<span class="spinner"></span><span></span>';
+    line.lastElementChild.textContent = label;
+    $("dbody").appendChild(line);
+    $("dbtns").innerHTML = "";
+    $("overlay").classList.add("show");
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
   async function runFlow(wid) {
     if (busy || !H) return;
     busy = true;
     try {
+      await paintBusy("Working…");
       let r = JSON.parse(H.start(wid));
       while (r.status === "need") {
         const resp = await showPayload(r.payload);
+        await paintBusy("Working…");
         r = JSON.parse(H.feed(JSON.stringify(resp)));
       }
       const tips = JSON.parse(H.flow_tooltips());
@@ -457,6 +487,7 @@
       toast("Demo error: " + e);
     } finally {
       busy = false;
+      $("overlay").classList.remove("show");
     }
   }
 
