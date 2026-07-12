@@ -73,6 +73,18 @@ relax them without understanding why they're there.
   carries consistent styling and title.
 - **Background work** (update checks, auto-sync polling) never touches the
   collection directly from a background thread; only the main thread writes.
+- **`installed_matching_collection` matches by deck-name prefix, not exact
+  equality.** A deck spec's `deck_name` is routinely just the parent path —
+  cards land in `deck_name::<subdeck>` for any spec with a `subdecks` list,
+  which is the normal case. An exact-match version silently treated every
+  subdeck-based deck as never-installed on every check, forever (shipped in
+  v0.25.2, fixed in v0.26.1) — caught via the live demo constantly
+  re-offering an update with nothing changed. `pytest` alone won't catch a
+  regression here, since none of the mock fixtures use subdecks; before
+  touching this function again, also exercise it against a real deck source
+  (`docs/demo_harness.py`'s `DEMO_SOURCE` env override lets `boot()` run
+  outside Pyodide against a local clone — see `docs/demo_harness.py`'s
+  docstring) or add a subdeck-nested fixture to the flow tests.
 
 ## Releases
 
