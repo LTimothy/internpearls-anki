@@ -121,6 +121,34 @@ def test_second_sync_with_same_versions_is_a_no_op(anki, tmp_path):
     assert any("up to date" in i for i in anki.gui.infos)
 
 
+def test_second_sync_is_a_no_op_when_the_deck_uses_subdecks(anki, tmp_path):
+    """A deck spec's deck_name is routinely just the parent path, with cards filed
+    into deck_name::<subdeck> — every spec with a subdecks list works this way,
+    including the real production decks and the live demo's example deck.
+    installed_matching_collection must recognize that as "this deck is installed"
+    rather than treating it as perpetually pending on every check — regression test
+    for exactly that bug (found via the live demo constantly re-offering an update
+    with nothing actually changed)."""
+    from internpearls import sync
+    subdeck = f"{DECK}::1. Basics"
+    folder = tmp_path / "source"
+    folder.mkdir()
+    make_apkg(str(folder / "Pharm.apkg"), [("g1", _fields("Front one"), TAGS)],
+              deck=subdeck)
+    (folder / "manifest.json").write_text(json.dumps({
+        "schema": 1, "decks": [{"name": DECK, "apkg": "Pharm.apkg", "version": "v1",
+                               "cards": 1}],
+        "front_aliases": {}, "retired": {}, "deck_moves": {}}), encoding="utf8")
+    _configure(anki, str(folder))
+    sync.sync_decks()
+    imports_after_first = len(anki.col.imports)
+
+    sync.sync_decks()
+
+    assert len(anki.col.imports) == imports_after_first
+    assert any("up to date" in i for i in anki.gui.infos)
+
+
 def test_sync_recovers_after_a_collection_revert_undoes_a_prior_sync(anki, tmp_path):
     """installed.json lives in user_files/, outside the collection file, so restoring
     an earlier collection backup ("collection revert") rolls the collection back to
@@ -710,6 +738,36 @@ def test_update_decks_syncs_and_reconciles_in_one_pass(anki, tmp_path):
     moved = anki.col.note_by_guid("moved1")
     assert anki.col.decks.name(anki.col.get_card(moved.card_ids()[0]).did) == DECK
     assert any("Update complete" in i for i in anki.gui.infos)
+
+
+def test_update_decks_confirmation_shows_real_kept_new_counts(anki, tmp_path):
+    """The confirmation must download and match each pending deck before showing
+    it, the same way Manage decks' old "Check what will sync" preview did — a
+    static total card count can't tell the learner how much of an update is
+    actually new to them versus already-matched content."""
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one"), TAGS.split())   # she already has g1
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}   # the completion info dialog: nothing to inspect, just continue
+        label = next((n for n in _walk(p["tree"]) if n.get("t") == "label"
+                     and "kept" in (n.get("text") or "")), None)
+        seen["text"] = label["text"] if label else None
+        btn = next(n for n in _walk(p["tree"])
+                  if n.get("t") == "button" and n.get("label") != "Cancel")
+        return {"events": [{"id": btn["id"], "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert seen.get("text"), "expected a kept/new preview line in the confirmation"
+    assert "1 kept" in seen["text"] and "1 new" in seen["text"]
 
 
 def test_update_decks_reports_up_to_date_when_nothing_pending(anki, tmp_path):
