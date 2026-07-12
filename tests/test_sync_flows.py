@@ -822,3 +822,52 @@ def test_update_decks_declined_leaves_everything_untouched(anki, tmp_path):
     old = anki.col.note_by_guid("old1")
     assert anki.col._cards[old.card_ids()[0]].queue == 0
     assert RETIRED_TAG not in old.tags
+
+
+def test_update_decks_cancel_during_preview_touches_nothing(anki, tmp_path):
+    """Clicking Cancel on the "Checking for updates" dialog is a download-and-diff
+    step only — nothing has touched the collection yet, so cancelling there must
+    leave everything exactly as it was, not partially apply anything."""
+    import aqt.qt as aqt_qt
+    from internpearls import sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None),
+        NEW_DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)})
+    _configure(anki, folder)
+    aqt_qt.QProgressDialog.cancel_after = {"Checking for updates": 1}
+
+    sync.update_decks()
+
+    assert not anki.col.imports
+    assert not any(n.guid in ("g1", "g2") for n in anki.col._notes.values())
+    assert any("cancelled" in i.lower() for i in anki.gui.infos)
+
+
+def test_update_decks_cancel_during_apply_keeps_completed_decks_and_skips_reconcile(
+        anki, tmp_path):
+    """Cancelling mid-apply must leave whatever deck(s) already finished fully
+    persisted (installed version, restored fields) and never start the deck after
+    the cancel point. Archiving/relocating must be skipped entirely rather than run
+    against a partial sync — it assumes every content update already landed, so a
+    retired card's replacement is in place before the old one archives out."""
+    import aqt.qt as aqt_qt
+    from internpearls import sync
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    folder = _write_source(
+        tmp_path, {
+            DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None),
+            NEW_DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)},
+        retired={DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                                 "superseded_by": ["g1"]}}})
+    _configure(anki, folder)
+    aqt_qt.QProgressDialog.cancel_after = {"Updating decks": 1}
+
+    drive(anki, sync.update_decks, _click_reconcile_button(accept=True))
+
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+    assert not any(n.guid == "g2" for n in anki.col._notes.values())
+    installed = json.load(open(sync.INSTALLED, encoding="utf8"))
+    assert installed == {DECK: "v1"}
+    old = anki.col.note_by_guid("old1")
+    assert RETIRED_TAG not in old.tags   # reconcile skipped, nothing archived
+    assert any("stopped early" in i.lower() for i in anki.gui.infos)
