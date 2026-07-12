@@ -26,6 +26,10 @@ DECK_BACKUPS_KEEP = 10   # how many automatic Intern Pearls deck backups to reta
 # the configured export_deck root; the tag leaf under the configured scope_tag.
 RETIRED_DECK_LEAF = "Retired"
 RETIRED_TAG_LEAF = "retired"
+# "Clean up duplicate cards" archives the losing copy of a sync duplicate to the same
+# Retired deck as above, but under its own tag leaf, so the two kinds of archive stay
+# distinguishable and a duplicate-cleanup re-run can tell what it already handled.
+DUPLICATE_TAG_LEAF = "retired-duplicate"
 _DIR = os.path.dirname(__file__)
 
 EXAMPLE_REPO = "LTimothy/internpearls-example-deck"   # public demo deck source
