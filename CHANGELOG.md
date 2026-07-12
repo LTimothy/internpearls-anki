@@ -3,6 +3,19 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.29.1
+
+- Fixed a bug where a reorganized deck could be offered as "needs update" forever,
+  even right after applying it, with nothing actually changing. It happened to a
+  card whose deck source changed its internal ID (so a long-time collection holds it
+  under an older ID than the current one) and which a later reorg moved to a new deck:
+  Reconcile matched the relocation by ID only, so it never moved that card, the new
+  deck looked permanently empty, and it kept getting re-offered. Reconcile now also
+  matches such a card by its front text (the same signal a normal sync already uses),
+  so it relocates on the next "Update my decks" and stops re-offering. Requires the
+  deck source's manifest to include each move's front; an older manifest is handled
+  gracefully (unchanged behavior).
+
 ## v0.29.0
 
 - New Advanced menu item, "Clean up duplicate cards." Finds sync duplicates (the same

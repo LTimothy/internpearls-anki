@@ -706,6 +706,45 @@ def test_reconcile_move_declined_leaves_deck_untouched(anki, tmp_path):
     assert anki.col.decks.name(anki.col._cards[cid].did) == DECK
 
 
+def test_reconcile_relocates_a_stuck_card_by_front_when_guid_changed(anki, tmp_path):
+    """The real-world bug: a card whose deck source changed its id_seed has a
+    different GUID in a long-time learner's collection than the move ledger is keyed
+    by. A pure GUID match misses it, so it sits stuck at `from` and its new deck is
+    re-offered forever. With the ledger carrying the note's front, reconcile matches
+    the learner's card by front (like content-sync does) and relocates it."""
+    from internpearls import sync
+    front = "Lidocaine onset time?"
+    # She holds the card under an OLD guid (pre-seed-change), sitting at `from`.
+    card = _her_card(anki, "old_v1_guid", front, deck=DECK)
+    # The ledger is keyed by the CURRENT (v2) guid she doesn't have, but carries front.
+    folder = _write_retired_source(tmp_path, {}, deck_moves={
+        "new_v2_guid": {"from": DECK, "to": NEW_DECK, "front": front}})
+    _configure(anki, folder)
+
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
+
+    cid = card.card_ids()[0]
+    assert anki.col.decks.name(anki.col._cards[cid].did) == NEW_DECK
+    assert any("Moved <b>1</b>" in i for i in anki.gui.infos)
+
+
+def test_reconcile_leaves_guid_mismatched_card_alone_without_front(anki, tmp_path):
+    """Graceful fallback: an older manifest whose deck_moves entries carry no front
+    can't match a GUID-mismatched card, so reconcile leaves it exactly where it is
+    rather than guessing. Same as the behavior before front matching existed."""
+    from internpearls import sync
+    card = _her_card(anki, "old_v1_guid", "Lidocaine onset time?", deck=DECK)
+    folder = _write_retired_source(tmp_path, {}, deck_moves={
+        "new_v2_guid": {"from": DECK, "to": NEW_DECK}})   # no "front" key
+    _configure(anki, folder)
+
+    sync.reconcile_decks()
+
+    cid = card.card_ids()[0]
+    assert anki.col.decks.name(anki.col._cards[cid].did) == DECK
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
+
+
 # ------------------------------------------------------------- update decks (unified)
 def test_update_decks_syncs_and_reconciles_in_one_pass(anki, tmp_path):
     """The unified flow's whole point: one confirmation, one click, and content sync

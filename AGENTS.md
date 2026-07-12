@@ -85,6 +85,19 @@ relax them without understanding why they're there.
   (`docs/demo_harness.py`'s `DEMO_SOURCE` env override lets `boot()` run
   outside Pyodide against a local clone — see `docs/demo_harness.py`'s
   docstring) or add a subdeck-nested fixture to the flow tests.
+- **`find_deck_moves_needed` matches a stuck card by front, not only GUID.**
+  A card whose deck source changed its `id_seed` has a different GUID in a
+  long-time learner's collection than the move ledger is keyed by, so a
+  GUID-only match never relocates it: it stays stuck at `from` and its new
+  deck is re-offered forever by `installed_matching_collection` (the same
+  "self-correcting redundant re-sync" that function's docstring describes, but
+  which never actually self-corrects for these cards). The deck-repo manifest
+  ships each move's current front (`build_all.py`'s `_deck_moves` +
+  `_spec_fronts`); the add-on falls back to front when the ledger GUID isn't in
+  the collection, and emits *her* GUID so `apply_deck_moves` can act (shipped
+  v0.29.1). A manifest without `front` keeps GUID-only behavior. Only bites
+  seed-changed + reorg'd cards, which no mock fixture had until the two
+  `..._by_front...` / `..._without_front` flow tests were added.
 - **`docs/index.html`'s busy indicator yields via `setTimeout`, never
   `requestAnimationFrame`.** Every `H.start()`/`H.feed()` call blocks
   Pyodide's single JS thread end to end (it's real synchronous Python,
