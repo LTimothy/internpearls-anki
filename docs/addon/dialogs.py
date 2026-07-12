@@ -358,7 +358,8 @@ class _SettingsDialog(QDialog):
     added.
     """
 
-    def __init__(self, parent, auto_sync, interval_minutes, notify_updates, auto_update):
+    def __init__(self, parent, auto_sync, interval_minutes, notify_updates, auto_update,
+                dim_images_night_mode):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Settings")
         self.setMinimumWidth(440)
@@ -405,6 +406,16 @@ class _SettingsDialog(QDialog):
             "add-on release isn't as time-sensitive as a new deck. Either way, Anki "
             "needs a restart to load the new version."))
 
+        outer.addWidget(section_label("Night mode", top_margin=14))
+
+        self._dim_images_cb = QCheckBox("Dim bright images in Night Mode")
+        self._dim_images_cb.setChecked(dim_images_night_mode)
+        outer.addWidget(self._dim_images_cb)
+
+        outer.addWidget(hint_label(
+            "Applies to every deck in your collection, not just Intern Pearls ones, "
+            "and takes effect immediately, no restart needed."))
+
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
         bb.addButton(QDialogButtonBox.StandardButton.Cancel)
@@ -418,6 +429,7 @@ class _SettingsDialog(QDialog):
             "auto_sync_interval_minutes": self._interval_spin.value(),
             "notify_addon_updates": self._notify_cb.isChecked(),
             "auto_update_addon": self._auto_update_cb.isChecked(),
+            "dim_images_night_mode": self._dim_images_cb.isChecked(),
         }
 
 
@@ -426,7 +438,8 @@ def open_settings():
     """Open Settings: sync automation and add-on update behavior."""
     cfg = _cfg()
     dlg = _SettingsDialog(mw, cfg["auto_sync_decks"], cfg["auto_sync_interval_minutes"],
-                          cfg["notify_addon_updates"], cfg["auto_update_addon"])
+                          cfg["notify_addon_updates"], cfg["auto_update_addon"],
+                          cfg["dim_images_night_mode"])
     if not dlg.exec():
         return
 
@@ -451,7 +464,10 @@ def open_settings():
         update_line = "You'll get a notice when a new add-on version is out."
     else:
         update_line = "Add-on update checks are off."
-    _info(f"Settings saved.<br><br>{sync_line}<br>{update_line}")
+    dim_line = ("Bright images will be dimmed in Night Mode."
+               if values["dim_images_night_mode"] else
+               "Night Mode image dimming is off.")
+    _info(f"Settings saved.<br><br>{sync_line}<br>{update_line}<br>{dim_line}")
 
 
 @_safe
