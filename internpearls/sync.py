@@ -430,6 +430,27 @@ def reconcile_decks():
     _info("<br><br>".join(result_lines) + backup_line)
 
 
+# A session-lived cache of preview downloads, keyed by deck name to (version, path).
+# Opening Update my decks, looking at the preview, and cancelling used to re-download
+# every pending deck's .apkg the next time it opened: pure repeated network cost for an
+# unchanged deck, and (since v0.26.1 made the preview a real per-deck download) the main
+# reason a "just checking" habit runs into sporadic GitHub hiccups more often. The
+# version is a content hash, so a cached entry can only ever satisfy a deck whose content
+# is byte-for-byte what it was: a real push changes the version, misses the cache, and
+# re-downloads. Cleared on Anki restart (it's only in memory), and the cached temp file
+# is re-fetched if it's been swept from the tempdir since.
+_apkg_cache = {}
+
+
+def _cached_fetch(fetch, d):
+    hit = _apkg_cache.get(d["name"])
+    if hit and hit[0] == d.get("version") and os.path.exists(hit[1]):
+        return hit[1]
+    path = fetch(d)
+    _apkg_cache[d["name"]] = (d.get("version"), path)
+    return path
+
+
 def _preview_content_changes(fetch, todo, her, aliases):
     """Download every pending deck and match it against the collection, so the
     confirmation can show real "N kept · M new" counts instead of just each deck's
@@ -437,15 +458,18 @@ def _preview_content_changes(fetch, todo, her, aliases):
     network fetch per deck and a multi-deck update on a slow link otherwise looks
     like a hang, with no way out, before the confirmation even appears.
 
-    Returns ({deck_name: (kept, new) | None}, downloaded, cancelled) — `downloaded`
+    Returns ({deck_name: (kept, new) | None}, downloaded, cancelled). `downloaded`
     is {deck_name: local_path_or_Exception}, in the same shape background.py's
     auto-sync poll already uses, so the caller can hand it straight to _run_sync
     afterward instead of downloading every deck a second time. A per-deck fetch
     failure here is recorded, not raised, so one bad download only blanks that
     deck's preview ("couldn't preview") rather than blocking the whole
     confirmation; the same failure surfaces for real if Sync then tries to apply it.
-    `cancelled` means the learner clicked Cancel partway through — nothing has
-    touched the collection at this point, so the caller can just stop outright.
+    `cancelled` means the learner clicked Cancel partway through: nothing has touched
+    the collection at this point, so the caller can just stop outright.
+
+    Downloads go through _cached_fetch, so re-opening Update my decks without applying
+    doesn't re-fetch a deck whose version hasn't changed.
     """
     preview, downloaded = {}, {}
     with cancellable_progress("Checking for updates", len(todo)) as step:
@@ -454,7 +478,7 @@ def _preview_content_changes(fetch, todo, her, aliases):
             if not step(i, f"Checking {short} ({i} of {len(todo)})"):
                 return preview, downloaded, True
             try:
-                src = fetch(d)
+                src = _cached_fetch(fetch, d)
                 downloaded[d["name"]] = src
                 _, kept, new = remap_cards(src, her, aliases)
                 preview[d["name"]] = (kept, new)
