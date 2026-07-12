@@ -937,3 +937,137 @@ def test_preview_refetches_a_deck_whose_version_changed(anki, tmp_path):
 
     sync._preview_content_changes(counting_fetch2, todo2, her, {})
     assert calls == ["v1", "v2"]   # version changed, cache missed, re-fetched
+
+
+# ---------------------------------------------------------- duplicate cleanup
+def _write_duplicate_source(tmp_path, deck_name):
+    """A source folder whose manifest lists one deck by name only (no apkg content
+    needed; clean_up_duplicates only reads manifest["decks"] for the canonical
+    deck-name list, it never downloads anything)."""
+    folder = tmp_path / "source"
+    folder.mkdir(exist_ok=True)
+    manifest = {"schema": 2, "decks": [{"name": deck_name, "apkg": "x.apkg",
+                                        "version": "v1", "cards": 1}],
+                "front_aliases": {}, "retired": {}, "deck_moves": {}}
+    (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf8")
+    return str(folder)
+
+
+def _click_duplicate_button(accept):
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        tree = p["tree"]
+        if accept:
+            btn = next(n for n in _walk(tree)
+                      if n.get("t") == "button" and n.get("label") != "Cancel")
+        else:
+            btn = _find(tree, t="button", label="Cancel")
+        return {"events": [{"id": btn["id"], "click": True}]}
+    return respond
+
+
+def test_clean_up_duplicates_archives_the_copy_with_fewer_reviews(anki, tmp_path):
+    from internpearls import sync
+    old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
+    new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
+    old_note = _her_card(anki, "old", "same front text", deck=old_deck)
+    _her_card(anki, "new", "same front text", deck=new_deck)
+    anki.col._cards[old_note.card_ids()[0]].reps = 3   # she has actually studied this one
+    folder = _write_duplicate_source(tmp_path, new_deck)
+    _configure(anki, folder)
+
+    drive(anki, sync.clean_up_duplicates, _click_duplicate_button(accept=True))
+
+    # Fresh lookups by guid throughout, not note/cid references captured before drive():
+    # the Runner's replay deepcopies mw.col on every pass, so a reference from before
+    # drive() points at an orphaned pre-replay collection, not the one actually mutated.
+    lost_cid = anki.col.note_by_guid("new").card_ids()[0]
+    assert anki.col._cards[lost_cid].queue == -1     # suspended
+    assert anki.col._cards[lost_cid].did == anki.col.decks.id_for_name(
+        "Intern Pearls::Intern Custom::Retired")
+    assert f"{SCOPE}::retired-duplicate" in anki.col.note_by_guid("new").tags
+    kept_cid = anki.col.note_by_guid("old").card_ids()[0]
+    assert anki.col._cards[kept_cid].queue == 0       # kept copy untouched
+    assert any("Archived <b>1</b>" in i for i in anki.gui.infos)
+
+
+def test_clean_up_duplicates_breaks_a_zero_review_tie_by_canonical_deck(anki, tmp_path):
+    from internpearls import sync
+    old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
+    new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
+    _her_card(anki, "old", "same front text", deck=old_deck)
+    _her_card(anki, "new", "same front text", deck=new_deck)
+    folder = _write_duplicate_source(tmp_path, new_deck)
+    _configure(anki, folder)
+
+    drive(anki, sync.clean_up_duplicates, _click_duplicate_button(accept=True))
+
+    # Fresh lookups by guid, same reason as the test above.
+    kept_cid = anki.col.note_by_guid("new").card_ids()[0]
+    assert anki.col._cards[kept_cid].queue == 0
+    lost_cid = anki.col.note_by_guid("old").card_ids()[0]
+    assert anki.col._cards[lost_cid].queue == -1
+
+
+def test_clean_up_duplicates_carries_notes_to_the_kept_copy(anki, tmp_path):
+    from internpearls import sync
+    old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
+    new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
+    old_note = _her_card(anki, "old", "same front text", deck=old_deck)
+    new_note = _her_card(anki, "new", "same front text", deck=new_deck)
+    new_note["Notes"] = "my personal mnemonic"   # written on the copy that will lose
+    anki.col._cards[old_note.card_ids()[0]].reps = 2   # old has more reviews, so it wins
+    folder = _write_duplicate_source(tmp_path, new_deck)
+    _configure(anki, folder)
+
+    drive(anki, sync.clean_up_duplicates, _click_duplicate_button(accept=True))
+
+    # old was kept (more reviews) and started with a blank Notes field, so this only
+    # passes if the losing copy's text actually carried over, not merely survived.
+    assert anki.col.note_by_guid("old")["Notes"] == "my personal mnemonic"
+
+
+def test_clean_up_duplicates_is_idempotent(anki, tmp_path):
+    from internpearls import sync
+    old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
+    new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
+    _her_card(anki, "old", "same front text", deck=old_deck)
+    _her_card(anki, "new", "same front text", deck=new_deck)
+    folder = _write_duplicate_source(tmp_path, new_deck)
+    _configure(anki, folder)
+    drive(anki, sync.clean_up_duplicates, _click_duplicate_button(accept=True))
+
+    anki.gui.infos.clear()
+    anki.gui.interactive = False
+    sync.clean_up_duplicates()   # second run must find nothing left to do
+
+    assert any("No duplicate" in i for i in anki.gui.infos)
+
+
+def test_clean_up_duplicates_declined_leaves_everything_untouched(anki, tmp_path):
+    from internpearls import sync
+    old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
+    new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
+    _her_card(anki, "old", "same front text", deck=old_deck)
+    _her_card(anki, "new", "same front text", deck=new_deck)
+    folder = _write_duplicate_source(tmp_path, new_deck)
+    _configure(anki, folder)
+
+    drive(anki, sync.clean_up_duplicates, _click_duplicate_button(accept=False))
+
+    old_cid = anki.col.note_by_guid("old").card_ids()[0]
+    new_cid = anki.col.note_by_guid("new").card_ids()[0]
+    assert anki.col._cards[old_cid].queue == 0
+    assert anki.col._cards[new_cid].queue == 0
+
+
+def test_clean_up_duplicates_reports_nothing_when_no_duplicates_present(anki, tmp_path):
+    from internpearls import sync
+    _her_card(anki, "mine", "a unique card")
+    folder = _write_duplicate_source(tmp_path, DECK)
+    _configure(anki, folder)
+
+    sync.clean_up_duplicates()
+
+    assert any("No duplicate" in i for i in anki.gui.infos)
