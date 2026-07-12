@@ -265,6 +265,36 @@ def _her_guid_to_deck(scope_tag):
     return out
 
 
+def _her_notes_summary(scope_tag, exclude_tag=None):
+    """{guid, nid, model, front, reps, deck} for every note under the scope tag, the
+    raw material find_duplicate_groups groups into duplicate candidates.
+
+    `exclude_tag`, if given, is added as a search exclusion so a note a previous
+    duplicate-cleanup run already archived (see sync.clean_up_duplicates) is never
+    considered again, making a repeat run idempotent on what it already handled.
+    """
+    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    if exclude_tag:
+        search = f'({search}) -"tag:{exclude_tag}"'
+    out = []
+    for nid in mw.col.find_notes(search):
+        note = mw.col.get_note(nid)
+        cids = note.card_ids()
+        if not cids:
+            continue
+        reps = sum(mw.col.get_card(cid).reps for cid in cids)
+        deck = mw.col.decks.name(mw.col.get_card(cids[0]).did)
+        out.append({
+            "guid": note.guid,
+            "nid": nid,
+            "model": note.note_type()["name"],
+            "front": note.fields[0],
+            "reps": reps,
+            "deck": deck,
+        })
+    return out
+
+
 def installed_matching_collection(installed, scope_tag):
     """Reconcile installed.json against what's actually in the collection.
 
