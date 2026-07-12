@@ -3,6 +3,19 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.27.1
+
+- Update my decks now caches each pending deck's download for the session, so opening
+  it, looking at the preview, and cancelling no longer re-downloads every deck the next
+  time you open it. Since v0.26.1 made the preview a real per-deck download, a "just
+  checking" habit was multiplying source requests and running into sporadic "server not
+  available" hiccups more often; a deck is only re-fetched when its content actually
+  changed (the cache is keyed by the content-hash version).
+- Loosened the first-contact network timeout from 6 to 10 seconds. This only affects
+  user-initiated fetches (never the unattended background poll, which keeps its own tight
+  bound), so a connection that's alive but briefly slow no longer fails a click that
+  would have succeeded a couple seconds later.
+
 ## v0.27.0
 
 - Update my decks and Sync decks now show a real, cancellable progress dialog

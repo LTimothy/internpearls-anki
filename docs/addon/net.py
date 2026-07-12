@@ -13,11 +13,18 @@ import urllib.request
 
 from .config import ANKI_REPO
 
-_CONNECT_TIMEOUT = 6     # seconds; fail-fast bound for reaching the source at all
+_CONNECT_TIMEOUT = 10    # seconds; fail-fast bound for reaching the source at all
 _DOWNLOAD_TIMEOUT = 60   # seconds; per-read bound for pulling a deck once we're online
+# This bound is only ever hit on an interactive, user-initiated fetch (the manifest, the
+# version check), never the unattended poll below, so a few extra seconds of patience
+# before it gives up is the right trade: GitHub's API occasionally takes longer than a
+# tight 6s under load, and failing a click that would have succeeded at 8s reads as a
+# flaky "server not available" the user then has to retry by hand. Deck downloads get the
+# far more generous _DOWNLOAD_TIMEOUT, and the background poll its own tight _BG_TIMEOUT,
+# so loosening this one doesn't slow either of those.
 # A tighter bound for the two checks that run on their own, unprompted: the deck-sync
 # poll and the add-on-update check. These can fire as often as once a minute, so a slow
-# or dead host has to fail well before the interactive 6-second bound would. Background
+# or dead host has to fail well before the interactive bound would. Background
 # checks that use QueryOp (see background._run_in_background) run this off the main
 # thread anyway, so the timeout mostly matters for the fallback path on an Anki build
 # without QueryOp.
