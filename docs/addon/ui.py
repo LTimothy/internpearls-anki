@@ -15,7 +15,7 @@ from contextlib import contextmanager
 
 from aqt import mw
 from aqt.qt import (QApplication, QDialog, QDialogButtonBox, QFrame, QLabel,
-                    QPushButton, QScrollArea, Qt, QVBoxLayout)
+                    QProgressDialog, QPushButton, QScrollArea, Qt, QVBoxLayout)
 from aqt.utils import askUser, getText, showInfo, showWarning, tooltip
 
 from .config import APP_NAME
@@ -134,6 +134,42 @@ def wait_cursor():
         yield
     finally:
         QApplication.restoreOverrideCursor()
+
+
+@contextmanager
+def cancellable_progress(title, total):
+    """A determinate, cancellable progress dialog for a loop of `total` steps.
+
+    `mw.progress.start()`/`.update()` is Anki's simple busy-indicator API: no
+    percentage, and nothing ever checks for a cancel, so a Cancel button (if one
+    even shows) does nothing. On a multi-deck update that's a real per-deck network
+    fetch, that reads as a hang with no way out — this is the one place in the
+    add-on where a single step can plausibly take a while. Bypasses `mw.progress`
+    for exactly that reason, in favor of a real `QProgressDialog`.
+
+    Yields `step(i, label)`: call it right before doing the i-th (1-based) unit of
+    work. Returns False if the user has clicked Cancel since the last call, in
+    which case the caller must stop *before* starting that unit of work — every
+    cancel point in this add-on sits between whole decks, never mid-import, so the
+    collection is always left in a consistent, already-backed-up state.
+    """
+    dlg = QProgressDialog(title, "Cancel", 0, total, mw)
+    dlg.setWindowModality(Qt.WindowModality.WindowModal)
+    dlg.setMinimumDuration(0)
+    dlg.setAutoClose(True)
+    dlg.setValue(0)
+
+    def step(i, label):
+        dlg.setLabelText(label)
+        dlg.setValue(i - 1)
+        QApplication.processEvents()
+        return not dlg.wasCanceled()
+
+    try:
+        yield step
+    finally:
+        dlg.setValue(total)
+        dlg.close()
 
 
 # ------------------------------------------------------------------ widget helpers

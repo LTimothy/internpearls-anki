@@ -95,6 +95,18 @@ relax them without understanding why they're there.
   with no error — found by testing this exact page in an automated,
   non-foregrounded browser tab. `setTimeout(fn, 0)` yields a real turn of the
   event loop regardless of tab visibility and doesn't have this failure mode.
+- **`_run_sync`'s `on_progress` callback must return truthy to continue.** A
+  False return (Cancel clicked in `cancellable_progress`) stops the loop
+  *before* that deck's fetch/import, never partway through one, so whatever
+  already completed is still fully persisted (installed.json, restored
+  fields). Any new caller of `_run_sync` that passes `on_progress` must treat
+  its 5th return value (`cancelled`) as a real branch, not an afterthought:
+  `update_decks()` skips archiving/relocating entirely on cancel, since that
+  step assumes every content update already landed. In `tests/mock_anki.py`,
+  the mock `QProgressDialog.cancel_after` hook counts `setLabelText()` calls,
+  not `setValue()` calls, on purpose, since `cancellable_progress()`'s own
+  setup/teardown calls `setValue()` outside the per-step loop and would
+  otherwise throw off a test's "cancel after N steps" count.
 
 ## Releases
 

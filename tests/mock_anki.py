@@ -1029,6 +1029,9 @@ def install():
         class TextFormat:
             RichText = 1
 
+        class WindowModality:
+            WindowModal = 1
+
     class _QApplication:
         @staticmethod
         def setOverrideCursor(cursor):
@@ -1058,8 +1061,52 @@ def install():
         def singleShot(ms, fn):
             pass   # tests and the demo call background checks directly
 
+    class _QProgressDialog:
+        """Stands in for cancellable_progress()'s real QProgressDialog. Never
+        cancels on its own — nothing here drives a real Qt event loop to click a
+        Cancel button — except when a test opts in via `cancel_after`, keyed by
+        the dialog's initial label (its title, e.g. "Updating decks"): the dialog
+        reports canceled once step() has run more than that many times, simulating
+        "the learner clicked Cancel after N steps" for tests that need to verify a
+        partial-apply is handled safely. Counts setLabelText() calls specifically
+        (not setValue()) since cancellable_progress's step() is the only caller of
+        setLabelText — the setup/teardown setValue(0)/setValue(total) calls around
+        the loop must not themselves count as steps.
+        """
+        cancel_after = {}   # {label: n}; tests set this, one fresh dict per install()
+
+        def __init__(self, label, cancel_text, minv, maxv, parent=None):
+            self._label = label
+            self._calls = 0
+            self._canceled = False
+
+        def setWindowModality(self, m):
+            pass
+
+        def setMinimumDuration(self, ms):
+            pass
+
+        def setAutoClose(self, b):
+            pass
+
+        def setLabelText(self, text):
+            self._calls += 1
+            n = _QProgressDialog.cancel_after.get(self._label)
+            if n is not None and self._calls > n:
+                self._canceled = True
+
+        def setValue(self, v):
+            pass
+
+        def wasCanceled(self):
+            return self._canceled
+
+        def close(self):
+            pass
+
     for name, obj in (("Qt", _Qt), ("QApplication", _QApplication),
-                      ("QTimer", _QTimer), ("QLabel", QLabel),
+                      ("QTimer", _QTimer), ("QProgressDialog", _QProgressDialog),
+                      ("QLabel", QLabel),
                       ("QPushButton", QPushButton), ("QAction", QAction),
                       ("QMenu", QMenu), ("QCheckBox", QCheckBox),
                       ("QDialog", QDialog), ("QDialogButtonBox", QDialogButtonBox),
