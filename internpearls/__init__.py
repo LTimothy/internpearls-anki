@@ -1,14 +1,18 @@
 """
 Intern Pearls Deck Tools: an Anki add-on for history-safe deck sync.
 
-"Sync decks" is the only button most people need. It pulls any changed decks (from the
-private GitHub repo, or a local folder) and applies each one so your review history and
-your own annotations in any preserved field are kept. Fixing note types and importing a
-single deck run automatically as part of Sync and are exposed under "Advanced" only as
-a fallback.
+"Update my decks" is the only button most people need. It pulls any changed decks
+(from the private GitHub repo, or a local folder), applies each one so your review
+history and your own annotations in any preserved field are kept, and in the same pass
+tidies up anything "Reconcile my decks" would otherwise catch later — retired cards
+still in your collection, and cards a deck reorg needs to relocate — so the two halves
+never drift apart into a separate manual step. Sync decks and Reconcile my decks are
+still there under "Advanced" for anyone who wants just one half; fixing note types and
+importing a single deck run automatically as part of a sync and are exposed there too,
+only as a fallback.
 
-Before touching the collection, Sync takes its own timestamped backup, so nothing here
-depends on the user remembering to export one first.
+Before touching the collection, Update takes its own timestamped backup, so nothing
+here depends on the user remembering to export one first.
 
 This file is only the menu and startup wiring. The work lives in focused modules:
 
@@ -29,7 +33,8 @@ from .background import _schedule_background_checks
 from .collection import (backup_collection_now, backup_deck_now, export_deck,
                          import_deck, restore_from_backup, update_notetypes)
 from .dialogs import about, manage_decks, open_settings
-from .sync import import_single, reconcile_decks, sync_decks
+from .sync import (import_single, reconcile_decks, register_reconcile_action,
+                   sync_decks, update_decks)
 from .updates import check_updates, register_update_action
 
 
@@ -51,13 +56,21 @@ def _menu():
     # notice already covers it), and a small Settings/About pair at the bottom. Deck
     # source configuration lives inside Manage decks itself now, not as its own item,
     # since it only matters in the context of what decks are available to manage.
-    add(menu, "Sync decks", sync_decks)
+    #
+    # "Update my decks" is the recommended front door (sync + reconcile in one consented
+    # flow, see sync.update_decks); Sync decks and Reconcile my decks stay under Advanced
+    # as escape hatches for anyone who wants just one half on its own.
+    add(menu, "Update my decks", update_decks)
     add(menu, "Manage decks", manage_decks)
     menu.addSeparator()
     adv = menu.addMenu("Advanced")
+    add(adv, "Sync decks", sync_decks)
+    # register_reconcile_action lets this item's own label show a pending count (e.g.
+    # "Reconcile my decks (3 pending)") set by the auto-sync poll, since that poll only
+    # ever applies content on its own — see sync.py's comment by _reconcile_action.
+    register_reconcile_action(add(adv, "Reconcile my decks", reconcile_decks))
     add(adv, "Import single deck (manual)", import_single)
     add(adv, "Fix note types", update_notetypes)
-    add(adv, "Reconcile my decks", reconcile_decks)
     adv.addSeparator()
     add(adv, "Backup intern pearls deck", backup_deck_now)
     add(adv, "Import intern pearls deck", import_deck)
