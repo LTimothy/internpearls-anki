@@ -1,1 +1,1 @@
-["__init__.py", "background.py", "collection.py", "config.py", "dialogs.py", "logic.py", "mock_anki.py", "net.py", "sync.py", "ui.py", "updates.py"]
+["__init__.py", "background.py", "collection.py", "config.py", "dialogs.py", "logic.py", "mock_anki.py", "net.py", "nightmode.py", "sync.py", "ui.py", "updates.py"]
