@@ -620,3 +620,16 @@ def test_carry_over_only_touches_fields_with_saved_content():
     saved = {"Notes": "text", "Dosing": ""}
     assert logic.fields_to_carry_over(saved, {"Notes": "", "Dosing": ""}) == {
         "Notes": "text"}
+
+
+# ------------------------------------------------------- night mode image css
+def test_night_mode_image_css_enabled_returns_dimming_rule():
+    css = logic.night_mode_image_css(True)
+    assert ".nightMode img" in css
+    assert "brightness(0.7)" in css
+    assert "contrast(0.92)" in css
+    assert css.startswith("<style>") and css.endswith("</style>")
+
+
+def test_night_mode_image_css_disabled_returns_empty_string():
+    assert logic.night_mode_image_css(False) == ""
