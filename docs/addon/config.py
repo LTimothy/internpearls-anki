@@ -8,7 +8,7 @@ import os
 
 from aqt import mw
 
-ADDON_VERSION = "0.28.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.29.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # CLAUDE.md); when it does, an add-on release that understands the new shape must bump
@@ -26,6 +26,10 @@ DECK_BACKUPS_KEEP = 10   # how many automatic Intern Pearls deck backups to reta
 # the configured export_deck root; the tag leaf under the configured scope_tag.
 RETIRED_DECK_LEAF = "Retired"
 RETIRED_TAG_LEAF = "retired"
+# "Clean up duplicate cards" archives the losing copy of a sync duplicate to the same
+# Retired deck as above, but under its own tag leaf, so the two kinds of archive stay
+# distinguishable and a duplicate-cleanup re-run can tell what it already handled.
+DUPLICATE_TAG_LEAF = "retired-duplicate"
 _DIR = os.path.dirname(__file__)
 
 EXAMPLE_REPO = "LTimothy/internpearls-example-deck"   # public demo deck source
