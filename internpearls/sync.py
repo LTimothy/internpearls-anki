@@ -18,15 +18,17 @@ from aqt.utils import getFile
 
 from .collection import (_apply_deck, _apply_template_changes, _ensure_notetypes,
                          _her_front_to_guid, _her_guid_to_deck, _her_guid_to_nid,
-                         _import_apkg, _pre_sync_backup_or_confirm_skip, _restore,
+                         _her_notes_summary, _import_apkg,
+                         _pre_sync_backup_or_confirm_skip, _restore,
                          _snapshot, _template_changes, apply_deck_moves,
                          archive_notes, carry_over_protected_fields,
                          installed_matching_collection)
-from .config import (ADDON_VERSION, INSTALLED, RETIRED_DECK_LEAF, RETIRED_TAG_LEAF,
-                     SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json)
+from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
+                     RETIRED_TAG_LEAF, SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json,
+                     _save_json)
 from .logic import (bullets, decks_to_update, find_deck_moves_needed,
-                    find_retired_in_collection, manifest_needs_newer_addon,
-                    remap_cards, write_personalized)
+                    find_duplicate_groups, find_retired_in_collection,
+                    manifest_needs_newer_addon, remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .ui import _ask, _ask_scrollable, _info, _safe, _warn, cancellable_progress, wait_cursor
 
@@ -428,6 +430,78 @@ def reconcile_decks():
         result_lines.append(f"Moved <b>{n_moved}</b> card(s) to their reorganized deck — "
                             "content and scheduling untouched.")
     _info("<br><br>".join(result_lines) + backup_line)
+
+
+@_safe
+def clean_up_duplicates():
+    """Find sync duplicates (two notes, same type and front text, different GUIDs)
+    and archive the losing copy of each, using the same retire machinery Reconcile my
+    decks already uses: carry over any personal notes first, then suspend, move to the
+    Retired deck, and tag so a later run skips it.
+
+    A duplicate happens when a sync fails to match an incoming note to one the learner
+    already has, by GUID or front text, and imports it fresh instead of updating her
+    existing copy in place, most commonly right after a deck reorg. See
+    logic.find_duplicate_groups for the ranking rule: most reviews wins, ties prefer
+    the copy already under the deck source's current canonical deck path.
+    """
+    cfg = _cfg()
+    try:
+        with wait_cursor():
+            manifest, _, source = _fetch_manifest(cfg)
+    except Exception as e:
+        _warn(f"Couldn't reach the deck source: {e}<br><br>"
+              "Open <b>Intern Pearls → Manage decks</b> and use Change source to check "
+              "your GitHub token or local folder.")
+        return
+    if not manifest:
+        _warn("No deck source configured yet.<br><br>"
+              "Open <b>Intern Pearls → Manage decks</b> and use Configure source.")
+        return
+
+    tag = f'{cfg["scope_tag"]}::{DUPLICATE_TAG_LEAF}'
+    canonical_deck_names = [d["name"] for d in manifest.get("decks", [])]
+    her_notes = _her_notes_summary(cfg["scope_tag"], exclude_tag=tag)
+    groups = find_duplicate_groups(her_notes, canonical_deck_names)
+    if not groups:
+        _info(f"No duplicate cards found. (Source: {source}.)")
+        return
+
+    lines = [f"{g['front']} <span style='color:gray;'>keeping "
+             f"{g['keep']['deck'].split('::')[-1]} ({g['keep']['reps']} reviews), "
+             f"archiving {', '.join(a['deck'].split('::')[-1] for a in g['archive'])} "
+             f"({', '.join(str(a['reps']) for a in g['archive'])} reviews)</span>"
+             for g in groups]
+    n_archive = sum(len(g["archive"]) for g in groups)
+    block = (f"<b>{n_archive}</b> duplicate card(s) found across <b>{len(groups)}</b> "
+             "card(s):" + bullets(lines, cap=15))
+    safety_note = (
+        "<br><br>Nothing is deleted. Archived cards keep their review history and can "
+        "be brought back anytime by unsuspending them or moving them out of the "
+        "Retired deck, and any personal notes on them carry over to the kept copy "
+        "first. A backup is taken automatically before anything changes.")
+    if not _ask_scrollable(block + safety_note, yes_label="Archive duplicates"):
+        return
+
+    proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
+    if not proceed:
+        return
+    retired_deck = f'{cfg["export_deck"]}::{RETIRED_DECK_LEAF}'
+    retired = [{"guid": a["guid"], "superseded_by": [g["keep"]["guid"]]}
+               for g in groups for a in g["archive"]]
+    her_guid_to_nid = {n["guid"]: n["nid"] for g in groups for n in [g["keep"], *g["archive"]]}
+    carried = carry_over_protected_fields(retired, her_guid_to_nid, cfg["protected"])
+    n_archived = archive_notes([a["nid"] for g in groups for a in g["archive"]],
+                               retired_deck, tag)
+    mw.reset()
+    backup_line = ("" if backed_up else
+                   "<br><br>(No backup was taken this time: nothing to back up yet, or "
+                   "it failed and you chose to continue.)")
+    _info(f"Archived <b>{n_archived}</b> duplicate card(s) to <b>{retired_deck}</b>: "
+          f"suspended and tagged <code>{tag}</code>, review history kept"
+          + (f" ({carried} personal note(s) carried over to the kept copy)"
+             if carried else "") + ". Bring any back by unsuspending it or moving "
+          "it out of the Retired deck." + backup_line)
 
 
 # A session-lived cache of preview downloads, keyed by deck name to (version, path).
