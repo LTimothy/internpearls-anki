@@ -179,27 +179,44 @@ def decide_addon_update_action(current, latest, auto_update, notify, last_notifi
     return "none"
 
 
-def find_deck_moves_needed(moves_ledger, her_guid_to_deck):
+def find_deck_moves_needed(moves_ledger, her_guid_to_deck, her_front_to_guid=None):
     """Which of the learner's cards need to move deck to match a pure reorg.
 
-    `moves_ledger` is {guid: {from, to}} — every note the deck repo has ever
-    relocated without changing its GUID (see build_all.py's deck_moves.json).
+    `moves_ledger` is {guid: {from, to, front?}}: every note the deck repo has ever
+    relocated without changing its GUID (see build_all.py's deck_moves.json). `front`,
+    when present, is the note's current first field, used to find a learner's card
+    even when its GUID no longer matches the ledger's (see below).
     `her_guid_to_deck` is {guid: current deck name} for her collection.
+    `her_front_to_guid` is {first field: guid} for her collection (optional).
+
+    Normally a card is matched to a ledger entry by GUID. But a card whose deck source
+    changed its `id_seed` (say Anesthesia Pharmacology's v1 to v2) has a *different*
+    GUID in a learner's older collection than the one the ledger is keyed by, so a
+    pure GUID match misses it: the card sits stuck at `from` forever, its new deck
+    perpetually re-offered because installed_matching_collection never finds a card
+    under it. So when the ledger GUID isn't in her collection, fall back to matching by
+    `front` (the same signal content-sync's remap_cards trusts; fronts are unique
+    across decks by build lint), and act on *her* GUID for that front. An older
+    manifest without `front`, or a caller that passes no `her_front_to_guid`, simply
+    keeps the GUID-only behavior.
 
     A move only applies if her card is still sitting exactly where the deck source
-    last put it (`from`). If it's anywhere else — already at `to` (she reconciled a
-    previous move), or somewhere of her own choosing (she filed it into a custom
-    deck) — leave it alone. This is what makes reconciling deck moves both
+    last put it (`from`). If it's anywhere else (already at `to` because she reconciled
+    a previous move, or somewhere of her own choosing because she filed it into a
+    custom deck), leave it alone. This is what makes reconciling deck moves both
     idempotent (nothing to do once she's there) and non-destructive of her own
     organization (a deliberate move away from `from` is never overwritten).
 
-    Returns [{guid, from, to}], sorted by `to` then `from` for stable display.
+    Returns [{guid, from, to}] where `guid` is *her* note's GUID (so apply_deck_moves
+    can find it), sorted by `to` then `from` for stable display.
     """
     out = []
     for guid, move in (moves_ledger or {}).items():
-        current = her_guid_to_deck.get(guid)
-        if current == move.get("from"):
-            out.append({"guid": guid, "from": move["from"], "to": move["to"]})
+        her_guid = guid if guid in her_guid_to_deck else None
+        if her_guid is None and her_front_to_guid and move.get("front"):
+            her_guid = her_front_to_guid.get(move["front"])
+        if her_guid is not None and her_guid_to_deck.get(her_guid) == move.get("from"):
+            out.append({"guid": her_guid, "from": move["from"], "to": move["to"]})
     out.sort(key=lambda m: (m["to"], m["from"]))
     return out
 
