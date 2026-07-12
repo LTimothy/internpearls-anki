@@ -32,6 +32,19 @@ def bullets(items, cap=None):
     return html + "</ul>"
 
 
+def night_mode_image_css(enabled):
+    """CSS that dims bright white-background images while Anki's Night Mode is on.
+
+    Anki's own Night Mode already adds a "nightMode" class to the card body, so this
+    only needs to define the rule; the browser applies it only when that class is
+    present. Dims rather than inverts, since a full color invert looks wrong on a
+    real photo mixed into an otherwise diagram-heavy deck.
+    """
+    if not enabled:
+        return ""
+    return "<style>.nightMode img { filter: brightness(0.7) contrast(0.92); }</style>"
+
+
 def version_tuple(v):
     """Parse a version string into a tuple of ints, e.g. "0.10.2" -> (0, 10, 2)."""
     return tuple(int(x) for x in re.findall(r"\d+", str(v)))
