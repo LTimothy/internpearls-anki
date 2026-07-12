@@ -871,3 +871,69 @@ def test_update_decks_cancel_during_apply_keeps_completed_decks_and_skips_reconc
     old = anki.col.note_by_guid("old1")
     assert RETIRED_TAG not in old.tags   # reconcile skipped, nothing archived
     assert any("stopped early" in i.lower() for i in anki.gui.infos)
+
+
+def test_preview_reuses_cached_download_for_an_unchanged_deck(anki, tmp_path):
+    """Opening Update my decks, previewing, and cancelling repeatedly must not
+    re-download a deck whose version hasn't changed. The v0.26.1 preview download is
+    the main reason a "just checking" habit runs into sporadic source hiccups, so a
+    second preview of the same version has to be a cache hit, not another fetch."""
+    from internpearls import sync
+    from internpearls.collection import _her_front_to_guid
+    from internpearls.logic import decks_to_update
+
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None),
+        NEW_DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)})
+    _configure(anki, folder)
+    manifest, real_fetch, _ = sync._fetch_manifest(sync._cfg())
+    todo = decks_to_update(manifest, {}, [])
+    her = _her_front_to_guid(SCOPE)
+
+    calls = []
+
+    def counting_fetch(d):
+        calls.append(d["name"])
+        return real_fetch(d)
+
+    sync._preview_content_changes(counting_fetch, todo, her, {})
+    assert len(calls) == 2   # both decks fetched the first time
+    sync._preview_content_changes(counting_fetch, todo, her, {})
+    assert len(calls) == 2   # second preview is all cache hits, no new fetches
+
+
+def test_preview_refetches_a_deck_whose_version_changed(anki, tmp_path):
+    """The cache is keyed by content-hash version, so a real push (new version) must
+    miss it and re-download, never serve a stale .apkg."""
+    from internpearls import sync
+    from internpearls.collection import _her_front_to_guid
+    from internpearls.logic import decks_to_update
+
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    _configure(anki, folder)
+    manifest, real_fetch, _ = sync._fetch_manifest(sync._cfg())
+    todo = decks_to_update(manifest, {}, [])
+    her = _her_front_to_guid(SCOPE)
+    calls = []
+
+    def counting_fetch(d):
+        calls.append(d["version"])
+        return real_fetch(d)
+
+    sync._preview_content_changes(counting_fetch, todo, her, {})
+    assert calls == ["v1"]
+    # Source pushes a new version of the same deck.
+    folder2 = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)})
+    _configure(anki, folder2)
+    manifest2, real_fetch2, _ = sync._fetch_manifest(sync._cfg())
+    todo2 = decks_to_update(manifest2, {}, [])
+
+    def counting_fetch2(d):
+        calls.append(d["version"])
+        return real_fetch2(d)
+
+    sync._preview_content_changes(counting_fetch2, todo2, her, {})
+    assert calls == ["v1", "v2"]   # version changed, cache missed, re-fetched
