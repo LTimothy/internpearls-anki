@@ -3,6 +3,23 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.26.1
+
+- Fixed a real bug in the collection-revert reconciliation added in v0.25.2: it
+  required an *exact* match between a manifest deck's name and an Anki deck you
+  actually have, but a deck spec's `deck_name` is routinely just the parent path —
+  cards land in `deck_name::<subdeck>` for any spec using subdecks, which is the
+  normal case (the public example deck included). That meant every subdeck-based
+  deck was silently treated as "not installed" on every single check, forever,
+  forcing a pointless resync each time — caught via the live demo constantly
+  offering an update with nothing actually changed. Now matches the manifest name
+  itself or any subdeck beneath it.
+- Update my decks' confirmation now downloads and matches each pending deck before
+  showing it, the same way the old "Check what will sync" preview did — real
+  "N kept · M new" counts per deck, not just how big the deck is. A progress window
+  covers the check itself, since it's a live download per deck. Nothing already
+  downloaded for this preview is fetched again during the actual update.
+
 ## v0.26.0
 
 - Added **Update my decks**, a new top-level menu item and the recommended way to
