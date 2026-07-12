@@ -421,6 +421,40 @@ def reconcile_decks():
     _info("<br><br>".join(result_lines) + backup_line)
 
 
+def _preview_content_changes(fetch, todo, her, aliases):
+    """Download every pending deck and match it against the collection, so the
+    confirmation can show real "N kept · M new" counts instead of just each deck's
+    total card count. A visible progress window covers it, since this is a live
+    network fetch per deck and a multi-deck update on a slow link otherwise looks
+    like a hang before the confirmation even appears.
+
+    Returns ({deck_name: (kept, new) | None}, downloaded) — `downloaded` is
+    {deck_name: local_path_or_Exception}, in the same shape background.py's
+    auto-sync poll already uses, so the caller can hand it straight to _run_sync
+    afterward instead of downloading every deck a second time. A per-deck fetch
+    failure here is recorded, not raised, so one bad download only blanks that
+    deck's preview ("couldn't preview") rather than blocking the whole
+    confirmation; the same failure surfaces for real if Sync then tries to apply it.
+    """
+    preview, downloaded = {}, {}
+    mw.progress.start(label="Checking for updates", immediate=True)
+    try:
+        for i, d in enumerate(todo, 1):
+            short = d["name"].split("::")[-1]
+            mw.progress.update(label=f"Checking {short} ({i} of {len(todo)})")
+            try:
+                src = fetch(d)
+                downloaded[d["name"]] = src
+                _, kept, new = remap_cards(src, her, aliases)
+                preview[d["name"]] = (kept, new)
+            except Exception as e:
+                downloaded[d["name"]] = e
+                preview[d["name"]] = None
+    finally:
+        mw.progress.finish()
+    return preview, downloaded
+
+
 @_safe
 def update_decks():
     """The one-click front door: computes everything pending — deck content updates,
@@ -451,12 +485,15 @@ def update_decks():
         _info(f"You're all up to date (source: {source}).")
         return
 
+    preview, downloaded = {}, {}
+    if todo:
+        preview, downloaded = _preview_content_changes(
+            fetch, todo, _her_front_to_guid(cfg["scope_tag"]), manifest.get("front_aliases", {}))
+
     def _line(d):
         short = d["name"].split("::")[-1]
-        cards = d.get("cards")
-        new = "new deck" if d["name"] not in installed else None
-        detail = ", ".join(x for x in (f"{cards} cards" if cards is not None else None, new) if x)
-        return f"{short} ({detail})" if detail else short
+        pc = preview.get(d["name"])
+        return f"{short} (couldn't preview)" if pc is None else f"{short} ({pc[0]} kept · {pc[1]} new)"
 
     sections = []
     if todo:
@@ -500,15 +537,25 @@ def update_decks():
 
     results, restored, tpl_changes = [], 0, {}
     if todo:
-        # A visible progress window while each deck downloads and imports: the fetches
-        # run on the main thread here, and a multi-deck update on a slow link
-        # otherwise looks like a hang.
+        def _already_fetched(d):
+            # Reuses _preview_content_changes' download above instead of fetching
+            # every deck a second time — same pattern background.py's auto-sync
+            # poll uses for the same reason. A deck whose preview download failed
+            # re-raises that same exception here, so _run_sync's own per-deck
+            # try/except reports it exactly like a live fetch failure would.
+            v = downloaded[d["name"]]
+            if isinstance(v, Exception):
+                raise v
+            return v
+
+        # A visible progress window while each deck imports: the preview step
+        # above already covered the download itself.
         mw.progress.start(label="Updating decks", immediate=True)
         try:
             results, restored, tpl_changes, _ = _run_sync(
-                cfg, manifest, fetch, todo, installed,
+                cfg, manifest, _already_fetched, todo, installed,
                 on_progress=lambda i, n, name: mw.progress.update(
-                    label=f"Syncing {name} ({i} of {n})"))
+                    label=f"Applying {name} ({i} of {n})"))
         finally:
             mw.progress.finish()
         _offer_template_changes(tpl_changes)

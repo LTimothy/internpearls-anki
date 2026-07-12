@@ -283,18 +283,30 @@ def installed_matching_collection(installed, scope_tag):
     Anki deck of that exact name; otherwise it's dropped, so a normal sync re-detects
     and re-applies it.
 
+    "An Anki deck of that exact name" means the manifest's deck name itself OR any
+    subdeck under it — a deck spec's `deck_name` is routinely just the parent path,
+    with cards actually filed into `deck_name::<subdeck>` (every spec with a
+    `subdecks` list works this way; the example deck does too). A first version of
+    this required an exact match, which meant it never recognized ANY subdeck-based
+    deck as present and treated every one of them as pending on every check, forever
+    — a real, silent regression, not the intended behavior.
+
     Trade-off worth knowing: this can also false-positive (call a deck "missing" when
     it isn't) in two narrow, self-correcting cases — a deck mid-reorg where Sync
     decks has updated content but "Reconcile my decks" hasn't yet relocated the
     learner's existing cards to the new deck name (apply_deck_moves does that, not
-    Sync), and a card the learner has manually filed into her own personal subdeck.
-    Both just cause a harmless redundant re-sync of that one deck (0 new, N kept in
-    place) rather than any data loss, which is the failure mode actually worth
-    avoiding here — a false "needs sync" self-corrects; a false "up to date" hides a
-    real problem silently.
+    Sync), and a card the learner has manually filed into a deck of her own outside
+    the spec's hierarchy entirely. Both just cause a harmless redundant re-sync of
+    that one deck (0 new, N kept in place) rather than any data loss, which is the
+    failure mode actually worth avoiding here — a false "needs sync" self-corrects;
+    a false "up to date" hides a real problem silently.
     """
     present = set(_her_guid_to_deck(scope_tag).values())
-    return {name: version for name, version in installed.items() if name in present}
+
+    def _has_cards(name):
+        return any(d == name or d.startswith(name + "::") for d in present)
+
+    return {name: version for name, version in installed.items() if _has_cards(name)}
 
 
 def apply_deck_moves(moves, her_guid_to_nid):
