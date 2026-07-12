@@ -54,4 +54,6 @@ def anki(tmp_path, monkeypatch):
         monkeypatch.setattr(mod, "STATE", state)
     monkeypatch.setattr(collection, "_USER_FILES", str(tmp_path / "user_files"))
     background._tpl_deferred_notified.clear()
+    background._last_reconcile_notified = 0
+    sync._reconcile_action = None   # a prior test's registered stub must not leak in
     return _mock

@@ -1,10 +1,13 @@
-"""The deck-sync flows: source resolution, Sync decks, and Import single deck.
+"""The deck-sync and reconcile flows: source resolution, Sync decks, Reconcile my
+decks, the unified Update my decks front door, and Import single deck.
 
 _run_sync is the one implementation of the history-preserving sequence (fix note
 types, snapshot protected fields, remap and import, restore, persist versions) —
-shared by the interactive Sync decks flow and the unattended auto-sync poll in
-background.py, so the part that matters for not losing anyone's review history
-exists exactly once.
+shared by the interactive Sync decks flow, update_decks(), and the unattended
+auto-sync poll in background.py, so the part that matters for not losing anyone's
+review history exists exactly once. _reconcile_pending is the equivalent single
+source of truth for what "Reconcile my decks" would find pending, shared by
+reconcile_decks() and update_decks() so the two can never disagree.
 """
 import json
 import os
@@ -26,6 +29,36 @@ from .logic import (bullets, decks_to_update, find_deck_moves_needed,
                     remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .ui import _ask, _ask_scrollable, _info, _safe, _warn, wait_cursor
+
+
+# The "Reconcile my decks" QAction, set once by __init__.py right after building the
+# menu. Mutated from here and from background.py's auto-sync poll, mirroring
+# updates.py's register_update_action/_refresh_update_action_label for the same
+# reason: auto-sync only ever applies content on its own (archiving/relocating always
+# stays a consented action — see _run_sync's history-preserving-but-additive-only
+# design), so without a persistent nudge here, a retired/relocated backlog could pile
+# up silently between manual checks, which is exactly the divergence problem this
+# whole flow exists to close.
+_reconcile_action = None
+
+
+def register_reconcile_action(action):
+    """Called once by __init__.py right after building the menu."""
+    global _reconcile_action
+    _reconcile_action = action
+
+
+def _refresh_reconcile_action_label(pending):
+    """Show a pending count on the menu item itself, or reset to the plain label once
+    there's nothing left to reconcile. No-op before the menu exists — safe to call
+    from anywhere that just learned a fresh count.
+    """
+    if _reconcile_action is None:
+        return
+    if pending:
+        _reconcile_action.setText(f"Reconcile my decks ({pending} pending)")
+    else:
+        _reconcile_action.setText("Reconcile my decks")
 
 
 def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT):
@@ -64,9 +97,13 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT):
     return None, None, None
 
 
-@_safe
-def sync_decks():
-    cfg = _cfg()
+def _fetch_manifest_gated(cfg):
+    """_fetch_manifest, plus the "you need a newer add-on" schema gate, plus the
+    unreachable/unconfigured warnings — all three callers that need a gated fetch
+    (Sync decks, Update my decks) want the exact same behavior here, so there's one
+    place that can disagree with itself. Returns (manifest, fetch, source) on success,
+    or None after already showing the user a warning; the caller should just return.
+    """
     try:
         with wait_cursor():
             manifest, fetch, source = _fetch_manifest(cfg)
@@ -74,21 +111,31 @@ def sync_decks():
         _warn(f"Couldn't reach the deck source: {e}<br><br>"
               "Open <b>Intern Pearls → Manage decks</b> and use Change source to check "
               "your GitHub token or local folder.")
-        return
+        return None
     if not manifest:
         _warn("No deck source configured yet.<br><br>"
               "Open <b>Intern Pearls → Manage decks</b> and use Configure source.")
-        return
+        return None
     if manifest_needs_newer_addon(manifest, SUPPORTED_MANIFEST_SCHEMA):
         _warn(
             f"This deck source needs a newer version of Intern Pearls Deck Tools than "
             f"the one installed (v{ADDON_VERSION}).<br><br>"
             "Update the add-on first — <b>Intern Pearls → Advanced → Check for add-on "
-            "updates</b> — then try Sync decks again. Syncing against a manifest format "
-            "this version doesn't understand is refused rather than attempted, so "
-            "nothing here has been touched."
+            "updates</b> — then try again. Syncing against a manifest format this "
+            "version doesn't understand is refused rather than attempted, so nothing "
+            "here has been touched."
         )
+        return None
+    return manifest, fetch, source
+
+
+@_safe
+def sync_decks():
+    cfg = _cfg()
+    fetched = _fetch_manifest_gated(cfg)
+    if not fetched:
         return
+    manifest, fetch, source = fetched
 
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     todo = decks_to_update(manifest, installed, cfg["excluded"])
@@ -211,6 +258,35 @@ def _offer_template_changes(tpl_changes):
         _apply_template_changes(tpl_changes)
 
 
+def _reconcile_pending(manifest, cfg):
+    """Everything "Reconcile my decks" would find pending: retired cards still in the
+    collection (split into fresh vs. already-archived) and cards sitting in a
+    since-reorganized deck. Shared by reconcile_decks() and update_decks() so the two
+    can never disagree about what's pending.
+
+    Returns (her, fresh, already, moves, retired_deck, tag) — `her` is {guid: nid} for
+    every note currently under scope_tag, which the caller needs again to act on
+    `fresh`/`moves` afterward (or, for update_decks(), to refetch post-sync — see its
+    docstring for why that refetch matters).
+    """
+    her = _her_guid_to_nid(cfg["scope_tag"])
+    found = find_retired_in_collection(manifest.get("retired", {}), set(her))
+    her_deck = _her_guid_to_deck(cfg["scope_tag"])
+    moves = [m for m in find_deck_moves_needed(manifest.get("deck_moves", {}), her_deck)
+             if m["guid"] in her]
+
+    tag = f'{cfg["scope_tag"]}::{RETIRED_TAG_LEAF}'
+    retired_deck = f'{cfg["export_deck"]}::{RETIRED_DECK_LEAF}'
+    # A previous run tags what it archives; skip those so re-running is a no-op on them.
+    fresh, already = [], 0
+    for r in found:
+        if tag in mw.col.get_note(her[r["guid"]]).tags:
+            already += 1
+        else:
+            fresh.append(r)
+    return her, fresh, already, moves, retired_deck, tag
+
+
 @_safe
 def reconcile_decks():
     """Find retired cards still in the learner's collection and archive them, and
@@ -232,6 +308,10 @@ def reconcile_decks():
     This reads the deck-moves ledger and relocates any card still sitting exactly
     where the source last filed it (find_deck_moves_needed skips anything she's since
     moved herself, so her own organization is never overridden).
+
+    Kept as an Advanced-menu escape hatch for running just this half on its own;
+    "Update my decks" is the recommended front door and runs this right after a sync
+    in one pass — see update_decks().
     """
     cfg = _cfg()
     try:
@@ -247,29 +327,16 @@ def reconcile_decks():
               "Open <b>Intern Pearls → Manage decks</b> and use Configure source.")
         return
 
-    her = _her_guid_to_nid(cfg["scope_tag"])
-    found = find_retired_in_collection(manifest.get("retired", {}), set(her))
-    her_deck = _her_guid_to_deck(cfg["scope_tag"])
-    moves = [m for m in find_deck_moves_needed(manifest.get("deck_moves", {}), her_deck)
-             if m["guid"] in her]
-
-    if not found and not moves:
-        _info("No retired cards or reorganized decks found in your collection — "
-              f"nothing to tidy up. (Source: {source}.)")
-        return
-
-    tag = f'{cfg["scope_tag"]}::{RETIRED_TAG_LEAF}'
-    retired_deck = f'{cfg["export_deck"]}::{RETIRED_DECK_LEAF}'
-    # A previous run tags what it archives; skip those so re-running is a no-op on them.
-    fresh, already = [], 0
-    for r in found:
-        if tag in mw.col.get_note(her[r["guid"]]).tags:
-            already += 1
-        else:
-            fresh.append(r)
+    her, fresh, already, moves, retired_deck, tag = _reconcile_pending(manifest, cfg)
     if not fresh and not moves:
-        _info(f"All {already} retired card(s) in your collection are already archived "
-              f"(suspended and moved to <b>{RETIRED_DECK_LEAF}</b>). Nothing more to do.")
+        _refresh_reconcile_action_label(0)
+        if already:
+            _info(f"All {already} retired card(s) in your collection are already "
+                  f"archived (suspended and moved to <b>{RETIRED_DECK_LEAF}</b>). "
+                  "Nothing more to do.")
+        else:
+            _info("No retired cards or reorganized decks found in your collection — "
+                  f"nothing to tidy up. (Source: {source}.)")
         return
 
     # A big first run (a large reorg landed before Reconcile was run even once) reads as
@@ -336,6 +403,7 @@ def reconcile_decks():
     n_archived = archive_notes([her[r["guid"]] for r in fresh], retired_deck, tag)
     n_moved = apply_deck_moves(moves, her)
     mw.reset()
+    _refresh_reconcile_action_label(0)   # this run just handled everything found
     backup_line = ("" if backed_up else
                    "<br><br>(No backup was taken this time — nothing to back up yet, or "
                    "it failed and you chose to continue.)")
@@ -351,6 +419,131 @@ def reconcile_decks():
         result_lines.append(f"Moved <b>{n_moved}</b> card(s) to their reorganized deck — "
                             "content and scheduling untouched.")
     _info("<br><br>".join(result_lines) + backup_line)
+
+
+@_safe
+def update_decks():
+    """The one-click front door: computes everything pending — deck content updates,
+    retired cards still in the collection, and cards a deck reorg needs to relocate —
+    in a single pass, shows one confirmation covering all of it, then applies content
+    updates before archiving/relocating, so a retired card's replacement is already in
+    place before the old card archives out (the ordering reconcile_decks' own "run Sync
+    decks first" note asks the learner to do by hand, done automatically here instead).
+
+    Composes sync_decks/reconcile_decks' own machinery (_run_sync, _reconcile_pending,
+    carry_over_protected_fields, archive_notes, apply_deck_moves) rather than
+    reimplementing any of it — this only adds the combined preview/confirm/summary
+    layer around them. Sync decks and Reconcile my decks remain as separate Advanced
+    items for anyone who wants either half on its own.
+    """
+    cfg = _cfg()
+    fetched = _fetch_manifest_gated(cfg)
+    if not fetched:
+        return
+    manifest, fetch, source = fetched
+
+    installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
+    todo = decks_to_update(manifest, installed, cfg["excluded"])
+    her, fresh, already, moves, retired_deck, tag = _reconcile_pending(manifest, cfg)
+
+    if not todo and not fresh and not moves:
+        _refresh_reconcile_action_label(0)
+        _info(f"You're all up to date (source: {source}).")
+        return
+
+    def _line(d):
+        short = d["name"].split("::")[-1]
+        cards = d.get("cards")
+        new = "new deck" if d["name"] not in installed else None
+        detail = ", ".join(x for x in (f"{cards} cards" if cards is not None else None, new) if x)
+        return f"{short} ({detail})" if detail else short
+
+    sections = []
+    if todo:
+        sections.append(
+            f"<b>{len(todo)}</b> deck(s) have updates:" + bullets([_line(d) for d in todo], cap=15))
+    if fresh:
+        lines = [f"{r['identity']} <span style='color:gray;'>"
+                 f"({r['deck'].split('::')[-1]})</span>" for r in fresh]
+        already_note = f" ({already} more were already archived earlier.)" if already else ""
+        sections.append(
+            f"<b>{len(fresh)}</b> retired card(s) are still in your collection — split "
+            "or reworded since, with the replacements added separately, so these just "
+            f"duplicate your reviews now.{already_note}" + bullets(lines, cap=15))
+    if moves:
+        move_lines = [f"{mw.col.get_note(her[m['guid']]).fields[0]} <span "
+                      f"style='color:gray;'>→ {m['to'].split('::')[-1]}</span>" for m in moves]
+        sections.append(
+            f"<b>{len(moves)}</b> card(s) belong to a deck that's since been "
+            "reorganized." + bullets(move_lines, cap=15))
+
+    # A big first run (a large backlog accumulated before Update was run even once)
+    # reads as alarming without context — say up front it's a one-time catch-up.
+    catch_up_note = (
+        "<i>This looks like a one-time catch-up — likely your first update in a "
+        "while. Future updates should be much shorter.</i><br><br>"
+        if len(fresh) + len(moves) > 20 else "")
+    safety_note = (
+        "<br><br>Your review history and any personal notes on existing cards are "
+        "kept (matched by card, not overwritten). Archived cards keep their history "
+        "too and can be brought back anytime by unsuspending them or moving them out "
+        "of the Retired deck — nothing here is ever deleted. A backup is taken "
+        "automatically first.")
+
+    if not _ask_scrollable(catch_up_note + "<br><br>".join(sections) + safety_note,
+                           yes_label="Update"):
+        return
+
+    proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
+    if not proceed:
+        return
+
+    results, restored, tpl_changes = [], 0, {}
+    if todo:
+        # A visible progress window while each deck downloads and imports: the fetches
+        # run on the main thread here, and a multi-deck update on a slow link
+        # otherwise looks like a hang.
+        mw.progress.start(label="Updating decks", immediate=True)
+        try:
+            results, restored, tpl_changes, _ = _run_sync(
+                cfg, manifest, fetch, todo, installed,
+                on_progress=lambda i, n, name: mw.progress.update(
+                    label=f"Syncing {name} ({i} of {n})"))
+        finally:
+            mw.progress.finish()
+        _offer_template_changes(tpl_changes)
+
+    n_archived = n_moved = carried = 0
+    if fresh or moves:
+        # Refetched, not the pre-sync `her` from _reconcile_pending above: the sync
+        # step just above may have imported a retired card's replacement for the
+        # first time, and carry_over_protected_fields needs the replacement's current
+        # nid to find it and copy her annotation over.
+        her = _her_guid_to_nid(cfg["scope_tag"])
+        carried = carry_over_protected_fields(fresh, her, cfg["protected"])
+        n_archived = archive_notes([her[r["guid"]] for r in fresh], retired_deck, tag)
+        n_moved = apply_deck_moves(moves, her)
+        mw.reset()
+        _refresh_reconcile_action_label(0)   # this run just handled everything found
+
+    result_lines = list(results)
+    if n_archived:
+        result_lines.append(
+            f"✓ Archived <b>{n_archived}</b> retired card(s) to <b>{retired_deck}</b>"
+            + (f" ({carried} personal note(s) carried over)" if carried else "") + ".")
+    if n_moved:
+        result_lines.append(f"✓ Moved <b>{n_moved}</b> card(s) to their reorganized deck.")
+
+    fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
+                  if restored else "")
+    backup_line = (
+        "A pre-sync backup of the Intern Pearls deck was saved; use "
+        "<i>Advanced → Import intern pearls deck</i> to revert to it if needed."
+        if backed_up else
+        "No pre-sync backup was taken this time (nothing to back up yet, or it "
+        "failed and you chose to continue).")
+    _info(f"<b>Update complete</b> (source: {source})" + bullets(result_lines) +
+          fields_line + backup_line)
 
 
 @_safe

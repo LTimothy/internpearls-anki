@@ -3,23 +3,18 @@
 Everything here is presentation plus config writes; the flows that touch the
 collection or the network live in sync.py / collection.py and are called from here.
 """
-import os
-
 from aqt import mw
-from aqt.qt import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
-                    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QScrollArea,
-                    QSpinBox, Qt, QVBoxLayout, QWidget)
+from aqt.qt import (QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
+                    QLineEdit, QMessageBox, QScrollArea, QSpinBox, Qt, QVBoxLayout,
+                    QWidget)
 
 from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
-from .collection import (_her_front_to_guid, _her_guid_to_deck, _her_guid_to_nid,
-                         installed_matching_collection)
+from .collection import installed_matching_collection
 from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, EXAMPLE_DECK_NAME, EXAMPLE_REPO,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, STATE, _cfg, _load_json)
-from .logic import (bullets, deck_status, find_deck_moves_needed,
-                    find_retired_in_collection, parse_fields, remap_cards,
-                    version_at_least)
-from .sync import _fetch_manifest, sync_decks
+from .logic import bullets, deck_status, parse_fields, version_at_least
+from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _info, _prompt, _safe, _warn, hint_label, link_button,
                  muted_label, section_label, title_label, wait_cursor)
 
@@ -133,7 +128,8 @@ def configure_source():
               "or repo and try again.")
         return
     _info(f"Saved and connected to <b>{source}</b>, found {len(manifest['decks'])} "
-          "deck(s).<br><br>Run <i>Intern Pearls → Sync decks</i> whenever you're ready.")
+          "deck(s).<br><br>Run <i>Intern Pearls → Update my decks</i> whenever you're "
+          "ready.")
 
 
 # -------------------------------------------------------------------- deck manager
@@ -166,19 +162,21 @@ class _DeckManagerDialog(QDialog):
     this dialog closes. Sync automation and add-on update behavior live in a separate
     Settings dialog: this one answers "which decks, which fields, from where," not "how
     automatic" (a different kind of choice that doesn't belong in the same panel).
+
+    Purely configuration, no live preview: what's actually pending — per-deck kept/new
+    counts, retired cards, cards to relocate — is Update my decks' confirmation's job,
+    not this dialog's. It used to also carry a "Check what will sync" button computing
+    that same preview, which meant checking twice: once here, then again in the
+    confirmation when actually running it. Removed rather than kept as a duplicate.
     """
 
-    def __init__(self, parent, rows, protected, source, preview_fn, configured):
+    def __init__(self, parent, rows, protected, source, configured):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Manage decks")
         self.setMinimumWidth(480)
-        self.sync_requested = False
+        self.update_requested = False
         self.change_source_requested = False
-        self._rows = rows
-        # callable() -> ({deck_name: (kept, new) | None}, retired_count, moves_count)
-        self._preview_fn = preview_fn
         self._checks = {}   # deck name -> QCheckBox
-        self._pills = {}    # deck name -> QLabel (status pill, updated after a preview)
 
         outer = QVBoxLayout(self)
         outer.setSpacing(10)
@@ -206,36 +204,7 @@ class _DeckManagerDialog(QDialog):
                 label, on_click=lambda _=False, v=val: self._set_all(v),
                 align_left=True))
         bar.addStretch()
-        self._preview_btn = link_button(
-            "Check what will sync", on_click=self._run_preview,
-            tooltip_text=(
-                "Download the changed decks and show, per deck, how many cards would "
-                "update in place (history kept) vs. be added as new. Also checks "
-                "whether Reconcile my decks has anything pending (retired cards "
-                "still in your collection, or cards a reorg needs to relocate). "
-                "Nothing is imported."))
-        # Reflect why there's nothing to check on open, rather than leaving an inviting
-        # button that just reports "nothing happened" once clicked: no decks at all
-        # (source unreachable or not configured) reads differently from every deck
-        # already matching what's installed.
-        if not rows:
-            self._preview_btn.setText("No decks available")
-            self._preview_btn.setEnabled(False)
-            self._preview_btn.setStyleSheet("color: gray;")
-        elif not any(r["state"] != "current" for r in rows):
-            self._preview_btn.setText("All decks up to date")
-            self._preview_btn.setEnabled(False)
-            self._preview_btn.setStyleSheet("color: gray;")
-        bar.addWidget(self._preview_btn)
         outer.addLayout(bar)
-
-        # Filled in after a preview if Reconcile my decks would have anything to do;
-        # hidden the rest of the time so this dialog doesn't grow a permanent empty row.
-        self._recon_label = QLabel("")
-        self._recon_label.setWordWrap(True)
-        self._recon_label.setStyleSheet("color: #b45309; font-size: 12px;")
-        self._recon_label.setVisible(False)
-        outer.addWidget(self._recon_label)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -266,15 +235,15 @@ class _DeckManagerDialog(QDialog):
             "never overwrites what you've written."))
 
         outer.addWidget(hint_label(
-            "Save keeps these choices for your next sync. Save and sync "
-            "now also pulls the selected decks right away.", top_margin=4))
+            "Save keeps these choices for your next update. Save and update "
+            "now also pulls and tidies up right away.", top_margin=4))
 
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
-        sync = bb.addButton("Save and sync now", QDialogButtonBox.ButtonRole.ApplyRole)
+        update = bb.addButton("Save and update now", QDialogButtonBox.ButtonRole.ApplyRole)
         bb.addButton(QDialogButtonBox.StandardButton.Cancel)
         save.clicked.connect(self.accept)
-        sync.clicked.connect(self._save_and_sync)
+        update.clicked.connect(self._save_and_update)
         bb.rejected.connect(self.reject)
         outer.addWidget(bb)
 
@@ -296,68 +265,15 @@ class _DeckManagerDialog(QDialog):
         text = f'{cards} cards · {label}' if cards is not None else label
         pill = QLabel(text)
         pill.setStyleSheet(_pill_style(color))
-        self._pills[r["name"]] = pill
         h.addWidget(pill)
         return row
-
-    def _run_preview(self):
-        """Download the changed decks and fill in each row's kept/new breakdown, plus a
-        summary line if Reconcile my decks has anything pending.
-
-        Read-only: it counts how incoming cards match the collection, but imports
-        nothing. Runs on click (not on open) so opening the panel stays fast.
-        """
-        pending = [r for r in self._rows if r["state"] != "current"]
-        if not pending:
-            self._preview_btn.setText("All up to date")
-            self._preview_btn.setEnabled(False)
-            return
-        self._preview_btn.setText("Checking…")
-        self._preview_btn.setEnabled(False)
-        QApplication.processEvents()   # repaint the button before the blocking fetch
-        try:
-            with wait_cursor():
-                result, retired_n, moves_n = self._preview_fn()
-        except Exception as e:
-            self._preview_btn.setText("Preview failed")
-            self._preview_btn.setEnabled(True)
-            self._preview_btn.setToolTip(str(e))
-            return
-        for r in pending:
-            pill = self._pills.get(r["name"])
-            if pill is None:
-                continue
-            rc = result.get(r["name"])
-            if rc is None:
-                pill.setText("couldn't preview")
-                pill.setStyleSheet(_pill_style("#b45309"))
-            else:
-                kept, new = rc
-                pill.setText(f"{kept} kept · {new} new")
-                pill.setStyleSheet(_pill_style("#6b7280"))
-        self._preview_btn.setText("Check again")
-        self._preview_btn.setEnabled(True)
-
-        if retired_n or moves_n:
-            parts = []
-            if retired_n:
-                parts.append(f"{retired_n} retired card"
-                            f"{'s' if retired_n != 1 else ''} still in your collection")
-            if moves_n:
-                parts.append(f"{moves_n} card{'s' if moves_n != 1 else ''} to relocate")
-            self._recon_label.setText(
-                "Also found: " + " and ".join(parts) +
-                " — Advanced → Reconcile my decks to tidy up.")
-            self._recon_label.setVisible(True)
-        else:
-            self._recon_label.setVisible(False)
 
     def _set_all(self, val):
         for cb in self._checks.values():
             cb.setChecked(val)
 
-    def _save_and_sync(self):
-        self.sync_requested = True
+    def _save_and_update(self):
+        self.update_requested = True
         self.accept()
 
     def _request_change_source(self):
@@ -385,11 +301,11 @@ def manage_decks():
     center, since that button is now the only way to reach deck-source configuration.
     """
     cfg = _cfg()
-    manifest, fetch, source, error = None, None, None, None
+    manifest, source, error = None, None, None
     if cfg["gh_repo"] or cfg["decks_dir"]:
         try:
             with wait_cursor():
-                manifest, fetch, source = _fetch_manifest(cfg)
+                manifest, _, source = _fetch_manifest(cfg)
         except Exception as e:
             error = str(e)
     source_label = source if manifest else (f"error: {error}" if error else "not configured")
@@ -397,50 +313,7 @@ def manage_decks():
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     rows = deck_status(manifest, installed, cfg["excluded"]) if manifest else []
 
-    def _preview():
-        """Download every changed deck and match it against the collection, returning
-        (per_deck, retired_count, moves_count). per_deck is {deck_name: (kept_in_place,
-        added_new)}. Read-only — imports nothing. Runs when the user clicks "Check what
-        will sync"; the download is why it's on demand. Only ever called when
-        manifest/fetch exist, since the button stays disabled otherwise.
-
-        retired_count/moves_count answer a different question than per_deck: not "what
-        would a sync add," but "what does Reconcile my decks already have pending for
-        you." They're collection-wide facts independent of which decks' versions
-        changed (a retirement or reorg can ship without bumping every deck's version),
-        so they're computed once here rather than folded into the per-deck loop — same
-        checks reconcile_decks() in sync.py runs, reused rather than duplicated.
-        """
-        pending = [d for d in manifest["decks"]
-                   if installed.get(d["name"]) != d["version"]]
-        her = _her_front_to_guid(cfg["scope_tag"])
-        aliases = manifest.get("front_aliases", {})
-        out = {}
-        for d in pending:
-            src = None
-            try:
-                src = fetch(d)
-                _, kept, new = remap_cards(src, her, aliases)
-                out[d["name"]] = (kept, new)
-            except Exception:
-                out[d["name"]] = None
-            finally:
-                if src and source == "GitHub":   # only delete our temp download
-                    try:
-                        os.remove(src)
-                    except OSError:
-                        pass
-
-        her_nid = _her_guid_to_nid(cfg["scope_tag"])
-        retired_count = len(find_retired_in_collection(
-            manifest.get("retired", {}), set(her_nid)))
-        her_deck = _her_guid_to_deck(cfg["scope_tag"])
-        moves_count = len([
-            m for m in find_deck_moves_needed(manifest.get("deck_moves", {}), her_deck)
-            if m["guid"] in her_nid])
-        return out, retired_count, moves_count
-
-    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source_label, _preview,
+    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source_label,
                              configured=bool(manifest))
     result = dlg.exec()
 
@@ -456,8 +329,8 @@ def manage_decks():
     conf["protected_fields"] = dlg.protected_fields()
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
-    if dlg.sync_requested:
-        sync_decks()
+    if dlg.update_requested:
+        update_decks()
         return
     if not rows:
         _info("Saved. No decks are available from this source yet.")
@@ -470,8 +343,8 @@ def manage_decks():
     # dialog only reports whether it's currently on, not whether it changed here.
     next_step = (" Auto-sync is on, so these will keep applying on their own."
                 if cfg["auto_sync_decks"] else
-                " Nothing synced yet, run <b>Sync decks</b> when you're ready to pull "
-                "them (or use <i>Save and sync now</i> next time to do both at once).")
+                " Nothing pulled yet, run <b>Update my decks</b> when you're ready "
+                "(or use <i>Save and update now</i> next time to do both at once).")
     _info(f"Saved. {scope}, preserving {', '.join(conf['protected_fields'])}."
           f"<br><br>{next_step}")
 
