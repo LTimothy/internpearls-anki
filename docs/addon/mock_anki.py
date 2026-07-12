@@ -153,6 +153,9 @@ class MockNote:
     def card_ids(self):
         return list(self._card_ids)
 
+    def note_type(self):
+        return self.model
+
     def _resize(self, values):
         names = [f["name"] for f in self.model["flds"]]
         self._names = names
@@ -288,7 +291,7 @@ class MockCollection:
         cid = self._next_cid
         self._next_cid += 1
         did = self.decks.id(deck) if deck else None
-        self._cards[cid] = types.SimpleNamespace(nid=note.id, did=did, queue=0)
+        self._cards[cid] = types.SimpleNamespace(nid=note.id, did=did, queue=0, reps=0)
         note._card_ids.append(cid)
         return note
 
@@ -313,12 +316,21 @@ class MockCollection:
 
     # -- surface the add-on calls ---------------------------------------------
     def find_notes(self, search):
-        # The add-on only ever searches '"tag:X" OR "tag:X::*"'; match that scope.
+        # The add-on searches '"tag:X" OR "tag:X::*"', optionally with a trailing
+        # ' -"tag:Y"' exclusion (see collection._her_notes_summary). Parse both.
+        exclude = None
+        if ' -"tag:' in search:
+            search, excl_part = search.split(' -"tag:', 1)
+            exclude = excl_part.rstrip('"')
         tag = search.split('"tag:', 1)[1].split('"', 1)[0] if "tag:" in search else ""
         out = []
         for nid, n in self._notes.items():
-            if any(t == tag or t.startswith(tag + "::") for t in n.tags):
-                out.append(nid)
+            if not any(t == tag or t.startswith(tag + "::") for t in n.tags):
+                continue
+            if exclude and any(t == exclude or t.startswith(exclude + "::")
+                               for t in n.tags):
+                continue
+            out.append(nid)
         return out
 
     def get_note(self, nid):
