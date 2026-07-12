@@ -176,6 +176,25 @@ def test_settings_saves_all_four_values(anki):
     assert cfg["auto_sync_interval_minutes"] == 30
 
 
+def test_settings_saves_dim_images_toggle(anki):
+    from internpearls import dialogs
+
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            dim = find(p["tree"], t="check", label="Dim bright images in Night Mode")
+            assert dim is not None
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": dim["id"], "value": True},
+                               {"id": save["id"], "click": True}]}
+        return {}
+
+    drive(anki, dialogs.open_settings, respond)
+    cfg = anki.mw._config
+    assert cfg["dim_images_night_mode"] is True
+
+
 # --------------------------------------------------------- configure source
 def test_configure_source_github_form(anki):
     from internpearls import dialogs
