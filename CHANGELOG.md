@@ -19,6 +19,10 @@ this repo's `README.md` ("Versioning").
   "N kept · M new" counts per deck, not just how big the deck is. A progress window
   covers the check itself, since it's a live download per deck. Nothing already
   downloaded for this preview is fetched again during the actual update.
+- The live demo now shows a busy indicator while a menu action is running, instead
+  of appearing to do nothing until the next dialog pops up (add-on progress dialogs
+  and wait cursors are mocked out in the browser, so they were never visible there;
+  this doesn't change the real add-on, only the demo page).
 
 ## v0.26.0
 
