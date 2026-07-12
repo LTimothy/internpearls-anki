@@ -3,6 +3,14 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.28.0
+
+- New Settings toggle, "Dim bright images in Night Mode." When on, applies a
+  brightness and contrast reduction to every image in every deck (not just
+  Intern Pearls ones) whenever Anki's Night Mode is active, so a white
+  background image no longer renders at full brightness during a night review
+  session. Off by default. Takes effect immediately, no restart needed.
+
 ## v0.27.1
 
 - Update my decks now caches each pending deck's download for the session, so opening
