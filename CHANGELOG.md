@@ -3,6 +3,21 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.27.0
+
+- Update my decks and Sync decks now show a real, cancellable progress dialog
+  (an actual "N of M decks" bar, not just a static label) while checking for and
+  applying updates, with a working Cancel button. Previously `mw.progress`'s
+  simple busy indicator gave no percentage and no cancel support at all, which on
+  a slow connection reads as a frozen add-on with no way out. Cancelling always
+  happens between whole decks, never mid-import, so whatever already completed
+  stays applied and persisted; cancelling during Update my decks skips
+  archiving/relocating retired cards for that run, since that step assumes every
+  content update already landed.
+- Update my decks' confirmation now says outright that it's a preview and nothing
+  has been applied yet, since Cancel there was already safe and read-only, just
+  not obviously so.
+
 ## v0.26.1
 
 - Fixed a real bug in the collection-revert reconciliation added in v0.25.2: it
