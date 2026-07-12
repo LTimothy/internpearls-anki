@@ -240,7 +240,7 @@ def _auto_sync_check():
                     raise v
                 return v
 
-            results, restored, _, deferred = _run_sync(
+            results, restored, _, deferred, _ = _run_sync(
                 cfg, result["manifest"], _already_fetched,
                 result["todo"], result["installed"], defer_template_changes=True)
             ok = sum(1 for r in results if r.startswith("✓"))

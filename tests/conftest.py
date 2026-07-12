@@ -32,7 +32,9 @@ def anki(tmp_path, monkeypatch):
     import internpearls.config as config
     import internpearls.sync as sync
     import internpearls.updates as updates
+    import aqt.qt as aqt_qt
 
+    aqt_qt.QProgressDialog.cancel_after = {}   # a prior test's cancel hook must not leak in
     _mock.mw.col = mock_anki.MockCollection()
     _mock.mw._config = {}
     _mock.mw.reset_count = 0

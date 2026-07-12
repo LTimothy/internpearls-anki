@@ -28,7 +28,7 @@ from .logic import (bullets, decks_to_update, find_deck_moves_needed,
                     find_retired_in_collection, manifest_needs_newer_addon,
                     remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
-from .ui import _ask, _ask_scrollable, _info, _safe, _warn, wait_cursor
+from .ui import _ask, _ask_scrollable, _info, _safe, _warn, cancellable_progress, wait_cursor
 
 
 # The "Reconcile my decks" QAction, set once by __init__.py right after building the
@@ -161,17 +161,14 @@ def sync_decks():
     if not proceed:
         return
 
-    # A visible progress window while each deck downloads and imports: the fetches run
-    # on the main thread here (unlike auto-sync's background poll), and a multi-deck
-    # sync on a slow link otherwise looks like a hang.
-    mw.progress.start(label="Syncing decks", immediate=True)
-    try:
-        results, restored, tpl_changes, _ = _run_sync(
+    # A cancellable, determinate progress window while each deck downloads and
+    # imports: the fetches run on the main thread here (unlike auto-sync's
+    # background poll), and a multi-deck sync on a slow link otherwise looks like a
+    # hang with no way out.
+    with cancellable_progress("Syncing decks", len(todo)) as step:
+        results, restored, tpl_changes, _, cancelled = _run_sync(
             cfg, manifest, fetch, todo, installed,
-            on_progress=lambda i, n, name: mw.progress.update(
-                label=f"Syncing {name} ({i} of {n})"))
-    finally:
-        mw.progress.finish()
+            on_progress=lambda i, n, name: step(i, f"Syncing {name} ({i} of {n})"))
     _offer_template_changes(tpl_changes)
     fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
                   if restored else "")
@@ -181,8 +178,11 @@ def sync_decks():
         if backed_up else
         "No pre-sync backup was taken this time (nothing to back up yet, or it "
         "failed and you chose to continue).")
-    _info(f"<b>Sync complete</b> (source: {source})" + bullets(results) +
-          fields_line + backup_line)
+    title = "Sync stopped early" if cancelled else "Sync complete"
+    stopped_note = ("<br><br>Nothing else was touched; run <b>Sync decks</b> again "
+                    "anytime to pick up where this left off." if cancelled else "")
+    _info(f"<b>{title}</b> (source: {source})" + bullets(results) +
+          fields_line + backup_line + stopped_note)
 
 
 def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
@@ -195,13 +195,20 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
     the one place the actual history-preserving sequence lives, shared by the interactive
     Sync decks flow and the unattended auto-sync poll, so there's exactly one
     implementation of the part that matters for not losing anyone's review history.
-    Returns (results, restored, tpl_changes, deferred): per-deck outcome lines, the
-    note-restore count, template/CSS changes detected in the imported decks (for the
-    interactive caller to offer applying — imports never propagate them on their own,
-    see _import_apkg), and the names of decks skipped because of such a change.
+    Returns (results, restored, tpl_changes, deferred, cancelled): per-deck outcome
+    lines, the note-restore count, template/CSS changes detected in the imported
+    decks (for the interactive caller to offer applying — imports never propagate
+    them on their own, see _import_apkg), the names of decks skipped because of such
+    a change, and whether `on_progress` asked to stop partway through.
     `on_progress(i, total, deck_short_name)`, if given, fires before each deck is
-    fetched and applied; the interactive flow uses it to drive Anki's progress window,
-    the unattended auto-sync poll passes nothing.
+    fetched and applied and must return a truthy value to continue; the interactive
+    flow uses it to drive a cancellable progress window (a False return means the
+    learner clicked Cancel), the unattended auto-sync poll passes nothing.
+
+    A False from `on_progress` stops *before* that deck's fetch/import, never
+    partway through one, so whatever decks already completed are already fully
+    applied — the loop below still runs its snapshot-restore and persists
+    `installed` for exactly those, same as a clean finish, just for fewer decks.
 
     `defer_template_changes` is the unattended-caller policy: applying a template bumps
     the collection schema (a one-time full AnkiWeb sync), which must never happen
@@ -214,10 +221,12 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
     her = _her_front_to_guid(cfg["scope_tag"])
     results, tpl_changes, deferred = [], {}, []
+    cancelled = False
     for i, d in enumerate(todo, 1):
         short = d["name"].split("::")[-1]
-        if on_progress:
-            on_progress(i, len(todo), short)
+        if on_progress and not on_progress(i, len(todo), short):
+            cancelled = True
+            break
         try:
             src = fetch(d)
             tpl = _template_changes(src)
@@ -235,7 +244,7 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
     _save_json(INSTALLED, installed)
     restored = _restore(snap)
     mw.reset()
-    return results, restored, tpl_changes, deferred
+    return results, restored, tpl_changes, deferred, cancelled
 
 
 def _offer_template_changes(tpl_changes):
@@ -424,24 +433,26 @@ def reconcile_decks():
 def _preview_content_changes(fetch, todo, her, aliases):
     """Download every pending deck and match it against the collection, so the
     confirmation can show real "N kept · M new" counts instead of just each deck's
-    total card count. A visible progress window covers it, since this is a live
+    total card count. A cancellable progress window covers it, since this is a live
     network fetch per deck and a multi-deck update on a slow link otherwise looks
-    like a hang before the confirmation even appears.
+    like a hang, with no way out, before the confirmation even appears.
 
-    Returns ({deck_name: (kept, new) | None}, downloaded) — `downloaded` is
-    {deck_name: local_path_or_Exception}, in the same shape background.py's
+    Returns ({deck_name: (kept, new) | None}, downloaded, cancelled) — `downloaded`
+    is {deck_name: local_path_or_Exception}, in the same shape background.py's
     auto-sync poll already uses, so the caller can hand it straight to _run_sync
     afterward instead of downloading every deck a second time. A per-deck fetch
     failure here is recorded, not raised, so one bad download only blanks that
     deck's preview ("couldn't preview") rather than blocking the whole
     confirmation; the same failure surfaces for real if Sync then tries to apply it.
+    `cancelled` means the learner clicked Cancel partway through — nothing has
+    touched the collection at this point, so the caller can just stop outright.
     """
     preview, downloaded = {}, {}
-    mw.progress.start(label="Checking for updates", immediate=True)
-    try:
+    with cancellable_progress("Checking for updates", len(todo)) as step:
         for i, d in enumerate(todo, 1):
             short = d["name"].split("::")[-1]
-            mw.progress.update(label=f"Checking {short} ({i} of {len(todo)})")
+            if not step(i, f"Checking {short} ({i} of {len(todo)})"):
+                return preview, downloaded, True
             try:
                 src = fetch(d)
                 downloaded[d["name"]] = src
@@ -450,9 +461,7 @@ def _preview_content_changes(fetch, todo, her, aliases):
             except Exception as e:
                 downloaded[d["name"]] = e
                 preview[d["name"]] = None
-    finally:
-        mw.progress.finish()
-    return preview, downloaded
+    return preview, downloaded, False
 
 
 @_safe
@@ -487,8 +496,11 @@ def update_decks():
 
     preview, downloaded = {}, {}
     if todo:
-        preview, downloaded = _preview_content_changes(
+        preview, downloaded, cancelled = _preview_content_changes(
             fetch, todo, _her_front_to_guid(cfg["scope_tag"]), manifest.get("front_aliases", {}))
+        if cancelled:
+            _info("Update cancelled — nothing was changed.")
+            return
 
     def _line(d):
         short = d["name"].split("::")[-1]
@@ -521,10 +533,11 @@ def update_decks():
         "while. Future updates should be much shorter.</i><br><br>"
         if len(fresh) + len(moves) > 20 else "")
     safety_note = (
-        "<br><br>Your review history and any personal notes on existing cards are "
-        "kept (matched by card, not overwritten). Archived cards keep their history "
-        "too and can be brought back anytime by unsuspending them or moving them out "
-        "of the Retired deck — nothing here is ever deleted. A backup is taken "
+        "<br><br>This is a preview: nothing above has been applied yet. Your "
+        "review history and any personal notes on existing cards are kept (matched "
+        "by card, not overwritten). Archived cards keep their history too and can "
+        "be brought back anytime by unsuspending them or moving them out of the "
+        "Retired deck, nothing here is ever deleted. A backup is taken "
         "automatically first.")
 
     if not _ask_scrollable(catch_up_note + "<br><br>".join(sections) + safety_note,
@@ -548,16 +561,34 @@ def update_decks():
                 raise v
             return v
 
-        # A visible progress window while each deck imports: the preview step
+        # A cancellable progress window while each deck imports: the preview step
         # above already covered the download itself.
-        mw.progress.start(label="Updating decks", immediate=True)
-        try:
-            results, restored, tpl_changes, _ = _run_sync(
+        with cancellable_progress("Updating decks", len(todo)) as step:
+            results, restored, tpl_changes, _, cancelled = _run_sync(
                 cfg, manifest, _already_fetched, todo, installed,
-                on_progress=lambda i, n, name: mw.progress.update(
-                    label=f"Applying {name} ({i} of {n})"))
-        finally:
-            mw.progress.finish()
+                on_progress=lambda i, n, name: step(i, f"Applying {name} ({i} of {n})"))
+
+        if cancelled:
+            # Stop here rather than falling through to archive/relocate: that step
+            # assumes every content update already landed, so a retired card's
+            # replacement is in place before the old one archives out. Whatever
+            # decks _run_sync did finish are already fully applied and persisted
+            # (see its docstring) — only the decks after the cancel point, and the
+            # reconcile pass, are what's left pending for next time.
+            fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
+                          if restored else "")
+            backup_line = (
+                "A pre-sync backup of the Intern Pearls deck was saved; use "
+                "<i>Advanced → Import intern pearls deck</i> to revert to it if needed."
+                if backed_up else
+                "No pre-sync backup was taken this time (nothing to back up yet, or "
+                "it failed and you chose to continue).")
+            _info(f"<b>Update stopped early</b> (source: {source})" + bullets(results) +
+                  "<br><br>Archiving or relocating retired cards was skipped, since "
+                  "that assumes every update above already landed. Nothing else was "
+                  "touched; run <b>Update my decks</b> again anytime to pick up where "
+                  "this left off." + fields_line + backup_line)
+            return
         _offer_template_changes(tpl_changes)
 
     n_archived = n_moved = carried = 0
