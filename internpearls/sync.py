@@ -283,7 +283,12 @@ def _reconcile_pending(manifest, cfg):
     her = _her_guid_to_nid(cfg["scope_tag"])
     found = find_retired_in_collection(manifest.get("retired", {}), set(her))
     her_deck = _her_guid_to_deck(cfg["scope_tag"])
-    moves = [m for m in find_deck_moves_needed(manifest.get("deck_moves", {}), her_deck)
+    # her_front lets find_deck_moves_needed relocate a card whose GUID no longer
+    # matches the ledger (an id_seed change), by its front, the same way remap_cards
+    # matches content. Without it such a card stays stuck at `from` and its new deck
+    # is re-offered forever.
+    moves = [m for m in find_deck_moves_needed(manifest.get("deck_moves", {}), her_deck,
+                                               _her_front_to_guid(cfg["scope_tag"]))
              if m["guid"] in her]
 
     tag = f'{cfg["scope_tag"]}::{RETIRED_TAG_LEAF}'
