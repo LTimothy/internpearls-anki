@@ -3,6 +3,16 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.29.0
+
+- New Advanced menu item, "Clean up duplicate cards." Finds sync duplicates (the same
+  card imported twice under different GUIDs, most often right after a deck
+  reorganization) and archives the losing copy: suspended, moved to the Retired deck,
+  and tagged, exactly like a retired card. Keeps whichever copy has more reviews;
+  ties prefer the copy already under the deck source's current deck path. Personal
+  notes on the archived copy carry over to the kept one first. Nothing is ever
+  deleted, and a backup is taken automatically before anything changes.
+
 ## v0.28.0
 
 - New Settings toggle, "Dim bright images in Night Mode." When on, applies a
