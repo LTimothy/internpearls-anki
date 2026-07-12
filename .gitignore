@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 internpearls/user_files/
+
+# scratch state for the subagent-driven-development skill (not part of the add-on)
+.superpowers/
