@@ -633,3 +633,79 @@ def test_night_mode_image_css_enabled_returns_dimming_rule():
 
 def test_night_mode_image_css_disabled_returns_empty_string():
     assert logic.night_mode_image_css(False) == ""
+
+
+# ------------------------------------------------------- duplicate grouping
+def test_find_duplicate_groups_ignores_notes_with_no_duplicate():
+    her_notes = [{"guid": "g1", "nid": 1, "model": "Basic", "front": "unique front",
+                  "reps": 0, "deck": "Foo"}]
+    assert logic.find_duplicate_groups(her_notes, []) == []
+
+
+def test_find_duplicate_groups_prefers_the_copy_with_more_reviews():
+    her_notes = [
+        {"guid": "old", "nid": 1, "model": "Basic", "front": "dup front",
+         "reps": 3, "deck": "Old::Path"},
+        {"guid": "new", "nid": 2, "model": "Basic", "front": "dup front",
+         "reps": 0, "deck": "New::Path"},
+    ]
+    groups = logic.find_duplicate_groups(her_notes, [])
+    assert len(groups) == 1
+    assert groups[0]["keep"]["guid"] == "old"
+    assert [a["guid"] for a in groups[0]["archive"]] == ["new"]
+
+
+def test_find_duplicate_groups_breaks_a_review_tie_by_canonical_deck():
+    her_notes = [
+        {"guid": "old", "nid": 1, "model": "Basic", "front": "dup front", "reps": 0,
+         "deck": "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"},
+        {"guid": "new", "nid": 2, "model": "Basic", "front": "dup front", "reps": 0,
+         "deck": "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"},
+    ]
+    canonical = ["Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"]
+    groups = logic.find_duplicate_groups(her_notes, canonical)
+    assert groups[0]["keep"]["guid"] == "new"
+
+
+def test_find_duplicate_groups_treats_a_canonical_subdeck_as_canonical_too():
+    her_notes = [
+        {"guid": "old", "nid": 1, "model": "Basic", "front": "dup front", "reps": 0,
+         "deck": "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"},
+        {"guid": "new", "nid": 2, "model": "Basic", "front": "dup front", "reps": 0,
+         "deck": "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks::3. The Blocks"},
+    ]
+    canonical = ["Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"]
+    groups = logic.find_duplicate_groups(her_notes, canonical)
+    assert groups[0]["keep"]["guid"] == "new"
+
+
+def test_find_duplicate_groups_breaks_a_full_tie_by_lower_note_id():
+    her_notes = [
+        {"guid": "b", "nid": 2, "model": "Basic", "front": "dup front",
+         "reps": 0, "deck": "Same"},
+        {"guid": "a", "nid": 1, "model": "Basic", "front": "dup front",
+         "reps": 0, "deck": "Same"},
+    ]
+    groups = logic.find_duplicate_groups(her_notes, [])
+    assert groups[0]["keep"]["guid"] == "a"
+
+
+def test_find_duplicate_groups_does_not_cross_note_types():
+    her_notes = [
+        {"guid": "b1", "nid": 1, "model": "Basic", "front": "same text",
+         "reps": 0, "deck": "Foo"},
+        {"guid": "c1", "nid": 2, "model": "Cloze", "front": "same text",
+         "reps": 0, "deck": "Foo"},
+    ]
+    assert logic.find_duplicate_groups(her_notes, []) == []
+
+
+def test_find_duplicate_groups_sorted_by_model_then_front():
+    her_notes = [
+        {"guid": "z1", "nid": 1, "model": "Basic", "front": "zzz", "reps": 0, "deck": "Foo"},
+        {"guid": "z2", "nid": 2, "model": "Basic", "front": "zzz", "reps": 0, "deck": "Foo"},
+        {"guid": "a1", "nid": 3, "model": "Basic", "front": "aaa", "reps": 0, "deck": "Foo"},
+        {"guid": "a2", "nid": 4, "model": "Basic", "front": "aaa", "reps": 0, "deck": "Foo"},
+    ]
+    groups = logic.find_duplicate_groups(her_notes, [])
+    assert [g["front"] for g in groups] == ["aaa", "zzz"]

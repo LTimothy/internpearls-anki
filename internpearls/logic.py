@@ -363,3 +363,44 @@ def remap_cards(src, her, aliases):
             if her_guid != apkg_guid:
                 remap[rid] = her_guid
     return remap, in_place, as_new
+
+
+def find_duplicate_groups(her_notes, canonical_deck_names):
+    """Group the learner's notes that share a note type and front text, and for each
+    group decide which copy to keep.
+
+    `her_notes` is a list of {guid, nid, model, front, reps, deck} for every note under
+    the scope tag (collection.py's _her_notes_summary builds this; it already excludes
+    notes a previous run archived as a duplicate, so a repeat run is idempotent).
+    `canonical_deck_names` is the manifest's current top-level deck names, used only as
+    a tie breaker.
+
+    Groups by (model, front); a group of size 1 is not a duplicate and is skipped.
+    Within a group, the kept copy is the one with the most reps. Ties prefer a copy
+    currently filed under one of canonical_deck_names (or a subdeck of one). Remaining
+    ties prefer the lower note id, for a fully deterministic result.
+
+    Returns one entry per duplicate group, sorted by (model, front):
+        {"model": ..., "front": ..., "keep": {...}, "archive": [{...}, ...]}
+    """
+    groups = {}
+    for note in her_notes:
+        groups.setdefault((note["model"], note["front"]), []).append(note)
+
+    def is_canonical(note):
+        d = note["deck"]
+        return any(d == name or d.startswith(name + "::") for name in canonical_deck_names)
+
+    out = []
+    for (model, front), members in groups.items():
+        if len(members) < 2:
+            continue
+        ranked = sorted(members, key=lambda n: (-n["reps"], not is_canonical(n), n["nid"]))
+        out.append({
+            "model": model,
+            "front": front,
+            "keep": ranked[0],
+            "archive": ranked[1:],
+        })
+    out.sort(key=lambda g: (g["model"], g["front"]))
+    return out
