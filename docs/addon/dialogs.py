@@ -13,7 +13,8 @@ from .collection import installed_matching_collection
 from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, EXAMPLE_DECK_NAME, EXAMPLE_REPO,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, STATE, _cfg, _load_json)
-from .logic import bullets, deck_status, parse_fields, version_at_least
+from .logic import (bullets, deck_status, manifest_scope_suggestion, parse_fields,
+                    version_at_least)
 from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _info, _prompt, _safe, _warn, hint_label, link_button,
                  muted_label, section_label, title_label, wait_cursor)
@@ -127,9 +128,42 @@ def configure_source():
         _warn("Saved, but nothing was found at that source yet. Check the path "
               "or repo and try again.")
         return
+    _offer_manifest_scope(manifest)
     _info(f"Saved and connected to <b>{source}</b>, found {len(manifest['decks'])} "
           "deck(s).<br><br>Run <i>Intern Pearls → Update my decks</i> whenever you're "
           "ready.")
+
+
+def _offer_manifest_scope(manifest):
+    """Offer the deck author's suggested scope_tag / export_deck from the manifest.
+
+    Without this, subscribing to a third-party deck leaves both at the Intern Pearls
+    defaults, so field protection and the automatic pre-sync backup silently cover the
+    wrong deck; the only fix was hand-editing raw config keys. Consent-gated, and only
+    ever run from this interactive configure flow, never by a background sync.
+    """
+    cfg = _cfg()
+    scope_tag, export_deck = manifest_scope_suggestion(
+        manifest, cfg["scope_tag"], cfg["export_deck"])
+    if not scope_tag and not export_deck:
+        return
+    changes = []
+    if scope_tag:
+        changes.append(f"Scope tag: <b>{scope_tag}</b> (which cards this add-on "
+                       "manages and protects)")
+    if export_deck:
+        changes.append(f"Backup deck: <b>{export_deck}</b> (what the automatic "
+                       "pre-sync backup covers)")
+    if not _ask("This deck source recommends settings so your own notes on cards "
+                "survive updates and backups cover its decks:"
+                f"{bullets(changes)}Apply them?"):
+        return
+    conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
+    if scope_tag:
+        conf["scope_tag"] = scope_tag
+    if export_deck:
+        conf["export_deck"] = export_deck
+    mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
 
 # -------------------------------------------------------------------- deck manager
