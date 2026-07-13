@@ -5,19 +5,17 @@
 
 **Update shared Anki decks without losing your review history or the notes you've written on cards.**
 
-**[Try the live demo](https://ltimothy.github.io/internpearls-anki/)** — the add-on's actual Python code running in your browser (only Anki itself is simulated): publish a deck update, sync it through the real dialogs, and watch scheduling and personal notes survive. No install, nothing leaves the page.
+**[Try the live demo](https://ltimothy.github.io/internpearls-anki/)**: the add-on's actual Python code running in your browser (only Anki itself is simulated). Publish a deck update, sync it through the real dialogs, and watch scheduling and personal notes survive. No install, and nothing leaves the page.
 
-If you maintain a deck for a study group (or subscribe to one someone else maintains), you've hit the problem: re-importing an updated `.apkg` overwrites every field, wiping the personal annotations people keep on their cards, and a reworded card silently loses its scheduling. This add-on fixes both. One click pulls only the decks that changed from a GitHub repo or local folder, matches cards by GUID so intervals and ease factors carry over, snapshots and restores whichever fields you've marked as yours (`Notes` by default), and backs up the deck automatically before touching anything. It can also sync and update itself on a schedule, if you turn that on.
+If you maintain a deck for a study group (or subscribe to one someone else maintains), you've hit the problem: shared decks have no update path. Re-importing an updated `.apkg` overwrites every field, wiping the annotations people keep on their cards, and a reworded card silently loses its scheduling. This add-on gives a shared deck a real one: point it at a GitHub repo or local folder once, and Update my decks handles the rest.
 
-What it does, in short:
+- **Syncs only what changed.** A version hash per deck means editing one deck doesn't re-import ten.
+- **Keeps review history.** Cards match by GUID (with a rename map for reworded fronts), so intervals and ease factors survive every update.
+- **Keeps your annotations.** Fields you mark as yours (`Notes` by default) are snapshotted before import and restored after.
+- **Backs up first, always.** A timestamped `.apkg` of the deck is saved before any import, pruned to the last 10.
+- **Stays current on its own.** Optional background auto-sync for decks, and self-update for the add-on.
 
-- **Sync only what changed** — a manifest hash per deck means editing one deck doesn't re-import ten.
-- **Keep review history** — cards match by GUID (with a rename map for reworded fronts), so scheduling survives every update.
-- **Keep your annotations** — configurable preserved fields are snapshotted before import and restored after.
-- **Back up first, always** — a timestamped `.apkg` of the deck is taken before any import, pruned to the last 10.
-- **Stay current on its own** — optional background auto-sync for decks, and self-update for the add-on.
-
-No deck content ships with the add-on itself; it only syncs whatever you point it at. Point Manage decks at your own GitHub repo or local folder and it works the same way for any decks that follow the same manifest format. See "Using this for your own decks" below.
+**Maintaining a deck of your own?** The add-on ships with no deck content; it syncs whatever source you point it at. Host a small `manifest.json` next to your `.apkg` files, in a GitHub repo or a shared folder, and everyone studying from your deck gets the same one-click updates. See [Using this for your own decks](#using-this-for-your-own-decks).
 
 See `CHANGELOG.md` for what changed in each version.
 
