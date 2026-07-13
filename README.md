@@ -147,7 +147,9 @@ The add-on's own record of which deck versions you've already synced lives in a 
 
 ## Using this for your own decks
 
-Nothing about Sync decks, Manage decks, or the backup/export/import tools is specific to any particular deck's content. To point this add-on at your own decks, host a `manifest.json` in a GitHub repo (private or public) or a local folder, alongside the `.apkg` files it references:
+**The easy way: start from the example deck.** [LTimothy/internpearls-example-deck](https://github.com/LTimothy/internpearls-example-deck) is a template repository: click "Use this template" on GitHub, edit the JSON card specs right in your browser, and its bundled GitHub Action rebuilds the `.apkg` files and manifest whenever the cards change. No terminal, no installs. Its README walks through creating a deck, sharing it with a study group, and publishing updates, step by step.
+
+The rest of this section documents the manifest format itself, for anyone building decks with their own tooling. Nothing about Sync decks, Manage decks, or the backup/export/import tools is specific to any particular deck's content. To point this add-on at your own decks, host a `manifest.json` in a GitHub repo (private or public) or a local folder, alongside the `.apkg` files it references:
 
 ```json
 {
