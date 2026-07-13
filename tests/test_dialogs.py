@@ -236,3 +236,60 @@ def test_about_shows_version_and_live_settings(anki):
         return {"events": [{"id": ok["id"], "click": True}]}
 
     drive(anki, dialogs.about, respond)
+
+
+def _write_scoped_source(tmp_path):
+    """A local source whose manifest carries the author's suggested scope settings."""
+    folder = tmp_path / "scoped"
+    folder.mkdir()
+    make_apkg(str(folder / "Cardio.apkg"),
+              [("c1", ["Front", "back", "", "", "", "", ""], "CardioDeck::Basics")],
+              deck="Cardio::Basics")
+    (folder / "manifest.json").write_text(json.dumps({
+        "schema": 2, "front_aliases": {},
+        "scope_tag": "CardioDeck", "export_deck": "Cardio",
+        "decks": [{"name": "Cardio::Basics", "apkg": "Cardio.apkg",
+                   "version": "v1", "cards": 1}]}), encoding="utf8")
+    return str(folder)
+
+
+def _drive_configure_local_folder(anki, path, answer):
+    """Run configure_source picking Local folder at `path`, answering the
+    manifest-suggestion question with `answer`. Returns the asks seen."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+    asks = []
+
+    def respond(p):
+        if p["kind"] == "msgbox":
+            btn = next(b for b in p["buttons"] if b["label"] == "Local folder")
+            return {"events": [{"id": btn["id"], "click": True}]}
+        if p["kind"] == "prompt":
+            return {"text": path, "ok": True}
+        if p["kind"] == "ask":
+            asks.append(p["text"])
+            return {"answer": answer}
+        assert p["kind"] == "info"
+        return {}
+
+    drive(anki, dialogs.configure_source, respond)
+    return asks
+
+
+def test_configure_source_offers_manifest_scope_and_applies_on_yes(anki, tmp_path):
+    asks = _drive_configure_local_folder(anki, _write_scoped_source(tmp_path), True)
+    assert len(asks) == 1 and "CardioDeck" in asks[0] and "Cardio" in asks[0]
+    assert anki.mw._config["scope_tag"] == "CardioDeck"
+    assert anki.mw._config["export_deck"] == "Cardio"
+
+
+def test_configure_source_manifest_scope_declined_leaves_config_alone(anki, tmp_path):
+    asks = _drive_configure_local_folder(anki, _write_scoped_source(tmp_path), False)
+    assert len(asks) == 1
+    assert anki.mw._config.get("scope_tag") not in ("CardioDeck",)
+    assert anki.mw._config.get("export_deck") not in ("Cardio",)
+
+
+def test_configure_source_without_manifest_scope_asks_nothing(anki, tmp_path):
+    asks = _drive_configure_local_folder(anki, _write_source(tmp_path), True)
+    assert asks == []
