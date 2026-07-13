@@ -700,6 +700,76 @@ def test_find_duplicate_groups_does_not_cross_note_types():
     assert logic.find_duplicate_groups(her_notes, []) == []
 
 
+# ------------------------------------------------------- note display labels
+def test_note_display_label_uses_the_first_text_field():
+    assert logic.note_display_label(["What is MAP?", "back", "why"]) == "What is MAP?"
+
+
+def test_note_display_label_strips_html_and_decodes_entities():
+    assert logic.note_display_label(["<b>ACE&amp;ARB</b> effect"]) == "ACE&ARB effect"
+
+
+def test_note_display_label_falls_through_an_image_field_to_the_prompt():
+    fields = ["<img src='block.jpg'>", "Name this nerve block", "Answer"]
+    assert logic.note_display_label(fields) == "Name this nerve block"
+
+
+def test_note_display_label_uses_image_filename_when_no_text_anywhere():
+    fields = ["<img src='decks/media/block-3.jpg'>", "", ""]
+    assert logic.note_display_label(fields) == "block-3.jpg"
+
+
+def test_note_display_label_truncates_a_long_field():
+    label = logic.note_display_label(["x" * 200], max_len=20)
+    assert len(label) == 20 and label.endswith("…")
+
+
+def test_note_display_label_handles_a_note_with_nothing_to_show():
+    assert logic.note_display_label(["", "   ", None]) == "(card)"
+
+
+# ------------------------------------------------------- duplicate dialog body
+def _dup_group(label, keep_deck, arch_deck, keep_reps=0, arch_reps=0):
+    return {
+        "model": "M", "front": "f",
+        "keep": {"guid": "k", "label": label, "deck": keep_deck, "reps": keep_reps},
+        "archive": [{"guid": "a", "label": label, "deck": arch_deck, "reps": arch_reps}],
+    }
+
+
+def test_duplicate_dialog_html_shows_the_label_not_a_raw_image_tag():
+    groups = [_dup_group("Name this nerve block",
+                         "Deck::3. The Blocks", "Deck::3. The Blocks")]
+    html = logic.duplicate_dialog_html(groups)
+    assert "Name this nerve block" in html
+    assert "<img" not in html
+
+
+def test_duplicate_dialog_html_reads_as_a_copy_count_when_decks_match():
+    groups = [_dup_group("Card A", "Deck::Blocks", "Deck::Blocks", keep_reps=3)]
+    html = logic.duplicate_dialog_html(groups)
+    assert "2 copies in Blocks" in html
+    assert "duplicate copy of" in html and "</b> card." in html
+
+
+def test_duplicate_dialog_html_names_both_decks_when_they_differ():
+    groups = [_dup_group("Card A", "Deck::New", "Deck::Old", keep_reps=5, arch_reps=1)]
+    html = logic.duplicate_dialog_html(groups)
+    assert "keeping New" in html and "archiving Old" in html
+
+
+def test_duplicate_dialog_html_escapes_the_label():
+    groups = [_dup_group("A <script> & B", "Deck::X", "Deck::X")]
+    html = logic.duplicate_dialog_html(groups)
+    assert "<script>" not in html and "&lt;script&gt;" in html
+
+
+def test_duplicate_dialog_html_pluralizes_the_heading():
+    groups = [_dup_group("A", "D::X", "D::X"), _dup_group("B", "D::Y", "D::Y")]
+    html = logic.duplicate_dialog_html(groups)
+    assert "duplicate copies of" in html and "</b> cards." in html
+
+
 def test_find_duplicate_groups_sorted_by_model_then_front():
     her_notes = [
         {"guid": "z1", "nid": 1, "model": "Basic", "front": "zzz", "reps": 0, "deck": "Foo"},

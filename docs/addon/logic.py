@@ -4,6 +4,7 @@ Nothing here imports aqt or anki, so it's testable with plain pytest, no Anki
 environment needed. If a function starts needing mw/col, it belongs in __init__.py
 instead, not here.
 """
+import html
 import json
 import os
 import re
@@ -421,3 +422,61 @@ def find_duplicate_groups(her_notes, canonical_deck_names):
         })
     out.sort(key=lambda g: (g["model"], g["front"]))
     return out
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_IMG_SRC_RE = re.compile(r"""<img[^>]*\bsrc\s*=\s*["']([^"']+)["']""", re.I)
+
+
+def note_display_label(fields, max_len=90):
+    """A short, human-readable label for a note, for dialogs that list its card.
+
+    Uses the first field whose visible text (HTML stripped, entities decoded) is
+    non-empty, so a normal card shows its front and an image card whose first field is
+    just an `<img>` falls through to its prompt field. If every field is non-text (a
+    pure image card with no prompt), returns the first image's filename, so the line
+    still says which card it is instead of rendering as a broken image. Plain text
+    only, never raw HTML; long labels are truncated.
+    """
+    for field in fields or []:
+        text = re.sub(r"\s+", " ", html.unescape(_TAG_RE.sub(" ", field or ""))).strip()
+        if text:
+            return text if len(text) <= max_len else text[: max_len - 1].rstrip() + "…"
+    for field in fields or []:
+        m = _IMG_SRC_RE.search(field or "")
+        if m:
+            return os.path.basename(m.group(1))
+    return "(card)"
+
+
+def duplicate_dialog_html(groups):
+    """Body of the Clean up duplicates confirmation, from find_duplicate_groups output.
+
+    Each line leads with the card's readable label (the note's precomputed 'label',
+    see collection._her_notes_summary; escaped here since it's data), then says which
+    copy is kept and which is archived. When every copy sits in the same deck it reads
+    as a copy count rather than repeating that deck name twice.
+    """
+    lines = []
+    for g in groups:
+        label = html.escape(g["keep"].get("label") or g["front"])
+        keep_leaf = g["keep"]["deck"].split("::")[-1]
+        arch = g["archive"]
+        arch_leaves = [a["deck"].split("::")[-1] for a in arch]
+        arch_reps = ", ".join(str(a["reps"]) for a in arch)
+        if all(leaf == keep_leaf for leaf in arch_leaves):
+            detail = (f"{1 + len(arch)} copies in {html.escape(keep_leaf)}: keeping the "
+                      f"one with {g['keep']['reps']} review(s), archiving {len(arch)} "
+                      f"({arch_reps} review(s))")
+        else:
+            detail = (f"keeping {html.escape(keep_leaf)} ({g['keep']['reps']} review(s)), "
+                      f"archiving {html.escape(', '.join(arch_leaves))} "
+                      f"({arch_reps} review(s))")
+        lines.append(f"{label} <span style='color:gray;'>{detail}</span>")
+    n_archive = sum(len(g["archive"]) for g in groups)
+    n_cards = len(groups)
+    copies = "copy" if n_archive == 1 else "copies"
+    cards = "card" if n_cards == 1 else "cards"
+    heading = (f"Found <b>{n_archive}</b> duplicate {copies} of <b>{n_cards}</b> {cards}. "
+               "Each card was imported more than once. Archiving keeps one copy of each:")
+    return heading + bullets(lines, cap=15)

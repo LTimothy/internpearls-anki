@@ -13,7 +13,7 @@ from aqt.utils import getFile, getSaveFile
 
 from .config import DECK_BACKUPS_KEEP, TARGET_FIELDS, _USER_FILES, _cfg
 from .logic import (apkg_models, bullets, changed_templates, fields_to_carry_over,
-                    model_shape, remap_cards, write_personalized)
+                    model_shape, note_display_label, remap_cards, write_personalized)
 from .ui import _ask, _info, _safe, _warn
 
 
@@ -266,8 +266,9 @@ def _her_guid_to_deck(scope_tag):
 
 
 def _her_notes_summary(scope_tag, exclude_tag=None):
-    """{guid, nid, model, front, reps, deck} for every note under the scope tag, the
-    raw material find_duplicate_groups groups into duplicate candidates.
+    """{guid, nid, model, front, label, reps, deck} for every note under the scope tag,
+    the raw material find_duplicate_groups groups into duplicate candidates. `front` is
+    the raw first field (the grouping key); `label` is a readable version for dialogs.
 
     `exclude_tag`, if given, is added as a search exclusion so a note a previous
     duplicate-cleanup run already archived (see sync.clean_up_duplicates) is never
@@ -289,6 +290,7 @@ def _her_notes_summary(scope_tag, exclude_tag=None):
             "nid": nid,
             "model": note.note_type()["name"],
             "front": note.fields[0],
+            "label": note_display_label(note.fields),
             "reps": reps,
             "deck": deck,
         })
