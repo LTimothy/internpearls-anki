@@ -779,3 +779,29 @@ def test_find_duplicate_groups_sorted_by_model_then_front():
     ]
     groups = logic.find_duplicate_groups(her_notes, [])
     assert [g["front"] for g in groups] == ["aaa", "zzz"]
+
+
+# ------------------------------------------------- manifest scope suggestions
+def test_manifest_scope_suggestion_returns_both_when_they_differ():
+    manifest = {"scope_tag": "CardioDeck", "export_deck": "Cardio"}
+    assert logic.manifest_scope_suggestion(
+        manifest, "InternPearls", "Intern Pearls::Intern Custom"
+    ) == ("CardioDeck", "Cardio")
+
+
+def test_manifest_scope_suggestion_skips_values_already_configured():
+    manifest = {"scope_tag": "CardioDeck", "export_deck": "Cardio"}
+    assert logic.manifest_scope_suggestion(
+        manifest, "CardioDeck", "Cardio") == (None, None)
+
+
+def test_manifest_scope_suggestion_offers_just_the_one_that_differs():
+    manifest = {"scope_tag": "CardioDeck", "export_deck": "Cardio"}
+    assert logic.manifest_scope_suggestion(
+        manifest, "CardioDeck", "Old Deck") == (None, "Cardio")
+
+
+def test_manifest_scope_suggestion_ignores_missing_or_junk_values():
+    assert logic.manifest_scope_suggestion({}, "A", "B") == (None, None)
+    junk = {"scope_tag": "", "export_deck": 7}
+    assert logic.manifest_scope_suggestion(junk, "A", "B") == (None, None)

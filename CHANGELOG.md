@@ -3,6 +3,17 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.30.0
+
+- Configuring a deck source now offers that source's recommended settings. A deck
+  author's manifest can carry `scope_tag` and `export_deck` (both optional; older
+  add-on versions ignore them), and right after Configure source connects, it offers
+  to apply whichever of the two differ from your current config. Accepting means
+  field protection and the automatic pre-sync backup cover that source's decks
+  without hand-editing raw config keys, which used to be the only way when
+  subscribing to a source with its own tag and deck names. Nothing applies without a
+  yes, and background auto-sync never touches these settings on its own.
+
 ## v0.29.2
 
 - Made the "Clean up duplicate cards" confirmation actually readable. Each line now
