@@ -26,9 +26,10 @@ from .collection import (_apply_deck, _apply_template_changes, _ensure_notetypes
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json,
                      _save_json)
-from .logic import (bullets, decks_to_update, find_deck_moves_needed,
-                    find_duplicate_groups, find_retired_in_collection,
-                    manifest_needs_newer_addon, remap_cards, write_personalized)
+from .logic import (bullets, decks_to_update, duplicate_dialog_html,
+                    find_deck_moves_needed, find_duplicate_groups,
+                    find_retired_in_collection, manifest_needs_newer_addon,
+                    remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .ui import _ask, _ask_scrollable, _info, _safe, _warn, cancellable_progress, wait_cursor
 
@@ -472,14 +473,7 @@ def clean_up_duplicates():
         _info(f"No duplicate cards found. (Source: {source}.)")
         return
 
-    lines = [f"{g['front']} <span style='color:gray;'>keeping "
-             f"{g['keep']['deck'].split('::')[-1]} ({g['keep']['reps']} reviews), "
-             f"archiving {', '.join(a['deck'].split('::')[-1] for a in g['archive'])} "
-             f"({', '.join(str(a['reps']) for a in g['archive'])} reviews)</span>"
-             for g in groups]
-    n_archive = sum(len(g["archive"]) for g in groups)
-    block = (f"<b>{n_archive}</b> duplicate card(s) found across <b>{len(groups)}</b> "
-             "card(s):" + bullets(lines, cap=15))
+    block = duplicate_dialog_html(groups)
     safety_note = (
         "<br><br>Nothing is deleted. Archived cards keep their review history and can "
         "be brought back anytime by unsuspending them or moving them out of the "

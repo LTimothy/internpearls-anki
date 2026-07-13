@@ -3,6 +3,17 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.29.2
+
+- Made the "Clean up duplicate cards" confirmation actually readable. Each line now
+  leads with a readable label for the card, so an image card identifies itself by its
+  prompt or image filename instead of rendering as a broken-image icon with no way to
+  tell what it is. When both copies sit in the same deck the line reads as a copy count
+  ("2 copies in <deck>: keeping the one with N reviews...") rather than repeating the
+  deck name twice, and the summary heading is reworded ("Found N duplicate copies of M
+  cards") so it no longer reuses the word "card" to mean two different things. Behavior
+  is unchanged: this only affects what the dialog shows, not which copy is archived.
+
 ## v0.29.1
 
 - Fixed a bug where a reorganized deck could be offered as "needs update" forever,
