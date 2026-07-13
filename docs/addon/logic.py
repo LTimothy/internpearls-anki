@@ -75,6 +75,23 @@ def manifest_needs_newer_addon(manifest, supported_schema):
     return bool(manifest) and manifest.get("schema", 1) > supported_schema
 
 
+def manifest_scope_suggestion(manifest, scope_tag, export_deck):
+    """(suggested scope_tag, suggested export_deck) worth offering, or None for each.
+
+    A deck source's manifest may carry the author's own `scope_tag` and `export_deck`
+    (schema-additive; older add-ons ignore them), because both config values default
+    to the Intern Pearls deck's: without matching them, a subscriber to someone else's
+    deck gets no protected-fields snapshot and mis-scoped backups. A value is
+    suggested only when it's a non-empty string that differs from what's configured
+    now; the caller asks before applying anything.
+    """
+    def pick(key, current):
+        v = (manifest or {}).get(key)
+        return v if isinstance(v, str) and v and v != current else None
+
+    return pick("scope_tag", scope_tag), pick("export_deck", export_deck)
+
+
 def parse_fields(text, default=("Notes",)):
     """Parse the deck manager's comma-separated "preserved fields" box into a clean list.
 

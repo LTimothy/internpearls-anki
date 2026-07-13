@@ -57,7 +57,7 @@ Deck-source configuration lives here too, behind a button next to the "Source" l
 - Local folder: point it at a directory that contains `manifest.json` and the `.apkg` files.
 - Try the example deck: points the add-on at [`LTimothy/internpearls-example-deck`](https://github.com/LTimothy/internpearls-example-deck), a small public demo repo, so you can watch a sync work before you have any deck source of your own. Choosing it also points `scope_tag` and `export_deck` at the example deck's values (only if you haven't customized them), so field preservation and the automatic backup work in the demo too; picking a GitHub repo or local folder later resets exactly those injected values.
 
-Either way, as soon as you save, the add-on connects to the source, and Manage decks reopens against it: how many decks it found, or (shown as an error in the Source line, with an empty deck list and the same button waiting) exactly what went wrong, a bad token, an unreachable repo, or a wrong folder, so you're never left staring at a dead end. If nothing is configured at all, Manage decks still opens; it just shows an empty list and the Configure source button, instead of a warning that sends you hunting for a different menu item.
+Either way, as soon as you save, the add-on connects to the source. If the source's manifest recommends a scope tag and backup deck (see "Using this for your own decks"), you're offered them right then, so field protection and the automatic backup cover that source's decks without editing raw config; nothing is applied unless you say yes. Then Manage decks reopens against the source: how many decks it found, or (shown as an error in the Source line, with an empty deck list and the same button waiting) exactly what went wrong, a bad token, an unreachable repo, or a wrong folder, so you're never left staring at a dead end. If nothing is configured at all, Manage decks still opens; it just shows an empty list and the Configure source button, instead of a warning that sends you hunting for a different menu item.
 
 You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tools > Config:
 
@@ -163,16 +163,19 @@ The rest of this section documents the manifest format itself, for anyone buildi
       "cards": 42
     }
   ],
+  "scope_tag": "YourTag",
+  "export_deck": "Your Deck",
   "front_aliases": {}
 }
 ```
 
 - `decks` lists every deck Sync should manage. `name` is the deck name as it should appear in Anki; `apkg` is the path to fetch, relative to the repo/folder root (a flat filename or nested in a subfolder like `decks/your-deck.apkg`, both work); `spec` is informational only (not read by the add-on); `version` is any string that changes when the deck changes (a hash, a date, a counter) and drives which decks Sync considers "changed"; `cards` is optional, shown as a count in the sync confirmation.
+- `scope_tag` and `export_deck` (optional, v0.30.0+) are your recommended values for the add-on config keys of the same names: the root tag your cards carry, and the deck whose export the automatic backup should cover. When someone configures your source, the add-on offers to apply whichever differ from their current settings; without them, subscribers have to set both by hand for field protection and backups to cover your decks. Older add-on versions ignore these keys.
 - `front_aliases` maps a card's current front-field text to its previous wording, for any card whose front changed since the last version someone might be syncing from. Omit entries for cards whose front never changed. See "How history is preserved" above for exactly how this is used and its limits.
 - Each `.apkg`'s notes need a stable GUID scheme of your own choosing. Most Anki deck-building tools default to a content hash of the front, which changes whenever you reword it — that's why `front_aliases` exists. The better scheme is a GUID derived from an explicit per-card id that never changes: the add-on matches by GUID before any text comparison, so with stable GUIDs you can reword fronts freely and never touch `front_aliases` again. This add-on doesn't generate decks, only syncs pre-built ones; how you build stable GUIDs into your `.apkg` is up to your own tooling.
 - Two optional (schema 2) ledgers back the Reconcile my decks action: `retired` — `{deck_name: {guid: {identity, reason, superseded_by}}}` — for cards you've deliberately split, merged, or removed; and `deck_moves` — `{guid: {from, to}}` (full Anki deck paths) — for notes you've relocated to a different deck without changing their identity. Both are additive and optional; an add-on version that predates one simply ignores it.
 
-Use Configure source, inside Manage decks, to point at your repo (with a read-only token if private) or folder, and Sync decks, Manage decks, and the Advanced tools all work exactly as described above, just against your own content. Set `scope_tag` and `export_deck` in Config to match your own deck's tag and name if they differ from the `InternPearls` / `Intern Pearls::Intern Custom` defaults.
+Use Configure source, inside Manage decks, to point at your repo (with a read-only token if private) or folder, and Sync decks, Manage decks, and the Advanced tools all work exactly as described above, just against your own content. If your manifest carries `scope_tag` and `export_deck`, configuring the source offers those values to each subscriber automatically; otherwise they need to set both in Config to match your deck's tag and name, if those differ from the `InternPearls` / `Intern Pearls::Intern Custom` defaults.
 
 ## For developers
 
