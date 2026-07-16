@@ -247,6 +247,47 @@ code, not written alongside it: `./build.sh` mirrors `internpearls/` into
 `docs/addon/` (byte-equality enforced by `tests/test_demo_parity.py`), and the page
 runs those modules under Pyodide against the example deck repo's real files.
 
+### Seeing a dialog actually render
+
+Every layer above uses mock Qt, which can prove a widget tree's *structure* but never
+that Qt painted it. That gap is real: Qt drops a stylesheet declaration it doesn't
+like without raising, so a rule can read correctly, pass review, pass its tests, and
+still be invisible. Two shipped rules were (v0.32.1).
+
+`tools/render_dialog.py` closes it by rendering a real dialog to a PNG, with real
+PyQt6 and no Anki:
+
+```bash
+pip install PyQt6
+python3 tools/render_dialog.py --list
+python3 tools/render_dialog.py review --expand 1 --feedback --out review.png
+python3 tools/render_dialog.py review --dark          # see "Colors" below
+python3 tools/render_dialog.py review --apkg ~/deck.apkg
+```
+
+It reuses `tests/mock_anki.py` for the whole fake Anki world and swaps only that
+harness's fake Qt for real PyQt6, so the two are opposites rather than duplicates:
+mock Qt for structure in CI, real Qt for pixels locally. It's a developer tool and
+isn't packaged into the `.ankiaddon`. Its default card content is synthetic; `--apkg`
+reads a real deck through the add-on's own `apkg_note_details`.
+
+Reach for it whenever a change involves a stylesheet, a border, spacing, or a color.
+
+### Colors
+
+Nothing here branches on Anki's Night Mode. Dialog colors are picked as saturated
+mid-tones that read on both themes, which keeps one code path instead of two.
+
+That convention has one rule that's easy to miss: **if you hardcode a background,
+hardcode the foreground with it.** Text color otherwise comes from the platform
+palette, which flips with the theme while your background doesn't, so a light block
+ends up with white text on it in dark mode. A color-only style is safe; a
+background-only style is not.
+
+`--dark` approximates a dark theme via Qt's color-scheme hint. It is *not* Anki's
+night theme, so treat it as a check on whether hardcoded colors survive a dark
+background at all, not as proof night mode is right.
+
 ### Repackage after editing
 
 ```bash
