@@ -232,6 +232,10 @@ all built on the mock Anki in `tests/mock_anki.py` (stub `aqt`/`anki` modules pl
 mock collection that emulates the one importer behavior everything here defends
 against — a GUID-matched import overwrites every field):
 
+- `tests/test_release_integrity.py` checks the two release steps that are manual and
+  therefore forgettable: that the committed `internpearls.ankiaddon` matches
+  `internpearls/`, and that `version.json` and `ADDON_VERSION` agree. Both fail the
+  same way, silently and permanently, so both are pinned rather than remembered.
 - `tests/test_logic.py` unit-tests `logic.py` against minimal mock `.apkg` files.
 - `tests/test_sync_flows.py` drives the real `sync`, `collection`, and `background`
   modules end to end, with dialog answers scripted per test — first sync,
