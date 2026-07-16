@@ -95,7 +95,8 @@ def make_model(name="Study Deck - Basic", fields=None, css=".card { color: black
                qfmt="{{Front}}", afmt="{{Back}}"):
     return {
         "name": name,
-        "flds": [{"name": f} for f in (fields or list(BASIC_FIELDS))],
+        "flds": [{"name": f, "ord": i}
+                 for i, f in enumerate(fields or list(BASIC_FIELDS))],
         "tmpls": [{"name": "c", "qfmt": qfmt, "afmt": afmt, "ord": 0}],
         "css": css,
         "id": abs(hash(name)) % 10**9,
@@ -117,11 +118,15 @@ def make_apkg(path, notes, model=None, deck=None):
     if os.path.exists(db):
         os.remove(db)
     con = sqlite3.connect(db)
+    # `mid` mirrors a real export: Anki's notes table always carries the note type id,
+    # and apkg_note_details joins on it to label each field (Front/Back/Why, which are
+    # not the same names across our note types). Omitting it here would let the mock
+    # pass with generic "Field N" labels that production never produces.
     con.execute("create table notes "
-                "(id integer primary key, guid text, flds text, tags text)")
+                "(id integer primary key, guid text, mid integer, flds text, tags text)")
     for i, (guid, fields, tags) in enumerate(notes, 1):
-        con.execute("insert into notes (id, guid, flds, tags) values (?, ?, ?, ?)",
-                    (i, guid, FS.join(fields), tags))
+        con.execute("insert into notes (id, guid, mid, flds, tags) values (?, ?, ?, ?, ?)",
+                    (i, guid, model["id"], FS.join(fields), tags))
     if deck:
         con.execute("create table cards "
                     "(id integer primary key, nid integer, did integer)")
@@ -413,6 +418,7 @@ class Gui:
 
     def __init__(self):
         self.infos, self.warnings, self.tooltips, self.asks = [], [], [], []
+        self.clipboard = []      # every text copy_to_clipboard() put on the clipboard
         self.answers = []        # non-interactive askUser script
         self.interactive = False
         self.interactions = []   # interactive-mode response script (the replay)
@@ -513,6 +519,9 @@ class QWidget:
     def setMaximumHeight(self, v):
         pass
 
+    def setFixedHeight(self, v):
+        pass
+
     def setFrameShape(self, s):
         pass   # QScrollArea/QFrame are QFrame subclasses in real Qt
 
@@ -605,6 +614,32 @@ class QLineEdit(QWidget):
                 "placeholder": self._placeholder, "password": self._password}
 
 
+class QPlainTextEdit(QWidget):
+    """The review dialog's per-card feedback box, and its read-only digest view."""
+
+    def __init__(self, text="", *a, **k):
+        super().__init__()
+        self._text = text
+        self._placeholder = ""
+        self._readonly = False
+
+    def setPlainText(self, t):
+        self._text = t
+
+    def toPlainText(self):
+        return self._text
+
+    def setPlaceholderText(self, t):
+        self._placeholder = t
+
+    def setReadOnly(self, v):
+        self._readonly = v
+
+    def node(self):
+        return {"t": "textarea", "id": self.wid, "value": self._text,
+                "placeholder": self._placeholder, "readonly": self._readonly}
+
+
 class QSpinBox(QWidget):
     def __init__(self, *a, **k):
         super().__init__()
@@ -666,7 +701,7 @@ class QHBoxLayout(_Layout):
 
 class QFrame(QWidget):
     class Shape:
-        NoFrame = 0
+        NoFrame, StyledPanel = 0, 6   # Qt's own values
 
     def setFrameShape(self, s):
         pass
@@ -694,7 +729,11 @@ class QScrollArea(QWidget):
 
 class QDialogButtonBox(QWidget):
     class ButtonRole:
-        AcceptRole, ApplyRole, RejectRole = 0, 1, 2
+        # ActionRole is Qt's own value for a button that does something without
+        # answering the dialog: it's deliberately NOT wired to accepted/rejected in
+        # addButton below, which is what lets _ask_scrollable's "Review new cards"
+        # button run and leave the confirmation standing.
+        AcceptRole, ApplyRole, RejectRole, ActionRole = 0, 1, 2, 3
 
     class StandardButton:
         # Qt's real flag values, so `Ok | Cancel` works exactly as in aqt.qt.
@@ -747,6 +786,8 @@ def _apply_events(events):
                 w.setChecked(ev["value"])
             elif isinstance(w, QLineEdit):
                 w.setText(str(ev["value"]))
+            elif isinstance(w, QPlainTextEdit):
+                w.setPlainText(str(ev["value"]))
             elif isinstance(w, QSpinBox):
                 w.setValue(ev["value"])
         if ev.get("click"):
@@ -1044,6 +1085,11 @@ def install():
         class WindowModality:
             WindowModal = 1
 
+    class _Clipboard:
+        @staticmethod
+        def setText(text):
+            gui.clipboard.append(text)
+
     class _QApplication:
         @staticmethod
         def setOverrideCursor(cursor):
@@ -1056,6 +1102,10 @@ def install():
         @staticmethod
         def processEvents():
             pass
+
+        @staticmethod
+        def clipboard():
+            return _Clipboard()
 
     class _QTimer:
         def __init__(self, parent=None):
@@ -1124,6 +1174,7 @@ def install():
                       ("QDialog", QDialog), ("QDialogButtonBox", QDialogButtonBox),
                       ("QFrame", QFrame), ("QHBoxLayout", QHBoxLayout),
                       ("QLineEdit", QLineEdit), ("QMessageBox", QMessageBox),
+                      ("QPlainTextEdit", QPlainTextEdit),
                       ("QScrollArea", QScrollArea), ("QSpinBox", QSpinBox),
                       ("QVBoxLayout", QVBoxLayout), ("QWidget", QWidget)):
         setattr(aqt_qt, name, obj)

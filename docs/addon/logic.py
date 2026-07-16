@@ -292,17 +292,71 @@ def find_retired_in_collection(retired_ledger, her_guids):
 
 
 def apkg_notes(path):
-    """Return (note_id, front_text, guid) for every note in an .apkg file."""
+    """Return (note_id, fields, guid) for every note in an .apkg file, where `fields` is
+    the note's complete field list.
+
+    Every field rather than just the front, because matching and display want different
+    things from a note. Matching only ever keys on `fields[0]` (see remap_cards), but a
+    caller that shows the card to a person needs the rest: an image note's first field
+    is an <img> tag, not a prompt, so field zero alone renders as a broken image instead
+    of naming the card. note_display_label picks the right field out of the whole list.
+    """
     with zipfile.ZipFile(path) as z:
         if "collection.anki2" not in z.namelist():
             raise RuntimeError("Unexpected .apkg format (no collection.anki2).")
         with tempfile.TemporaryDirectory() as d:
             z.extract("collection.anki2", d)
             con = sqlite3.connect(os.path.join(d, "collection.anki2"))
-            rows = [(rid, flds.split(FS)[0], guid) for rid, guid, flds in
+            rows = [(rid, flds.split(FS), guid) for rid, guid, flds in
                     con.execute("select id, guid, flds from notes")]
             con.close()
     return rows
+
+
+def apkg_note_details(path, rids=None):
+    """Return full, labeled field detail for notes in the .apkg at `path`, as a list of
+    {"rid", "guid", "notetype", "fields": [(field_name, value), ...]} in the .apkg's own
+    note order. `rids`, if given, limits the result to those note ids.
+
+    Separate from apkg_notes because it costs more and is wanted less often: this reads
+    the note types too, and only the review dialog needs it, only when the learner opens
+    it. The normal update path never pays for it.
+
+    Field names come from the .apkg's own `col.models` rather than from position,
+    because our note types don't agree on layout: index 1 is "Back" on a basic note but
+    "Prompt" on an image note, so a positional guess mislabels whole decks. A note whose
+    note type isn't described in this .apkg (or an .apkg carrying no models at all)
+    falls back to generic "Field N" labels instead of failing, since a plainly-labeled
+    preview is worth more to the learner than a raised exception.
+    """
+    wanted = None if rids is None else set(rids)
+    with zipfile.ZipFile(path) as z:
+        if "collection.anki2" not in z.namelist():
+            raise RuntimeError("Unexpected .apkg format (no collection.anki2).")
+        with tempfile.TemporaryDirectory() as d:
+            z.extract("collection.anki2", d)
+            con = sqlite3.connect(os.path.join(d, "collection.anki2"))
+            try:
+                models = json.loads(con.execute("select models from col").fetchone()[0])
+            except (sqlite3.Error, TypeError, ValueError, IndexError):
+                models = {}
+            rows = list(con.execute("select id, guid, mid, flds from notes"))
+            con.close()
+
+    names = {}
+    for mid, m in (models or {}).items():
+        ordered = sorted(m.get("flds", []), key=lambda f: f.get("ord", 0))
+        names[str(mid)] = (m.get("name", ""), [f.get("name", "") for f in ordered])
+
+    out = []
+    for rid, guid, mid, flds in rows:
+        if wanted is not None and rid not in wanted:
+            continue
+        notetype, field_names = names.get(str(mid), ("", []))
+        labeled = [(field_names[i] if i < len(field_names) else f"Field {i + 1}", value)
+                   for i, value in enumerate(flds.split(FS))]
+        out.append({"rid": rid, "guid": guid, "notetype": notetype, "fields": labeled})
+    return out
 
 
 def apkg_models(path):
@@ -378,26 +432,35 @@ def remap_cards(src, her, aliases):
       3. `aliases` ({current_front: previous_front}): her card still shows the one
          prior wording of a renamed front.
 
-    Returns (remap, in_place, as_new): `remap` is {note_id: guid} for notes whose GUID
-    needs rewriting to match an existing card, `in_place`/`as_new` are counts for the
-    confirmation dialogs. A GUID match needs no rewrite, so it never lands in `remap`.
+    Returns (remap, in_place, as_new, new_notes): `remap` is {note_id: guid} for notes
+    whose GUID needs rewriting to match an existing card, `in_place`/`as_new` are counts
+    for the confirmation dialogs. A GUID match needs no rewrite, so it never lands in
+    `remap`.
+
+    `new_notes` is [(note_id, fields, guid), ...] for the notes that will import as new,
+    in the .apkg's own order, and `as_new` is exactly its length. It's returned from here
+    rather than re-derived by a second function so the matching ladder above stays the
+    single source of truth about what "new" means: a separate implementation would
+    eventually disagree with this one, and the visible symptom would be a preview that
+    lies to the learner about which cards are about to appear.
     """
-    remap, in_place, as_new = {}, 0, 0
+    remap, in_place, new_notes = {}, 0, []
     her_guids = set(her.values())
-    for rid, front, apkg_guid in apkg_notes(src):
+    for rid, fields, apkg_guid in apkg_notes(src):
         if apkg_guid in her_guids:
             in_place += 1
             continue
+        front = fields[0] if fields else ""
         her_guid = her.get(front)
         if her_guid is None and front in aliases:
             her_guid = her.get(aliases[front])
         if her_guid is None:
-            as_new += 1
+            new_notes.append((rid, fields, apkg_guid))
         else:
             in_place += 1
             if her_guid != apkg_guid:
                 remap[rid] = her_guid
-    return remap, in_place, as_new
+    return remap, in_place, len(new_notes), new_notes
 
 
 def find_duplicate_groups(her_notes, canonical_deck_names):
@@ -445,6 +508,14 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _IMG_SRC_RE = re.compile(r"""<img[^>]*\bsrc\s*=\s*["']([^"']+)["']""", re.I)
 
 
+def plain_text(field):
+    """The visible text of one card field: HTML tags stripped, entities decoded,
+    whitespace collapsed. Tags become a space rather than nothing, so text either side
+    of a block tag doesn't run together into one word.
+    """
+    return re.sub(r"\s+", " ", html.unescape(_TAG_RE.sub(" ", field or ""))).strip()
+
+
 def note_display_label(fields, max_len=90):
     """A short, human-readable label for a note, for dialogs that list its card.
 
@@ -456,7 +527,7 @@ def note_display_label(fields, max_len=90):
     only, never raw HTML; long labels are truncated.
     """
     for field in fields or []:
-        text = re.sub(r"\s+", " ", html.unescape(_TAG_RE.sub(" ", field or ""))).strip()
+        text = plain_text(field)
         if text:
             return text if len(text) <= max_len else text[: max_len - 1].rstrip() + "…"
     for field in fields or []:
@@ -464,6 +535,65 @@ def note_display_label(fields, max_len=90):
         if m:
             return os.path.basename(m.group(1))
     return "(card)"
+
+
+def field_preview_text(value):
+    """One card field as plain text for the review list, with any images named rather
+    than rendered.
+
+    The review dialog reads fields straight out of the .apkg and never extracts its
+    media, so an <img> tag in there points at a file that isn't on disk yet: rendering
+    it would paint a broken image. Naming the file instead tells the reader the card
+    has a picture, which is what they actually need to know at review time. A field
+    holding both text and an image reports both, since dropping either would misrepresent
+    the card.
+    """
+    text = plain_text(value)
+    names = [os.path.basename(src) for src in _IMG_SRC_RE.findall(value or "")]
+    if not names:
+        return text
+    tag = f"[image: {', '.join(names)}]"
+    return f"{text} {tag}" if text else tag
+
+
+def build_feedback_digest(entries, version="", date=""):
+    """Render flagged-card feedback as plain text, ready to paste into a message.
+
+    `entries` is a list of {"deck", "front", "guid", "note"}, grouped here by deck in
+    first-seen order. Plain text rather than HTML or JSON on purpose: this gets pasted
+    into an ordinary text thread, so it has to survive being read by a person with no
+    tooling. Deck headings use the leaf name, since the full "Intern Pearls::Intern
+    Custom::" path is noise in a message.
+
+    The guid line is what makes this worth more than the learner describing a card from
+    memory: it names the exact spec note, so the fix doesn't start with hunting for
+    which card she meant. Fronts are stored as HTML, so they go through plain_text on
+    the way out.
+
+    Returns "" for no entries, so a caller can treat empty as "nothing to send" without
+    a separate check.
+    """
+    if not entries:
+        return ""
+    header = "Intern Pearls card feedback"
+    if date:
+        header += f" ({date})"
+    lines = [header]
+    if version:
+        lines.append(f"Add-on v{version}")
+    by_deck = {}
+    for e in entries:
+        by_deck.setdefault(e.get("deck") or "", []).append(e)
+    for deck, items in by_deck.items():
+        lines.append("")
+        lines.append(deck.split("::")[-1] if deck else "(unknown deck)")
+        for e in items:
+            lines.append(f'  "{plain_text(e.get("front"))}"')
+            if e.get("guid"):
+                lines.append(f'  guid {e["guid"]}')
+            lines.append(f'  > {plain_text(e.get("note"))}')
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def duplicate_dialog_html(groups):

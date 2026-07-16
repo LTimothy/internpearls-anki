@@ -3,6 +3,23 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.31.0
+
+- You can now read the cards an update would add, before it adds them. "Update my
+  decks" already listed retired and relocated cards by name, but a card being *added*
+  only ever showed up as a count ("3 new"), so new cards were the one kind that
+  arrived without ever being seen first. The confirmation now names them like
+  everything else, and a "Review N new card(s)" button opens each one in full: every
+  field, labeled, grouped by deck. Reviewing doesn't cost you the decision, since the
+  confirmation stays open behind it, and nothing is applied until you choose Update.
+- Cards you review can be flagged with a note, and closing the review hands you a
+  plain-text summary of everything you flagged, copied to your clipboard and shown so
+  you can see exactly what it says before sending it back to whoever maintains the
+  decks. Each entry names the deck, the card, and its id, so a fix doesn't have to
+  start by working out which card you meant. The summary is offered whether you go
+  ahead with the update or back out of it: notes you took are worth keeping either
+  way. Flagging changes nothing about what imports; it's a message, not a veto.
+
 ## v0.30.0
 
 - Configuring a deck source now offers that source's recommended settings. A deck
