@@ -10,6 +10,8 @@ import sqlite3
 import sys
 import zipfile
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "internpearls"))
 import logic  # noqa: E402
 
@@ -552,6 +554,50 @@ def test_field_preview_text_plain_field_is_unchanged():
     assert logic.field_preview_text("") == ""
 
 
+# --------------------------------------------------------------- cloze_filled_html
+def test_cloze_filled_html_fills_each_deletion_with_its_answer():
+    assert logic.cloze_filled_html(
+        "The {{c1::tibial}} nerve lies posterior to the {{c2::medial}} malleolus") == (
+        'The <span class="cloze">tibial</span> nerve lies posterior to the '
+        '<span class="cloze">medial</span> malleolus')
+
+
+def test_cloze_filled_html_drops_the_hint_and_keeps_the_answer():
+    assert logic.cloze_filled_html("Give {{c1::4 mg::dose}} of it") == (
+        'Give <span class="cloze">4 mg</span> of it')
+
+
+def test_cloze_filled_html_passes_through_a_field_with_no_deletions():
+    assert logic.cloze_filled_html("Just prose") == "Just prose"
+    assert logic.cloze_filled_html("") == ""
+
+
+def test_cloze_filled_html_escapes_field_content_rather_than_rendering_it():
+    # A card's own text is data. Escaping has to happen before the spans go in, or the
+    # spans get escaped too and the markup shows up as visible text.
+    assert logic.cloze_filled_html("SpO2 {{c1::<94%}} is low") == (
+        'SpO2 <span class="cloze">&lt;94%</span> is low')
+
+
+def test_cloze_filled_html_returns_empty_string_for_none():
+    assert logic.cloze_filled_html(None) == ""
+
+
+def test_cloze_filled_html_keeps_a_bare_colon_in_the_answer():
+    # ":" is not the "::" hint separator, so an answer containing one must render whole.
+    assert logic.cloze_filled_html("{{c1::ratio 1:2}}") == (
+        '<span class="cloze">ratio 1:2</span>')
+
+
+def test_cloze_filled_html_does_not_let_a_malformed_deletion_swallow_the_next_one():
+    # An unclosed deletion must not let its non-greedy match backtrack past a following
+    # "{{" and eat a well-formed deletion's answer. The malformed one degrades to raw
+    # text instead of silently swallowing real content.
+    assert logic.cloze_filled_html(
+        "Unclosed {{c1::foo and then {{c2::bar}} end") == (
+        'Unclosed {{c1::foo and then <span class="cloze">bar</span> end')
+
+
 # -------------------------------------------------------------- build_feedback_digest
 def test_build_feedback_digest_groups_by_deck_and_names_each_card(tmp_path):
     text = logic.build_feedback_digest([
@@ -980,3 +1026,130 @@ def test_manifest_scope_suggestion_ignores_missing_or_junk_values():
     assert logic.manifest_scope_suggestion({}, "A", "B") == (None, None)
     junk = {"scope_tag": "", "export_deck": 7}
     assert logic.manifest_scope_suggestion(junk, "A", "B") == (None, None)
+
+
+# ------------------------------------------------------------------- apkg_deck_names
+def _legacy_apkg(path, deck_names, with_col=True):
+    """An old-format .apkg: deck names live in col.decks as a JSON blob.
+
+    Always includes an empty notes table, so the file also imports cleanly through
+    a real (or mock) importer, not just through apkg_deck_names. with_col=False
+    omits the col table (and its deck names) entirely, for building a file that
+    imports fine but whose deck names can't be read.
+    """
+    import json as _json
+    import sqlite3 as _sql
+    import zipfile as _zip
+    db = str(path) + ".anki2"
+    con = _sql.connect(db)
+    con.execute("create table notes (id integer primary key, guid text, flds text, "
+                "tags text)")
+    if with_col:
+        con.execute("create table col (decks text)")
+        decks = {str(i + 1): {"name": n} for i, n in enumerate(deck_names)}
+        con.execute("insert into col (decks) values (?)", (_json.dumps(decks),))
+    con.commit()
+    con.close()
+    with _zip.ZipFile(path, "w") as z:
+        z.write(db, "collection.anki2")
+    return path
+
+
+def test_apkg_deck_names_reads_the_legacy_format(tmp_path):
+    p = _legacy_apkg(tmp_path / "legacy.apkg",
+                     ["Intern Pearls::Intern Custom::CA1 Handbook", "Default"])
+    assert sorted(logic.apkg_deck_names(p)) == [
+        "Default", "Intern Pearls::Intern Custom::CA1 Handbook"]
+
+
+def test_apkg_deck_names_raises_on_a_file_it_cannot_read(tmp_path):
+    import zipfile as _zip
+    p = tmp_path / "junk.apkg"
+    with _zip.ZipFile(p, "w") as z:
+        z.writestr("nothing.txt", "not a collection")
+    with pytest.raises(Exception):
+        logic.apkg_deck_names(p)
+
+
+class _FakeZstandardModule:
+    """Stands in for the real zstandard package, which isn't installed here. Its
+    copy_stream just copies bytes through, so the fixture's "compressed" member can be
+    a plain SQLite file; the test is proving which member gets picked, not that zstd
+    decompression itself works."""
+
+    class ZstdDecompressor:
+        def copy_stream(self, src, dst):
+            dst.write(src.read())
+
+
+def _newer_apkg(path, deck_names):
+    """A newer-format .apkg: deck names live in collection.anki21b's decks table
+    (path segments separated by \\x1f), shipped alongside the same near-empty legacy
+    collection.anki2 stub _legacy_apkg produces, which must lose to the newer format.
+    """
+    import sqlite3 as _sql
+    import zipfile as _zip
+
+    newer_db = str(path) + ".anki21b.db"
+    con = _sql.connect(newer_db)
+    con.execute("create table decks (id integer primary key, name text)")
+    con.executemany("insert into decks (id, name) values (?, ?)",
+                     [(i + 1, n) for i, n in enumerate(deck_names)])
+    con.commit()
+    con.close()
+
+    stub_apkg = _legacy_apkg(str(path) + ".stub", [])
+    with _zip.ZipFile(stub_apkg) as sz:
+        stub_db_bytes = sz.read("collection.anki2")
+    stub_db = str(path) + ".stub.anki2"
+    with open(stub_db, "wb") as f:
+        f.write(stub_db_bytes)
+
+    with _zip.ZipFile(path, "w") as z:
+        z.write(newer_db, "collection.anki21b")
+        z.write(stub_db, "collection.anki2")
+    return path
+
+
+def test_apkg_deck_names_prefers_the_newer_format_over_the_legacy_stub(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "zstandard", _FakeZstandardModule)
+    p = _newer_apkg(tmp_path / "newer.apkg", ["Default", "Intern Pearls"])
+    assert sorted(logic.apkg_deck_names(p)) == ["Default", "Intern Pearls"]
+
+
+def test_apkg_deck_names_converts_unit_separator_to_double_colon(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "zstandard", _FakeZstandardModule)
+    p = _newer_apkg(tmp_path / "newer_sep.apkg",
+                     ["Intern Pearls\x1fIntern Custom\x1fCA1 Handbook"])
+    assert logic.apkg_deck_names(p) == [
+        "Intern Pearls::Intern Custom::CA1 Handbook"]
+
+
+# ---------------------------------------------------------------- manifest_decks_for
+MANIFEST = ["A::Regional::Upper Extremity Nerve Blocks", "A::Regional", "A::CA1 Handbook"]
+
+
+def test_manifest_decks_for_matches_an_exact_name():
+    assert logic.manifest_decks_for(["A::CA1 Handbook"], MANIFEST) == ["A::CA1 Handbook"]
+
+
+def test_manifest_decks_for_matches_a_subdeck_to_its_parent_spec():
+    # A spec's deck_name is the parent path; cards live in deck_name::<subdeck>.
+    assert logic.manifest_decks_for(
+        ["A::CA1 Handbook::01. Foundational Concepts"], MANIFEST) == ["A::CA1 Handbook"]
+
+
+def test_manifest_decks_for_longest_prefix_wins():
+    # Both "A::Regional" and the nerve blocks deck prefix this; only the closest owns it.
+    assert logic.manifest_decks_for(
+        ["A::Regional::Upper Extremity Nerve Blocks::3. The Blocks"], MANIFEST) == [
+            "A::Regional::Upper Extremity Nerve Blocks"]
+
+
+def test_manifest_decks_for_ignores_unrelated_decks():
+    assert logic.manifest_decks_for(["Default", "Someone Else::Deck"], MANIFEST) == []
+
+
+def test_manifest_decks_for_requires_a_segment_boundary_not_just_a_string_prefix():
+    # "A::Reg" is a string prefix of "A::Regional::X" but not a "::"-segment prefix.
+    assert logic.manifest_decks_for(["A::Regional::X"], ["A::Reg"]) == []

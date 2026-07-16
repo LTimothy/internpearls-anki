@@ -313,6 +313,61 @@ def apkg_notes(path):
     return rows
 
 
+def apkg_deck_names(path):
+    """Every Anki deck name inside an .apkg, in either on-disk format.
+
+    Newer files hold a zstd-compressed collection.anki21b whose decks table separates
+    path segments with \\x1f, and also ship a near-empty legacy collection.anki2 stub,
+    so the newer name has to win or the stub reads as an empty file. zstandard is not
+    stdlib; Anki bundles it, so it is imported lazily and a missing one raises like any
+    other read failure, leaving the caller to fall back.
+    """
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        newer = "collection.anki21b" in names
+        member = "collection.anki21b" if newer else "collection.anki2"
+        if member not in names:
+            raise RuntimeError("Unexpected .apkg format (no collection found).")
+        with tempfile.TemporaryDirectory() as d:
+            z.extract(member, d)
+            src = os.path.join(d, member)
+            if newer:
+                import zstandard
+                db = os.path.join(d, "decoded.anki2")
+                with open(src, "rb") as fh, open(db, "wb") as out:
+                    zstandard.ZstdDecompressor().copy_stream(fh, out)
+            else:
+                db = src
+            con = sqlite3.connect(db)
+            try:
+                if newer:
+                    rows = [r[0] for r in con.execute("select name from decks")]
+                    return [r.replace("\x1f", "::") for r in rows]
+                blob = con.execute("select decks from col").fetchone()[0]
+                return [d_["name"] for d_ in json.loads(blob).values()]
+            finally:
+                con.close()
+
+
+def manifest_decks_for(deck_names, manifest_names):
+    """Which manifest decks own the given Anki deck names.
+
+    A spec's deck_name is routinely just the parent path, with cards filed under
+    deck_name::<subdeck>, so an exact match alone misses every subdeck-based deck.
+    Where two manifest names both prefix a deck, the longest one owns it.
+    """
+    owners = set()
+    for deck in deck_names:
+        best = None
+        for name in manifest_names:
+            if deck == name or deck.startswith(name + "::"):
+                if best is None or len(name) > len(best):
+                    best = name
+        if best is not None:
+            owners.add(best)
+    return [n for n in manifest_names if n in owners]
+
+
 def apkg_note_details(path, rids=None):
     """Return full, labeled field detail for notes in the .apkg at `path`, as a list of
     {"rid", "guid", "notetype", "fields": [(field_name, value), ...]} in the .apkg's own
@@ -535,6 +590,25 @@ def note_display_label(fields, max_len=90):
         if m:
             return os.path.basename(m.group(1))
     return "(card)"
+
+
+_CLOZE_RE = re.compile(r"\{\{c\d+::([^{}]*?)(?:::[^{}]*?)?\}\}", re.S)
+
+
+def cloze_filled_html(text):
+    """A cloze field as HTML with every deletion showing its answer.
+
+    Review is for confirming the fact is right, and for a cloze the fact lives in the
+    deletions, so they are filled rather than blanked. The hint half of
+    {{c1::answer::hint}} is dropped. The field is escaped first and the spans injected
+    after: the other order escapes the spans themselves into visible markup. The
+    deletion regex excludes braces from the answer, so a well-formed deletion whose
+    answer contains a literal brace renders raw instead of filling; that degrades to
+    visible markup rather than silently corrupting the card, which is the acceptable
+    direction.
+    """
+    escaped = html.escape(text or "")
+    return _CLOZE_RE.sub(lambda m: f'<span class="cloze">{m.group(1)}</span>', escaped)
 
 
 def field_preview_text(value):

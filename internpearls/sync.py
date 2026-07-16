@@ -670,7 +670,8 @@ def update_decks():
 
     def _body():
         flagged = (f"<br><br><b>{len(flags)} card(s) flagged.</b> You'll get a summary "
-                   "to send back when this finishes." if flags else "")
+                   "to send back when this finishes."
+                   if cfg["collect_feedback"] and flags else "")
         return catch_up_note + "<br><br>".join(sections) + flagged + safety_note
 
     def _open_review(parent):

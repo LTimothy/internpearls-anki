@@ -3,6 +3,29 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.32.0
+
+- A restore is now re-detected. The add-on's record of which deck versions you've
+  already applied lives outside your collection, so restoring a backup used to roll
+  your cards back to older content while Update my decks kept reporting you were up
+  to date. Both restore paths now clear the relevant part of that record: Restore
+  full collection clears it entirely, and Import intern pearls deck clears just the
+  decks in the file you're restoring (falling back to clearing all of them if the
+  file can't be read). Your next Update my decks re-offers whatever rolled back, and
+  the re-import still matches by GUID, so review history carries over.
+- New Settings toggle, "Let me flag problems with new cards as they sync," off by
+  default. With it off, reviewing the new cards an update would add is a quick,
+  read-only preview: no note boxes, nothing to send afterward. Turn it on to get
+  both back.
+- The new-card review itself now reads as a scannable list instead of a stack of
+  full note dumps: one row per card, with a caret, its tag, and its primary line
+  collapsed by default, expanding on click to the answer, why, and dosing. A cloze
+  card shows its deletions filled in rather than raw markup, and an image is named
+  rather than rendered, since the review has no access to the deck's media on disk.
+- The flagged-card summary is easier to use once you have it: a monospace,
+  read-only view styled like the payload it is, with a Copy again button in case
+  something else lands on your clipboard first.
+
 ## v0.31.0
 
 - You can now read the cards an update would add, before it adds them. "Update my

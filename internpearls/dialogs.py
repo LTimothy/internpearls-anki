@@ -393,7 +393,7 @@ class _SettingsDialog(QDialog):
     """
 
     def __init__(self, parent, auto_sync, interval_minutes, notify_updates, auto_update,
-                dim_images_night_mode):
+                dim_images_night_mode, collect_feedback):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Settings")
         self.setMinimumWidth(440)
@@ -450,6 +450,17 @@ class _SettingsDialog(QDialog):
             "Applies to every deck in your collection, not just Intern Pearls ones, "
             "and takes effect immediately, no restart needed."))
 
+        outer.addWidget(section_label("New card review", top_margin=14))
+
+        self._feedback_cb = QCheckBox("Let me flag problems with new cards as they sync")
+        self._feedback_cb.setChecked(collect_feedback)
+        outer.addWidget(self._feedback_cb)
+
+        outer.addWidget(hint_label(
+            "Adds a note box under each new card in the review, and offers a summary "
+            "to send back when you close it. Off by default, so the review stays a "
+            "quick read-only preview."))
+
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
         bb.addButton(QDialogButtonBox.StandardButton.Cancel)
@@ -464,6 +475,7 @@ class _SettingsDialog(QDialog):
             "notify_addon_updates": self._notify_cb.isChecked(),
             "auto_update_addon": self._auto_update_cb.isChecked(),
             "dim_images_night_mode": self._dim_images_cb.isChecked(),
+            "collect_card_feedback": self._feedback_cb.isChecked(),
         }
 
 
@@ -473,7 +485,7 @@ def open_settings():
     cfg = _cfg()
     dlg = _SettingsDialog(mw, cfg["auto_sync_decks"], cfg["auto_sync_interval_minutes"],
                           cfg["notify_addon_updates"], cfg["auto_update_addon"],
-                          cfg["dim_images_night_mode"])
+                          cfg["dim_images_night_mode"], cfg["collect_feedback"])
     if not dlg.exec():
         return
 

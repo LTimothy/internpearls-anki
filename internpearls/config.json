@@ -10,5 +10,6 @@
   "notify_addon_updates": true,
   "auto_update_addon": false,
   "auto_sync_decks": false,
-  "auto_sync_interval_minutes": 15
+  "auto_sync_interval_minutes": 15,
+  "collect_card_feedback": false
 }
