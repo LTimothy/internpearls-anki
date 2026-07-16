@@ -3,6 +3,13 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.32.2
+
+- A new card's dosing block is readable in Night Mode again. It set its own light
+  background but left the text color to the theme, so the text turned white on a
+  near-white block. Found by rendering the dialog on a dark background, which is
+  something the add-on's tests, running on a mock Qt, cannot see.
+
 ## v0.32.1
 
 - The new-card review list is much tighter to read. Each row's caret was an
