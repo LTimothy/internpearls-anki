@@ -9,6 +9,12 @@ no parallel implementations:
   the real menu construction in __init__.py;
 - the GitHub Pages live demo runs this same file under Pyodide, so the demo's
   behavior IS the add-on's code, not a re-implementation.
+- tools/render_dialog.py installs this world and then replaces the Qt layer below
+  with real PyQt6, to render a dialog to a PNG. The two are opposites, not
+  duplicates: the widgets here answer "what is the structure", cheaply and
+  everywhere; real Qt answers "did it paint", which nothing here can. Keep this
+  layer's setter surface honest (a no-op setFixedWidth is fine, a missing one is
+  an AttributeError) so that swap keeps working.
 
 Every behavior here is the minimum the add-on actually relies on:
 
