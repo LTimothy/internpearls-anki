@@ -35,7 +35,11 @@ _STRUCTURAL_FIELDS = {"Why", "Dosing", "Tag", "Image"}
 # Matches the deck's own CSS so review looks like study: the same green why rule,
 # grey dosing block, and blue cloze fill.
 _WHY_RULE = "#2e6b3e"
+# A hardcoded background needs a hardcoded foreground with it: text colour otherwise
+# comes from the platform palette, which flips white under Night Mode while this
+# block stays light. See "Colors" in README.md.
 _DOSING_BG = "#eef2f7"
+_DOSING_FG = "#334155"
 _CLOZE_COLOR = "#2563eb"
 _CLOZE_STYLE = f"<style>.cloze {{ color: {_CLOZE_COLOR}; font-weight: 600; }}</style>"
 
@@ -234,8 +238,8 @@ def _card_row(detail, flags, boxes, collect_feedback):
     dosing_text = field_preview_text(_field(detail, "Dosing"))
     if dosing_text:
         dosing_label = _rich_label(f"<b>Dosing</b> &nbsp;{html.escape(dosing_text)}")
-        dosing_label.setStyleSheet(
-            f"background: {_DOSING_BG}; padding: 6px; border-radius: 4px;")
+        dosing_label.setStyleSheet(f"background: {_DOSING_BG}; color: {_DOSING_FG};"
+                                   f" padding: 6px; border-radius: 4px;")
         blay.addWidget(dosing_label)
 
     if collect_feedback:
