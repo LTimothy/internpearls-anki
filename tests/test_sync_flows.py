@@ -809,6 +809,125 @@ def test_update_decks_confirmation_shows_real_kept_new_counts(anki, tmp_path):
     assert "1 kept" in seen["text"] and "1 new" in seen["text"]
 
 
+def _labels(tree):
+    """Every label's text in one dialog, joined, for asserting on what it showed."""
+    return "\n".join(n.get("text") or "" for n in _walk(tree) if n.get("t") == "label")
+
+
+def test_update_decks_confirmation_names_the_new_cards_not_just_a_count(anki, tmp_path):
+    """Retired and relocated cards were always listed by name; a card being ADDED was
+    the one kind that arrived as a bare count, which is exactly the "it just gets
+    slipped in" gap this closes. The kept card must NOT be listed: this section is
+    about what's new, and padding it with cards she already has would bury that."""
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one"), TAGS.split())   # she already has g1
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen.setdefault("text", _labels(p["tree"]))
+        btn = next(n for n in _walk(p["tree"])
+                  if n.get("t") == "button" and n.get("label") != "Cancel")
+        return {"events": [{"id": btn["id"], "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert "Front two" in seen["text"], "the new card should be named, not just counted"
+    assert "<b>1</b> card(s) will be added" in seen["text"]
+    assert "Front one" not in seen["text"], "a card she already has isn't new"
+
+
+def test_update_decks_review_shows_full_cards_and_flags_reach_the_clipboard(anki, tmp_path):
+    """The whole point of the review dialog: she sees the answer and the reasoning, not
+    just the front, because "this card is wrong" is a judgment you can't make from a
+    prompt alone. What she writes has to come back out as a digest naming the card."""
+    from internpearls import sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g2", _fields("Front two", "the answer"), TAGS)], None)})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        title, tree = p.get("title") or "", p["tree"]
+        if "new cards" in title:
+            seen["review"] = _labels(tree)
+            box = next(n for n in _walk(tree) if n.get("t") == "textarea")
+            done = _find(tree, t="button", label="Done")
+            return {"events": [{"id": box["id"], "value": "dose is wrong"},
+                               {"id": done["id"], "click": True}]}
+        if "card feedback" in title:
+            return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
+                                "click": True}]}
+        review = next((n for n in _walk(tree) if n.get("t") == "button"
+                       and "Review" in (n.get("label") or "")), None)
+        if review and "review" not in seen:
+            return {"events": [{"id": review["id"], "click": True}]}
+        seen["after"] = _labels(tree)
+        return {"events": [{"id": _find(tree, t="button", label="Update")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    # The card is shown in full, with its fields labeled from the .apkg's own note type.
+    assert "the answer" in seen["review"] and "why" in seen["review"]
+    assert "Back" in seen["review"], "fields should be labeled, not bare values"
+    # Coming back from the review, the confirmation says her flag registered.
+    assert "1 card(s) flagged" in seen.get("after", "")
+    # And the digest names the deck, the card, its id, and what she said.
+    digest = anki.gui.clipboard[-1]
+    assert "Front two" in digest and "dose is wrong" in digest and "g2" in digest
+    assert "Pharm" in digest
+    # Flagging is feedback, not a veto: the card still imported.
+    assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
+
+
+def test_update_decks_declined_still_returns_the_feedback_she_wrote(anki, tmp_path):
+    """If she reads the new cards, flags one and then backs out, the flag is the most
+    interesting thing that happened in the whole run. Dropping it because she said no
+    would throw away the only part that clicking Update again later can't reproduce."""
+    from internpearls import sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        title, tree = p.get("title") or "", p["tree"]
+        if "new cards" in title:
+            seen["reviewed"] = True
+            box = next(n for n in _walk(tree) if n.get("t") == "textarea")
+            return {"events": [{"id": box["id"], "value": "too bulky"},
+                               {"id": _find(tree, t="button", label="Done")["id"],
+                                "click": True}]}
+        if "card feedback" in title:
+            return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
+                                "click": True}]}
+        review = next((n for n in _walk(tree) if n.get("t") == "button"
+                       and "Review" in (n.get("label") or "")), None)
+        if review and not seen.get("reviewed"):
+            return {"events": [{"id": review["id"], "click": True}]}
+        return {"events": [{"id": _find(tree, t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert anki.gui.clipboard, "declining the update must not discard her notes"
+    assert "too bulky" in anki.gui.clipboard[-1]
+    assert not anki.col.find_notes(f'"tag:{SCOPE}"'), "Cancel must still import nothing"
+
+
 def test_update_decks_reports_up_to_date_when_nothing_pending(anki, tmp_path):
     from internpearls import sync
     folder = _write_source(tmp_path, {})
