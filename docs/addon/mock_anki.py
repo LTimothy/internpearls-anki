@@ -412,7 +412,8 @@ class MockCollection:
 # ============================== gui / replay ==============================
 class Gui:
     """The dialog hub. Non-interactive (pytest default): info/warn record,
-    askUser pops `answers` (True when empty). Interactive (the demo driver, or
+    askUser pops `answers` (True when empty), getFile/getSaveFile pop
+    `file_picks` (None when empty). Interactive (the demo driver, or
     dialog tests): EVERY dialog goes through next_interaction — scripted
     responses replay, and running past the script raises NeedInteraction."""
 
@@ -420,6 +421,7 @@ class Gui:
         self.infos, self.warnings, self.tooltips, self.asks = [], [], [], []
         self.clipboard = []      # every text copy_to_clipboard() put on the clipboard
         self.answers = []        # non-interactive askUser script
+        self.file_picks = []     # non-interactive getFile/getSaveFile script
         self.interactive = False
         self.interactions = []   # interactive-mode response script (the replay)
         self.cursor = 0
@@ -458,6 +460,8 @@ class Gui:
         return (resp.get("text", ""), bool(resp.get("ok")))
 
     def pick_file(self, payload):
+        if self.file_picks:
+            return self.file_picks.pop(0)
         if not self.interactive:
             return None
         resp = self.next_interaction(payload)
@@ -522,11 +526,15 @@ class QWidget:
     def setFixedHeight(self, v):
         pass
 
+    def setFont(self, font):
+        pass
+
     def setFrameShape(self, s):
         pass   # QScrollArea/QFrame are QFrame subclasses in real Qt
 
     def node(self):
         return {"t": "box", "id": self.wid, "style": self._style,
+                "visible": self._visible,
                 "children": [self._layout.node()] if self._layout else []}
 
 
@@ -1085,6 +1093,14 @@ def install():
         class WindowModality:
             WindowModal = 1
 
+    class _QFontDatabase:
+        class SystemFont:
+            FixedFont = 0
+
+        @staticmethod
+        def systemFont(kind):
+            return None
+
     class _Clipboard:
         @staticmethod
         def setText(text):
@@ -1168,7 +1184,7 @@ def install():
 
     for name, obj in (("Qt", _Qt), ("QApplication", _QApplication),
                       ("QTimer", _QTimer), ("QProgressDialog", _QProgressDialog),
-                      ("QLabel", QLabel),
+                      ("QFontDatabase", _QFontDatabase), ("QLabel", QLabel),
                       ("QPushButton", QPushButton), ("QAction", QAction),
                       ("QMenu", QMenu), ("QCheckBox", QCheckBox),
                       ("QDialog", QDialog), ("QDialogButtonBox", QDialogButtonBox),

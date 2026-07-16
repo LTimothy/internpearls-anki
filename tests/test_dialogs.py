@@ -196,6 +196,31 @@ def test_settings_saves_dim_images_toggle(anki):
     assert cfg["dim_images_night_mode"] is True
 
 
+def test_card_feedback_is_off_by_default(anki):
+    from internpearls.config import _cfg
+    assert _cfg()["collect_feedback"] is False
+
+
+def test_settings_saves_feedback_toggle(anki):
+    from internpearls import dialogs
+
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            feedback = find(p["tree"], t="check",
+                            label="Let me flag problems with new cards as they sync")
+            assert feedback is not None
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": feedback["id"], "value": True},
+                               {"id": save["id"], "click": True}]}
+        return {}
+
+    drive(anki, dialogs.open_settings, respond)
+    cfg = anki.mw._config
+    assert cfg["collect_card_feedback"] is True
+
+
 # --------------------------------------------------------- configure source
 def test_configure_source_github_form(anki):
     from internpearls import dialogs
@@ -220,6 +245,89 @@ def test_configure_source_github_form(anki):
 
     drive(anki, dialogs.configure_source, respond)
     assert anki.mw._config["github_decks_repo"] == "someone/decks"
+
+
+# --------------------------------------------------------------- feedback digest
+def test_copy_again_puts_the_digest_back_on_the_clipboard(anki, monkeypatch):
+    """A clipboard clobbered between copying and pasting should not cost the notes:
+    clicking Copy again has to put the exact digest text back.
+
+    Drives QDialog.exec()'s interaction hook directly instead of through drive():
+    drive() replays a flow from a fresh snapshot on every feed(), which reruns
+    offer_feedback_digest from the top and redoes its own initial clipboard copy.
+    That copy alone would make the clipboard's last entry match the digest again,
+    whether or not Copy again was actually clicked, so it can't tell the two apart.
+    Scripting next_interaction directly keeps the run to one pass, so the only way
+    the digest reappears on the clipboard after the clobber is the button itself.
+    """
+    from internpearls import review
+
+    entries = [{"deck": "Intern Pearls::Intern Custom::Pharm", "front": "Front one",
+               "guid": "g1", "note": "dose looks off"}]
+    rounds = []
+
+    def fake_next_interaction(payload):
+        rounds.append(payload)
+        tree = payload["tree"]
+        if len(rounds) == 1:
+            again = find(tree, t="button", label="Copy again")
+            close = find(tree, t="button", label="Close")
+            assert again and close, "expected a Copy again button beside Close"
+            anki.gui.clipboard.append("something else, clobbered")
+            return {"events": [{"id": again["id"], "click": True}]}
+        close = find(tree, t="button", label="Close")
+        assert close
+        return {"events": [{"id": close["id"], "click": True}]}
+
+    monkeypatch.setattr(anki.gui, "next_interaction", fake_next_interaction)
+    review.offer_feedback_digest(None, entries)
+
+    assert len(rounds) == 2, "Copy again must not close the dialog on its own"
+    digest = anki.gui.clipboard[0]
+    assert anki.gui.clipboard == [digest, "something else, clobbered", digest]
+
+
+def test_review_row_starts_collapsed_and_the_caret_expands_it(anki, monkeypatch):
+    """The headline interaction of the new-card review dialog: a card's answer
+    stays hidden until the reader asks for it. Confirms the row's body starts
+    collapsed, and that clicking the caret both reveals it and flips the glyph."""
+    from internpearls import review
+
+    detail = {
+        "guid": "g1",
+        "notetype": "Study Deck - Basic",
+        "fields": [
+            ("Front", "What nerve block covers the anterior thigh?"),
+            ("Back", "Femoral nerve block"),
+            ("Why", ""), ("Image", ""), ("Tag", ""), ("Dosing", ""), ("Notes", ""),
+        ],
+    }
+    decks = [("Intern Pearls::Intern Custom::Pharm", [detail])]
+    rounds = []
+    body_id = []
+
+    def fake_next_interaction(payload):
+        rounds.append(payload)
+        tree = payload["tree"]
+        if len(rounds) == 1:
+            caret = find(tree, t="button", label=review._CARET_CLOSED)
+            body = find(tree, t="box", visible=False)
+            assert caret is not None, "row must start with the closed-caret glyph"
+            assert body is not None, "row's body must start collapsed"
+            body_id.append(body["id"])
+            return {"events": [{"id": caret["id"], "click": True}]}
+        caret = find(tree, t="button", label=review._CARET_OPEN)
+        assert caret is not None, "clicking the caret must flip it to the open glyph"
+        assert find(tree, t="button", label=review._CARET_CLOSED) is None
+        body = find(tree, t="box", id=body_id[0])
+        assert body["visible"] is True, "clicking the caret must reveal the body"
+        done = find(tree, t="button", label="Done")
+        return {"events": [{"id": done["id"], "click": True}]}
+
+    monkeypatch.setattr(anki.gui, "next_interaction", fake_next_interaction)
+    review.review_new_cards(None, decks, {})
+
+    assert len(rounds) == 2, "expected one round to open the row, one to finish"
 
 
 # ------------------------------------------------------------------------ about
