@@ -129,3 +129,70 @@ def test_cloze_note_with_populated_image_field_names_it_when_expanded():
     answer = review._answer_html(detail)
     assert "lumbar-plexus.jpg" in answer
     assert "<img" not in answer
+
+
+# --------------------------------------------------------------- row composition
+def test_tagged_row_carries_its_tag_in_the_same_line_as_its_primary_text():
+    """Tag and primary text must be one label, not two widgets side by side: two
+    widgets start each row's text at a different x depending on whether that card
+    carries a tag, which reads as a ragged left edge down the list."""
+    row_html = review._row_html(_basic_note_detail())
+    assert "Pharm" in row_html
+    assert "What nerve block covers the anterior thigh?" in row_html
+
+
+def test_untagged_row_has_no_empty_tag_lead_in():
+    detail = _basic_note_detail()
+    detail["fields"] = [(n, "" if n == "Tag" else v) for n, v in detail["fields"]]
+    row_html = review._row_html(detail)
+    assert review._DIM not in row_html
+    assert "What nerve block covers the anterior thigh?" in row_html
+
+
+def test_cloze_row_carries_the_cloze_style_block_once():
+    """_primary_html no longer prepends the style itself, so a row that dropped it
+    would render its deletions in body text with no visible fill at all."""
+    row_html = review._row_html(_cloze_note_detail("The {{c1::lumbar}} plexus."))
+    assert row_html.count(review._CLOZE_STYLE) == 1
+    assert '<span class="cloze">lumbar</span>' in row_html
+
+
+# ------------------------------------------------------------- rendered structure
+def _walk(node, out=None):
+    out = out if out is not None else []
+    out.append(node)
+    for c in node.get("children", []) or []:
+        _walk(c, out)
+    return out
+
+
+def _row_nodes(detail, collect_feedback=False):
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, collect_feedback)
+    return _walk(row.node())
+
+
+def test_why_rule_resets_the_border_shorthand_before_setting_border_left():
+    """Qt silently ignores a lone border-left on a QLabel unless the border shorthand
+    is set first: the padding still applies, so the why reads as deliberately indented
+    and the green rule it's supposed to hang off never paints. Asserted on the
+    stylesheet because no mock, and no headless Qt, can be asked whether it painted.
+    """
+    styles = [n.get("style") or "" for n in _row_nodes(_basic_note_detail())]
+    why = next(s for s in styles if "border-left" in s)
+    assert why.index("border: none") < why.index("border-left")
+    assert review._WHY_RULE in why
+
+
+def test_no_card_row_widget_carries_a_border_of_its_own():
+    """The rule between cards belongs to a separator widget. Set on the row instead,
+    a selector-less stylesheet propagates into every child, so each row drew a second
+    inset rule under its own header on top of its own.
+    """
+    for node in _row_nodes(_basic_note_detail(), collect_feedback=True):
+        assert "border-bottom" not in (node.get("style") or "")
+
+
+def test_separator_is_an_hline_carrying_the_rule_colour():
+    node = review._separator().node()
+    assert node["t"] == "hline"
+    assert review._ROW_RULE in node["style"]
