@@ -40,19 +40,27 @@ def _ask(text, **kw):
     return askUser(text, **kw)
 
 
-def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=340):
-    """Like _ask, but for content whose length isn't bounded by anything short — a
+def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=340,
+                    extra_label=None, on_extra=None):
+    """Like _ask, but for content whose length isn't bounded by anything short: a
     bullet list of cards or decks that can grow into the dozens. A plain QMessageBox
-    (what askUser/_ask use) has no scroll area: long text just makes the box taller,
-    and once it's taller than the screen, its Yes/No buttons end up off-screen with no
-    way to reach them — an unusable, undismissable dialog. This scrolls the body in a
+    (what askUser/_ask use) has no scroll area, so long text just makes the box taller,
+    and once it's taller than the screen its Yes/No buttons end up off-screen with no
+    way to reach them, an unusable and undismissable dialog. This scrolls the body in a
     fixed-height viewport instead, with the buttons pinned outside it, so they're
     always reachable no matter how long the content is.
 
     yes_label/no_label default to action-neutral "Continue"/"Cancel" rather than
-    "Yes"/"No" — a caller with a specific action (e.g. "Archive & relocate") should
+    "Yes"/"No": a caller with a specific action (e.g. "Archive & relocate") should
     pass its own labels, since a generic Yes/No forces the reader back up to the
     question to know what they're agreeing to.
+
+    `extra_label` adds a third button that does NOT answer the question. It carries
+    ActionRole, so clicking it leaves this dialog open, runs `on_extra`, and returns
+    the reader to the same undecided confirmation, which is the point: going to look
+    at something in more detail shouldn't cost you the decision you were making. If
+    `on_extra` returns a string, it replaces the body text, so the confirmation can
+    reflect whatever happened while it was open; returning None leaves the body alone.
     """
     dlg = QDialog(mw)
     dlg.setWindowTitle(APP_NAME)
@@ -72,11 +80,34 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     bb = QDialogButtonBox()
     yes = bb.addButton(yes_label, QDialogButtonBox.ButtonRole.AcceptRole)
     bb.addButton(no_label, QDialogButtonBox.ButtonRole.RejectRole)
+    if extra_label:
+        extra = bb.addButton(extra_label, QDialogButtonBox.ButtonRole.ActionRole)
+
+        def _run_extra():
+            updated = on_extra(dlg) if on_extra else None
+            if updated is not None:
+                body.setText(updated)
+        extra.clicked.connect(_run_extra)
     yes.clicked.connect(dlg.accept)
     bb.rejected.connect(dlg.reject)
     lay.addWidget(bb)
 
     return bool(dlg.exec())
+
+
+def copy_to_clipboard(text):
+    """Put `text` on the system clipboard, returning True if it landed.
+
+    Best-effort on purpose: every caller shows the text itself as well, so a clipboard
+    that isn't there (a mocked or headless Qt, as in the Pyodide demo) costs the reader
+    a manual select-and-copy rather than costing them what they wrote.
+    """
+    try:
+        QApplication.clipboard().setText(text)
+        return True
+    except Exception:
+        print(traceback.format_exc())
+        return False
 
 
 def _prompt(text, **kw):
