@@ -79,3 +79,9 @@ at 1 minute regardless of what's set here, to keep a typo or a 0 from becoming a
 loop. GitHub's request volume at that floor is still trivial: one small `manifest.json`
 fetch a minute, well under even the unauthenticated 60-per-hour limit. Defaults to `15`.
 Editable in Intern Pearls → Settings.
+
+## collect_card_feedback
+
+When on, reviewing the new cards an update would add puts a box under each one for
+noting anything wrong with it, and closing the review offers a summary to send back.
+Off by default: the review is a read-only preview unless you ask for the boxes.
