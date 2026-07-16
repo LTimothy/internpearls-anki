@@ -11,9 +11,11 @@ import os
 from aqt import mw
 from aqt.utils import getFile, getSaveFile
 
-from .config import DECK_BACKUPS_KEEP, TARGET_FIELDS, _USER_FILES, _cfg
-from .logic import (apkg_models, bullets, changed_templates, fields_to_carry_over,
-                    model_shape, note_display_label, remap_cards, write_personalized)
+from .config import (DECK_BACKUPS_KEEP, INSTALLED, TARGET_FIELDS, _USER_FILES, _cfg,
+                     _load_json, _save_json)
+from .logic import (apkg_deck_names, apkg_models, bullets, changed_templates,
+                    fields_to_carry_over, manifest_decks_for, model_shape,
+                    note_display_label, remap_cards, write_personalized)
 from .ui import _ask, _info, _safe, _warn
 
 
@@ -438,6 +440,26 @@ def _apply_deck(src, aliases, her):
     return in_place, as_new
 
 
+def invalidate_installed(names=None):
+    """Drop the add-on's record of which deck versions are applied.
+
+    installed.json is the only record of what was last applied, and it lives in
+    user_files/, outside the collection, so a restore rolls the cards back while
+    leaving it claiming the newest version. Its usual safety net only checks whether
+    a deck still has cards, which a rollback to older content passes, so the restore
+    itself is the only reliable signal. `names` limits the drop to those decks; None
+    clears everything. Re-imports match by GUID, so the cost of re-offering a deck
+    that did not actually change is bandwidth, never history.
+    """
+    if names is None:
+        _save_json(INSTALLED, {})
+        return
+    installed = _load_json(INSTALLED, {})
+    for name in names:
+        installed.pop(name, None)
+    _save_json(INSTALLED, installed)
+
+
 # --------------------------------------------------------------- Advanced actions
 @_safe
 def restore_from_backup():
@@ -453,6 +475,9 @@ def restore_from_backup():
         "you to confirm the specific backup before doing anything. Continue?"
     ):
         return
+    # Before onOpenBackup, not after: it reloads the profile, so code after it does
+    # not reliably run.
+    invalidate_installed()
     mw.onOpenBackup()
 
 
@@ -509,6 +534,20 @@ def import_deck():
     except Exception as e:
         _warn(f"Import failed: {e}")
         return
+    # The imported file holds older cards than the source does, so whatever it restored
+    # has to be re-offered. Scope that to the decks actually in the file, falling back to
+    # all of them if it cannot be read: a redundant re-offer is recoverable, a missed one
+    # silently leaves stale cards looking current. installed.json's own keys are the
+    # manifest names last applied, so no fetch is needed here. An empty match (names or
+    # None) also clears everything rather than nothing: if the decks were renamed before
+    # this backup was taken, the file's deck names won't map to anything current, yet the
+    # import did roll back a tracked deck, so clearing all is correct here, not merely a
+    # conservative fallback.
+    try:
+        names = manifest_decks_for(apkg_deck_names(src), list(_load_json(INSTALLED, {})))
+        invalidate_installed(names or None)
+    except Exception:
+        invalidate_installed()
     mw.reset()
     _info(f"Imported <code>{os.path.basename(src)}</code>.")
 

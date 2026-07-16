@@ -92,13 +92,13 @@ Both are schema-neutral (no forced full AnkiWeb sync) and trivially reversible b
 
 **Backup intern pearls deck** is the manual, on-demand version of the automatic pre-sync backup: a fresh `.apkg` of just the configured deck (`export_deck`), with scheduling included, saved internally and pruned to the most recent 10. Use it right before poking at cards yourself outside the add-on.
 
-**Import intern pearls deck** brings a previous deck backup or export back in. The file picker defaults to the internal backups folder, but you can browse to any matching `.apkg`. Since the file's own GUIDs already came from a real collection, this is a plain import with scheduling restored, matching cards update in place and anything missing is added as new; no personalization step is needed the way Sync and Import single deck need it for a spec-authored deck from someone else's collection.
+**Import intern pearls deck** brings a previous deck backup or export back in. The file picker defaults to the internal backups folder, but you can browse to any matching `.apkg`. Since the file's own GUIDs already came from a real collection, this is a plain import with scheduling restored, matching cards update in place and anything missing is added as new; no personalization step is needed the way Sync and Import single deck need it for a spec-authored deck from someone else's collection. Whatever deck this rolls back is re-offered on your next Update my decks (see "How history is preserved").
 
 **Export intern pearls deck** writes a standalone `.apkg` of just the configured deck, with your review history, deck options, and media all included, the same result as Anki's own File > Export > Anki Deck Package with every checkbox checked. This is the same export the automatic backup and Backup intern pearls deck use, just prompting you for where to save it, meant to be kept or shared on its own rather than used purely to undo a sync.
 
 **Backup full collection** takes a full, whole-collection backup on demand, the same kind that used to run automatically before every sync. Use this for broader protection than the deck-scoped default covers. Retention for these is whatever Anki's own preferences specify, not this add-on's 10-backup limit, which only applies to the deck-scoped backups above.
 
-**Restore full collection** opens Anki's own backup picker (the same one under File > Switch Profile > Open Backup) pointed at your backups folder, so you can revert a full collection backup if something looks wrong. This replaces your entire collection, every deck, not just the ones this add-on manages, since that's what a real collection backup contains. Anki asks you to confirm the specific backup file before doing anything.
+**Restore full collection** opens Anki's own backup picker (the same one under File > Switch Profile > Open Backup) pointed at your backups folder, so you can revert a full collection backup if something looks wrong. This replaces your entire collection, every deck, not just the ones this add-on manages, since that's what a real collection backup contains. Anki asks you to confirm the specific backup file before doing anything. Every deck this add-on manages is re-offered on your next Update my decks (see "How history is preserved").
 
 **Check for add-on updates** compares your installed version against the public repo's `version.json`. If a newer version exists, it offers to download and install the `.ankiaddon`. You still need to restart Anki afterward. This is the on-demand version of what the Settings toggles below do on their own, which is why most people never need it: it's here as a fallback, not the primary way to stay current.
 
@@ -110,6 +110,7 @@ Sync automation and add-on update behavior, kept separate from Manage decks sinc
 - **Check every N minutes**, default 15, minimum 1. The check runs off the main thread when Anki supports it (essentially all current versions do), so it doesn't freeze Anki even at a short interval; if it can't reach the source, it fails within a few seconds and just tries again next time.
 - **Notify me when a new add-on version is out**, on by default. A tooltip once per new release, no installation.
 - **Install add-on updates automatically**, off by default. Downloads and installs a newer version as part of the same once-per-launch check, no confirmation. A restart is still needed to load it, same as installing by hand.
+- **Let me flag problems with new cards as they sync**, off by default. Update my decks lets you preview each card a sync would add before it's imported. With this off, that preview is a quick, read-only list: no note boxes, nothing to send. Turn it on and a note box appears under each card, and closing the preview offers a copyable summary of whatever you flagged, whether or not you go ahead with the update.
 
 ### About
 
@@ -144,6 +145,8 @@ With the automatic backup in place, any of this is fully reversible even if you 
 The automatic deck-scoped backups also live in that `user_files/` subfolder inside the add-on's own directory, so they survive add-on updates but not an add-on *uninstall* — export anything you want to keep long-term (Advanced > Export intern pearls deck) before removing the add-on.
 
 The add-on's own record of which deck versions you've already synced lives in a `user_files/` subfolder, which Anki preserves across add-on updates (everything else in the add-on's folder gets replaced fresh). Earlier versions kept this file elsewhere, so updating the add-on itself would reset it and make the next Sync treat every deck as new; that's fixed as of v0.7.0.
+
+As of v0.32.0, restoring a backup clears the relevant part of that record too, so a rollback is re-offered on your next check instead of the add-on reporting you're up to date over stale cards. Restore full collection clears it entirely, since every deck could have rolled back. Import intern pearls deck only clears the decks actually in the file you're importing (falling back to clearing all of them if the file can't be read), so restoring one deck's backup doesn't force a recheck of every other deck too. Either way, the next Update my decks re-offers whatever came back, and the re-import still matches by GUID, so review history carries over as always.
 
 ## Using this for your own decks
 

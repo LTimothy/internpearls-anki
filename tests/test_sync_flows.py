@@ -843,14 +843,65 @@ def test_update_decks_confirmation_names_the_new_cards_not_just_a_count(anki, tm
     assert "Front one" not in seen["text"], "a card she already has isn't new"
 
 
-def test_update_decks_review_shows_full_cards_and_flags_reach_the_clipboard(anki, tmp_path):
-    """The whole point of the review dialog: she sees the answer and the reasoning, not
-    just the front, because "this card is wrong" is a judgment you can't make from a
-    prompt alone. What she writes has to come back out as a digest naming the card."""
+def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
+    """Default: the review previews the incoming cards, with a cloze note's deletions
+    filled in rather than blanked, and collects nothing."""
+    from internpearls import sync
+    cloze_model = make_model(name="Study Deck - Cloze",
+                             fields=["Text", "Why", "Image", "Dosing", "Notes"])
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g4", ["The {{c1::lumbar}} plexus is compressed.",
+                              "why text", "", "500 mg", ""], TAGS)], cloze_model)})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        title, tree = p.get("title") or "", p["tree"]
+        if "new cards" in title:
+            seen["review"] = _labels(tree)
+            seen["boxes"] = [n for n in _walk(tree) if n.get("t") == "textarea"]
+            done = _find(tree, t="button", label="Done")
+            return {"events": [{"id": done["id"], "click": True}]}
+        if "card feedback" in title:
+            seen["digest_offered"] = True
+            return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
+                                "click": True}]}
+        review = next((n for n in _walk(tree) if n.get("t") == "button"
+                       and "Review" in (n.get("label") or "")), None)
+        if review and "review" not in seen:
+            return {"events": [{"id": review["id"], "click": True}]}
+        seen["after"] = _labels(tree)
+        return {"events": [{"id": _find(tree, t="button", label="Update")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    # The deletion is filled in, not blanked, and the raw cloze markup never leaks,
+    # in the deck's own cloze color so review looks like study.
+    assert "lumbar" in seen["review"]
+    assert "{{c1::" not in seen["review"]
+    assert "#2563eb" in seen["review"]
+    # No feedback box anywhere, and no digest offered on close.
+    assert not seen["boxes"], "no feedback box should render when the toggle is off"
+    assert "digest_offered" not in seen, "nothing was flagged, so no digest to offer"
+    assert "flagged" not in seen.get("after", "")
+    assert not anki.gui.clipboard, "nothing should reach the clipboard"
+    # It's still just a preview: the card still imports once Update is chosen.
+    assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
+
+
+def test_review_collects_feedback_when_the_toggle_is_on(anki, tmp_path):
+    """Existing behavior, now opt-in: boxes appear and the digest is offered on close.
+    She sees the answer and the reasoning, not just the front, because "this card is
+    wrong" is a judgment you can't make from a prompt alone."""
     from internpearls import sync
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g2", _fields("Front two", "the answer"), TAGS)], None)})
     _configure(anki, folder)
+    anki.mw._config["collect_card_feedback"] = True
     anki.gui.interactive = True
     seen = {}
 
@@ -877,9 +928,12 @@ def test_update_decks_review_shows_full_cards_and_flags_reach_the_clipboard(anki
 
     drive(anki, sync.update_decks, respond)
 
-    # The card is shown in full, with its fields labeled from the .apkg's own note type.
+    # Her card's primary line, tag, answer, and why are all there, but the old field
+    # captions are gone: dropping that chrome is exactly what this rework did.
+    assert "Front two" in seen["review"]
+    assert "Pharm" in seen["review"]
     assert "the answer" in seen["review"] and "why" in seen["review"]
-    assert "Back" in seen["review"], "fields should be labeled, not bare values"
+    assert "Back" not in seen["review"], "field names shouldn't be captioned anymore"
     # Coming back from the review, the confirmation says her flag registered.
     assert "1 card(s) flagged" in seen.get("after", "")
     # And the digest names the deck, the card, its id, and what she said.
@@ -898,6 +952,7 @@ def test_update_decks_declined_still_returns_the_feedback_she_wrote(anki, tmp_pa
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)})
     _configure(anki, folder)
+    anki.mw._config["collect_card_feedback"] = True
     anki.gui.interactive = True
     seen = {}
 
@@ -1229,3 +1284,112 @@ def test_clean_up_duplicates_reports_nothing_when_no_duplicates_present(anki, tm
     sync.clean_up_duplicates()
 
     assert any("No duplicate" in i for i in anki.gui.infos)
+
+
+def test_restore_from_backup_clears_installed_so_the_next_sync_re_offers(anki, tmp_path):
+    """A collection restore rolls content back but installed.json lives outside the
+    collection, so nothing else can tell the add-on its versions are now stale."""
+    from internpearls import collection
+    from internpearls.config import INSTALLED, _load_json, _save_json
+
+    _save_json(INSTALLED, {DECK: "v1"})
+    anki.gui.answers.append(True)          # "Continue?" on the restore confirmation
+
+    collection.restore_from_backup()
+
+    assert _load_json(INSTALLED, {}) == {}
+
+
+def test_sync_re_offers_a_deck_whose_cards_were_rolled_back_to_older_content(
+        anki, tmp_path):
+    """The reported bug: a restore that rolls a deck back to older content leaves its
+    cards present, so the presence check passes and installed.json still claims the
+    newest version. Only invalidating on restore can catch this."""
+    from internpearls import collection, sync
+
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front two"), TAGS)], None)})
+    _configure(anki, folder)
+    sync.sync_decks()
+    assert anki.col.note_by_guid("g1")["Front"] == "Front two"
+
+    # A restore rolls the card back to older content. It is still present and still
+    # tagged, so the presence check is satisfied and nothing else can notice.
+    anki.col.note_by_guid("g1")["Front"] = "Front one"
+    anki.gui.infos.clear()
+    anki.gui.answers.append(True)   # "Continue?" on the restore confirmation
+    collection.restore_from_backup()
+
+    sync.sync_decks()
+
+    assert not any("up to date" in i for i in anki.gui.infos)
+    assert anki.col.note_by_guid("g1")["Front"] == "Front two"
+
+
+def test_import_deck_invalidates_only_the_decks_in_the_imported_file(anki, tmp_path):
+    from internpearls import collection
+    from internpearls.config import INSTALLED, _load_json, _save_json
+    from tests.test_logic import _legacy_apkg
+
+    src = _legacy_apkg(tmp_path / "one.apkg", [f"{DECK}::1. Basics"])
+    _save_json(INSTALLED, {DECK: "v1", "Intern Pearls::Intern Custom::Other": "v9"})
+    anki.gui.file_picks.append(str(src))
+    anki.gui.answers.append(True)          # "Import ...?"
+
+    collection.import_deck()
+
+    assert not anki.gui.warnings   # the import itself succeeded
+    # Only the imported deck is re-offered; the untouched one stays current.
+    assert _load_json(INSTALLED, {}) == {"Intern Pearls::Intern Custom::Other": "v9"}
+
+
+def test_import_deck_falls_back_to_clearing_everything_when_deck_names_unreadable(
+        anki, tmp_path):
+    """The file itself imports fine (its notes table reads clean) but its deck
+    names can't be read (no col table). A read failure here must never mean "no
+    invalidation" - that's the exact bug this release exists to fix."""
+    from internpearls import collection
+    from internpearls.config import INSTALLED, _load_json, _save_json
+    from tests.test_logic import _legacy_apkg
+
+    src = _legacy_apkg(tmp_path / "unreadable.apkg", [DECK], with_col=False)
+    _save_json(INSTALLED, {DECK: "v1", "Intern Pearls::Intern Custom::Other": "v9"})
+    anki.gui.file_picks.append(str(src))
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    # Proves this took the "imported fine, deck names unreadable" fallback path,
+    # not the earlier "import itself failed" early return, which also clears
+    # nothing but for an unrelated reason.
+    assert not anki.gui.warnings
+    assert _load_json(INSTALLED, {}) == {}
+
+
+def test_invalidate_installed_drops_only_the_named_decks(anki):
+    from internpearls.collection import invalidate_installed
+    from internpearls.config import INSTALLED, _load_json, _save_json
+
+    _save_json(INSTALLED, {"A": "v1", "B": "v2", "C": "v3"})
+    invalidate_installed(["A", "C"])
+    assert _load_json(INSTALLED, {}) == {"B": "v2"}
+
+
+def test_invalidate_installed_with_no_names_clears_everything(anki):
+    from internpearls.collection import invalidate_installed
+    from internpearls.config import INSTALLED, _load_json, _save_json
+
+    _save_json(INSTALLED, {"A": "v1", "B": "v2"})
+    invalidate_installed()
+    assert _load_json(INSTALLED, {}) == {}
+
+
+def test_invalidate_installed_ignores_a_deck_it_never_had(anki):
+    # The caller maps deck names it read from a file; one that was never synced is
+    # simply not our business, not an error.
+    from internpearls.collection import invalidate_installed
+    from internpearls.config import INSTALLED, _load_json, _save_json
+
+    _save_json(INSTALLED, {"A": "v1"})
+    invalidate_installed(["Never::Synced"])
+    assert _load_json(INSTALLED, {}) == {"A": "v1"}

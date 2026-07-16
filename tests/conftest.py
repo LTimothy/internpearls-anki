@@ -40,13 +40,13 @@ def anki(tmp_path, monkeypatch):
     _mock.mw.reset_count = 0
     _mock.gui.interactive = False
     for lst in (_mock.gui.infos, _mock.gui.warnings, _mock.gui.tooltips,
-                _mock.gui.asks, _mock.gui.answers, _mock.gui.interactions,
-                _mock.gui.payloads):
+                _mock.gui.asks, _mock.gui.answers, _mock.gui.file_picks,
+                _mock.gui.interactions, _mock.gui.payloads, _mock.gui.clipboard):
         lst.clear()
     mock_anki.reset_run()
 
     installed = str(tmp_path / "installed.json")
-    for mod in (config, sync, background):
+    for mod in (config, sync, background, collection):
         monkeypatch.setattr(mod, "INSTALLED", installed)
     # Each of these modules does `from .config import STATE` (a direct name import), so
     # patching config.STATE alone doesn't reach them — every module holding its own
