@@ -196,3 +196,17 @@ def test_separator_is_an_hline_carrying_the_rule_colour():
     node = review._separator().node()
     assert node["t"] == "hline"
     assert review._ROW_RULE in node["style"]
+
+
+def test_no_widget_sets_a_background_without_setting_a_foreground():
+    """Text colour comes from the platform palette when a style doesn't set it, and
+    the palette flips under Night Mode while a hardcoded background does not. So a
+    background-only style renders white-on-light in dark mode, which is what the
+    dosing block did. A colour-only style is safe; this is about backgrounds.
+    """
+    detail = dict(_basic_note_detail())
+    detail["fields"] = [(n, "0.5 mg IV" if n == "Dosing" else v)
+                        for n, v in detail["fields"]]
+    styled = [n.get("style") or "" for n in _row_nodes(detail, collect_feedback=True)]
+    offenders = [s for s in styled if "background" in s and "color:" not in s]
+    assert not offenders, f"background with no foreground: {offenders}"
