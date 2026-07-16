@@ -55,6 +55,10 @@ the menu and startup wiring. See "Code layout" in the README.
   the existing style even where you'd do it differently.
 - Add or update a test in `tests/test_logic.py` for any `logic.py` change.
 - Run `pytest tests/ -v` and `./build.sh` before opening the PR.
+- Changed a stylesheet, border, spacing, or color? Render it and look:
+  `python3 tools/render_dialog.py --list`. The test suite uses mock Qt and cannot
+  tell you whether Qt painted anything. See "Seeing a dialog actually render" and
+  "Colors" in `README.md`.
 - Don't bump the version, edit `CHANGELOG.md`, or rebuild
   `internpearls.ankiaddon` in your PR — releases (semver bump in
   `internpearls/config.py` + `version.json`, tag, changelog entry, repackage) are done
