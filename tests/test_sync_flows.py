@@ -893,6 +893,41 @@ def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
 
 
+def test_review_rules_separate_cards_without_trailing_the_last_one(anki, tmp_path):
+    """One hairline between each pair of cards: three cards means two rules, not
+    three, and never one per widget. The rule used to be a border on the row itself,
+    where a selector-less stylesheet propagated into the row's children and drew a
+    second, inset copy under every card."""
+    from internpearls import sync
+    cloze_model = make_model(name="Study Deck - Cloze",
+                             fields=["Text", "Why", "Image", "Dosing", "Notes"])
+    notes = [(f"g{i}", [f"Card {i} has a {{{{c1::deletion}}}}.", "", "", "", ""], TAGS)
+             for i in range(3)]
+    folder = _write_source(tmp_path, {DECK: ("v1", notes, cloze_model)})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        title, tree = p.get("title") or "", p["tree"]
+        if "new cards" in title:
+            seen["hlines"] = [n for n in _walk(tree) if n.get("t") == "hline"]
+            return {"events": [{"id": _find(tree, t="button", label="Done")["id"],
+                                "click": True}]}
+        review = next((n for n in _walk(tree) if n.get("t") == "button"
+                       and "Review" in (n.get("label") or "")), None)
+        if review and "hlines" not in seen:
+            return {"events": [{"id": review["id"], "click": True}]}
+        return {"events": [{"id": _find(tree, t="button", label="Update")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert len(seen["hlines"]) == 2, "three cards separate with two rules"
+
+
 def test_review_collects_feedback_when_the_toggle_is_on(anki, tmp_path):
     """Existing behavior, now opt-in: boxes appear and the digest is offered on close.
     She sees the answer and the reasoning, not just the front, because "this card is

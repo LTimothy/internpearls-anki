@@ -526,6 +526,12 @@ class QWidget:
     def setFixedHeight(self, v):
         pass
 
+    def setFixedWidth(self, v):
+        pass
+
+    def setCursor(self, c):
+        pass
+
     def setFont(self, font):
         pass
 
@@ -709,13 +715,26 @@ class QHBoxLayout(_Layout):
 
 class QFrame(QWidget):
     class Shape:
-        NoFrame, StyledPanel = 0, 6   # Qt's own values
+        NoFrame, HLine, StyledPanel = 0, 4, 6   # Qt's own values
+
+    class Shadow:
+        Plain = 0x10                            # Qt's own value
+
+    def __init__(self, *a, **k):
+        super().__init__()
+        self._shape = QFrame.Shape.NoFrame
 
     def setFrameShape(self, s):
+        self._shape = s
+
+    def setFrameShadow(self, s):
         pass
 
     def node(self):
-        return {"t": "frame", "id": self.wid, "style": self._style,
+        # A shaped frame carries no content: reported as its own kind so a test can
+        # tell a separator apart from a container box.
+        kind = "hline" if self._shape == QFrame.Shape.HLine else "frame"
+        return {"t": kind, "id": self.wid, "style": self._style,
                 "children": [self._layout.node()] if self._layout else []}
 
 
@@ -1086,6 +1105,10 @@ def install():
     class _Qt:
         class CursorShape:
             WaitCursor = 0
+            PointingHandCursor = 13   # Qt's own value
+
+        class AlignmentFlag:
+            AlignTop = 0x20           # Qt's own value
 
         class TextFormat:
             RichText = 1

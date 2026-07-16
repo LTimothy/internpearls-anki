@@ -111,6 +111,8 @@
   .hstack { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .scrollbox { max-height: 260px; overflow: auto; }
   .qframe { border: 1px solid var(--line); border-radius: 6px; padding: 8px 11px; }
+  /* An HLine frame: the Qt stylesheet sets its color, so paint from currentColor. */
+  .qhline { height: 1px; background: currentColor; }
   .qbuttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
   .dinput { width: 100%; font: inherit; font-size: 13.5px; padding: 7px 9px;
             border: 1px solid var(--line); border-radius: 6px;
@@ -351,6 +353,12 @@
         el.className = "qframe";
         for (const c of node.children) el.appendChild(renderTree(c, ctx));
         return el;
+      case "hline":
+        // Falls through to the style pass below rather than returning: the rule's
+        // color is carried in the node's own Qt stylesheet.
+        el = document.createElement("div");
+        el.className = "qhline";
+        break;
       case "row": case "col": case "box": {
         el = document.createElement("div");
         el.className = node.t === "row" ? "hstack" : "vstack";
