@@ -425,7 +425,7 @@ def archive_notes(nids, retired_deck, tag):
 
 
 def _apply_deck(src, aliases, her):
-    remap, in_place, as_new = remap_cards(src, her, aliases)
+    remap, in_place, as_new, _ = remap_cards(src, her, aliases)
     out = src + ".sync.apkg"
     write_personalized(src, remap, out)
     try:

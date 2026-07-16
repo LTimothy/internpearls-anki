@@ -9,6 +9,7 @@ review history exists exactly once. _reconcile_pending is the equivalent single
 source of truth for what "Reconcile my decks" would find pending, shared by
 reconcile_decks() and update_decks() so the two can never disagree.
 """
+import html
 import json
 import os
 import tempfile
@@ -26,11 +27,13 @@ from .collection import (_apply_deck, _apply_template_changes, _ensure_notetypes
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json,
                      _save_json)
-from .logic import (bullets, decks_to_update, duplicate_dialog_html,
-                    find_deck_moves_needed, find_duplicate_groups,
-                    find_retired_in_collection, manifest_needs_newer_addon,
-                    remap_cards, write_personalized)
+from .logic import (apkg_note_details, bullets, decks_to_update,
+                    duplicate_dialog_html, find_deck_moves_needed,
+                    find_duplicate_groups, find_retired_in_collection,
+                    manifest_needs_newer_addon, note_display_label, remap_cards,
+                    write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
+from .review import offer_feedback_digest, review_new_cards
 from .ui import _ask, _ask_scrollable, _info, _safe, _warn, cancellable_progress, wait_cursor
 
 
@@ -531,15 +534,18 @@ def _preview_content_changes(fetch, todo, her, aliases):
     network fetch per deck and a multi-deck update on a slow link otherwise looks
     like a hang, with no way out, before the confirmation even appears.
 
-    Returns ({deck_name: (kept, new) | None}, downloaded, cancelled). `downloaded`
-    is {deck_name: local_path_or_Exception}, in the same shape background.py's
-    auto-sync poll already uses, so the caller can hand it straight to _run_sync
-    afterward instead of downloading every deck a second time. A per-deck fetch
-    failure here is recorded, not raised, so one bad download only blanks that
-    deck's preview ("couldn't preview") rather than blocking the whole
-    confirmation; the same failure surfaces for real if Sync then tries to apply it.
-    `cancelled` means the learner clicked Cancel partway through: nothing has touched
-    the collection at this point, so the caller can just stop outright.
+    Returns ({deck_name: (kept, new, new_notes) | None}, downloaded, cancelled).
+    `new_notes` is remap_cards' own list of the notes that will import as new, carried
+    through so the confirmation can name them and the review dialog can show them in
+    full: it costs nothing extra here, since remap_cards already reads every note to
+    count them. `downloaded` is {deck_name: local_path_or_Exception}, in the same shape
+    background.py's auto-sync poll already uses, so the caller can hand it straight to
+    _run_sync afterward instead of downloading every deck a second time. A per-deck
+    fetch failure here is recorded, not raised, so one bad download only blanks that
+    deck's preview ("couldn't preview") rather than blocking the whole confirmation;
+    the same failure surfaces for real if Sync then tries to apply it. `cancelled` means
+    the learner clicked Cancel partway through: nothing has touched the collection at
+    this point, so the caller can just stop outright.
 
     Downloads go through _cached_fetch, so re-opening Update my decks without applying
     doesn't re-fetch a deck whose version hasn't changed.
@@ -553,8 +559,8 @@ def _preview_content_changes(fetch, todo, her, aliases):
             try:
                 src = _cached_fetch(fetch, d)
                 downloaded[d["name"]] = src
-                _, kept, new = remap_cards(src, her, aliases)
-                preview[d["name"]] = (kept, new)
+                _, kept, new, new_notes = remap_cards(src, her, aliases)
+                preview[d["name"]] = (kept, new, new_notes)
             except Exception as e:
                 downloaded[d["name"]] = e
                 preview[d["name"]] = None
@@ -599,6 +605,19 @@ def update_decks():
             _info("Update cancelled — nothing was changed.")
             return
 
+    # Every card this update would add, in deck order then .apkg order. `new_index` maps
+    # each one's GUID back to where it came from, because the review dialog only knows
+    # GUIDs: without it a flag she writes couldn't say which deck or card it was about.
+    new_cards = []
+    for d in todo:
+        pc = preview.get(d["name"])
+        if not pc:
+            continue          # this deck's download failed; it already reads "couldn't preview"
+        for _, fields, guid in pc[2]:
+            new_cards.append((d["name"], note_display_label(fields), guid))
+    new_index = {guid: (deck, label) for deck, label, guid in new_cards}
+    flags = {}
+
     def _line(d):
         short = d["name"].split("::")[-1]
         pc = preview.get(d["name"])
@@ -608,6 +627,18 @@ def update_decks():
     if todo:
         sections.append(
             f"<b>{len(todo)}</b> deck(s) have updates:" + bullets([_line(d) for d in todo], cap=15))
+    if new_cards:
+        # New cards get named here, not just counted, and the count alone is what this
+        # section exists to replace: retired and relocated cards were already listed by
+        # front, so a card being ADDED was the one kind that used to arrive as a bare
+        # number. note_display_label is plain text (tags stripped, entities decoded), so
+        # it has to be escaped on the way back into this HTML: an unescaped front like
+        # "SpO2 <94%" would otherwise be parsed as a tag and swallow the rest of the line.
+        new_lines = [f"{html.escape(label)} <span style='color:gray;'>"
+                     f"({deck.split('::')[-1]})</span>" for deck, label, _ in new_cards]
+        sections.append(
+            f"<b>{len(new_cards)}</b> card(s) will be added that you don't have yet."
+            + bullets(new_lines, cap=15))
     if fresh:
         lines = [f"{r['identity']} <span style='color:gray;'>"
                  f"({r['deck'].split('::')[-1]})</span>" for r in fresh]
@@ -637,12 +668,63 @@ def update_decks():
         "Retired deck, nothing here is ever deleted. A backup is taken "
         "automatically first.")
 
-    if not _ask_scrollable(catch_up_note + "<br><br>".join(sections) + safety_note,
-                           yes_label="Update"):
+    def _body():
+        flagged = (f"<br><br><b>{len(flags)} card(s) flagged.</b> You'll get a summary "
+                   "to send back when this finishes." if flags else "")
+        return catch_up_note + "<br><br>".join(sections) + flagged + safety_note
+
+    def _open_review(parent):
+        """Read the new cards in full and hand them to the review dialog.
+
+        This is the only place that pays for apkg_note_details, and only when she asks
+        for it: the .apkg is already downloaded and cached by the preview above, so the
+        cost is reading a local file, not another fetch. A deck that can't be read is
+        reported and skipped rather than blocking the rest, matching how a failed
+        preview download already degrades: the update itself doesn't depend on any of
+        this, so a broken preview must never be able to stop it.
+        """
+        decks, failed = [], []
+        for d in todo:
+            pc = preview.get(d["name"])
+            src = downloaded.get(d["name"])
+            if not pc or not pc[2] or isinstance(src, Exception) or not src:
+                continue
+            try:
+                decks.append((d["name"], apkg_note_details(src, [r for r, _, _ in pc[2]])))
+            except Exception as e:
+                failed.append(f"{d['name'].split('::')[-1]} ({e})")
+        if failed:
+            _warn("Couldn't read the new cards from:" + bullets(failed) +
+                  "<br>The update itself is unaffected; those decks just can't be "
+                  "shown here.")
+        if not decks:
+            return None
+        review_new_cards(parent, decks, flags)
+        return _body()
+
+    def _offer_feedback():
+        """Her notes are worth sending whatever she decides about the update itself.
+
+        Called on the Cancel path too, deliberately: if she read the new cards, flagged
+        three of them and backed out, those flags are the most interesting thing that
+        happened, and dropping them because she said no would throw away the only part
+        of the run that couldn't be reproduced by clicking Update again later.
+        """
+        if flags:
+            offer_feedback_digest(None, [
+                {"deck": new_index[g][0], "front": new_index[g][1], "guid": g, "note": n}
+                for g, n in flags.items() if g in new_index])
+
+    if not _ask_scrollable(
+            _body(), yes_label="Update",
+            extra_label=(f"Review {len(new_cards)} new card(s)" if new_cards else None),
+            on_extra=_open_review):
+        _offer_feedback()
         return
 
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
     if not proceed:
+        _offer_feedback()
         return
 
     results, restored, tpl_changes = [], 0, {}
@@ -685,6 +767,7 @@ def update_decks():
                   "that assumes every update above already landed. Nothing else was "
                   "touched; run <b>Update my decks</b> again anytime to pick up where "
                   "this left off." + fields_line + backup_line)
+            _offer_feedback()
             return
         _offer_template_changes(tpl_changes)
 
@@ -719,6 +802,7 @@ def update_decks():
         "failed and you chose to continue).")
     _info(f"<b>Update complete</b> (source: {source})" + bullets(result_lines) +
           fields_line + backup_line)
+    _offer_feedback()
 
 
 @_safe
@@ -749,7 +833,7 @@ def import_single():
             return
     _ensure_notetypes()
     her = _her_front_to_guid(cfg["scope_tag"])
-    remap, in_place, as_new = remap_cards(src, her, aliases)
+    remap, in_place, as_new, _ = remap_cards(src, her, aliases)
     if not _ask(f"{in_place} card(s) will keep their history, {as_new} will be added "
                 "as new. A backup is taken automatically first. Import now?"):
         return

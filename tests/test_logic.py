@@ -15,18 +15,24 @@ import logic  # noqa: E402
 
 
 def _make_mock_apkg(path, notes, models=None):
-    """notes: list of (id, guid, front) tuples. Writes a zip with collection.anki2.
-    `models`, if given, is the col.models JSON value (a {model_id: model_dict} map,
-    the legacy format genanki writes) so apkg_models has something to read."""
+    """notes: list of (id, guid, front) tuples, where `front` may instead be a list of
+    field values to control every field, and an optional 4th element pins the note's
+    note type id (default 0). Writes a zip with collection.anki2. `models`, if given,
+    is the col.models JSON value (a {model_id: model_dict} map, the legacy format
+    genanki writes) so apkg_models/apkg_note_details have something to read."""
     db_path = path + ".tmp.db"
     if os.path.exists(db_path):
         os.remove(db_path)
     con = sqlite3.connect(db_path)
-    con.execute("create table notes (id integer primary key, guid text, flds text)")
-    for nid, guid, front in notes:
-        flds = front + logic.FS + "back text"
-        con.execute("insert into notes (id, guid, flds) values (?, ?, ?)",
-                    (nid, guid, flds))
+    con.execute("create table notes (id integer primary key, guid text, mid integer, "
+                "flds text)")
+    for note in notes:
+        nid, guid, front = note[0], note[1], note[2]
+        mid = note[3] if len(note) > 3 else 0
+        flds = (logic.FS.join(front) if isinstance(front, (list, tuple))
+                else front + logic.FS + "back text")
+        con.execute("insert into notes (id, guid, mid, flds) values (?, ?, ?, ?)",
+                    (nid, guid, mid, flds))
     if models is not None:
         import json
         con.execute("create table col (models text)")
@@ -326,11 +332,12 @@ def test_parse_fields_custom_default():
 
 
 # --------------------------------------------------------------------- apkg_notes
-def test_apkg_notes_reads_id_front_guid(tmp_path):
+def test_apkg_notes_reads_id_fields_guid(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "guid-a", "Front A"), (2, "guid-b", "Front B")])
     rows = logic.apkg_notes(apkg)
-    assert sorted(rows) == [(1, "Front A", "guid-a"), (2, "Front B", "guid-b")]
+    assert rows == [(1, ["Front A", "back text"], "guid-a"),
+                    (2, ["Front B", "back text"], "guid-b")]
 
 
 def test_apkg_notes_rejects_non_apkg_zip(tmp_path):
@@ -358,20 +365,23 @@ def test_remap_cards_end_to_end(tmp_path):
     }
     aliases = {"New wording": "Old wording"}     # records that rename
 
-    remap, in_place, as_new = logic.remap_cards(apkg, her, aliases)
+    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her, aliases)
 
     assert in_place == 2          # "Matches directly" and "New wording" (via alias)
     assert as_new == 1            # "Never seen before" has no match anywhere
     # GUIDs get rewritten to match her existing cards so Anki's importer updates in
     # place instead of creating duplicates:
     assert remap == {1: "her-guid-direct", 2: "her-guid-aliased"}
+    # and the one genuinely new card comes back in full, for the review dialog:
+    assert new_notes == [(3, ["Never seen before", "back text"], "apkg-guid-new")]
 
 
 def test_remap_cards_no_matches_are_all_new(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "g1", "Nobody has this")])
-    remap, in_place, as_new = logic.remap_cards(apkg, her={}, aliases={})
+    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her={}, aliases={})
     assert (remap, in_place, as_new) == ({}, 0, 1)
+    assert new_notes == [(1, ["Nobody has this", "back text"], "g1")]
 
 
 def test_remap_cards_guid_already_matches_needs_no_rewrite(tmp_path):
@@ -381,8 +391,8 @@ def test_remap_cards_guid_already_matches_needs_no_rewrite(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "shared-guid", "Same front")])
     her = {"Same front": "shared-guid"}
-    remap, in_place, as_new = logic.remap_cards(apkg, her, aliases={})
-    assert (remap, in_place, as_new) == ({}, 1, 0)
+    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her, aliases={})
+    assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
 
 
 def test_remap_cards_alias_target_also_missing_is_new(tmp_path):
@@ -391,8 +401,9 @@ def test_remap_cards_alias_target_also_missing_is_new(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "g1", "New wording")])
     aliases = {"New wording": "Old wording"}   # but "Old wording" isn't in her map
-    remap, in_place, as_new = logic.remap_cards(apkg, her={}, aliases=aliases)
+    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her={}, aliases=aliases)
     assert (remap, in_place, as_new) == ({}, 0, 1)
+    assert [rid for rid, _, _ in new_notes] == [1]
 
 
 def test_remap_cards_matches_by_guid_before_front(tmp_path):
@@ -403,8 +414,8 @@ def test_remap_cards_matches_by_guid_before_front(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "stable-guid", "Reworded front, take three")])
     her = {"Original front wording": "stable-guid"}
-    remap, in_place, as_new = logic.remap_cards(apkg, her, aliases={})
-    assert (remap, in_place, as_new) == ({}, 1, 0)
+    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her, aliases={})
+    assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
 
 
 def test_remap_cards_guid_match_wins_over_front_match(tmp_path):
@@ -413,8 +424,169 @@ def test_remap_cards_guid_match_wins_over_front_match(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "guid-a", "Front of B")])
     her = {"Front of A": "guid-a", "Front of B": "guid-b"}
-    remap, in_place, as_new = logic.remap_cards(apkg, her, aliases={})
-    assert (remap, in_place, as_new) == ({}, 1, 0)
+    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her, aliases={})
+    assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
+
+
+def test_remap_cards_new_notes_length_always_matches_as_new(tmp_path):
+    # as_new is just a count of new_notes; if these two ever disagree the confirmation
+    # would promise a number of cards the review dialog can't actually show.
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [
+        (1, "g-known", "She has this"),
+        (2, "g-new-a", "New A"),
+        (3, "g-new-b", "New B"),
+    ])
+    _, _, as_new, new_notes = logic.remap_cards(
+        apkg, her={"She has this": "g-known"}, aliases={})
+    assert as_new == len(new_notes) == 2
+    assert [rid for rid, _, _ in new_notes] == [2, 3]   # apkg order preserved
+
+
+def test_remap_cards_new_notes_carries_every_field_for_image_cards(tmp_path):
+    # An image note's first field is an <img> tag, not a prompt, so new_notes must carry
+    # the whole field list; field zero alone would render as a broken image in the
+    # confirmation's inline list rather than naming the card.
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "g1", ['<img src="femoral.jpg">', "Name this nerve",
+                                      "Femoral nerve"])])
+    _, _, _, new_notes = logic.remap_cards(apkg, her={}, aliases={})
+    assert new_notes == [(1, ['<img src="femoral.jpg">', "Name this nerve",
+                              "Femoral nerve"], "g1")]
+    # and the display helper picks the prompt out of exactly that list:
+    assert logic.note_display_label(new_notes[0][1]) == "Name this nerve"
+
+
+# ----------------------------------------------------------------- apkg_note_details
+# Field names are NOT uniform across our note types, which is the whole reason this
+# function reads col.models instead of guessing positionally: index 1 is "Back" on a
+# basic note but "Prompt" on an image note.
+_MODELS = {
+    "1": {"name": "Intern Pearls Basic",
+          "flds": [{"name": "Front", "ord": 0}, {"name": "Back", "ord": 1},
+                   {"name": "Why", "ord": 2}, {"name": "Notes", "ord": 3}]},
+    "2": {"name": "Intern Pearls Image",
+          "flds": [{"name": "Image", "ord": 0}, {"name": "Prompt", "ord": 1},
+                   {"name": "Answer", "ord": 2}]},
+}
+
+
+def test_apkg_note_details_labels_fields_per_notetype(tmp_path):
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [
+        (1, "g1", ["Front text", "Back text", "Why text", ""], 1),
+        (2, "g2", ['<img src="x.jpg">', "Name this", "Answer text"], 2),
+    ], models=_MODELS)
+    basic, image = logic.apkg_note_details(apkg)
+    assert basic["notetype"] == "Intern Pearls Basic"
+    assert basic["fields"] == [("Front", "Front text"), ("Back", "Back text"),
+                               ("Why", "Why text"), ("Notes", "")]
+    assert image["notetype"] == "Intern Pearls Image"
+    # index 1 is "Prompt" here, not "Back": the exact mislabeling a positional guess
+    # would produce.
+    assert image["fields"][1] == ("Prompt", "Name this")
+
+
+def test_apkg_note_details_orders_fields_by_ord_not_json_order(tmp_path):
+    # col.models is JSON, so field order in the dict is not authoritative; "ord" is.
+    models = {"1": {"name": "Scrambled",
+                    "flds": [{"name": "Second", "ord": 1}, {"name": "First", "ord": 0}]}}
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "g1", ["value a", "value b"], 1)], models=models)
+    assert logic.apkg_note_details(apkg)[0]["fields"] == [
+        ("First", "value a"), ("Second", "value b")]
+
+
+def test_apkg_note_details_filters_to_requested_rids_preserving_order(tmp_path):
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [
+        (1, "g1", ["A"], 1), (2, "g2", ["B"], 1), (3, "g3", ["C"], 1),
+    ], models=_MODELS)
+    details = logic.apkg_note_details(apkg, rids=[3, 1])
+    assert [d["rid"] for d in details] == [1, 3]   # apkg order, not the caller's
+
+
+def test_apkg_note_details_unknown_notetype_falls_back_to_generic_labels(tmp_path):
+    # A deck built with a note type this .apkg doesn't describe still previews, with
+    # generic labels: a mislabeled preview beats no preview, and never a crash.
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "g1", ["a", "b"], 99)], models=_MODELS)
+    d = logic.apkg_note_details(apkg)[0]
+    assert d["notetype"] == ""
+    assert d["fields"] == [("Field 1", "a"), ("Field 2", "b")]
+
+
+def test_apkg_note_details_without_any_models_table_still_works(tmp_path):
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "g1", ["a", "b"], 1)])   # no models= at all
+    d = logic.apkg_note_details(apkg)[0]
+    assert d["guid"] == "g1"
+    assert d["fields"] == [("Field 1", "a"), ("Field 2", "b")]
+
+
+def test_apkg_note_details_rejects_non_apkg_zip(tmp_path):
+    bogus = str(tmp_path / "bogus.apkg")
+    with zipfile.ZipFile(bogus, "w") as z:
+        z.writestr("not_a_collection.txt", "nope")
+    try:
+        logic.apkg_note_details(bogus)
+        assert False, "expected RuntimeError for a zip with no collection.anki2"
+    except RuntimeError:
+        pass
+
+
+# ----------------------------------------------------------------- field_preview_text
+def test_field_preview_text_names_images_instead_of_rendering_them(tmp_path):
+    # The review dialog never extracts the .apkg's media, so a rendered <img> would be
+    # a broken image. Naming the file says "this card has a picture" instead.
+    assert logic.field_preview_text('<img src="femoral.jpg">') == "[image: femoral.jpg]"
+
+
+def test_field_preview_text_reports_text_and_image_together():
+    assert logic.field_preview_text('Look here: <img src="a/b/nerve.png">') == (
+        "Look here: [image: nerve.png]")
+
+
+def test_field_preview_text_plain_field_is_unchanged():
+    assert logic.field_preview_text("Just prose") == "Just prose"
+    assert logic.field_preview_text("") == ""
+
+
+# -------------------------------------------------------------- build_feedback_digest
+def test_build_feedback_digest_groups_by_deck_and_names_each_card(tmp_path):
+    text = logic.build_feedback_digest([
+        {"deck": "Intern Pearls::Intern Custom::Pharmacology", "front": "Vasopressor?",
+         "guid": "abc123", "note": "dose is wrong"},
+        {"deck": "Intern Pearls::Intern Custom::Pharmacology", "front": "Beta blocker?",
+         "guid": "def456", "note": "too bulky"},
+        {"deck": "Intern Pearls::Intern Custom::Regional", "front": "Which nerve?",
+         "guid": "ghi789", "note": "contrast is backwards"},
+    ], version="0.30.0", date="2026-07-15")
+    assert "Intern Pearls card feedback" in text
+    assert "2026-07-15" in text and "0.30.0" in text
+    # Deck headings use the leaf name; the full path is noise in a text message.
+    assert "Pharmacology" in text and "Intern Pearls::Intern Custom" not in text
+    # The GUID is the point: it points at the exact spec note without hunting.
+    assert "abc123" in text and "def456" in text and "ghi789" in text
+    assert "dose is wrong" in text
+    # Each deck appears once, as a heading, with its cards under it.
+    assert text.count("Pharmacology") == 1
+
+
+def test_build_feedback_digest_empty_is_empty_string():
+    # Lets the caller treat "" as "nothing to send" without a second check.
+    assert logic.build_feedback_digest([]) == ""
+
+
+def test_build_feedback_digest_is_plain_text_not_html():
+    text = logic.build_feedback_digest([
+        {"deck": "D", "front": "SpO<sub>2</sub> &lt;94%", "guid": "g", "note": "x"}])
+    # Fronts are stored as HTML; the digest gets pasted into a plain text thread, so
+    # tags come out and entities are decoded. A stripped tag leaves a space behind
+    # (plain_text's rule, shared with note_display_label) rather than joining words.
+    assert "<sub>" not in text
+    assert "&lt;" not in text
+    assert "SpO 2 <94%" in text
 
 
 # ------------------------------------------------------------- apkg_models / templates
@@ -471,7 +643,7 @@ def test_write_personalized_rewrites_only_remapped_guids(tmp_path):
         (2, "original-guid-2", "Front 2"),
     ])
     logic.write_personalized(src, {1: "rewritten-guid"}, out)
-    rows = {rid: (front, guid) for rid, front, guid in logic.apkg_notes(out)}
+    rows = {rid: (fields[0], guid) for rid, fields, guid in logic.apkg_notes(out)}
     assert rows[1] == ("Front 1", "rewritten-guid")   # remapped
     assert rows[2] == ("Front 2", "original-guid-2")  # untouched
 
@@ -496,9 +668,11 @@ def test_write_personalized_preserves_media_and_manifest(tmp_path):
     assert logic.apkg_notes(out)[0][2] == "new-guid"
 
 
-def test_apkg_notes_extracts_first_field_from_many(tmp_path):
-    # flds packs every field joined by the separator; the "front" this code keys on is
-    # always the first one, regardless of how many fields the note type has.
+def test_apkg_notes_splits_every_field_and_tolerates_no_mid_column(tmp_path):
+    # flds packs every field joined by the separator. apkg_notes returns all of them so
+    # callers can label an image card properly (its first field is an <img>, not a
+    # prompt) rather than being stuck with field zero. The table here deliberately has
+    # no `mid` column, which apkg_notes must not depend on; only apkg_note_details does.
     apkg = str(tmp_path / "deck.apkg")
     db = apkg + ".tmp.db"
     con = sqlite3.connect(db)
@@ -510,7 +684,8 @@ def test_apkg_notes_extracts_first_field_from_many(tmp_path):
     with zipfile.ZipFile(apkg, "w") as z:
         z.write(db, "collection.anki2")
     os.remove(db)
-    assert logic.apkg_notes(apkg) == [(1, "The Front", "g1")]
+    assert logic.apkg_notes(apkg) == [
+        (1, ["The Front", "the back", "why text", "", "Tag", "dose", "notes"], "g1")]
 
 
 # ------------------------------------------------ find_retired_in_collection
