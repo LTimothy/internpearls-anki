@@ -3,6 +3,22 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.32.1
+
+- The new-card review list is much tighter to read. Each row's caret was an
+  unconstrained push button sitting at its platform minimum width, which left a wide
+  empty gutter down the whole list, and nested layouts each added their own default
+  margins on top. A card's tag now shares one line with its text rather than sitting
+  in a separate widget beside it, so every row's text starts at the same place and
+  wraps against the row's edge instead of the tag's.
+- Fixed the doubled hairline under every card. The rule was a border on the row
+  itself, and a stylesheet with no selector propagates into a widget's children, so
+  each row drew an inset second copy under its own header. It's now one rule between
+  each pair of cards, and none after the last.
+- The green rule beside a card's "why" now actually appears. Qt ignores a lone
+  border-left on a label unless the border shorthand is set first, so it had never
+  painted; the indent it created made it look intentional.
+
 ## v0.32.0
 
 - A restore is now re-detected. The add-on's record of which deck versions you've
