@@ -18,7 +18,8 @@ from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayou
 
 from .config import ADDON_VERSION, APP_NAME, _cfg
 from .logic import build_feedback_digest, cloze_filled_html, field_preview_text
-from .ui import copy_to_clipboard, muted_label, section_label, title_label
+from .ui import (copy_to_clipboard, hint_label, muted_label, section_label,
+                 title_label)
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
 # would be a blank row on every single card.
@@ -38,8 +39,16 @@ _DOSING_BG = "#eef2f7"
 _CLOZE_COLOR = "#2563eb"
 _CLOZE_STYLE = f"<style>.cloze {{ color: {_CLOZE_COLOR}; font-weight: 600; }}</style>"
 
+_DIM = "#8a9aa2"        # the tag lead-in and the caret
+_ROW_RULE = "#d6d6d6"   # the hairline between two cards
+
 _CARET_CLOSED = "▸"
 _CARET_OPEN = "▾"
+
+# The caret's width plus its gap to the text. The expanded body indents by exactly
+# this, so the answer lines up under the primary line rather than under the caret.
+_CARET_W = 14
+_CARET_GAP = 6
 
 
 class _ClickableLabel(QLabel):
@@ -96,7 +105,7 @@ def _primary_html(detail):
     """
     if _is_cloze(detail):
         text = field_preview_text(_field(detail, "Text"))
-        return _CLOZE_STYLE + cloze_filled_html(text)
+        return cloze_filled_html(text)
     fields = _content_fields(detail)
     text = field_preview_text(fields[0][1]) if fields else ""
     if _is_image_note(detail):
@@ -125,11 +134,41 @@ def _answer_html(detail):
     return html.escape(answer) if answer else ""
 
 
+def _row_html(detail):
+    """A collapsed row's whole line: the card's tag, then its primary line.
+
+    One rich-text paragraph rather than a tag widget beside a text widget. Two widgets
+    start each row's text at a different x depending on whether that card happens to
+    carry a tag, and wrap it against the tag's edge instead of the row's.
+    """
+    primary = _primary_html(detail)
+    tag_text = field_preview_text(_field(detail, "Tag"))
+    if tag_text:
+        tag = html.escape(tag_text)
+        primary = f'<span style="color: {_DIM};">{tag}</span>&nbsp;&nbsp;{primary}'
+    return _CLOZE_STYLE + primary
+
+
 def _rich_label(text):
     lbl = QLabel(text)
     lbl.setWordWrap(True)
     lbl.setTextFormat(Qt.TextFormat.RichText)
     return lbl
+
+
+def _separator():
+    """The hairline between two cards.
+
+    A real HLine, not a border-bottom on the row: Qt won't paint a lone border-bottom
+    on a plain container widget, and a selector-less stylesheet on the row propagates
+    into its children, which each draw their own rule.
+    """
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setFrameShadow(QFrame.Shadow.Plain)
+    line.setFixedHeight(1)
+    line.setStyleSheet(f"color: {_ROW_RULE};")
+    return line
 
 
 def _card_row(detail, flags, boxes, collect_feedback):
@@ -140,9 +179,9 @@ def _card_row(detail, flags, boxes, collect_feedback):
     """
     guid = detail["guid"]
     row = QWidget()
-    row.setStyleSheet("border-bottom: 1px solid #e2e2e2;")
     outer = QVBoxLayout(row)
-    outer.setSpacing(2)
+    outer.setContentsMargins(0, 5, 0, 6)
+    outer.setSpacing(4)
 
     body = QWidget()
     caret = QPushButton(_CARET_CLOSED)
@@ -154,26 +193,28 @@ def _card_row(detail, flags, boxes, collect_feedback):
 
     header = QWidget()
     hlay = QHBoxLayout(header)
-    hlay.setSpacing(6)
+    hlay.setContentsMargins(0, 0, 0, 0)
+    hlay.setSpacing(_CARET_GAP)
 
     caret.setFlat(True)
+    # Unconstrained, this is a real push button at its platform minimum (~80px on
+    # macOS) around a 6px glyph, which is a wide dead gutter down the whole list.
+    caret.setFixedWidth(_CARET_W)
+    caret.setStyleSheet(f"border: none; padding: 0; color: {_DIM};")
+    caret.setCursor(Qt.CursorShape.PointingHandCursor)
     caret.clicked.connect(_toggle)
-    hlay.addWidget(caret)
+    hlay.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
 
-    tag_text = field_preview_text(_field(detail, "Tag"))
-    if tag_text:
-        tag_label = QLabel(html.escape(tag_text))
-        tag_label.setStyleSheet("color: gray; font-size: 11px;")
-        hlay.addWidget(tag_label)
-
-    primary = _ClickableLabel(_primary_html(detail), _toggle)
+    primary = _ClickableLabel(_row_html(detail), _toggle)
     primary.setWordWrap(True)
     primary.setTextFormat(Qt.TextFormat.RichText)
+    primary.setCursor(Qt.CursorShape.PointingHandCursor)
     hlay.addWidget(primary, 1)
     outer.addWidget(header)
 
     body.setVisible(False)
     blay = QVBoxLayout(body)
+    blay.setContentsMargins(_CARET_W + _CARET_GAP, 2, 0, 2)
     blay.setSpacing(4)
 
     answer_html = _answer_html(detail)
@@ -183,8 +224,11 @@ def _card_row(detail, flags, boxes, collect_feedback):
     why_text = field_preview_text(_field(detail, "Why"))
     if why_text:
         why_label = _rich_label(html.escape(why_text))
-        why_label.setStyleSheet(
-            f"border-left: 3px solid {_WHY_RULE}; padding-left: 8px; color: {_WHY_RULE};")
+        # The `border: none` reset is load-bearing: Qt ignores a lone border-left on a
+        # QLabel unless the shorthand is set first, so without it the padding applies
+        # and the rule itself silently never paints.
+        why_label.setStyleSheet(f"border: none; border-left: 3px solid {_WHY_RULE};"
+                                f" padding-left: 8px; color: {_WHY_RULE};")
         blay.addWidget(why_label)
 
     dosing_text = field_preview_text(_field(detail, "Dosing"))
@@ -232,26 +276,23 @@ def review_new_cards(parent, decks, flags):
 
     total = sum(len(details) for _, details in decks)
     outer.addWidget(title_label(f"{total} new card(s)"))
+    hint = "Nothing is added until you choose Update. Click a card to open it."
     if collect_feedback:
-        hint = ("Click a card to see its answer and the reasoning behind it. These "
-                "aren't in your collection yet, and nothing is added until you choose "
-                "Update. If a card looks wrong, or reads as more than one fact at "
-                "once, say so once it's open: you'll get a summary to send back when "
-                "you close this.")
-    else:
-        hint = ("Click a card to see its answer and the reasoning behind it. These "
-                "aren't in your collection yet, and nothing is added until you "
-                "choose Update.")
-    outer.addWidget(muted_label(hint))
+        hint += " Say what's wrong with one and you'll get a summary to send back."
+    outer.addWidget(hint_label(hint))
 
     inner = QWidget()
     ilay = QVBoxLayout(inner)
+    ilay.setContentsMargins(0, 0, 0, 0)
+    ilay.setSpacing(0)
     boxes = {}
     for deck_name, details in decks:
         if not details:
             continue
-        ilay.addWidget(section_label(deck_name.split("::")[-1], top_margin=10))
-        for detail in details:
+        ilay.addWidget(section_label(deck_name.split("::")[-1], top_margin=14))
+        for i, detail in enumerate(details):
+            if i:
+                ilay.addWidget(_separator())   # between cards, not after the last
             ilay.addWidget(_card_row(detail, flags, boxes, collect_feedback))
     ilay.addStretch(1)
 
