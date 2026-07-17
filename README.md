@@ -223,9 +223,14 @@ cost a manual Sync decks click already pays, so it isn't the part that needed fi
 ### Running tests
 
 ```bash
-pip install pytest
-cd addon && pytest tests/ -v
+python3 -m pip install pytest
+python3 -m pytest tests/ -v
 ```
+
+The dialogs also have a render suite that asserts on real painted pixels
+(`qt_tests/`, run separately because real and mock Qt cannot share a process). See
+`CONTRIBUTING.md`. `tools/render_dialog.py` renders the same scenes to a PNG when you
+want to look at one rather than assert on it.
 
 No Anki install or running Anki instance is needed for any of them. Three layers,
 all built on the mock Anki in `tests/mock_anki.py` (stub `aqt`/`anki` modules plus a

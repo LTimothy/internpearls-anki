@@ -9,9 +9,25 @@ write code.
 No install step beyond Python 3 and pytest:
 
 ```bash
-pip install pytest
-cd addon && pytest tests/ -v
+python3 -m pip install pytest
+python3 -m pytest tests/ -v
 ```
+
+That suite runs a fake Qt, so it needs no PyQt6, no display, and no Anki. It proves
+structure: which widgets exist, how they nest, what a click calls.
+
+There is a second suite that renders the real dialogs with real PyQt6 and asserts on
+what they paint, because Qt drops a stylesheet rule it dislikes without raising and a
+fake Qt cannot see that:
+
+```bash
+python3 -m venv .venv-qt
+.venv-qt/bin/pip install PyQt6 pytest
+QT_QPA_PLATFORM=offscreen .venv-qt/bin/python -m pytest qt_tests/ -q
+```
+
+The two cannot run in one process, which is why the second one names its path. See
+`qt_tests/README.md` for why. Both run in CI on every release tag.
 
 Tests run against `internpearls/logic.py` only and need no Anki install. To
 try your change in Anki itself, run `./build.sh` and install the resulting
