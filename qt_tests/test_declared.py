@@ -2,8 +2,9 @@
 
 Qt drops a stylesheet declaration it dislikes without raising: no exception, no warning,
 just absence. This walks every visible widget and asserts each hex colour in its own
-stylesheet appears somewhere inside its rect. It is the only generic check in the suite
-(all widgets, all scenes), and it catches the fully-dropped case: a colour that paints
+stylesheet appears somewhere inside its rect. It is the only generic check in the suite,
+over every visible widget in every scene rendered expanded, and it catches the
+fully-dropped case: a colour that paints
 nowhere at all, from a mistyped property or a rule Qt discards where that colour is not
 reused elsewhere.
 
@@ -39,6 +40,12 @@ _HEX = re.compile(r"#[0-9a-fA-F]{6}")
 # nothing is hovering, which is the point rather than a bug.
 IGNORE_STATES = ("hover", "pressed", "disabled", "checked", "focus")
 
+# Render every scene with its rows opened, so the collapsed review-row widgets (the why
+# and dosing labels) are visible and inspected. Without this the check silently skips
+# exactly the widgets the suite exists to protect. render() clamps expand to the carets
+# a scene has, so this is a no-op for scenes without any.
+_EXPAND_ALL = tuple(range(8))
+
 
 def _declared_colours(widget):
     """Hex colours in a widget's own stylesheet, minus any declared for a state this
@@ -53,7 +60,7 @@ def _declared_colours(widget):
 @pytest.mark.parametrize("scene", ALL_SCENES)
 def test_every_declared_colour_actually_paints(shot, scene, theme):
     _, q = harness.bootstrap()
-    s = shot(scene, theme=theme)
+    s = shot(scene, theme=theme, expand=_EXPAND_ALL)
     missing = []
     for widget in s.dialog.findChildren(q.QWidget):
         if not widget.isVisible():
