@@ -6,7 +6,9 @@ argument is processed first, this file is always imported before tests/conftest.
 or qt_tests/conftest.py. A pytest_sessionstart hook would be too late: all initial
 conftests, including qt_tests/conftest.py's module-level harness.bootstrap() call,
 finish loading before pytest_sessionstart ever fires. Plain module-level code here
-is the only point left where a dual-path invocation is still recoverable, because
+catches every command-line invocation, which covers every documented and CI path;
+it reads sys.argv, so it cannot see a dual-path invocation that never puts tests/
+and qt_tests/ there, such as a programmatic pytest.main(['tests', 'qt_tests']).
 tests/ and qt_tests/ cannot share a process: both install a Qt into aqt.qt, and
 whichever lands first wins for every internpearls import for the rest of the run.
 """

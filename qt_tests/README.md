@@ -27,7 +27,14 @@ assert against the wrong widgets and still pass.
 
 `pytest.ini` pins `testpaths = tests`, so a bare `pytest` runs only the mock suite and
 this one is opt-in by path. `harness.bootstrap()` raises if internpearls was imported
-before it ran, which turns that mistake into a loud failure rather than a quiet one.
+before it ran, or if aqt.qt already holds mock widgets, which turns that mistake into
+a loud failure rather than a quiet one. `addon/conftest.py` adds a second guard that
+rejects any command-line invocation naming both tests/ and qt_tests/.
+
+Known limitation: both guards read command-line arguments, so a programmatic
+`pytest.main(['tests', 'qt_tests'])` call, which never puts those paths in argv, can
+still slip past them. That path can end the process with a native crash rather than
+a clean error message.
 
 ## What belongs here
 

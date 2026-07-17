@@ -51,6 +51,16 @@ def bootstrap():
             "nothing. This happens when qt_tests/ is collected alongside tests/. Run "
             "it as its own invocation: pytest qt_tests/")
 
+    existing_qt = sys.modules.get("aqt.qt")
+    existing_label = getattr(existing_qt, "QLabel", None)
+    if existing_label is not None and getattr(existing_label, "__module__", "") == "mock_anki":
+        raise RuntimeError(
+            "aqt.qt already holds mock widgets, so tests/conftest.py's mock Anki has "
+            "already installed itself in this process and bootstrapping real Qt on top "
+            "of it would leave some internpearls modules holding mock widgets and "
+            "others holding real ones. This happens when tests/ is collected alongside "
+            "qt_tests/. Run it as its own invocation: pytest qt_tests/")
+
     sys.path.insert(0, os.path.join(ROOT, "tests"))
     sys.path.insert(0, ROOT)
     from PyQt6 import QtCore, QtGui, QtWidgets
