@@ -25,6 +25,8 @@ from collections import namedtuple
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
+# Duplicates review.py's private caret glyphs deliberately: internpearls cannot be
+# imported until bootstrap() has installed real Qt.
 CARET_CLOSED = "▸"
 CARET_OPEN = "▾"
 
@@ -268,6 +270,10 @@ def render(scene, theme="light", expand=(), size=(640, 560), **opts):
     apply_theme(theme)
     if scene not in SCENES:
         raise KeyError(f"unknown scene {scene!r}; known: {sorted(SCENES)}")
+    # Each scene starts from an empty config so it cannot inherit a key a prior render
+    # left on this shared mock. config._cfg() defaults every key, so empty is safe; the
+    # scenes that need config set it in their builder below.
+    mock.mw._config = {}
     opener = SCENES[scene][0](mock, opts)
 
     shots = []
