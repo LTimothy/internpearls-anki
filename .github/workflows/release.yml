@@ -1,0 +1,92 @@
+# Publishes a GitHub release when a vX.Y.Z tag is pushed.
+#
+# The release was the one release step living only in habit: the version bump, the
+# rebuild, and the tag all have a test or a script behind them, so the release is what
+# drifted, four versions deep. Pushing the tag is now the whole ritual.
+#
+# Nothing here re-derives what the test suite already proves. tests/test_release_integrity.py
+# pins version.json to ADDON_VERSION and to the copy inside the packaged .ankiaddon, and
+# tests/test_demo_parity.py pins the demo mirror, so running the suite first means the
+# only thing left to check is the tag itself, which no test can see.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install pytest
+        run: pip install pytest
+
+      # Gates a stale package, a version bumped out of lockstep, an undocumented
+      # version, and a stale demo mirror. A tag pushed against any of those fails
+      # here, before a release exists.
+      - name: Run tests
+        run: pytest tests/ -q
+
+      - name: Check the tag matches the advertised version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          advertised="$(python -c 'import json; print(json.load(open("version.json"))["version"])')"
+          if [ "$tag" != "$advertised" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match version.json ($advertised)."
+            echo "Bump ADDON_VERSION, version.json and the tag in lockstep (see README, Versioning)."
+            exit 1
+          fi
+          echo "tag ${GITHUB_REF_NAME} matches version.json"
+
+      # The notes are this version's CHANGELOG section verbatim: the changelog is
+      # already written for the people who read releases, so a second set of notes
+      # would only be a second thing to keep true.
+      - name: Build the release notes
+        run: |
+          set -euo pipefail
+          awk -v want="## ${GITHUB_REF_NAME}" '
+            $0 == want { found = 1; next }
+            /^## / { found = 0 }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          # Not [ -s ]: awk emits the blank line that follows every heading, so an empty
+          # section would leave a file that is non-empty and still says nothing.
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no ## ${GITHUB_REF_NAME} section with any content."
+            exit 1
+          fi
+          cat >> notes.md <<'EOF'
+
+          Install: download `internpearls.ankiaddon` below and double-click it (or Anki,
+          Tools, Add-ons, Install from file). Restart Anki after updating.
+
+          If you already have the add-on, you don't need this page: Check for add-on
+          updates offers this version in-app.
+          EOF
+          echo "--- notes.md ---"; cat notes.md
+
+      # Attaches the committed package rather than rebuilding: that is the exact file
+      # self-update serves from main, and the suite above already proved it is current.
+      # Rebuilding here would publish a different artifact than people get in-app.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            --verify-tag \
+            --latest \
+            internpearls.ankiaddon
