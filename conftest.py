@@ -30,7 +30,7 @@ def _requested_dirs():
     for arg in sys.argv[1:]:
         if not arg or arg.startswith("-"):
             continue
-        candidate = os.path.normpath(os.path.join(_ROOT, arg.split("::", 1)[0]))
+        candidate = os.path.abspath(arg.split("::", 1)[0])
         if _under(candidate, _TESTS):
             dirs.add(_TESTS)
         elif _under(candidate, _QT_TESTS):
