@@ -14,6 +14,10 @@ on:
   push:
     tags:
       - "v*"
+  # So the render job can be run without cutting a release. GitHub only honours this
+  # once the workflow file carrying it is on the default branch, so it does nothing
+  # from a branch. It is here for the first person who needs to debug the job.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -21,6 +25,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # A dropped stylesheet rule should stop a release, not decorate one. Without this
+    # the two jobs race and the publish wins.
+    needs: render
     steps:
       - uses: actions/checkout@v4
 
@@ -94,3 +101,38 @@ jobs:
             --verify-tag \
             --latest \
             internpearls.ankiaddon
+
+  # Separate from `release` on purpose: PyQt6 needs system libraries the runner does
+  # not ship, so when this breaks it is almost always the environment rather than the
+  # add-on. A distinct job says which.
+  #
+  # This suite is why a stylesheet rule that Qt silently drops fails a build instead
+  # of shipping. It cannot run in the `release` job's process: the two suites install
+  # different Qts into aqt.qt and every module binds its Qt at import time, so the
+  # first one in wins for the whole run. See qt_tests/README.md.
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # PyQt6's wheel links against these and ubuntu-latest ships none of them. Without
+      # this step the import fails with "libEGL.so.1: cannot open shared object file",
+      # which reads like a broken add-on and is not.
+      - name: Install the libraries PyQt6 links against
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
+
+      - name: Install PyQt6 and pytest
+        run: pip install PyQt6 pytest
+
+      # offscreen is what lets Qt render with no display. Without it Qt aborts with
+      # "could not connect to display".
+      - name: Render the dialogs and assert on what they paint
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest qt_tests/ -q
