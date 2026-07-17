@@ -267,7 +267,7 @@ still be invisible. Two shipped rules were (v0.32.1).
 PyQt6 and no Anki:
 
 ```bash
-pip install PyQt6
+python3 -m pip install PyQt6
 python3 tools/render_dialog.py --list
 python3 tools/render_dialog.py review --expand 1 --feedback --out review.png
 python3 tools/render_dialog.py review --dark          # see "Colors" below
