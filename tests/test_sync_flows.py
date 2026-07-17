@@ -1401,6 +1401,37 @@ def test_import_deck_falls_back_to_clearing_everything_when_deck_names_unreadabl
     assert _load_json(INSTALLED, {}) == {}
 
 
+def test_import_deck_clears_everything_when_no_deck_name_maps_to_a_tracked_deck(
+        anki, tmp_path):
+    """A backup taken before a deck was renamed carries the old deck path, which maps
+    to nothing tracked today. The import still rolled cards back, by GUID, so the
+    empty match has to mean "clear all", not "clear nothing".
+
+    This pins a deliberate choice, not an incidental one: `invalidate_installed(names
+    or None)` reads like a latent bug (empty mapping clears everything) right up until
+    you ask what an empty mapping means here. Clearing nothing would leave rolled-back
+    cards looking current, which is the failure this whole path exists to prevent. The
+    cost of being wrong the other way is one redundant re-verify.
+    """
+    from internpearls import collection
+    from internpearls.config import INSTALLED, _load_json, _save_json
+    from tests.test_logic import _legacy_apkg
+
+    renamed_before_backup = "Intern Pearls::Intern Custom::Its Older Name"
+    src = _legacy_apkg(tmp_path / "old-name.apkg", [renamed_before_backup])
+    _save_json(INSTALLED, {DECK: "v1", "Intern Pearls::Intern Custom::Other": "v9"})
+    anki.gui.file_picks.append(str(src))
+    anki.gui.answers.append(True)          # "Import ...?"
+
+    collection.import_deck()
+
+    # Not the unreadable-file fallback: this file's deck names read fine, they just
+    # match nothing. Both paths clear everything, so the warning check is what tells
+    # them apart.
+    assert not anki.gui.warnings
+    assert _load_json(INSTALLED, {}) == {}
+
+
 def test_invalidate_installed_drops_only_the_named_decks(anki):
     from internpearls.collection import invalidate_installed
     from internpearls.config import INSTALLED, _load_json, _save_json
