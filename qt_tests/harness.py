@@ -104,6 +104,16 @@ def app():
     _, q = bootstrap()
     if _APP is None:
         _APP = q.QApplication([])
+        # Turn text antialiasing off application-wide, before any widget is built. The
+        # colour tests read a label's foreground as the highest-contrast pixel in its
+        # rect, which only works when the glyph is one flat colour. Antialiasing paints
+        # blended edge pixels, and on some platforms (ubuntu CI, not macOS) those edges
+        # are subpixel-coloured fringes, which are more contrasty in a hue direction than
+        # the real glyph, so the reader locks onto a fringe and the ratio is wrong. Off
+        # means every glyph pixel is the declared colour, identically on every platform.
+        _font = _APP.font()
+        _font.setStyleStrategy(q.QFont.StyleStrategy.NoAntialias)
+        _APP.setFont(_font)
     return _APP
 
 
