@@ -70,7 +70,7 @@ the menu and startup wiring. See "Code layout" in the README.
 - Keep changes surgical: touch only what the fix or feature needs, and match
   the existing style even where you'd do it differently.
 - Add or update a test in `tests/test_logic.py` for any `logic.py` change.
-- Run `pytest tests/ -v` and `./build.sh` before opening the PR.
+- Run `python3 -m pytest tests/ -v` and `./build.sh` before opening the PR.
 - Changed a stylesheet, border, spacing, or color? Render it and look:
   `python3 tools/render_dialog.py --list`. The test suite uses mock Qt and cannot
   tell you whether Qt painted anything. See "Seeing a dialog actually render" and
