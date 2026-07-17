@@ -1364,7 +1364,7 @@ def test_sync_re_offers_a_deck_whose_cards_were_rolled_back_to_older_content(
 def test_import_deck_invalidates_only_the_decks_in_the_imported_file(anki, tmp_path):
     from internpearls import collection
     from internpearls.config import INSTALLED, _load_json, _save_json
-    from tests.test_logic import _legacy_apkg
+    from test_logic import _legacy_apkg
 
     src = _legacy_apkg(tmp_path / "one.apkg", [f"{DECK}::1. Basics"])
     _save_json(INSTALLED, {DECK: "v1", "Intern Pearls::Intern Custom::Other": "v9"})
@@ -1385,7 +1385,7 @@ def test_import_deck_falls_back_to_clearing_everything_when_deck_names_unreadabl
     invalidation" - that's the exact bug this release exists to fix."""
     from internpearls import collection
     from internpearls.config import INSTALLED, _load_json, _save_json
-    from tests.test_logic import _legacy_apkg
+    from test_logic import _legacy_apkg
 
     src = _legacy_apkg(tmp_path / "unreadable.apkg", [DECK], with_col=False)
     _save_json(INSTALLED, {DECK: "v1", "Intern Pearls::Intern Custom::Other": "v9"})
@@ -1415,7 +1415,7 @@ def test_import_deck_clears_everything_when_no_deck_name_maps_to_a_tracked_deck(
     """
     from internpearls import collection
     from internpearls.config import INSTALLED, _load_json, _save_json
-    from tests.test_logic import _legacy_apkg
+    from test_logic import _legacy_apkg
 
     renamed_before_backup = "Intern Pearls::Intern Custom::Its Older Name"
     src = _legacy_apkg(tmp_path / "old-name.apkg", [renamed_before_backup])
