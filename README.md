@@ -306,4 +306,19 @@ The add-on uses three-part semver: `MAJOR.MINOR.PATCH`.
 - MINOR (0.11.0 to 0.12.0): new feature or menu item, backwards compatible.
 - MAJOR (0.x to 1.0.0): breaking change that requires the user to reconfigure.
 
-On each release, bump `ADDON_VERSION` in `internpearls/config.py` and `version` in `version.json`, tag the commit `vX.Y.Z`, add an entry to `CHANGELOG.md`, run `./build.sh`, and push.
+On each release, bump `ADDON_VERSION` in `internpearls/config.py` and `version` in `version.json`, add an entry to `CHANGELOG.md`, run `./build.sh`, and commit.
+
+Then tag `vX.Y.Z` and push the tag. That publishes the GitHub release on its own
+(`.github/workflows/release.yml`): it runs the tests, checks the tag against
+`version.json`, cuts the notes from that version's `CHANGELOG.md` section, and attaches
+the committed `internpearls.ankiaddon`. Any of those failing means no release is
+created, so a tag pushed against a stale package or an undocumented version fails loudly
+rather than shipping.
+
+Run `pytest tests/ -q` before tagging and none of that should ever fire:
+`tests/test_release_integrity.py` checks the same things locally, except the tag itself,
+which only exists once you push it.
+
+The release page is not how anyone gets the add-on. Self-update reads `version.json` and
+`internpearls.ankiaddon` from `main` through the Contents API, so a release that is late,
+or missing, changes nothing about what people receive. It is a shopfront for humans.
