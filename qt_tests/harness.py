@@ -253,6 +253,15 @@ def render(scene, theme="light", expand=(), size=(640, 560), **opts):
             if i < len(carets):
                 carets[i].click()
         a.processEvents()
+        # A dialog forced below its sizeHint clips content that fits at its natural
+        # size, which is a harness artifact rather than a real add-on layout bug, so
+        # the requested size is a floor, not a fixed size.
+        hint = self.sizeHint()
+        grown_w = max(self.width(), hint.width())
+        grown_h = max(self.height(), hint.height())
+        if grown_w != self.width() or grown_h != self.height():
+            self.resize(grown_w, grown_h)
+            a.processEvents()
         shots.append(Shot(self.grab().toImage(), self, theme, scene))
         return 1
 
