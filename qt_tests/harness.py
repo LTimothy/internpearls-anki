@@ -217,11 +217,40 @@ def _scene_manage_decks(mock, opts):
     return dialogs.manage_decks
 
 
+def _scene_about(mock, opts):
+    from internpearls import dialogs
+    return dialogs.about
+
+
+def _scene_configure_source(mock, opts):
+    from internpearls import dialogs
+    return dialogs.configure_source
+
+
+def _scene_confirm(mock, opts):
+    """The Update my decks confirmation.
+
+    This one is our own Qt dialog (_ask_scrollable, which exists because a plain
+    QMessageBox has no scroll area and a long card list just makes the box taller), so
+    it renders. The plain _ask and _info message boxes route through mocked aqt.utils
+    and have no real widget to grab, which is why they are not scenes.
+    """
+    from internpearls.ui import _ask_scrollable
+    body = (
+        "<b>Example Deck</b><ul>"
+        + "".join(f"<li>{d['fields'][0][1]}</li>" for d in synthetic_details()[:3])
+        + "</ul><p>Nothing is added until you choose Update.</p>")
+    return lambda: _ask_scrollable(body, yes_label="Update", no_label="Cancel")
+
+
 SCENES = {
     "review": (_scene_review, "the new-card review list (apkg, expand, feedback)"),
     "digest": (_scene_digest, "the flagged-card feedback digest"),
     "settings": (_scene_settings, "the Settings dialog"),
     "manage-decks": (_scene_manage_decks, "the deck manager (decks_dir for a source)"),
+    "about": (_scene_about, "the About dialog"),
+    "configure-source": (_scene_configure_source, "the deck-source configuration form"),
+    "confirm": (_scene_confirm, "the Update my decks confirmation (_ask_scrollable)"),
 }
 
 
