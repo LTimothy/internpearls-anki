@@ -1,4 +1,4 @@
-"""Guards the two release steps that are manual, and therefore forgettable.
+"""Guards the release steps that are manual, and therefore forgettable.
 
 `internpearls.ankiaddon` is committed, and self-update serves it straight from the
 repo. So a release built from stale source doesn't fail loudly: people download old
@@ -8,16 +8,24 @@ permanently. The same reasoning already guards the demo's mirrored copy in
 test_demo_parity.py; the package that people actually install deserves it at least as
 much.
 
-Both failures here are fixed the same way: run ./build.sh.
+Most failures here are fixed the same way: run ./build.sh.
+
+The release workflow (.github/workflows/release.yml) runs this suite before it publishes
+anything, so a tag pushed against a stale package or an undocumented version fails
+without creating a release. It compares the tag against version.json, which these tests
+already pin to ADDON_VERSION and to the packaged copy, so that one comparison is enough
+to hold all four in lockstep.
 """
 import json
 import os
+import re
 import zipfile
 
 HERE = os.path.dirname(__file__)
 ROOT = os.path.join(HERE, "..")
 ADDON = os.path.join(ROOT, "internpearls")
 PACKAGE = os.path.join(ROOT, "internpearls.ankiaddon")
+CHANGELOG = os.path.join(ROOT, "CHANGELOG.md")
 
 
 def _packaged_names():
@@ -74,3 +82,22 @@ def test_packaged_version_matches_the_source_version():
         packaged_config = z.read("config.py").decode()
     assert f'ADDON_VERSION = "{ADDON_VERSION}"' in packaged_config, (
         f"the packaged config.py doesn't carry {ADDON_VERSION}: run ./build.sh")
+
+
+def test_changelog_documents_the_current_version():
+    """The release workflow cuts a tag's notes from this file's section for that
+    version, so a missing section means a tag that publishes nothing. Failing here makes
+    that a local failure before the tag exists, rather than a red build after it does.
+    """
+    from internpearls.config import ADDON_VERSION
+    with open(CHANGELOG) as fh:
+        changelog = fh.read()
+    heading = f"## v{ADDON_VERSION}"
+    assert heading in changelog, (
+        f"CHANGELOG.md has no {heading!r} section. Add one describing this version "
+        "before tagging: the release notes are cut from it.")
+
+    body = re.split(r"^## ", changelog, flags=re.M)
+    section = next(s for s in body if s.startswith(f"v{ADDON_VERSION}"))
+    text = section.split("\n", 1)[1].strip()
+    assert text, f"the {heading!r} section is empty; the release notes would be blank."
