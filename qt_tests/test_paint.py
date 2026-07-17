@@ -83,6 +83,8 @@ def test_only_one_hairline_is_drawn_between_two_rows(shot):
                 run = 0
         if run:
             widths.add(run)
+    # 100 is only a noise floor to drop 1 to 2px antialiasing runs, well below any real
+    # separator, which spans most of the dialog width. The real check is len <= 1 below.
     significant = {w for w in widths if w > 100}
     assert len(significant) <= 1, (
         f"the rule colour {_ROW_RULE} paints runs of {sorted(significant)}px. More "
