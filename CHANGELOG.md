@@ -3,6 +3,14 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.38.1
+
+- Fixes an update failing with 'Protocol message ChangeNotetypeRequest has no
+  "new_notetype_name" field' on any deck that reformats a card. The add-on was setting
+  a field that does not exist on the real message. Decks that reported this were not
+  applied and were not marked as installed, so simply running Update my decks again on
+  this version picks them up; nothing was left half-imported.
+
 ## v0.38.0
 
 - Fixes v0.37.0 for anyone using FSRS. FSRS schedules from a card's memory state rather
