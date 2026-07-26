@@ -824,6 +824,48 @@ def test_find_retired_without_front_map_keeps_guid_only_behaviour():
     assert logic.find_retired_in_collection(_LEDGER, {"hers1"}) == []
 
 
+# ---------------------------------------------------------- stranded rewords
+_SUPERSEDED = {"old wording of a card": "new wording of a card",
+               "another old wording": "another new wording"}
+
+
+def test_stranded_pair_found_when_she_holds_both_wordings():
+    her = {"old wording of a card": "g_old", "new wording of a card": "g_new"}
+    (p,) = logic.find_stranded_pairs(_SUPERSEDED, her)
+    assert p == {"guid": "g_old", "front": "old wording of a card",
+                 "successor_guid": "g_new", "successor_front": "new wording of a card"}
+
+
+def test_stranded_skipped_when_she_holds_only_the_old_wording():
+    # Not a stranding: the import's own front matching merges this one, and acting
+    # here as well would fight that ladder.
+    assert logic.find_stranded_pairs(_SUPERSEDED, {"old wording of a card": "g_old"}) == []
+
+
+def test_stranded_skipped_when_she_holds_only_the_new_wording():
+    # The normal case for anyone whose GUID matched: the reword landed in place.
+    assert logic.find_stranded_pairs(_SUPERSEDED, {"new wording of a card": "g_new"}) == []
+
+
+def test_stranded_skipped_when_both_wordings_are_the_same_note():
+    her = {"old wording of a card": "g", "new wording of a card": "g"}
+    assert logic.find_stranded_pairs(_SUPERSEDED, her) == []
+
+
+def test_stranded_empty_inputs():
+    assert logic.find_stranded_pairs({}, {"x": "g"}) == []
+    assert logic.find_stranded_pairs(None, {"x": "g"}) == []
+    assert logic.find_stranded_pairs(_SUPERSEDED, None) == []
+
+
+def test_stranded_sorted_by_front():
+    her = {f: f"g{i}" for i, f in enumerate(
+        ["old wording of a card", "new wording of a card",
+         "another old wording", "another new wording"])}
+    assert [p["front"] for p in logic.find_stranded_pairs(_SUPERSEDED, her)] == [
+        "another old wording", "old wording of a card"]
+
+
 # --------------------------------------------------------------- deck moves
 _MOVES = {
     "g1": {"from": "Pharm::Local Anesthetics", "to": "Regional::Local Anesthetics"},
