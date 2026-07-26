@@ -352,6 +352,8 @@ def test_extra_blanks_inherit_the_parent_card_rather_than_starting_new(anki, tmp
     her = anki.col.add_note("g1", _fields("Old Q and A front"), [TAGS], deck=DECK)
     parent = anki.col.get_card(her.card_ids()[0])
     parent.reps, parent.ivl, parent.due, parent.factor, parent.type = 5, 20, 90, 2400, 2
+    parent.memory_state = mock_anki.FsrsMemoryState(stability=18.0, difficulty=7.5)
+    parent.desired_retention, parent.decay = 0.9, 0.1542
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", ["{{c1::one}} and {{c2::two}} and {{c3::three}}",
                               "why", "", "", ""], TAGS)], _cloze_model())}))
@@ -366,6 +368,11 @@ def test_extra_blanks_inherit_the_parent_card_rather_than_starting_new(anki, tmp
         assert sib.ivl == 10                       # half the parent's, not new
         assert (sib.reps, sib.factor, sib.type) == (5, 2400, 2)
         assert sib.queue != 0 or sib.ivl > 0       # not sitting in the new queue
+        # FSRS schedules from memory state, not ivl, so it has to travel too, and
+        # stability is the interval's counterpart so it halves with it.
+        assert sib.memory_state.stability == 9.0
+        assert sib.memory_state.difficulty == 7.5  # difficulty is not per-blank
+        assert (sib.desired_retention, sib.decay) == (0.9, 0.1542)
 
 
 def test_extra_blanks_stay_new_when_the_parent_was_never_studied(anki, tmp_path):
