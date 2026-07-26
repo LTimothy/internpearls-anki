@@ -6,6 +6,7 @@ runs, with a real manifest + .apkg local-folder source built per test — the on
 things mocked are Anki itself and the dialogs, which are recorded and scripted.
 """
 import json
+import os
 
 import mock_anki
 from mock_anki import make_apkg, make_model
@@ -292,6 +293,103 @@ def test_preserved_field_name_matches_regardless_of_case(anki, tmp_path):
     sync.sync_decks()
 
     assert anki.col.note_by_guid("g1")["Notes"] == "her mnemonic"
+
+
+CLOZE_FIELDS = ["Text", "Why", "Image", "Dosing", "Notes"]
+
+
+def _cloze_model():
+    from mock_anki import make_model
+    return make_model(name="Study Deck - Cloze", fields=CLOZE_FIELDS)
+
+
+def _answer_conversion(convert):
+    """respond() for sync_decks() when an update also converts note types: say yes to
+    the import, then `convert` to the "changed format" question, and pass everything
+    else (progress, the final summary) straight through."""
+    def respond(p):
+        if p.get("kind") == "ask":
+            return {"answer": convert if "changed format" in p.get("text", "") else True}
+        return {}
+    return respond
+
+
+def test_qa_card_converted_to_cloze_keeps_its_card_and_history(anki, tmp_path):
+    """The whole point: a question-and-answer card becoming a fill-in-the-blank used to
+    mean retiring hers and starting the new one from zero. Converting her note's type
+    first means the import matches it by GUID and updates it in place instead."""
+    from internpearls import sync
+    anki.col.models._models.append(_cloze_model())
+    her = anki.col.add_note("g1", _fields("Old Q and A front", notes="her mnemonic"),
+                            [TAGS], deck=DECK)
+    card = anki.col.get_card(her.card_ids()[0])
+    card.reps, card.ivl, card.due = 6, 21, 140
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
+               _cloze_model())}))
+
+    drive(anki, sync.sync_decks, lambda p: {"answer": True})
+
+    assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1        # one card, not two
+    note = anki.col.note_by_guid("g1")
+    assert note.id == her.id                                      # same note
+    assert note.note_type()["name"] == "Study Deck - Cloze"
+    assert note["Text"] == "A {{c1::cloze}} version"              # Front mapped to Text
+    assert note["Notes"] == "her mnemonic"                        # annotation survived
+    kept = anki.col.get_card(note.card_ids()[0])
+    assert (kept.reps, kept.ivl, kept.due) == (6, 21, 140)        # history survived
+    assert anki.col.notetype_changes == [[her.id]]
+
+
+def test_declining_the_conversion_imports_alongside_instead(anki, tmp_path):
+    """Declining is a real choice with a real consequence, and the dialog says so: the
+    cards still arrive, just as separate notes, leaving her progress on the old ones."""
+    from internpearls import sync
+    anki.col.models._models.append(_cloze_model())
+    her = anki.col.add_note("g1", _fields("Old Q and A front"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
+               _cloze_model())}))
+
+    drive(anki, sync.sync_decks, _answer_conversion(False))
+
+    assert anki.col.notetype_changes == []
+    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Basic"
+
+
+def test_conversion_is_never_applied_by_unattended_auto_sync(anki, tmp_path):
+    """Same rule as a template change: it bumps the schema, so it never happens with
+    nobody there to consent. The deck is held back, not half-applied."""
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Old Q and A front"), [TAGS], deck=DECK)
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
+               _cloze_model())})
+    _configure(anki, folder)
+    cfg = sync._cfg()
+
+    results, _restored, _tpl, deferred, _c, _col, converted = sync._run_sync(
+        cfg, json.load(open(os.path.join(folder, "manifest.json"))),
+        lambda d: os.path.join(folder, d["apkg"]),
+        [{"name": DECK, "apkg": "Pharm.apkg", "version": "v2"}], {},
+        defer_template_changes=True)
+
+    assert deferred == [DECK] and converted == 0
+    assert anki.col.notetype_changes == []
+    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Basic"
+
+
+def test_a_learners_own_note_type_is_never_converted(anki, tmp_path):
+    from internpearls import logic
+    assert logic.plan_notetype_changes(
+        {"g1": "Study Deck - Cloze"}, {"g1": "Her Own Custom Type"},
+        {"Study Deck - Basic", "Study Deck - Cloze"}) == []
+    assert logic.plan_notetype_changes(
+        {"g1": "Some Unknown Incoming Type"}, {"g1": "Study Deck - Basic"},
+        {"Study Deck - Basic", "Study Deck - Cloze"}) == []
+    assert logic.plan_notetype_changes(
+        {"g1": "Study Deck - Basic"}, {"g1": "Study Deck - Basic"},
+        {"Study Deck - Basic"}) == []
 
 
 def test_reworded_front_with_stable_guid_updates_in_place_without_alias(anki, tmp_path):

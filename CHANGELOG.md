@@ -3,6 +3,20 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.35.0
+
+- A card that changes format keeps its review history. When a question-and-answer card
+  becomes a fill-in-the-blank, its note type changes, and Anki's importer will not move
+  an existing note to a different type, so until now the deck had to retire your card and
+  give you a new one starting from zero. Sync now offers to move your own cards to the
+  new format first, so the update lands on the card you already have. You keep one card,
+  with its history and your personal notes. Anki treats this as a schema change, so it
+  asks first and warns about the one-time full AnkiWeb sync, the same as a card-styling
+  change. Declining still imports them, just as separate new cards.
+- Background auto-sync never does this on its own, for the same reason it never applies a
+  styling change unattended: the deck is held back for a manual sync instead.
+- Only the deck's own note types are ever converted, never one of your own.
+
 ## v0.34.0
 
 - A preserved field no longer means a frozen field. Preserving a field used to restore

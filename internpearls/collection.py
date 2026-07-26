@@ -13,10 +13,10 @@ from aqt.utils import getFile, getSaveFile
 
 from .config import (DECK_BACKUPS_KEEP, INSTALLED, TARGET_FIELDS, _USER_FILES, _cfg,
                      _load_json, _save_json)
-from .logic import (apkg_deck_names, apkg_models, apkg_notes, bullets,
-                    changed_templates,
-                    fields_to_carry_over, manifest_decks_for, model_shape,
-                    note_display_label, remap_cards, write_personalized)
+from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
+                    bullets, changed_templates, fields_to_carry_over,
+                    manifest_decks_for, model_shape, note_display_label,
+                    plan_notetype_changes, remap_cards, write_personalized)
 from .ui import _ask, _info, _safe, _warn
 
 
@@ -551,6 +551,96 @@ def carry_scheduling_forward(pairs, her_guid_to_nid):
             mw.col.update_card(dst)
             moved += 1
     return moved
+
+
+def _her_note_types(scope_tag):
+    """{note guid: notetype name} for every note under the scope tag."""
+    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    out = {}
+    for nid in mw.col.find_notes(search):
+        note = mw.col.get_note(nid)
+        out[note.guid] = note.note_type()["name"]
+    return out
+
+
+def _field_map(old_model, new_model):
+    """new_fields for change_notetype_of_notes: one entry per field of the NEW note
+    type, holding that field's index in the OLD one, or -1 to discard.
+
+    Matched by NAME, not position. Anki's own default is positional, which for
+    Basic to Cloze would drop Front into Text by luck and then slide Back into Why,
+    Why into Image and so on, quietly shifting every remaining field by one. Front maps
+    to Text explicitly because they are the same thing under two names; everything else
+    (Why, Image, Dosing, Notes) lines up by name, and Back and Tag have nowhere to go.
+    """
+    old = [f["name"] for f in old_model["flds"]]
+    idx = {name: i for i, name in enumerate(old)}
+    if "Front" in idx:
+        idx.setdefault("Text", idx["Front"])
+    if "Text" in idx:
+        idx.setdefault("Front", idx["Text"])
+    return [idx.get(f["name"], -1) for f in new_model["flds"]]
+
+
+def change_note_types(changes):
+    """Move the learner's notes onto the note type this update ships for them.
+
+    Runs BEFORE the import: once a note is on the right type, Anki's importer matches it
+    by GUID and updates it in place, so the conversion keeps the card and its whole
+    review history instead of adding a second one beside it.
+
+    This is the one operation here that DOES bump the collection's schema (Anki's own
+    Change Notetype dialog gates on confirm_schema_modification for the same reason), so
+    the caller must have consented to the one-time full AnkiWeb sync first, exactly as
+    it does for a template change. Returns the number of notes converted.
+    """
+    if not changes:
+        return 0
+    from anki.models import ChangeNotetypeRequest
+
+    by_pair = {}
+    for c in changes:
+        by_pair.setdefault((c["old"], c["new"]), []).append(c["guid"])
+    done = 0
+    for (old_name, new_name), guids in by_pair.items():
+        old_model = mw.col.models.by_name(old_name)
+        new_model = mw.col.models.by_name(new_name)
+        if not old_model or not new_model:
+            continue
+        nids = [nid for nid in (mw.col.db.scalar(
+            "select id from notes where guid = ?", g) for g in guids) if nid]
+        if not nids:
+            continue
+        info = mw.col.models.change_notetype_info(
+            old_notetype_id=old_model["id"], new_notetype_id=new_model["id"])
+        req = ChangeNotetypeRequest()
+        req.CopyFrom(info.input)
+        req.note_ids.extend(nids)
+        del req.new_fields[:]
+        req.new_fields.extend(_field_map(old_model, new_model))
+        req.new_notetype_name = new_name
+        mw.col.models.change_notetype_of_notes(req)
+        done += len(nids)
+    if done:
+        mw.reset()
+    return done
+
+
+def notetype_changes(src, her, aliases, scope_tag):
+    """Note-type changes this .apkg would need on the learner's own notes.
+
+    Resolves the .apkg's guids through the same matching ladder the import uses, so a
+    note matched by front counts, then compares types. Returns plan_notetype_changes'
+    list; empty when nothing needs converting, which is the normal case.
+    """
+    remap, _in_place, _as_new, _new = remap_cards(src, her, aliases)
+    incoming = apkg_note_types(src)
+    by_her = {}
+    for rid, _fields, guid in apkg_notes(src):
+        her_guid = remap.get(rid, guid)
+        if guid in incoming:
+            by_her[her_guid] = incoming[guid]
+    return plan_notetype_changes(by_her, _her_note_types(scope_tag), TARGET_FIELDS)
 
 
 def _apply_deck(src, aliases, her):
