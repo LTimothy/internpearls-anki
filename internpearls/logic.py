@@ -253,7 +253,7 @@ def fields_to_carry_over(saved, target_current):
             if v.strip() and not (target_current.get(f) or "").strip()}
 
 
-def find_retired_in_collection(retired_ledger, her_guids):
+def find_retired_in_collection(retired_ledger, her_guids, her_front_to_guid=None):
     """The retired cards a learner still has in her collection.
 
     When a deck splits, merges, or drops a card, the old card's GUID leaves the
@@ -263,24 +263,47 @@ def find_retired_in_collection(retired_ledger, her_guids):
 
     `retired_ledger` is that ledger: {deck_name: {guid: {identity, reason,
     superseded_by, ...}}}. `her_guids` is the set of note GUIDs she has under the scope
-    tag. Returns one dict per retired card she still has, so the reconcile flow can show
+    tag. `her_front_to_guid` is {first field: guid} for those same notes (optional).
+
+    Normally a retired card is matched by GUID. But a learner whose copy predates the
+    identity the ledger is keyed by (the card was reworded between her import and the
+    GUID freeze, or its deck source changed `id_seed`) holds a *different* GUID, so a
+    pure GUID match misses her copy and the retired card lingers in her reviews
+    forever, with nothing to signal it. So when the ledger GUID isn't in her
+    collection, fall back to matching by front text (the same signal content-sync's
+    remap_cards trusts; fronts are unique across decks by build lint) and report *her*
+    GUID for it. The front compared is the entry's own `front` if the ledger records
+    one, else its `identity`, which for a basic or cloze note is exactly the front.
+    Two kinds of entry therefore keep GUID-only behaviour, both by simply not matching
+    rather than by matching something wrong: an image note (identity is
+    "image||answer", never a first field), and a card whose front was reworded under a
+    frozen `id` before it was retired (identity is the pre-reword wording). Recording
+    `front` at retirement time closes that second gap without another release here.
+
+    Returns one dict per retired card she still has, so the reconcile flow can show
     and archive them:
         {guid, deck, identity, reason, superseded_by, replacements_present}
-    `replacements_present` is how many of `superseded_by` are already in her collection
-    — so the UI can distinguish "replaced by cards you already have" from "sync first to
-    get the replacements." Sorted by deck then identity for stable display. Pure: the
-    caller supplies her_guids and does anything collection-touching (tag checks, the
-    archive itself).
+    where `guid` is HER note's GUID. `replacements_present` is how many of
+    `superseded_by` are already in her collection, so the UI can distinguish "replaced
+    by cards you already have" from "sync first to get the replacements". It stays a
+    GUID-only count: a collection whose GUIDs have drifted reads 0 and gets the
+    advisory "sync first" note, which is a cosmetic miss, not a wrong archive. Sorted
+    by deck then identity for stable display. Pure: the caller supplies the collection
+    maps and does anything collection-touching (tag checks, the archive itself).
     """
     her_guids = set(her_guids)
     out = []
     for deck, entries in (retired_ledger or {}).items():
         for guid, info in (entries or {}).items():
-            if guid not in her_guids:
+            her_guid = guid if guid in her_guids else None
+            if her_guid is None and her_front_to_guid:
+                front = info.get("front") or info.get("identity") or ""
+                her_guid = her_front_to_guid.get(front) if front else None
+            if her_guid is None:
                 continue
             sup = list(info.get("superseded_by") or [])
             out.append({
-                "guid": guid,
+                "guid": her_guid,
                 "deck": deck,
                 "identity": info.get("identity", ""),
                 "reason": info.get("reason", ""),
