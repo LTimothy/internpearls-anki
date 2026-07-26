@@ -62,8 +62,8 @@ def _click_reconcile_button(accept):
     return respond
 
 
-def _fields(front, back="the back", notes=""):
-    return [front, back, "why", "", "Pharm", "", notes]
+def _fields(front, back="the back", notes="", dosing=""):
+    return [front, back, "why", "", "Pharm", dosing, notes]
 
 
 def _write_source(tmp_path, decks, retired=None, deck_moves=None):
@@ -224,6 +224,74 @@ def test_sync_overwrites_content_but_restores_protected_notes(anki, tmp_path):
     assert note["Back"] == "NEW back"                    # content updated
     assert note["Notes"] == "her personal mnemonic"      # her field survived
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1   # updated, not duplicated
+
+
+def test_preserved_field_she_never_touched_still_receives_updates(anki, tmp_path):
+    """The point of preserving a field she can edit: protecting Dosing must not mean
+    freezing it. First sync establishes what the source shipped; the second one is
+    free to correct it, because her copy still matches that baseline."""
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one", dosing="1 mg/kg"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", dosing="1 mg/kg"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
+    sync.sync_decks()
+
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", dosing="2 mg/kg (corrected)"), TAGS)],
+               None)}))
+    anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
+    sync.sync_decks()
+
+    assert anki.col.note_by_guid("g1")["Dosing"] == "2 mg/kg (corrected)"
+
+
+def test_preserved_field_she_edited_is_kept_and_the_collision_reported(anki, tmp_path):
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one", dosing="1 mg/kg"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", dosing="1 mg/kg"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
+    sync.sync_decks()
+    anki.col.note_by_guid("g1")["Dosing"] = "1 mg/kg (my attending says 1.5)"
+
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", dosing="2 mg/kg (corrected)"), TAGS)],
+               None)}))
+    anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
+    anki.gui.infos.clear()
+    sync.sync_decks()
+
+    assert anki.col.note_by_guid("g1")["Dosing"] == "1 mg/kg (my attending says 1.5)"
+    assert any("edits sit on a field the deck source also changed" in i
+               for i in anki.gui.infos)
+
+
+def test_preserved_field_falls_back_to_always_restoring_without_a_baseline(anki, tmp_path):
+    """Upgrading into this feature must never cost an annotation: with no record of
+    what was last shipped, her value wins exactly as it did before."""
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one", notes="her mnemonic"), [TAGS])
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", notes="shipped placeholder"), TAGS)],
+               None)}))
+
+    sync.sync_decks()
+
+    assert anki.col.note_by_guid("g1")["Notes"] == "her mnemonic"
+
+
+def test_preserved_field_name_matches_regardless_of_case(anki, tmp_path):
+    """A lowercase field name used to protect nothing at all, silently."""
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one", notes="her mnemonic"), [TAGS])
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["notes"]
+
+    sync.sync_decks()
+
+    assert anki.col.note_by_guid("g1")["Notes"] == "her mnemonic"
 
 
 def test_reworded_front_with_stable_guid_updates_in_place_without_alias(anki, tmp_path):
