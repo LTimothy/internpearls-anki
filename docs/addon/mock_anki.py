@@ -183,6 +183,16 @@ class MockNote:
         self.fields[self._names.index(name)] = value
 
 
+class ChangeNotetypeRequest:
+    """Stands in for the protobuf message: the add-on only sets note_ids, new_fields,
+    and reads/copies the defaults, so a plain namespace with list semantics is enough."""
+    def __init__(self):
+        self.note_ids, self.new_fields, self.new_notetype_name = [], [], ""
+
+    def CopyFrom(self, other):
+        self.note_ids, self.new_fields = list(other.note_ids), list(other.new_fields)
+
+
 class _Models:
     def __init__(self, models):
         self._models = models
@@ -195,6 +205,22 @@ class _Models:
 
     def new_field(self, name):
         return {"name": name}
+
+    # -- change-notetype surface (see collection.change_note_types) --------------
+    def change_notetype_info(self, *, old_notetype_id, new_notetype_id):
+        return types.SimpleNamespace(input=ChangeNotetypeRequest())
+
+    def change_notetype_of_notes(self, req):
+        """Reassign the notes' model and remap their field values by the caller's map,
+        the way Anki's backend does. The mock keeps the note's cards as they are, which
+        is the behaviour under test: converting must not discard review history."""
+        new_model = self.by_name(req.new_notetype_name)
+        for nid in req.note_ids:
+            note = self._col._notes[nid]
+            old = list(note.fields)
+            note.model = new_model
+            note._resize([old[i] if 0 <= i < len(old) else "" for i in req.new_fields])
+        self._col.notetype_changes.append(list(req.note_ids))
 
     def add_field(self, model, field):
         model["flds"].append(field)
@@ -288,6 +314,7 @@ class MockCollection:
         self.db = _Db(self)
         self.imports = []   # paths passed to import_anki_package, for assertions
         self.updated_cards = []   # nids passed to update_card, for assertions
+        self.notetype_changes = []   # note-id batches converted, for assertions
         # Anki exposes suspend via col.sched and tag edits via col.tags; the add-on's
         # archive path (Reconcile) uses set_deck + these two. All are incremental (no
         # schema bump), which is exactly what the reconcile feature relies on.
@@ -1252,6 +1279,8 @@ def install():
 
     anki = types.ModuleType("anki")
     anki_collection = types.ModuleType("anki.collection")
+    anki_models = types.ModuleType("anki.models")
+    anki_models.ChangeNotetypeRequest = ChangeNotetypeRequest
 
     class ImportAnkiPackageOptions:
         pass
@@ -1281,4 +1310,5 @@ def install():
     sys.modules.pop("aqt.operations", None)
     sys.modules["anki"] = anki
     sys.modules["anki.collection"] = anki_collection
+    sys.modules["anki.models"] = anki_models
     return mock
