@@ -3,6 +3,16 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.38.0
+
+- Fixes v0.37.0 for anyone using FSRS. FSRS schedules from a card's memory state rather
+  than from its interval, so seeding an extra blank with an interval alone left the
+  number saying one thing and the scheduler computing another. The parent's memory
+  state, desired retention and decay now travel with the interval, at half the
+  parent's stability since stability is what the interval is derived from. Difficulty
+  carries over unchanged, since how hard the material is does not depend on which blank
+  is asking about it. No effect on a collection not using FSRS.
+
 ## v0.37.0
 
 - When a card is reformatted into several fill-in-the-blanks, all of them keep your

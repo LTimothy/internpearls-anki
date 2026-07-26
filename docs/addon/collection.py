@@ -510,6 +510,36 @@ def archive_notes(nids, retired_deck, tag):
 # so carrying this forward moves her progress without moving her organization.
 _SCHED_FIELDS = ("type", "queue", "due", "ivl", "factor", "reps", "lapses")
 
+# FSRS schedules from the card's memory state, not from ivl/factor, so a card seeded
+# with an interval but no memory state is inconsistent under it: the number says one
+# thing and the scheduler computes another. These travel with the interval.
+_FSRS_FIELDS = ("desired_retention", "decay", "last_review_time")
+
+
+def _halve_memory_state(parent, card):
+    """Copy the parent's FSRS memory state onto a seeded sibling, at half stability.
+
+    Stability is roughly the interval at which the learner still recalls the card at
+    their desired retention, so it is the FSRS-side counterpart of the interval and has
+    to be halved with it. Copying the interval alone would leave FSRS recomputing from
+    a memory state the card never had. Difficulty carries over unchanged: how hard the
+    material is does not depend on which blank is asking about it.
+
+    A no-op on a collection not using FSRS, where memory_state is simply absent.
+    """
+    state = getattr(parent, "memory_state", None)
+    if state is None:
+        return
+    try:
+        copy = type(state)()
+        copy.CopyFrom(state)
+        copy.stability = max(0.5, state.stability / 2)
+        card.memory_state = copy
+    except Exception:
+        # Never let a scheduler detail break the conversion itself; the card still
+        # carries the seeded interval, which is what the older scheduler reads.
+        pass
+
 
 def carry_scheduling_forward(pairs, her_guid_to_nid):
     """Move a stranded predecessor's review history onto its live successor.
@@ -611,11 +641,12 @@ def seed_converted_siblings(nids):
         for card in cards:
             if card.id == parent.id or getattr(card, "reps", 0) > 0:
                 continue
-            for f in _SCHED_FIELDS:
+            for f in _SCHED_FIELDS + _FSRS_FIELDS:
                 if hasattr(parent, f):
                     setattr(card, f, getattr(parent, f))
             card.ivl = max(1, getattr(parent, "ivl", 0) // 2)
             card.due = getattr(parent, "due", 0)
+            _halve_memory_state(parent, card)
             mw.col.update_card(card)
             seeded += 1
     return seeded
