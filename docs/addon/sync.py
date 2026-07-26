@@ -209,9 +209,11 @@ def _collision_note(collisions):
         if nid:
             fronts.append(f"{mw.col.get_note(nid).fields[0][:70]} ({field})")
     more = f" and {len(collisions) - len(fronts)} more" if len(collisions) > len(fronts) else ""
-    return (f"<br><br><b>{len(collisions)}</b> of your edits sit on a field the deck "
-            "source also changed. Yours was kept; send these back if you'd like them "
-            "folded in:" + bullets(fronts) + more)
+    return (f"<br><br>On <b>{len(collisions)}</b> card(s), this update changed a field "
+            "you had also written in yourself. <b>Your version was kept</b> and the "
+            "update to that field was skipped, so nothing you wrote was lost. Worth "
+            "passing these on to whoever maintains the decks if you want your wording "
+            "folded in, or theirs applied instead:" + bullets(fronts) + more)
 
 
 def _offer_notetype_changes(changes):
@@ -311,7 +313,7 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
     # _restore, hers is what the note holds, and recording that as the baseline would
     # make her own edit indistinguishable from the source's own value next time.
     shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched)
-    restored, collisions = _restore(snap, _load_json(SHIPPED, {}))
+    restored, collisions = _restore(snap, _load_json(SHIPPED, {}), touched)
     if shipped:
         _save_json(SHIPPED, {**_load_json(SHIPPED, {}), **shipped})
     mw.reset()
@@ -986,7 +988,7 @@ def import_single():
         except OSError:
             pass
     shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched)
-    restored, _ = _restore(snap, _load_json(SHIPPED, {}))
+    restored, _ = _restore(snap, _load_json(SHIPPED, {}), touched)
     if shipped:
         _save_json(SHIPPED, {**_load_json(SHIPPED, {}), **shipped})
     mw.reset()
