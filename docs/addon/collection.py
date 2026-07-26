@@ -237,7 +237,7 @@ def _capture_shipped(protected, scope_tag, touched):
     return out
 
 
-def _restore(snap, baseline=None):
+def _restore(snap, baseline=None, touched=None):
     """Put the learner's own annotations back after an import, but only the ones that
     are actually hers.
 
@@ -258,6 +258,10 @@ def _restore(snap, baseline=None):
     source has never written) the old always-restore behaviour applies, so the
     conservative direction is the default and an upgrade never loses an annotation.
 
+    `touched` is the guids this run's import actually wrote. Notes outside it are
+    skipped entirely: an import that never ran over a note cannot have overwritten
+    anything on it, so there is nothing to restore and nothing to conflict with.
+
     Returns (restored, collisions), where a collision is a field she edited AND the
     source changed since that baseline: hers wins, and the count lets the caller offer
     to send those back rather than let the two versions drift apart unnoticed.
@@ -265,6 +269,12 @@ def _restore(snap, baseline=None):
     baseline = baseline or {}
     restored, collisions = 0, []
     for guid, saved in snap.items():
+        if touched is not None and guid not in touched:
+            # Nothing imported over this note, so none of its fields were overwritten:
+            # there is nothing to put back, and comparing it to the baseline would
+            # report a conflict against an update that never happened. This is what
+            # made a card in a deck that had no update at all read as a collision.
+            continue
         nid = mw.col.db.scalar("select id from notes where guid = ?", guid)
         if not nid:
             continue
