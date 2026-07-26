@@ -314,6 +314,39 @@ def find_retired_in_collection(retired_ledger, her_guids, her_front_to_guid=None
     return out
 
 
+def find_stranded_pairs(superseded, her_front_to_guid):
+    """Pairs where the learner holds BOTH wordings of a card that was reworded once.
+
+    Rewording a front freezes the old wording as the note's `id`, which keeps the GUID
+    stable so the reword updates a learner's card in place. That works for anyone whose
+    GUID matches. For anyone whose GUID drifted first, the reword matched nothing and
+    imported as a second note, leaving her with the dead wording (carrying whatever
+    review history she had built) sitting beside the live one (starting from zero).
+    Neither copy alone is right: the old one has her progress but stale content, the new
+    one has current content but no progress.
+
+    `superseded` is the manifest's {superseded front: its replacement}, derived by the
+    deck source from those same `id` freezes, so the pairing is the deck author's own
+    declaration that the two wordings are one card rather than a guess made here.
+    `her_front_to_guid` is {first field: guid} for her collection.
+
+    Only pairs where she holds both are returned. Holding just the old wording is not a
+    stranding: the import's own front matching merges it, which is the whole point of
+    that ladder, and acting here too would fight it. Returns
+    [{guid, front, successor_guid, successor_front}] sorted by front for stable display;
+    `guid` is the predecessor, the copy that gets emptied out and archived.
+    """
+    out = []
+    for old_front, new_front in (superseded or {}).items():
+        old_guid = (her_front_to_guid or {}).get(old_front)
+        new_guid = (her_front_to_guid or {}).get(new_front)
+        if old_guid and new_guid and old_guid != new_guid:
+            out.append({"guid": old_guid, "front": old_front,
+                        "successor_guid": new_guid, "successor_front": new_front})
+    out.sort(key=lambda p: p["front"])
+    return out
+
+
 def apkg_notes(path):
     """Return (note_id, fields, guid) for every note in an .apkg file, where `fields` is
     the note's complete field list.

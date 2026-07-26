@@ -551,6 +551,101 @@ def test_reconcile_leaves_a_retired_card_alone_when_neither_guid_nor_front_match
     assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
 
 
+def _stranded_source(tmp_path, superseded):
+    folder = tmp_path / "source"
+    folder.mkdir(exist_ok=True)
+    (folder / "manifest.json").write_text(json.dumps({
+        "schema": 2, "decks": [], "front_aliases": {}, "retired": {},
+        "deck_moves": {}, "superseded_fronts": superseded}), encoding="utf8")
+    return str(folder)
+
+
+def _sched(anki, note, **vals):
+    card = anki.col.get_card(note.card_ids()[0])
+    for k, v in vals.items():
+        setattr(card, k, v)
+    return card
+
+
+def test_reconcile_moves_progress_onto_the_reworded_card_and_archives_the_old(
+        anki, tmp_path):
+    """The real-world case: her GUID drifted before the reword was frozen, so the
+    reword imported as a second note and her review history sat on the dead copy while
+    the live one started from zero. She should end up with one card, current wording,
+    her progress intact."""
+    from internpearls import sync
+    old = _her_card(anki, "g_old", "old wording")
+    new = _her_card(anki, "g_new", "new wording")
+    _sched(anki, old, reps=4, ivl=12, due=90, factor=2300, lapses=1, type=2, queue=2)
+    _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
+
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
+
+    kept = anki.col.get_card(anki.col.note_by_guid("g_new").card_ids()[0])
+    assert (kept.reps, kept.ivl, kept.due, kept.factor, kept.lapses) == (4, 12, 90, 2300, 1)
+    dead = anki.col.get_card(anki.col.note_by_guid("g_old").card_ids()[0])
+    assert dead.queue == -1                                    # archived, not deleted
+    assert dead.did == anki.col.decks.id_for_name(RETIRED_DECK)
+    assert RETIRED_TAG in anki.col.note_by_guid("g_old").tags
+    assert dead.reps == 4          # its own history is left on it, never cleared
+    assert anki.col.note_by_guid("g_new").id in anki.col.updated_cards   # persisted
+    assert len(anki.col._notes) == 2                           # nothing deleted
+    assert any("Merged <b>1</b>" in i for i in anki.gui.infos)
+
+
+def test_reconcile_never_rolls_back_a_reworded_card_she_already_studied(anki, tmp_path):
+    """If she's further along on the new wording than the old one, her progress there
+    is what counts. The old copy still archives; it just doesn't overwrite anything."""
+    from internpearls import sync
+    old = _her_card(anki, "g_old", "old wording")
+    new = _her_card(anki, "g_new", "new wording")
+    _sched(anki, old, reps=1, ivl=2, due=10)
+    _sched(anki, new, reps=9, ivl=40, due=200)
+    _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
+
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
+
+    kept = anki.col.get_card(anki.col.note_by_guid("g_new").card_ids()[0])
+    assert (kept.reps, kept.ivl, kept.due) == (9, 40, 200)     # untouched
+    assert anki.col.get_card(anki.col.note_by_guid("g_old").card_ids()[0]).queue == -1
+
+
+def test_reconcile_stranded_merge_is_idempotent(anki, tmp_path):
+    from internpearls import sync
+    old = _her_card(anki, "g_old", "old wording")
+    _her_card(anki, "g_new", "new wording")
+    _sched(anki, old, reps=4, ivl=12)
+    folder = _stranded_source(tmp_path, {"old wording": "new wording"})
+    _configure(anki, folder)
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
+    kept_before = dict(vars(anki.col.get_card(
+        anki.col.note_by_guid("g_new").card_ids()[0])))
+
+    anki.gui.infos.clear()
+    anki.gui.interactive = False
+    sync.reconcile_decks()          # second run: the predecessor is tagged, so skipped
+
+    assert vars(anki.col.get_card(
+        anki.col.note_by_guid("g_new").card_ids()[0])) == kept_before
+    assert any("nothing to tidy up" in i for i in anki.gui.infos)
+    assert len(anki.col._notes) == 2
+
+
+def test_reconcile_leaves_a_reworded_card_alone_when_she_only_has_the_old_one(
+        anki, tmp_path):
+    """Holding just the old wording is the import's job, not this one's: its front
+    matching merges her card in place. Touching it here would fight that."""
+    from internpearls import sync
+    old = _her_card(anki, "g_old", "old wording")
+    _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
+
+    sync.reconcile_decks()
+
+    card = anki.col.get_card(old.card_ids()[0])
+    assert card.queue == 0 and card.did == anki.col.decks.id_for_name(DECK)
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
+
+
 def test_reconcile_run_manually_clears_the_auto_sync_nudge_label(anki, tmp_path):
     """A manual Reconcile run (bypassing auto-sync entirely, e.g. auto-sync is off)
     should also reset the persistent "N pending" menu label, not leave it stuck
