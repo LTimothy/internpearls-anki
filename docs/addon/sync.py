@@ -285,14 +285,16 @@ def _reconcile_pending(manifest, cfg):
     docstring for why that refetch matters).
     """
     her = _her_guid_to_nid(cfg["scope_tag"])
-    found = find_retired_in_collection(manifest.get("retired", {}), set(her))
+    # her_front lets both ledgers act on a card whose GUID no longer matches them (an
+    # id_seed change, or a reword that predates the GUID freeze), by its front, the
+    # same way remap_cards matches content. Without it a moved card stays stuck at
+    # `from` with its new deck re-offered forever, and a retired card is never found
+    # to archive, so it duplicates its replacements in every review indefinitely.
+    her_front = _her_front_to_guid(cfg["scope_tag"])
+    found = find_retired_in_collection(manifest.get("retired", {}), set(her), her_front)
     her_deck = _her_guid_to_deck(cfg["scope_tag"])
-    # her_front lets find_deck_moves_needed relocate a card whose GUID no longer
-    # matches the ledger (an id_seed change), by its front, the same way remap_cards
-    # matches content. Without it such a card stays stuck at `from` and its new deck
-    # is re-offered forever.
     moves = [m for m in find_deck_moves_needed(manifest.get("deck_moves", {}), her_deck,
-                                               _her_front_to_guid(cfg["scope_tag"]))
+                                               her_front)
              if m["guid"] in her]
 
     tag = f'{cfg["scope_tag"]}::{RETIRED_TAG_LEAF}'
