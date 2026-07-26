@@ -184,6 +184,16 @@ class MockNote:
         self.fields[self._names.index(name)] = value
 
 
+class FsrsMemoryState:
+    """Stands in for Anki's protobuf memory state: stability and difficulty, with the
+    CopyFrom the add-on uses to clone one before halving its stability."""
+    def __init__(self, stability=0.0, difficulty=0.0):
+        self.stability, self.difficulty = stability, difficulty
+
+    def CopyFrom(self, other):
+        self.stability, self.difficulty = other.stability, other.difficulty
+
+
 class ChangeNotetypeRequest:
     """Stands in for the protobuf message: the add-on only sets note_ids, new_fields,
     and reads/copies the defaults, so a plain namespace with list semantics is enough."""
@@ -336,7 +346,9 @@ class MockCollection:
         # be exercised for real: it copies these across and the tests read them back.
         self._cards[cid] = types.SimpleNamespace(
             id=cid, nid=note.id, did=did, queue=0, reps=0, ord=0,
-            type=0, due=0, ivl=0, factor=0, lapses=0)
+            type=0, due=0, ivl=0, factor=0, lapses=0,
+            memory_state=None, desired_retention=None, decay=None,
+            last_review_time=None)
         note._card_ids.append(cid)
         return note
 
@@ -398,7 +410,9 @@ class MockCollection:
             first = self._cards[note._card_ids[0]]
             self._cards[cid] = types.SimpleNamespace(
                 id=cid, nid=note.id, did=first.did, queue=0, reps=0, ord=i,
-                type=0, due=0, ivl=0, factor=0, lapses=0)
+                type=0, due=0, ivl=0, factor=0, lapses=0,
+                memory_state=None, desired_retention=None, decay=None,
+                last_review_time=None)
             note._card_ids.append(cid)
 
     def update_card(self, card):
