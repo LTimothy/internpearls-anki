@@ -426,6 +426,54 @@ def archive_notes(nids, retired_deck, tag):
     return len(nids)
 
 
+# The scheduling a card carries: what SM-2/FSRS reads to decide when it comes back, plus
+# the counters the learner sees. Deliberately not the deck (`did`) or the note's fields,
+# so carrying this forward moves her progress without moving her organization.
+_SCHED_FIELDS = ("type", "queue", "due", "ivl", "factor", "reps", "lapses")
+
+
+def carry_scheduling_forward(pairs, her_guid_to_nid):
+    """Move a stranded predecessor's review history onto its live successor.
+
+    `pairs` is find_stranded_pairs' output. For each, the predecessor's cards are copied
+    onto the successor's by ordinal, so a cloze whose deletions were renumbered only
+    moves the ordinals that still line up rather than smearing card 1's schedule across
+    all of them.
+
+    Two guards keep this from ever costing her progress. A successor card is only
+    written when it has FEWER reps than the predecessor, so a card she has already been
+    studying is never rolled back to an older schedule, and a re-run is a no-op. And
+    nothing is cleared from the predecessor: it keeps its own scheduling and is archived
+    afterwards, so the worst case is a duplicated schedule on a suspended card, which is
+    recoverable by hand, rather than history that no card holds any more.
+
+    Like archiving, every write here is an ordinary card update: no note types, no
+    fields, no schema bump, so it does not force the one-way AnkiWeb full sync. Returns
+    the number of successor cards updated.
+    """
+    moved = 0
+    for p in pairs:
+        old_nid = her_guid_to_nid.get(p["guid"])
+        new_nid = her_guid_to_nid.get(p["successor_guid"])
+        if old_nid is None or new_nid is None:
+            continue
+        src = {}
+        for cid in mw.col.get_note(old_nid).card_ids():
+            card = mw.col.get_card(cid)
+            src[getattr(card, "ord", 0)] = card
+        for cid in mw.col.get_note(new_nid).card_ids():
+            dst = mw.col.get_card(cid)
+            card = src.get(getattr(dst, "ord", 0))
+            if card is None or getattr(dst, "reps", 0) >= getattr(card, "reps", 0):
+                continue
+            for f in _SCHED_FIELDS:
+                if hasattr(card, f):
+                    setattr(dst, f, getattr(card, f))
+            mw.col.update_card(dst)
+            moved += 1
+    return moved
+
+
 def _apply_deck(src, aliases, her):
     remap, in_place, as_new, _ = remap_cards(src, her, aliases)
     out = src + ".sync.apkg"

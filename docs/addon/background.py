@@ -212,7 +212,7 @@ def _auto_sync_check():
         # this is the one place that keeps the "Reconcile my decks" menu label (and,
         # the first time a backlog appears or grows, a one-time tooltip pointing at
         # it) honest between manual checks.
-        _, fresh, _, moves, _, _ = _reconcile_pending(result["manifest"], cfg)
+        _, fresh, _, moves, _, _, stranded = _reconcile_pending(result["manifest"], cfg)
         pending = len(fresh) + len(moves)
         _refresh_reconcile_action_label(pending)
         if pending and pending != _last_reconcile_notified:

@@ -3,6 +3,18 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.33.0
+
+- Update my decks now repairs a card you ended up holding twice. When a card's wording
+  changes, the deck source freezes its identity so the new wording lands on the copy you
+  already have. If your copy's identity had drifted before that freeze, the new wording
+  arrived as a second card instead, leaving your review progress on the outdated one and
+  the current one starting from zero. Update my decks now spots those pairs, moves your
+  progress and your personal notes onto the current wording, and archives the outdated
+  copy along with everything else it archives. Nothing is deleted, the outdated copy
+  keeps its own history, and a card you were already further along on is never rolled
+  back to an older schedule. Reconcile my decks does the same thing on its own.
+
 ## v0.32.3
 
 - Retired cards are found and archived even when your copy carries an older GUID than

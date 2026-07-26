@@ -23,6 +23,7 @@ from .collection import (_apply_deck, _apply_template_changes, _ensure_notetypes
                          _pre_sync_backup_or_confirm_skip, _restore,
                          _snapshot, _template_changes, apply_deck_moves,
                          archive_notes, carry_over_protected_fields,
+                         carry_scheduling_forward,
                          installed_matching_collection)
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json,
@@ -30,8 +31,8 @@ from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_
 from .logic import (apkg_note_details, bullets, decks_to_update,
                     duplicate_dialog_html, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
-                    manifest_needs_newer_addon, note_display_label, remap_cards,
-                    write_personalized)
+                    find_stranded_pairs, manifest_needs_newer_addon,
+                    note_display_label, remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .review import offer_feedback_digest, review_new_cards
 from .ui import _ask, _ask_scrollable, _info, _safe, _warn, cancellable_progress, wait_cursor
@@ -279,10 +280,12 @@ def _reconcile_pending(manifest, cfg):
     since-reorganized deck. Shared by reconcile_decks() and update_decks() so the two
     can never disagree about what's pending.
 
-    Returns (her, fresh, already, moves, retired_deck, tag) — `her` is {guid: nid} for
-    every note currently under scope_tag, which the caller needs again to act on
-    `fresh`/`moves` afterward (or, for update_decks(), to refetch post-sync — see its
-    docstring for why that refetch matters).
+    Returns (her, fresh, already, moves, retired_deck, tag, stranded) — `her` is
+    {guid: nid} for every note currently under scope_tag, which the caller needs again
+    to act on `fresh`/`moves` afterward (or, for update_decks(), to refetch post-sync —
+    see its docstring for why that refetch matters). `stranded` is the reworded-card
+    pairs she holds both halves of (see find_stranded_pairs); its predecessors are
+    archived like `fresh`, but only after their scheduling has been carried forward.
     """
     her = _her_guid_to_nid(cfg["scope_tag"])
     # her_front lets both ledgers act on a card whose GUID no longer matches them (an
@@ -306,7 +309,50 @@ def _reconcile_pending(manifest, cfg):
             already += 1
         else:
             fresh.append(r)
-    return her, fresh, already, moves, retired_deck, tag
+    stranded = [p for p in find_stranded_pairs(manifest.get("superseded_fronts", {}),
+                                               her_front)
+                if p["guid"] in her and p["successor_guid"] in her
+                and tag not in mw.col.get_note(her[p["guid"]]).tags]
+    return her, fresh, already, moves, retired_deck, tag, stranded
+
+
+def _stranded_block(stranded, her):
+    """The confirmation section for reworded cards she holds both halves of.
+
+    Worded around what she'll notice (two versions of the same card, progress on the
+    one that's out of date) rather than around GUIDs, which is the actual cause but not
+    something she should have to know about to say yes to this.
+    """
+    if not stranded:
+        return ""
+    lines = [f"{p['front']} <span style='color:gray;'>→ {p['successor_front']}</span>"
+             for p in stranded]
+    return (f"<b>{len(stranded)}</b> card(s) are in your collection twice, in an older "
+            "and a newer wording of the same question, because the wording changed "
+            "after you first imported them. Your progress on the older copy moves to "
+            "the newer one, then the older copy is archived."
+            + bullets(lines, cap=15))
+
+
+def _merge_stranded(stranded, her, protected, retired_deck, tag):
+    """Carry each stranded predecessor's scheduling and personal notes onto its live
+    successor, then archive the predecessor. Returns the number of pairs merged.
+
+    Scheduling first, archiving second, and both before the caller's own archive pass:
+    a predecessor that somehow failed to hand its history over should still be sitting
+    in her review queue afterwards rather than suspended with nothing carrying it.
+    Reuses carry_over_protected_fields by describing each pair the way it describes a
+    retirement (one predecessor, one replacement), so her Notes field follows the same
+    single path here as everywhere else.
+    """
+    if not stranded:
+        return 0
+    carry_scheduling_forward(stranded, her)
+    carry_over_protected_fields(
+        [{"guid": p["guid"], "superseded_by": [p["successor_guid"]]} for p in stranded],
+        her, protected)
+    archive_notes([her[p["guid"]] for p in stranded], retired_deck, tag)
+    return len(stranded)
 
 
 @_safe
@@ -349,8 +395,9 @@ def reconcile_decks():
               "Open <b>Intern Pearls → Manage decks</b> and use Configure source.")
         return
 
-    her, fresh, already, moves, retired_deck, tag = _reconcile_pending(manifest, cfg)
-    if not fresh and not moves:
+    her, fresh, already, moves, retired_deck, tag, stranded = _reconcile_pending(
+        manifest, cfg)
+    if not fresh and not moves and not stranded:
         _refresh_reconcile_action_label(0)
         if already:
             _info(f"All {already} retired card(s) in your collection are already "
@@ -367,7 +414,7 @@ def reconcile_decks():
     catch_up_note = (
         "<i>This looks like a one-time catch-up — likely your first Reconcile since a "
         "larger update. Future runs should be much shorter.</i><br><br>"
-        if len(fresh) + len(moves) > 20 else "")
+        if len(fresh) + len(moves) + len(stranded) > 20 else "")
 
     # Both lists are capped for readability, and the confirmation below uses the
     # scrollable dialog rather than a plain askUser() — a bare QMessageBox has no
@@ -399,7 +446,7 @@ def reconcile_decks():
         + bullets(move_lines, cap=15)
     ) if moves else ""
 
-    sep = "<br><br>" if fresh and moves else ""
+    stranded_block = _stranded_block(stranded, her)
     safety_note = (
         "<br><br>Nothing is deleted. Archived cards keep their review history and can "
         "be brought back anytime by unsuspending them or moving them out of the "
@@ -408,20 +455,18 @@ def reconcile_decks():
          if fresh else ".") +
         " A backup is taken automatically before anything changes."
     )
-    if fresh and moves:
-        yes_label = "Archive and relocate"
-    elif fresh:
-        yes_label = "Archive"
-    else:
-        yes_label = "Relocate"
-    if not _ask_scrollable(catch_up_note + archive_block + sep + moves_block + safety_note,
-                           yes_label=yes_label):
+    body = "<br><br>".join(b for b in (archive_block, stranded_block, moves_block) if b)
+    yes_label = " and ".join(
+        x for x in ("Archive" if fresh or stranded else None,
+                    "relocate" if moves else None) if x) or "Apply"
+    if not _ask_scrollable(catch_up_note + body + safety_note, yes_label=yes_label):
         return
 
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
     if not proceed:
         return
     carried = carry_over_protected_fields(fresh, her, cfg["protected"])
+    n_merged = _merge_stranded(stranded, her, cfg["protected"], retired_deck, tag)
     n_archived = archive_notes([her[r["guid"]] for r in fresh], retired_deck, tag)
     n_moved = apply_deck_moves(moves, her)
     mw.reset()
@@ -437,6 +482,10 @@ def reconcile_decks():
             + (f" ({carried} personal note(s) carried over to their replacement)"
                if carried else "") + ". Bring any back by unsuspending it or moving "
             "it out of the Retired deck.")
+    if n_merged:
+        result_lines.append(
+            f"Merged <b>{n_merged}</b> reworded card(s): your progress moved onto the "
+            "current wording, and the older copy was archived alongside the rest.")
     if n_moved:
         result_lines.append(f"Moved <b>{n_moved}</b> card(s) to their reorganized deck — "
                             "content and scheduling untouched.")
@@ -592,9 +641,10 @@ def update_decks():
 
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     todo = decks_to_update(manifest, installed, cfg["excluded"])
-    her, fresh, already, moves, retired_deck, tag = _reconcile_pending(manifest, cfg)
+    her, fresh, already, moves, retired_deck, tag, stranded = _reconcile_pending(
+        manifest, cfg)
 
-    if not todo and not fresh and not moves:
+    if not todo and not fresh and not moves and not stranded:
         _refresh_reconcile_action_label(0)
         _info(f"You're all up to date (source: {source}).")
         return
@@ -649,6 +699,8 @@ def update_decks():
             f"<b>{len(fresh)}</b> retired card(s) are still in your collection — split "
             "or reworded since, with the replacements added separately, so these just "
             f"duplicate your reviews now.{already_note}" + bullets(lines, cap=15))
+    if stranded:
+        sections.append(_stranded_block(stranded, her))
     if moves:
         move_lines = [f"{mw.col.get_note(her[m['guid']]).fields[0]} <span "
                       f"style='color:gray;'>→ {m['to'].split('::')[-1]}</span>" for m in moves]
@@ -661,7 +713,7 @@ def update_decks():
     catch_up_note = (
         "<i>This looks like a one-time catch-up — likely your first update in a "
         "while. Future updates should be much shorter.</i><br><br>"
-        if len(fresh) + len(moves) > 20 else "")
+        if len(fresh) + len(moves) + len(stranded) > 20 else "")
     safety_note = (
         "<br><br>This is a preview: nothing above has been applied yet. Your "
         "review history and any personal notes on existing cards are kept (matched "
@@ -774,14 +826,24 @@ def update_decks():
             return
         _offer_template_changes(tpl_changes)
 
-    n_archived = n_moved = carried = 0
-    if fresh or moves:
+    n_archived = n_moved = carried = n_merged = 0
+    if fresh or moves or stranded:
         # Refetched, not the pre-sync `her` from _reconcile_pending above: the sync
         # step just above may have imported a retired card's replacement for the
         # first time, and carry_over_protected_fields needs the replacement's current
         # nid to find it and copy her annotation over.
         her = _her_guid_to_nid(cfg["scope_tag"])
+        # Recomputed against the post-sync collection for the same reason, and for one
+        # more: this very sync can CREATE a stranding, by importing a reworded front as
+        # a second note when her GUID didn't match. Recomputing means such a pair is
+        # merged in the same run that made it, rather than surfacing as a duplicate she
+        # has to see once before the next update tidies it away.
+        stranded = [p for p in find_stranded_pairs(
+            manifest.get("superseded_fronts", {}), _her_front_to_guid(cfg["scope_tag"]))
+            if p["guid"] in her and p["successor_guid"] in her
+            and tag not in mw.col.get_note(her[p["guid"]]).tags]
         carried = carry_over_protected_fields(fresh, her, cfg["protected"])
+        n_merged = _merge_stranded(stranded, her, cfg["protected"], retired_deck, tag)
         n_archived = archive_notes([her[r["guid"]] for r in fresh], retired_deck, tag)
         n_moved = apply_deck_moves(moves, her)
         mw.reset()
@@ -792,6 +854,10 @@ def update_decks():
         result_lines.append(
             f"✓ Archived <b>{n_archived}</b> retired card(s) to <b>{retired_deck}</b>"
             + (f" ({carried} personal note(s) carried over)" if carried else "") + ".")
+    if n_merged:
+        result_lines.append(
+            f"✓ Merged <b>{n_merged}</b> reworded card(s): your progress moved onto the "
+            "current wording, older copy archived.")
     if n_moved:
         result_lines.append(f"✓ Moved <b>{n_moved}</b> card(s) to their reorganized deck.")
 
