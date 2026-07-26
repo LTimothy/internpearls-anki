@@ -3,6 +3,17 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.38.2
+
+- Fixed a false alarm: cards in decks that had no update at all were being reported as
+  having a conflict between your own notes and the deck's. Nothing had imported over
+  those cards, so nothing of yours was overwritten and there was no update to conflict
+  with. Only cards an update actually wrote are considered now.
+- Reworded that report, which said "your edits sit on a field the deck source also
+  changed" without saying what had happened or what to do about it. It now says plainly
+  that your version was kept, the update to that one field was skipped, and nothing you
+  wrote was lost.
+
 ## v0.38.1
 
 - Fixes an update failing with 'Protocol message ChangeNotetypeRequest has no
