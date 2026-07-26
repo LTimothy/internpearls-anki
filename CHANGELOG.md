@@ -3,6 +3,16 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.36.0
+
+- The format conversion added in v0.35.0 now actually finds your cards. Anki keeps both
+  note types and adds a "+" when an imported one collides with an existing name, so a
+  collection that has synced these decks across several updates holds cards on
+  "Study Deck - Basic", "Basic+", "Basic++" and so on. The check was matching the exact
+  name, so on a real collection it would have converted 30 cards and skipped 595.
+- Understands deck sources using the newer manifest format, which is what lets a deck
+  ship a reformatted card as the same card you already have rather than a new one.
+
 ## v0.35.0
 
 - A card that changes format keeps its review history. When a question-and-answer card

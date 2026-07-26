@@ -492,6 +492,20 @@ def apkg_note_types(path):
                 con.close()
 
 
+def base_notetype_name(name):
+    """A note type's name with Anki's collision suffix stripped.
+
+    Importing a note type whose name matches an existing one with different fields makes
+    Anki keep both and append "+" to the newcomer, so a collection that has re-imported a
+    deck across several field additions ends up holding "Study Deck - Basic",
+    "Study Deck - Basic+", "Study Deck - Basic++" and so on, every one of them ours.
+    Measured on a real collection: 595 of 625 notes sat on a suffixed variant and only 30
+    on the bare name, so treating a suffix as somebody else's note type would skip
+    virtually every card that needs converting.
+    """
+    return (name or "").rstrip("+") or (name or "")
+
+
 def plan_notetype_changes(incoming_types, her_types, managed):
     """Which of the learner's notes have to change note type for this update to land on
     them instead of beside them.
@@ -513,7 +527,11 @@ def plan_notetype_changes(incoming_types, her_types, managed):
     out = []
     for guid, new in (incoming_types or {}).items():
         old = (her_types or {}).get(guid)
-        if old is None or old == new or old not in managed or new not in managed:
+        if old is None:
+            continue
+        old_base, new_base = base_notetype_name(old), base_notetype_name(new)
+        if (old_base == new_base or old_base not in managed
+                or new_base not in managed):
             continue
         out.append({"guid": guid, "old": old, "new": new})
     out.sort(key=lambda c: c["guid"])
