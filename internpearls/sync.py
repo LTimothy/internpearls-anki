@@ -18,7 +18,8 @@ from aqt import mw
 from aqt.utils import getFile
 
 from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
-                         _ensure_notetypes,
+                         _ensure_notetypes, change_note_types,
+                         notetype_changes,
                          _her_front_to_guid, _her_guid_to_deck, _her_guid_to_nid,
                          _her_notes_summary, _import_apkg,
                          _pre_sync_backup_or_confirm_skip, _restore,
@@ -174,7 +175,7 @@ def sync_decks():
     # background poll), and a multi-deck sync on a slow link otherwise looks like a
     # hang with no way out.
     with cancellable_progress("Syncing decks", len(todo)) as step:
-        results, restored, tpl_changes, _, cancelled, collisions = _run_sync(
+        results, restored, tpl_changes, _, cancelled, collisions, _conv = _run_sync(
             cfg, manifest, fetch, todo, installed,
             on_progress=lambda i, n, name: step(i, f"Syncing {name} ({i} of {n})"))
     _offer_template_changes(tpl_changes)
@@ -213,6 +214,28 @@ def _collision_note(collisions):
             "folded in:" + bullets(fronts) + more)
 
 
+def _offer_notetype_changes(changes):
+    """Ask before converting the learner's notes to the note type an update ships.
+
+    Declining is a real choice with a real consequence, and it says so: the cards still
+    import, but as new notes beside her existing ones, so the history stays on a copy
+    that is no longer what the deck teaches. Accepting keeps one card with its history.
+    Mirrors _offer_template_changes because it costs the same thing, a one-time full
+    AnkiWeb sync, for the same reason.
+    """
+    if not changes:
+        return 0
+    return change_note_types(changes) if _ask(
+        f"<b>{len(changes)}</b> card(s) in this update changed format (a question and "
+        "answer became a fill-in-the-blank).<br><br>Move your existing cards to the new "
+        "format? They keep their review history and stay one card each. Anki treats "
+        "this as a schema change, so your next AnkiWeb sync will be a one-time full "
+        "sync, choose \"Upload to AnkiWeb\" when asked.<br><br>Choosing No still "
+        "imports them, but as separate new cards, leaving your progress on the old "
+        "versions."
+    ) else 0
+
+
 def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
               defer_template_changes=False):
     """Apply every deck in `todo`: fix note types, snapshot protected fields, remap and
@@ -249,6 +272,7 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
     her = _her_front_to_guid(cfg["scope_tag"])
     results, tpl_changes, deferred, touched = [], {}, [], set()
+    converted = 0
     cancelled = False
     for i, d in enumerate(todo, 1):
         short = d["name"].split("::")[-1]
@@ -258,12 +282,20 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
         try:
             src = fetch(d)
             tpl = _template_changes(src)
-            if tpl and defer_template_changes:
+            # A note-type conversion is the same class of thing as a template change:
+            # it bumps the schema, so it needs consent and must never happen
+            # unattended. Same deferral, one deck held back rather than half-applied.
+            nt = notetype_changes(src, her, aliases, cfg["scope_tag"])
+            if (tpl or nt) and defer_template_changes:
                 deferred.append(d["name"])
                 results.append(f"• <b>{short}</b>: includes a card-template update, "
                                "waiting for a manual Sync decks")
                 continue
             tpl_changes.update(tpl)
+            # Before the import, not after: once the note is on the right type, the
+            # import matches it by GUID and updates it in place, which is the whole
+            # point. Afterwards it would be converting a duplicate.
+            converted += _offer_notetype_changes(nt)
             in_place, as_new, wrote = _apply_deck(src, aliases, her)
             touched |= wrote
             installed[d["name"]] = d["version"]
@@ -279,7 +311,7 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
     if shipped:
         _save_json(SHIPPED, {**_load_json(SHIPPED, {}), **shipped})
     mw.reset()
-    return results, restored, tpl_changes, deferred, cancelled, collisions
+    return results, restored, tpl_changes, deferred, cancelled, collisions, converted
 
 
 def _offer_template_changes(tpl_changes):
@@ -826,7 +858,7 @@ def update_decks():
         # A cancellable progress window while each deck imports: the preview step
         # above already covered the download itself.
         with cancellable_progress("Updating decks", len(todo)) as step:
-            results, restored, tpl_changes, _, cancelled, collisions = _run_sync(
+            results, restored, tpl_changes, _, cancelled, collisions, _conv = _run_sync(
                 cfg, manifest, _already_fetched, todo, installed,
                 on_progress=lambda i, n, name: step(i, f"Applying {name} ({i} of {n})"))
 

@@ -470,6 +470,56 @@ def apkg_note_details(path, rids=None):
     return out
 
 
+def apkg_note_types(path):
+    """{guid: notetype name} for every note in the .apkg.
+
+    Cheaper than apkg_note_details, which reads every field of every note to render a
+    review list; this joins notes to the models JSON for the name alone, which is all
+    the note-type-change check needs on the sync path.
+    """
+    with zipfile.ZipFile(path) as z:
+        if "collection.anki2" not in z.namelist():
+            raise RuntimeError("Unexpected .apkg format (no collection.anki2).")
+        with tempfile.TemporaryDirectory() as d:
+            z.extract("collection.anki2", d)
+            con = sqlite3.connect(os.path.join(d, "collection.anki2"))
+            try:
+                blob = con.execute("select models from col").fetchone()[0]
+                names = {int(k): v["name"] for k, v in json.loads(blob).items()}
+                return {guid: names.get(mid, "")
+                        for guid, mid in con.execute("select guid, mid from notes")}
+            finally:
+                con.close()
+
+
+def plan_notetype_changes(incoming_types, her_types, managed):
+    """Which of the learner's notes have to change note type for this update to land on
+    them instead of beside them.
+
+    Converting a Q&A card to a cloze changes its note type, and Anki's importer will not
+    move an existing note to a different one. Without this the incoming note imports
+    fresh and she keeps a stale duplicate holding all her history, which is why such a
+    conversion has always had to retire the old card and restart the new one from zero.
+
+    Both arguments are keyed by HER note guid: `incoming_types` is what this update
+    would make each matched note (the caller resolves the .apkg's own guids through
+    remap_cards first, so a note matched by front counts too), `her_types` is what they
+    are now. A change is planned only when both names are in `managed`, so a learner's
+    own note types are never touched and an unrecognised incoming type is left alone.
+
+    Returns [{guid, old, new}] sorted by guid, for a caller that asks permission first:
+    Anki treats this as a schema change, meaning a one-time full AnkiWeb sync.
+    """
+    out = []
+    for guid, new in (incoming_types or {}).items():
+        old = (her_types or {}).get(guid)
+        if old is None or old == new or old not in managed or new not in managed:
+            continue
+        out.append({"guid": guid, "old": old, "new": new})
+    out.sort(key=lambda c: c["guid"])
+    return out
+
+
 def apkg_models(path):
     """Return {notetype_name: {"css": str, "tmpls": [(name, qfmt, afmt), ...]}} for
     every note type carried by the .apkg at `path`.
