@@ -195,13 +195,40 @@ class FsrsMemoryState:
 
 
 class ChangeNotetypeRequest:
-    """Stands in for the protobuf message: the add-on only sets note_ids, new_fields,
-    and reads/copies the defaults, so a plain namespace with list semantics is enough."""
+    """Stands in for Anki's protobuf message, with its real field set.
+
+    Deliberately strict about unknown fields. A protobuf raises when you assign one it
+    does not define, and an earlier version of this stub was a plain namespace that
+    happily accepted anything, so add-on code setting a field the real message lacks
+    passed every test here and then failed on a real collection with "Protocol message
+    ChangeNotetypeRequest has no ... field". A stub looser than the thing it stands in
+    for turns a runtime error into a green test suite.
+
+    Field names mirror anki.notetypes_pb2.ChangeNotetypeRequest (Anki 25.7).
+    """
+    _FIELDS = ("note_ids", "new_fields", "new_templates", "old_notetype_id",
+               "new_notetype_id", "current_schema", "old_notetype_name", "is_cloze")
+
     def __init__(self):
-        self.note_ids, self.new_fields, self.new_notetype_name = [], [], ""
+        object.__setattr__(self, "note_ids", [])
+        object.__setattr__(self, "new_fields", [])
+        object.__setattr__(self, "new_templates", [])
+        for name in ("old_notetype_id", "new_notetype_id", "current_schema"):
+            object.__setattr__(self, name, 0)
+        object.__setattr__(self, "old_notetype_name", "")
+        object.__setattr__(self, "is_cloze", False)
+
+    def __setattr__(self, name, value):
+        if name not in self._FIELDS:
+            raise AttributeError(
+                f'Protocol message ChangeNotetypeRequest has no "{name}" field.')
+        object.__setattr__(self, name, value)
 
     def CopyFrom(self, other):
-        self.note_ids, self.new_fields = list(other.note_ids), list(other.new_fields)
+        for name in self._FIELDS:
+            value = getattr(other, name)
+            object.__setattr__(self, name,
+                               list(value) if isinstance(value, list) else value)
 
 
 class _Models:
@@ -219,13 +246,15 @@ class _Models:
 
     # -- change-notetype surface (see collection.change_note_types) --------------
     def change_notetype_info(self, *, old_notetype_id, new_notetype_id):
-        return types.SimpleNamespace(input=ChangeNotetypeRequest())
+        req = ChangeNotetypeRequest()
+        req.old_notetype_id, req.new_notetype_id = old_notetype_id, new_notetype_id
+        return types.SimpleNamespace(input=req)
 
     def change_notetype_of_notes(self, req):
         """Reassign the notes' model and remap their field values by the caller's map,
         the way Anki's backend does. The mock keeps the note's cards as they are, which
         is the behaviour under test: converting must not discard review history."""
-        new_model = self.by_name(req.new_notetype_name)
+        new_model = next((m for m in self._models if m["id"] == req.new_notetype_id), None)
         for nid in req.note_ids:
             note = self._col._notes[nid]
             old = list(note.fields)

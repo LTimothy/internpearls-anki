@@ -686,6 +686,10 @@ def change_note_types(changes):
             "select id from notes where guid = ?", g) for g in guids) if nid]
         if not nids:
             continue
+        # info.input already carries old/new notetype ids, the current schema and the
+        # cloze flag; only the note ids and the field map are ours to set. Do not add
+        # fields to this message: it is a protobuf, and assigning one it does not
+        # define raises at runtime rather than being ignored.
         info = mw.col.models.change_notetype_info(
             old_notetype_id=old_model["id"], new_notetype_id=new_model["id"])
         req = ChangeNotetypeRequest()
@@ -693,7 +697,6 @@ def change_note_types(changes):
         req.note_ids.extend(nids)
         del req.new_fields[:]
         req.new_fields.extend(_field_map(old_model, new_model))
-        req.new_notetype_name = new_name
         mw.col.models.change_notetype_of_notes(req)
         done.extend(nids)
     if done:

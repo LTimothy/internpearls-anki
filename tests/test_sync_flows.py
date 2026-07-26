@@ -444,6 +444,25 @@ def test_conversion_sees_through_ankis_collision_suffix(anki, tmp_path):
         {"g1": "Study Deck - Cloze"}, {"g1": "Study Deck - Cloze+++++"}, managed) == []
 
 
+def test_conversion_request_only_sets_fields_the_real_message_has(anki, tmp_path):
+    """Regression: the add-on set new_notetype_name, which exists on no real
+    ChangeNotetypeRequest. The stub accepted it, every test passed, and a real sync
+    failed with 'Protocol message ChangeNotetypeRequest has no "new_notetype_name"
+    field.' The stub now raises the way protobuf does, so this can only be green if the
+    add-on stays inside the real field set."""
+    import mock_anki as m
+    req = m.ChangeNotetypeRequest()
+    assert set(req._FIELDS) == {
+        "note_ids", "new_fields", "new_templates", "old_notetype_id",
+        "new_notetype_id", "current_schema", "old_notetype_name", "is_cloze"}
+    try:
+        req.new_notetype_name = "Study Deck - Cloze"
+    except AttributeError as e:
+        assert "has no" in str(e)
+    else:
+        raise AssertionError("the stub must reject a field the real message lacks")
+
+
 def test_a_learners_own_note_type_is_never_converted(anki, tmp_path):
     from internpearls import logic
     assert logic.plan_notetype_changes(
