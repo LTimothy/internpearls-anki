@@ -341,6 +341,48 @@ def test_qa_card_converted_to_cloze_keeps_its_card_and_history(anki, tmp_path):
     assert anki.col.notetype_changes == [[her.id]]
 
 
+def test_extra_blanks_inherit_the_parent_card_rather_than_starting_new(anki, tmp_path):
+    """One card becoming four blanks must not become one card plus three new ones. She
+    has been retrieving these same facts off the parent for months, and across a deck it
+    would drop a four-figure new queue on her. Each extra blank inherits the parent's
+    standing at half its interval, since producing one blank cold is harder than the
+    paragraph the parent tested."""
+    from internpearls import sync
+    anki.col.models._models.append(_cloze_model())
+    her = anki.col.add_note("g1", _fields("Old Q and A front"), [TAGS], deck=DECK)
+    parent = anki.col.get_card(her.card_ids()[0])
+    parent.reps, parent.ivl, parent.due, parent.factor, parent.type = 5, 20, 90, 2400, 2
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", ["{{c1::one}} and {{c2::two}} and {{c3::three}}",
+                              "why", "", "", ""], TAGS)], _cloze_model())}))
+
+    drive(anki, sync.sync_decks, lambda p: {"answer": True})
+
+    cards = sorted((anki.col.get_card(c) for c in anki.col.note_by_guid("g1").card_ids()),
+                   key=lambda c: c.ord)
+    assert len(cards) == 3
+    assert (cards[0].reps, cards[0].ivl, cards[0].due) == (5, 20, 90)   # untouched
+    for sib in cards[1:]:
+        assert sib.ivl == 10                       # half the parent's, not new
+        assert (sib.reps, sib.factor, sib.type) == (5, 2400, 2)
+        assert sib.queue != 0 or sib.ivl > 0       # not sitting in the new queue
+
+
+def test_extra_blanks_stay_new_when_the_parent_was_never_studied(anki, tmp_path):
+    """Nothing to inherit means nothing is fabricated."""
+    from internpearls import sync
+    anki.col.models._models.append(_cloze_model())
+    anki.col.add_note("g1", _fields("Old Q and A front"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", ["{{c1::one}} and {{c2::two}}", "why", "", "", ""], TAGS)],
+               _cloze_model())}))
+
+    drive(anki, sync.sync_decks, lambda p: {"answer": True})
+
+    for c in (anki.col.get_card(x) for x in anki.col.note_by_guid("g1").card_ids()):
+        assert (c.reps, c.ivl) == (0, 0)
+
+
 def test_declining_the_conversion_imports_alongside_instead(anki, tmp_path):
     """Declining is a real choice with a real consequence, and the dialog says so: the
     cards still arrive, just as separate notes, leaving her progress on the old ones."""
