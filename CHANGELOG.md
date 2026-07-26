@@ -3,6 +3,16 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.32.3
+
+- Retired cards are found and archived even when your copy carries an older GUID than
+  the one the deck source retired. Reconcile matched on GUID alone, so a card you
+  imported before its identity was frozen was invisible to it: the replacement cards
+  arrived, the old bulky one was never archived, and it duplicated them in every
+  review with nothing to indicate anything was wrong. It now falls back to matching by
+  front text, the same signal a content sync already uses, exactly as relocating a
+  reorganized card has done since v0.29.1.
+
 ## v0.32.2
 
 - A new card's dosing block is readable in Night Mode again. It set its own light

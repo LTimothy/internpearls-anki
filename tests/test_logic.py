@@ -784,6 +784,46 @@ def test_find_retired_sorted_by_deck_then_identity():
         "bulky card one", "reworded card two", "removed card three"]
 
 
+def test_find_retired_falls_back_to_front_when_her_guid_drifted():
+    # Her copy predates the ledger's GUID (an id_seed change), so a GUID-only
+    # match misses it entirely and the card lingers forever.
+    her = {"hers1"}
+    front_map = {"bulky card one": "hers1"}
+    (r,) = logic.find_retired_in_collection(_LEDGER, her, front_map)
+    assert r["guid"] == "hers1"        # HER guid, so the caller can find the note
+    assert r["identity"] == "bulky card one"
+
+
+def test_find_retired_prefers_guid_match_over_front():
+    # Both signals available: the GUID is the stronger one and wins.
+    her = {"old1", "hers1"}
+    front_map = {"bulky card one": "hers1"}
+    (r,) = logic.find_retired_in_collection(_LEDGER, her, front_map)
+    assert r["guid"] == "old1"
+
+
+def test_find_retired_front_fallback_prefers_recorded_front_over_identity():
+    ledger = {"Deck A": {"old1": {"identity": "the front it was frozen to",
+                                  "front": "the front she actually sees",
+                                  "reason": "split", "superseded_by": []}}}
+    front_map = {"the front she actually sees": "hers1"}
+    (r,) = logic.find_retired_in_collection(ledger, {"hers1"}, front_map)
+    assert r["guid"] == "hers1"
+
+
+def test_find_retired_front_fallback_matches_nothing_when_front_is_unknown():
+    # An image note's identity is "image||answer", never a first field, so it
+    # simply doesn't match. That's the pre-fallback behaviour, not a false positive.
+    ledger = {"Deck A": {"old1": {"identity": "pic.jpg||Femoral block",
+                                  "reason": "split", "superseded_by": []}}}
+    assert logic.find_retired_in_collection(
+        ledger, {"hers1"}, {"Femoral block": "hers1"}) == []
+
+
+def test_find_retired_without_front_map_keeps_guid_only_behaviour():
+    assert logic.find_retired_in_collection(_LEDGER, {"hers1"}) == []
+
+
 # --------------------------------------------------------------- deck moves
 _MOVES = {
     "g1": {"from": "Pharm::Local Anesthetics", "to": "Regional::Local Anesthetics"},

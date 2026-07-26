@@ -506,6 +506,51 @@ def test_reconcile_archives_retired_cards(anki, tmp_path):
     assert any("Archived <b>1</b>" in i for i in anki.gui.infos)
 
 
+def test_reconcile_archives_a_retired_card_she_holds_under_an_older_guid(anki, tmp_path):
+    """The counterpart bug to the stuck deck move: a learner whose copy predates the
+    identity the retirement ledger is keyed by holds a different GUID, so a pure GUID
+    match never finds her card. The replacements sync in, the retired one is never
+    archived, and it duplicates them in every review indefinitely. Matching by front
+    finds it, and archives HER note rather than looking for a GUID she doesn't have."""
+    from internpearls import sync
+    front = "bulky crisis card"
+    card = _her_card(anki, "her_older_guid", front)
+    _her_card(anki, "new1a", "focused card A")
+    folder = _write_retired_source(tmp_path, {
+        DECK: {"canonical_guid": {"identity": front, "reason": "split",
+                                  "superseded_by": ["new1a"]}}})
+    _configure(anki, folder)
+
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
+
+    cid = card.card_ids()[0]
+    assert anki.col._cards[cid].queue == -1                       # suspended
+    assert anki.col._cards[cid].did == anki.col.decks.id_for_name(RETIRED_DECK)
+    assert RETIRED_TAG in anki.col.note_by_guid("her_older_guid").tags
+    assert anki.col.note_by_guid("new1a") is not None             # replacement untouched
+    assert any("Archived <b>1</b>" in i for i in anki.gui.infos)
+
+
+def test_reconcile_leaves_a_retired_card_alone_when_neither_guid_nor_front_match(
+        anki, tmp_path):
+    """The fallback only ever acts on a front it actually finds. A retired entry whose
+    identity matches nothing in her collection (an image note's "image||answer", say)
+    leaves every card of hers exactly as it was, the same as before front matching."""
+    from internpearls import sync
+    card = _her_card(anki, "her_older_guid", "a card she keeps")
+    folder = _write_retired_source(tmp_path, {
+        DECK: {"canonical_guid": {"identity": "pic.jpg||Femoral block",
+                                  "reason": "split", "superseded_by": []}}})
+    _configure(anki, folder)
+
+    sync.reconcile_decks()
+
+    cid = card.card_ids()[0]
+    assert anki.col._cards[cid].queue == 0                        # still in review
+    assert anki.col.decks.name(anki.col._cards[cid].did) == DECK
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
+
+
 def test_reconcile_run_manually_clears_the_auto_sync_nudge_label(anki, tmp_path):
     """A manual Reconcile run (bypassing auto-sync entirely, e.g. auto-sync is off)
     should also reset the persistent "N pending" menu label, not leave it stuck
