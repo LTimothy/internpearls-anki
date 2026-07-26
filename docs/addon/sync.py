@@ -17,7 +17,8 @@ import tempfile
 from aqt import mw
 from aqt.utils import getFile
 
-from .collection import (_apply_deck, _apply_template_changes, _ensure_notetypes,
+from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
+                         _ensure_notetypes,
                          _her_front_to_guid, _her_guid_to_deck, _her_guid_to_nid,
                          _her_notes_summary, _import_apkg,
                          _pre_sync_backup_or_confirm_skip, _restore,
@@ -26,9 +27,9 @@ from .collection import (_apply_deck, _apply_template_changes, _ensure_notetypes
                          carry_scheduling_forward,
                          installed_matching_collection)
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
-                     RETIRED_TAG_LEAF, SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json,
-                     _save_json)
-from .logic import (apkg_note_details, bullets, decks_to_update,
+                     RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
+                     _load_json, _save_json)
+from .logic import (apkg_note_details, apkg_notes, bullets, decks_to_update,
                     duplicate_dialog_html, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, manifest_needs_newer_addon,
@@ -173,12 +174,13 @@ def sync_decks():
     # background poll), and a multi-deck sync on a slow link otherwise looks like a
     # hang with no way out.
     with cancellable_progress("Syncing decks", len(todo)) as step:
-        results, restored, tpl_changes, _, cancelled = _run_sync(
+        results, restored, tpl_changes, _, cancelled, collisions = _run_sync(
             cfg, manifest, fetch, todo, installed,
             on_progress=lambda i, n, name: step(i, f"Syncing {name} ({i} of {n})"))
     _offer_template_changes(tpl_changes)
     fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
                   if restored else "")
+    fields_line += _collision_note(collisions)
     backup_line = (
         "A pre-sync backup of the Intern Pearls deck was saved; use "
         "<i>Advanced → Import intern pearls deck</i> to revert to it if needed."
@@ -190,6 +192,25 @@ def sync_decks():
                     "anytime to pick up where this left off." if cancelled else "")
     _info(f"<b>{title}</b> (source: {source})" + bullets(results) +
           fields_line + backup_line + stopped_note)
+
+
+def _collision_note(collisions):
+    """A line naming the cards where her own edit and a source update landed on the
+    same field. Hers is kept; this exists so the two versions don't quietly diverge
+    with nobody knowing, which is the one thing the three-way restore can't decide on
+    its own.
+    """
+    if not collisions:
+        return ""
+    fronts = []
+    for guid, field in collisions[:10]:
+        nid = mw.col.db.scalar("select id from notes where guid = ?", guid)
+        if nid:
+            fronts.append(f"{mw.col.get_note(nid).fields[0][:70]} ({field})")
+    more = f" and {len(collisions) - len(fronts)} more" if len(collisions) > len(fronts) else ""
+    return (f"<br><br><b>{len(collisions)}</b> of your edits sit on a field the deck "
+            "source also changed. Yours was kept; send these back if you'd like them "
+            "folded in:" + bullets(fronts) + more)
 
 
 def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
@@ -227,7 +248,7 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
     _ensure_notetypes()
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
     her = _her_front_to_guid(cfg["scope_tag"])
-    results, tpl_changes, deferred = [], {}, []
+    results, tpl_changes, deferred, touched = [], {}, [], set()
     cancelled = False
     for i, d in enumerate(todo, 1):
         short = d["name"].split("::")[-1]
@@ -243,15 +264,22 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
                                "waiting for a manual Sync decks")
                 continue
             tpl_changes.update(tpl)
-            in_place, as_new = _apply_deck(src, aliases, her)
+            in_place, as_new, wrote = _apply_deck(src, aliases, her)
+            touched |= wrote
             installed[d["name"]] = d["version"]
             results.append(f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new")
         except Exception as e:
             results.append(f"✗ <b>{short}</b>: {e}")
     _save_json(INSTALLED, installed)
-    restored = _restore(snap)
+    # Read what the source shipped BEFORE restoring her annotations over it: after
+    # _restore, hers is what the note holds, and recording that as the baseline would
+    # make her own edit indistinguishable from the source's own value next time.
+    shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched)
+    restored, collisions = _restore(snap, _load_json(SHIPPED, {}))
+    if shipped:
+        _save_json(SHIPPED, {**_load_json(SHIPPED, {}), **shipped})
     mw.reset()
-    return results, restored, tpl_changes, deferred, cancelled
+    return results, restored, tpl_changes, deferred, cancelled, collisions
 
 
 def _offer_template_changes(tpl_changes):
@@ -649,7 +677,7 @@ def update_decks():
         _info(f"You're all up to date (source: {source}).")
         return
 
-    preview, downloaded = {}, {}
+    preview, downloaded, collisions = {}, {}, []
     if todo:
         preview, downloaded, cancelled = _preview_content_changes(
             fetch, todo, _her_front_to_guid(cfg["scope_tag"]), manifest.get("front_aliases", {}))
@@ -798,7 +826,7 @@ def update_decks():
         # A cancellable progress window while each deck imports: the preview step
         # above already covered the download itself.
         with cancellable_progress("Updating decks", len(todo)) as step:
-            results, restored, tpl_changes, _, cancelled = _run_sync(
+            results, restored, tpl_changes, _, cancelled, collisions = _run_sync(
                 cfg, manifest, _already_fetched, todo, installed,
                 on_progress=lambda i, n, name: step(i, f"Applying {name} ({i} of {n})"))
 
@@ -863,6 +891,7 @@ def update_decks():
 
     fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
                   if restored else "")
+    fields_line += _collision_note(collisions)
     backup_line = (
         "A pre-sync backup of the Intern Pearls deck was saved; use "
         "<i>Advanced → Import intern pearls deck</i> to revert to it if needed."
@@ -910,6 +939,7 @@ def import_single():
         return
     tpl = _template_changes(src)
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
+    touched = {remap.get(rid, guid) for rid, _f, guid in apkg_notes(src)}
     out = src + ".sync.apkg"
     write_personalized(src, remap, out)
     try:
@@ -919,7 +949,10 @@ def import_single():
             os.remove(out)
         except OSError:
             pass
-    restored = _restore(snap)
+    shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched)
+    restored, _ = _restore(snap, _load_json(SHIPPED, {}))
+    if shipped:
+        _save_json(SHIPPED, {**_load_json(SHIPPED, {}), **shipped})
     mw.reset()
     _offer_template_changes(tpl)
     fields_line = f" Preserved fields restored on {restored} card(s)." if restored else ""

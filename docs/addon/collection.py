@@ -13,7 +13,8 @@ from aqt.utils import getFile, getSaveFile
 
 from .config import (DECK_BACKUPS_KEEP, INSTALLED, TARGET_FIELDS, _USER_FILES, _cfg,
                      _load_json, _save_json)
-from .logic import (apkg_deck_names, apkg_models, bullets, changed_templates,
+from .logic import (apkg_deck_names, apkg_models, apkg_notes, bullets,
+                    changed_templates,
                     fields_to_carry_over, manifest_decks_for, model_shape,
                     note_display_label, remap_cards, write_personalized)
 from .ui import _ask, _info, _safe, _warn
@@ -179,33 +180,111 @@ def _pre_sync_backup_or_skip_silently(deck_name):
 
 
 # ----------------------------------------------------------------- notes snapshot
+def _note_field(note, name):
+    """The note's actual field name matching `name`, or None.
+
+    Case-insensitive on purpose. The preserved-fields box is free text, the real names
+    are capitalised (Front, Back, Why, Image, Tag, Dosing, Notes), and an exact-match
+    lookup meant typing "dosing" silently protected nothing at all: no error, no
+    warning, just annotations quietly overwritten on the next sync.
+    """
+    if name in note:
+        return name
+    lowered = name.lower()
+    return next((f for f in note.keys() if f.lower() == lowered), None)
+
+
 def _snapshot(protected, scope_tag):
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
     snap = {}
     for nid in mw.col.find_notes(search):
         note = mw.col.get_note(nid)
-        saved = {f: note[f] for f in protected if f in note and note[f].strip()}
+        saved = {}
+        for name in protected:
+            f = _note_field(note, name)
+            if f and note[f].strip():
+                saved[f] = note[f]
         if saved:
             snap[note.guid] = saved
     return snap
 
 
-def _restore(snap):
-    restored = 0
+def _capture_shipped(protected, scope_tag, touched):
+    """What the deck source's own values are, read straight after an import and before
+    anything is restored, which is the one moment the collection holds them.
+
+    Limited to `touched` (the guids an import actually wrote this run) because a note in
+    a deck that didn't update still holds the learner's restored value, and recording
+    that as "what we shipped" would make her own edit look like ours next time, so the
+    following sync would overwrite it. That is the exact failure this baseline exists to
+    prevent, so it must not create it.
+    """
+    if not touched:
+        return {}
+    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    out = {}
+    for nid in mw.col.find_notes(search):
+        note = mw.col.get_note(nid)
+        if note.guid not in touched:
+            continue
+        vals = {}
+        for name in protected:
+            f = _note_field(note, name)
+            if f:
+                vals[f] = note[f]
+        if vals:
+            out[note.guid] = vals
+    return out
+
+
+def _restore(snap, baseline=None):
+    """Put the learner's own annotations back after an import, but only the ones that
+    are actually hers.
+
+    Anki's importer overwrites every field on a matched note, so without this her
+    annotations are wiped on every sync. Restoring unconditionally is the blunt version
+    of that fix, and it has a cost: a preserved field can never receive a correction
+    from the deck source again, which is why preserving anything beyond an
+    always-empty-by-design Notes field used to mean freezing it forever.
+
+    `baseline` ({guid: {field: value}}, what the source last shipped for that note)
+    makes it a three-way merge instead. If her pre-import value still equals what was
+    last shipped, she never touched it, so the freshly imported value is allowed to
+    stand. If it differs, the field is hers and gets restored. Comparing against the
+    INCOMING value can't distinguish those two cases: "she edited it" and "the deck
+    author changed it" both read as a difference, which is why the baseline is kept.
+
+    With no baseline for a note (the first sync after this shipped, or a note the
+    source has never written) the old always-restore behaviour applies, so the
+    conservative direction is the default and an upgrade never loses an annotation.
+
+    Returns (restored, collisions), where a collision is a field she edited AND the
+    source changed since that baseline: hers wins, and the count lets the caller offer
+    to send those back rather than let the two versions drift apart unnoticed.
+    """
+    baseline = baseline or {}
+    restored, collisions = 0, []
     for guid, saved in snap.items():
         nid = mw.col.db.scalar("select id from notes where guid = ?", guid)
         if not nid:
             continue
         note = mw.col.get_note(nid)
+        was_shipped = baseline.get(guid, {})
         changed = False
         for f, v in saved.items():
-            if f in note and note[f] != v:
+            if f not in note:
+                continue
+            if f in was_shipped and was_shipped[f] == v:
+                continue          # untouched by her; let the source's update stand
+            if f in was_shipped and note[f] != was_shipped[f]:
+                collisions.append((guid, f))
+            if note[f] != v:
                 note[f] = v
                 changed = True
         if changed:
             mw.col.update_note(note)
             restored += 1
-    return restored
+    return restored, collisions
 
 
 # -------------------------------------------------------------------- apkg helpers
@@ -475,7 +554,11 @@ def carry_scheduling_forward(pairs, her_guid_to_nid):
 
 
 def _apply_deck(src, aliases, her):
+    """Import one deck, returning (in_place, as_new, touched) where `touched` is the
+    guids this import wrote in her collection: the remapped guid where a note matched
+    one of hers, the .apkg's own otherwise. _capture_shipped needs exactly that set."""
     remap, in_place, as_new, _ = remap_cards(src, her, aliases)
+    touched = {remap.get(rid, guid) for rid, _f, guid in apkg_notes(src)}
     out = src + ".sync.apkg"
     write_personalized(src, remap, out)
     try:
@@ -485,7 +568,7 @@ def _apply_deck(src, aliases, her):
             os.remove(out)
         except OSError:
             pass
-    return in_place, as_new
+    return in_place, as_new, touched
 
 
 def invalidate_installed(names=None):

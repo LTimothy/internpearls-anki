@@ -3,6 +3,21 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.34.0
+
+- A preserved field no longer means a frozen field. Preserving a field used to restore
+  your copy of it over every sync forever, so protecting anything the decks actually
+  ship a value for (Dosing, say) meant never receiving a correction to it again. The
+  add-on now records what the deck source last shipped for each preserved field, so it
+  can tell your edit apart from the author's: a field you have never touched takes the
+  update, and one you have edited keeps your version. That makes preserving every field
+  a reasonable thing to do rather than a trade-off.
+- Where your edit and an update land on the same field, yours is kept and the sync
+  summary now names those cards, so you can send them back to be folded in instead of
+  the two versions quietly drifting apart.
+- A preserved field name now matches whatever its capitalisation. "notes" used to
+  protect nothing at all, with no error, and the first sign was an annotation gone.
+
 ## v0.33.0
 
 - Update my decks now repairs a card you ended up holding twice. When a card's wording
