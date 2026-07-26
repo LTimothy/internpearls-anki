@@ -287,6 +287,7 @@ class MockCollection:
         self.decks = _Decks()
         self.db = _Db(self)
         self.imports = []   # paths passed to import_anki_package, for assertions
+        self.updated_cards = []   # nids passed to update_card, for assertions
         # Anki exposes suspend via col.sched and tag edits via col.tags; the add-on's
         # archive path (Reconcile) uses set_deck + these two. All are incremental (no
         # schema bump), which is exactly what the reconcile feature relies on.
@@ -302,7 +303,11 @@ class MockCollection:
         cid = self._next_cid
         self._next_cid += 1
         did = self.decks.id(deck) if deck else None
-        self._cards[cid] = types.SimpleNamespace(nid=note.id, did=did, queue=0, reps=0)
+        # Scheduling fields mirror Anki's card columns, so carry_scheduling_forward can
+        # be exercised for real: it copies these across and the tests read them back.
+        self._cards[cid] = types.SimpleNamespace(
+            nid=note.id, did=did, queue=0, reps=0, ord=0,
+            type=0, due=0, ivl=0, factor=0, lapses=0)
         note._card_ids.append(cid)
         return note
 
@@ -349,6 +354,12 @@ class MockCollection:
 
     def get_card(self, cid):
         return self._cards[cid]
+
+    def update_card(self, card):
+        # The namespace is already mutated in place, so this records the call rather
+        # than applying it: in real Anki this is what persists the change, and a test
+        # that only reads the namespace back would pass even if it were never called.
+        self.updated_cards.append(card.nid)
 
     def update_note(self, note):
         pass   # MockNote is mutated in place
