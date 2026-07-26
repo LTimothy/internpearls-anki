@@ -8,7 +8,7 @@ import os
 
 from aqt import mw
 
-ADDON_VERSION = "0.33.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.34.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # own notes); when it does, an add-on release that understands the new shape must bump
@@ -49,6 +49,10 @@ INSTALLED = os.path.join(_USER_FILES, "installed.json")
 # must still survive an add-on update — currently just which add-on version we've already
 # nagged about, so the startup notice fires once per release, not every launch.
 STATE = os.path.join(_USER_FILES, "state.json")
+# What the deck source last shipped for each preserved field, so _restore can tell
+# "she edited this" from "the deck author changed this" instead of freezing the
+# field forever. {guid: {field: value}}. See collection._restore.
+SHIPPED = os.path.join(_USER_FILES, "shipped_fields.json")
 
 AUTO_SYNC_INTERVAL_FLOOR_MIN = 1     # refuse to poll more often than this, however configured
 AUTO_SYNC_INTERVAL_DEFAULT_MIN = 15  # used when the setting is missing or unreadable
