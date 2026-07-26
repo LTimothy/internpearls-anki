@@ -264,8 +264,35 @@ def test_preserved_field_she_edited_is_kept_and_the_collision_reported(anki, tmp
     sync.sync_decks()
 
     assert anki.col.note_by_guid("g1")["Dosing"] == "1 mg/kg (my attending says 1.5)"
-    assert any("edits sit on a field the deck source also changed" in i
+    assert any("changed a field you had also written in yourself" in i
                for i in anki.gui.infos)
+
+
+def test_no_collision_reported_for_a_deck_this_run_never_touched(anki, tmp_path):
+    """The false positive: a card in a deck with no update at all was reported as
+    conflicting. Nothing imported over it, so nothing of hers was overwritten and
+    there was no update to conflict with."""
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one", notes="her mnemonic"), [TAGS], deck=DECK)
+    other = "Intern Pearls::Intern Custom::Other"
+    anki.col.add_note("g2", _fields("Front two", notes="another of hers"), [TAGS],
+                      deck=other)
+    _configure(anki, _write_source(tmp_path, {
+        DECK:  ("v1", [("g1", _fields("Front one"), TAGS)], None),
+        other: ("v1", [("g2", _fields("Front two"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["Notes"]
+    sync.sync_decks()                       # first run establishes the baseline
+
+    # only one deck changes now; the other is untouched
+    _configure(anki, _write_source(tmp_path, {
+        DECK:  ("v2", [("g1", _fields("Front one", back="NEW"), TAGS)], None),
+        other: ("v1", [("g2", _fields("Front two"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["Notes"]
+    anki.gui.infos.clear()
+    sync.sync_decks()
+
+    assert not any("written in yourself" in i for i in anki.gui.infos)
+    assert anki.col.note_by_guid("g2")["Notes"] == "another of hers"
 
 
 def test_preserved_field_falls_back_to_always_restoring_without_a_baseline(anki, tmp_path):
