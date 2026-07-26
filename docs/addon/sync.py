@@ -19,7 +19,7 @@ from aqt.utils import getFile
 
 from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
                          _ensure_notetypes, change_note_types,
-                         notetype_changes,
+                         notetype_changes, seed_converted_siblings,
                          _her_front_to_guid, _her_guid_to_deck, _her_guid_to_nid,
                          _her_notes_summary, _import_apkg,
                          _pre_sync_backup_or_confirm_skip, _restore,
@@ -224,7 +224,7 @@ def _offer_notetype_changes(changes):
     AnkiWeb sync, for the same reason.
     """
     if not changes:
-        return 0
+        return []
     return change_note_types(changes) if _ask(
         f"<b>{len(changes)}</b> card(s) in this update changed format (a question and "
         "answer became a fill-in-the-blank).<br><br>Move your existing cards to the new "
@@ -233,7 +233,7 @@ def _offer_notetype_changes(changes):
         "sync, choose \"Upload to AnkiWeb\" when asked.<br><br>Choosing No still "
         "imports them, but as separate new cards, leaving your progress on the old "
         "versions."
-    ) else 0
+    ) else []
 
 
 def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
@@ -295,8 +295,12 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
             # Before the import, not after: once the note is on the right type, the
             # import matches it by GUID and updates it in place, which is the whole
             # point. Afterwards it would be converting a duplicate.
-            converted += _offer_notetype_changes(nt)
+            changed_nids = _offer_notetype_changes(nt)
+            converted += len(changed_nids)
             in_place, as_new, wrote = _apply_deck(src, aliases, her)
+            # After the import, not before: the extra cloze cards only exist once the
+            # cloze markup has actually landed on the note.
+            seed_converted_siblings(changed_nids)
             touched |= wrote
             installed[d["name"]] = d["version"]
             results.append(f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new")

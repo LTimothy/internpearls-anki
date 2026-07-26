@@ -41,6 +41,7 @@ import copy
 import importlib
 import json
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -220,6 +221,7 @@ class _Models:
             old = list(note.fields)
             note.model = new_model
             note._resize([old[i] if 0 <= i < len(old) else "" for i in req.new_fields])
+            self._col._generate_cloze_cards(note)
         self._col.notetype_changes.append(list(req.note_ids))
 
     def add_field(self, model, field):
@@ -333,7 +335,7 @@ class MockCollection:
         # Scheduling fields mirror Anki's card columns, so carry_scheduling_forward can
         # be exercised for real: it copies these across and the tests read them back.
         self._cards[cid] = types.SimpleNamespace(
-            nid=note.id, did=did, queue=0, reps=0, ord=0,
+            id=cid, nid=note.id, did=did, queue=0, reps=0, ord=0,
             type=0, due=0, ivl=0, factor=0, lapses=0)
         note._card_ids.append(cid)
         return note
@@ -382,6 +384,23 @@ class MockCollection:
     def get_card(self, cid):
         return self._cards[cid]
 
+    def _generate_cloze_cards(self, note):
+        """Add a card per extra cloze deletion, the way Anki does after a conversion:
+        the original card stays as ordinal 0, the rest are created new."""
+        if "Cloze" not in note.model["name"]:
+            return
+        ords = sorted({int(m) for m in re.findall(r"\{\{c(\d+)::", note.fields[0])})
+        for i, _o in enumerate(ords):
+            if i < len(note._card_ids):
+                continue
+            cid = self._next_cid
+            self._next_cid += 1
+            first = self._cards[note._card_ids[0]]
+            self._cards[cid] = types.SimpleNamespace(
+                id=cid, nid=note.id, did=first.did, queue=0, reps=0, ord=i,
+                type=0, due=0, ivl=0, factor=0, lapses=0)
+            note._card_ids.append(cid)
+
     def update_card(self, card):
         # The namespace is already mutated in place, so this records the call rather
         # than applying it: in real Anki this is what persists the change, and a test
@@ -413,6 +432,7 @@ class MockCollection:
             if existing:
                 existing.fields = list(values)[:len(existing._names)] + \
                     [""] * max(0, len(existing._names) - len(values))
+                self._generate_cloze_cards(existing)
                 if deck and not existing.deck:
                     existing.deck = deck
             else:

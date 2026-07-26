@@ -3,6 +3,19 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.37.0
+
+- When a card is reformatted into several fill-in-the-blanks, all of them keep your
+  progress, not just the first. Anki carries the original card's scheduling onto one
+  blank and creates the rest as brand new, which would have dropped a very large new
+  queue on you the first time a whole deck was reformatted, for facts you have been
+  reviewing for months. Each extra blank now inherits the original's ease and standing
+  at half its interval: producing one blank cold is harder than recognising the
+  paragraph the original tested, so it comes back sooner to prove itself rather than
+  either starting from scratch or coasting on the old interval.
+- A blank whose original card had never been studied still starts new, and a card with
+  reviews of its own is never overwritten.
+
 ## v0.36.0
 
 - The format conversion added in v0.35.0 now actually finds your cards. Anki keeps both

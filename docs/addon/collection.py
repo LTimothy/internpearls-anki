@@ -582,6 +582,45 @@ def _field_map(old_model, new_model):
     return [idx.get(f["name"], -1) for f in new_model["flds"]]
 
 
+def seed_converted_siblings(nids):
+    """Give the extra cards a conversion generates the parent card's standing.
+
+    Turning one question-and-answer card into a cloze with four blanks produces four
+    cards. Anki carries the original's scheduling onto the first and creates the rest
+    as brand new, which is right when the blanks are new material and wrong here: the
+    learner has been retrieving these same facts off the parent card for months, and
+    across a whole deck it would drop a four-figure new-card queue on her, which is the
+    workload problem this reformatting is meant to reduce.
+
+    So a sibling inherits the parent's ease, counters and standing, at HALF its
+    interval (floored at a day). Half rather than whole because producing one blank
+    cold is a harder retrieval than recognising the paragraph the parent tested, so its
+    interval is evidence about the fact set rather than about that blank. Halving keeps
+    the card out of the new queue while still bringing it back soon enough to prove
+    itself, and one failed review resets it properly either way.
+
+    Only cards with no reviews of their own are touched, so this never overwrites real
+    history and re-running is a no-op. Returns the number of cards seeded.
+    """
+    seeded = 0
+    for nid in nids:
+        cards = [mw.col.get_card(cid) for cid in mw.col.get_note(nid).card_ids()]
+        parent = max(cards, key=lambda c: getattr(c, "reps", 0))
+        if getattr(parent, "reps", 0) == 0:
+            continue                      # nothing to inherit; leave them all new
+        for card in cards:
+            if card.id == parent.id or getattr(card, "reps", 0) > 0:
+                continue
+            for f in _SCHED_FIELDS:
+                if hasattr(parent, f):
+                    setattr(card, f, getattr(parent, f))
+            card.ivl = max(1, getattr(parent, "ivl", 0) // 2)
+            card.due = getattr(parent, "due", 0)
+            mw.col.update_card(card)
+            seeded += 1
+    return seeded
+
+
 def change_note_types(changes):
     """Move the learner's notes onto the note type this update ships for them.
 
@@ -592,16 +631,21 @@ def change_note_types(changes):
     This is the one operation here that DOES bump the collection's schema (Anki's own
     Change Notetype dialog gates on confirm_schema_modification for the same reason), so
     the caller must have consented to the one-time full AnkiWeb sync first, exactly as
-    it does for a template change. Returns the number of notes converted.
+    it does for a template change.
+
+    Returns the note ids converted, for the caller to hand to seed_converted_siblings
+    AFTER the import: at this point the note still holds its old question-and-answer
+    text, so the extra cloze cards do not exist yet and there is nothing to seed. They
+    appear only once the import writes the cloze markup in.
     """
     if not changes:
-        return 0
+        return []
     from anki.models import ChangeNotetypeRequest
 
     by_pair = {}
     for c in changes:
         by_pair.setdefault((c["old"], c["new"]), []).append(c["guid"])
-    done = 0
+    done = []
     for (old_name, new_name), guids in by_pair.items():
         old_model = mw.col.models.by_name(old_name)
         new_model = mw.col.models.by_name(new_name)
@@ -620,7 +664,7 @@ def change_note_types(changes):
         req.new_fields.extend(_field_map(old_model, new_model))
         req.new_notetype_name = new_name
         mw.col.models.change_notetype_of_notes(req)
-        done += len(nids)
+        done.extend(nids)
     if done:
         mw.reset()
     return done
