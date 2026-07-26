@@ -379,6 +379,22 @@ def test_conversion_is_never_applied_by_unattended_auto_sync(anki, tmp_path):
     assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Basic"
 
 
+def test_conversion_sees_through_ankis_collision_suffix(anki, tmp_path):
+    """Re-importing a deck across field additions leaves a learner's notes on
+    "Study Deck - Basic+", "++" and so on, all still ours. Measured on a real
+    collection: 595 of 625 notes were on a suffixed variant, so an exact-name check
+    would convert almost nothing."""
+    from internpearls import logic
+    managed = {"Study Deck - Basic", "Study Deck - Cloze"}
+    (c,) = logic.plan_notetype_changes(
+        {"g1": "Study Deck - Cloze"}, {"g1": "Study Deck - Basic+++"}, managed)
+    assert c == {"guid": "g1", "old": "Study Deck - Basic+++",
+                 "new": "Study Deck - Cloze"}
+    # same family on both sides is not a format change, whatever the suffixes
+    assert logic.plan_notetype_changes(
+        {"g1": "Study Deck - Cloze"}, {"g1": "Study Deck - Cloze+++++"}, managed) == []
+
+
 def test_a_learners_own_note_type_is_never_converted(anki, tmp_path):
     from internpearls import logic
     assert logic.plan_notetype_changes(

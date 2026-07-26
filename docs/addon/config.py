@@ -8,7 +8,7 @@ import os
 
 from aqt import mw
 
-ADDON_VERSION = "0.35.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.36.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # own notes); when it does, an add-on release that understands the new shape must bump
@@ -16,7 +16,7 @@ ADDON_VERSION = "0.35.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # refuses to sync against it instead of guessing. Today's manifest schema is 2, and has
 # been since before this constant existed, so 2 is also the correct floor for every
 # earlier add-on release — this only starts mattering the next time schema goes to 3.
-SUPPORTED_MANIFEST_SCHEMA = 2
+SUPPORTED_MANIFEST_SCHEMA = 3
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
