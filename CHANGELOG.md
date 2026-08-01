@@ -3,6 +3,15 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.38.3
+
+- The new-card review now shows a card the way the card is written. Tables and bulleted
+  lists were being reduced to plain text first, so a card whose answer is a comparison
+  table arrived as one run-on line of cell text and read as unusable when it was fine.
+  Tables, lists, bold and line breaks are kept; anything else is still stripped, and
+  pictures are still named rather than drawn, since the review runs before the deck's
+  media is on disk.
+
 ## v0.38.2
 
 - Fixed a false alarm: cards in decks that had no update at all were being reported as

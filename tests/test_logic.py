@@ -554,7 +554,54 @@ def test_field_preview_text_plain_field_is_unchanged():
     assert logic.field_preview_text("") == ""
 
 
+# ----------------------------------------------------------------- field_preview_html
+def test_field_preview_html_keeps_the_structure_a_card_was_written_with():
+    # A comparison is written as a table because the grid carries the meaning. Reducing
+    # it to plain text is what made a correct card read as "just jumbled text".
+    out = logic.field_preview_html("<table><tr><th>A</th><td>1</td></tr></table>")
+    assert out == "<table><tr><th>A</th><td>1</td></tr></table>"
+
+
+def test_field_preview_html_keeps_colspan_but_drops_everything_else():
+    out = logic.field_preview_html(
+        '<td colspan="2" class="hl" onclick="x()">Both</td>')
+    assert out == '<td colspan="2">Both</td>'
+
+
+def test_field_preview_html_drops_an_unrenderable_tag_and_keeps_its_text():
+    out = logic.field_preview_html('<a href="http://x">Barash</a> p551')
+    assert "<a" not in out and "href" not in out
+    assert "Barash" in out and "p551" in out
+
+
+def test_field_preview_html_names_images_the_same_way_the_text_preview_does():
+    # Same reason as field_preview_text: the dialog never extracts the .apkg's media.
+    assert logic.field_preview_html(
+        'Look: <img src="a/b/nerve.png">') == "Look: [image: nerve.png]"
+
+
+def test_field_preview_html_drops_script_and_style_blocks_whole():
+    out = logic.field_preview_html("<style>td{color:red}</style>Keep<script>x()</script>")
+    assert "color:red" not in out and "x()" not in out
+    assert "Keep" in out
+
+
+def test_field_preview_html_leaves_entities_and_escaped_comparators_alone():
+    # &#8593; is an arrow the card meant to show; &lt;94% is a literal '<' the spec
+    # escaped. Neither is markup, and double-escaping either would corrupt the card.
+    assert logic.field_preview_html("SpO2 &lt;94% &#8593;") == "SpO2 &lt;94% &#8593;"
+    assert logic.field_preview_html("") == ""
+
+
 # --------------------------------------------------------------- cloze_filled_html
+def test_cloze_filled_html_leaves_markup_alone_when_asked_not_to_escape():
+    # The already-sanitized path: field_preview_html has run, so escaping again would
+    # turn the field's own table into visible tags.
+    assert logic.cloze_filled_html(
+        "<td>{{c1::&#8593;}}</td>", escape=False) == (
+        '<td><span class="cloze">&#8593;</span></td>')
+
+
 def test_cloze_filled_html_fills_each_deletion_with_its_answer():
     assert logic.cloze_filled_html(
         "The {{c1::tibial}} nerve lies posterior to the {{c2::medial}} malleolus") == (
