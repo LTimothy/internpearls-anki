@@ -17,7 +17,8 @@ from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayou
                     QVBoxLayout, QWidget)
 
 from .config import ADDON_VERSION, APP_NAME, _cfg
-from .logic import build_feedback_digest, cloze_filled_html, field_preview_text
+from .logic import (build_feedback_digest, cloze_filled_html, field_preview_html,
+                    field_preview_text)
 from .ui import (copy_to_clipboard, hint_label, muted_label, section_label,
                  title_label)
 
@@ -41,10 +42,24 @@ _WHY_RULE = "#2e6b3e"
 _DOSING_BG = "#eef2f7"
 _DOSING_FG = "#334155"
 _CLOZE_COLOR = "#2563eb"
-_CLOZE_STYLE = f"<style>.cloze {{ color: {_CLOZE_COLOR}; font-weight: 600; }}</style>"
 
 _DIM = "#8a9aa2"        # the tag lead-in and the caret
 _ROW_RULE = "#d6d6d6"   # the hairline between two cards
+_CELL_RULE = "#a9b4ba"  # a table's own gridlines, a mid-tone that reads on both themes
+
+# Every label that can hold card HTML carries this, so a <table> or a <ul> in a field
+# reads as the grid or the list the card author wrote rather than as a run-on line.
+# Qt's rich text takes a <style> block with class and element selectors, but only a
+# subset of CSS, so this stays to borders, padding and colour.
+_PREVIEW_STYLE = (
+    "<style>"
+    f".cloze {{ color: {_CLOZE_COLOR}; font-weight: 600; }}"
+    " table { border-collapse: collapse; margin: 4px 0; }"
+    f" th, td {{ border: 1px solid {_CELL_RULE}; padding: 2px 7px; }}"
+    f" th {{ color: {_DIM}; font-weight: 600; }}"
+    " ul, ol { margin: 4px 0; }"
+    "</style>"
+)
 
 _CARET_CLOSED = "▸"
 _CARET_OPEN = "▾"
@@ -101,22 +116,22 @@ def _primary_html(detail):
     an image note the picture is the question itself, so its name is folded in here
     too: without it, a generic prompt gives no way to tell which image it's about.
 
-    A cloze field is run through field_preview_text before cloze_filled_html, since a
-    real cloze Text field carries its own HTML (inline images, br, entities), not the
-    plain text cloze_filled_html's escaping assumes. field_preview_text strips that down
-    to plain text with any inline image named, without touching {{c1::...}} markup, and
-    cloze_filled_html escapes and fills deletions from there same as always.
+    A cloze field is run through field_preview_html before cloze_filled_html, since a
+    real cloze Text field carries its own HTML (a table, inline images, br, entities).
+    field_preview_html keeps the structure and names any inline image, without touching
+    {{c1::...}} markup, so cloze_filled_html fills the deletions into markup that is
+    already safe and must not be escaped a second time.
     """
     if _is_cloze(detail):
-        text = field_preview_text(_field(detail, "Text"))
-        return cloze_filled_html(text)
+        text = field_preview_html(_field(detail, "Text"))
+        return cloze_filled_html(text, escape=False)
     fields = _content_fields(detail)
-    text = field_preview_text(fields[0][1]) if fields else ""
+    text = field_preview_html(fields[0][1]) if fields else ""
     if _is_image_note(detail):
-        image_text = _image_text(detail)
+        image_text = html.escape(_image_text(detail))
         if image_text:
             text = f"{image_text} {text}".strip() if text else image_text
-    return html.escape(text)
+    return text
 
 
 def _answer_html(detail):
@@ -130,12 +145,12 @@ def _answer_html(detail):
         image_text = _image_text(detail)
         return html.escape(image_text) if image_text else ""
     fields = _content_fields(detail)
-    answer = field_preview_text(fields[1][1]) if len(fields) >= 2 else ""
+    answer = field_preview_html(fields[1][1]) if len(fields) >= 2 else ""
     if not _is_image_note(detail):
-        image_text = _image_text(detail)
+        image_text = html.escape(_image_text(detail))
         if image_text:
             answer = f"{answer} {image_text}".strip() if answer else image_text
-    return html.escape(answer) if answer else ""
+    return answer
 
 
 def _row_html(detail):
@@ -150,11 +165,11 @@ def _row_html(detail):
     if tag_text:
         tag = html.escape(tag_text)
         primary = f'<span style="color: {_DIM};">{tag}</span>&nbsp;&nbsp;{primary}'
-    return _CLOZE_STYLE + primary
+    return _PREVIEW_STYLE + primary
 
 
 def _rich_label(text):
-    lbl = QLabel(text)
+    lbl = QLabel(_PREVIEW_STYLE + text)
     lbl.setWordWrap(True)
     lbl.setTextFormat(Qt.TextFormat.RichText)
     return lbl
@@ -225,9 +240,9 @@ def _card_row(detail, flags, boxes, collect_feedback):
     if answer_html:
         blay.addWidget(_rich_label(answer_html))
 
-    why_text = field_preview_text(_field(detail, "Why"))
-    if why_text:
-        why_label = _rich_label(html.escape(why_text))
+    why_html = field_preview_html(_field(detail, "Why"))
+    if why_html:
+        why_label = _rich_label(why_html)
         # The `border: none` reset is load-bearing: Qt ignores a lone border-left on a
         # QLabel unless the shorthand is set first, so without it the padding applies
         # and the rule itself silently never paints.
@@ -235,9 +250,9 @@ def _card_row(detail, flags, boxes, collect_feedback):
                                 f" padding-left: 8px; color: {_WHY_RULE};")
         blay.addWidget(why_label)
 
-    dosing_text = field_preview_text(_field(detail, "Dosing"))
-    if dosing_text:
-        dosing_label = _rich_label(f"<b>Dosing</b> &nbsp;{html.escape(dosing_text)}")
+    dosing_html = field_preview_html(_field(detail, "Dosing"))
+    if dosing_html:
+        dosing_label = _rich_label(f"<b>Dosing</b> &nbsp;{dosing_html}")
         dosing_label.setStyleSheet(f"background: {_DOSING_BG}; color: {_DOSING_FG};"
                                    f" padding: 6px; border-radius: 4px;")
         blay.addWidget(dosing_label)

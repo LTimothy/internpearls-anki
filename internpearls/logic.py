@@ -719,7 +719,7 @@ def note_display_label(fields, max_len=90):
 _CLOZE_RE = re.compile(r"\{\{c\d+::([^{}]*?)(?:::[^{}]*?)?\}\}", re.S)
 
 
-def cloze_filled_html(text):
+def cloze_filled_html(text, escape=True):
     """A cloze field as HTML with every deletion showing its answer.
 
     Review is for confirming the fact is right, and for a cloze the fact lives in the
@@ -730,9 +730,13 @@ def cloze_filled_html(text):
     answer contains a literal brace renders raw instead of filling; that degrades to
     visible markup rather than silently corrupting the card, which is the acceptable
     direction.
+
+    `escape=False` is for a field that has already been through field_preview_html,
+    which returns real markup: escaping again would turn that field's own tags into
+    visible text, which is the whole defect that function exists to fix.
     """
-    escaped = html.escape(text or "")
-    return _CLOZE_RE.sub(lambda m: f'<span class="cloze">{m.group(1)}</span>', escaped)
+    text = html.escape(text or "") if escape else (text or "")
+    return _CLOZE_RE.sub(lambda m: f'<span class="cloze">{m.group(1)}</span>', text)
 
 
 def field_preview_text(value):
@@ -752,6 +756,72 @@ def field_preview_text(value):
         return text
     tag = f"[image: {', '.join(names)}]"
     return f"{text} {tag}" if text else tag
+
+
+# The structure a card field actually uses, restricted to what a QLabel's rich text can
+# render. A comparison is written as a <table> and a set of causes as a <ul> precisely
+# because the shape carries the meaning, so flattening those to a run-on line loses the
+# card. Anything outside this set has its tag dropped and its text kept.
+_PREVIEW_TAGS = frozenset({
+    "b", "strong", "i", "em", "u", "s", "sub", "sup", "small", "span", "font",
+    "br", "p", "div", "hr",
+    "ul", "ol", "li",
+    "table", "thead", "tbody", "tfoot", "tr", "th", "td",
+})
+
+# Attributes worth keeping: the ones carrying layout the tag can't express on its own.
+# Everything else goes, so nothing a field happens to carry (ids, classes, handlers,
+# stray Anki editor markup) reaches the dialog.
+_PREVIEW_ATTRS = frozenset({"colspan", "rowspan", "align", "valign", "style"})
+
+_IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
+_SCRIPT_STYLE_RE = re.compile(r"<\s*(script|style)\b[^>]*>.*?</\s*\1\s*>", re.I | re.S)
+_ANY_TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>")
+_ATTR_RE = re.compile(r"""([a-zA-Z:-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""")
+
+
+def _named_image(match):
+    src = _IMG_SRC_RE.search(match.group(0))
+    name = os.path.basename(src.group(1)) if src else "image"
+    return f"[image: {html.escape(name)}]"
+
+
+def _clean_tag(match):
+    closing, name, attrs = match.group(1), match.group(2).lower(), match.group(3)
+    if name not in _PREVIEW_TAGS:
+        return " "
+    if closing:
+        return f"</{name}>"
+    kept = ""
+    for attr, value in _ATTR_RE.findall(attrs):
+        if attr.lower() not in _PREVIEW_ATTRS:
+            continue
+        value = value.strip("\"'")
+        kept += ' {}="{}"'.format(attr.lower(), html.escape(value, quote=True))
+    return f"<{name}{kept}>"
+
+
+def field_preview_html(value):
+    """One card field as HTML the review dialog can render, with images named.
+
+    field_preview_text's plain-text answer is right for the feedback digest and for a
+    one-line label, and wrong for the dialog itself: a card back written as a <table>
+    or a <ul> arrives as an unreadable run-on line, so the reader judges a card she has
+    never actually seen. Real feedback came back that way ("just jumbled text to me")
+    on cards whose only problem was that the preview flattened them.
+
+    So structure is kept and everything else is dropped: <img> becomes its filename the
+    same way field_preview_text names it (the dialog reads fields straight out of the
+    .apkg and never extracts its media, so rendering one would paint broken), script and
+    style blocks go entirely, and any tag outside _PREVIEW_TAGS loses the tag but keeps
+    its text. Attributes are filtered rather than passed through, so the output is a
+    small, known subset rather than whatever a field happens to contain.
+    """
+    if not value:
+        return ""
+    text = _SCRIPT_STYLE_RE.sub(" ", value)
+    text = _IMG_TAG_RE.sub(_named_image, text)
+    return _ANY_TAG_RE.sub(_clean_tag, text).strip()
 
 
 def build_feedback_digest(entries, version="", date=""):

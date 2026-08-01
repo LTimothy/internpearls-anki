@@ -131,6 +131,57 @@ def test_cloze_note_with_populated_image_field_names_it_when_expanded():
     assert "<img" not in answer
 
 
+# ------------------------------------------------------- structure survives preview
+_TABLE_BACK = (
+    "<table><tr><th></th><th>PTH</th></tr>"
+    "<tr><td>Primary</td><td>&#8593;</td></tr></table>"
+)
+
+
+def test_basic_note_answer_keeps_its_table_instead_of_flattening_it():
+    """The defect this exists to prevent: a card back written as a table arrived as a
+    run-on line of cell text, so real feedback came back calling a correct card
+    "just jumbled text". The grid is the answer; it has to survive the preview."""
+    detail = _basic_note_detail(image_field="")
+    detail["fields"] = [(n, _TABLE_BACK if n == "Back" else v)
+                        for n, v in detail["fields"]]
+    answer = review._answer_html(detail)
+    assert "<table>" in answer and "<td>" in answer
+    assert "&lt;table" not in answer
+    assert "&#8593;" in answer          # the arrow is still an entity, not escaped
+
+
+def test_cloze_note_keeps_a_table_around_its_deletions():
+    """A cloze whose Text field is a table (one row blanked per card) is the shape that
+    breaks hardest when flattened: every cell runs together and the rows are lost."""
+    detail = _cloze_note_detail(
+        "PTH:<table><tr><td>Primary</td><td>{{c1::&#8593;}}</td></tr></table>")
+    primary = review._primary_html(detail)
+    assert "<table>" in primary
+    assert '<span class="cloze">&#8593;</span>' in primary
+
+
+def test_bulleted_answer_keeps_its_list_markup():
+    detail = _basic_note_detail(image_field="")
+    detail["fields"] = [
+        (n, '<ul style="padding-left:1.1em;"><li>Etomidate</li><li>Alfentanil</li></ul>'
+            if n == "Back" else v)
+        for n, v in detail["fields"]]
+    answer = review._answer_html(detail)
+    assert answer.count("<li>") == 2
+    assert "<ul" in answer
+
+
+def test_preview_drops_tags_it_cannot_render_but_keeps_their_text():
+    detail = _basic_note_detail(image_field="")
+    detail["fields"] = [
+        (n, '<a href="http://x">Barash</a>, page 551' if n == "Back" else v)
+        for n, v in detail["fields"]]
+    answer = review._answer_html(detail)
+    assert "<a " not in answer and "href" not in answer
+    assert "Barash" in answer and "page 551" in answer
+
+
 # --------------------------------------------------------------- row composition
 def test_tagged_row_carries_its_tag_in_the_same_line_as_its_primary_text():
     """Tag and primary text must be one label, not two widgets side by side: two
@@ -145,15 +196,16 @@ def test_untagged_row_has_no_empty_tag_lead_in():
     detail = _basic_note_detail()
     detail["fields"] = [(n, "" if n == "Tag" else v) for n, v in detail["fields"]]
     row_html = review._row_html(detail)
-    assert review._DIM not in row_html
+    assert f'<span style="color: {review._DIM};">' not in row_html
     assert "What nerve block covers the anterior thigh?" in row_html
 
 
-def test_cloze_row_carries_the_cloze_style_block_once():
+def test_cloze_row_carries_the_preview_style_block_once():
     """_primary_html no longer prepends the style itself, so a row that dropped it
-    would render its deletions in body text with no visible fill at all."""
+    would render its deletions in body text with no visible fill at all, and any table
+    on the card with no gridlines."""
     row_html = review._row_html(_cloze_note_detail("The {{c1::lumbar}} plexus."))
-    assert row_html.count(review._CLOZE_STYLE) == 1
+    assert row_html.count(review._PREVIEW_STYLE) == 1
     assert '<span class="cloze">lumbar</span>' in row_html
 
 
