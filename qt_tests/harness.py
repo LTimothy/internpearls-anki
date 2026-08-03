@@ -252,7 +252,27 @@ def _scene_confirm(mock, opts):
         "<b>Example Deck</b><ul>"
         + "".join(f"<li>{d['fields'][0][1]}</li>" for d in synthetic_details()[:3])
         + "</ul><p>Nothing is added until you choose Update.</p>")
-    return lambda: _ask_scrollable(body, yes_label="Update", no_label="Cancel")
+    # `checkbox` renders the subordinate decision the confirmation carries (applying a
+    # deck's new card look), which used to interrupt the run with its own question.
+    checkbox = ({"label": "Also apply the new card look (forces a one-time full "
+                          "AnkiWeb sync)", "checked": False}
+                if opts.get("checkbox") else None)
+    return lambda: _ask_scrollable(body, yes_label="Update", no_label="Cancel",
+                                   checkbox=checkbox)
+
+
+def _scene_result(mock, opts):
+    """The end of a run: completion summary and flagged-card digest in one dialog."""
+    from internpearls import review
+    mock.mw._config = {"collect_card_feedback": True}
+    entries = [{"deck": "Example Deck", "guid": "g1",
+                "front": "Which widget is this, in one short line?",
+                "note": "reads as two facts at once"}]
+    summary = ("<b>Update complete</b> (source: example-decks)"
+               "<ul><li>Example Deck: 29 kept, 3 new</li>"
+               "<li>Archived <b>2</b> retired card(s)</li></ul>"
+               "A backup of the deck was saved before anything changed.")
+    return lambda: review.show_result_with_feedback(summary, entries)
 
 
 SCENES = {
@@ -263,6 +283,7 @@ SCENES = {
     "about": (_scene_about, "the About dialog"),
     "configure-source": (_scene_configure_source, "the deck-source configuration form"),
     "confirm": (_scene_confirm, "the Update my decks confirmation (_ask_scrollable)"),
+    "result": (_scene_result, "the end-of-run summary and feedback digest, one dialog"),
 }
 
 
