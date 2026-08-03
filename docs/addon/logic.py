@@ -716,10 +716,10 @@ def note_display_label(fields, max_len=90):
     return "(card)"
 
 
-_CLOZE_RE = re.compile(r"\{\{c\d+::([^{}]*?)(?:::[^{}]*?)?\}\}", re.S)
+_CLOZE_RE = re.compile(r"\{\{c(\d+)::([^{}]*?)(?:::[^{}]*?)?\}\}", re.S)
 
 
-def cloze_filled_html(text, escape=True):
+def cloze_filled_html(text, escape=True, mark_groups=None):
     """A cloze field as HTML with every deletion showing its answer.
 
     Review is for confirming the fact is right, and for a cloze the fact lives in the
@@ -734,9 +734,23 @@ def cloze_filled_html(text, escape=True):
     `escape=False` is for a field that has already been through field_preview_html,
     which returns real markup: escaping again would turn that field's own tags into
     visible text, which is the whole defect that function exists to fix.
+
+    Deletions that share a number are one card, so a note with two or more groups is
+    really two or more cards sharing a field, and filling every deletion in one colour
+    hides where a card ends. Each one therefore carries its group number as a small
+    superscript. Default (`mark_groups=None`) adds them only when the field has more
+    than one group, since labelling every blank "c1" on a single-card note is noise
+    for a distinction that isn't there. Pass True or False to force it either way.
     """
     text = html.escape(text or "") if escape else (text or "")
-    return _CLOZE_RE.sub(lambda m: f'<span class="cloze">{m.group(1)}</span>', text)
+    if mark_groups is None:
+        mark_groups = len({m.group(1) for m in _CLOZE_RE.finditer(text)}) > 1
+
+    def fill(m):
+        badge = f'<sup class="cn">c{int(m.group(1))}</sup>' if mark_groups else ""
+        return f'<span class="cloze">{m.group(2)}{badge}</span>'
+
+    return _CLOZE_RE.sub(fill, text)
 
 
 def field_preview_text(value):
