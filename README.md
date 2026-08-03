@@ -116,6 +116,8 @@ Sync automation and add-on update behavior, kept separate from Manage decks sinc
 - **Install add-on updates automatically**, off by default. Downloads and installs a newer version as part of the same once-per-launch check, no confirmation. A restart is still needed to load it, same as installing by hand.
 - **Let me flag problems with new cards as they sync**, off by default. Update my decks lets you preview each card a sync would add before it's imported. With this off, that preview is a quick, read-only list: no note boxes, nothing to send. Turn it on and a note box appears under each card, and closing the preview offers a copyable summary of whatever you flagged, whether or not you go ahead with the update.
 
+In that preview, a fill-in-the-blank card shows its blanks filled in rather than hidden, since the point is to check the fact is right. When one field holds more than one group of blanks, meaning it generates more than one card, each blank carries its group number as a small superscript (c1, c2), so you can see which blanks belong to the same card. A field with only one group is left unlabelled.
+
 ### About
 
 A short description of what the add-on does, a summary of your current settings (auto-sync, add-on updates, preserved fields), a reminder that no deck content ships with it, and a link to this repo.
