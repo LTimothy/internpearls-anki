@@ -305,6 +305,15 @@ palette, which flips with the theme while your background doesn't, so a light bl
 ends up with white text on it in dark mode. A color-only style is safe; a
 background-only style is not.
 
+Better still, when a block just needs to look sunken rather than to carry a specific
+brand color: reference the palette from the stylesheet itself, `background:
+palette(base); color: palette(text); border: 1px solid palette(mid)`. Qt resolves those
+per theme, so the pair can never drift apart the way a hardcoded background and a
+palette foreground did twice. Two guards back this up, and both were added only after
+each had already missed a real instance: a source lint over every `setStyleSheet` call
+in the add-on (`tests/test_review.py`), and the real-Qt contrast suite, which measures
+`QPlainTextEdit` as well as labels and flat buttons (`qt_tests/test_contrast.py`).
+
 `--dark` approximates a dark theme via Qt's color-scheme hint. It is *not* Anki's
 night theme, so treat it as a check on whether hardcoded colors survive a dark
 background at all, not as proof night mode is right.
