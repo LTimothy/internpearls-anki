@@ -895,3 +895,60 @@ def duplicate_dialog_html(groups):
     heading = (f"Found <b>{n_archive}</b> duplicate {copies} of <b>{n_cards}</b> {cards}. "
                "Each card was imported more than once. Archiving keeps one copy of each:")
     return heading + bullets(lines, cap=15)
+
+
+def select_empty_cards(report_notes, scoped_nids):
+    """Split an empty-cards report down to the cards this add-on is willing to remove.
+
+    An empty card is one whose template renders nothing, which for a cloze note means a
+    card for a deletion number the note's text no longer contains (Anki shows it in
+    review as "No cloze 3 found on card"). They appear when a deck source regroups a
+    live cloze into fewer deletions: an import rewrites a matched note's fields but
+    never removes its cards, so the surplus cards stay behind with nothing to render.
+
+    Two filters, both load-bearing:
+
+    - Only notes in `scoped_nids` (the learner's notes under the configured scope tag).
+      Anki's own report covers the whole collection, and other people's decks are not
+      ours to clean up.
+    - A note whose cards are ALL empty is never touched, only reported. That is the one
+      case where removing the cards would take the note and its content with it, and it
+      means something is wrong upstream (a note with no deletions at all), not that
+      there is a card to tidy away.
+
+    Returns (removable, skipped), each a list of {"nid", "card_ids"}.
+    """
+    removable, skipped = [], []
+    for n in report_notes:
+        if n["nid"] not in scoped_nids:
+            continue
+        entry = {"nid": n["nid"], "card_ids": list(n["card_ids"])}
+        (skipped if n.get("will_delete_note") else removable).append(entry)
+    return removable, skipped
+
+
+def empty_cards_dialog_html(rows, skipped=0):
+    """Body of the Remove empty cards confirmation, from collection.find_empty_cards.
+
+    Each row names the card the way the rest of the add-on labels one, then lists which
+    deletion numbers went missing, since "c3, c4" is what she actually sees on the dead
+    card in review.
+    """
+    lines = []
+    for r in rows:
+        label = html.escape(r.get("label") or "")
+        gone = ", ".join(f"c{o}" for o in r.get("ords", []))
+        lines.append(f"{label} <span style='color:gray;'>{gone}</span>"
+                     if gone else label)
+    n_cards = sum(len(r["card_ids"]) for r in rows)
+    cards = "card" if n_cards == 1 else "cards"
+    notes = "note" if len(rows) == 1 else "notes"
+    heading = (f"Found <b>{n_cards}</b> empty {cards} on <b>{len(rows)}</b> {notes}. "
+               "These are leftovers from a card that used to have more blanks than it "
+               "does now, so there is nothing left for them to show:")
+    tail = ""
+    if skipped:
+        tail = (f"<br><br><b>{skipped}</b> note(s) have no content on any card at all "
+                "and were left alone, since removing those cards would delete the note "
+                "itself.")
+    return heading + bullets(lines, cap=15) + tail
