@@ -34,6 +34,8 @@ No deck source yet? Open Manage decks > Configure source and pick "Try the examp
 
 The main button, and the only one most people ever need. It fetches `manifest.json` from your configured deck source and figures out everything pending in one pass: which decks changed, which retired cards are still lingering in your collection, and which cards a deck reorg needs to relocate — the same two kinds of housekeeping "Reconcile my decks" handles on its own (see the Advanced entry below). For any changed deck, it downloads and matches it against your collection before showing you anything, so the confirmation lists real per-deck counts ("12 kept · 3 new"), not just how big the deck is. A real progress bar with a working Cancel button covers this step (and the later apply step), since it's a live download per deck and a multi-deck check on a slow connection would otherwise look like a frozen add-on with no way out. One confirmation covers all of it — changed decks with their real counts, retired cards, and relocations, and it's explicitly a preview, nothing applies until you click Update — so you know the full scope before anything happens. Cancelling the apply step partway through is safe: whatever decks already finished stay applied, and archiving/relocating is skipped for that run rather than run against a partial sync.
 
+If an update also changes how cards look, that choice is a checkbox on this same confirmation rather than a separate question part-way through the run. It is unticked by default, because applying it costs a one-time full AnkiWeb sync; leaving it alone still imports all the content and just keeps your current card appearance, and the next update carrying a look change offers it again.
+
 On confirm, content updates apply first, then retired cards archive and reorganized cards relocate — in that order, so a retired card's replacement is already in your collection before the old card gets archived out, instead of you having to remember to run a sync first. Nothing already downloaded for the preview is fetched again. For each changed deck it:
 
 1. Takes a fresh, timestamped backup of just the configured deck first (a self-contained `.apkg` with scheduling included, saved internally and pruned to the most recent 10). Nothing else runs until this succeeds, or you explicitly choose to continue without one.
@@ -43,7 +45,9 @@ On confirm, content updates apply first, then retired cards archive and reorgani
 5. Imports through Anki's built-in importer with scheduling disabled, so your intervals and ease factors stay put.
 6. Restores the preserved fields from the snapshot.
 
-If an update also changes how cards *look* (a card template or its CSS — the one thing these imports deliberately never touch, see "How history is preserved"), it says so afterward and offers to apply the new look. Saying yes updates the note type's templates and styling, which Anki treats as a schema change: your next AnkiWeb sync will be a one-time full sync ("Upload to AnkiWeb"). Saying no keeps your current card appearance; the content update has already imported either way, and the next template change will offer again.
+That look change is a card template or its CSS, the one thing these imports deliberately never touch (see "How history is preserved"), which is why applying it is a separate consent at all: Anki treats it as a schema change, so your next AnkiWeb sync becomes a one-time full sync ("Upload to AnkiWeb"). Sync decks, the content-only half under Advanced, still asks about it in its own dialog afterward rather than up front.
+
+When the run ends, the summary of what happened and (if you flagged any cards) the copyable summary of your notes arrive together in one dialog rather than one after the other.
 
 If no deck source is configured, it tells you to open Manage decks and use Configure source. If nothing at all is pending, it just says you're up to date.
 
@@ -115,6 +119,8 @@ Sync automation and add-on update behavior, kept separate from Manage decks sinc
 - **Notify me when a new add-on version is out**, on by default. A tooltip once per new release, no installation.
 - **Install add-on updates automatically**, off by default. Downloads and installs a newer version as part of the same once-per-launch check, no confirmation. A restart is still needed to load it, same as installing by hand.
 - **Let me flag problems with new cards as they sync**, off by default. Update my decks lets you preview each card a sync would add before it's imported. With this off, that preview is a quick, read-only list: no note boxes, nothing to send. Turn it on and a note box appears under each card, and closing the preview offers a copyable summary of whatever you flagged, whether or not you go ahead with the update.
+
+Whatever you type in those boxes is saved to disk as you type it, not just when the preview closes. The summary comes at the end of a run, after an import that can fail, and your notes are the one part of a run that clicking Update again cannot reproduce, so anything still unsent is picked up automatically by your next update and included in that summary. Nothing to remember, and no recovery prompt to click through.
 
 In that preview, a fill-in-the-blank card shows its blanks filled in rather than hidden, since the point is to check the fact is right. When one field holds more than one group of blanks, meaning it generates more than one card, each blank carries its group number as a small superscript (c1, c2), so you can see which blanks belong to the same card. A field with only one group is left unlabelled.
 

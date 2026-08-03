@@ -54,7 +54,11 @@ relax them without understanding why they're there.
   when it genuinely adds a missing field). Template/CSS changes are detected
   separately and applied only with explicit user consent; an unattended
   auto-sync defers a template change to a manual sync rather than ever
-  applying one on its own.
+  applying one on its own. In `update_decks` that consent is the checkbox on
+  the single confirmation (detected up front from the preview's own download,
+  unticked by default) rather than a question mid-import; `sync_decks` still
+  asks via `_offer_template_changes`. Either way the consent is explicit and
+  names the one-time full AnkiWeb sync it costs.
 - **Card matching is GUID first, then front text, then a rename map**
   (`remap_cards`). A GUID match must never be overridden by a text match.
   Stable-GUID deck sources rely on this to reword card fronts without any
@@ -76,6 +80,16 @@ relax them without understanding why they're there.
   still archives.
 - **Persistent state lives under `internpearls/user_files/`.** Everything
   else in the add-on folder is replaced on update.
+- **Card feedback is written to disk as it is typed, and cleared only once
+  the digest has actually been shown.** It is the one thing in a run that
+  clicking Update again cannot reproduce, and it used to exist only in memory
+  until the digest at the very end, several dialogs and one fallible import
+  later. `review.save_feedback` is debounced, not deferred to close;
+  `update_decks` folds anything left on disk back into the current run rather
+  than prompting about it. Do not move the clear earlier than the digest: an
+  exit with nothing flagged deliberately leaves the file alone, because
+  treating "no flags this run" as "safe to forget" is how a recovered note
+  gets thrown away a second time.
 - **Self-update fetches use an API that returns fresh data**, not a CDN path
   that can serve a stale cached response right after a release.
 - **Dialogs go through shared wrappers**, not ad hoc calls, so every dialog
