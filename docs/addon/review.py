@@ -486,8 +486,15 @@ def offer_feedback_digest(parent, entries, summary_html=None):
     view = QPlainTextEdit(text)
     view.setReadOnly(True)
     view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-    view.setStyleSheet(
-        "QPlainTextEdit { background: #f6f7f8; border: 1px solid #d8dee4; }")
+    # Every colour here is a palette reference, not a hex value, so the block follows
+    # Night Mode instead of fighting it. It used to hardcode a near-white background
+    # and leave the text to the palette, which is the v0.32.1 dosing-block bug exactly:
+    # measured at 1.34:1 in dark mode (light grey on near-white), so the one thing in
+    # this dialog she is meant to read was the one thing she could not. `base` is the
+    # background a text field already uses, so it still reads as a sunken payload block
+    # in both themes, and `text` on `base` is a pairing the platform guarantees.
+    view.setStyleSheet("QPlainTextEdit { background: palette(base);"
+                       " color: palette(text); border: 1px solid palette(mid); }")
     lay.addWidget(view, 1)
     bb = QDialogButtonBox()
     again = bb.addButton("Copy again", QDialogButtonBox.ButtonRole.ActionRole)

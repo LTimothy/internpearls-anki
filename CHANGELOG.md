@@ -3,6 +3,14 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.41.1
+
+- Fixed the flagged-card summary being unreadable in Night Mode. The text block set its
+  own near-white background but left the text colour to the theme, so the text came out
+  light grey on near-white: measured at 1.34:1, against the 4.5:1 needed to read
+  comfortably. It now takes both colours from the theme, so it is readable in either one
+  and no longer a white box on a dark screen. Copying was never affected, only reading.
+
 ## v0.41.0
 
 - Notes you write about a new card are now saved as you type, not only when the review
