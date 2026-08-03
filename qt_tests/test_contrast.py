@@ -28,13 +28,20 @@ _EXPAND_ALL = tuple(range(8))
 
 def _text_widgets(dialog, q):
     """The widgets whose text this suite measures for contrast: every QLabel, plus flat
-    QPushButtons. Flat buttons carry the add-on's own foreground colours (the caret is
-    the dim colour, the link buttons are the accent) over the window, so they are
-    measurable. Native buttons are excluded: their offscreen chrome is not the add-on's
-    colour and reads as a false failure."""
+    QPushButtons, plus every QPlainTextEdit. Flat buttons carry the add-on's own
+    foreground colours (the caret is the dim colour, the link buttons are the accent)
+    over the window, so they are measurable. Native buttons are excluded: their
+    offscreen chrome is not the add-on's colour and reads as a false failure.
+
+    QPlainTextEdit was added after the feedback digest shipped a hardcoded near-white
+    background with its text colour left to the palette, and so measured 1.34:1 in
+    Night Mode while every widget this suite did look at passed. A widget that sets its
+    own background is precisely the shape of thing this suite exists for, so which
+    widget class it happens to be must not decide whether it gets measured."""
     labels = list(dialog.findChildren(q.QLabel))
     buttons = [b for b in dialog.findChildren(q.QPushButton) if b.isFlat()]
-    return labels + buttons
+    edits = list(dialog.findChildren(q.QPlainTextEdit))
+    return labels + buttons + edits
 
 # Colours that fail AA today, every ratio measured 2026-07-16. These are real
 # legibility bugs, not false positives, and every one is deliberately out of scope

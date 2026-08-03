@@ -75,7 +75,11 @@ def text_contrast(shot, widget, sample=12):
     measured. Inline-span contrast within a mixed label remains uncovered by this suite.
     """
     _, q = harness.bootstrap()
-    if not widget.isVisible() or not widget.text().strip():
+    # QLabel and QPushButton say text(); QPlainTextEdit (the feedback digest, which
+    # carries its own background and so is exactly the shape of widget this suite
+    # exists for) says toPlainText().
+    read = getattr(widget, "text", None) or getattr(widget, "toPlainText", None)
+    if not widget.isVisible() or not read or not read().strip():
         return None
     rect = widget_rect(shot.dialog, widget)
     if rect.width() < 2 or rect.height() < 2:
