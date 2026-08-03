@@ -3,6 +3,15 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.40.0
+
+- Reviewing new cards now shows which fill-in-the-blank belongs to which card. A card
+  with more than one group of blanks is really several cards sharing one field, and
+  every blank rendering the same colour gave no way to see where one card ended and the
+  next began. Each blank now carries its group number as a small superscript (c1, c2),
+  so a table whose rows are separate cards reads as separate cards. A field with only
+  one group is left unlabelled, since there is no distinction to draw there.
+
 ## v0.39.0
 
 - New Advanced menu item, "Remove empty cards." When a deck rewrites a fill-in-the-blank

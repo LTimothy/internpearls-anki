@@ -605,8 +605,30 @@ def test_cloze_filled_html_leaves_markup_alone_when_asked_not_to_escape():
 def test_cloze_filled_html_fills_each_deletion_with_its_answer():
     assert logic.cloze_filled_html(
         "The {{c1::tibial}} nerve lies posterior to the {{c2::medial}} malleolus") == (
-        'The <span class="cloze">tibial</span> nerve lies posterior to the '
-        '<span class="cloze">medial</span> malleolus')
+        'The <span class="cloze">tibial<sup class="cn">c1</sup></span> nerve lies '
+        'posterior to the <span class="cloze">medial<sup class="cn">c2</sup></span> '
+        'malleolus')
+
+
+def test_cloze_filled_html_labels_each_group_when_a_field_holds_more_than_one():
+    # Two groups is two cards sharing one field, and which blanks belong to which card
+    # is invisible when every deletion renders the same. Blanks that share a number
+    # share a label, which is the whole point: it reads as one card's worth.
+    out = logic.cloze_filled_html("{{c1::a}}, {{c1::b}}, {{c2::c}}")
+    assert out.count('<sup class="cn">c1</sup>') == 2
+    assert out.count('<sup class="cn">c2</sup>') == 1
+
+
+def test_cloze_filled_html_leaves_a_single_group_field_unlabelled():
+    # Labelling every blank "c1" on a one-card note is noise for a distinction that
+    # isn't there.
+    assert "<sup" not in logic.cloze_filled_html("{{c1::one}} and {{c1::two}}")
+
+
+def test_cloze_filled_html_group_labels_can_be_forced_either_way():
+    assert "<sup" in logic.cloze_filled_html("{{c1::one}}", mark_groups=True)
+    assert "<sup" not in logic.cloze_filled_html(
+        "{{c1::one}} {{c2::two}}", mark_groups=False)
 
 
 def test_cloze_filled_html_drops_the_hint_and_keeps_the_answer():
