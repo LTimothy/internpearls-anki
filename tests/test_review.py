@@ -5,7 +5,11 @@
 building a dialog or driving the mock Qt widget tree. mock_anki's aqt stubs are already
 installed by conftest.py before this module imports, same as every other test file here.
 """
+import os
+
 from internpearls import review
+
+_ADDON_DIR = os.path.dirname(review.__file__)
 
 
 def _image_note_detail(image_field='<img src="femoral.jpg">'):
@@ -261,4 +265,44 @@ def test_no_widget_sets_a_background_without_setting_a_foreground():
                         for n, v in detail["fields"]]
     styled = [n.get("style") or "" for n in _row_nodes(detail, collect_feedback=True)]
     offenders = [s for s in styled if "background" in s and "color:" not in s]
+    assert not offenders, f"background with no foreground: {offenders}"
+
+
+def _stylesheet_literals():
+    """Every setStyleSheet() call in the add-on, as the literal text it applies.
+
+    Read from the source with ast rather than from rendered widgets, because the
+    rendered check above only ever sees the widgets one dialog happens to build. The
+    digest box was a QPlainTextEdit in a different dialog entirely, so it sat outside
+    that check for four versions while shipping the exact bug the check exists for.
+    An f-string's placeholders drop out and its literal parts remain, which is all this
+    needs: "background:" and "color:" are always literal.
+    """
+    import ast
+    import glob
+    out = []
+    for path in sorted(glob.glob(os.path.join(_ADDON_DIR, "*.py"))):
+        tree = ast.parse(open(path, encoding="utf8").read())
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "setStyleSheet" and node.args):
+                continue
+            parts = []
+            for piece in ast.walk(node.args[0]):
+                if isinstance(piece, ast.Constant) and isinstance(piece.value, str):
+                    parts.append(piece.value)
+            out.append((os.path.basename(path), "".join(parts)))
+    return out
+
+
+def test_no_stylesheet_anywhere_sets_a_background_without_a_foreground():
+    """The rendered check above, applied to every widget in the add-on rather than to
+    the card rows of one dialog. A hardcoded background with the text colour left to
+    the palette renders white-on-near-white in Night Mode: it did it once in the dosing
+    block (v0.32.1) and once in the feedback digest, where it measured 1.34:1 and made
+    the one thing that dialog exists to show unreadable.
+    """
+    offenders = [(mod, css) for mod, css in _stylesheet_literals()
+                 if "background" in css and "color:" not in css]
     assert not offenders, f"background with no foreground: {offenders}"
