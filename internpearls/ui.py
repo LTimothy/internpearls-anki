@@ -14,8 +14,9 @@ import traceback
 from contextlib import contextmanager
 
 from aqt import mw
-from aqt.qt import (QApplication, QDialog, QDialogButtonBox, QFrame, QLabel,
-                    QProgressDialog, QPushButton, QScrollArea, Qt, QVBoxLayout)
+from aqt.qt import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
+                    QLabel, QProgressDialog, QPushButton, QScrollArea, Qt,
+                    QVBoxLayout)
 from aqt.utils import askUser, getText, showInfo, showWarning, tooltip
 
 from .config import APP_NAME
@@ -41,7 +42,7 @@ def _ask(text, **kw):
 
 
 def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=340,
-                    extra_label=None, on_extra=None):
+                    extra_label=None, on_extra=None, checkbox=None):
     """Like _ask, but for content whose length isn't bounded by anything short: a
     bullet list of cards or decks that can grow into the dozens. A plain QMessageBox
     (what askUser/_ask use) has no scroll area, so long text just makes the box taller,
@@ -54,6 +55,14 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     "Yes"/"No": a caller with a specific action (e.g. "Archive & relocate") should
     pass its own labels, since a generic Yes/No forces the reader back up to the
     question to know what they're agreeing to.
+
+    `checkbox` is an optional {"label": ..., "checked": bool} dict, shown under the
+    body and written back in place when the dialog closes. It exists so a second
+    decision that used to interrupt the run with its own question can be made here,
+    while the reader is already deciding, instead of mid-flight three dialogs later.
+    Only for a decision that is genuinely subordinate to this one: a checkbox on a
+    confirmation is answered by the same click, so anything needing its own yes or no
+    still needs its own dialog.
 
     `extra_label` adds a third button that does NOT answer the question. It carries
     ActionRole, so clicking it leaves this dialog open, runs `on_extra`, and returns
@@ -77,6 +86,12 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     scroll.setWidget(body)
     lay.addWidget(scroll)
 
+    box = None
+    if checkbox:
+        box = QCheckBox(checkbox["label"])
+        box.setChecked(bool(checkbox.get("checked")))
+        lay.addWidget(box)
+
     bb = QDialogButtonBox()
     yes = bb.addButton(yes_label, QDialogButtonBox.ButtonRole.AcceptRole)
     bb.addButton(no_label, QDialogButtonBox.ButtonRole.RejectRole)
@@ -92,7 +107,10 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     bb.rejected.connect(dlg.reject)
     lay.addWidget(bb)
 
-    return bool(dlg.exec())
+    answered = bool(dlg.exec())
+    if box is not None:
+        checkbox["checked"] = box.isChecked()
+    return answered
 
 
 def copy_to_clipboard(text):

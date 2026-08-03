@@ -10,17 +10,18 @@ the collection or the network, which is also why the dialog has no Cancel.
 """
 import datetime
 import html
+import os
 
 from aqt import mw
 from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayout,
-                    QLabel, QPlainTextEdit, QPushButton, QScrollArea, Qt,
+                    QLabel, QPlainTextEdit, QPushButton, QScrollArea, Qt, QTimer,
                     QVBoxLayout, QWidget)
 
-from .config import ADDON_VERSION, APP_NAME, _cfg
+from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _cfg, _load_json, _save_json
 from .logic import (build_feedback_digest, cloze_filled_html, field_preview_html,
-                    field_preview_text)
-from .ui import (copy_to_clipboard, hint_label, muted_label, section_label,
-                 title_label)
+                    field_preview_text, note_display_label)
+from .ui import (_info, copy_to_clipboard, hint_label, muted_label,
+                 section_label, title_label)
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
 # would be a blank row on every single card.
@@ -275,7 +276,37 @@ def _card_row(detail, flags, boxes, collect_feedback):
     return row
 
 
-def review_new_cards(parent, decks, flags):
+def save_feedback(entries):
+    """Write the in-progress notes to user_files/, or clear the file when there are none.
+
+    Called as she types rather than only when the dialog closes. Everything else a run
+    does can be reproduced by clicking Update again; what she wrote about a card cannot,
+    so it is the one thing that must survive a crash, a force quit, or an error thrown
+    three dialogs later. Kept next to the other persistent state, so an add-on update
+    does not wipe it.
+    """
+    if entries:
+        _save_json(FEEDBACK, entries)
+    else:
+        clear_saved_feedback()
+
+
+def load_saved_feedback():
+    """Notes left over from a run that never reached its digest. {guid: {note, deck,
+    front}}, empty when there is nothing pending."""
+    saved = _load_json(FEEDBACK, {})
+    return saved if isinstance(saved, dict) else {}
+
+
+def clear_saved_feedback():
+    """Drop the saved notes, once they have actually been shown to her."""
+    try:
+        os.remove(FEEDBACK)
+    except OSError:
+        pass
+
+
+def review_new_cards(parent, decks, flags, unreadable=()):
     """Show every card this update would add, as one row each, and collect notes on
     them when the feedback toggle asks for it.
 
@@ -292,6 +323,13 @@ def review_new_cards(parent, decks, flags):
     There's no Cancel button, and every exit path keeps what she typed: nothing in this
     dialog changes anything, so the only thing a Cancel could throw away is her own
     work, which is never what she'd mean by it.
+
+    That principle is why the boxes also save to disk as she types (save_feedback, on a
+    short debounce so it is not a write per keystroke). Closing this dialog is not the
+    end of the run: the digest that actually hands her notes back comes several steps
+    later, after an import that can fail, and before v0.41.0 anything that ended the run
+    in between dropped them without a word. `unreadable` names decks whose new cards
+    could not be read, shown as a line here rather than as its own warning box.
     """
     collect_feedback = _cfg()["collect_feedback"]
     dlg = QDialog(parent or mw)
@@ -307,11 +345,19 @@ def review_new_cards(parent, decks, flags):
         hint += " Say what's wrong with one and you'll get a summary to send back."
     outer.addWidget(hint_label(hint))
 
+    if unreadable:
+        outer.addWidget(muted_label(
+            "Couldn't read the new cards from " + ", ".join(unreadable) +
+            ". The update itself is unaffected; those decks just aren't shown here."))
+
     inner = QWidget()
     ilay = QVBoxLayout(inner)
     ilay.setContentsMargins(0, 0, 0, 0)
     ilay.setSpacing(0)
     boxes = {}
+    # Each card's deck and readable front, so a note saved to disk can still name the
+    # card it is about in a later session, when this run's own index is long gone.
+    index = {}
     for deck_name, details in decks:
         if not details:
             continue
@@ -319,8 +365,42 @@ def review_new_cards(parent, decks, flags):
         for i, detail in enumerate(details):
             if i:
                 ilay.addWidget(_separator())   # between cards, not after the last
+            index[detail["guid"]] = (deck_name, note_display_label(
+                [v for _, v in detail.get("fields", [])]))
             ilay.addWidget(_card_row(detail, flags, boxes, collect_feedback))
     ilay.addStretch(1)
+
+    # What is already on disk, read once. A note carried in from an earlier session is
+    # about a card this dialog may not be showing at all (its deck imported last time),
+    # so this dialog cannot name it: only the saved entry still knows its deck and
+    # front. Rebuilding it from `index` instead wrote the GUID in as the front and lost
+    # the card's identity on the very first re-save.
+    carried = load_saved_feedback()
+
+    def _current_entries():
+        entries = {g: {"note": t, "deck": index.get(g, ("", ""))[0],
+                       "front": index.get(g, ("", g))[1]}
+                   for g, box in boxes.items()
+                   for t in [box.toPlainText().strip()] if t}
+        # Notes carried in from an earlier session are pending too: dropping them
+        # because this dialog has no box for that card would lose exactly the notes
+        # this whole mechanism exists to keep.
+        for g, note in flags.items():
+            if g in entries or g in boxes:
+                continue
+            entries[g] = dict(carried.get(g) or {}, note=note) if carried.get(g) else {
+                "note": note, "deck": index.get(g, ("", ""))[0],
+                "front": index.get(g, ("", g))[1]}
+        return entries
+
+    # Debounced rather than saving on every keystroke: a burst of typing collapses into
+    # one write, and 400ms is far below the time any of the losing scenarios take.
+    saver = QTimer(dlg)
+    saver.setSingleShot(True)
+    saver.setInterval(400)
+    saver.timeout.connect(lambda: save_feedback(_current_entries()))
+    for box in boxes.values():
+        box.textChanged.connect(saver.start)
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
@@ -341,10 +421,32 @@ def review_new_cards(parent, decks, flags):
             flags[guid] = note
         else:
             flags.pop(guid, None)   # she cleared it; treat that as unflagging
+    saver.stop()                    # the final state, not whatever the debounce had
+    save_feedback(_current_entries())
     return flags
 
 
-def offer_feedback_digest(parent, entries):
+def show_result_with_feedback(summary_html, entries):
+    """The end of a run, as one dialog instead of two.
+
+    A completion summary and a feedback digest used to arrive as separate boxes, back
+    to back, at the exact point in the run where the reader is most done paying
+    attention: the summary lands first, gets dismissed, and the digest, the one thing
+    she cannot reproduce by running the update again, appears behind it looking like
+    yet another popup. They are one dialog now, summary on top, digest below it.
+
+    Degrades in both directions on purpose: a run with no flagged cards is a plain
+    _info as before, and a digest with no summary (she backed out of the update but
+    still wrote notes) is the digest on its own.
+    """
+    if not entries:
+        if summary_html:
+            _info(summary_html)
+        return
+    offer_feedback_digest(None, entries, summary_html=summary_html)
+
+
+def offer_feedback_digest(parent, entries, summary_html=None):
     """Put the flagged-card summary on the clipboard and show it.
 
     Shown as well as copied, for two reasons: she sees exactly what's being sent before
@@ -366,6 +468,16 @@ def offer_feedback_digest(parent, entries):
     dlg.setMinimumWidth(520)
     dlg.setMinimumHeight(380)
     lay = QVBoxLayout(dlg)
+    if summary_html:
+        summary = QLabel(summary_html)
+        summary.setWordWrap(True)
+        summary.setTextFormat(Qt.TextFormat.RichText)
+        summary_scroll = QScrollArea()
+        summary_scroll.setWidgetResizable(True)
+        summary_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        summary_scroll.setMaximumHeight(200)
+        summary_scroll.setWidget(summary)
+        lay.addWidget(summary_scroll)
     lay.addWidget(title_label(f"{len(entries)} card(s) flagged"))
     lay.addWidget(muted_label(
         "Copied to your clipboard, ready to paste into a message."

@@ -1949,3 +1949,166 @@ def test_remove_empty_cards_declines_cleanly(anki):
 
     assert len(anki.col.note_by_guid("regrouped")._card_ids) == 2
     assert not getattr(anki.col, "removed_cards", [])
+
+
+# ------------------------------------------- feedback persistence & popup merge
+def _feedback_run(anki, tmp_path, on_review, decide="Cancel"):
+    """Drive update_decks through the review dialog, letting the caller decide what to
+    type, and answering everything else. Returns the responder's own scratch dict."""
+    from internpearls import sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)})
+    _configure(anki, folder)
+    anki.mw._config["collect_card_feedback"] = True
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        title, tree = p.get("title") or "", p["tree"]
+        if "new cards" in title:
+            seen["reviewed"] = True
+            return on_review(tree, seen)
+        if "card feedback" in title:
+            seen["digest"] = tree
+            return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
+                                "click": True}]}
+        review = next((n for n in _walk(tree) if n.get("t") == "button"
+                       and "Review" in (n.get("label") or "")), None)
+        if review and not seen.get("reviewed"):
+            return {"events": [{"id": review["id"], "click": True}]}
+        return {"events": [{"id": _find(tree, t="button", label=decide)["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+    return seen
+
+
+def test_feedback_is_saved_without_waiting_for_the_dialog_to_close(anki, tmp_path):
+    """The whole point: what she types has to survive the run dying before the digest,
+    and the digest is several steps and one fallible import later.
+
+    Answered in two passes on purpose. The first types into the box and does NOT close
+    the dialog, so the second pass sees exactly the state a crash would interrupt: text
+    entered, dialog still open, nothing closed. The debounce timer is fired by hand
+    there because the mock has no event loop, which is also what proves the box is
+    wired to it at all.
+    """
+    from internpearls import review
+    saved = {}
+
+    def on_review(tree, seen):
+        box = next(n for n in _walk(tree) if n.get("t") == "textarea")
+        if not seen.get("typed"):
+            seen["typed"] = True
+            seen.pop("reviewed", None)        # keep answering this same dialog
+            return {"events": [{"id": box["id"], "value": "far too bulky"}]}
+        assert any(t.started for t in anki.qt_timers), "typing must arm the save"
+        for t in anki.qt_timers:
+            t.fire()
+        saved.update(review.load_saved_feedback())
+        return {"events": [{"id": _find(tree, t="button", label="Done")["id"],
+                            "click": True}]}
+
+    _feedback_run(anki, tmp_path, on_review)
+
+    assert [e["note"] for e in saved.values()] == ["far too bulky"], \
+        "the note must be on disk while the dialog is still open"
+    assert [e["front"] for e in saved.values()] == ["Front two"], "saved with its card"
+
+
+def test_feedback_from_an_interrupted_run_comes_back_in_the_next_one(anki, tmp_path):
+    """A run that died before the digest left her notes on disk. The next update picks
+    them up on its own, with no recovery prompt of its own to click through."""
+    from internpearls import review
+    review.save_feedback({"gONE": {"note": "wrong dose", "deck": DECK,
+                                   "front": "An earlier card"}})
+
+    def just_close(tree, seen):
+        return {"events": [{"id": _find(tree, t="button", label="Done")["id"],
+                            "click": True}]}
+
+    _feedback_run(anki, tmp_path, just_close)
+
+    assert any("wrong dose" in c for c in anki.gui.clipboard)
+    assert any("An earlier card" in c for c in anki.gui.clipboard)
+
+
+def test_saved_feedback_is_cleared_once_the_digest_has_been_shown(anki, tmp_path):
+    from internpearls import review
+    review.save_feedback({"gONE": {"note": "wrong dose", "deck": DECK,
+                                   "front": "An earlier card"}})
+
+    def just_close(tree, seen):
+        return {"events": [{"id": _find(tree, t="button", label="Done")["id"],
+                            "click": True}]}
+
+    _feedback_run(anki, tmp_path, just_close)
+
+    assert review.load_saved_feedback() == {}, "shown once, not offered forever"
+
+
+def test_completion_summary_and_feedback_arrive_as_one_dialog(anki, tmp_path):
+    """They used to be two boxes back to back at the end of the run."""
+    def flag_one(tree, seen):
+        box = next(n for n in _walk(tree) if n.get("t") == "textarea")
+        return {"events": [{"id": box["id"], "value": "too bulky"},
+                           {"id": _find(tree, t="button", label="Done")["id"],
+                            "click": True}]}
+
+    seen = _feedback_run(anki, tmp_path, flag_one, decide="Update")
+
+    assert seen.get("digest"), "the digest dialog should have opened"
+    text = " ".join(str(n) for n in _walk(seen["digest"]))
+    assert "Update complete" in text, "the summary belongs in the same dialog"
+    assert not any("Update complete" in i for i in anki.gui.infos), \
+        "and must not also arrive as its own info box"
+
+
+def _update_with_look_change(anki, tmp_path, tick):
+    """Run update_decks against a deck whose card template changed, ticking (or not)
+    the new-look checkbox on the one confirmation."""
+    from internpearls import sync
+    _her_card(anki, "g1", "Front one")
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one"), TAGS)], make_model(css=NEW_CSS))})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        tree = p["tree"]
+        events = []
+        box = next((n for n in _walk(tree) if n.get("t") == "check"), None)
+        if box and tick:
+            events.append({"id": box["id"], "value": True})
+        update = _find(tree, t="button", label="Update")
+        events.append({"id": update["id"], "click": True})
+        return {"events": events}
+
+    drive(anki, sync.update_decks, respond)
+
+
+def test_update_applies_the_new_look_when_the_box_is_ticked(anki, tmp_path):
+    _update_with_look_change(anki, tmp_path, tick=True)
+
+    assert anki.col.models.all()[0]["css"] == NEW_CSS
+
+
+def test_update_keeps_the_old_look_when_the_box_is_left_alone(anki, tmp_path):
+    old_css = anki.col.models.all()[0]["css"]
+
+    _update_with_look_change(anki, tmp_path, tick=False)
+
+    assert anki.col.models.all()[0]["css"] == old_css
+    assert anki.col.imports, "declining the look must still import the content"
+
+
+def test_update_never_asks_about_the_look_in_its_own_dialog(anki, tmp_path):
+    """It used to interrupt mid-run, after the import had already started. The
+    confirmation carries the decision now, so nothing new appears behind it."""
+    _update_with_look_change(anki, tmp_path, tick=True)
+
+    assert not any("full sync" in a for a in anki.gui.asks)

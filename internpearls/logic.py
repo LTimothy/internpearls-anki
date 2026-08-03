@@ -966,3 +966,37 @@ def empty_cards_dialog_html(rows, skipped=0):
                 "and were left alone, since removing those cards would delete the note "
                 "itself.")
     return heading + bullets(lines, cap=15) + tail
+
+
+def feedback_entries(flags, index):
+    """The flagged cards as digest entries: [{deck, front, guid, note}].
+
+    `flags` is {guid: her note}; `index` is {guid: (deck, front)}, which is what turns a
+    GUID into something a person can read. A flag whose GUID isn't in the index is
+    dropped rather than shown as a bare GUID: it means we no longer know which card she
+    meant, and a line naming no card is not something anyone can act on.
+    """
+    return [{"deck": index[g][0], "front": index[g][1], "guid": g, "note": n}
+            for g, n in flags.items() if g in index]
+
+
+def merge_saved_feedback(saved, flags, index):
+    """Fold notes recovered from disk into this run's flags and card index, in place.
+
+    A saved note is only restored for a card this run hasn't already collected a note
+    on: what she just typed is newer than what a previous run left behind, so the live
+    value wins on a conflict. The index gets the saved deck/front for every restored
+    card, since the card may well not be in this run at all (its deck already imported
+    last time), and without a name it would be dropped from the digest.
+
+    Returns the number of notes restored, so the caller can say so.
+    """
+    restored = 0
+    for guid, entry in (saved or {}).items():
+        note = (entry or {}).get("note", "").strip()
+        if not note or guid in flags:
+            continue
+        flags[guid] = note
+        index.setdefault(guid, (entry.get("deck", ""), entry.get("front", guid)))
+        restored += 1
+    return restored

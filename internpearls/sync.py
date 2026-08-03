@@ -31,12 +31,14 @@ from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json)
 from .logic import (apkg_note_details, apkg_notes, bullets, decks_to_update,
+                    feedback_entries, merge_saved_feedback,
                     duplicate_dialog_html, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, manifest_needs_newer_addon,
                     note_display_label, remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
-from .review import offer_feedback_digest, review_new_cards
+from .review import (clear_saved_feedback, load_saved_feedback,
+                     review_new_cards, show_result_with_feedback)
 from .ui import _ask, _ask_scrollable, _info, _safe, _warn, cancellable_progress, wait_cursor
 
 
@@ -733,8 +735,29 @@ def update_decks():
             continue          # this deck's download failed; it already reads "couldn't preview"
         for _, fields, guid in pc[2]:
             new_cards.append((d["name"], note_display_label(fields), guid))
+    # Detected here, not mid-import, because the download that reveals it has already
+    # happened: the preview above fetched every pending deck. Knowing it now is what
+    # lets the one confirmation carry the decision, instead of interrupting the run
+    # with its own question after the import has started.
+    pending_templates = {}
+    for d in todo:
+        src = downloaded.get(d["name"])
+        if not src or isinstance(src, Exception):
+            continue
+        try:
+            pending_templates.update(_template_changes(src))
+        except Exception:
+            pass    # a deck we can't read here still imports; it just can't offer this
+
     new_index = {guid: (deck, label) for deck, label, guid in new_cards}
     flags = {}
+    # Notes from a run that never reached its digest (a crash, a force quit, an error
+    # mid-import) come back here rather than needing their own recovery prompt: they
+    # ride along in this run's flags and land in the summary at the end like anything
+    # written just now. merge_saved_feedback carries each one's deck and front too,
+    # since the card itself may have imported last time and so appear nowhere in this
+    # run's own index.
+    recovered = merge_saved_feedback(load_saved_feedback(), flags, new_index)
 
     def _line(d):
         short = d["name"].split("::")[-1]
@@ -789,8 +812,10 @@ def update_decks():
         "automatically first.")
 
     def _body():
-        flagged = (f"<br><br><b>{len(flags)} card(s) flagged.</b> You'll get a summary "
-                   "to send back when this finishes."
+        carried = (f" {recovered} of them carried over from an earlier session."
+                   if recovered else "")
+        flagged = (f"<br><br><b>{len(flags)} card(s) flagged.</b>{carried} You'll get a "
+                   "summary to send back when this finishes."
                    if cfg["collect_feedback"] and flags else "")
         return catch_up_note + "<br><br>".join(sections) + flagged + safety_note
 
@@ -814,38 +839,61 @@ def update_decks():
                 decks.append((d["name"], apkg_note_details(src, [r for r, _, _ in pc[2]])))
             except Exception as e:
                 failed.append(f"{d['name'].split('::')[-1]} ({e})")
-        if failed:
-            _warn("Couldn't read the new cards from:" + bullets(failed) +
-                  "<br>The update itself is unaffected; those decks just can't be "
-                  "shown here.")
         if not decks:
+            if failed:
+                _warn("Couldn't read the new cards from:" + bullets(failed) +
+                      "<br>The update itself is unaffected; there is just nothing to "
+                      "show here.")
             return None
-        review_new_cards(parent, decks, flags)
+        # Named inside the review dialog rather than as a warning box in front of it:
+        # it is context for the list she asked to see, and the update does not depend
+        # on any of it.
+        review_new_cards(parent, decks, flags, unreadable=failed)
         return _body()
 
-    def _offer_feedback():
-        """Her notes are worth sending whatever she decides about the update itself.
+    def _finish(summary_html=None):
+        """End the run: the summary and her notes as one dialog, then drop the saved
+        copy of those notes.
 
-        Called on the Cancel path too, deliberately: if she read the new cards, flagged
-        three of them and backed out, those flags are the most interesting thing that
-        happened, and dropping them because she said no would throw away the only part
-        of the run that couldn't be reproduced by clicking Update again later.
+        Called on every exit path including Cancel, deliberately: if she read the new
+        cards, flagged three of them and backed out, those flags are the most
+        interesting thing that happened, and dropping them because she said no would
+        throw away the only part of the run that couldn't be reproduced by clicking
+        Update again later.
+
+        The saved copy is cleared only once the digest has actually been built and
+        shown. An exit with nothing flagged leaves the file alone rather than deleting
+        it: there is nothing to clear in that case anyway, and treating "no flags this
+        run" as "safe to forget" is exactly how a recovered note would get thrown away
+        a second time.
         """
-        if flags:
-            offer_feedback_digest(None, [
-                {"deck": new_index[g][0], "front": new_index[g][1], "guid": g, "note": n}
-                for g, n in flags.items() if g in new_index])
+        entries = feedback_entries(flags, new_index)
+        show_result_with_feedback(summary_html, entries)
+        if entries:
+            clear_saved_feedback()
+
+    # Unticked by default: applying it forces a one-time full AnkiWeb sync, which is
+    # not something a reader should be able to agree to by not reading a checkbox.
+    # Declining still imports the content; only the card's appearance stays as it is,
+    # and the next update carrying a look change offers it again.
+    tpl_choice = {"label": "Also apply the new card look (forces a one-time full "
+                           "AnkiWeb sync)", "checked": False} if pending_templates else None
+    if tpl_choice:
+        sections.append(
+            "This update also changes how some cards look (template or styling) for: "
+            + ", ".join(f"<b>{n}</b>" for n in sorted(pending_templates))
+            + ". Your review history and card content are unaffected either way.")
 
     if not _ask_scrollable(
             _body(), yes_label="Update",
             extra_label=(f"Review {len(new_cards)} new card(s)" if new_cards else None),
-            on_extra=_open_review):
-        _offer_feedback()
+            on_extra=_open_review, checkbox=tpl_choice):
+        _finish()
         return
 
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
     if not proceed:
-        _offer_feedback()
+        _finish()
         return
 
     results, restored, tpl_changes = [], 0, {}
@@ -883,14 +931,17 @@ def update_decks():
                 if backed_up else
                 "No pre-sync backup was taken this time (nothing to back up yet, or "
                 "it failed and you chose to continue).")
-            _info(f"<b>Update stopped early</b> (source: {source})" + bullets(results) +
-                  "<br><br>Archiving or relocating retired cards was skipped, since "
-                  "that assumes every update above already landed. Nothing else was "
-                  "touched; run <b>Update my decks</b> again anytime to pick up where "
-                  "this left off." + fields_line + backup_line)
-            _offer_feedback()
+            _finish(f"<b>Update stopped early</b> (source: {source})" + bullets(results) +
+                    "<br><br>Archiving or relocating retired cards was skipped, since "
+                    "that assumes every update above already landed. Nothing else was "
+                    "touched; run <b>Update my decks</b> again anytime to pick up where "
+                    "this left off." + fields_line + backup_line)
             return
-        _offer_template_changes(tpl_changes)
+        # Consented to on the confirmation, so nothing is asked here. tpl_changes is
+        # what the import actually found; the checkbox is what she agreed to, and the
+        # intersection is what gets applied.
+        if tpl_choice and tpl_choice["checked"] and tpl_changes:
+            _apply_template_changes(tpl_changes)
 
     n_archived = n_moved = carried = n_merged = 0
     if fresh or moves or stranded:
@@ -936,9 +987,8 @@ def update_decks():
         if backed_up else
         "No pre-sync backup was taken this time (nothing to back up yet, or it "
         "failed and you chose to continue).")
-    _info(f"<b>Update complete</b> (source: {source})" + bullets(result_lines) +
-          fields_line + backup_line)
-    _offer_feedback()
+    _finish(f"<b>Update complete</b> (source: {source})" + bullets(result_lines) +
+            fields_line + backup_line)
 
 
 @_safe
