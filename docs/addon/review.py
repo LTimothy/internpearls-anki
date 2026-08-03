@@ -54,6 +54,13 @@ _CELL_RULE = "#a9b4ba"  # a table's own gridlines, a mid-tone that reads on both
 _PREVIEW_STYLE = (
     "<style>"
     f".cloze {{ color: {_CLOZE_COLOR}; font-weight: 600; }}"
+    # The group number rides in the deletion's own colour rather than a new one, so it
+    # reads as part of that blank and adds no colour to the theme problem. Only the
+    # weight is dropped: it is a marker, not content. Deliberately NOT given a smaller
+    # font size on top of the <sup> tag's own reduction: rendered offscreen at a 13px
+    # base, "font-size: small" inside a <sup> came out an unreadable smudge, which no
+    # amount of squinting at the markup would have shown. Render it before resizing it.
+    " .cn { font-weight: 400; }"
     " table { border-collapse: collapse; margin: 4px 0; }"
     f" th, td {{ border: 1px solid {_CELL_RULE}; padding: 2px 7px; }}"
     f" th {{ color: {_DIM}; font-weight: 600; }}"
