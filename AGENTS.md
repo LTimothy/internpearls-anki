@@ -65,6 +65,15 @@ relax them without understanding why they're there.
   moves it to a "Retired" subdeck and tags it, or relocates a card whose deck
   moved in a pure reorg — never removes anything outright, and never bumps
   the collection schema (so it never forces an unattended full sync either).
+  The single carve-out is `collection.remove_empty_cards`, which deletes
+  cards Anki's own empty-cards report says render nothing at all. It is a
+  deliberate exception, not a precedent: an empty card holds no content to
+  preserve (its note keeps every field, and the card itself shows only an
+  error), and archiving one would leave a dead card in the Retired deck
+  forever. It stays safe by never leaving a note with zero cards, so nothing
+  it does can delete a note, and by scoping to the configured tag so other
+  people's decks are untouched. Anything that isn't provably contentless
+  still archives.
 - **Persistent state lives under `internpearls/user_files/`.** Everything
   else in the add-on folder is replaced on update.
 - **Self-update fetches use an API that returns fresh data**, not a CDN path

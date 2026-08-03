@@ -1282,3 +1282,36 @@ def test_manifest_decks_for_ignores_unrelated_decks():
 def test_manifest_decks_for_requires_a_segment_boundary_not_just_a_string_prefix():
     # "A::Reg" is a string prefix of "A::Regional::X" but not a "::"-segment prefix.
     assert logic.manifest_decks_for(["A::Regional::X"], ["A::Reg"]) == []
+
+
+# ------------------------------------------------- empty-card selection
+def test_select_empty_cards_keeps_only_scoped_notes():
+    from internpearls.logic import select_empty_cards
+    report = [{"nid": 1, "card_ids": [11, 12], "will_delete_note": False},
+              {"nid": 2, "card_ids": [21], "will_delete_note": False}]
+    removable, skipped = select_empty_cards(report, {1})
+    assert [r["nid"] for r in removable] == [1]
+    assert skipped == []
+
+
+def test_select_empty_cards_refuses_a_note_that_would_be_deleted():
+    from internpearls.logic import select_empty_cards
+    report = [{"nid": 1, "card_ids": [11], "will_delete_note": True}]
+    removable, skipped = select_empty_cards(report, {1})
+    assert removable == []
+    assert [s["nid"] for s in skipped] == [1]
+
+
+def test_empty_cards_dialog_html_names_the_missing_deletions():
+    from internpearls.logic import empty_cards_dialog_html
+    html = empty_cards_dialog_html(
+        [{"nid": 1, "card_ids": [11, 12], "label": "a regrouped card", "ords": [3, 4]}])
+    assert "a regrouped card" in html and "c3, c4" in html
+    assert "<b>2</b> empty cards" in html and "<b>1</b> note" in html
+
+
+def test_empty_cards_dialog_html_escapes_the_label():
+    from internpearls.logic import empty_cards_dialog_html
+    html = empty_cards_dialog_html(
+        [{"nid": 1, "card_ids": [11], "label": "SpO<sub>2</sub> & <b>x</b>", "ords": [2]}])
+    assert "&lt;sub&gt;" in html and "&amp;" in html

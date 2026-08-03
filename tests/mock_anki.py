@@ -425,6 +425,47 @@ class MockCollection:
     def get_card(self, cid):
         return self._cards[cid]
 
+    def get_empty_cards(self):
+        """Anki's own empty-cards report, reduced to what the add-on reads.
+
+        Real Anki renders every card and reports the ones that come out blank. For a
+        cloze note that means a card whose ordinal has no matching {{cN::}} left in the
+        text, which is exactly the leftover a deck source creates when it regroups a
+        live cloze into fewer deletions. Computed from the note text here rather than
+        stubbed, so a test can't pass against a report that disagrees with the note.
+
+        Scans the WHOLE collection, like the real one: scoping to the learner's own
+        notes is the add-on's job, and a mock that pre-filtered would hide a bug there.
+        """
+        notes = []
+        for nid, note in self._notes.items():
+            if "Cloze" not in note.model["name"]:
+                continue
+            live = {int(m) - 1 for m in re.findall(r"\{\{c(\d+)::", note.fields[0])}
+            empty = [cid for cid in note._card_ids
+                     if self._cards[cid].ord not in live]
+            if empty:
+                notes.append(types.SimpleNamespace(
+                    note_id=nid, card_ids=empty,
+                    will_delete_note=len(empty) == len(note._card_ids)))
+        return types.SimpleNamespace(notes=notes, report="")
+
+    def remove_cards_and_orphaned_notes(self, cids):
+        """Remove cards, and any note left with none. The add-on is expected never to
+        orphan a note this way; the mock still implements it so a regression that does
+        shows up as a missing note rather than silently passing."""
+        self.removed_cards = getattr(self, "removed_cards", []) + list(cids)
+        for cid in cids:
+            card = self._cards.pop(cid, None)
+            if card is None:
+                continue
+            note = self._notes.get(card.nid)
+            if note and cid in note._card_ids:
+                note._card_ids.remove(cid)
+        for nid, note in list(self._notes.items()):
+            if not note._card_ids:
+                del self._notes[nid]
+
     def _generate_cloze_cards(self, note):
         """Add a card per extra cloze deletion, the way Anki does after a conversion:
         the original card stays as ordinal 0, the rest are created new."""

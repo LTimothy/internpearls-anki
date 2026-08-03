@@ -62,7 +62,8 @@ def test_real_menu_structure():
     sub_labels = [n["label"] for n in sub["items"] if n["t"] == "item"]
     assert sub_labels == [
         "Sync decks", "Reconcile my decks", "Clean up duplicate cards",
-        "Import single deck (manual)", "Fix note types", "Backup intern pearls deck",
+        "Remove empty cards", "Import single deck (manual)", "Fix note types",
+        "Backup intern pearls deck",
         "Import intern pearls deck", "Export intern pearls deck",
         "Backup full collection", "Restore full collection",
         "Check for add-on updates"]

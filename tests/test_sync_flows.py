@@ -1876,3 +1876,76 @@ def test_invalidate_installed_ignores_a_deck_it_never_had(anki):
     _save_json(INSTALLED, {"A": "v1"})
     invalidate_installed(["Never::Synced"])
     assert _load_json(INSTALLED, {}) == {"A": "v1"}
+
+
+# --------------------------------------------------------------- empty cards
+def _her_cloze(anki, guid, text, deck=DECK, ords=None):
+    """A cloze note of hers, with a card per ordinal in `ords` (defaults to the
+    ordinals the text actually has). Passing `ords` wider than the text is how a
+    collection looks after the deck source regrouped a live cloze into fewer
+    deletions: the surplus cards are still there with nothing left to render."""
+    import types
+    if not anki.col.models.by_name("Study Deck - Cloze"):
+        anki.col.models._models.append(_cloze_model())
+    model = anki.col.models.by_name("Study Deck - Cloze")
+    note = anki.col.add_note(guid, [text, "why", "", "", ""], TAGS.split(),
+                             model=model, deck=deck)
+    for o in (ords or [])[1:]:
+        cid = anki.col._next_cid
+        anki.col._next_cid += 1
+        first = anki.col._cards[note._card_ids[0]]
+        anki.col._cards[cid] = types.SimpleNamespace(
+            id=cid, nid=note.id, did=first.did, queue=0, reps=0, ord=o, type=0,
+            due=0, ivl=0, factor=0, lapses=0, memory_state=None,
+            desired_retention=None, decay=None, last_review_time=None)
+        note._card_ids.append(cid)
+    return note
+
+
+def test_remove_empty_cards_removes_only_the_orphaned_ordinals(anki):
+    from internpearls import collection
+    # Regrouped from five deletions down to two: c3/c4/c5 are left with nothing.
+    _her_cloze(anki, "regrouped", "the {{c1::first}} and {{c2::second}}",
+               ords=[0, 1, 2, 3, 4])
+    _her_cloze(anki, "intact", "an {{c1::untouched}} card", ords=[0])
+
+    drive(anki, collection.remove_empty_cards, _click_duplicate_button(accept=True))
+
+    note = anki.col.note_by_guid("regrouped")
+    assert sorted(anki.col._cards[cid].ord for cid in note._card_ids) == [0, 1]
+    assert len(anki.col.note_by_guid("intact")._card_ids) == 1
+    assert any("Removed <b>3</b> empty card(s)" in i for i in anki.gui.infos)
+
+
+def test_remove_empty_cards_leaves_other_peoples_notes_alone(anki):
+    from internpearls import collection
+    _her_cloze(anki, "hers", "the {{c1::first}} only", ords=[0, 1])
+    theirs = _her_cloze(anki, "theirs", "the {{c1::first}} only", ords=[0, 1])
+    theirs.tags = ["SomeoneElsesDeck"]
+
+    drive(anki, collection.remove_empty_cards, _click_duplicate_button(accept=True))
+
+    assert len(anki.col.note_by_guid("hers")._card_ids) == 1
+    assert len(anki.col.note_by_guid("theirs")._card_ids) == 2   # untouched
+
+
+def test_remove_empty_cards_never_deletes_a_note_whose_cards_are_all_empty(anki):
+    from internpearls import collection
+    # No deletions at all, so every card is empty: removing them would take the note
+    # and its content with it. Reported, never acted on.
+    _her_cloze(anki, "contentless", "a card with no deletions in it", ords=[0])
+
+    drive(anki, collection.remove_empty_cards, _click_duplicate_button(accept=True))
+
+    assert anki.col.note_by_guid("contentless") is not None
+    assert any("no content on any card at all" in i for i in anki.gui.infos)
+
+
+def test_remove_empty_cards_declines_cleanly(anki):
+    from internpearls import collection
+    _her_cloze(anki, "regrouped", "the {{c1::first}} only", ords=[0, 1])
+
+    drive(anki, collection.remove_empty_cards, _click_duplicate_button(accept=False))
+
+    assert len(anki.col.note_by_guid("regrouped")._card_ids) == 2
+    assert not getattr(anki.col, "removed_cards", [])
