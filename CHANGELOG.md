@@ -3,6 +3,21 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.41.0
+
+- Notes you write about a new card are now saved as you type, not only when the review
+  closes. They used to live in memory until the summary at the very end of a run, so
+  anything that ended the run in between (a crash, a force quit, an error partway
+  through the import) threw them away without saying so. Anything still unsent is picked
+  up automatically by your next update and included in that summary, with no recovery
+  prompt to click through.
+- Fewer dialogs in an update. The question about applying a deck's new card look has
+  moved onto the one confirmation as a checkbox, so it no longer interrupts the run
+  after the import has started; unticked still means your current card look is kept.
+  A deck whose new cards can't be read is named inside the card list instead of as its
+  own warning. And the completion summary and the flagged-card summary now arrive as
+  one dialog rather than two back to back. A busy update goes from six dialogs to three.
+
 ## v0.40.0
 
 - Reviewing new cards now shows which fill-in-the-blank belongs to which card. A card

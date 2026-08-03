@@ -784,9 +784,15 @@ class QPlainTextEdit(QWidget):
         self._text = text
         self._placeholder = ""
         self._readonly = False
+        # Real QPlainTextEdit emits this on every edit; the review dialog connects it
+        # to the debounced save, so a mock without it hides whether that wiring exists.
+        self._changed = []
+        self.textChanged = types.SimpleNamespace(connect=self._changed.append)
 
     def setPlainText(self, t):
         self._text = t
+        for fn in self._changed:
+            fn()
 
     def toPlainText(self):
         return self._text
@@ -1149,6 +1155,13 @@ class MockAnki:
     def col(self):
         return self.mw.col
 
+    @property
+    def qt_timers(self):
+        """Every QTimer the add-on has built. There is no event loop here, so a test
+        that cares what a timer does fires it itself; see _QTimer."""
+        import sys
+        return list(sys.modules["aqt.qt"].QTimer.registry)
+
 
 class Runner:
     """Deterministic replay driver, shared by dialog tests and the browser demo.
@@ -1295,16 +1308,44 @@ def install():
             return _Clipboard()
 
     class _QTimer:
+        """Real QTimer's shape, minus an event loop to fire it.
+
+        `timeout.connect` records the callback and `fire()` runs it, so a test can
+        assert what a timer actually does rather than only that one was created. It is
+        deliberately NOT fired by start(): background.py schedules its auto-sync poll on
+        one of these, and a timer that ran its callback the moment it was started would
+        turn that poll into unbounded recursion the first time a test touched it.
+        """
+        registry = []    # every timer built this process; a test fires them by hand
+
         def __init__(self, parent=None):
             self.started = None
+            self.interval = None
+            self.single_shot = False
+            self._callbacks = []
+            _QTimer.registry.append(self)
 
-        def start(self, ms):
-            self.started = ms
+        def setSingleShot(self, on):
+            self.single_shot = bool(on)
+
+        def setInterval(self, ms):
+            self.interval = ms
+
+        def start(self, ms=None):
+            # Real QTimer.start() takes an optional interval and falls back to
+            # setInterval's value; a signal connected straight to start passes none.
+            self.started = self.interval if ms is None else ms
 
         def stop(self):
-            pass
+            self.started = None
 
-        timeout = property(lambda self: types.SimpleNamespace(connect=lambda fn: None))
+        def fire(self):
+            for fn in self._callbacks:
+                fn()
+
+        @property
+        def timeout(self):
+            return types.SimpleNamespace(connect=self._callbacks.append)
 
         @staticmethod
         def singleShot(ms, fn):
