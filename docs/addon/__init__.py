@@ -31,7 +31,8 @@ from aqt.qt import QAction, QMenu
 
 from .background import _schedule_background_checks
 from .collection import (backup_collection_now, backup_deck_now, export_deck,
-                         import_deck, restore_from_backup, update_notetypes)
+                         import_deck, remove_empty_cards, restore_from_backup,
+                         update_notetypes)
 from .dialogs import about, manage_decks, open_settings
 from .nightmode import dim_images_in_night_mode
 from .sync import (clean_up_duplicates, import_single, reconcile_decks,
@@ -71,6 +72,7 @@ def _menu():
     # ever applies content on its own — see sync.py's comment by _reconcile_action.
     register_reconcile_action(add(adv, "Reconcile my decks", reconcile_decks))
     add(adv, "Clean up duplicate cards", clean_up_duplicates)
+    add(adv, "Remove empty cards", remove_empty_cards)
     add(adv, "Import single deck (manual)", import_single)
     add(adv, "Fix note types", update_notetypes)
     adv.addSeparator()

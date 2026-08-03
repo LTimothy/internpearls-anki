@@ -3,6 +3,16 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.39.0
+
+- New Advanced menu item, "Remove empty cards." When a deck rewrites a fill-in-the-blank
+  card to use fewer blanks, the cards generated for the blanks that are gone stay in your
+  collection and come up in review reading "No cloze 3 found on card." This is Anki's own
+  Tools > Empty Cards scoped to your deck: same report, filtered to the notes under your
+  scope tag, with every card it proposes to remove listed first. It is the one action here
+  that deletes rather than archives, since an empty card has no content to keep, and it
+  never leaves a note with zero cards, so no note can be deleted by it.
+
 ## v0.38.3
 
 - The new-card review now shows a card the way the card is written. Tables and bulleted

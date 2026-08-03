@@ -14,10 +14,11 @@ from aqt.utils import getFile, getSaveFile
 from .config import (DECK_BACKUPS_KEEP, INSTALLED, TARGET_FIELDS, _USER_FILES, _cfg,
                      _load_json, _save_json)
 from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
-                    bullets, changed_templates, fields_to_carry_over,
-                    manifest_decks_for, model_shape, note_display_label,
-                    plan_notetype_changes, remap_cards, write_personalized)
-from .ui import _ask, _info, _safe, _warn
+                    bullets, changed_templates, empty_cards_dialog_html,
+                    fields_to_carry_over, manifest_decks_for, model_shape,
+                    note_display_label, plan_notetype_changes, remap_cards,
+                    select_empty_cards, write_personalized)
+from .ui import _ask, _ask_scrollable, _info, _safe, _warn
 
 
 def _ensure_notetypes():
@@ -894,3 +895,78 @@ def update_notetypes():
     _info(("<b>Updated note types</b> (cards and scheduling untouched):" +
            bullets(added)) if added else
           "Note types are already up to date, no changes needed.")
+
+
+def find_empty_cards(scope_tag):
+    """Empty cards on the learner's own notes: (rows, skipped_count).
+
+    Asks Anki for its own empty-cards report rather than deciding what "empty" means
+    here. That report is a backend render of every card in the collection, so it stays
+    right as note types and templates change, and it is the same source Anki's own
+    Tools / Empty Cards acts on. Everything after it is narrowing: select_empty_cards
+    keeps only notes under the scope tag and refuses any note whose every card is
+    empty, then each surviving row gets the label and the deletion numbers the
+    confirmation needs.
+
+    `ords` are 1-based to match what the learner reads on the dead card ("No cloze 3
+    found on card" is ord 2 internally).
+    """
+    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    scoped = set(mw.col.find_notes(search))
+    report = mw.col.get_empty_cards()
+    raw = [{"nid": int(n.note_id), "card_ids": [int(c) for c in n.card_ids],
+            "will_delete_note": bool(n.will_delete_note)} for n in report.notes]
+    removable, skipped = select_empty_cards(raw, scoped)
+    rows = []
+    for r in removable:
+        note = mw.col.get_note(r["nid"])
+        rows.append({
+            "nid": r["nid"],
+            "card_ids": r["card_ids"],
+            "label": note_display_label(note.fields),
+            "ords": sorted(mw.col.get_card(cid).ord + 1 for cid in r["card_ids"]),
+        })
+    return rows, len(skipped)
+
+
+@_safe
+def remove_empty_cards():
+    """Remove the empty cards on the learner's own notes, after showing exactly which.
+
+    The one place this add-on deletes anything, and it is deliberately narrow. An empty
+    card holds no content: its note keeps every field, and the card itself renders as
+    "No cloze 3 found on card" because the blank it was generated for is gone. Archiving
+    one the way a retired card is archived would leave a dead card sitting in a Retired
+    deck forever, which is the thing the learner was already suspending by hand.
+
+    Three guards, in order: the note must be hers (scope tag), the note must keep at
+    least one real card (select_empty_cards refuses the rest, so no note can be orphaned
+    into deletion), and she sees and confirms every card first. The usual automatic
+    backup runs before anything is touched, so an unwanted run is recoverable.
+    """
+    cfg = _cfg()
+    rows, skipped = find_empty_cards(cfg["scope_tag"])
+    if not rows:
+        _info("No empty cards found." + (
+            f"<br><br>({skipped} note(s) have no content on any card at all and were "
+            "left alone, since removing those cards would delete the note itself.)"
+            if skipped else ""))
+        return
+    n_cards = sum(len(r["card_ids"]) for r in rows)
+    safety = ("<br><br>Only the empty cards are removed; the notes themselves, and "
+              "every card that still shows something, are left exactly as they are. A "
+              "backup is taken automatically before anything changes.")
+    if not _ask_scrollable(empty_cards_dialog_html(rows, skipped) + safety,
+                           yes_label=f"Remove {n_cards} card(s)"):
+        return
+    proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
+    if not proceed:
+        return
+    cids = [cid for r in rows for cid in r["card_ids"]]
+    mw.col.remove_cards_and_orphaned_notes(cids)
+    mw.reset()
+    backup_line = ("" if backed_up else
+                   "<br><br>(No backup was taken this time: nothing to back up yet, or "
+                   "it failed and you chose to continue.)")
+    _info(f"Removed <b>{len(cids)}</b> empty card(s) from "
+          f"<b>{len(rows)}</b> note(s). Nothing else changed." + backup_line)
