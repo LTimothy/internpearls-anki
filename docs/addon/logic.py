@@ -866,8 +866,18 @@ def _clean_tag(match):
     return f"<{name}{kept}>"
 
 
-def field_preview_html(value):
-    """One card field as HTML the review dialog can render, with images named.
+def field_image_names(value):
+    """Every picture a field references, as bare filenames in document order.
+
+    The dialog needs the list before it renders, so it can extract exactly those files
+    and nothing else.
+    """
+    return list(dict.fromkeys(
+        os.path.basename(src) for src in _IMG_SRC_RE.findall(value or "")))
+
+
+def field_preview_html(value, image_html=None):
+    """One card field as HTML the review dialog can render.
 
     field_preview_text's plain-text answer is right for the feedback digest and for a
     one-line label, and wrong for the dialog itself: a card back written as a <table>
@@ -875,18 +885,42 @@ def field_preview_html(value):
     never actually seen. Real feedback came back that way ("just jumbled text to me")
     on cards whose only problem was that the preview flattened them.
 
-    So structure is kept and everything else is dropped: <img> becomes its filename the
-    same way field_preview_text names it (the dialog reads fields straight out of the
-    .apkg and never extracts its media, so rendering one would paint broken), script and
-    style blocks go entirely, and any tag outside _PREVIEW_TAGS loses the tag but keeps
-    its text. Attributes are filtered rather than passed through, so the output is a
-    small, known subset rather than whatever a field happens to contain.
+    So structure is kept and everything else is dropped: script and style blocks go
+    entirely, and any tag outside _PREVIEW_TAGS loses the tag but keeps its text.
+    Attributes are filtered rather than passed through, so the output is a small, known
+    subset rather than whatever a field happens to contain.
+
+    `image_html`, when given, is called with one picture's bare filename and returns the
+    markup to put in that <img>'s place, or None to decline. Without it, or on a decline,
+    an <img> becomes "[image: name]" the same way field_preview_text names it: the caller
+    that has not extracted the .apkg's media would otherwise paint a broken image, which
+    is every caller except the dialog once a row is opened.
     """
     if not value:
         return ""
+
+    resolved_images = {}
+    marker_counter = [0]
+
+    def replace(match):
+        if image_html is not None:
+            names = field_image_names(match.group(0))
+            rendered = image_html(names[0]) if names else None
+            if rendered:
+                marker = f"__RESOLVED_IMG_{marker_counter[0]}__"
+                marker_counter[0] += 1
+                resolved_images[marker] = rendered
+                return marker
+        return _named_image(match)
+
     text = _SCRIPT_STYLE_RE.sub(" ", value)
-    text = _IMG_TAG_RE.sub(_named_image, text)
-    return _ANY_TAG_RE.sub(_clean_tag, text).strip()
+    text = _IMG_TAG_RE.sub(replace, text)
+    text = _ANY_TAG_RE.sub(_clean_tag, text).strip()
+
+    for marker, resolved in resolved_images.items():
+        text = text.replace(marker, resolved)
+
+    return text
 
 
 def build_feedback_digest(entries, version="", date=""):
