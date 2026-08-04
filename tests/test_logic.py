@@ -654,6 +654,44 @@ def test_field_preview_html_leaves_entities_and_escaped_comparators_alone():
     assert logic.field_preview_html("") == ""
 
 
+def test_field_preview_html_substitutes_what_the_resolver_returns():
+    out = logic.field_preview_html(
+        'before <img src="femoral.jpg"> after',
+        image_html=lambda name: f'<img src="/tmp/{name}" width="440">')
+    assert '<img src="/tmp/femoral.jpg" width="440">' in out
+    assert "[image:" not in out
+    assert "before" in out and "after" in out
+
+
+def test_field_preview_html_falls_back_to_naming_when_the_resolver_declines():
+    """A file Qt cannot decode, or one the deck never shipped, has to degrade to the
+    chip rather than to a broken image icon."""
+    out = logic.field_preview_html('<img src="missing.jpg">', image_html=lambda n: None)
+    assert out == "[image: missing.jpg]"
+
+
+def test_field_preview_html_hands_the_resolver_a_bare_filename():
+    seen = []
+    logic.field_preview_html('<img src="subdir/femoral.jpg">',
+                             image_html=lambda name: seen.append(name) or None)
+    assert seen == ["femoral.jpg"]
+
+
+def test_field_preview_html_with_no_resolver_is_unchanged():
+    assert logic.field_preview_html('<img src="femoral.jpg">') == "[image: femoral.jpg]"
+
+
+def test_field_image_names_lists_every_picture_in_document_order():
+    assert logic.field_image_names(
+        '<img src="a.jpg">text<img src="sub/b.png">') == ["a.jpg", "b.png"]
+
+
+def test_field_image_names_dedupes_and_handles_no_images():
+    assert logic.field_image_names('<img src="a.jpg"><img src="a.jpg">') == ["a.jpg"]
+    assert logic.field_image_names("plain text") == []
+    assert logic.field_image_names("") == []
+
+
 # --------------------------------------------------------------- cloze_filled_html
 def test_cloze_filled_html_leaves_markup_alone_when_asked_not_to_escape():
     # The already-sanitized path: field_preview_html has run, so escaping again would
