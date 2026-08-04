@@ -681,6 +681,30 @@ def test_field_preview_html_with_no_resolver_is_unchanged():
     assert logic.field_preview_html('<img src="femoral.jpg">') == "[image: femoral.jpg]"
 
 
+def test_field_preview_html_resolves_multiple_images_in_correct_order():
+    """Multiple images in one field must each be resolved with their own filename.
+    A placeholder collision or reversed restoration would fail this guard."""
+    resolver_calls = []
+
+    def track_and_resolve(name):
+        resolver_calls.append(name)
+        return f'<img src="/resolved/{name}" alt="{name}">'
+
+    out = logic.field_preview_html(
+        'First <img src="femoral.jpg"> and second <img src="axillary.jpg">',
+        image_html=track_and_resolve)
+
+    # Both filenames were passed to the resolver in document order
+    assert resolver_calls == ["femoral.jpg", "axillary.jpg"]
+    # Both resolved images appear in the output paired with their correct names
+    assert '<img src="/resolved/femoral.jpg" alt="femoral.jpg">' in out
+    assert '<img src="/resolved/axillary.jpg" alt="axillary.jpg">' in out
+    # No placeholder text leaked into the output
+    assert "__RESOLVED_IMG_" not in out
+    # Surrounding text is preserved
+    assert "First" in out and "and second" in out
+
+
 def test_field_image_names_lists_every_picture_in_document_order():
     assert logic.field_image_names(
         '<img src="a.jpg">text<img src="sub/b.png">') == ["a.jpg", "b.png"]
