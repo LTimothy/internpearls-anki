@@ -369,6 +369,57 @@ def apkg_notes(path):
     return rows
 
 
+def apkg_media_index(path):
+    """{media filename: zip member} for the pictures an .apkg carries.
+
+    An .apkg stores media as numbered blobs beside a JSON member called "media" mapping
+    each number back to the filename a card's <img> tag actually references. A deck with
+    no pictures, or one whose index will not parse, returns {} rather than raising: the
+    only caller falls back to naming the image, which is what it did before it could
+    resolve one at all.
+    """
+    try:
+        with zipfile.ZipFile(path) as z:
+            if "media" not in z.namelist():
+                return {}
+            entries = json.loads(z.read("media").decode("utf8"))
+    except (OSError, zipfile.BadZipFile, ValueError, UnicodeDecodeError):
+        return {}
+    if not isinstance(entries, dict):
+        return {}
+    return {name: member for member, name in entries.items() if isinstance(name, str)}
+
+
+def extract_apkg_media(path, index, names, dest):
+    """Extract just the named pictures out of an .apkg into `dest`.
+
+    Returns {filename: local path} for the ones that came out. Deliberately not the
+    whole archive: a single deck carries up to 179 images and a review that opens two
+    rows has no reason to pay for the others. A name absent from `index`, or a member
+    absent from the zip, is skipped rather than raised, so one stale reference in one
+    field cannot blank the row it sits in.
+    """
+    out = {}
+    wanted = [n for n in dict.fromkeys(names) if n in index]
+    if not wanted:
+        return out
+    try:
+        os.makedirs(dest, exist_ok=True)
+        with zipfile.ZipFile(path) as z:
+            members = set(z.namelist())
+            for name in wanted:
+                if index[name] not in members:
+                    continue
+                local = os.path.join(dest, os.path.basename(name))
+                if not os.path.exists(local):
+                    with z.open(index[name]) as src, open(local, "wb") as fh:
+                        fh.write(src.read())
+                out[name] = local
+    except (OSError, zipfile.BadZipFile):
+        return out
+    return out
+
+
 def apkg_deck_names(path):
     """Every Anki deck name inside an .apkg, in either on-disk format.
 

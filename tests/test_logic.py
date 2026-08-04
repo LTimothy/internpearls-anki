@@ -5,6 +5,7 @@ These build a minimal mock .apkg (a zip with just a "notes" table) since that's 
 logic under test ever reads or writes; the many other tables a real Anki collection
 has are irrelevant to this code.
 """
+import json
 import os
 import sqlite3
 import sys
@@ -351,6 +352,66 @@ def test_apkg_notes_rejects_non_apkg_zip(tmp_path):
         assert False, "expected RuntimeError for a zip with no collection.anki2"
     except RuntimeError:
         pass
+
+
+# --------------------------------------------------------------------- apkg media
+def _add_apkg_media(path, files):
+    """files: {filename: bytes}. Appends the numbered blobs and the `media` index an
+    .apkg carries alongside its collection, mirroring what genanki writes."""
+    with zipfile.ZipFile(path, "a", zipfile.ZIP_DEFLATED) as z:
+        index = {}
+        for i, (name, blob) in enumerate(files.items()):
+            z.writestr(str(i), blob)
+            index[str(i)] = name
+        z.writestr("media", json.dumps(index))
+
+
+def test_apkg_media_index_maps_each_filename_to_its_member(tmp_path):
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "guid-a", "Front A")])
+    _add_apkg_media(apkg, {"femoral.jpg": b"\x89PNG-ish", "axillary.jpg": b"jpeg-ish"})
+    assert logic.apkg_media_index(apkg) == {"femoral.jpg": "0", "axillary.jpg": "1"}
+
+
+def test_apkg_media_index_is_empty_when_the_deck_carries_no_pictures(tmp_path):
+    # The normal case for a text-only deck: no media member at all. It must read as
+    # "nothing to resolve" rather than raising, so a caller falls back to naming.
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "guid-a", "Front A")])
+    assert logic.apkg_media_index(apkg) == {}
+
+
+def test_apkg_media_index_tolerates_an_unreadable_media_member(tmp_path):
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "guid-a", "Front A")])
+    with zipfile.ZipFile(apkg, "a") as z:
+        z.writestr("media", "not json at all")
+    assert logic.apkg_media_index(apkg) == {}
+
+
+def test_extract_apkg_media_writes_only_the_names_asked_for(tmp_path):
+    """One deck carries up to 179 images; a review that opens one card must not pay
+    for the rest."""
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "guid-a", "Front A")])
+    _add_apkg_media(apkg, {"femoral.jpg": b"one", "axillary.jpg": b"two"})
+    dest = str(tmp_path / "media")
+    out = logic.extract_apkg_media(apkg, logic.apkg_media_index(apkg),
+                                   ["femoral.jpg"], dest)
+    assert list(out) == ["femoral.jpg"]
+    assert open(out["femoral.jpg"], "rb").read() == b"one"
+    assert sorted(os.listdir(dest)) == ["femoral.jpg"]
+
+
+def test_extract_apkg_media_skips_a_name_the_index_does_not_have(tmp_path):
+    # A field can reference an image the deck never shipped. One bad reference must not
+    # blank the whole row.
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "guid-a", "Front A")])
+    _add_apkg_media(apkg, {"femoral.jpg": b"one"})
+    out = logic.extract_apkg_media(apkg, logic.apkg_media_index(apkg),
+                                   ["femoral.jpg", "missing.jpg"], str(tmp_path / "m"))
+    assert list(out) == ["femoral.jpg"]
 
 
 # ----------------------------------------------------------------------- remap_cards
