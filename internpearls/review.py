@@ -5,8 +5,10 @@ Manage decks' manifest fetch and the Update my decks action), and this is opened
 sync.py's update flow, so living in dialogs.py would close that import into a cycle.
 
 Presentation only, in both directions: it reads note fields that sync.py already pulled
-out of a downloaded .apkg, and hands back what the learner typed. Nothing here touches
-the collection or the network, which is also why the dialog has no Cancel.
+out of a downloaded .apkg, and hands back what the learner typed. It also reads the
+collection's own media folder, to render the learner's side of a changed-field
+comparison from a picture she already has, but it writes nothing there or anywhere else,
+and touches no network. That's still why the dialog has no Cancel.
 """
 import datetime
 import html
