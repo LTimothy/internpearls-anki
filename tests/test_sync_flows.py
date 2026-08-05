@@ -1285,7 +1285,7 @@ def test_update_decks_confirmation_counts_and_names_changed_cards(anki, tmp_path
 
     drive(anki, sync.update_decks, respond)
 
-    assert "1 changed" in seen["text"], "the per-deck line should count changed cards"
+    assert "1 changing" in seen["text"], "the per-deck line should count changed cards"
     assert "<b>1</b> card(s) you already have will change" in seen["text"]
     assert "Front one" in seen["text"]
 
