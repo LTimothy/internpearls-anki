@@ -828,8 +828,11 @@ def update_decks():
         reported and skipped rather than blocking the rest, matching how a failed
         preview download already degrades: the update itself doesn't depend on any of
         this, so a broken preview must never be able to stop it.
+
+        That same downloaded file is what a row's pictures are extracted from when it is
+        opened, so showing one costs a local read rather than another fetch.
         """
-        decks, failed = [], []
+        decks, failed, sources = [], [], {}
         for d in todo:
             pc = preview.get(d["name"])
             src = downloaded.get(d["name"])
@@ -837,6 +840,7 @@ def update_decks():
                 continue
             try:
                 decks.append((d["name"], apkg_note_details(src, [r for r, _, _ in pc[2]])))
+                sources[d["name"]] = src
             except Exception as e:
                 failed.append(f"{d['name'].split('::')[-1]} ({e})")
         if not decks:
@@ -848,7 +852,7 @@ def update_decks():
         # Named inside the review dialog rather than as a warning box in front of it:
         # it is context for the list she asked to see, and the update does not depend
         # on any of it.
-        review_new_cards(parent, decks, flags, unreadable=failed)
+        review_new_cards(parent, decks, flags, unreadable=failed, sources=sources)
         return _body()
 
     def _finish(summary_html=None):
