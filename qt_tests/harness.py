@@ -354,9 +354,32 @@ def _manage_decks_fixture(mock):
     return folder
 
 
+_EMPTY_MANAGE_DECKS_FIXTURE = None
+
+
+def _empty_manage_decks_fixture():
+    """A local folder with no manifest.json, so `manage_decks()` opens with `rows`
+    empty and the source reading "not configured". That's the empty-state branch
+    `_scene_manage_decks` otherwise never exercises, since its default fixture always
+    seeds three decks. Built once per process, same lifetime pattern as the other
+    fixtures in this file.
+    """
+    global _EMPTY_MANAGE_DECKS_FIXTURE
+    if _EMPTY_MANAGE_DECKS_FIXTURE is not None:
+        return _EMPTY_MANAGE_DECKS_FIXTURE
+    import atexit
+    import tempfile
+    tmpdir = tempfile.TemporaryDirectory(prefix="internpearls_qt_manage_decks_empty_")
+    atexit.register(tmpdir.cleanup)
+    _EMPTY_MANAGE_DECKS_FIXTURE = tmpdir.name
+    return tmpdir.name
+
+
 def _scene_manage_decks(mock, opts):
     from internpearls import dialogs
-    if opts.get("decks_dir"):
+    if opts.get("empty"):
+        mock.mw._config = {"decks_dir": _empty_manage_decks_fixture()}
+    elif opts.get("decks_dir"):
         mock.mw._config = {"decks_dir": os.path.expanduser(opts["decks_dir"])}
     else:
         mock.mw._config = {"decks_dir": _manage_decks_fixture(mock)}
@@ -413,7 +436,8 @@ SCENES = {
     "review": (_scene_review, "the new-card review list (apkg, expand, feedback)"),
     "digest": (_scene_digest, "the flagged-card feedback digest"),
     "settings": (_scene_settings, "the Settings dialog"),
-    "manage-decks": (_scene_manage_decks, "the deck manager (decks_dir for a source)"),
+    "manage-decks": (_scene_manage_decks,
+                     "the deck manager (decks_dir for a source, empty for no decks)"),
     "about": (_scene_about, "the About dialog"),
     "configure-source": (_scene_configure_source, "the deck-source configuration form"),
     "confirm": (_scene_confirm, "the Update my decks confirmation (_ask_scrollable)"),
