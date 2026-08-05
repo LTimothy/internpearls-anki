@@ -292,10 +292,74 @@ def _scene_settings(mock, opts):
     return dialogs.open_settings
 
 
+_MANAGE_DECKS_FIXTURE = None
+
+
+def _manage_decks_fixture(mock):
+    """A manifest with one deck per sync state (new, update, current), plus the
+    matching installed state file and collection notes, so all three state pills
+    actually paint. Without this the scene's deck list was empty and the pills that
+    read _STATE_STYLE were never measured by the render suite at all. Deck names are
+    invented, like the rest of this file.
+
+    Built once and cached: this writes real notes into the shared mock collection
+    (see render()'s docstring: mock.mw.col is not reset between scenes), so a second
+    call would just duplicate them for no benefit.
+    """
+    global _MANAGE_DECKS_FIXTURE
+    if _MANAGE_DECKS_FIXTURE is not None:
+        return _MANAGE_DECKS_FIXTURE
+    import atexit
+    import json
+    import tempfile
+
+    tmpdir = tempfile.TemporaryDirectory(prefix="internpearls_qt_manage_decks_")
+    atexit.register(tmpdir.cleanup)
+    folder = tmpdir.name
+
+    root = "Intern Pearls::Intern Custom"
+    new_deck = f"{root}::Widget Basics"
+    update_deck = f"{root}::Gadget Care"
+    current_deck = f"{root}::Gizmo Repair"
+    decks = [
+        {"name": new_deck, "apkg": "widget-basics.apkg", "version": "v2", "cards": 4},
+        {"name": update_deck, "apkg": "gadget-care.apkg", "version": "v3", "cards": 6},
+        {"name": current_deck, "apkg": "gizmo-repair.apkg", "version": "v1", "cards": 5},
+    ]
+    with open(os.path.join(folder, "manifest.json"), "w", encoding="utf8") as fh:
+        json.dump({"schema": 2, "front_aliases": {}, "decks": decks,
+                   "retired": {}, "deck_moves": {}}, fh)
+
+    # installed.json, read through dialogs.INSTALLED (patched below). update_deck's
+    # installed version differs from what the manifest now offers, so it reads
+    # "update"; current_deck's matches, so it reads "current". new_deck has no entry
+    # at all, so it reads "new".
+    installed_path = os.path.join(folder, "installed.json")
+    with open(installed_path, "w", encoding="utf8") as fh:
+        json.dump({update_deck: "v2", current_deck: "v1"}, fh)
+    from internpearls import dialogs
+    dialogs.INSTALLED = installed_path
+
+    # installed_matching_collection only trusts installed.json for a deck that also
+    # has at least one of her notes actually sitting in it, so update_deck and
+    # current_deck each need one.
+    mock.col.add_note("manage-decks-update",
+                      ["A gadget-care front", "back", "", "", "", "", ""],
+                      ["InternPearls"], deck=update_deck)
+    mock.col.add_note("manage-decks-current",
+                      ["A gizmo-repair front", "back", "", "", "", "", ""],
+                      ["InternPearls"], deck=current_deck)
+
+    _MANAGE_DECKS_FIXTURE = folder
+    return folder
+
+
 def _scene_manage_decks(mock, opts):
     from internpearls import dialogs
     if opts.get("decks_dir"):
         mock.mw._config = {"decks_dir": os.path.expanduser(opts["decks_dir"])}
+    else:
+        mock.mw._config = {"decks_dir": _manage_decks_fixture(mock)}
     return dialogs.manage_decks
 
 

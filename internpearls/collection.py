@@ -18,6 +18,7 @@ from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
                     fields_to_carry_over, manifest_decks_for, model_shape,
                     note_display_label, plan_notetype_changes, remap_cards,
                     select_empty_cards, write_personalized)
+from .palette import colors
 from .ui import _ask, _ask_scrollable, _info, _safe, _warn
 
 
@@ -972,8 +973,9 @@ def remove_empty_cards():
     safety = ("<br><br>Only the empty cards are removed; the notes themselves, and "
               "every card that still shows something, are left exactly as they are. A "
               "backup is taken automatically before anything changes.")
-    if not _ask_scrollable(empty_cards_dialog_html(rows, skipped) + safety,
-                           yes_label=f"Remove {n_cards} card(s)"):
+    if not _ask_scrollable(
+            empty_cards_dialog_html(rows, colors()["muted"], skipped) + safety,
+            yes_label=f"Remove {n_cards} card(s)"):
         return
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
     if not proceed:

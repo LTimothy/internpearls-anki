@@ -15,6 +15,7 @@ from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, STATE, _cfg, _load_json)
 from .logic import (bullets, deck_status, manifest_scope_suggestion, parse_fields,
                     version_at_least)
+from .palette import colors
 from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _info, _prompt, _safe, _warn, hint_label, link_button,
                  muted_label, section_label, title_label, wait_cursor)
@@ -61,8 +62,9 @@ def configure_source():
     box = QMessageBox(mw)
     box.setWindowTitle(f"{APP_NAME}: Configure deck source")
     box.setIcon(QMessageBox.Icon.Question)
+    muted = colors()["muted"]
     box.setText("Where should decks come from?<br><br>"
-                "<span style='color:gray;'>No decks of your own yet? Try the example "
+                f"<span style='color:{muted};'>No decks of your own yet? Try the example "
                 "deck: a small public demo repo you can sync right away, and swap out "
                 "later.</span>")
     gh_btn = box.addButton("GitHub repo", QMessageBox.ButtonRole.AcceptRole)
@@ -172,18 +174,17 @@ def _offer_manifest_scope(manifest):
 
 
 # -------------------------------------------------------------------- deck manager
-# Colors for a deck's sync-state pill. Deliberately readable on both Anki themes: a
-# saturated mid-tone reads fine on light and dark backgrounds alike, so we don't need to
-# branch on night mode.
+# A deck's sync-state pill maps to a palette role, resolved through colors() at render
+# time so it stays readable on both Anki themes.
 _STATE_STYLE = {
-    "new":     ("New",              "#2563eb"),
-    "update":  ("Update available", "#b45309"),
-    "current": ("Up to date",       "#6b7280"),
+    "new":     ("New",              "accent"),
+    "update":  ("Update available", "updated_fg"),
+    "current": ("Up to date",       "muted"),
 }
 
 
-def _pill_style(color):
-    return f"color: {color}; font-size: 12px;"
+def _pill_style(role):
+    return f"color: {colors()[role]}; font-size: 12px;"
 
 
 class _DeckManagerDialog(QDialog):
@@ -224,7 +225,7 @@ class _DeckManagerDialog(QDialog):
 
         source_row = QHBoxLayout()
         source_label = QLabel(f"Source: {source}")
-        source_label.setStyleSheet("color: gray;")
+        source_label.setStyleSheet(f"color: {colors()['muted']};")
         source_row.addWidget(source_label)
         source_row.addWidget(link_button(
             "Change source" if configured else "Configure source",
@@ -299,11 +300,11 @@ class _DeckManagerDialog(QDialog):
         self._checks[r["name"]] = cb
         h.addWidget(cb)
         h.addStretch()
-        label, color = _STATE_STYLE[r["state"]]
+        label, role = _STATE_STYLE[r["state"]]
         cards = r.get("cards")
         text = f'{cards} cards · {label}' if cards is not None else label
         pill = QLabel(text)
-        pill.setStyleSheet(_pill_style(color))
+        pill.setStyleSheet(_pill_style(role))
         h.addWidget(pill)
         return row
 
@@ -549,8 +550,9 @@ def about():
     box.setWindowTitle(f"{APP_NAME}: About")
     box.setIcon(QMessageBox.Icon.Information)
     box.setTextFormat(Qt.TextFormat.RichText)
+    muted = colors()["muted"]
     box.setText(
-        f"<b>Intern Pearls Deck Tools</b> &nbsp;<span style='color:gray;'>v{ADDON_VERSION}"
+        f"<b>Intern Pearls Deck Tools</b> &nbsp;<span style='color:{muted};'>v{ADDON_VERSION}"
         f"</span>{update_suffix}<br><br>"
         "Keeps a set of Anki decks in sync with a source you control, without losing "
         "review history or the annotations you keep in any preserved field. Cards are "

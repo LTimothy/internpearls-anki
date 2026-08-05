@@ -1164,6 +1164,64 @@ def test_reconcile_leaves_guid_mismatched_card_alone_without_front(anki, tmp_pat
     assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
 
 
+def test_reconcile_dialog_uses_the_palette_not_a_css_keyword(anki, tmp_path):
+    """Both the retired-card list and the deck-move list in the confirmation used to
+    hardcode the CSS keyword gray for their secondary detail text."""
+    from internpearls import palette, sync
+    active = palette.colors()
+    _her_card(anki, "old1", "bulky crisis card")
+    _her_card(anki, "g1", "Lidocaine onset time?", deck=DECK)
+    folder = _write_retired_source(
+        tmp_path,
+        {DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                         "superseded_by": []}}},
+        deck_moves={"g1": {"from": DECK, "to": NEW_DECK}})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        label = next(n for n in _walk(p["tree"]) if n.get("t") == "label")
+        seen["text"] = label["text"]
+        btn = next(n for n in _walk(p["tree"])
+                  if n.get("t") == "button" and n.get("label") != "Cancel")
+        return {"events": [{"id": btn["id"], "click": True}]}
+
+    drive(anki, sync.reconcile_decks, respond)
+
+    assert "color:gray" not in seen["text"]
+    assert active["muted"] in seen["text"]
+
+
+def test_stranded_block_uses_the_palette_not_a_css_keyword(anki, tmp_path):
+    """The reworded-pair section of the confirmation (a card she holds in both an old
+    and a new wording) used to hardcode the CSS keyword gray too."""
+    from internpearls import palette, sync
+    active = palette.colors()
+    _her_card(anki, "g_old", "old wording")
+    _her_card(anki, "g_new", "new wording")
+    _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        label = next(n for n in _walk(p["tree"]) if n.get("t") == "label")
+        seen["text"] = label["text"]
+        btn = next(n for n in _walk(p["tree"])
+                  if n.get("t") == "button" and n.get("label") != "Cancel")
+        return {"events": [{"id": btn["id"], "click": True}]}
+
+    drive(anki, sync.reconcile_decks, respond)
+
+    assert "old wording" in seen["text"] and "new wording" in seen["text"]
+    assert "color:gray" not in seen["text"]
+    assert active["muted"] in seen["text"]
+
+
 # ------------------------------------------------------------- update decks (unified)
 def test_update_decks_syncs_and_reconciles_in_one_pass(anki, tmp_path):
     """The unified flow's whole point: one confirmation, one click, and content sync
@@ -1288,6 +1346,46 @@ def test_update_decks_confirmation_counts_and_names_changed_cards(anki, tmp_path
     assert "1 changing" in seen["text"], "the per-deck line should count changed cards"
     assert "<b>1</b> card(s) you already have will change" in seen["text"]
     assert "Front one" in seen["text"]
+
+
+def test_update_decks_confirmation_uses_the_palette_not_a_css_keyword(anki, tmp_path):
+    """The new-cards, changed-cards, retired-cards, and deck-move sections of the
+    confirmation all used to hardcode the CSS keyword gray for their secondary detail
+    text. One source carrying all four at once exercises every section in a single
+    render of the confirmation."""
+    from internpearls import palette, sync
+    active = palette.colors()
+    old_deck = "Intern Pearls::Intern Custom::Regional (old)"
+    anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    _her_card(anki, "moved1", "a card that moved decks", deck=old_deck)
+    folder = _write_source(
+        tmp_path,
+        {DECK: ("v2", [("g1", _fields("Front one", back="the new answer"), TAGS),
+                       ("g2", _fields("Front two"), TAGS)], None)},
+        retired={DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                                 "superseded_by": []}}},
+        deck_moves={"moved1": {"from": old_deck, "to": DECK}})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        label = next(n for n in _walk(p["tree"]) if n.get("t") == "label")
+        seen["text"] = label["text"]
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert "will be added" in seen["text"]        # new_cards section rendered
+    assert "will change" in seen["text"]          # changed_cards section rendered
+    assert "retired card(s)" in seen["text"]      # fresh (retired) section rendered
+    assert "belong to a deck" in seen["text"]     # moves section rendered
+    assert "color:gray" not in seen["text"]
+    assert active["muted"] in seen["text"]
 
 
 def test_update_decks_does_not_call_an_untouched_card_changed(anki, tmp_path):
@@ -1798,6 +1896,32 @@ def test_clean_up_duplicates_archives_the_copy_with_fewer_reviews(anki, tmp_path
     assert any("Archived <b>1</b>" in i for i in anki.gui.infos)
 
 
+def test_clean_up_duplicates_dialog_uses_the_palette_not_a_css_keyword(anki, tmp_path):
+    from internpearls import palette, sync
+    active = palette.colors()
+    old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
+    new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
+    _her_card(anki, "old", "same front text", deck=old_deck)
+    _her_card(anki, "new", "same front text", deck=new_deck)
+    folder = _write_duplicate_source(tmp_path, new_deck)
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        label = next(n for n in _walk(p["tree"]) if n.get("t") == "label")
+        seen["text"] = label["text"]
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.clean_up_duplicates, respond)
+
+    assert "color:gray" not in seen["text"]
+    assert active["muted"] in seen["text"]
+
+
 def test_clean_up_duplicates_breaks_a_zero_review_tie_by_canonical_deck(anki, tmp_path):
     from internpearls import sync
     old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
@@ -2080,6 +2204,28 @@ def test_remove_empty_cards_never_deletes_a_note_whose_cards_are_all_empty(anki)
 
     assert anki.col.note_by_guid("contentless") is not None
     assert any("no content on any card at all" in i for i in anki.gui.infos)
+
+
+def test_remove_empty_cards_dialog_uses_the_palette_not_a_css_keyword(anki):
+    from internpearls import collection, palette
+    active = palette.colors()
+    _her_cloze(anki, "regrouped", "the {{c1::first}} and {{c2::second}}",
+              ords=[0, 1, 2, 3, 4])
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        label = next(n for n in _walk(p["tree"]) if n.get("t") == "label")
+        seen["text"] = label["text"]
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, collection.remove_empty_cards, respond)
+
+    assert "color:gray" not in seen["text"]
+    assert active["muted"] in seen["text"]
 
 
 def test_remove_empty_cards_declines_cleanly(anki):
