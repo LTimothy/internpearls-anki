@@ -722,7 +722,7 @@ def notetype_changes(src, her, aliases, scope_tag):
     note matched by front counts, then compares types. Returns plan_notetype_changes'
     list; empty when nothing needs converting, which is the normal case.
     """
-    remap, _in_place, _as_new, _new = remap_cards(src, her, aliases)
+    remap, _in_place, _as_new, _new, _matched = remap_cards(src, her, aliases)
     incoming = apkg_note_types(src)
     by_her = {}
     for rid, _fields, guid in apkg_notes(src):
@@ -736,7 +736,7 @@ def _apply_deck(src, aliases, her):
     """Import one deck, returning (in_place, as_new, touched) where `touched` is the
     guids this import wrote in her collection: the remapped guid where a note matched
     one of hers, the .apkg's own otherwise. _capture_shipped needs exactly that set."""
-    remap, in_place, as_new, _ = remap_cards(src, her, aliases)
+    remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
     touched = {remap.get(rid, guid) for rid, _f, guid in apkg_notes(src)}
     out = src + ".sync.apkg"
     write_personalized(src, remap, out)
