@@ -90,3 +90,20 @@ def test_only_one_hairline_is_drawn_between_two_rows(shot):
         f"the rule colour {_ROW_RULE} paints runs of {sorted(significant)}px. More "
         "than one width means more than one line: a selector-less stylesheet is "
         "leaking into child widgets again.")
+
+
+def test_an_expanded_image_row_paints_the_picture_itself(shot):
+    """The mock suite can only assert that an <img> tag was written. Whether Qt's rich
+    text actually loads a local file and paints it is a pixel question, and it is the
+    whole point of the feature: a tag that renders as a broken-image icon passes every
+    structural test there is.
+
+    The fixture image is a solid magenta block, a colour nothing in the dialog's own
+    palette uses, so finding it means the file was decoded and painted rather than
+    approximated by a placeholder.
+    """
+    harness.bootstrap()
+    s = shot("review", expand=(4,), image=True)
+    assert colour_counts(s.image).get("#ff00ff", 0) > 100, (
+        "the extracted picture is not painting: Qt did not load the file the <img> src "
+        "points at")
