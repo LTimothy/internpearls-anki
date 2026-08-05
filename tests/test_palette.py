@@ -17,7 +17,8 @@ BASE = {"light": "#ffffff", "dark": "#2f2f31"}
 # are independent, so listing a role in both is not redundant.
 ON_WINDOW = ("why", "accent", "dim", "muted", "warning", "updated_fg")
 # Roles that carry their own background, so they answer to it instead.
-PAIRS = (("dosing_fg", "dosing_bg"), ("new_fg", "new_bg"), ("updated_fg", "updated_bg"))
+PAIRS = (("dosing_fg", "dosing_bg"), ("new_fg", "new_bg"), ("updated_fg", "updated_bg"),
+        ("retired_fg", "retired_bg"), ("moved_fg", "moved_bg"))
 # Roles that are not text at all (a rule/divider colour), so no contrast check applies.
 # Named explicitly rather than left implicit, so the completeness test below stays an
 # honest check of every role in palette.py rather than a silent pass on anything absent
@@ -66,7 +67,7 @@ def test_marker_chips_stand_off_their_window_enough_to_read_as_chips():
     """Contrast inside the chip was never the problem: separation from the window was.
     At 1.02:1 a chip background is invisible and the marker reads as tinted text."""
     for theme, colors in _sets().items():
-        for bg in ("new_bg", "updated_bg"):
+        for bg in ("new_bg", "updated_bg", "retired_bg", "moved_bg"):
             got = contrast(colors[bg], WINDOW[theme])
             assert got >= 1.4, f"{theme}/{bg} only {got:.2f}:1 off its window"
 
