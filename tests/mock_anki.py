@@ -697,6 +697,9 @@ class QWidget:
     def setFrameShape(self, s):
         pass   # QScrollArea/QFrame are QFrame subclasses in real Qt
 
+    def setSizePolicy(self, *a):
+        pass
+
     def node(self):
         return {"t": "box", "id": self.wid, "style": self._style,
                 "visible": self._visible,
@@ -1334,6 +1337,13 @@ def install():
         def systemFont(kind):
             return None
 
+    class _QSizePolicy:
+        class Policy:
+            Fixed, Preferred, Expanding = 0, 5, 7   # Qt's own values
+
+        def __init__(self, *a, **k):
+            pass
+
     class _Clipboard:
         @staticmethod
         def setText(text):
@@ -1453,7 +1463,8 @@ def install():
                       ("QImage", QImage),
                       ("QLineEdit", QLineEdit), ("QMessageBox", QMessageBox),
                       ("QPlainTextEdit", QPlainTextEdit),
-                      ("QScrollArea", QScrollArea), ("QSpinBox", QSpinBox),
+                      ("QScrollArea", QScrollArea), ("QSizePolicy", _QSizePolicy),
+                      ("QSpinBox", QSpinBox),
                       ("QVBoxLayout", QVBoxLayout), ("QWidget", QWidget)):
         setattr(aqt_qt, name, obj)
 
