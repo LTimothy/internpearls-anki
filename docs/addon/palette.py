@@ -25,6 +25,7 @@ LIGHT = {
     "new_fg":     "#10305f",
     "updated_bg": "#efc277",
     "updated_fg": "#5e3103",
+    "warning":    "#b33427",
 }
 
 DARK = {
@@ -40,6 +41,7 @@ DARK = {
     "new_fg":     "#dbe9ff",
     "updated_bg": "#6b4f22",
     "updated_fg": "#ffe4b5",
+    "warning":    "#f0968c",
 }
 
 

@@ -11,7 +11,7 @@ AA = 4.5
 WINDOW = {"light": "#efefef", "dark": "#2f2f31"}
 BASE = {"light": "#ffffff", "dark": "#2f2f31"}
 # Roles drawn as text straight onto the dialog, so they answer to the window colour.
-ON_WINDOW = ("why", "accent", "dim", "muted")
+ON_WINDOW = ("why", "accent", "dim", "muted", "warning")
 # Roles that carry their own background, so they answer to it instead.
 PAIRS = (("dosing_fg", "dosing_bg"), ("new_fg", "new_bg"), ("updated_fg", "updated_bg"))
 
