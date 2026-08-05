@@ -156,15 +156,21 @@ def synthetic_details():
 
     Index 1 is the only row carrying a Dosing field. Tests that assert on the dosing
     block must expand row 1, not row 0.
+
+    Rows 0 and 1 also carry a `kind`, one of each ("new" and "changed"), so a render
+    actually paints both row markers _marker_html can produce; row 1's `was` entry
+    paints its previous-value line too. Without this, test_contrast.py's fixture never
+    exercised the marker pill at all.
     """
     return [
-        {"guid": "g1", "notetype": "Study Deck - Basic",
+        {"guid": "g1", "notetype": "Study Deck - Basic", "kind": "new",
          "fields": [("Front", "Which widget is this, in one short line?"),
                     ("Back", "A basic note with a tag."),
                     ("Why", "Short rows are the common case."),
                     ("Image", ""), ("Tag", "Widgets"), ("Dosing", ""),
                     ("Notes", "")]},
-        {"guid": "g2", "notetype": "Study Deck - Basic",
+        {"guid": "g2", "notetype": "Study Deck - Basic", "kind": "changed",
+         "was": {"Back": "A wrapping basic note, before its Back field was rewritten."},
          "fields": [("Front", "A deliberately long prompt, written to run past the "
                               "dialog's width so the wrap lands under the text and "
                               "not under the caret, which is where it used to go?"),
