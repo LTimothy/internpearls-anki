@@ -7,8 +7,20 @@ green.
 
 Counts are never asserted, only presence: ubuntu and macOS disagree about font metrics,
 so "some of this colour is inside this widget" ports and "102 pixels of it" does not.
+
+Every colour read here comes from `palette.LIGHT` or `palette.DARK` directly, picked by
+the literal theme name the test itself passed to `shot(...)`, never from
+`palette.colors()`. `shot` is a session-scoped cache: it only actually renders (and so
+only flips the theme harness.apply_theme() stubs into aqt.theme.theme_manager) on the
+first call for a given (scene, theme, ...) key, and every later call in the file, from
+any test, can return that same cached Shot with no render at all. Reading
+`palette.colors()` after such a call sees whichever theme the *last* real render in the
+session happened to leave the stub on, not the theme this particular Shot was actually
+painted with. The literal set sidesteps that: it names the theme this test asked for,
+not whatever the stub currently says.
 """
 import harness
+from internpearls import palette
 from sampling import colour_counts, widget_rect
 
 
@@ -22,25 +34,25 @@ def test_the_why_rule_actually_paints_green(shot):
     with the border dropped, which is the bug this is for.
     """
     _, q = harness.bootstrap()
-    from internpearls.review import _WHY_RULE
+    why_rule = palette.LIGHT["why"]
     s = shot("review", expand=(0,))
     why = next(w for w in s.dialog.findChildren(q.QLabel)
                if "common case" in w.text())
     rect = widget_rect(s.dialog, why)
     edge = q.QRect(rect.left(), rect.top(), 3, rect.height())
-    assert colour_counts(s.image, edge).get(_WHY_RULE, 0) > 0, (
-        f"the why rule's green {_WHY_RULE} is not painting down the label's left edge. "
+    assert colour_counts(s.image, edge).get(why_rule, 0) > 0, (
+        f"the why rule's green {why_rule} is not painting down the label's left edge. "
         "Qt has dropped the border-left again: it needs `border: none` before it.")
 
 
 def test_the_dosing_block_paints_its_own_background(shot):
     """Row 1 is the only fixture row with a Dosing field."""
-    from internpearls.review import _DOSING_BG, _DOSING_FG
+    dosing_bg, dosing_fg = palette.LIGHT["dosing_bg"], palette.LIGHT["dosing_fg"]
     s = shot("review", expand=(1,))
     painted = colour_counts(s.image)
-    assert painted.get(_DOSING_BG, 0) > 0, f"the dosing background {_DOSING_BG} is absent"
-    assert painted.get(_DOSING_FG, 0) > 0, (
-        f"the dosing foreground {_DOSING_FG} is absent: the text is taking its colour "
+    assert painted.get(dosing_bg, 0) > 0, f"the dosing background {dosing_bg} is absent"
+    assert painted.get(dosing_fg, 0) > 0, (
+        f"the dosing foreground {dosing_fg} is absent: the text is taking its colour "
         "from the palette again, which is what turned it white on near-white in Night "
         "Mode")
 
@@ -48,18 +60,18 @@ def test_the_dosing_block_paints_its_own_background(shot):
 def test_the_dosing_block_stays_readable_on_a_dark_palette(shot):
     """The regression that mattered: a hardcoded background needs a hardcoded
     foreground, or the theme flips one and not the other."""
-    from internpearls.review import _DOSING_BG, _DOSING_FG
+    dosing_bg, dosing_fg = palette.DARK["dosing_bg"], palette.DARK["dosing_fg"]
     s = shot("review", theme="dark", expand=(1,))
     painted = colour_counts(s.image)
-    assert painted.get(_DOSING_BG, 0) > 0 and painted.get(_DOSING_FG, 0) > 0, (
+    assert painted.get(dosing_bg, 0) > 0 and painted.get(dosing_fg, 0) > 0, (
         "the dosing block loses its own colours on a dark palette")
 
 
 def test_a_cloze_deletion_paints_in_the_decks_blue(shot):
-    from internpearls.review import _CLOZE_COLOR
+    cloze_colour = palette.LIGHT["accent"]
     s = shot("review")
-    assert colour_counts(s.image).get(_CLOZE_COLOR, 0) > 0, (
-        f"no cloze blue {_CLOZE_COLOR}: the <style> block is being dropped, so "
+    assert colour_counts(s.image).get(cloze_colour, 0) > 0, (
+        f"no cloze blue {cloze_colour}: the <style> block is being dropped, so "
         "deletions are rendering as plain text")
 
 
@@ -70,13 +82,13 @@ def test_only_one_hairline_is_drawn_between_two_rows(shot):
     fingerprint (the row's own width, and the narrower header's); one width means one
     line.
     """
-    from internpearls.review import _ROW_RULE
+    row_rule = palette.LIGHT["row_rule"]
     s = shot("review")
     widths = set()
     for y in range(s.image.height()):
         run = 0
         for x in range(s.image.width()):
-            if s.image.pixelColor(x, y).name() == _ROW_RULE:
+            if s.image.pixelColor(x, y).name() == row_rule:
                 run += 1
             elif run:
                 widths.add(run)
@@ -87,24 +99,27 @@ def test_only_one_hairline_is_drawn_between_two_rows(shot):
     # separator, which spans most of the dialog width. The real check is len <= 1 below.
     significant = {w for w in widths if w > 100}
     assert len(significant) <= 1, (
-        f"the rule colour {_ROW_RULE} paints runs of {sorted(significant)}px. More "
+        f"the rule colour {row_rule} paints runs of {sorted(significant)}px. More "
         "than one width means more than one line: a selector-less stylesheet is "
         "leaking into child widgets again.")
 
 
 def test_a_row_markers_background_actually_paints(shot):
-    """tests/test_review.py checks that each marker pair in review._MARKERS clears
-    WCAG AA on its own; it cannot see whether Qt's rich text actually honours the
-    span's background at all. If the background never painted, the marker's
-    foreground would land straight on the row's own window colour instead of on its
-    pill, which is a different failure than a badly chosen pair and invisible to a
-    string-level check. The fixture's first two rows carry "new" and "changed" kinds
-    (see synthetic_details), so both pills are on screen with no row expanded.
+    """tests/test_review.py checks that each marker pair clears WCAG AA on its own; it
+    cannot see whether Qt's rich text actually honours the span's background at all. If
+    the background never painted, the marker's foreground would land straight on the
+    row's own window colour instead of on its pill, which is a different failure than a
+    badly chosen pair and invisible to a string-level check. The fixture's first two
+    rows carry "new" and "changed" kinds (see synthetic_details), so both pills are on
+    screen with no row expanded.
     """
-    from internpearls.review import _MARKERS
+    from internpearls.review import _MARKER_LABELS
+    pairs = {"new": (palette.LIGHT["new_bg"], palette.LIGHT["new_fg"]),
+             "changed": (palette.LIGHT["updated_bg"], palette.LIGHT["updated_fg"])}
     s = shot("review")
     painted = colour_counts(s.image)
-    for kind, (label, background, _foreground) in _MARKERS.items():
+    for kind, label in _MARKER_LABELS.items():
+        background, _foreground = pairs[kind]
         assert painted.get(background, 0) > 0, (
             f"the {kind} marker's background {background} ({label}) is not painting: "
             "Qt is not honouring the span's background-color")
