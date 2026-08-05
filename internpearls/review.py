@@ -11,14 +11,16 @@ the collection or the network, which is also why the dialog has no Cancel.
 import datetime
 import html
 import os
+import tempfile
 
 from aqt import mw
 from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayout,
-                    QLabel, QPlainTextEdit, QPushButton, QScrollArea, Qt, QTimer,
-                    QVBoxLayout, QWidget)
+                    QImage, QLabel, QPlainTextEdit, QPushButton, QScrollArea, Qt,
+                    QTimer, QVBoxLayout, QWidget)
 
 from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _cfg, _load_json, _save_json
-from .logic import (build_feedback_digest, cloze_filled_html, field_preview_html,
+from .logic import (apkg_media_index, build_feedback_digest, cloze_filled_html,
+                    extract_apkg_media, field_image_names, field_preview_html,
                     field_preview_text, note_display_label)
 from .ui import (_info, copy_to_clipboard, hint_label, muted_label,
                  section_label, title_label)
@@ -76,6 +78,43 @@ _CARET_OPEN = "▾"
 # this, so the answer lines up under the primary line rather than under the caret.
 _CARET_W = 14
 _CARET_GAP = 6
+
+# The row body's usable width at the dialog's 560px minimum. A picture wider than this
+# is scaled down to it; a smaller one is left alone rather than blown up.
+_IMAGE_MAX_W = 440
+
+
+def _image_tag(local_path):
+    """One extracted picture as an <img> Qt's rich text can paint, capped to the row.
+
+    The natural width is read from the file rather than assumed, since Qt scales to
+    whatever `width` says and a fixed value would enlarge a small diagram as readily as
+    it shrinks a large one. A file Qt cannot decode returns None, so the caller keeps
+    naming it instead of painting a broken image.
+    """
+    image = QImage(local_path)
+    if image.isNull():
+        return None
+    natural = image.width()
+    width = min(natural, _IMAGE_MAX_W) if natural else _IMAGE_MAX_W
+    return f'<img src="{html.escape(local_path, quote=True)}" width="{width}">'
+
+
+def _media_resolver(apkg_path, index, dest):
+    """A field_preview_html resolver bound to one deck, extracting as it is asked.
+
+    Nothing comes out of the archive until a row is actually opened, and each picture is
+    resolved once per dialog however many fields reference it.
+    """
+    cache = {}
+
+    def resolve(name):
+        if name not in cache:
+            found = extract_apkg_media(apkg_path, index, [name], dest)
+            cache[name] = _image_tag(found[name]) if name in found else None
+        return cache[name]
+
+    return resolve
 
 
 class _ClickableLabel(QLabel):
@@ -161,6 +200,41 @@ def _answer_html(detail):
     return answer
 
 
+def _answer_source(detail):
+    """The single field `_answer_html` renders, or "" when it composes several.
+
+    Only a lone field can be re-rendered from its source value. `_answer_html` folds a
+    non-image note's Image field onto its answer, and that case is left to the picture
+    strip instead, which already renders exactly that field.
+    """
+    if _is_cloze(detail):
+        return ""
+    fields = _content_fields(detail)
+    if len(fields) < 2:
+        return ""
+    if not _is_image_note(detail) and _image_text(detail):
+        return ""
+    return fields[1][1]
+
+
+def _primary_images(detail):
+    """The pictures the collapsed line can only name: the Image field, plus any inline
+    in the primary field itself.
+
+    An image note's whole question is its picture and a cloze can carry one inside its
+    Text, so without this the one note type that is entirely about pictures would be the
+    one that never showed them. Fields rendered in the body resolve their own images in
+    place instead, so nothing appears twice.
+    """
+    if _is_cloze(detail):
+        primary_value = _field(detail, "Text")
+    else:
+        fields = _content_fields(detail)
+        primary_value = fields[0][1] if fields else ""
+    names = field_image_names(_field(detail, "Image")) + field_image_names(primary_value)
+    return list(dict.fromkeys(names))
+
+
 def _row_html(detail):
     """A collapsed row's whole line: the card's tag, then its primary line.
 
@@ -198,11 +272,15 @@ def _separator():
     return line
 
 
-def _card_row(detail, flags, boxes, collect_feedback):
+def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     """One card as a single row: a caret, its tag if it has one, and its primary
     line. Clicking the row (the caret or the line itself) reveals the answer, the why
     behind a green left rule, and dosing when present, plus, only when feedback
     collection is on, a box for what the learner makes of it.
+
+    Pictures are named until that first expand and rendered from then on. Extraction is
+    what opening a row pays for, so a long list stays cheap to scroll and a review nobody
+    opens costs nothing at all.
     """
     guid = detail["guid"]
     row = QWidget()
@@ -212,9 +290,27 @@ def _card_row(detail, flags, boxes, collect_feedback):
 
     body = QWidget()
     caret = QPushButton(_CARET_CLOSED)
+    # Labels whose field can hold a picture, each with the field value that produced it,
+    # so the first expand can re-render exactly those and leave the rest alone.
+    rerender = []
+    revealed = []
+
+    def _reveal_images():
+        if resolve is None or revealed:
+            return
+        revealed.append(True)
+        for label, value in rerender:
+            label.setText(_PREVIEW_STYLE + field_preview_html(value, image_html=resolve))
+        strip = [resolve(name) for name in _primary_images(detail)]
+        rendered = "<br>".join(tag for tag in strip if tag)
+        if rendered:
+            images.setText(_PREVIEW_STYLE + rendered)
+            images.setVisible(True)
 
     def _toggle():
         expanded = not body.isVisible()
+        if expanded:
+            _reveal_images()
         body.setVisible(expanded)
         caret.setText(_CARET_OPEN if expanded else _CARET_CLOSED)
 
@@ -244,11 +340,20 @@ def _card_row(detail, flags, boxes, collect_feedback):
     blay.setContentsMargins(_CARET_W + _CARET_GAP, 2, 0, 2)
     blay.setSpacing(4)
 
+    images = _rich_label("")
+    images.setVisible(False)
+    blay.addWidget(images)
+
     answer_html = _answer_html(detail)
     if answer_html:
-        blay.addWidget(_rich_label(answer_html))
+        answer_label = _rich_label(answer_html)
+        blay.addWidget(answer_label)
+        answer_value = _answer_source(detail)
+        if answer_value:
+            rerender.append((answer_label, answer_value))
 
-    why_html = field_preview_html(_field(detail, "Why"))
+    why_value = _field(detail, "Why")
+    why_html = field_preview_html(why_value)
     if why_html:
         why_label = _rich_label(why_html)
         # The `border: none` reset is load-bearing: Qt ignores a lone border-left on a
@@ -257,7 +362,10 @@ def _card_row(detail, flags, boxes, collect_feedback):
         why_label.setStyleSheet(f"border: none; border-left: 3px solid {_WHY_RULE};"
                                 f" padding-left: 8px; color: {_WHY_RULE};")
         blay.addWidget(why_label)
+        rerender.append((why_label, why_value))
 
+    # Dosing is deliberately left out of rerender: it is a citation, never a picture,
+    # and re-rendering it from field_preview_html would drop the "Dosing" label prefix.
     dosing_html = field_preview_html(_field(detail, "Dosing"))
     if dosing_html:
         dosing_label = _rich_label(f"<b>Dosing</b> &nbsp;{dosing_html}")
@@ -306,7 +414,7 @@ def clear_saved_feedback():
         pass
 
 
-def review_new_cards(parent, decks, flags, unreadable=()):
+def review_new_cards(parent, decks, flags, unreadable=(), sources=None):
     """Show every card this update would add, as one row each, and collect notes on
     them when the feedback toggle asks for it.
 
@@ -315,6 +423,10 @@ def review_new_cards(parent, decks, flags, unreadable=()):
     close, so closing and reopening shows what she already wrote instead of quietly
     dropping it. With feedback collection off, no boxes are ever created, so this is a
     read-only preview and `flags` comes back untouched.
+
+    `sources` is {deck_name: .apkg path} for the decks whose media can be resolved. A
+    deck missing from it renders exactly as it did before pictures were possible, which
+    is what a download this run could not read has to do.
 
     A card is flagged by writing something about it. A checkbox on top of a note box
     would be two ways to say one thing, and a flag with no note ("this card is wrong",
@@ -358,6 +470,13 @@ def review_new_cards(parent, decks, flags, unreadable=()):
     # Each card's deck and readable front, so a note saved to disk can still name the
     # card it is about in a later session, when this run's own index is long gone.
     index = {}
+    media_dir = tempfile.TemporaryDirectory()
+    resolvers = {}
+    for name, path in (sources or {}).items():
+        media_index = apkg_media_index(path)
+        if media_index:
+            resolvers[name] = _media_resolver(
+                path, media_index, os.path.join(media_dir.name, str(len(resolvers))))
     for deck_name, details in decks:
         if not details:
             continue
@@ -367,7 +486,8 @@ def review_new_cards(parent, decks, flags, unreadable=()):
                 ilay.addWidget(_separator())   # between cards, not after the last
             index[detail["guid"]] = (deck_name, note_display_label(
                 [v for _, v in detail.get("fields", [])]))
-            ilay.addWidget(_card_row(detail, flags, boxes, collect_feedback))
+            ilay.addWidget(_card_row(detail, flags, boxes, collect_feedback,
+                                     resolve=resolvers.get(deck_name)))
     ilay.addStretch(1)
 
     # What is already on disk, read once. A note carried in from an earlier session is
@@ -414,6 +534,7 @@ def review_new_cards(parent, decks, flags, unreadable=()):
     outer.addWidget(bb)
 
     dlg.exec()
+    media_dir.cleanup()
 
     for guid, box in boxes.items():
         note = box.toPlainText().strip()

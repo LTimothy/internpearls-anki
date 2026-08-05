@@ -308,6 +308,86 @@ def test_no_stylesheet_anywhere_sets_a_background_without_a_foreground():
     assert not offenders, f"background with no foreground: {offenders}"
 
 
+# --------------------------------------------------------------------- images
+def _apkg_with_image(tmp_path, name="femoral.jpg"):
+    """A minimal .apkg carrying one media file, enough for the resolver to find it."""
+    import json
+    import sqlite3
+    import zipfile
+    path = str(tmp_path / "deck.apkg")
+    db = path + ".tmp.db"
+    con = sqlite3.connect(db)
+    con.execute("create table notes (id integer primary key, guid text, mid integer, "
+                "flds text)")
+    con.commit()
+    con.close()
+    with zipfile.ZipFile(path, "w") as z:
+        z.write(db, "collection.anki2")
+        z.writestr("0", b"pretend image bytes")
+        z.writestr("media", json.dumps({"0": name}))
+    os.remove(db)
+    return path
+
+
+def _click(wid, root):
+    """Fire the clicked signal of the widget with this id, found by walking the real
+    widget objects rather than the node dicts (which carry no callables). mock_anki's
+    layouts keep their children in `_children`, not `_items`."""
+    seen, stack = set(), [root]
+    while stack:
+        w = stack.pop()
+        if id(w) in seen:
+            continue
+        seen.add(id(w))
+        if getattr(w, "wid", None) == wid and hasattr(w, "clicked"):
+            w.clicked.emit()
+            return True
+        stack.extend(v for v in vars(w).values() if hasattr(v, "wid"))
+        layout = getattr(w, "_layout", None)
+        if layout is not None:
+            stack.extend(getattr(layout, "_children", []) or [])
+    return False
+
+
+def test_a_row_names_its_image_until_it_is_expanded(tmp_path):
+    """Collapsed rows stay one line each. Extraction is what expanding pays for, so a
+    review nobody opens extracts nothing."""
+    resolve = review._media_resolver(
+        _apkg_with_image(tmp_path), {"femoral.jpg": "0"}, str(tmp_path / "out"))
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False,
+                           resolve=resolve)
+    texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
+    assert "[image: femoral.jpg]" in texts
+    assert "<img" not in texts
+    assert not os.path.exists(str(tmp_path / "out"))
+
+
+def test_expanding_a_row_renders_its_image_for_real(tmp_path):
+    resolve = review._media_resolver(
+        _apkg_with_image(tmp_path), {"femoral.jpg": "0"}, str(tmp_path / "out"))
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False,
+                           resolve=resolve)
+    caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
+    _click(caret["id"], row)
+    texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
+    assert "<img src=" in texts and "femoral.jpg" in texts
+    assert f'width="{review._IMAGE_MAX_W}"' in texts
+
+
+def test_a_row_with_no_resolver_keeps_naming_its_image():
+    """Sync can hand over a deck whose .apkg could not be read. That row must still
+    render, exactly as it did before pictures were possible."""
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False)
+    caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
+    _click(caret["id"], row)
+    texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
+    assert "[image: femoral.jpg]" in texts and "<img" not in texts
+
+
+def test_image_tag_declines_a_file_qt_cannot_decode(tmp_path):
+    assert review._image_tag(str(tmp_path / "nothing-here.jpg")) is None
+
+
 # ------------------------------------------------------------------ mock Qt surface
 def test_the_mock_qt_provides_the_qimage_review_reads_widths_from():
     """review.py reads an extracted file's natural width to cap it. The mock has to
