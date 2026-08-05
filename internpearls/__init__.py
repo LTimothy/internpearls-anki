@@ -66,9 +66,11 @@ def _menu():
     add(menu, "Manage decks", manage_decks)
     menu.addSeparator()
     adv = menu.addMenu("Advanced")
-    # Four groups: act on the deck source (run either half of Update on its own, or
-    # pull one deck in manually), repair the collection itself, the two backup/restore
-    # pairs (deck-scoped, then whole-collection), and the add-on's own update check.
+    # Four groups below, though the backup/restore group is itself two
+    # separator-delimited blocks, so a literal block count reads five: act on the deck
+    # source (run either half of Update on its own, or pull one deck in manually),
+    # repair the collection itself, back up and restore (deck-scoped, then
+    # whole-collection, its own block each), and the add-on's own update check.
     add(adv, "Sync decks", sync_decks)
     # register_reconcile_action lets this item's own label show a pending count (e.g.
     # "Reconcile my decks (3 pending)") set by the auto-sync poll, since that poll only
