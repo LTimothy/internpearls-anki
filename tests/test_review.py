@@ -374,6 +374,64 @@ def test_expanding_a_row_renders_its_image_for_real(tmp_path):
     assert f'width="{review._IMAGE_MAX_W}"' in texts
 
 
+def test_expanding_a_row_rerenders_a_back_field_inline_image_in_place(tmp_path):
+    """The other half of the image fix: a field rendered in the body (here the answer,
+    from Back) that carries its own inline <img> re-renders itself through the
+    `rerender` list, separately from the picture strip `_primary_images` feeds. A basic
+    note with no dedicated Image field value exercises that path in isolation, since the
+    strip has nothing to show and cannot be the one putting a real <img> on the page.
+    """
+    detail = _basic_note_detail(image_field="")
+    detail["fields"] = [
+        (n, '<img src="femoral.jpg"> Femoral nerve block' if n == "Back" else v)
+        for n, v in detail["fields"]]
+    resolve = review._media_resolver(
+        _apkg_with_image(tmp_path), {"femoral.jpg": "0"}, str(tmp_path / "out"))
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, False, resolve=resolve)
+
+    before = next(n for n in _walk(row.node())
+                 if n.get("t") == "label" and "Femoral nerve block" in (n.get("text") or ""))
+    assert "[image: femoral.jpg]" in before["text"]
+    assert "<img" not in before["text"]
+    answer_id = before["id"]
+
+    caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
+    _click(caret["id"], row)
+
+    after = next(n for n in _walk(row.node()) if n.get("id") == answer_id)
+    assert "<img src=" in after["text"] and "femoral.jpg" in after["text"]
+    assert "Femoral nerve block" in after["text"]
+
+
+def test_expanding_a_row_rerenders_a_why_fields_inline_image_in_place(tmp_path):
+    """The highest-value case for the in-place path: most real pictures live in Why,
+    not in a dedicated Image field. A basic note with no Image field value and a plain
+    (image-free) Back isolates it the same way the Back test above isolates its field.
+    """
+    detail = _basic_note_detail(image_field="")
+    detail["fields"] = [
+        (n, '<img src="mechanism.png"> runs with the saphenous nerve along the same sheath'
+            if n == "Why" else v)
+        for n, v in detail["fields"]]
+    resolve = review._media_resolver(
+        _apkg_with_image(tmp_path, name="mechanism.png"), {"mechanism.png": "0"},
+        str(tmp_path / "out"))
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, False, resolve=resolve)
+
+    before = next(n for n in _walk(row.node())
+                 if n.get("t") == "label" and "saphenous nerve" in (n.get("text") or ""))
+    assert "[image: mechanism.png]" in before["text"]
+    assert "<img" not in before["text"]
+    why_id = before["id"]
+
+    caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
+    _click(caret["id"], row)
+
+    after = next(n for n in _walk(row.node()) if n.get("id") == why_id)
+    assert "<img src=" in after["text"] and "mechanism.png" in after["text"]
+    assert "saphenous nerve" in after["text"]
+
+
 def test_a_row_with_no_resolver_keeps_naming_its_image():
     """Sync can hand over a deck whose .apkg could not be read. That row must still
     render, exactly as it did before pictures were possible."""
