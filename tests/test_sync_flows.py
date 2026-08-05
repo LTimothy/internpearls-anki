@@ -1229,8 +1229,11 @@ def test_update_decks_confirmation_shows_real_kept_new_counts(anki, tmp_path):
 
 
 def _labels(tree):
-    """Every label's text in one dialog, joined, for asserting on what it showed."""
-    return "\n".join(n.get("text") or "" for n in _walk(tree) if n.get("t") == "label")
+    """Every label's text and every button's label in one dialog, joined, for asserting
+    on what it showed. Buttons are included because a button's own wording (e.g. which
+    kind of cards "Review" offers) is part of what the dialog tells the reader."""
+    return "\n".join((n.get("text") or n.get("label") or "")
+                     for n in _walk(tree) if n.get("t") in ("label", "button"))
 
 
 def test_update_decks_confirmation_names_the_new_cards_not_just_a_count(anki, tmp_path):
@@ -1260,6 +1263,77 @@ def test_update_decks_confirmation_names_the_new_cards_not_just_a_count(anki, tm
     assert "Front two" in seen["text"], "the new card should be named, not just counted"
     assert "<b>1</b> card(s) will be added" in seen["text"]
     assert "Front one" not in seen["text"], "a card she already has isn't new"
+
+
+def test_update_decks_confirmation_counts_and_names_changed_cards(anki, tmp_path):
+    """A card whose Back was rewritten upstream used to import silently: it matched, so
+    it counted as "kept" and nothing said its content had moved."""
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="the new answer"), TAGS)], None)})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen.setdefault("text", _labels(p["tree"]))
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert "1 changed" in seen["text"], "the per-deck line should count changed cards"
+    assert "<b>1</b> card(s) you already have will change" in seen["text"]
+    assert "Front one" in seen["text"]
+
+
+def test_update_decks_does_not_call_an_untouched_card_changed(anki, tmp_path):
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one"), TAGS.split())
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen.setdefault("text", _labels(p["tree"]))
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert "will change" not in seen["text"]
+    assert "Review 1 new card(s)" in seen["text"], (
+        "with nothing changed the button must still say what kind of cards it shows")
+
+
+def test_update_decks_review_button_covers_both_kinds(anki, tmp_path):
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="the new answer"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen.setdefault("text", _labels(p["tree"]))
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert "Review 2 card(s)" in seen["text"]
 
 
 def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
@@ -2154,3 +2228,4 @@ def test_update_never_asks_about_the_look_in_its_own_dialog(anki, tmp_path):
     _update_with_look_change(anki, tmp_path, tick=True)
 
     assert not any("full sync" in a for a in anki.gui.asks)
+
