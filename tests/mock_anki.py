@@ -649,6 +649,9 @@ class QWidget:
     def setStyleSheet(self, s):
         self._style = s
 
+    def styleSheet(self):
+        return self._style
+
     def setObjectName(self, n):
         pass
 
