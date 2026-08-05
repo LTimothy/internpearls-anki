@@ -186,7 +186,7 @@ def _safe(fn):
             print(traceback.format_exc())
             _warn(f"Something went wrong: {e}<br><br>"
                   "If a backup was taken before this ran, Advanced has tools to "
-                  "revert to it: Import intern pearls deck or Restore full collection.")
+                  "revert to it: Restore intern pearls deck or Restore full collection.")
     return wrapper
 
 
