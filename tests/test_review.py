@@ -197,10 +197,11 @@ def test_tagged_row_carries_its_tag_in_the_same_line_as_its_primary_text():
 
 
 def test_untagged_row_has_no_empty_tag_lead_in():
+    from internpearls import palette
     detail = _basic_note_detail()
     detail["fields"] = [(n, "" if n == "Tag" else v) for n, v in detail["fields"]]
     row_html = review._row_html(detail)
-    assert f'<span style="color: {review._DIM};">' not in row_html
+    assert f'<span style="color: {palette.colors()["dim"]};">' not in row_html
     assert "What nerve block covers the anterior thigh?" in row_html
 
 
@@ -209,8 +210,25 @@ def test_cloze_row_carries_the_preview_style_block_once():
     would render its deletions in body text with no visible fill at all, and any table
     on the card with no gridlines."""
     row_html = review._row_html(_cloze_note_detail("The {{c1::lumbar}} plexus."))
-    assert row_html.count(review._PREVIEW_STYLE) == 1
+    assert row_html.count(review._preview_style()) == 1
     assert '<span class="cloze">lumbar</span>' in row_html
+
+
+def test_review_holds_no_colour_literals_of_its_own():
+    """Every colour has to come from the palette, or a theme switch silently misses one.
+    Checked against the source rather than a render, since a literal that is only reached
+    on one code path would not show up in any single dialog."""
+    import re
+    source = open(os.path.join(_ADDON_DIR, "review.py"), encoding="utf8").read()
+    literals = set(re.findall(r"#[0-9a-fA-F]{6}\b", source))
+    assert not literals, f"review.py still hardcodes {sorted(literals)}"
+
+
+def test_row_markers_use_the_active_palette():
+    from internpearls import palette
+    markup = review._row_html(dict(_basic_note_detail(), kind="new"))
+    active = palette.colors()
+    assert active["new_bg"] in markup and active["new_fg"] in markup
 
 
 # ------------------------------------------------------------- rendered structure
@@ -233,10 +251,11 @@ def test_why_rule_resets_the_border_shorthand_before_setting_border_left():
     and the green rule it's supposed to hang off never paints. Asserted on the
     stylesheet because no mock, and no headless Qt, can be asked whether it painted.
     """
+    from internpearls import palette
     styles = [n.get("style") or "" for n in _row_nodes(_basic_note_detail())]
     why = next(s for s in styles if "border-left" in s)
     assert why.index("border: none") < why.index("border-left")
-    assert review._WHY_RULE in why
+    assert palette.colors()["why"] in why
 
 
 def test_no_card_row_widget_carries_a_border_of_its_own():
@@ -307,8 +326,13 @@ def test_every_marker_pill_clears_wcag_aa_against_its_own_background():
     one of the two themes. The ratio is computed rather than hardcoded, so a changed
     colour is re-checked rather than just trusted.
     """
+    from internpearls import palette
     AA = 4.5
-    for kind, (label, background, foreground) in review._MARKERS.items():
+    active = palette.colors()
+    pairs = {"new": (active["new_bg"], active["new_fg"]),
+             "changed": (active["updated_bg"], active["updated_fg"])}
+    for kind, label in review._MARKER_LABELS.items():
+        background, foreground = pairs[kind]
         ratio = _contrast_ratio(background, foreground)
         assert ratio >= AA, (
             f"{kind} marker ({label}) is {ratio:.2f}:1, foreground {foreground} on "
@@ -411,9 +435,10 @@ def test_two_changed_fields_show_was_lines_after_their_own_fields_in_order():
 
 
 def test_separator_is_an_hline_carrying_the_rule_colour():
+    from internpearls import palette
     node = review._separator().node()
     assert node["t"] == "hline"
-    assert review._ROW_RULE in node["style"]
+    assert palette.colors()["row_rule"] in node["style"]
 
 
 def test_no_widget_sets_a_background_without_setting_a_foreground():

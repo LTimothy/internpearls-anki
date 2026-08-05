@@ -1398,9 +1398,10 @@ def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
 
     # The deletion is filled in, not blanked, and the raw cloze markup never leaks,
     # in the deck's own cloze color so review looks like study.
+    from internpearls import palette
     assert "lumbar" in seen["review"]
     assert "{{c1::" not in seen["review"]
-    assert "#2563eb" in seen["review"]
+    assert palette.colors()["accent"] in seen["review"]
     # No feedback box anywhere, and no digest offered on close.
     assert not seen["boxes"], "no feedback box should render when the toggle is off"
     assert "digest_offered" not in seen, "nothing was flagged, so no digest to offer"

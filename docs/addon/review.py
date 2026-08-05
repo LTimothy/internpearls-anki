@@ -24,6 +24,7 @@ from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _cfg, _load_json, _save_j
 from .logic import (apkg_media_index, build_feedback_digest, cloze_filled_html,
                     extract_apkg_media, field_image_names, field_preview_html,
                     field_preview_text, note_display_label, plain_text)
+from .palette import colors
 from .ui import (_info, copy_to_clipboard, hint_label, muted_label,
                  section_label, title_label)
 
@@ -39,29 +40,12 @@ _SKIP_FIELDS = {"Notes"}
 _STRUCTURAL_FIELDS = {"Why", "Dosing", "Tag", "Image"}
 
 # Matches the deck's own CSS so review looks like study: the same green why rule,
-# grey dosing block, and blue cloze fill.
-_WHY_RULE = "#2e6b3e"
-# A hardcoded background needs a hardcoded foreground with it: text colour otherwise
-# comes from the platform palette, which flips white under Night Mode while this
-# block stays light. See "Colors" in README.md.
-_DOSING_BG = "#eef2f7"
-_DOSING_FG = "#334155"
-_CLOZE_COLOR = "#2563eb"
+# grey dosing block, and blue cloze fill. Every colour below is asked for by role from
+# palette.colors(), which picks the light or dark set from Anki's own theme at the
+# moment it is called, rather than being decided once at import.
 
-_DIM = "#8a9aa2"        # the tag lead-in and the caret
-_ROW_RULE = "#d6d6d6"   # the hairline between two cards
-_CELL_RULE = "#a9b4ba"  # a table's own gridlines, a mid-tone that reads on both themes
-
-# The row markers, as a background and foreground pair each. A bare coloured marker was
-# the obvious design and is not available: measured against the render suite's own
-# palettes, no single colour clears WCAG AA on both a light and a dark window, so a
-# marker with only a foreground is either unreadable on one theme or a new entry on a
-# debt ledger that may only shrink. A pair is legible on both, and follows the rule the
-# dosing block had to learn: never a background without a foreground.
-_MARKERS = {
-    "new":     ("NEW",     "#eaf1fb", "#1a4a8a"),   # 7.73:1 within the pill
-    "changed": ("UPDATED", "#fdf1e0", "#8a4b08"),   # 6.09:1 within the pill
-}
+# The marker labels. Their colours come from the palette, so only the wording lives here.
+_MARKER_LABELS = {"new": "NEW", "changed": "UPDATED"}
 
 
 def _marker_html(kind):
@@ -71,35 +55,50 @@ def _marker_html(kind):
     paragraph: a separate marker widget starts each row's text at a different x
     depending on whether that row has a marker, and wraps it against the marker's edge
     instead of the row's, which is the same defect the tag column had.
+
+    A bare coloured marker was the obvious design and is not available: measured
+    against the render suite's own palettes, no single colour clears WCAG AA on both a
+    light and a dark window, so a marker with only a foreground is either unreadable on
+    one theme or a new entry on a debt ledger that may only shrink. A pair is legible on
+    both, and follows the rule the dosing block had to learn: never a background
+    without a foreground.
     """
-    marker = _MARKERS.get(kind)
-    if not marker:
+    label = _MARKER_LABELS.get(kind)
+    if not label:
         return ""
-    label, background, foreground = marker
+    c = colors()
+    background, foreground = ((c["new_bg"], c["new_fg"]) if kind == "new"
+                              else (c["updated_bg"], c["updated_fg"]))
     return (f'<span style="background-color: {background}; color: {foreground};'
             f' font-size: 11px;">&nbsp;{label}&nbsp;</span>&nbsp;&nbsp;')
 
 
-# Every label that can hold card HTML carries this, so a <table> or a <ul> in a field
-# reads as the grid or the list the card author wrote rather than as a run-on line.
-# Qt's rich text takes a <style> block with class and element selectors, but only a
-# subset of CSS, so this stays to borders, padding and colour.
-_PREVIEW_STYLE = (
-    "<style>"
-    f".cloze {{ color: {_CLOZE_COLOR}; font-weight: 600; }}"
-    # The group number rides in the deletion's own colour rather than a new one, so it
-    # reads as part of that blank and adds no colour to the theme problem. Only the
-    # weight is dropped: it is a marker, not content. Deliberately NOT given a smaller
-    # font size on top of the <sup> tag's own reduction: rendered offscreen at a 13px
-    # base, "font-size: small" inside a <sup> came out an unreadable smudge, which no
-    # amount of squinting at the markup would have shown. Render it before resizing it.
-    " .cn { font-weight: 400; }"
-    " table { border-collapse: collapse; margin: 4px 0; }"
-    f" th, td {{ border: 1px solid {_CELL_RULE}; padding: 2px 7px; }}"
-    f" th {{ color: {_DIM}; font-weight: 600; }}"
-    " ul, ol { margin: 4px 0; }"
-    "</style>"
-)
+def _preview_style():
+    """Every label that can hold card HTML carries this, so a <table> or a <ul> in a
+    field reads as the grid or the list the card author wrote rather than as a run-on
+    line. Qt's rich text takes a <style> block with class and element selectors, but
+    only a subset of CSS, so this stays to borders, padding and colour.
+
+    A function rather than a module constant: its colours come from the palette, which
+    is chosen from Anki's theme at the moment this is called, not fixed once at import.
+    """
+    c = colors()
+    return (
+        "<style>"
+        f".cloze {{ color: {c['accent']}; font-weight: 600; }}"
+        # The group number rides in the deletion's own colour rather than a new one, so it
+        # reads as part of that blank and adds no colour to the theme problem. Only the
+        # weight is dropped: it is a marker, not content. Deliberately NOT given a smaller
+        # font size on top of the <sup> tag's own reduction: rendered offscreen at a 13px
+        # base, "font-size: small" inside a <sup> came out an unreadable smudge, which no
+        # amount of squinting at the markup would have shown. Render it before resizing it.
+        " .cn { font-weight: 400; }"
+        " table { border-collapse: collapse; margin: 4px 0; }"
+        f" th, td {{ border: 1px solid {c['cell_rule']}; padding: 2px 7px; }}"
+        f" th {{ color: {c['dim']}; font-weight: 600; }}"
+        " ul, ol { margin: 4px 0; }"
+        "</style>"
+    )
 
 _CARET_CLOSED = "▸"
 _CARET_OPEN = "▾"
@@ -330,12 +329,12 @@ def _row_html(detail):
     tag_text = field_preview_text(_field(detail, "Tag"))
     if tag_text:
         tag = html.escape(tag_text)
-        primary = f'<span style="color: {_DIM};">{tag}</span>&nbsp;&nbsp;{primary}'
-    return _PREVIEW_STYLE + _marker_html(detail.get("kind")) + primary
+        primary = f'<span style="color: {colors()["dim"]};">{tag}</span>&nbsp;&nbsp;{primary}'
+    return _preview_style() + _marker_html(detail.get("kind")) + primary
 
 
 def _rich_label(text):
-    lbl = QLabel(_PREVIEW_STYLE + text)
+    lbl = QLabel(_preview_style() + text)
     lbl.setWordWrap(True)
     lbl.setTextFormat(Qt.TextFormat.RichText)
     return lbl
@@ -356,7 +355,7 @@ def _was_label(detail, field_name):
     if not old:
         return None
     label = _rich_label(f"<b>was</b> &nbsp;{field_preview_html(old)}")
-    label.setStyleSheet(f"color: {_DIM};")
+    label.setStyleSheet(f"color: {colors()['dim']};")
     return label, old
 
 
@@ -387,7 +386,7 @@ def _separator():
     line.setFrameShape(QFrame.Shape.HLine)
     line.setFrameShadow(QFrame.Shadow.Plain)
     line.setFixedHeight(1)
-    line.setStyleSheet(f"color: {_ROW_RULE};")
+    line.setStyleSheet(f"color: {colors()['row_rule']};")
     return line
 
 
@@ -427,21 +426,21 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
         revealed.append(True)
         for label, value in was_rerender:
             was_html = field_preview_html(value, image_html=_collection_image)
-            label.setText(f"{_PREVIEW_STYLE}<b>was</b> &nbsp;{was_html}")
+            label.setText(f"{_preview_style()}<b>was</b> &nbsp;{was_html}")
         if resolve is None:
             return
         image_names = _primary_images(detail)
         resolved_tags = {name: resolve(name) for name in image_names}
         succeeded = {name for name, tag in resolved_tags.items() if tag}
         for label, value in rerender:
-            label.setText(_PREVIEW_STYLE + field_preview_html(value, image_html=resolve))
+            label.setText(_preview_style() + field_preview_html(value, image_html=resolve))
         rendered = "<br>".join(tag for tag in resolved_tags.values() if tag)
         if rendered:
-            images.setText(_PREVIEW_STYLE + rendered)
+            images.setText(_preview_style() + rendered)
             images.setVisible(True)
         if answer_label is not None:
             new_answer_html = _answer_html(detail, resolved=succeeded, image_html=resolve)
-            answer_label.setText(_PREVIEW_STYLE + new_answer_html)
+            answer_label.setText(_preview_style() + new_answer_html)
             answer_label.setVisible(bool(new_answer_html))
 
     def _toggle():
@@ -460,7 +459,7 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     # Unconstrained, this is a real push button at its platform minimum (~80px on
     # macOS) around a 6px glyph, which is a wide dead gutter down the whole list.
     caret.setFixedWidth(_CARET_W)
-    caret.setStyleSheet(f"border: none; padding: 0; color: {_DIM};")
+    caret.setStyleSheet(f"border: none; padding: 0; color: {colors()['dim']};")
     caret.setCursor(Qt.CursorShape.PointingHandCursor)
     caret.clicked.connect(_toggle)
     hlay.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
@@ -524,11 +523,12 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     why_html = field_preview_html(why_value)
     if why_html:
         why_label = _rich_label(why_html)
+        why_colour = colors()["why"]
         # The `border: none` reset is load-bearing: Qt ignores a lone border-left on a
         # QLabel unless the shorthand is set first, so without it the padding applies
         # and the rule itself silently never paints.
-        why_label.setStyleSheet(f"border: none; border-left: 3px solid {_WHY_RULE};"
-                                f" padding-left: 8px; color: {_WHY_RULE};")
+        why_label.setStyleSheet(f"border: none; border-left: 3px solid {why_colour};"
+                                f" padding-left: 8px; color: {why_colour};")
         blay.addWidget(why_label)
         rerender.append((why_label, why_value))
         if "Why" in changed_names:
@@ -540,7 +540,11 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     dosing_html = field_preview_html(_field(detail, "Dosing"))
     if dosing_html:
         dosing_label = _rich_label(f"<b>Dosing</b> &nbsp;{dosing_html}")
-        dosing_label.setStyleSheet(f"background: {_DOSING_BG}; color: {_DOSING_FG};"
+        c = colors()
+        # A hardcoded background needs a hardcoded foreground with it: text colour
+        # otherwise comes from the platform palette, which flips white under Night
+        # Mode while this block stays light. See "Colors" in README.md.
+        dosing_label.setStyleSheet(f"background: {c['dosing_bg']}; color: {c['dosing_fg']};"
                                    f" padding: 6px; border-radius: 4px;")
         blay.addWidget(dosing_label)
         if "Dosing" in changed_names:
