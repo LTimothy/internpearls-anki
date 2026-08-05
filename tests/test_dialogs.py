@@ -80,7 +80,7 @@ def test_real_menu_structure():
 
 
 def test_advanced_groups_source_actions_then_repair_actions(anki):
-    """Advanced held thirteen items whose first group mixed running half of Update,
+    """Advanced held twelve items whose first group mixed running half of Update,
     repairing the collection, and a one-off import, so neither reader had a group to find.
     """
     labels = _advanced_labels(anki)   # follow this file's existing menu-reading helper
