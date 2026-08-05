@@ -55,6 +55,34 @@ def test_nothing_overflows_the_dialog_horizontally(shot, scene):
         f"{scene}: widgets overflow the dialog:\n  " + "\n  ".join(overflowing))
 
 
+def test_a_short_confirmation_starts_at_the_top_not_the_middle(shot):
+    """Qt stretches a QLabel to a resizable scroll area's viewport and vertically centres
+    its text, so a short confirmation floated with a screenful of blank above it.
+
+    The label's own widget box is not a useful signal here: setWidgetResizable(True)
+    stretches that box to fill the whole scroll viewport regardless of alignment (its
+    heightForWidth is ~114px, but its measured box is a full 340px tall), so the box's
+    top is always near the scroll's top either way. What actually moves with the fix is
+    where the glyphs get painted inside that box, so this reads pixels: it walks down
+    from the box's own top edge and finds the first row that isn't background colour.
+    """
+    _, q = harness.bootstrap()
+    s = shot("confirm")
+    body = max((w for w in s.dialog.findChildren(q.QLabel) if w.text()),
+               key=lambda w: len(w.text()))
+    rect = widget_rect(s.dialog, body)
+    background = s.image.pixelColor(rect.left(), rect.top()).name()
+    first_ink_row = next(
+        (y for y in range(rect.top(), rect.bottom() + 1)
+         if any(s.image.pixelColor(x, y).name() != background
+               for x in range(rect.left(), rect.right() + 1))),
+        rect.bottom() + 1)
+    offset = first_ink_row - rect.top()
+    assert offset < 40, (
+        f"the confirmation text starts {offset}px into its {rect.height()}px-tall box; "
+        "it should hug the top instead of floating near the middle")
+
+
 def test_review_rows_share_a_left_edge(shot):
     """Tagged and untagged rows must start at the same x.
 
