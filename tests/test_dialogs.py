@@ -457,3 +457,15 @@ def test_configure_source_manifest_scope_declined_leaves_config_alone(anki, tmp_
 def test_configure_source_without_manifest_scope_asks_nothing(anki, tmp_path):
     asks = _drive_configure_local_folder(anki, _write_source(tmp_path), True)
     assert asks == []
+
+
+def test_ui_helpers_use_the_palette_not_a_css_keyword():
+    """muted_label and hint_label used the CSS keyword `gray`, which is #808080 whatever
+    the theme, and fails AA on both. A keyword is a hardcoded colour with a friendlier
+    name."""
+    from internpearls import palette, ui
+    active = palette.colors()
+    for helper in (ui.muted_label, ui.hint_label):
+        style = helper("some text").styleSheet()
+        assert "gray" not in style, f"{helper.__name__} still uses the gray keyword"
+        assert active["muted"] in style

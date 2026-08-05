@@ -20,8 +20,7 @@ from aqt.qt import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
 from aqt.utils import askUser, getText, showInfo, showWarning, tooltip
 
 from .config import APP_NAME
-
-ACCENT = "#2563eb"   # link-style buttons and the "new deck" pill; readable on both themes
+from .palette import colors
 
 
 def _info(text, **kw):
@@ -241,7 +240,7 @@ def muted_label(text):
     """Secondary explanatory text at the dialog's normal font size."""
     lbl = QLabel(text)
     lbl.setWordWrap(True)
-    lbl.setStyleSheet("color: gray;")
+    lbl.setStyleSheet(f"color: {colors()['muted']};")
     return lbl
 
 
@@ -250,7 +249,7 @@ def hint_label(text, top_margin=0):
     lbl = QLabel(text)
     lbl.setWordWrap(True)
     margin = f" margin-top: {top_margin}px;" if top_margin else ""
-    lbl.setStyleSheet(f"color: gray; font-size: 11px;{margin}")
+    lbl.setStyleSheet(f"color: {colors()['muted']}; font-size: 11px;{margin}")
     return lbl
 
 
@@ -259,7 +258,7 @@ def link_button(label, on_click=None, tooltip_text=None, align_left=False):
     btn = QPushButton(label)
     btn.setFlat(True)
     align = " text-align: left;" if align_left else ""
-    btn.setStyleSheet(f"color: {ACCENT}; font-size: 12px;{align}")
+    btn.setStyleSheet(f"color: {colors()['accent']}; font-size: 12px;{align}")
     if tooltip_text:
         btn.setToolTip(tooltip_text)
     if on_click:
