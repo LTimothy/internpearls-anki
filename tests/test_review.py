@@ -306,3 +306,13 @@ def test_no_stylesheet_anywhere_sets_a_background_without_a_foreground():
     offenders = [(mod, css) for mod, css in _stylesheet_literals()
                  if "background" in css and "color:" not in css]
     assert not offenders, f"background with no foreground: {offenders}"
+
+
+# ------------------------------------------------------------------ mock Qt surface
+def test_the_mock_qt_provides_the_qimage_review_reads_widths_from():
+    """review.py reads an extracted file's natural width to cap it. The mock has to
+    carry that name or every image test fails on import rather than on behaviour."""
+    from aqt.qt import QImage
+    assert QImage("/definitely/not/a/file.jpg").isNull() is True
+    assert QImage(__file__).isNull() is False
+    assert QImage(__file__).width() > 0
