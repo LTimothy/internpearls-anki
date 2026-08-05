@@ -1414,10 +1414,10 @@ def test_review_renders_a_new_cards_picture_once_its_row_is_opened(anki, tmp_pat
     """The .apkg the preview already downloaded is what the pictures come out of, so
     opening a row costs a local read rather than another fetch."""
     from internpearls import sync
-    fields = ["Front with a picture", 'see <img src="femoral.jpg">', "why", "",
+    fields = ["Front with a picture", 'see <img src="sample-a.jpg">', "why", "",
               "Pharm", "", ""]
     folder = _write_source(tmp_path, {
-        DECK: ("v1", [("g1", fields, TAGS)], None, {"femoral.jpg": b"bytes"})})
+        DECK: ("v1", [("g1", fields, TAGS)], None, {"sample-a.jpg": b"bytes"})})
     _configure(anki, folder)
     anki.gui.interactive = True
     seen = {}
@@ -1447,7 +1447,7 @@ def test_review_renders_a_new_cards_picture_once_its_row_is_opened(anki, tmp_pat
     assert "<img src=" in seen["review"], (
         "the row was opened but its picture is still only named: the .apkg path is not "
         "reaching the review dialog")
-    assert "femoral.jpg" in seen["review"]
+    assert "sample-a.jpg" in seen["review"]
 
 
 def test_review_rules_separate_cards_without_trailing_the_last_one(anki, tmp_path):
