@@ -678,7 +678,7 @@ def _preview_content_changes(fetch, todo, her, aliases):
             try:
                 src = _cached_fetch(fetch, d)
                 downloaded[d["name"]] = src
-                _, kept, new, new_notes = remap_cards(src, her, aliases)
+                _, kept, new, new_notes, _matched = remap_cards(src, her, aliases)
                 preview[d["name"]] = (kept, new, new_notes)
             except Exception as e:
                 downloaded[d["name"]] = e
@@ -1023,7 +1023,7 @@ def import_single():
             return
     _ensure_notetypes()
     her = _her_front_to_guid(cfg["scope_tag"])
-    remap, in_place, as_new, _ = remap_cards(src, her, aliases)
+    remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
     if not _ask(f"{in_place} card(s) will keep their history, {as_new} will be added "
                 "as new. A backup is taken automatically first. Import now?"):
         return

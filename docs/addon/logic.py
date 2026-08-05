@@ -662,23 +662,26 @@ def remap_cards(src, her, aliases):
       3. `aliases` ({current_front: previous_front}): her card still shows the one
          prior wording of a renamed front.
 
-    Returns (remap, in_place, as_new, new_notes): `remap` is {note_id: guid} for notes
-    whose GUID needs rewriting to match an existing card, `in_place`/`as_new` are counts
-    for the confirmation dialogs. A GUID match needs no rewrite, so it never lands in
-    `remap`.
+    Returns (remap, in_place, as_new, new_notes, matched): `remap` is {note_id: guid} for
+    notes whose GUID needs rewriting to match an existing card, `in_place`/`as_new` are
+    counts for the confirmation dialogs. A GUID match needs no rewrite, so it never lands
+    in `remap`.
 
     `new_notes` is [(note_id, fields, guid), ...] for the notes that will import as new,
-    in the .apkg's own order, and `as_new` is exactly its length. It's returned from here
-    rather than re-derived by a second function so the matching ladder above stays the
-    single source of truth about what "new" means: a separate implementation would
-    eventually disagree with this one, and the visible symptom would be a preview that
-    lies to the learner about which cards are about to appear.
+    in the .apkg's own order, and `as_new` is exactly its length. `matched` is the
+    complement, [(note_id, apkg_guid, her_guid), ...], where her_guid is the .apkg's own
+    guid on a GUID match. Both are returned from here rather than re-derived by a second
+    function so the matching ladder above stays the single source of truth about what
+    "new" and "already hers" mean: a separate implementation would eventually disagree
+    with this one, and the visible symptom would be a preview that lies to the learner
+    about which cards are about to appear or change.
     """
-    remap, in_place, new_notes = {}, 0, []
+    remap, in_place, new_notes, matched = {}, 0, [], []
     her_guids = set(her.values())
     for rid, fields, apkg_guid in apkg_notes(src):
         if apkg_guid in her_guids:
             in_place += 1
+            matched.append((rid, apkg_guid, apkg_guid))
             continue
         front = fields[0] if fields else ""
         her_guid = her.get(front)
@@ -688,9 +691,10 @@ def remap_cards(src, her, aliases):
             new_notes.append((rid, fields, apkg_guid))
         else:
             in_place += 1
+            matched.append((rid, apkg_guid, her_guid))
             if her_guid != apkg_guid:
                 remap[rid] = her_guid
-    return remap, in_place, len(new_notes), new_notes
+    return remap, in_place, len(new_notes), new_notes, matched
 
 
 def find_duplicate_groups(her_notes, canonical_deck_names):
