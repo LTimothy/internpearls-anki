@@ -39,7 +39,7 @@ from .logic import (apkg_note_details, apkg_notes, bullets, decks_to_update,
                     note_display_label, remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .review import (clear_saved_feedback, load_saved_feedback,
-                     review_new_cards, show_result_with_feedback)
+                     review_cards, show_result_with_feedback)
 from .ui import _ask, _ask_scrollable, _info, _safe, _warn, cancellable_progress, wait_cursor
 
 
@@ -901,14 +901,14 @@ def update_decks():
             sources[d["name"]] = src
         if not decks:
             if failed:
-                _warn("Couldn't read the new cards from:" + bullets(failed) +
+                _warn("Couldn't read the pending cards from:" + bullets(failed) +
                       "<br>The update itself is unaffected; there is just nothing to "
                       "show here.")
             return None
         # Named inside the review dialog rather than as a warning box in front of it:
         # it is context for the list she asked to see, and the update does not depend
         # on any of it.
-        review_new_cards(parent, decks, flags, unreadable=failed, sources=sources)
+        review_cards(parent, decks, flags, unreadable=failed, sources=sources)
         return _body()
 
     def _finish(summary_html=None):
