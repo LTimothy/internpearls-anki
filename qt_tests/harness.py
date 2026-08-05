@@ -76,6 +76,14 @@ def bootstrap():
             if name.startswith("Q") or name == "Qt":
                 setattr(aqt_qt, name, getattr(module, name))
 
+    # internpearls/palette.py reads Anki's own theme through aqt.theme.theme_manager,
+    # not through the Qt palette apply_theme() below sets, so it needs its own stub
+    # here. Starts light; apply_theme() flips night_mode to match its own theme name.
+    aqt_theme = types.ModuleType("aqt.theme")
+    aqt_theme.theme_manager = types.SimpleNamespace(night_mode=False)
+    sys.modules["aqt.theme"] = aqt_theme
+    sys.modules["aqt"].theme = aqt_theme
+
     # Every dialog parents itself to mw, which here is the mock's plain object rather
     # than a QWidget, and real Qt rejects that outright. Parentless is fine for a grab.
     _dialog_init = QtWidgets.QDialog.__init__
@@ -140,12 +148,18 @@ def apply_theme(name):
     This approximates Anki's night theme, it does not reproduce it. It shows whether a
     hardcoded colour survives a dark window, which is the bug class we have actually
     hit; it does not show that night mode is correct.
+
+    Also flips the aqt.theme.theme_manager stub bootstrap() installs, so
+    internpearls/palette.py picks the same set this scene is actually painted with:
+    without this a "dark" scene still asked the palette for its light colours, which
+    were never tuned against this window.
     """
     _, q = bootstrap()
     pal = q.QPalette()
     for role, colour in THEMES[name].items():
         pal.setColor(getattr(q.QPalette.ColorRole, role), q.QColor(colour))
     app().setPalette(pal)
+    sys.modules["aqt.theme"].theme_manager.night_mode = (name == "dark")
 
 
 def synthetic_details():
