@@ -546,6 +546,71 @@ def test_remap_cards_matched_and_new_together_account_for_every_note(tmp_path):
     assert len(matched) + len(new_notes) == 3
 
 
+# ------------------------------------------------------------------ find_changed_notes
+def _detail(rid, notetype, fields):
+    return {"rid": rid, "guid": f"g{rid}", "notetype": notetype, "fields": fields}
+
+
+def test_find_changed_notes_reports_the_previous_value_of_each_changed_field():
+    details = [_detail(1, "Study Deck - Basic",
+                       [("Front", "A prompt"), ("Back", "the new answer"),
+                        ("Why", "unchanged why"), ("Notes", "")])]
+    her = {"her-1": {"Front": "A prompt", "Back": "the old answer",
+                     "Why": "unchanged why", "Notes": ""}}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her) == {
+        1: {"Back": "the old answer"}}
+
+
+def test_find_changed_notes_ignores_a_note_that_is_identical():
+    details = [_detail(1, "Study Deck - Basic",
+                       [("Front", "A prompt"), ("Back", "same"), ("Notes", "")])]
+    her = {"her-1": {"Front": "A prompt", "Back": "same", "Notes": ""}}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her) == {}
+
+
+def test_find_changed_notes_skips_protected_fields():
+    """Notes is the learner's own annotation space and every spec ships it empty, so
+    without this every card she has ever written a note on would read as changed."""
+    details = [_detail(1, "Study Deck - Basic",
+                       [("Front", "A prompt"), ("Notes", "")])]
+    her = {"her-1": {"Front": "A prompt", "Notes": "her own annotation"}}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her,
+                                    protected=["Notes"]) == {}
+
+
+def test_find_changed_notes_compares_by_name_not_position():
+    """Index 1 is Back on a basic note and Prompt on an image note. A positional
+    comparison mislabels whole decks."""
+    details = [_detail(1, "Study Deck - Image ID",
+                       [("Image", '<img src="a.jpg">'), ("Prompt", "Which block?"),
+                        ("Answer", "Femoral")])]
+    her = {"her-1": {"Prompt": "Which block?", "Answer": "Femoral",
+                     "Image": '<img src="a.jpg">'}}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her) == {}
+
+
+def test_find_changed_notes_ignores_a_field_her_note_type_does_not_have():
+    # _ensure_notetypes adds a genuinely missing field before an import; until it has,
+    # a field she cannot hold is not a content change to show her.
+    details = [_detail(1, "Study Deck - Basic",
+                       [("Front", "A prompt"), ("Dosing", "0.5 mg IV")])]
+    her = {"her-1": {"Front": "A prompt"}}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her) == {}
+
+
+def test_find_changed_notes_ignores_whitespace_only_differences():
+    details = [_detail(1, "Study Deck - Basic", [("Front", " A prompt ")])]
+    her = {"her-1": {"Front": "A prompt"}}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her) == {}
+
+
+def test_find_changed_notes_skips_a_pair_with_nothing_to_compare_against():
+    details = [_detail(1, "Study Deck - Basic", [("Front", "A prompt")])]
+    assert logic.find_changed_notes([(1, "g1", "unknown-guid")], details, {}) == {}
+    assert logic.find_changed_notes([(99, "g99", "her-1")], details,
+                                    {"her-1": {"Front": "other"}}) == {}
+
+
 # ----------------------------------------------------------------- apkg_note_details
 # Field names are NOT uniform across our note types, which is the whole reason this
 # function reads col.models instead of guessing positionally: index 1 is "Back" on a
