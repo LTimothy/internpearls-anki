@@ -20,7 +20,8 @@ from aqt.utils import getFile
 from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
                          _ensure_notetypes, change_note_types,
                          notetype_changes, seed_converted_siblings,
-                         _her_front_to_guid, _her_guid_to_deck, _her_guid_to_nid,
+                         _her_front_to_guid, _her_guid_to_deck, _her_guid_to_fields,
+                         _her_guid_to_nid,
                          _her_notes_summary, _import_apkg,
                          _pre_sync_backup_or_confirm_skip, _restore,
                          _snapshot, _template_changes, apply_deck_moves,
@@ -32,7 +33,7 @@ from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_
                      _load_json, _save_json)
 from .logic import (apkg_note_details, apkg_notes, bullets, decks_to_update,
                     feedback_entries, merge_saved_feedback,
-                    duplicate_dialog_html, find_deck_moves_needed,
+                    duplicate_dialog_html, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, manifest_needs_newer_addon,
                     note_display_label, remap_cards, write_personalized)
@@ -646,14 +647,14 @@ def _cached_fetch(fetch, d):
     return path
 
 
-def _preview_content_changes(fetch, todo, her, aliases):
+def _preview_content_changes(fetch, todo, her, aliases, her_fields=None):
     """Download every pending deck and match it against the collection, so the
     confirmation can show real "N kept · M new" counts instead of just each deck's
     total card count. A cancellable progress window covers it, since this is a live
     network fetch per deck and a multi-deck update on a slow link otherwise looks
     like a hang, with no way out, before the confirmation even appears.
 
-    Returns ({deck_name: (kept, new, new_notes) | None}, downloaded, cancelled).
+    Returns ({deck_name: (kept, new, new_notes, changed) | None}, downloaded, cancelled).
     `new_notes` is remap_cards' own list of the notes that will import as new, carried
     through so the confirmation can name them and the review dialog can show them in
     full: it costs nothing extra here, since remap_cards already reads every note to
@@ -668,6 +669,12 @@ def _preview_content_changes(fetch, todo, her, aliases):
 
     Downloads go through _cached_fetch, so re-opening Update my decks without applying
     doesn't re-fetch a deck whose version hasn't changed.
+
+    Each entry is (kept, new, new_notes, changed), where `changed` is
+    {note id: {field: her current value}} for the cards this deck would rewrite. That
+    costs one extra labeled read of the same already-downloaded file, which is the price
+    of the confirmation being able to say a card is about to change rather than only that
+    it matched.
     """
     preview, downloaded = {}, {}
     with cancellable_progress("Checking for updates", len(todo)) as step:
@@ -678,8 +685,13 @@ def _preview_content_changes(fetch, todo, her, aliases):
             try:
                 src = _cached_fetch(fetch, d)
                 downloaded[d["name"]] = src
-                _, kept, new, new_notes, _matched = remap_cards(src, her, aliases)
-                preview[d["name"]] = (kept, new, new_notes)
+                _, kept, new, new_notes, matched = remap_cards(src, her, aliases)
+                changed = {}
+                if her_fields and matched:
+                    changed = find_changed_notes(
+                        matched, apkg_note_details(src), her_fields,
+                        protected=_cfg()["protected"])
+                preview[d["name"]] = (kept, new, new_notes, changed)
             except Exception as e:
                 downloaded[d["name"]] = e
                 preview[d["name"]] = None
@@ -720,7 +732,8 @@ def update_decks():
     preview, downloaded, collisions = {}, {}, []
     if todo:
         preview, downloaded, cancelled = _preview_content_changes(
-            fetch, todo, _her_front_to_guid(cfg["scope_tag"]), manifest.get("front_aliases", {}))
+            fetch, todo, _her_front_to_guid(cfg["scope_tag"]),
+            manifest.get("front_aliases", {}), _her_guid_to_fields(cfg["scope_tag"]))
         if cancelled:
             _info("Update cancelled — nothing was changed.")
             return
@@ -735,6 +748,25 @@ def update_decks():
             continue          # this deck's download failed; it already reads "couldn't preview"
         for _, fields, guid in pc[2]:
             new_cards.append((d["name"], note_display_label(fields), guid))
+    # The cards this update would rewrite, gathered the same way as the added ones: the
+    # review dialog only knows note ids and guids, so the deck and a readable label have
+    # to be carried alongside. A deck whose download failed, or whose details can't be
+    # read for some other reason, is skipped here: the update itself still applies, it
+    # just can't be listed in this section.
+    changed_cards = []
+    for d in todo:
+        pc = preview.get(d["name"])
+        src = downloaded.get(d["name"])
+        if not pc or not pc[3] or not src or isinstance(src, Exception):
+            continue
+        try:
+            details = apkg_note_details(src, list(pc[3]))
+        except Exception:
+            continue    # this deck still imports; it just cannot be listed here
+        for detail in details:
+            changed_cards.append((d["name"],
+                                  note_display_label([v for _, v in detail["fields"]]),
+                                  detail["guid"]))
     # Detected here, not mid-import, because the download that reveals it has already
     # happened: the preview above fetched every pending deck. Knowing it now is what
     # lets the one confirmation carry the decision, instead of interrupting the run
@@ -749,7 +781,7 @@ def update_decks():
         except Exception:
             pass    # a deck we can't read here still imports; it just can't offer this
 
-    new_index = {guid: (deck, label) for deck, label, guid in new_cards}
+    new_index = {guid: (deck, label) for deck, label, guid in new_cards + changed_cards}
     flags = {}
     # Notes from a run that never reached its digest (a crash, a force quit, an error
     # mid-import) come back here rather than needing their own recovery prompt: they
@@ -762,7 +794,12 @@ def update_decks():
     def _line(d):
         short = d["name"].split("::")[-1]
         pc = preview.get(d["name"])
-        return f"{short} (couldn't preview)" if pc is None else f"{short} ({pc[0]} kept · {pc[1]} new)"
+        if pc is None:
+            return f"{short} (couldn't preview)"
+        counts = f"{pc[0]} kept · {pc[1]} new"
+        if pc[3]:
+            counts += f" · {len(pc[3])} changed"
+        return f"{short} ({counts})"
 
     sections = []
     if todo:
@@ -780,6 +817,13 @@ def update_decks():
         sections.append(
             f"<b>{len(new_cards)}</b> card(s) will be added that you don't have yet."
             + bullets(new_lines, cap=15))
+    if changed_cards:
+        changed_lines = [f"{html.escape(label)} <span style='color:gray;'>"
+                         f"({deck.split('::')[-1]})</span>"
+                         for deck, label, _ in changed_cards]
+        sections.append(
+            f"<b>{len(changed_cards)}</b> card(s) you already have will change. Your "
+            "review history stays with them." + bullets(changed_lines, cap=15))
     if fresh:
         lines = [f"{r['identity']} <span style='color:gray;'>"
                  f"({r['deck'].split('::')[-1]})</span>" for r in fresh]
@@ -820,7 +864,7 @@ def update_decks():
         return catch_up_note + "<br><br>".join(sections) + flagged + safety_note
 
     def _open_review(parent):
-        """Read the new cards in full and hand them to the review dialog.
+        """Read the new and changed cards in full and hand them to the review dialog.
 
         This is the only place that pays for apkg_note_details, and only when she asks
         for it: the .apkg is already downloaded and cached by the preview above, so the
@@ -830,19 +874,31 @@ def update_decks():
         this, so a broken preview must never be able to stop it.
 
         That same downloaded file is what a row's pictures are extracted from when it is
-        opened, so showing one costs a local read rather than another fetch.
+        opened, so showing one costs a local read rather than another fetch. Each detail
+        is tagged with `kind` ("new" or "changed") and, for a changed one, `was` (what
+        her copy currently says), so the dialog can render both without guessing which
+        is which from the id alone.
         """
         decks, failed, sources = [], [], {}
         for d in todo:
             pc = preview.get(d["name"])
             src = downloaded.get(d["name"])
-            if not pc or not pc[2] or isinstance(src, Exception) or not src:
+            if not pc or isinstance(src, Exception) or not src:
+                continue
+            if not pc[2] and not pc[3]:
                 continue
             try:
-                decks.append((d["name"], apkg_note_details(src, [r for r, _, _ in pc[2]])))
-                sources[d["name"]] = src
+                rids = [r for r, _, _ in pc[2]] + list(pc[3])
+                details = apkg_note_details(src, rids)
             except Exception as e:
                 failed.append(f"{d['name'].split('::')[-1]} ({e})")
+                continue
+            new_rids = {r for r, _, _ in pc[2]}
+            for detail in details:
+                detail["kind"] = "new" if detail["rid"] in new_rids else "changed"
+                detail["was"] = pc[3].get(detail["rid"], {})
+            decks.append((d["name"], details))
+            sources[d["name"]] = src
         if not decks:
             if failed:
                 _warn("Couldn't read the new cards from:" + bullets(failed) +
@@ -888,9 +944,18 @@ def update_decks():
             + ", ".join(f"<b>{n}</b>" for n in sorted(pending_templates))
             + ". Your review history and card content are unaffected either way.")
 
+    if new_cards and changed_cards:
+        review_label = f"Review {len(new_cards) + len(changed_cards)} card(s)"
+    elif new_cards:
+        review_label = f"Review {len(new_cards)} new card(s)"
+    elif changed_cards:
+        review_label = f"Review {len(changed_cards)} changed card(s)"
+    else:
+        review_label = None
+
     if not _ask_scrollable(
             _body(), yes_label="Update",
-            extra_label=(f"Review {len(new_cards)} new card(s)" if new_cards else None),
+            extra_label=review_label,
             on_extra=_open_review, checkbox=tpl_choice):
         _finish()
         return
