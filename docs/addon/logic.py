@@ -208,7 +208,7 @@ def find_deck_moves_needed(moves_ledger, her_guid_to_deck, her_front_to_guid=Non
     `her_front_to_guid` is {first field: guid} for her collection (optional).
 
     Normally a card is matched to a ledger entry by GUID. But a card whose deck source
-    changed its `id_seed` (say Anesthesia Pharmacology's v1 to v2) has a *different*
+    changed its `id_seed` (say a deck's seed moving from v1 to v2) has a *different*
     GUID in a learner's older collection than the one the ledger is keyed by, so a
     pure GUID match misses it: the card sits stuck at `from` forever, its new deck
     perpetually re-offered because installed_matching_collection never finds a card
