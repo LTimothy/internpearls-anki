@@ -334,6 +334,22 @@ def _her_front_to_guid(scope_tag):
     return out
 
 
+def _her_guid_to_fields(scope_tag):
+    """{note guid: {field name: value}} for every note under the scope tag.
+
+    Change detection needs her side of the comparison by name, not by position, so this
+    zips each note's values against its own note type's field names rather than assuming
+    every note type agrees on an order.
+    """
+    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    out = {}
+    for nid in mw.col.find_notes(search):
+        note = mw.col.get_note(nid)
+        names = [f["name"] for f in note.note_type()["flds"]]
+        out[note.guid] = dict(zip(names, note.fields))
+    return out
+
+
 def _her_guid_to_nid(scope_tag):
     """{note guid: note id} for every card under the scope tag. The reconcile flow needs
     to go from a retired card's GUID (what the ledger lists) back to the learner's note
