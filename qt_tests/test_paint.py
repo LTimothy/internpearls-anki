@@ -92,6 +92,24 @@ def test_only_one_hairline_is_drawn_between_two_rows(shot):
         "leaking into child widgets again.")
 
 
+def test_a_row_markers_background_actually_paints(shot):
+    """tests/test_review.py checks that each marker pair in review._MARKERS clears
+    WCAG AA on its own; it cannot see whether Qt's rich text actually honours the
+    span's background at all. If the background never painted, the marker's
+    foreground would land straight on the row's own window colour instead of on its
+    pill, which is a different failure than a badly chosen pair and invisible to a
+    string-level check. The fixture's first two rows carry "new" and "changed" kinds
+    (see synthetic_details), so both pills are on screen with no row expanded.
+    """
+    from internpearls.review import _MARKERS
+    s = shot("review")
+    painted = colour_counts(s.image)
+    for kind, (label, background, _foreground) in _MARKERS.items():
+        assert painted.get(background, 0) > 0, (
+            f"the {kind} marker's background {background} ({label}) is not painting: "
+            "Qt is not honouring the span's background-color")
+
+
 def test_an_expanded_image_row_paints_the_picture_itself(shot):
     """The mock suite can only assert that an <img> tag was written. Whether Qt's rich
     text actually loads a local file and paints it is a pixel question, and it is the

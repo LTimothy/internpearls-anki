@@ -277,6 +277,44 @@ def test_every_marker_sets_a_foreground_with_its_background():
         assert "; color:" in span, f"{kind} marker sets a background with no foreground"
 
 
+def _luminance(hex_colour):
+    """WCAG relative luminance of a "#rrggbb" string, 0.0 (black) to 1.0 (white)."""
+    hex_colour = hex_colour.lstrip("#")
+    r, g, b = (int(hex_colour[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+    def channel(v):
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def _contrast_ratio(a, b):
+    """WCAG contrast ratio between two "#rrggbb" strings: 1.0 identical, 21.0 black on
+    white."""
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_every_marker_pill_clears_wcag_aa_against_its_own_background():
+    """qt_tests/test_contrast.py cannot see this: it measures one dominant foreground
+    and background per widget, and a row's own body text always outcompetes its small
+    inline marker for that spot, so the pill's own colour pair is structurally never
+    what that suite samples. This test is what stands guard over the pair instead.
+
+    A bare, foreground-only marker was the obvious design and isn't available: measured
+    against the render suite's own light and dark window colours, no single colour
+    clears AA on both, so a marker without a matched background would be unreadable on
+    one of the two themes. The ratio is computed rather than hardcoded, so a changed
+    colour is re-checked rather than just trusted.
+    """
+    AA = 4.5
+    for kind, (label, background, foreground) in review._MARKERS.items():
+        ratio = _contrast_ratio(background, foreground)
+        assert ratio >= AA, (
+            f"{kind} marker ({label}) is {ratio:.2f}:1, foreground {foreground} on "
+            f"background {background}; WCAG AA needs {AA}:1")
+
+
 def test_a_changed_row_shows_what_the_field_used_to_say():
     detail = dict(_basic_note_detail(), guid="g1", kind="changed",
                   was={"Back": "the answer she has today"})
