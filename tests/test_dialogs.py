@@ -248,6 +248,61 @@ def test_configure_source_github_form(anki):
     assert anki.mw._config["github_decks_repo"] == "someone/decks"
 
 
+def test_configure_source_switching_to_local_folder_clears_repo_and_keeps_token(
+        anki, tmp_path):
+    """Picking Local folder while a repo is already configured must make the folder
+    the effective source (a lingering repo otherwise wins inside _fetch_manifest) and
+    must not throw away a token she'll need if she switches back."""
+    from internpearls import dialogs
+    anki.mw._config = {"github_decks_repo": "example-org/study-decks",
+                       "github_token": "test-token-abc123"}
+    anki.gui.interactive = True
+    path = _write_source(tmp_path)
+
+    def respond(p):
+        if p["kind"] == "msgbox":
+            btn = next(b for b in p["buttons"] if b["label"] == "Local folder")
+            return {"events": [{"id": btn["id"], "click": True}]}
+        if p["kind"] == "prompt":
+            return {"text": path, "ok": True}
+        # If the repo is left set, _fetch_manifest tries GitHub first and (with no
+        # network in tests) this comes back "couldn't connect" instead of "info".
+        assert p["kind"] == "info" and "Saved and connected" in p["text"]
+        return {}
+
+    drive(anki, dialogs.configure_source, respond)
+    cfg = anki.mw._config
+    assert cfg["decks_dir"] == path
+    assert cfg["github_decks_repo"] == ""
+    assert cfg["github_token"] == "test-token-abc123"
+
+
+def test_configure_source_switching_to_github_repo_clears_local_folder(anki, tmp_path):
+    """Guard against the fix above breaking symmetry: picking a GitHub repo while a
+    local folder is configured must still clear the folder."""
+    from internpearls import dialogs
+    anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "msgbox":
+            btn = next(b for b in p["buttons"] if b["label"] == "GitHub repo")
+            return {"events": [{"id": btn["id"], "click": True}]}
+        if p["kind"] == "dialog":
+            repo = find(p["tree"], t="line", password=False)
+            ok = find(p["tree"], t="button", label="OK")
+            return {"events": [{"id": repo["id"], "value": "example-org/study-decks"},
+                               {"id": ok["id"], "click": True}]}
+        # no network in tests: the real flow warns it saved but couldn't connect
+        assert p["kind"] == "warn" and "couldn't connect" in p["text"]
+        return {}
+
+    drive(anki, dialogs.configure_source, respond)
+    cfg = anki.mw._config
+    assert cfg["github_decks_repo"] == "example-org/study-decks"
+    assert cfg["decks_dir"] == ""
+
+
 # --------------------------------------------------------------- feedback digest
 def test_copy_again_puts_the_digest_back_on_the_clipboard(anki, monkeypatch):
     """A clipboard clobbered between copying and pasting should not cost the notes:
