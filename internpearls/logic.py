@@ -394,10 +394,10 @@ def extract_apkg_media(path, index, names, dest):
     """Extract just the named pictures out of an .apkg into `dest`.
 
     Returns {filename: local path} for the ones that came out. Deliberately not the
-    whole archive: a single deck carries up to 179 images and a review that opens two
-    rows has no reason to pay for the others. A name absent from `index`, or a member
-    absent from the zip, is skipped rather than raised, so one stale reference in one
-    field cannot blank the row it sits in.
+    whole archive: a deck can carry a couple of hundred images and a review that opens
+    two rows has no reason to pay for the others. A name absent from `index`, or a
+    member absent from the zip, is skipped rather than raised, so one stale reference in
+    one field cannot blank the row it sits in.
     """
     out = {}
     wanted = [n for n in dict.fromkeys(names) if n in index]

@@ -12,7 +12,7 @@ from internpearls import review
 _ADDON_DIR = os.path.dirname(review.__file__)
 
 
-def _image_note_detail(image_field='<img src="femoral.jpg">'):
+def _image_note_detail(image_field='<img src="sample-a.jpg">'):
     return {
         "notetype": "Study Deck - Image ID",
         "fields": [
@@ -25,7 +25,7 @@ def _image_note_detail(image_field='<img src="femoral.jpg">'):
     }
 
 
-def _basic_note_detail(image_field='<img src="femoral.jpg">'):
+def _basic_note_detail(image_field='<img src="sample-a.jpg">'):
     return {
         "notetype": "Study Deck - Basic",
         "fields": [
@@ -46,7 +46,7 @@ def test_image_note_primary_line_names_its_image():
     review. This is the exact regression: Image landing in _STRUCTURAL_FIELDS
     dropped it from every line, collapsed and expanded alike."""
     primary = review._primary_html(_image_note_detail())
-    assert "femoral.jpg" in primary
+    assert "sample-a.jpg" in primary
     assert "Which block does this coverage map show?" in primary
     assert "<img" not in primary
 
@@ -62,8 +62,8 @@ def test_basic_note_answer_names_its_image_when_expanded():
     (_answer_html), not the collapsed primary line."""
     primary = review._primary_html(_basic_note_detail())
     answer = review._answer_html(_basic_note_detail())
-    assert "femoral.jpg" not in primary
-    assert "femoral.jpg" in answer
+    assert "sample-a.jpg" not in primary
+    assert "sample-a.jpg" in answer
     assert "Femoral nerve block" in answer
     assert "<img" not in primary
     assert "<img" not in answer
@@ -471,7 +471,7 @@ def test_no_stylesheet_anywhere_sets_a_background_without_a_foreground():
 
 
 # --------------------------------------------------------------------- images
-def _apkg_with_image(tmp_path, name="femoral.jpg"):
+def _apkg_with_image(tmp_path, name="sample-a.jpg"):
     """A minimal .apkg carrying one media file, enough for the resolver to find it."""
     import json
     import sqlite3
@@ -515,24 +515,24 @@ def test_a_row_names_its_image_until_it_is_expanded(tmp_path):
     """Collapsed rows stay one line each. Extraction is what expanding pays for, so a
     review nobody opens extracts nothing."""
     resolve = review._media_resolver(
-        _apkg_with_image(tmp_path), {"femoral.jpg": "0"}, str(tmp_path / "out"))
+        _apkg_with_image(tmp_path), {"sample-a.jpg": "0"}, str(tmp_path / "out"))
     row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False,
                            resolve=resolve)
     texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
-    assert "[image: femoral.jpg]" in texts
+    assert "[image: sample-a.jpg]" in texts
     assert "<img" not in texts
     assert not os.path.exists(str(tmp_path / "out"))
 
 
 def test_expanding_a_row_renders_its_image_for_real(tmp_path):
     resolve = review._media_resolver(
-        _apkg_with_image(tmp_path), {"femoral.jpg": "0"}, str(tmp_path / "out"))
+        _apkg_with_image(tmp_path), {"sample-a.jpg": "0"}, str(tmp_path / "out"))
     row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False,
                            resolve=resolve)
     caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
     _click(caret["id"], row)
     texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
-    assert "<img src=" in texts and "femoral.jpg" in texts
+    assert "<img src=" in texts and "sample-a.jpg" in texts
     assert f'width="{review._IMAGE_MAX_W}"' in texts
 
 
@@ -545,15 +545,15 @@ def test_expanding_a_row_rerenders_a_back_field_inline_image_in_place(tmp_path):
     """
     detail = _basic_note_detail(image_field="")
     detail["fields"] = [
-        (n, '<img src="femoral.jpg"> Femoral nerve block' if n == "Back" else v)
+        (n, '<img src="sample-a.jpg"> Femoral nerve block' if n == "Back" else v)
         for n, v in detail["fields"]]
     resolve = review._media_resolver(
-        _apkg_with_image(tmp_path), {"femoral.jpg": "0"}, str(tmp_path / "out"))
+        _apkg_with_image(tmp_path), {"sample-a.jpg": "0"}, str(tmp_path / "out"))
     row = review._card_row(dict(detail, guid="g1"), {}, {}, False, resolve=resolve)
 
     before = next(n for n in _walk(row.node())
                  if n.get("t") == "label" and "Femoral nerve block" in (n.get("text") or ""))
-    assert "[image: femoral.jpg]" in before["text"]
+    assert "[image: sample-a.jpg]" in before["text"]
     assert "<img" not in before["text"]
     answer_id = before["id"]
 
@@ -561,7 +561,7 @@ def test_expanding_a_row_rerenders_a_back_field_inline_image_in_place(tmp_path):
     _click(caret["id"], row)
 
     after = next(n for n in _walk(row.node()) if n.get("id") == answer_id)
-    assert "<img src=" in after["text"] and "femoral.jpg" in after["text"]
+    assert "<img src=" in after["text"] and "sample-a.jpg" in after["text"]
     assert "Femoral nerve block" in after["text"]
 
 
@@ -601,11 +601,69 @@ def test_a_row_with_no_resolver_keeps_naming_its_image():
     caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
     _click(caret["id"], row)
     texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
-    assert "[image: femoral.jpg]" in texts and "<img" not in texts
+    assert "[image: sample-a.jpg]" in texts and "<img" not in texts
 
 
 def test_image_tag_declines_a_file_qt_cannot_decode(tmp_path):
     assert review._image_tag(str(tmp_path / "nothing-here.jpg")) is None
+
+
+def test_expanding_a_row_drops_the_chip_once_the_strip_paints_the_picture(tmp_path):
+    """The bug this guards: a picture and its `[image: name]` chip both rendering,
+    stacked, for the same file. Before the fix, `_answer_html` baked the chip into the
+    answer label's text once, at construction time, and nothing ever revisited it, so
+    it survived a successful expand unchanged sitting right under the picture it names.
+    """
+    resolve = review._media_resolver(
+        _apkg_with_image(tmp_path), {"sample-a.jpg": "0"}, str(tmp_path / "out"))
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False,
+                           resolve=resolve)
+    caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
+    _click(caret["id"], row)
+    texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
+    assert "<img src=" in texts and "sample-a.jpg" in texts   # the strip painted it
+    assert "[image:" not in texts, (
+        "the answer still names a picture the strip already painted")
+    assert "Femoral nerve block" in texts   # the rest of the answer survives
+
+
+def test_expanding_a_row_keeps_the_chip_when_the_picture_cannot_be_resolved():
+    """The other direction: a name missing from the archive (or any other resolution
+    failure) must keep the chip, since naming the picture is the fallback for exactly
+    this case."""
+    resolve = review._media_resolver("unused.apkg", {}, "unused-dest")
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False,
+                           resolve=resolve)
+    caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
+    _click(caret["id"], row)
+    texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
+    assert "<img src=" not in texts
+    assert "[image: sample-a.jpg]" in texts
+
+
+def test_a_changed_rows_previous_image_is_not_resolved_before_expand(monkeypatch):
+    """A collapsed changed row's `was` line resolves its picture through
+    `_collection_image`, a real `mw.col.media.dir()` call, an `os.path.exists`, and a
+    QImage decode per picture. Building the row must not pay for any of that before it
+    is ever opened, same invariant the strip's own resolver already keeps: a review
+    nobody opens costs nothing.
+    """
+    calls = []
+    real = review._collection_image
+
+    def spy(name):
+        calls.append(name)
+        return real(name)
+
+    monkeypatch.setattr(review, "_collection_image", spy)
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
+                  was={"Back": '<img src="sample-b.jpg">'})
+    row = review._card_row(detail, {}, {}, False)
+    assert calls == [], "the was-line resolved its picture before the row was ever opened"
+
+    caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
+    _click(caret["id"], row)
+    assert calls == ["sample-b.jpg"], "expanding the row should resolve it exactly once"
 
 
 # ------------------------------------------------------------------ mock Qt surface
