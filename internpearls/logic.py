@@ -1004,13 +1004,18 @@ def build_feedback_digest(entries, version="", date=""):
     return "\n".join(lines).rstrip() + "\n"
 
 
-def duplicate_dialog_html(groups):
+def duplicate_dialog_html(groups, muted_color):
     """Body of the Clean up duplicates confirmation, from find_duplicate_groups output.
 
     Each line leads with the card's readable label (the note's precomputed 'label',
     see collection._her_notes_summary; escaped here since it's data), then says which
     copy is kept and which is archived. When every copy sits in the same deck it reads
     as a copy count rather than repeating that deck name twice.
+
+    `muted_color` is the caller's palette colour for the secondary detail text. This
+    module is pure Python by contract (no aqt/anki import, unit-testable with no Anki
+    install), so it cannot read the live theme itself; the caller, which already knows
+    the theme, supplies the colour instead.
     """
     lines = []
     for g in groups:
@@ -1027,7 +1032,7 @@ def duplicate_dialog_html(groups):
             detail = (f"keeping {html.escape(keep_leaf)} ({g['keep']['reps']} review(s)), "
                       f"archiving {html.escape(', '.join(arch_leaves))} "
                       f"({arch_reps} review(s))")
-        lines.append(f"{label} <span style='color:gray;'>{detail}</span>")
+        lines.append(f"{label} <span style='color:{muted_color};'>{detail}</span>")
     n_archive = sum(len(g["archive"]) for g in groups)
     n_cards = len(groups)
     copies = "copy" if n_archive == 1 else "copies"
@@ -1067,18 +1072,22 @@ def select_empty_cards(report_notes, scoped_nids):
     return removable, skipped
 
 
-def empty_cards_dialog_html(rows, skipped=0):
+def empty_cards_dialog_html(rows, muted_color, skipped=0):
     """Body of the Remove empty cards confirmation, from collection.find_empty_cards.
 
     Each row names the card the way the rest of the add-on labels one, then lists which
     deletion numbers went missing, since "c3, c4" is what she actually sees on the dead
     card in review.
+
+    `muted_color` is the caller's palette colour for the missing-deletions detail, for
+    the same reason duplicate_dialog_html takes one: this module stays pure, so the
+    theme-aware caller passes the colour in rather than this reading the live theme.
     """
     lines = []
     for r in rows:
         label = html.escape(r.get("label") or "")
         gone = ", ".join(f"c{o}" for o in r.get("ords", []))
-        lines.append(f"{label} <span style='color:gray;'>{gone}</span>"
+        lines.append(f"{label} <span style='color:{muted_color};'>{gone}</span>"
                      if gone else label)
     n_cards = sum(len(r["card_ids"]) for r in rows)
     cards = "card" if n_cards == 1 else "cards"
