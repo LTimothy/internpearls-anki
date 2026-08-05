@@ -196,6 +196,33 @@ def _image_text(detail):
     return field_preview_text(_field(detail, "Image"))
 
 
+def _primary_field(detail):
+    """The (name, value) of the note type's primary content field: a cloze's Text, or
+    otherwise the first field `_content_fields` keeps (Front for a basic note, Prompt
+    for an image note). None when a note type somehow has no content field at all.
+
+    Shared between `_primary_html`, which renders it, and `_primary_images`, which
+    looks for pictures inline in it, so the note-type branching that picks it out
+    lives in exactly one place rather than twice.
+    """
+    if _is_cloze(detail):
+        return ("Text", _field(detail, "Text"))
+    fields = _content_fields(detail)
+    return fields[0] if fields else None
+
+
+def _primary_field_names(detail):
+    """Every field name that feeds the card's primary line: `_primary_field`'s own
+    name, plus, for an image note, the Image field folded in beside it (see
+    `_primary_html`). Used to route a `was` line for any of them to the top of the
+    expanded body, since none of these fields has a block of its own down there."""
+    names = ["Image"] if _is_image_note(detail) else []
+    primary = _primary_field(detail)
+    if primary:
+        names.append(primary[0])
+    return names
+
+
 def _primary_html(detail):
     """The card's collapsed-row line, always its primary line whatever the note type:
     a cloze note's text with its deletions filled in (the fact under review lives in
@@ -209,11 +236,10 @@ def _primary_html(detail):
     {{c1::...}} markup, so cloze_filled_html fills the deletions into markup that is
     already safe and must not be escaped a second time.
     """
+    primary = _primary_field(detail)
+    text = field_preview_html(primary[1]) if primary else ""
     if _is_cloze(detail):
-        text = field_preview_html(_field(detail, "Text"))
         return cloze_filled_html(text, escape=False)
-    fields = _content_fields(detail)
-    text = field_preview_html(fields[0][1]) if fields else ""
     if _is_image_note(detail):
         image_text = html.escape(_image_text(detail))
         if image_text:
@@ -238,6 +264,21 @@ def _answer_html(detail):
         if image_text:
             answer = f"{answer} {image_text}".strip() if answer else image_text
     return answer
+
+
+def _answer_field_names(detail):
+    """Every field name `_answer_html` draws its expanded-body block from, mirroring
+    that function's own branching: a cloze's Image field is its whole answer block;
+    otherwise the second content field (Back for a basic note, Answer for an image
+    note), plus, for a non-image note, its own optional Image field folded in beside
+    it. Used to route a `was` line for any of them under the answer block."""
+    if _is_cloze(detail):
+        return ["Image"]
+    fields = _content_fields(detail)
+    names = [fields[1][0]] if len(fields) >= 2 else []
+    if not _is_image_note(detail):
+        names.append("Image")
+    return names
 
 
 def _answer_source(detail):
@@ -266,11 +307,8 @@ def _primary_images(detail):
     one that never showed them. Fields rendered in the body resolve their own images in
     place instead, so nothing appears twice.
     """
-    if _is_cloze(detail):
-        primary_value = _field(detail, "Text")
-    else:
-        fields = _content_fields(detail)
-        primary_value = fields[0][1] if fields else ""
+    primary = _primary_field(detail)
+    primary_value = primary[1] if primary else ""
     names = field_image_names(_field(detail, "Image")) + field_image_names(primary_value)
     return list(dict.fromkeys(names))
 
@@ -412,6 +450,30 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     blay.setContentsMargins(_CARET_W + _CARET_GAP, 2, 0, 2)
     blay.setSpacing(4)
 
+    # A changed field's `was` line belongs directly under the block that field feeds,
+    # per name, so the comparison reads as the same card in two states rather than as
+    # one detached list. `was_placed` tracks which changed names have already found a
+    # home; anything left over falls to the catch-all at the very end instead of
+    # vanishing, which covers a field with no block of its own (Tag) and a field whose
+    # block didn't render this time (its current value went blank).
+    changed_names = _changed_field_names(detail)
+    primary_names = set(_primary_field_names(detail))
+    answer_names = set(_answer_field_names(detail))
+    was_placed = set()
+
+    def _add_was(name):
+        was = _was_label(detail, name)
+        if was is not None:
+            blay.addWidget(was)
+
+    # The primary field (Front / a cloze's Text / an image note's Image+Prompt) is the
+    # collapsed header line above the body, not a block inside it, so its `was` line
+    # opens the body instead, reading as belonging to the line directly above it.
+    for name in changed_names:
+        if name in primary_names:
+            _add_was(name)
+            was_placed.add(name)
+
     images = _rich_label("")
     images.setVisible(False)
     blay.addWidget(images)
@@ -423,10 +485,10 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
         answer_value = _answer_source(detail)
         if answer_value:
             rerender.append((answer_label, answer_value))
-    for name in _changed_field_names(detail):
-        was = _was_label(detail, name)
-        if was is not None:
-            blay.addWidget(was)
+        for name in changed_names:
+            if name in answer_names:
+                _add_was(name)
+                was_placed.add(name)
 
     why_value = _field(detail, "Why")
     why_html = field_preview_html(why_value)
@@ -439,6 +501,9 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
                                 f" padding-left: 8px; color: {_WHY_RULE};")
         blay.addWidget(why_label)
         rerender.append((why_label, why_value))
+        if "Why" in changed_names:
+            _add_was("Why")
+            was_placed.add("Why")
 
     # Dosing is deliberately left out of rerender: it is a citation, never a picture,
     # and re-rendering it from field_preview_html would drop the "Dosing" label prefix.
@@ -448,6 +513,16 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
         dosing_label.setStyleSheet(f"background: {_DOSING_BG}; color: {_DOSING_FG};"
                                    f" padding: 6px; border-radius: 4px;")
         blay.addWidget(dosing_label)
+        if "Dosing" in changed_names:
+            _add_was("Dosing")
+            was_placed.add("Dosing")
+
+    # Anything still unplaced (Tag, or a field whose own block stayed empty) has
+    # nowhere of its own to sit under, but still needs to surface rather than
+    # disappear, so it goes at the end rather than wedged into an unrelated block.
+    for name in changed_names:
+        if name not in was_placed:
+            _add_was(name)
 
     if collect_feedback:
         box = QPlainTextEdit(flags.get(guid, ""))
