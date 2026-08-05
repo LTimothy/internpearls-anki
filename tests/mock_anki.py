@@ -692,6 +692,24 @@ class QWidget:
                 "children": [self._layout.node()] if self._layout else []}
 
 
+class QImage:
+    """Enough of QImage for the width cap review.py applies to an extracted picture.
+
+    The mock suite never has real image data, so an existing file reports a fixed
+    natural width and anything else reads as null, which is the branch that falls back
+    to naming the image. qt_tests/ exercises the real one.
+    """
+
+    def __init__(self, path=""):
+        self._ok = bool(path) and os.path.exists(path)
+
+    def isNull(self):
+        return not self._ok
+
+    def width(self):
+        return 800 if self._ok else 0
+
+
 class QLabel(QWidget):
     def __init__(self, text="", *a, **k):
         super().__init__()
@@ -1401,6 +1419,7 @@ def install():
                       ("QMenu", QMenu), ("QCheckBox", QCheckBox),
                       ("QDialog", QDialog), ("QDialogButtonBox", QDialogButtonBox),
                       ("QFrame", QFrame), ("QHBoxLayout", QHBoxLayout),
+                      ("QImage", QImage),
                       ("QLineEdit", QLineEdit), ("QMessageBox", QMessageBox),
                       ("QPlainTextEdit", QPlainTextEdit),
                       ("QScrollArea", QScrollArea), ("QSpinBox", QSpinBox),
