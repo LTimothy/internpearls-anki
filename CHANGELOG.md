@@ -15,6 +15,10 @@ this repo's `README.md` ("Versioning").
   before anything applies, with what it says today shown under each field that moved.
 - Rows carry a NEW or UPDATED marker, and the review button names whichever kinds it
   covers.
+- Fixed Configure source: choosing a local folder while a GitHub repo was already
+  configured left the repo in effect, so the folder was silently ignored. Picking a
+  local folder now actually switches the source to it, and no longer clears the
+  GitHub token, so switching back doesn't cost the saved credential.
 
 ## v0.41.1
 
