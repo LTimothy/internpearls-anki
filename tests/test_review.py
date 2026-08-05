@@ -248,6 +248,53 @@ def test_no_card_row_widget_carries_a_border_of_its_own():
         assert "border-bottom" not in (node.get("style") or "")
 
 
+# ----------------------------------------------------------------- new vs changed
+def test_a_new_row_and_a_changed_row_are_marked_differently():
+    new_html = review._row_html(dict(_basic_note_detail(), kind="new"))
+    changed_html = review._row_html(dict(_basic_note_detail(), kind="changed"))
+    assert "NEW" in new_html and "UPDATED" not in new_html
+    assert "UPDATED" in changed_html and "NEW" not in changed_html
+
+
+def test_an_unmarked_row_carries_no_marker_at_all():
+    """A review opened for one kind only, and every pre-existing caller, must render
+    exactly as before."""
+    assert "NEW" not in review._row_html(_basic_note_detail())
+    assert "UPDATED" not in review._row_html(_basic_note_detail())
+
+
+def test_every_marker_sets_a_foreground_with_its_background():
+    """The v0.32.1 rule, applied to markup rather than to a stylesheet: this one lives
+    inside the row's rich text, so the setStyleSheet lint cannot see it.
+
+    Matched on "; color:" rather than "color:", which "background-color:" contains and
+    would pass this test with no foreground set at all.
+    """
+    for kind in ("new", "changed"):
+        markup = review._row_html(dict(_basic_note_detail(), kind=kind))
+        span = markup[markup.index("background-color"):]
+        span = span[:span.index(">")]
+        assert "; color:" in span, f"{kind} marker sets a background with no foreground"
+
+
+def test_a_changed_row_shows_what_the_field_used_to_say():
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
+                  was={"Back": "the answer she has today"})
+    texts = " ".join(n.get("text") or "" for n in _walk(
+        review._card_row(detail, {}, {}, False).node()))
+    assert "the answer she has today" in texts
+    assert "was" in texts
+
+
+def test_a_changed_row_shows_nothing_extra_for_an_unchanged_field():
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
+                  was={"Back": "old back"})
+    texts = " ".join(n.get("text") or "" for n in _walk(
+        review._card_row(detail, {}, {}, False).node()))
+    assert "runs with the saphenous nerve" in texts   # the Why, rendered once
+    assert texts.count("was") == 1
+
+
 def test_separator_is_an_hline_carrying_the_rule_colour():
     node = review._separator().node()
     assert node["t"] == "hline"
