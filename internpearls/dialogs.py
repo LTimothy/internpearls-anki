@@ -99,7 +99,12 @@ def configure_source():
         if not ok or not path.strip():
             return
         conf["decks_dir"] = path.strip()
-        conf["github_token"] = ""
+        # A lingering repo name would win: _fetch_manifest checks gh_repo first and
+        # never even looks at decks_dir while one is set. Clear it so picking a local
+        # folder actually takes effect, mirroring how the GitHub branch above clears
+        # decks_dir. The token is left alone; it's inert with no repo configured, and
+        # she'll need it again if she switches back.
+        conf["github_decks_repo"] = ""
     else:
         return  # Cancel, or the dialog was closed
 
