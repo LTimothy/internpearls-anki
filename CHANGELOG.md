@@ -3,6 +3,19 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.42.0
+
+- The review dialog shows a card's pictures. Opening a row extracts just that card's
+  images from the deck file already downloaded and renders them in place; a collapsed
+  row still names them, so a long list stays cheap and a review nobody opens extracts
+  nothing.
+- Review now covers cards an update would change, not only cards it would add. A card
+  whose content was rewritten upstream used to import silently because it matched an
+  existing card; it is now counted per deck, named on the confirmation, and readable
+  before anything applies, with what it says today shown under each field that moved.
+- Rows carry a NEW or UPDATED marker, and the review button names whichever kinds it
+  covers.
+
 ## v0.41.1
 
 - Fixed the flagged-card summary being unreadable in Night Mode. The text block set its
