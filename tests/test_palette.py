@@ -11,9 +11,18 @@ AA = 4.5
 WINDOW = {"light": "#efefef", "dark": "#2f2f31"}
 BASE = {"light": "#ffffff", "dark": "#2f2f31"}
 # Roles drawn as text straight onto the dialog, so they answer to the window colour.
-ON_WINDOW = ("why", "accent", "dim", "muted", "warning")
+# updated_fg is here as well as in PAIRS below: it is paired with updated_bg for the
+# review row's marker chip, but dialogs.py also paints it bare on the window for the
+# About dialog's "update available" pill, so it needs both checks. The two loops below
+# are independent, so listing a role in both is not redundant.
+ON_WINDOW = ("why", "accent", "dim", "muted", "warning", "updated_fg")
 # Roles that carry their own background, so they answer to it instead.
 PAIRS = (("dosing_fg", "dosing_bg"), ("new_fg", "new_bg"), ("updated_fg", "updated_bg"))
+# Roles that are not text at all (a rule/divider colour), so no contrast check applies.
+# Named explicitly rather than left implicit, so the completeness test below stays an
+# honest check of every role in palette.py rather than a silent pass on anything absent
+# from ON_WINDOW and PAIRS.
+NON_TEXT_ROLES = ("row_rule", "cell_rule")
 
 
 def _luminance(value):
@@ -64,6 +73,25 @@ def test_marker_chips_stand_off_their_window_enough_to_read_as_chips():
 
 def test_both_sets_define_exactly_the_same_roles():
     assert set(palette.LIGHT) == set(palette.DARK)
+
+
+def test_every_role_is_covered_by_a_contrast_check():
+    """ON_WINDOW and PAIRS above are hand-maintained tuples, not derived from
+    palette.py, so a role added there and forgotten here would be checked by nothing:
+    the exact escaped-because-nobody-looked failure this whole pass kept finding, and
+    the contrast ledger being empty by policy (KNOWN_LOW_CONTRAST) makes this file the
+    only guard left. NON_TEXT_ROLES is the deliberate, named exception, so a role
+    missing from all three fails loudly here instead of quietly passing everywhere
+    else.
+    """
+    covered = set(ON_WINDOW) | set(NON_TEXT_ROLES)
+    for fg, bg in PAIRS:
+        covered.add(fg)
+        covered.add(bg)
+    missing = set(palette.LIGHT) - covered
+    assert not missing, (
+        "role(s) defined in palette.py but exercised by no check in this file: "
+        + ", ".join(sorted(missing)))
 
 
 def test_colors_follows_ankis_theme(monkeypatch):

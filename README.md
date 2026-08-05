@@ -302,27 +302,35 @@ Reach for it whenever a change involves a stylesheet, a border, spacing, or a co
 
 ### Colors
 
-Nothing here branches on Anki's Night Mode. Dialog colors are picked as saturated
-mid-tones that read on both themes, which keeps one code path instead of two.
+Colors live in `internpearls/palette.py`, in two sets, light and dark, chosen from
+Anki's own `theme_manager.night_mode` when a dialog builds. There is no theme-neutral
+value: measured against Anki's own window colors, no single mid-tone clears WCAG AA on
+both a light and a dark background, so a single set always leaves one theme unreadable.
+`tests/test_palette.py` checks every value arithmetically.
 
-That convention has one rule that's easy to miss: **if you hardcode a background,
-hardcode the foreground with it.** Text color otherwise comes from the platform
-palette, which flips with the theme while your background doesn't, so a light block
-ends up with white text on it in dark mode. A color-only style is safe; a
+That still leaves one rule that's easy to miss: **if you hardcode a background,
+hardcode the foreground with it, from the same set.** Text color otherwise comes from
+the platform palette, which flips with the theme while your background doesn't, so a
+light block ends up with white text on it in dark mode. A color-only style is safe; a
 background-only style is not.
 
 Better still, when a block just needs to look sunken rather than to carry a specific
 brand color: reference the palette from the stylesheet itself, `background:
 palette(base); color: palette(text); border: 1px solid palette(mid)`. Qt resolves those
-per theme, so the pair can never drift apart the way a hardcoded background and a
-palette foreground did twice. Two guards back this up, and both were added only after
-each had already missed a real instance: a source lint over every `setStyleSheet` call
-in the add-on (`tests/test_review.py`), and the real-Qt contrast suite, which measures
-`QPlainTextEdit` as well as labels and flat buttons (`qt_tests/test_contrast.py`).
+per theme on its own, so there's no set to pick and no pair that can drift apart the way
+a hardcoded background and a palette foreground did twice. Two guards back the
+hardcoded path, and both were added only after each had already missed a real instance:
+a source lint over every `setStyleSheet` call in the add-on (`tests/test_review.py`),
+and the real-Qt contrast suite, which measures `QPlainTextEdit` as well as labels and
+flat buttons (`qt_tests/test_contrast.py`).
 
-`--dark` approximates a dark theme via Qt's color-scheme hint. It is *not* Anki's
-night theme, so treat it as a check on whether hardcoded colors survive a dark
-background at all, not as proof night mode is right.
+`--dark` selects `palette.py`'s dark set, the same one a real dialog picks up under
+Anki's night mode, and separately approximates Anki's own window colors through Qt's
+color-scheme hint for anything that still reads from the platform palette. That second
+part is an approximation, not a reproduction, so a `palette()`-based color can still
+look slightly off from the real app; the `palette.py` colors themselves are exact,
+since `--dark` selects the real dark set rather than testing whether one value survives
+a dark background.
 
 ### Repackage after editing
 

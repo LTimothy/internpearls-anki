@@ -581,4 +581,8 @@ def about():
     # A QDialog built through _ask_scrollable rather than a bare QMessageBox, so About
     # carries the same title, width, and scrollable-body styling every other dialog
     # here does. no_label=None drops the second button: About only ever has the one.
-    _ask_scrollable(text, yes_label="OK", no_label=None, title=f"{APP_NAME}: About")
+    # open_external_links=True is the one deliberate exception to the wrapper's default:
+    # this body is fixed, add-on-authored text (never collection content), and its own
+    # repository anchor is meant to be clickable.
+    _ask_scrollable(text, yes_label="OK", no_label=None, title=f"{APP_NAME}: About",
+                    open_external_links=True)
