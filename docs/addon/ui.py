@@ -41,7 +41,7 @@ def _ask(text, **kw):
 
 
 def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=340,
-                    extra_label=None, on_extra=None, checkbox=None):
+                    extra_label=None, on_extra=None, checkbox=None, title=None):
     """Like _ask, but for content whose length isn't bounded by anything short: a
     bullet list of cards or decks that can grow into the dozens. A plain QMessageBox
     (what askUser/_ask use) has no scroll area, so long text just makes the box taller,
@@ -69,15 +69,28 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     at something in more detail shouldn't cost you the decision you were making. If
     `on_extra` returns a string, it replaces the body text, so the confirmation can
     reflect whatever happened while it was open; returning None leaves the body alone.
+
+    `no_label=None` drops the second button entirely, for a caller with nothing to
+    decline, just long or richly formatted content to show in a scrollable, consistently
+    styled dialog with a single acknowledgement button (About uses this).
+
+    `title` overrides the window title beyond the plain APP_NAME every other caller
+    here is fine with, for a caller (About) whose title carries a suffix the way the
+    add-on's other standalone dialogs (Settings, Manage decks) do.
     """
     dlg = QDialog(mw)
-    dlg.setWindowTitle(APP_NAME)
+    dlg.setWindowTitle(title or APP_NAME)
     dlg.setMinimumWidth(460)
     lay = QVBoxLayout(dlg)
 
     body = QLabel(text)
     body.setWordWrap(True)
+    # setWidgetResizable(True) below stretches this label's box to fill the whole
+    # scroll viewport, and Qt vertically centres a label's text within its own box by
+    # default, so a short body would otherwise float with blank space above it.
+    body.setAlignment(Qt.AlignmentFlag.AlignTop)
     body.setTextFormat(Qt.TextFormat.RichText)
+    body.setOpenExternalLinks(True)
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -93,7 +106,8 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
 
     bb = QDialogButtonBox()
     yes = bb.addButton(yes_label, QDialogButtonBox.ButtonRole.AcceptRole)
-    bb.addButton(no_label, QDialogButtonBox.ButtonRole.RejectRole)
+    if no_label:
+        bb.addButton(no_label, QDialogButtonBox.ButtonRole.RejectRole)
     if extra_label:
         extra = bb.addButton(extra_label, QDialogButtonBox.ButtonRole.ActionRole)
 
