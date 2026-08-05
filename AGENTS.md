@@ -131,6 +131,28 @@ relax them without understanding why they're there.
   with no error — found by testing this exact page in an automated,
   non-foregrounded browser tab. `setTimeout(fn, 0)` yields a real turn of the
   event loop regardless of tab visibility and doesn't have this failure mode.
+- **Review renders a card's media only from an already-downloaded `.apkg`, on
+  expand.** `field_preview_html` names an image unless it is handed a
+  resolver, and the resolver extracts on first expand into a per-dialog temp
+  dir. Rendering eagerly would extract every picture in a deck (179 in one of
+  them) to show a list most of which is never opened, and rendering from a
+  path that was never extracted paints broken images, which is the failure
+  the naming behavior exists to avoid.
+- **A row marker is a background and foreground pair, never a bare colour.**
+  Measured against the render suite's own window colours (`#efefef` light,
+  `#2f2f31` dark), no single colour clears WCAG AA 4.5:1 on both themes, so a
+  foreground-only marker would be unreadable on one of them. Guarded by two
+  direct tests, not the general contrast suite: `qt_tests/test_contrast.py`
+  measures one dominant foreground/background pair per widget, and a row's
+  own body text always outcompetes a small inline pill, so it cannot see this
+  case at all. `tests/test_review.py` computes WCAG directly over
+  `review._MARKERS`, and `qt_tests/test_paint.py` asserts each pill's
+  background colour actually appears in the render.
+- **`remap_cards` owns what "matched" and "new" mean.** `find_changed_notes`
+  takes its pair list rather than re-deciding, for the same reason
+  `new_notes` is returned from there: a second implementation of that ladder
+  eventually disagrees, and the visible symptom is a preview that lies about
+  what is going to change.
 - **`_run_sync`'s `on_progress` callback must return truthy to continue.** A
   False return (Cancel clicked in `cancellable_progress`) stops the loop
   *before* that deck's fetch/import, never partway through one, so whatever
