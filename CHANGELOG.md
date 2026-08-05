@@ -3,6 +3,19 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.43.0
+
+- Every colour now comes in a light and a dark version, picked from Anki's own theme. The
+  explanation text on a card, the cloze fills, the links and the muted help text were all
+  hard to read in Night Mode; all of them now meet the WCAG AA contrast standard on both
+  themes, as does every block that carries its own background.
+- The NEW and UPDATED markers in the review read as chips rather than as tinted text.
+- The update confirmation starts at the top of its window instead of floating in the middle.
+- Advanced is regrouped so its items sit with the ones they belong with: acting on the deck
+  source, repairing the collection, then the backup and restore pairs.
+- "Import intern pearls deck" is now "Restore intern pearls deck", which is what it does and
+  matches "Restore full collection".
+
 ## v0.42.0
 
 - The review dialog shows a card's pictures. Opening a row extracts just that card's

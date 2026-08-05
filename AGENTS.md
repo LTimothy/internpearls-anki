@@ -165,6 +165,15 @@ relax them without understanding why they're there.
   not `setValue()` calls, on purpose, since `cancellable_progress()`'s own
   setup/teardown calls `setValue()` outside the per-step loop and would
   otherwise throw off a test's "cancel after N steps" count.
+- **Colours live in `palette.py`, in two sets, and nowhere else.** No module
+  may hold a hex literal. There is no theme-neutral value: measured against
+  Anki's own window colours, no single colour clears WCAG AA on both, so a
+  single set always leaves one theme unreadable. `tests/test_palette.py`
+  checks the values arithmetically and `qt_tests/test_contrast.py` checks
+  what actually paints; the latter cannot see a small inline span, which is
+  why both exist.
+- **`KNOWN_LOW_CONTRAST` is empty and stays empty.** A colour that fails is a
+  colour to fix, not an entry to add.
 
 ## Releases
 
