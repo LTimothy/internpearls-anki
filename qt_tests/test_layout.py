@@ -91,6 +91,47 @@ def test_a_short_confirmation_starts_at_the_top_not_the_middle(shot):
         "it should hug the dialog's own top margin, not float partway down")
 
 
+def test_manage_decks_empty_state_starts_at_the_top_not_the_middle(shot):
+    """Same defect as `test_a_short_confirmation_starts_at_the_top_not_the_middle`,
+    one call site over: the Manage decks empty state ("No decks available yet...")
+    used to sit in its own QScrollArea with the default Expanding size policy, which
+    claimed the dialog's leftover height and left the message floating mid-panel
+    instead of hugging the row above it.
+
+    Manage decks has real content above the empty message (title, source line,
+    instructions, the Select all/Select none bar), so this can't scan from the
+    dialog's row 0 the way the confirmation test does; that would just find the
+    title's ink. Instead it bounds the scan between two stable anchors: the bottom of
+    the Select all/Select none bar (the last fixed row before the empty-state region)
+    and the top of the "Preserved fields" section (the next fixed row after it). Only
+    the empty-state message lives in that band, so the first non-background pixel in
+    it is exactly the gap this message opens with.
+    """
+    _, q = harness.bootstrap()
+    s = shot("manage-decks", empty=True)
+    labels = [w for w in s.dialog.findChildren(q.QLabel) if w.text().strip()]
+    body = next(w for w in labels if "No decks available" in w.text())
+    preserved = next(w for w in labels if w.text() == "Preserved fields")
+    select_all = next(b for b in s.dialog.findChildren(q.QPushButton)
+                      if b.text() == "Select all")
+
+    top_bound = widget_rect(s.dialog, select_all).bottom()
+    bottom_bound = widget_rect(s.dialog, preserved).top()
+    body_rect = widget_rect(s.dialog, body)
+
+    background = s.image.pixelColor(body_rect.left(), top_bound).name()
+    first_ink_row = next(
+        (y for y in range(top_bound, bottom_bound)
+         if any(s.image.pixelColor(x, y).name() != background
+               for x in range(body_rect.left(), body_rect.right() + 1))),
+        bottom_bound)
+    gap_above = first_ink_row - top_bound
+    assert gap_above < 40, (
+        f"the empty-state message starts painting {gap_above}px below the row "
+        "above it; it should hug that row, not float partway down toward "
+        "Preserved fields")
+
+
 def test_review_rows_share_a_left_edge(shot):
     """Tagged and untagged rows must start at the same x.
 

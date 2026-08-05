@@ -246,34 +246,34 @@ class _DeckManagerDialog(QDialog):
         bar.addStretch()
         outer.addLayout(bar)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        holder = QWidget()
-        col = QVBoxLayout(holder)
-        col.setSpacing(6)
-        col.setContentsMargins(0, 0, 6, 0)
         if rows:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            holder = QWidget()
+            col = QVBoxLayout(holder)
+            col.setSpacing(6)
+            col.setContentsMargins(0, 0, 6, 0)
             # The 230px floor only makes sense once there's a list to scroll: it gives
-            # a few rows room before a scrollbar kicks in. Reserving it for the empty
-            # state too just wrapped one line of text in a mostly blank panel, since
-            # nothing else in `col` grows to fill it either.
+            # a few rows room before a scrollbar kicks in.
             scroll.setMinimumHeight(230)
             for r in rows:
                 col.addWidget(self._deck_row(r))
             col.addStretch()
+            scroll.setWidget(holder)
             outer.addWidget(scroll, 1)
         else:
-            col.addWidget(muted_label(
+            # No QScrollArea here: it's a single static line with nothing to scroll,
+            # and a QScrollArea defaults to an Expanding vertical size policy, which
+            # claims the dialog's leftover height for itself and leaves the label
+            # floating mid-box instead of at its own natural size (the same bug fixed
+            # in ui.py's _ask_scrollable). A plain label has no such policy, so it sizes
+            # to its own content and the addStretch() below collects all the leftover
+            # space instead.
+            outer.addWidget(muted_label(
                 "No decks available yet. Use the button above to set up or "
                 "fix your deck source."))
-            outer.addWidget(scroll)
-            # Without an explicit stretch, a dialog opened taller than its natural
-            # content (a manual resize) has nothing telling Qt where the surplus goes,
-            # so it spreads thin gaps between every section below instead of leaving
-            # one, in the one place that's actually empty here.
             outer.addStretch()
-        scroll.setWidget(holder)
 
         outer.addWidget(section_label("Preserved fields"))
         self._pf_edit = QLineEdit(", ".join(protected))
