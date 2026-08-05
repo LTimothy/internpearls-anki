@@ -326,12 +326,13 @@ def test_every_marker_pill_clears_wcag_aa_against_its_own_background():
     one of the two themes. The ratio is computed rather than hardcoded, so a changed
     colour is re-checked rather than just trusted.
     """
-    from internpearls import palette
+    from internpearls import palette, widgets
     AA = 4.5
     active = palette.colors()
     pairs = {"new": (active["new_bg"], active["new_fg"]),
              "changed": (active["updated_bg"], active["updated_fg"])}
-    for kind, label in review._MARKER_LABELS.items():
+    for kind in pairs:   # review only ever renders these two chip kinds (see sync.py)
+        label = widgets.CHIPS[kind]
         background, foreground = pairs[kind]
         ratio = _contrast_ratio(background, foreground)
         assert ratio >= AA, (

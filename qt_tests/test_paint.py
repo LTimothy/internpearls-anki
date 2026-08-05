@@ -113,12 +113,13 @@ def test_a_row_markers_background_actually_paints(shot):
     rows carry "new" and "changed" kinds (see synthetic_details), so both pills are on
     screen with no row expanded.
     """
-    from internpearls.review import _MARKER_LABELS
+    from internpearls.widgets import CHIPS
     pairs = {"new": (palette.LIGHT["new_bg"], palette.LIGHT["new_fg"]),
              "changed": (palette.LIGHT["updated_bg"], palette.LIGHT["updated_fg"])}
     s = shot("review")
     painted = colour_counts(s.image)
-    for kind, label in _MARKER_LABELS.items():
+    for kind in pairs:   # review only ever renders these two chip kinds (see sync.py)
+        label = CHIPS[kind]
         background, _foreground = pairs[kind]
         assert painted.get(background, 0) > 0, (
             f"the {kind} marker's background {background} ({label}) is not painting: "
