@@ -428,7 +428,7 @@ def test_remap_cards_end_to_end(tmp_path):
     }
     aliases = {"New wording": "Old wording"}     # records that rename
 
-    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her, aliases)
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her, aliases)
 
     assert in_place == 2          # "Matches directly" and "New wording" (via alias)
     assert as_new == 1            # "Never seen before" has no match anywhere
@@ -442,7 +442,7 @@ def test_remap_cards_end_to_end(tmp_path):
 def test_remap_cards_no_matches_are_all_new(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "g1", "Nobody has this")])
-    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her={}, aliases={})
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her={}, aliases={})
     assert (remap, in_place, as_new) == ({}, 0, 1)
     assert new_notes == [(1, ["Nobody has this", "back text"], "g1")]
 
@@ -454,7 +454,7 @@ def test_remap_cards_guid_already_matches_needs_no_rewrite(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "shared-guid", "Same front")])
     her = {"Same front": "shared-guid"}
-    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her, aliases={})
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her, aliases={})
     assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
 
 
@@ -464,7 +464,7 @@ def test_remap_cards_alias_target_also_missing_is_new(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "g1", "New wording")])
     aliases = {"New wording": "Old wording"}   # but "Old wording" isn't in her map
-    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her={}, aliases=aliases)
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her={}, aliases=aliases)
     assert (remap, in_place, as_new) == ({}, 0, 1)
     assert [rid for rid, _, _ in new_notes] == [1]
 
@@ -477,7 +477,7 @@ def test_remap_cards_matches_by_guid_before_front(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "stable-guid", "Reworded front, take three")])
     her = {"Original front wording": "stable-guid"}
-    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her, aliases={})
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her, aliases={})
     assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
 
 
@@ -487,7 +487,7 @@ def test_remap_cards_guid_match_wins_over_front_match(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "guid-a", "Front of B")])
     her = {"Front of A": "guid-a", "Front of B": "guid-b"}
-    remap, in_place, as_new, new_notes = logic.remap_cards(apkg, her, aliases={})
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her, aliases={})
     assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
 
 
@@ -500,7 +500,7 @@ def test_remap_cards_new_notes_length_always_matches_as_new(tmp_path):
         (2, "g-new-a", "New A"),
         (3, "g-new-b", "New B"),
     ])
-    _, _, as_new, new_notes = logic.remap_cards(
+    _, _, as_new, new_notes, _ = logic.remap_cards(
         apkg, her={"She has this": "g-known"}, aliases={})
     assert as_new == len(new_notes) == 2
     assert [rid for rid, _, _ in new_notes] == [2, 3]   # apkg order preserved
@@ -513,11 +513,37 @@ def test_remap_cards_new_notes_carries_every_field_for_image_cards(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "g1", ['<img src="femoral.jpg">', "Name this nerve",
                                       "Femoral nerve"])])
-    _, _, _, new_notes = logic.remap_cards(apkg, her={}, aliases={})
+    _, _, _, new_notes, _ = logic.remap_cards(apkg, her={}, aliases={})
     assert new_notes == [(1, ['<img src="femoral.jpg">', "Name this nerve",
                               "Femoral nerve"], "g1")]
     # and the display helper picks the prompt out of exactly that list:
     assert logic.note_display_label(new_notes[0][1]) == "Name this nerve"
+
+
+def test_remap_cards_reports_every_pair_it_matched(tmp_path):
+    """Change detection has to reuse this ladder rather than reimplement it: a second
+    implementation would eventually disagree, and the visible symptom is a preview that
+    lies about which cards are about to change."""
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [
+        (1, "apkg-guid-same", "Matched by guid"),
+        (2, "apkg-guid-other", "Matched by front"),
+        (3, "apkg-guid-new", "Nobody has this"),
+    ])
+    her = {"Matched by front": "her-guid-front", "Matched by guid": "apkg-guid-same"}
+    _, in_place, as_new, new_notes, matched = logic.remap_cards(apkg, her, aliases={})
+    assert in_place == 2 and as_new == 1
+    assert matched == [(1, "apkg-guid-same", "apkg-guid-same"),
+                       (2, "apkg-guid-other", "her-guid-front")]
+    assert len(new_notes) == 1
+
+
+def test_remap_cards_matched_and_new_together_account_for_every_note(tmp_path):
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "a", "One"), (2, "b", "Two"), (3, "c", "Three")])
+    _, _, _, new_notes, matched = logic.remap_cards(
+        apkg, her={"One": "her-one"}, aliases={})
+    assert len(matched) + len(new_notes) == 3
 
 
 # ----------------------------------------------------------------- apkg_note_details
