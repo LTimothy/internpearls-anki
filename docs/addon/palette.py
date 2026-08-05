@@ -25,6 +25,10 @@ LIGHT = {
     "new_fg":     "#10305f",
     "updated_bg": "#efc277",
     "updated_fg": "#5e3103",
+    "retired_bg": "#e2a6a1",
+    "retired_fg": "#5c1410",
+    "moved_bg":   "#c9b3ea",
+    "moved_fg":   "#3a1a63",
     "warning":    "#b33427",
 }
 
@@ -41,6 +45,10 @@ DARK = {
     "new_fg":     "#dbe9ff",
     "updated_bg": "#6b4f22",
     "updated_fg": "#ffe4b5",
+    "retired_bg": "#8a3c34",
+    "retired_fg": "#ffdad4",
+    "moved_bg":   "#5a4080",
+    "moved_fg":   "#ecdcff",
     "warning":    "#f0968c",
 }
 

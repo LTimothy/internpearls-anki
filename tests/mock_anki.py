@@ -700,6 +700,12 @@ class QWidget:
     def setSizePolicy(self, *a):
         pass
 
+    def height(self):
+        # No real layout engine here, so no real geometry either: always 0, same as a
+        # freshly constructed, never-shown real widget. qt_tests/ (real Qt, offscreen)
+        # is what exercises actual scroll geometry.
+        return 0
+
     def node(self):
         return {"t": "box", "id": self.wid, "style": self._style,
                 "visible": self._visible,
@@ -944,16 +950,55 @@ class QFrame(QWidget):
                 "children": [self._layout.node()] if self._layout else []}
 
 
+class QScrollBar:
+    """Minimal stand-in for the object a real QScrollArea.verticalScrollBar() returns.
+
+    Added for widgets.StreamingList, which connects to its valueChanged signal to
+    extend the list as the reader scrolls near the bottom. The mock has no real layout
+    engine, so maximum() stays whatever a caller sets it to (0 unless told otherwise);
+    the geometry-driven behaviour is qt_tests/'s job, on the real widget. This stub
+    exists so the production wiring (connecting to the real signal) has something to
+    connect to here too, rather than the widget having to guard against a scrollbar
+    that might not exist.
+    """
+
+    def __init__(self):
+        self._value = 0
+        self._maximum = 0
+        self.valueChanged = Signal()
+
+    def value(self):
+        return self._value
+
+    def setValue(self, v):
+        self._value = v
+        self.valueChanged.emit(v)
+
+    def maximum(self):
+        return self._maximum
+
+    def setMaximum(self, v):
+        self._maximum = v
+
+
 class QScrollArea(QWidget):
     def __init__(self, *a, **k):
         super().__init__()
         self._widget = None
+        self._vbar = QScrollBar()
+        self._viewport = QWidget()
 
     def setWidgetResizable(self, v):
         pass
 
     def setWidget(self, w):
         self._widget = w
+
+    def verticalScrollBar(self):
+        return self._vbar
+
+    def viewport(self):
+        return self._viewport
 
     def node(self):
         return {"t": "scroll", "id": self.wid,
