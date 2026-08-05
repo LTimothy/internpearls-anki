@@ -333,6 +333,83 @@ def test_a_changed_row_shows_nothing_extra_for_an_unchanged_field():
     assert texts.count("was") == 1
 
 
+def _text_nodes(detail):
+    """Every label's text in a card row, in the same depth-first order the layout
+    walks them, so a test can compare *positions* rather than just presence."""
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, False)
+    return [n.get("text") or "" for n in _walk(row.node()) if n.get("t") == "label"]
+
+
+def _first_index(texts, needle):
+    return next(i for i, t in enumerate(texts) if needle in t)
+
+
+def test_a_changed_why_shows_its_previous_value_after_the_current_one():
+    """The defect this guards: every `was` line used to land at one fixed spot, after
+    the answer and before Why, so a changed Why's previous value rendered ABOVE the
+    current Why instead of under it. Positional, not just "both appear": the pre-fix
+    layout puts the fixed slot (and so this `was` line) before the Why block, which
+    would put `was_i` before `current_i` and fail this assertion.
+    """
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
+                  was={"Why": "an older explanation of the same mechanism"})
+    texts = _text_nodes(detail)
+    current_i = _first_index(texts, "runs with the saphenous nerve")
+    was_i = _first_index(texts, "an older explanation of the same mechanism")
+    assert was_i > current_i
+
+
+def test_a_changed_dosing_shows_its_previous_value_after_the_current_one():
+    """Same defect as Why, for Dosing: the fixed slot sat before the dosing block, so
+    a changed Dosing's `was` line rendered above the current dosing instead of under
+    it. Positional for the same reason as the Why test above.
+    """
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed")
+    detail["fields"] = [(n, "0.5 mg/kg IV" if n == "Dosing" else v)
+                        for n, v in detail["fields"]]
+    detail["was"] = {"Dosing": "1 mg/kg IV, per an older source"}
+    texts = _text_nodes(detail)
+    current_i = _first_index(texts, "0.5 mg/kg IV")
+    was_i = _first_index(texts, "1 mg/kg IV, per an older source")
+    assert was_i > current_i
+
+
+def test_a_changed_primary_field_shows_its_previous_value_first_in_the_body():
+    """Front is the collapsed header line, never rendered inside the expandable body
+    at all, so its `was` line used to appear detached from anything, sitting in the
+    fixed slot after the answer. It belongs first in the body instead, immediately
+    under the header it describes. Checked as adjacency (immediately after the header
+    label) rather than just "before the answer": the pre-fix layout also puts it
+    before Why and Dosing, so a looser check would pass against the defect too.
+    """
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
+                  was={"Front": "what block used to cover the anterior thigh?"})
+    texts = _text_nodes(detail)
+    header_i = _first_index(texts, "What nerve block covers the anterior thigh?")
+    was_i = _first_index(texts, "what block used to cover the anterior thigh?")
+    assert was_i == header_i + 1
+
+
+def test_two_changed_fields_show_was_lines_after_their_own_fields_in_order():
+    """Why and Dosing changed together: each `was` line lands after its own current
+    field, not both dumped together in one spot, and the two lines keep the note
+    type's own field order (Why before Dosing). Fully positional: the pre-fix fixed
+    slot puts both `was` lines before either block renders, so `why_i < why_was_i`
+    alone already fails against it (why_was_i would be smaller, not larger).
+    """
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed")
+    detail["fields"] = [(n, "0.5 mg/kg IV" if n == "Dosing" else v)
+                        for n, v in detail["fields"]]
+    detail["was"] = {"Why": "an older explanation of the same mechanism",
+                     "Dosing": "1 mg/kg IV, per an older source"}
+    texts = _text_nodes(detail)
+    why_i = _first_index(texts, "runs with the saphenous nerve")
+    why_was_i = _first_index(texts, "an older explanation of the same mechanism")
+    dosing_i = _first_index(texts, "0.5 mg/kg IV")
+    dosing_was_i = _first_index(texts, "1 mg/kg IV, per an older source")
+    assert why_i < why_was_i < dosing_i < dosing_was_i
+
+
 def test_separator_is_an_hline_carrying_the_rule_colour():
     node = review._separator().node()
     assert node["t"] == "hline"
