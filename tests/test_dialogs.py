@@ -153,6 +153,33 @@ def test_manage_decks_status_pill_recovers_after_a_collection_revert(anki, tmp_p
     drive(anki, dialogs.manage_decks, respond)
 
 
+def test_deck_state_pills_use_the_palette():
+    from internpearls import dialogs, palette
+    active = palette.colors()
+    for state in ("new", "update", "current"):
+        label, role = dialogs._STATE_STYLE[state]
+        assert role in active, f"{state} pill uses an unknown palette role {role!r}"
+
+
+def test_manage_decks_source_label_uses_the_palette_not_a_css_keyword(anki, tmp_path):
+    from internpearls import dialogs, palette
+    active = palette.colors()
+    anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        source_label = next(n for n in walk(p["tree"])
+                            if n.get("t") == "label"
+                            and (n.get("text") or "").startswith("Source:"))
+        assert "gray" not in source_label["style"]
+        assert active["muted"] in source_label["style"]
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+
+
 # --------------------------------------------------------------------- settings
 def test_settings_saves_all_four_values(anki):
     from internpearls import dialogs
@@ -277,6 +304,22 @@ def test_configure_source_switching_to_local_folder_clears_repo_and_keeps_token(
     assert cfg["github_token"] == "test-token-abc123"
 
 
+def test_configure_source_message_uses_the_palette_not_a_css_keyword(anki):
+    from internpearls import dialogs, palette
+    active = palette.colors()
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "msgbox":
+            assert "color:gray" not in p["text"]
+            assert active["muted"] in p["text"]
+            cancel = next(b for b in p["buttons"] if b["label"] == "Cancel")
+            return {"events": [{"id": cancel["id"], "click": True}]}
+        return {}
+
+    drive(anki, dialogs.configure_source, respond)
+
+
 def test_configure_source_switching_to_github_repo_clears_local_folder(anki, tmp_path):
     """Guard against the fix above breaking symmetry: picking a GitHub repo while a
     local folder is configured must still clear the folder."""
@@ -396,6 +439,21 @@ def test_about_shows_version_and_live_settings(anki):
     def respond(p):
         assert p["kind"] == "msgbox"
         assert ADDON_VERSION in p["text"] and "Auto-sync: off" in p["text"]
+        ok = p["buttons"][0]
+        return {"events": [{"id": ok["id"], "click": True}]}
+
+    drive(anki, dialogs.about, respond)
+
+
+def test_about_version_tag_uses_the_palette_not_a_css_keyword(anki):
+    from internpearls import dialogs, palette
+    active = palette.colors()
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "msgbox"
+        assert "color:gray" not in p["text"]
+        assert active["muted"] in p["text"]
         ok = p["buttons"][0]
         return {"events": [{"id": ok["id"], "click": True}]}
 

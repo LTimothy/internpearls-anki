@@ -38,6 +38,7 @@ from .logic import (apkg_note_details, apkg_notes, bullets, decks_to_update,
                     find_stranded_pairs, manifest_needs_newer_addon,
                     note_display_label, remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
+from .palette import colors
 from .review import (clear_saved_feedback, load_saved_feedback,
                      review_cards, show_result_with_feedback)
 from .ui import _ask, _ask_scrollable, _info, _safe, _warn, cancellable_progress, wait_cursor
@@ -394,7 +395,8 @@ def _stranded_block(stranded, her):
     """
     if not stranded:
         return ""
-    lines = [f"{p['front']} <span style='color:gray;'>→ {p['successor_front']}</span>"
+    muted = colors()["muted"]
+    lines = [f"{p['front']} <span style='color:{muted};'>→ {p['successor_front']}</span>"
              for p in stranded]
     return (f"<b>{len(stranded)}</b> card(s) are in your collection twice, in an older "
             "and a newer wording of the same question, because the wording changed "
@@ -492,7 +494,8 @@ def reconcile_decks():
     # way to reach them. Capping keeps the dialog itself short in the common case;
     # the scroll area is the structural guarantee that it can never happen again even
     # if some future list grows past the cap.
-    lines = [f"{r['identity']} <span style='color:gray;'>"
+    muted = colors()["muted"]
+    lines = [f"{r['identity']} <span style='color:{muted};'>"
              f"({r['deck'].split('::')[-1]})</span>" for r in fresh]
     missing = sum(1 for r in fresh
                   if r["superseded_by"] and r["replacements_present"] == 0)
@@ -509,7 +512,7 @@ def reconcile_decks():
     ) if fresh else ""
 
     move_lines = [f"{mw.col.get_note(her[m['guid']]).fields[0]} <span "
-                  f"style='color:gray;'>→ {m['to'].split('::')[-1]}</span>" for m in moves]
+                  f"style='color:{muted};'>→ {m['to'].split('::')[-1]}</span>" for m in moves]
     moves_block = (
         f"<b>{len(moves)}</b> card(s) belong to a deck that's since been reorganized."
         + bullets(move_lines, cap=15)
@@ -596,7 +599,7 @@ def clean_up_duplicates():
         _info(f"No duplicate cards found. (Source: {source}.)")
         return
 
-    block = duplicate_dialog_html(groups)
+    block = duplicate_dialog_html(groups, colors()["muted"])
     safety_note = (
         "<br><br>Nothing is deleted. Archived cards keep their review history and can "
         "be brought back anytime by unsuspending them or moving them out of the "
@@ -804,6 +807,7 @@ def update_decks():
         kept = f"{pc[0]} kept" + (f" ({len(pc[3])} changing)" if pc[3] else "")
         return f"{short} ({kept} · {pc[1]} new)"
 
+    muted = colors()["muted"]
     sections = []
     if todo:
         sections.append(
@@ -815,20 +819,20 @@ def update_decks():
         # number. note_display_label is plain text (tags stripped, entities decoded), so
         # it has to be escaped on the way back into this HTML: an unescaped front like
         # "SpO2 <94%" would otherwise be parsed as a tag and swallow the rest of the line.
-        new_lines = [f"{html.escape(label)} <span style='color:gray;'>"
+        new_lines = [f"{html.escape(label)} <span style='color:{muted};'>"
                      f"({deck.split('::')[-1]})</span>" for deck, label, _ in new_cards]
         sections.append(
             f"<b>{len(new_cards)}</b> card(s) will be added that you don't have yet."
             + bullets(new_lines, cap=15))
     if changed_cards:
-        changed_lines = [f"{html.escape(label)} <span style='color:gray;'>"
+        changed_lines = [f"{html.escape(label)} <span style='color:{muted};'>"
                          f"({deck.split('::')[-1]})</span>"
                          for deck, label, _ in changed_cards]
         sections.append(
             f"<b>{len(changed_cards)}</b> card(s) you already have will change. Your "
             "review history stays with them." + bullets(changed_lines, cap=15))
     if fresh:
-        lines = [f"{r['identity']} <span style='color:gray;'>"
+        lines = [f"{r['identity']} <span style='color:{muted};'>"
                  f"({r['deck'].split('::')[-1]})</span>" for r in fresh]
         already_note = f" ({already} more were already archived earlier.)" if already else ""
         sections.append(
@@ -839,7 +843,7 @@ def update_decks():
         sections.append(_stranded_block(stranded, her))
     if moves:
         move_lines = [f"{mw.col.get_note(her[m['guid']]).fields[0]} <span "
-                      f"style='color:gray;'>→ {m['to'].split('::')[-1]}</span>" for m in moves]
+                      f"style='color:{muted};'>→ {m['to'].split('::')[-1]}</span>" for m in moves]
         sections.append(
             f"<b>{len(moves)}</b> card(s) belong to a deck that's since been "
             "reorganized." + bullets(move_lines, cap=15))

@@ -1315,6 +1315,9 @@ def test_note_display_label_handles_a_note_with_nothing_to_show():
 
 
 # ------------------------------------------------------- duplicate dialog body
+_MUTED = "#63676c"   # a stand-in colour; logic.py is pure and takes it as a parameter
+
+
 def _dup_group(label, keep_deck, arch_deck, keep_reps=0, arch_reps=0):
     return {
         "model": "M", "front": "f",
@@ -1326,34 +1329,41 @@ def _dup_group(label, keep_deck, arch_deck, keep_reps=0, arch_reps=0):
 def test_duplicate_dialog_html_shows_the_label_not_a_raw_image_tag():
     groups = [_dup_group("Name this nerve block",
                          "Deck::3. The Blocks", "Deck::3. The Blocks")]
-    html = logic.duplicate_dialog_html(groups)
+    html = logic.duplicate_dialog_html(groups, _MUTED)
     assert "Name this nerve block" in html
     assert "<img" not in html
 
 
 def test_duplicate_dialog_html_reads_as_a_copy_count_when_decks_match():
     groups = [_dup_group("Card A", "Deck::Blocks", "Deck::Blocks", keep_reps=3)]
-    html = logic.duplicate_dialog_html(groups)
+    html = logic.duplicate_dialog_html(groups, _MUTED)
     assert "2 copies in Blocks" in html
     assert "duplicate copy of" in html and "</b> card." in html
 
 
 def test_duplicate_dialog_html_names_both_decks_when_they_differ():
     groups = [_dup_group("Card A", "Deck::New", "Deck::Old", keep_reps=5, arch_reps=1)]
-    html = logic.duplicate_dialog_html(groups)
+    html = logic.duplicate_dialog_html(groups, _MUTED)
     assert "keeping New" in html and "archiving Old" in html
 
 
 def test_duplicate_dialog_html_escapes_the_label():
     groups = [_dup_group("A <script> & B", "Deck::X", "Deck::X")]
-    html = logic.duplicate_dialog_html(groups)
+    html = logic.duplicate_dialog_html(groups, _MUTED)
     assert "<script>" not in html and "&lt;script&gt;" in html
 
 
 def test_duplicate_dialog_html_pluralizes_the_heading():
     groups = [_dup_group("A", "D::X", "D::X"), _dup_group("B", "D::Y", "D::Y")]
-    html = logic.duplicate_dialog_html(groups)
+    html = logic.duplicate_dialog_html(groups, _MUTED)
     assert "duplicate copies of" in html and "</b> cards." in html
+
+
+def test_duplicate_dialog_html_uses_the_passed_colour_not_a_css_keyword():
+    groups = [_dup_group("Card A", "Deck::Blocks", "Deck::Blocks", keep_reps=3)]
+    html = logic.duplicate_dialog_html(groups, _MUTED)
+    assert "color:gray" not in html
+    assert _MUTED in html
 
 
 def test_find_duplicate_groups_sorted_by_model_then_front():
@@ -1541,7 +1551,8 @@ def test_select_empty_cards_refuses_a_note_that_would_be_deleted():
 def test_empty_cards_dialog_html_names_the_missing_deletions():
     from internpearls.logic import empty_cards_dialog_html
     html = empty_cards_dialog_html(
-        [{"nid": 1, "card_ids": [11, 12], "label": "a regrouped card", "ords": [3, 4]}])
+        [{"nid": 1, "card_ids": [11, 12], "label": "a regrouped card", "ords": [3, 4]}],
+        _MUTED)
     assert "a regrouped card" in html and "c3, c4" in html
     assert "<b>2</b> empty cards" in html and "<b>1</b> note" in html
 
@@ -1549,5 +1560,15 @@ def test_empty_cards_dialog_html_names_the_missing_deletions():
 def test_empty_cards_dialog_html_escapes_the_label():
     from internpearls.logic import empty_cards_dialog_html
     html = empty_cards_dialog_html(
-        [{"nid": 1, "card_ids": [11], "label": "SpO<sub>2</sub> & <b>x</b>", "ords": [2]}])
+        [{"nid": 1, "card_ids": [11], "label": "SpO<sub>2</sub> & <b>x</b>", "ords": [2]}],
+        _MUTED)
     assert "&lt;sub&gt;" in html and "&amp;" in html
+
+
+def test_empty_cards_dialog_html_uses_the_passed_colour_not_a_css_keyword():
+    from internpearls.logic import empty_cards_dialog_html
+    html = empty_cards_dialog_html(
+        [{"nid": 1, "card_ids": [11, 12], "label": "a regrouped card", "ords": [3, 4]}],
+        _MUTED)
+    assert "color:gray" not in html
+    assert _MUTED in html
