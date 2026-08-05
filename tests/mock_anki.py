@@ -735,6 +735,12 @@ class QLabel(QWidget):
     def setTextFormat(self, f):
         pass
 
+    def setAlignment(self, a):
+        pass
+
+    def setOpenExternalLinks(self, v):
+        pass
+
     def node(self):
         return {"t": "label", "id": self.wid, "text": self._text,
                 "style": self._style}
@@ -832,6 +838,17 @@ class QPlainTextEdit(QWidget):
     def setReadOnly(self, v):
         self._readonly = v
 
+    def fontMetrics(self):
+        # No real font here, so no real line height either; enough for review.py's
+        # content-height arithmetic to run without crashing, not to be accurate.
+        return types.SimpleNamespace(lineSpacing=lambda: 14)
+
+    def document(self):
+        return types.SimpleNamespace(documentMargin=lambda: 4)
+
+    def frameWidth(self):
+        return 1
+
     def node(self):
         return {"t": "textarea", "id": self.wid, "value": self._text,
                 "placeholder": self._placeholder, "readonly": self._readonly}
@@ -875,6 +892,9 @@ class _Layout:
         self._children.append(l)
 
     def addStretch(self, *a):
+        pass
+
+    def addSpacing(self, v):
         pass
 
     def setSpacing(self, v):

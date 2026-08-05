@@ -806,7 +806,25 @@ def offer_feedback_digest(parent, entries, summary_html=None):
     # in both themes, and `text` on `base` is a pairing the platform guarantees.
     view.setStyleSheet("QPlainTextEdit { background: palette(base);"
                        " color: palette(text); border: 1px solid palette(mid); }")
-    lay.addWidget(view, 1)
+    # Sized to its own content, up to the same 340px cap _ask_scrollable uses for a
+    # long body, rather than the plain `addWidget(view, 1)` stretch this used to carry:
+    # that stretch filled whatever height the dialog happened to be, so one short
+    # flagged card left most of the box a blank payload-coloured slab. A long digest
+    # still gets the full cap and scrolls internally past it.
+    metrics = view.fontMetrics()
+    line_count = text.count("\n") + 1
+    # The +4 covers rounding in Qt's own layout of the document inside the viewport;
+    # without it this estimate lands a couple of pixels short and triggers a scrollbar
+    # nobody needs.
+    content_height = int(line_count * metrics.lineSpacing()
+                         + view.document().documentMargin() * 2 + view.frameWidth() * 2) + 4
+    view.setFixedHeight(min(content_height, 340))
+    lay.addWidget(view)
+    # Without this, a dialog opened taller than its now content-sized parts (a manual
+    # resize, or this add-on's own minimumHeight above) has nothing telling Qt where
+    # the surplus goes, so it spreads thin gaps between the title/hint/box instead of
+    # leaving one, below the content and above the buttons where it belongs.
+    lay.addStretch()
     bb = QDialogButtonBox()
     again = bb.addButton("Copy again", QDialogButtonBox.ButtonRole.ActionRole)
     again.clicked.connect(lambda: copy_to_clipboard(text))

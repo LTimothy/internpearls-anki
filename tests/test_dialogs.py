@@ -430,17 +430,23 @@ def test_review_row_starts_collapsed_and_the_caret_expands_it(anki, monkeypatch)
 
 
 # ------------------------------------------------------------------------ about
-def test_about_shows_version_and_live_settings(anki):
+def test_about_is_a_dialog_with_a_single_ok_button(anki):
+    """About used to be a bare QMessageBox; it now routes through _ask_scrollable like
+    every other dialog here, which means it shows up as a "dialog" replay node (not
+    "msgbox") and keeps its one OK button rather than picking up a second, unwanted
+    Cancel/Continue from the shared wrapper's usual pair."""
     from internpearls import dialogs
     from internpearls.config import ADDON_VERSION
 
     anki.gui.interactive = True
 
     def respond(p):
-        assert p["kind"] == "msgbox"
-        assert ADDON_VERSION in p["text"] and "Auto-sync: off" in p["text"]
-        ok = p["buttons"][0]
-        return {"events": [{"id": ok["id"], "click": True}]}
+        assert p["kind"] == "dialog"
+        body = find(p["tree"], t="label")
+        assert ADDON_VERSION in body["text"] and "Auto-sync: off" in body["text"]
+        buttons = [n for n in walk(p["tree"]) if n.get("t") == "button"]
+        assert [b["label"] for b in buttons] == ["OK"]
+        return {"events": [{"id": buttons[0]["id"], "click": True}]}
 
     drive(anki, dialogs.about, respond)
 
@@ -451,10 +457,11 @@ def test_about_version_tag_uses_the_palette_not_a_css_keyword(anki):
     anki.gui.interactive = True
 
     def respond(p):
-        assert p["kind"] == "msgbox"
-        assert "color:gray" not in p["text"]
-        assert active["muted"] in p["text"]
-        ok = p["buttons"][0]
+        assert p["kind"] == "dialog"
+        body = find(p["tree"], t="label")
+        assert "color:gray" not in body["text"]
+        assert active["muted"] in body["text"]
+        ok = find(p["tree"], t="button", label="OK")
         return {"events": [{"id": ok["id"], "click": True}]}
 
     drive(anki, dialogs.about, respond)
