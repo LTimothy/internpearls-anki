@@ -326,7 +326,7 @@ def test_review_row_starts_collapsed_and_the_caret_expands_it(anki, monkeypatch)
         return {"events": [{"id": done["id"], "click": True}]}
 
     monkeypatch.setattr(anki.gui, "next_interaction", fake_next_interaction)
-    review.review_new_cards(None, decks, {})
+    review.review_cards(None, decks, {})
 
     assert len(rounds) == 2, "expected one round to open the row, one to finish"
 

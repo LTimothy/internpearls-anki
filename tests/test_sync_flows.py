@@ -1336,6 +1336,30 @@ def test_update_decks_review_button_covers_both_kinds(anki, tmp_path):
     assert "Review 2 card(s)" in seen["text"]
 
 
+def test_update_decks_review_button_covers_changed_only(anki, tmp_path):
+    """The button has three forms: both kinds, new-only, and this one, changed-only.
+    A deck where every pending card is a rewrite of one she already has must still
+    say what kind it shows, the same reasoning the new-only case already covers."""
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="the new answer"), TAGS)], None)})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen.setdefault("text", _labels(p["tree"]))
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert "Review 1 changed card(s)" in seen["text"]
+
+
 def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
     """Default: the review previews the incoming cards, with a cloze note's deletions
     filled in rather than blanked, and collects nothing."""
@@ -1353,7 +1377,7 @@ def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
         if p["kind"] != "dialog":
             return {}
         title, tree = p.get("title") or "", p["tree"]
-        if "new cards" in title:
+        if "card review" in title:
             seen["review"] = _labels(tree)
             seen["boxes"] = [n for n in _walk(tree) if n.get("t") == "textarea"]
             done = _find(tree, t="button", label="Done")
@@ -1402,7 +1426,7 @@ def test_review_renders_a_new_cards_picture_once_its_row_is_opened(anki, tmp_pat
         if p["kind"] != "dialog":
             return {}
         title, tree = p.get("title") or "", p["tree"]
-        if "new cards" in title:
+        if "card review" in title:
             caret = next(n for n in _walk(tree) if n.get("t") == "button"
                          and n.get("label") in ("▸", "▾"))
             if "opened" not in seen:
@@ -1445,7 +1469,7 @@ def test_review_rules_separate_cards_without_trailing_the_last_one(anki, tmp_pat
         if p["kind"] != "dialog":
             return {}
         title, tree = p.get("title") or "", p["tree"]
-        if "new cards" in title:
+        if "card review" in title:
             seen["hlines"] = [n for n in _walk(tree) if n.get("t") == "hline"]
             return {"events": [{"id": _find(tree, t="button", label="Done")["id"],
                                 "click": True}]}
@@ -1477,7 +1501,7 @@ def test_review_collects_feedback_when_the_toggle_is_on(anki, tmp_path):
         if p["kind"] != "dialog":
             return {}
         title, tree = p.get("title") or "", p["tree"]
-        if "new cards" in title:
+        if "card review" in title:
             seen["review"] = _labels(tree)
             box = next(n for n in _walk(tree) if n.get("t") == "textarea")
             done = _find(tree, t="button", label="Done")
@@ -1528,7 +1552,7 @@ def test_update_decks_declined_still_returns_the_feedback_she_wrote(anki, tmp_pa
         if p["kind"] != "dialog":
             return {}
         title, tree = p.get("title") or "", p["tree"]
-        if "new cards" in title:
+        if "card review" in title:
             seen["reviewed"] = True
             box = next(n for n in _walk(tree) if n.get("t") == "textarea")
             return {"events": [{"id": box["id"], "value": "too bulky"},
@@ -2083,7 +2107,7 @@ def _feedback_run(anki, tmp_path, on_review, decide="Cancel"):
         if p["kind"] != "dialog":
             return {}
         title, tree = p.get("title") or "", p["tree"]
-        if "new cards" in title:
+        if "card review" in title:
             seen["reviewed"] = True
             return on_review(tree, seen)
         if "card feedback" in title:
