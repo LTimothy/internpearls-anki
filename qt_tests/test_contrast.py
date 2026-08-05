@@ -43,23 +43,10 @@ def _text_widgets(dialog, q):
     edits = list(dialog.findChildren(q.QPlainTextEdit))
     return labels + buttons + edits
 
-# Colours that fail AA today, every ratio measured 2026-07-16. These are real
-# legibility bugs, not false positives, and every one is deliberately out of scope
-# here: they are hardcoded foregrounds over a palette background, so fixing them is an
-# add-on-wide colour change with its own design rather than a line in a test file.
-# The pattern is worth seeing whole: the one hardcoded colour that is NOT here is
-# _DOSING_FG, and it is the only one paired with a hardcoded background. README's
-# "Colors" rule works. It is just not applied anywhere else yet.
-#
-# This is a debt ledger, not an exemption list. It may only ever shrink. Adding to it
-# means shipping a legibility bug, which is a decision for the colour-system design,
-# not a way to make this file green.
-KNOWN_LOW_CONTRAST = {
-    "#808080": "ui.py muted_label/hint_label: 3.43:1 light, 3.38:1 dark",
-    "#8a9aa2": "review.py _DIM, the tag lead-in and caret: 2.53:1 light",
-    "#2563eb": "ui.py ACCENT / review.py _CLOZE_COLOR: 4.49:1 light, 2.58:1 dark",
-    "#2e6b3e": "review.py _WHY_RULE: 2.09:1 dark",
-}
+# Empty, and it should stay that way. This used to carry four hardcoded colours that
+# failed AA; they are all on the palette now, tuned per theme. If a colour starts
+# failing here, the colour is wrong: fix it in palette.py, do not add an entry.
+KNOWN_LOW_CONTRAST = {}
 
 
 @pytest.mark.parametrize("theme", sorted(harness.THEMES))

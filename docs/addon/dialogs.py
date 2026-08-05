@@ -543,7 +543,8 @@ def about():
     latest_known = _load_json(STATE, {}).get("last_notified_addon_version")
     update_suffix = ""
     if latest_known and not version_at_least(ADDON_VERSION, latest_known):
-        update_suffix = (f" &nbsp;<span style='color:#c0392b;'>(v{latest_known} "
+        warning = colors()["warning"]
+        update_suffix = (f" &nbsp;<span style='color:{warning};'>(v{latest_known} "
                          f"available — Advanced → Check for add-on updates)</span>")
 
     box = QMessageBox(mw)
