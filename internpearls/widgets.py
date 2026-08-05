@@ -34,13 +34,12 @@ def chip_html(kind):
     Empty string for `kind` not in CHIPS (including None), so a caller can always
     prepend the result with no branching of its own.
 
-    Same markup shape as review._marker_html, on purpose: a background always needs
-    its own foreground alongside it, since plain text colour comes from the platform
-    palette and a hardcoded background does not flip with it under Night Mode. And the
-    chip lives inside the row's own single rich-text paragraph rather than as a widget
-    beside it, because a separate marker widget starts each row's text at a different
-    x depending on whether that row happens to have one, and wraps against the
-    marker's edge instead of the row's.
+    A background always needs its own foreground alongside it, since plain text colour
+    comes from the platform palette and a hardcoded background does not flip with it
+    under Night Mode. And the chip lives inside the row's own single rich-text
+    paragraph rather than as a widget beside it, because a separate marker widget
+    starts each row's text at a different x depending on whether that row happens to
+    have one, and wraps against the marker's edge instead of the row's.
     """
     label = CHIPS.get(kind)
     if not label:
