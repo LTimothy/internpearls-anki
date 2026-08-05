@@ -697,6 +697,43 @@ def remap_cards(src, her, aliases):
     return remap, in_place, len(new_notes), new_notes, matched
 
 
+def find_changed_notes(matched, details, her_fields, protected=()):
+    """Which already-matched notes this .apkg would rewrite, and what they say now.
+
+    `matched` is remap_cards' own pair list, so this never re-decides what counts as
+    matched. `details` is apkg_note_details' labeled output for the same .apkg,
+    `her_fields` is {guid: {field name: value}} for the learner's notes.
+
+    Returns {note_id: {field name: her current value}}, carrying only the fields that
+    actually differ, so a caller can show what a card says today next to what it is
+    about to say.
+
+    Compared by field name, never by position: index 1 is Back on a basic note and
+    Prompt on an image note, so a positional comparison would report whole decks as
+    changed. Fields named in `protected` are skipped, since those hold the learner's own
+    annotations and every spec ships them empty. A field her note type does not have is
+    skipped too: the import's own note-type step adds a genuinely missing field, and
+    until it does there is nothing of hers to show.
+    """
+    skip = set(protected or ())
+    by_rid = {d.get("rid"): d for d in details}
+    out = {}
+    for rid, _apkg_guid, her_guid in matched:
+        detail = by_rid.get(rid)
+        hers = (her_fields or {}).get(her_guid)
+        if not detail or not hers:
+            continue
+        changed = {}
+        for name, value in detail.get("fields", []):
+            if name in skip or name not in hers:
+                continue
+            if (hers[name] or "").strip() != (value or "").strip():
+                changed[name] = hers[name]
+        if changed:
+            out[rid] = changed
+    return out
+
+
 def find_duplicate_groups(her_notes, canonical_deck_names):
     """Group the learner's notes that share a note type and front text, and for each
     group decide which copy to keep.
