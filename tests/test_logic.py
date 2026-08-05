@@ -369,8 +369,8 @@ def _add_apkg_media(path, files):
 def test_apkg_media_index_maps_each_filename_to_its_member(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "guid-a", "Front A")])
-    _add_apkg_media(apkg, {"femoral.jpg": b"\x89PNG-ish", "axillary.jpg": b"jpeg-ish"})
-    assert logic.apkg_media_index(apkg) == {"femoral.jpg": "0", "axillary.jpg": "1"}
+    _add_apkg_media(apkg, {"sample-a.jpg": b"\x89PNG-ish", "sample-b.jpg": b"jpeg-ish"})
+    assert logic.apkg_media_index(apkg) == {"sample-a.jpg": "0", "sample-b.jpg": "1"}
 
 
 def test_apkg_media_index_is_empty_when_the_deck_carries_no_pictures(tmp_path):
@@ -390,17 +390,17 @@ def test_apkg_media_index_tolerates_an_unreadable_media_member(tmp_path):
 
 
 def test_extract_apkg_media_writes_only_the_names_asked_for(tmp_path):
-    """One deck carries up to 179 images; a review that opens one card must not pay
-    for the rest."""
+    """A deck can carry a couple of hundred images; a review that opens one card must
+    not pay for the rest."""
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "guid-a", "Front A")])
-    _add_apkg_media(apkg, {"femoral.jpg": b"one", "axillary.jpg": b"two"})
+    _add_apkg_media(apkg, {"sample-a.jpg": b"one", "sample-b.jpg": b"two"})
     dest = str(tmp_path / "media")
     out = logic.extract_apkg_media(apkg, logic.apkg_media_index(apkg),
-                                   ["femoral.jpg"], dest)
-    assert list(out) == ["femoral.jpg"]
-    assert open(out["femoral.jpg"], "rb").read() == b"one"
-    assert sorted(os.listdir(dest)) == ["femoral.jpg"]
+                                   ["sample-a.jpg"], dest)
+    assert list(out) == ["sample-a.jpg"]
+    assert open(out["sample-a.jpg"], "rb").read() == b"one"
+    assert sorted(os.listdir(dest)) == ["sample-a.jpg"]
 
 
 def test_extract_apkg_media_skips_a_name_the_index_does_not_have(tmp_path):
@@ -408,10 +408,10 @@ def test_extract_apkg_media_skips_a_name_the_index_does_not_have(tmp_path):
     # blank the whole row.
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "guid-a", "Front A")])
-    _add_apkg_media(apkg, {"femoral.jpg": b"one"})
+    _add_apkg_media(apkg, {"sample-a.jpg": b"one"})
     out = logic.extract_apkg_media(apkg, logic.apkg_media_index(apkg),
-                                   ["femoral.jpg", "missing.jpg"], str(tmp_path / "m"))
-    assert list(out) == ["femoral.jpg"]
+                                   ["sample-a.jpg", "missing.jpg"], str(tmp_path / "m"))
+    assert list(out) == ["sample-a.jpg"]
 
 
 # ----------------------------------------------------------------------- remap_cards
@@ -511,10 +511,10 @@ def test_remap_cards_new_notes_carries_every_field_for_image_cards(tmp_path):
     # the whole field list; field zero alone would render as a broken image in the
     # confirmation's inline list rather than naming the card.
     apkg = str(tmp_path / "deck.apkg")
-    _make_mock_apkg(apkg, [(1, "g1", ['<img src="femoral.jpg">', "Name this nerve",
+    _make_mock_apkg(apkg, [(1, "g1", ['<img src="sample-a.jpg">', "Name this nerve",
                                       "Femoral nerve"])])
     _, _, _, new_notes, _ = logic.remap_cards(apkg, her={}, aliases={})
-    assert new_notes == [(1, ['<img src="femoral.jpg">', "Name this nerve",
+    assert new_notes == [(1, ['<img src="sample-a.jpg">', "Name this nerve",
                               "Femoral nerve"], "g1")]
     # and the display helper picks the prompt out of exactly that list:
     assert logic.note_display_label(new_notes[0][1]) == "Name this nerve"
@@ -693,7 +693,7 @@ def test_apkg_note_details_rejects_non_apkg_zip(tmp_path):
 def test_field_preview_text_names_images_instead_of_rendering_them(tmp_path):
     # The review dialog never extracts the .apkg's media, so a rendered <img> would be
     # a broken image. Naming the file says "this card has a picture" instead.
-    assert logic.field_preview_text('<img src="femoral.jpg">') == "[image: femoral.jpg]"
+    assert logic.field_preview_text('<img src="sample-a.jpg">') == "[image: sample-a.jpg]"
 
 
 def test_field_preview_text_reports_text_and_image_together():
@@ -747,9 +747,9 @@ def test_field_preview_html_leaves_entities_and_escaped_comparators_alone():
 
 def test_field_preview_html_substitutes_what_the_resolver_returns():
     out = logic.field_preview_html(
-        'before <img src="femoral.jpg"> after',
+        'before <img src="sample-a.jpg"> after',
         image_html=lambda name: f'<img src="/tmp/{name}" width="440">')
-    assert '<img src="/tmp/femoral.jpg" width="440">' in out
+    assert '<img src="/tmp/sample-a.jpg" width="440">' in out
     assert "[image:" not in out
     assert "before" in out and "after" in out
 
@@ -763,13 +763,13 @@ def test_field_preview_html_falls_back_to_naming_when_the_resolver_declines():
 
 def test_field_preview_html_hands_the_resolver_a_bare_filename():
     seen = []
-    logic.field_preview_html('<img src="subdir/femoral.jpg">',
+    logic.field_preview_html('<img src="subdir/sample-a.jpg">',
                              image_html=lambda name: seen.append(name) or None)
-    assert seen == ["femoral.jpg"]
+    assert seen == ["sample-a.jpg"]
 
 
 def test_field_preview_html_with_no_resolver_is_unchanged():
-    assert logic.field_preview_html('<img src="femoral.jpg">') == "[image: femoral.jpg]"
+    assert logic.field_preview_html('<img src="sample-a.jpg">') == "[image: sample-a.jpg]"
 
 
 def test_field_preview_html_resolves_multiple_images_in_correct_order():
@@ -782,14 +782,14 @@ def test_field_preview_html_resolves_multiple_images_in_correct_order():
         return f'<img src="/resolved/{name}" alt="{name}">'
 
     out = logic.field_preview_html(
-        'First <img src="femoral.jpg"> and second <img src="axillary.jpg">',
+        'First <img src="sample-a.jpg"> and second <img src="sample-b.jpg">',
         image_html=track_and_resolve)
 
     # Both filenames were passed to the resolver in document order
-    assert resolver_calls == ["femoral.jpg", "axillary.jpg"]
+    assert resolver_calls == ["sample-a.jpg", "sample-b.jpg"]
     # Both resolved images appear in the output paired with their correct names
-    assert '<img src="/resolved/femoral.jpg" alt="femoral.jpg">' in out
-    assert '<img src="/resolved/axillary.jpg" alt="axillary.jpg">' in out
+    assert '<img src="/resolved/sample-a.jpg" alt="sample-a.jpg">' in out
+    assert '<img src="/resolved/sample-b.jpg" alt="sample-b.jpg">' in out
     # No placeholder text leaked into the output
     assert "__RESOLVED_IMG_" not in out
     # Surrounding text is preserved
@@ -985,13 +985,13 @@ def test_write_personalized_preserves_media_and_manifest(tmp_path):
     out = str(tmp_path / "out.apkg")
     _make_mock_apkg(src, [(1, "g1", "Front 1")])
     with zipfile.ZipFile(src, "a") as z:      # add media the way a genanki package would
-        z.writestr("media", '{"0": "femoral.jpg"}')
+        z.writestr("media", '{"0": "sample-a.jpg"}')
         z.writestr("0", b"\xff\xd8\xff-mock-jpeg-bytes")
     logic.write_personalized(src, {1: "new-guid"}, out)
     with zipfile.ZipFile(out) as z:
         names = set(z.namelist())
         assert {"collection.anki2", "media", "0"} <= names
-        assert z.read("media") == b'{"0": "femoral.jpg"}'
+        assert z.read("media") == b'{"0": "sample-a.jpg"}'
         assert z.read("0") == b"\xff\xd8\xff-mock-jpeg-bytes"
     # and the GUID rewrite still took effect
     assert logic.apkg_notes(out)[0][2] == "new-guid"

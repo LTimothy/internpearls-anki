@@ -792,14 +792,17 @@ def update_decks():
     recovered = merge_saved_feedback(load_saved_feedback(), flags, new_index)
 
     def _line(d):
+        # The changed count is a subset of kept, not a third bucket beside it: those
+        # cards count as "changed" precisely because they matched an existing card.
+        # So it's parenthesized onto "kept" rather than joined with the same "·" new
+        # gets, which would read as three disjoint piles adding up to more cards than
+        # the deck actually has.
         short = d["name"].split("::")[-1]
         pc = preview.get(d["name"])
         if pc is None:
             return f"{short} (couldn't preview)"
-        counts = f"{pc[0]} kept · {pc[1]} new"
-        if pc[3]:
-            counts += f" · {len(pc[3])} changed"
-        return f"{short} ({counts})"
+        kept = f"{pc[0]} kept" + (f" ({len(pc[3])} changing)" if pc[3] else "")
+        return f"{short} ({kept} · {pc[1]} new)"
 
     sections = []
     if todo:
@@ -866,12 +869,17 @@ def update_decks():
     def _open_review(parent):
         """Read the new and changed cards in full and hand them to the review dialog.
 
-        This is the only place that pays for apkg_note_details, and only when she asks
-        for it: the .apkg is already downloaded and cached by the preview above, so the
-        cost is reading a local file, not another fetch. A deck that can't be read is
-        reported and skipped rather than blocking the rest, matching how a failed
-        preview download already degrades: the update itself doesn't depend on any of
-        this, so a broken preview must never be able to stop it.
+        Not the only place that pays for apkg_note_details any more:
+        `_preview_content_changes` already calls it per pending deck to build the
+        changed-fields diff, and the `changed_cards` loop above calls it again to name
+        what will change in the confirmation. This call is the one that only runs when
+        she actually asks to see the cards, reading the review dialog's full field set
+        rather than just what those two callers needed. Every call reads the same
+        already-downloaded, already-cached .apkg, so the cost here is a local file
+        read, not another fetch. A deck that can't be read is reported and skipped
+        rather than blocking the rest, matching how a failed preview download already
+        degrades: the update itself doesn't depend on any of this, so a broken preview
+        must never be able to stop it.
 
         That same downloaded file is what a row's pictures are extracted from when it is
         opened, so showing one costs a local read rather than another fetch. Each detail

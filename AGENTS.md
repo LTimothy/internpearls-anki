@@ -134,10 +134,10 @@ relax them without understanding why they're there.
 - **Review renders a card's media only from an already-downloaded `.apkg`, on
   expand.** `field_preview_html` names an image unless it is handed a
   resolver, and the resolver extracts on first expand into a per-dialog temp
-  dir. Rendering eagerly would extract every picture in a deck (179 in one of
-  them) to show a list most of which is never opened, and rendering from a
-  path that was never extracted paints broken images, which is the failure
-  the naming behavior exists to avoid.
+  dir. Rendering eagerly would extract every picture in a deck (a deck can
+  carry a couple of hundred images) to show a list most of which is never
+  opened, and rendering from a path that was never extracted paints broken
+  images, which is the failure the naming behavior exists to avoid.
 - **A row marker is a background and foreground pair, never a bare colour.**
   Measured against the render suite's own window colours (`#efefef` light,
   `#2f2f31` dark), no single colour clears WCAG AA 4.5:1 on both themes, so a
