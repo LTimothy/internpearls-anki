@@ -125,6 +125,43 @@ def test_a_row_markers_background_actually_paints(shot):
             "Qt is not honouring the span's background-color")
 
 
+def test_the_about_link_paints_in_the_accent_colour_light(shot):
+    """internpearls/ui.py's _ask_scrollable sets setOpenExternalLinks(True) on the body
+    label, so About's repository line is a real <a href> anchor. Qt paints an anchor in
+    its own built-in link colour, never in anything set on the widget -- verified
+    directly: giving the label's palette a Link role has no effect at all on what its
+    rich text paints, only a <style> block inside the document itself does. That is
+    exactly why the anchor survived the whole colour pass untouched: every other role
+    reached its widget through a stylesheet or an inline span colour, and this is the
+    one spot neither mechanism was in play. Scoped to the body label's own rect, since a
+    whole-image search would also pass if the accent colour happened to paint somewhere
+    else in the dialog.
+    """
+    accent = palette.LIGHT["accent"]
+    _, q = harness.bootstrap()
+    s = shot("about")
+    body = max((w for w in s.dialog.findChildren(q.QLabel) if w.text()),
+               key=lambda w: len(w.text()))
+    rect = widget_rect(s.dialog, body)
+    assert colour_counts(s.image, rect).get(accent, 0) > 0, (
+        f"the About link is not painting in the accent colour {accent}: Qt is still "
+        "using its own built-in link colour instead")
+
+
+def test_the_about_link_paints_in_the_accent_colour_dark(shot):
+    """Same check, on the theme where Qt's own link blue is the one the audit called
+    out: dark blue on a near-black window."""
+    accent = palette.DARK["accent"]
+    _, q = harness.bootstrap()
+    s = shot("about", theme="dark")
+    body = max((w for w in s.dialog.findChildren(q.QLabel) if w.text()),
+               key=lambda w: len(w.text()))
+    rect = widget_rect(s.dialog, body)
+    assert colour_counts(s.image, rect).get(accent, 0) > 0, (
+        f"the About link is not painting in the accent colour {accent}: Qt is still "
+        "using its own built-in link colour instead")
+
+
 def test_an_expanded_image_row_paints_the_picture_itself(shot):
     """The mock suite can only assert that an <img> tag was written. Whether Qt's rich
     text actually loads a local file and paints it is a pixel question, and it is the
