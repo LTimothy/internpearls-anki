@@ -56,15 +56,24 @@ def test_nothing_overflows_the_dialog_horizontally(shot, scene):
 
 
 def test_a_short_confirmation_starts_at_the_top_not_the_middle(shot):
-    """Qt stretches a QLabel to a resizable scroll area's viewport and vertically centres
-    its text, so a short confirmation floated with a screenful of blank above it.
+    """Two ways a short confirmation ends up with blank space above its first line, both
+    guarded here in one measurement:
 
-    The label's own widget box is not a useful signal here: setWidgetResizable(True)
-    stretches that box to fill the whole scroll viewport regardless of alignment (its
-    heightForWidth is ~114px, but its measured box is a full 340px tall), so the box's
-    top is always near the scroll's top either way. What actually moves with the fix is
-    where the glyphs get painted inside that box, so this reads pixels: it walks down
-    from the box's own top edge and finds the first row that isn't background colour.
+    1. The label's text not being top-aligned within its own box (the original bug:
+       setWidgetResizable(True) stretches the label's box to fill the scroll viewport,
+       and Qt vertically centres a label's text within its own box by default).
+    2. The scroll area itself floating away from the dialog's own top margin, which
+       stayed possible even after fix 1: with nothing below the scroll area claiming
+       the dialog's leftover height, Qt spread that surplus above, inside, and below
+       the scroll area instead of collecting it below the content, so a short
+       confirmation still opened with real blank space above the first line, just less
+       of it (verified: fixing only #1 left this at 89px in a 620px-tall dialog).
+
+    A fix to #1 alone cannot be told apart from a regression in #2 by measuring pixels
+    only inside the label's own box, since that box's top moves with #2 too. So this
+    reads pixels from the DIALOG's own top edge, not the label's: it walks down from
+    row 0 and finds the first row, anywhere in the label's rect, that isn't background
+    colour. That is the actual blank gap a person looking at the dialog sees.
     """
     _, q = harness.bootstrap()
     s = shot("confirm")
@@ -73,14 +82,13 @@ def test_a_short_confirmation_starts_at_the_top_not_the_middle(shot):
     rect = widget_rect(s.dialog, body)
     background = s.image.pixelColor(rect.left(), rect.top()).name()
     first_ink_row = next(
-        (y for y in range(rect.top(), rect.bottom() + 1)
+        (y for y in range(0, rect.bottom() + 1)
          if any(s.image.pixelColor(x, y).name() != background
                for x in range(rect.left(), rect.right() + 1))),
         rect.bottom() + 1)
-    offset = first_ink_row - rect.top()
-    assert offset < 40, (
-        f"the confirmation text starts {offset}px into its {rect.height()}px-tall box; "
-        "it should hug the top instead of floating near the middle")
+    assert first_ink_row < 40, (
+        f"the confirmation text starts painting at row {first_ink_row} of the dialog; "
+        "it should hug the dialog's own top margin, not float partway down")
 
 
 def test_review_rows_share_a_left_edge(shot):

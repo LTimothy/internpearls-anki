@@ -15,7 +15,7 @@ from contextlib import contextmanager
 
 from aqt import mw
 from aqt.qt import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
-                    QLabel, QProgressDialog, QPushButton, QScrollArea, Qt,
+                    QLabel, QProgressDialog, QPushButton, QScrollArea, QSizePolicy, Qt,
                     QVBoxLayout)
 from aqt.utils import askUser, getText, showInfo, showWarning, tooltip
 
@@ -83,7 +83,19 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     dlg.setMinimumWidth(460)
     lay = QVBoxLayout(dlg)
 
-    body = QLabel(text)
+    # Qt paints an <a href> anchor in its own built-in link colour, never in any colour
+    # set on the widget (its palette's Link role included: verified that setting it has
+    # no effect on what a QLabel's rich text actually paints), so an anchor in body text
+    # would otherwise stay the same shade on both themes and go unreadable on a dark
+    # window. A <style> block in the document itself is what Qt's rich text honours, so
+    # it's prepended here rather than left to each caller: every body this wrapper ever
+    # renders, About's link today or another dialog's tomorrow, gets it for free.
+    link_style = f"<style>a {{ color: {colors()['accent']}; }}</style>"
+
+    def _rich(t):
+        return link_style + t
+
+    body = QLabel(_rich(text))
     body.setWordWrap(True)
     # setWidgetResizable(True) below stretches this label's box to fill the whole
     # scroll viewport, and Qt vertically centres a label's text within its own box by
@@ -95,6 +107,14 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.Shape.NoFrame)
     scroll.setMaximumHeight(max_height)
+    # Preferred rather than the QScrollArea default of Expanding: Expanding claims any
+    # leftover height the dialog has beyond every widget's own natural size, which is
+    # exactly what stretched this scroll area to its full max_height cap even for a
+    # one-line body, leaving nothing to tell Qt where the *rest* of the leftover space
+    # (beyond that cap) should go, so it spread thinly above, inside, and below the
+    # scroll area instead. Preferred lets it size to its content and hands leftover
+    # space to the addStretch() below instead.
+    scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
     scroll.setWidget(body)
     lay.addWidget(scroll)
 
@@ -103,6 +123,12 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
         box = QCheckBox(checkbox["label"])
         box.setChecked(bool(checkbox.get("checked")))
         lay.addWidget(box)
+
+    # Collects all leftover height here, between the content and the buttons, instead
+    # of Qt spreading it across every gap (see scroll's size policy above): a short
+    # confirmation now sits at the top of the dialog with its buttons pinned to the
+    # bottom, and a long one still scrolls within max_height with the buttons reachable.
+    lay.addStretch()
 
     bb = QDialogButtonBox()
     yes = bb.addButton(yes_label, QDialogButtonBox.ButtonRole.AcceptRole)
@@ -114,7 +140,7 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
         def _run_extra():
             updated = on_extra(dlg) if on_extra else None
             if updated is not None:
-                body.setText(updated)
+                body.setText(_rich(updated))
         extra.clicked.connect(_run_extra)
     yes.clicked.connect(dlg.accept)
     bb.rejected.connect(dlg.reject)
