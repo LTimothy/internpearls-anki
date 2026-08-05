@@ -185,9 +185,8 @@ def synthetic_details():
         {"guid": "g5", "notetype": "Study Deck - Image ID",
          "fields": [("Image", '<img src="example-diagram.jpg">'),
                     ("Prompt", "What is this, and what does it show?"),
-                    ("Answer", "An image note names its picture rather than "
-                               "painting it."),
-                    ("Why", "Review never extracts the .apkg's media."),
+                    ("Answer", "An image note's picture is its question."),
+                    ("Why", "Opening a row is what extracts it."),
                     ("Notes", "")]},
     ]
 
@@ -198,6 +197,38 @@ def apkg_details(path):
 
 
 # ----------------------------------------------------------------------- scenes
+def _fixture_image_apkg():
+    """A throwaway .apkg carrying one solid magenta PNG under the filename
+    synthetic_details()'s image note references.
+
+    Written with real Qt rather than checked in: a binary fixture in this repo would be
+    one more thing to keep in step with the note that points at it, and QImage.save is
+    already available here.
+    """
+    import json
+    import sqlite3
+    import tempfile
+    import zipfile
+    _, q = bootstrap()
+    folder = tempfile.mkdtemp()
+    png = os.path.join(folder, "example-diagram.jpg")
+    image = q.QImage(120, 80, q.QImage.Format.Format_RGB32)
+    image.fill(q.QColor("#ff00ff"))
+    image.save(png, "PNG")
+    db = os.path.join(folder, "collection.anki2")
+    con = sqlite3.connect(db)
+    con.execute("create table notes (id integer primary key, guid text, mid integer, "
+                "flds text)")
+    con.commit()
+    con.close()
+    path = os.path.join(folder, "fixture.apkg")
+    with zipfile.ZipFile(path, "w") as z:
+        z.write(db, "collection.anki2")
+        z.write(png, "0")
+        z.writestr("media", json.dumps({"0": "example-diagram.jpg"}))
+    return path
+
+
 def _scene_review(mock, opts):
     from internpearls import review
     apkg = opts.get("apkg", "")
@@ -206,7 +237,8 @@ def _scene_review(mock, opts):
         details = details[:opts["limit"]]
     mock.mw._config = {"collect_card_feedback": opts.get("feedback", False)}
     name = os.path.basename(apkg).replace(".apkg", "") if apkg else "Example Deck"
-    return lambda: review.review_new_cards(None, [(name, details)], {})
+    sources = {name: _fixture_image_apkg()} if opts.get("image") else None
+    return lambda: review.review_new_cards(None, [(name, details)], {}, sources=sources)
 
 
 def _scene_digest(mock, opts):
