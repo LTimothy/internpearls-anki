@@ -75,9 +75,11 @@ def _write_source(tmp_path, decks, retired=None, deck_moves=None):
     folder.mkdir(exist_ok=True)
     manifest = {"schema": 1, "decks": [], "front_aliases": {},
                 "retired": retired or {}, "deck_moves": deck_moves or {}}
-    for name, (version, notes, model) in decks.items():
+    for name, spec in decks.items():
+        version, notes, model = spec[0], spec[1], spec[2]
+        media = spec[3] if len(spec) > 3 else None
         fn = name.split("::")[-1].replace(" ", "_") + ".apkg"
-        make_apkg(str(folder / fn), notes, model=model, deck=name)
+        make_apkg(str(folder / fn), notes, model=model, deck=name, media=media)
         manifest["decks"].append({"name": name, "apkg": fn, "version": version,
                                   "cards": len(notes)})
     (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf8")
@@ -1308,6 +1310,46 @@ def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
     assert not anki.gui.clipboard, "nothing should reach the clipboard"
     # It's still just a preview: the card still imports once Update is chosen.
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
+
+
+def test_review_renders_a_new_cards_picture_once_its_row_is_opened(anki, tmp_path):
+    """The .apkg the preview already downloaded is what the pictures come out of, so
+    opening a row costs a local read rather than another fetch."""
+    from internpearls import sync
+    fields = ["Front with a picture", 'see <img src="femoral.jpg">', "why", "",
+              "Pharm", "", ""]
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", fields, TAGS)], None, {"femoral.jpg": b"bytes"})})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        title, tree = p.get("title") or "", p["tree"]
+        if "new cards" in title:
+            caret = next(n for n in _walk(tree) if n.get("t") == "button"
+                         and n.get("label") in ("▸", "▾"))
+            if "opened" not in seen:
+                seen["opened"] = True
+                return {"events": [{"id": caret["id"], "click": True}]}
+            seen["review"] = _labels(tree)
+            done = _find(tree, t="button", label="Done")
+            return {"events": [{"id": done["id"], "click": True}]}
+        review = next((n for n in _walk(tree) if n.get("t") == "button"
+                       and "Review" in (n.get("label") or "")), None)
+        if review and "review" not in seen:
+            return {"events": [{"id": review["id"], "click": True}]}
+        return {"events": [{"id": _find(tree, t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert "<img src=" in seen["review"], (
+        "the row was opened but its picture is still only named: the .apkg path is not "
+        "reaching the review dialog")
+    assert "femoral.jpg" in seen["review"]
 
 
 def test_review_rules_separate_cards_without_trailing_the_last_one(anki, tmp_path):
