@@ -1,4 +1,4 @@
-"""The new-card review dialog, and the feedback digest it produces.
+"""The card review dialog, and the feedback digest it produces.
 
 Its own module rather than part of dialogs.py because dialogs.py imports sync.py (for
 Manage decks' manifest fetch and the Update my decks action), and this is opened *from*
@@ -49,6 +49,34 @@ _CLOZE_COLOR = "#2563eb"
 _DIM = "#8a9aa2"        # the tag lead-in and the caret
 _ROW_RULE = "#d6d6d6"   # the hairline between two cards
 _CELL_RULE = "#a9b4ba"  # a table's own gridlines, a mid-tone that reads on both themes
+
+# The row markers, as a background and foreground pair each. A bare coloured marker was
+# the obvious design and is not available: measured against the render suite's own
+# palettes, no single colour clears WCAG AA on both a light and a dark window, so a
+# marker with only a foreground is either unreadable on one theme or a new entry on a
+# debt ledger that may only shrink. A pair is legible on both, and follows the rule the
+# dosing block had to learn: never a background without a foreground.
+_MARKERS = {
+    "new":     ("NEW",     "#eaf1fb", "#1a4a8a"),   # 7.73:1 within the pill
+    "changed": ("UPDATED", "#fdf1e0", "#8a4b08"),   # 6.09:1 within the pill
+}
+
+
+def _marker_html(kind):
+    """A row's kind as a small pill, inside the row's own paragraph.
+
+    Inside rather than beside it because the row is deliberately one rich-text
+    paragraph: a separate marker widget starts each row's text at a different x
+    depending on whether that row has a marker, and wraps it against the marker's edge
+    instead of the row's, which is the same defect the tag column had.
+    """
+    marker = _MARKERS.get(kind)
+    if not marker:
+        return ""
+    label, background, foreground = marker
+    return (f'<span style="background-color: {background}; color: {foreground};'
+            f' font-size: 11px;">&nbsp;{label}&nbsp;</span>&nbsp;&nbsp;')
+
 
 # Every label that can hold card HTML carries this, so a <table> or a <ul> in a field
 # reads as the grid or the list the card author wrote rather than as a run-on line.
@@ -149,6 +177,16 @@ def _content_fields(detail):
             if n not in _SKIP_FIELDS and n not in _STRUCTURAL_FIELDS]
 
 
+def _changed_field_names(detail):
+    """The fields this card would rewrite, in the note type's own order.
+
+    Ordered off the note type rather than off the `was` map so two cards of the same
+    type always list their changes the same way round.
+    """
+    was = detail.get("was") or {}
+    return [n for n, _ in detail.get("fields", []) if n in was]
+
+
 def _image_text(detail):
     """The card's Image field, named rather than rendered (field_preview_text again:
     the review dialog never extracts .apkg media, so an <img> tag would paint broken).
@@ -236,7 +274,8 @@ def _primary_images(detail):
 
 
 def _row_html(detail):
-    """A collapsed row's whole line: the card's tag, then its primary line.
+    """A collapsed row's whole line: its kind when it has one, then the card's tag, then
+    its primary line.
 
     One rich-text paragraph rather than a tag widget beside a text widget. Two widgets
     start each row's text at a different x depending on whether that card happens to
@@ -247,7 +286,7 @@ def _row_html(detail):
     if tag_text:
         tag = html.escape(tag_text)
         primary = f'<span style="color: {_DIM};">{tag}</span>&nbsp;&nbsp;{primary}'
-    return _PREVIEW_STYLE + primary
+    return _PREVIEW_STYLE + _marker_html(detail.get("kind")) + primary
 
 
 def _rich_label(text):
@@ -255,6 +294,37 @@ def _rich_label(text):
     lbl.setWordWrap(True)
     lbl.setTextFormat(Qt.TextFormat.RichText)
     return lbl
+
+
+def _was_label(detail, field_name):
+    """What a changed field says in the collection today, or None when it has not moved.
+
+    Rendered rather than quoted, and dimmed, so a comparison reads as the same card in
+    two states rather than as two cards. Her copy's pictures are already in the
+    collection's own media folder, so they resolve without extracting anything.
+    """
+    old = (detail.get("was") or {}).get(field_name)
+    if not old:
+        return None
+    label = _rich_label(f"<b>was</b> &nbsp;{field_preview_html(old, image_html=_collection_image)}")
+    label.setStyleSheet(f"color: {_DIM};")
+    return label
+
+
+def _collection_image(name):
+    """One of the learner's own media files as an <img>, or None when it is not there.
+
+    Her side of a comparison comes out of the collection, not out of the .apkg, so its
+    pictures are already on disk and need no extraction.
+    """
+    try:
+        folder = mw.col.media.dir()
+    except Exception:
+        return None
+    if not folder:
+        return None
+    local = os.path.join(folder, os.path.basename(name))
+    return _image_tag(local) if os.path.exists(local) else None
 
 
 def _separator():
@@ -351,6 +421,10 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
         answer_value = _answer_source(detail)
         if answer_value:
             rerender.append((answer_label, answer_value))
+    for name in _changed_field_names(detail):
+        was = _was_label(detail, name)
+        if was is not None:
+            blay.addWidget(was)
 
     why_value = _field(detail, "Why")
     why_html = field_preview_html(why_value)
@@ -414,9 +488,9 @@ def clear_saved_feedback():
         pass
 
 
-def review_new_cards(parent, decks, flags, unreadable=(), sources=None):
-    """Show every card this update would add, as one row each, and collect notes on
-    them when the feedback toggle asks for it.
+def review_cards(parent, decks, flags, unreadable=(), sources=None):
+    """Show every card this update would add or rewrite, as one row each, and collect
+    notes on them when the feedback toggle asks for it.
 
     `decks` is [(deck_name, [detail, ...])], each detail as apkg_note_details returns it.
     `flags` is {guid: note text}: read to prefill the boxes and rewritten in place on
@@ -440,18 +514,23 @@ def review_new_cards(parent, decks, flags, unreadable=(), sources=None):
     short debounce so it is not a write per keystroke). Closing this dialog is not the
     end of the run: the digest that actually hands her notes back comes several steps
     later, after an import that can fail, and before v0.41.0 anything that ended the run
-    in between dropped them without a word. `unreadable` names decks whose new cards
-    could not be read, shown as a line here rather than as its own warning box.
+    in between dropped them without a word. `unreadable` names decks whose pending
+    cards could not be read, shown as a line here rather than as its own warning box.
     """
     collect_feedback = _cfg()["collect_feedback"]
     dlg = QDialog(parent or mw)
-    dlg.setWindowTitle(f"{APP_NAME}: new cards")
+    dlg.setWindowTitle(f"{APP_NAME}: card review")
     dlg.setMinimumWidth(560)
     dlg.setMinimumHeight(520)
     outer = QVBoxLayout(dlg)
 
     total = sum(len(details) for _, details in decks)
-    outer.addWidget(title_label(f"{total} new card(s)"))
+    kinds = [d.get("kind") for _, details in decks for d in details]
+    counts = [f"{kinds.count('new')} new" if "new" in kinds else "",
+              f"{kinds.count('changed')} updated" if "changed" in kinds else ""]
+    heading = f"{total} card(s)"
+    detail_line = " · ".join(c for c in counts if c)
+    outer.addWidget(title_label(f"{heading}  ({detail_line})" if detail_line else heading))
     hint = "Nothing is added until you choose Update. Click a card to open it."
     if collect_feedback:
         hint += " Say what's wrong with one and you'll get a summary to send back."
@@ -459,7 +538,7 @@ def review_new_cards(parent, decks, flags, unreadable=(), sources=None):
 
     if unreadable:
         outer.addWidget(muted_label(
-            "Couldn't read the new cards from " + ", ".join(unreadable) +
+            "Couldn't read the pending cards from " + ", ".join(unreadable) +
             ". The update itself is unaffected; those decks just aren't shown here."))
 
     inner = QWidget()

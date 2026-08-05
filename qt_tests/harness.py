@@ -256,7 +256,7 @@ def _scene_review(mock, opts):
     mock.mw._config = {"collect_card_feedback": opts.get("feedback", False)}
     name = os.path.basename(apkg).replace(".apkg", "") if apkg else "Example Deck"
     sources = {name: _fixture_image_apkg()} if opts.get("image") else None
-    return lambda: review.review_new_cards(None, [(name, details)], {}, sources=sources)
+    return lambda: review.review_cards(None, [(name, details)], {}, sources=sources)
 
 
 def _scene_digest(mock, opts):

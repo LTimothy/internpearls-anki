@@ -221,7 +221,7 @@ Everything that does touch Anki is split by concern:
 - `internpearls/background.py` — `_run_in_background` (QueryOp dispatch), the startup
   update check, the auto-sync poll and its timer.
 - `internpearls/dialogs.py` — Manage decks, Settings, About, and source configuration.
-- `internpearls/review.py`: the new-card review dialog and the feedback digest it
+- `internpearls/review.py`: the card review dialog and the feedback digest it
   produces. Kept out of `dialogs.py` because that module imports `sync.py`, and this is
   opened from `sync.py`'s update flow, which would make the import circular.
 
