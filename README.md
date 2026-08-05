@@ -76,18 +76,14 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 | `scope_tag` | Root tag identifying cards this add-on manages (default: `InternPearls`). Scopes snapshots and GUID matching so your other decks are never touched. |
 | `protected_fields` | Field names to snapshot and restore (default: `["Notes"]`). Add any field where you keep your own content. Also editable from Manage decks. |
 | `excluded_decks` | Deck names opted out of syncing. Also editable from Manage decks. |
-| `export_deck` | The deck that Backup/Import/Export intern pearls deck and the automatic pre-sync backup operate on (default: `Intern Pearls::Intern Custom`). |
+| `export_deck` | The deck that Backup/Restore/Export intern pearls deck and the automatic pre-sync backup operate on (default: `Intern Pearls::Intern Custom`). |
 | `auto_sync_decks`, `auto_sync_interval_minutes`, `notify_addon_updates`, `auto_update_addon` | Sync and update automation, see Settings below and `config.md` for details on each. |
 
 ### Advanced submenu
 
-Occasional tools, tucked away from the two primary actions at the top — including the two halves Update my decks normally runs together, for anyone who wants just one of them on its own:
+Occasional tools, tucked away from the two primary actions at the top, in four groups: acting on the deck source (including the two halves Update my decks normally runs together, for anyone who wants just one of them on its own), repairing the collection itself, the two backup/restore pairs (deck-scoped, then whole-collection), and the add-on's own update check.
 
 **Sync decks** is the content-only half of Update my decks: it fetches `manifest.json`, compares each deck's version hash against what you last synced, and imports only the decks that changed, with the same confirmation, backup, GUID matching, and field preservation described above. It just doesn't also archive retired cards or relocate reorganized ones — use Update my decks for that in one pass, or Reconcile my decks below to run just that half.
-
-**Import single deck (manual)** picks one `.apkg` outside your configured source, for a deck someone sent you directly or a build you're testing before pushing it live. It runs the same personalization, automatic backup, and note restore as a sync, just for the one file you choose.
-
-**Fix note types** scans the note types this add-on manages (Study Deck - Basic, Study Deck - Cloze, Study Deck - Image ID) and adds any fields they are missing. It never removes or renames fields, and it does not touch cards or scheduling. Every sync runs this before every import.
 
 **Reconcile my decks** is the archive/relocate half of Update my decks, runnable on its own. It does two kinds of housekeeping a plain content sync can't, both driven by ledgers the deck source ships in its manifest:
 
@@ -96,9 +92,15 @@ Occasional tools, tucked away from the two primary actions at the top — includ
 
 Both are schema-neutral (no forced full AnkiWeb sync) and trivially reversible by hand. A backup is taken automatically first, and re-running it is a no-op on anything already handled. If you've turned on background auto-sync (see Settings below), which only ever applies deck content on its own, a pending retired/relocated backlog shows up right on this menu item itself — "Reconcile my decks (3 pending)" — with a one-time tooltip when it first appears or grows, so a backlog auto-sync can't clear by itself never piles up unnoticed.
 
+**Import single deck (manual)** picks one `.apkg` outside your configured source, for a deck someone sent you directly or a build you're testing before pushing it live. It runs the same personalization, automatic backup, and note restore as a sync, just for the one file you choose.
+
+**Clean up duplicate cards** finds notes that share a note type and front text but carry different GUIDs, most often left over from a deck reorg where a sync couldn't match an incoming card to your existing one and imported it fresh instead. For each such group it keeps the copy with the most reviews (ties prefer whichever copy already sits under the deck source's current canonical deck), and archives the rest using the same never-delete machinery as Reconcile my decks: any personal notes carry over to the kept copy first, then the losing copies are suspended, moved to the Retired deck, and tagged. Nothing is deleted, and a backup runs automatically before anything changes.
+
 **Remove empty cards** clears out cards that have nothing left to show. When a deck source rewrites a fill-in-the-blank card to use fewer blanks, an import updates the card's text but never removes the cards that were generated for the blanks that are now gone, so those come up in review reading "No cloze 3 found on card". This is Anki's own Tools > Empty Cards narrowed to your deck: it asks Anki for the same report, keeps only the notes under your configured scope tag, and lists every card it proposes to remove, with the blank numbers that went missing, before anything happens. Other people's decks are left alone.
 
 This is the one place the add-on deletes rather than archives, because there is nothing in an empty card to keep: the note holds every field, and the dead card renders as an error message. Two guards make that safe. A note is never left with zero cards, so no note can be deleted along with its cards, and any note whose cards are *all* empty is reported and skipped rather than touched, since that means something is wrong with the card itself rather than there being a leftover to tidy. A backup is taken automatically first, as with every other action here.
+
+**Fix note types** scans the note types this add-on manages (Study Deck - Basic, Study Deck - Cloze, Study Deck - Image ID) and adds any fields they are missing. It never removes or renames fields, and it does not touch cards or scheduling. Every sync runs this before every import.
 
 **Backup intern pearls deck** is the manual, on-demand version of the automatic pre-sync backup: a fresh `.apkg` of just the configured deck (`export_deck`), with scheduling included, saved internally and pruned to the most recent 10. Use it right before poking at cards yourself outside the add-on.
 

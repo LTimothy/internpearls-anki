@@ -43,7 +43,7 @@ does not delete cards you already imported.
 
 ## export_deck
 
-The deck that Export/Import/Backup intern pearls deck (Advanced menu) and the automatic
+The deck that Export/Restore/Backup intern pearls deck (Advanced menu) and the automatic
 pre-sync backup all operate on. Defaults to `Intern Pearls::Intern Custom`. Change this
 if you've adapted this add-on for a different deck hierarchy.
 
