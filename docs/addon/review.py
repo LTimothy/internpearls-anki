@@ -259,7 +259,7 @@ def _primary_html(detail):
     return text
 
 
-def _answer_html(detail, resolved=frozenset()):
+def _answer_html(detail, resolved=frozenset(), image_html=None):
     """The card's answer, shown only once its row is expanded. A cloze note has no
     answer text of its own here, since cloze_filled_html already put the answer on the
     collapsed line, but its optional Image field (separate from any image inline in
@@ -269,15 +269,18 @@ def _answer_html(detail, resolved=frozenset()):
 
     `resolved` passes straight through to `_image_text`: once the picture strip above
     has actually painted a filename, this stops naming it too, so an opened row never
-    shows the same picture and a chip for it both. Left empty (the default) at build
-    time, before anything has been resolved; `_reveal_images` calls this again with
-    whatever resolved once a row's pictures are actually extracted.
+    shows the same picture and a chip for it both. `image_html` passes straight through
+    to `field_preview_html` for the answer field itself, so a picture inline in the
+    answer's own text (not just its Image field) renders in place too. Both are left at
+    their defaults (nothing resolved, no resolver) at build time, before anything has
+    been extracted; `_reveal_images` calls this again, once, with both filled in, once a
+    row's pictures are actually resolved.
     """
     if _is_cloze(detail):
         image_text = _image_text(detail, resolved)
         return html.escape(image_text) if image_text else ""
     fields = _content_fields(detail)
-    answer = field_preview_html(fields[1][1]) if len(fields) >= 2 else ""
+    answer = field_preview_html(fields[1][1], image_html=image_html) if len(fields) >= 2 else ""
     if not _is_image_note(detail):
         image_text = html.escape(_image_text(detail, resolved))
         if image_text:
@@ -298,23 +301,6 @@ def _answer_field_names(detail):
     if not _is_image_note(detail):
         names.append("Image")
     return names
-
-
-def _answer_source(detail):
-    """The single field `_answer_html` renders, or "" when it composes several.
-
-    Only a lone field can be re-rendered from its source value. `_answer_html` folds a
-    non-image note's Image field onto its answer, and that case is left to the picture
-    strip instead, which already renders exactly that field.
-    """
-    if _is_cloze(detail):
-        return ""
-    fields = _content_fields(detail)
-    if len(fields) < 2:
-        return ""
-    if not _is_image_note(detail) and _image_text(detail):
-        return ""
-    return fields[1][1]
 
 
 def _primary_images(detail):
@@ -424,7 +410,10 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     body = QWidget()
     caret = QPushButton(_CARET_CLOSED)
     # Labels whose field can hold a picture, each with the field value that produced it,
-    # so the first expand can re-render exactly those and leave the rest alone.
+    # so the first expand can re-render exactly those and leave the rest alone. The
+    # answer label isn't one of these: it has its own composed rendering (folding an
+    # Image field's chip in alongside its own text), so `_reveal_images` re-renders it
+    # once, directly through `_answer_html`, rather than through this generic list.
     rerender = []
     # A changed field's `was` line, separately: it resolves from the learner's own
     # collection (_collection_image) rather than the deck's .apkg, so it stays on the
@@ -441,20 +430,19 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
             label.setText(f"{_PREVIEW_STYLE}<b>was</b> &nbsp;{was_html}")
         if resolve is None:
             return
-        for label, value in rerender:
-            label.setText(_PREVIEW_STYLE + field_preview_html(value, image_html=resolve))
         image_names = _primary_images(detail)
         resolved_tags = {name: resolve(name) for name in image_names}
+        succeeded = {name for name, tag in resolved_tags.items() if tag}
+        for label, value in rerender:
+            label.setText(_PREVIEW_STYLE + field_preview_html(value, image_html=resolve))
         rendered = "<br>".join(tag for tag in resolved_tags.values() if tag)
         if rendered:
             images.setText(_PREVIEW_STYLE + rendered)
             images.setVisible(True)
         if answer_label is not None:
-            succeeded = {name for name, tag in resolved_tags.items() if tag}
-            if succeeded:
-                new_answer_html = _answer_html(detail, resolved=succeeded)
-                answer_label.setText(_PREVIEW_STYLE + new_answer_html)
-                answer_label.setVisible(bool(new_answer_html))
+            new_answer_html = _answer_html(detail, resolved=succeeded, image_html=resolve)
+            answer_label.setText(_PREVIEW_STYLE + new_answer_html)
+            answer_label.setVisible(bool(new_answer_html))
 
     def _toggle():
         expanded = not body.isVisible()
@@ -527,9 +515,6 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     if answer_html:
         answer_label = _rich_label(answer_html)
         blay.addWidget(answer_label)
-        answer_value = _answer_source(detail)
-        if answer_value:
-            rerender.append((answer_label, answer_value))
         for name in changed_names:
             if name in answer_names:
                 _add_was(name)

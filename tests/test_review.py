@@ -25,12 +25,12 @@ def _image_note_detail(image_field='<img src="sample-a.jpg">'):
     }
 
 
-def _basic_note_detail(image_field='<img src="sample-a.jpg">'):
+def _basic_note_detail(image_field='<img src="sample-a.jpg">', back="Femoral nerve block"):
     return {
         "notetype": "Study Deck - Basic",
         "fields": [
             ("Front", "What nerve block covers the anterior thigh?"),
-            ("Back", "Femoral nerve block"),
+            ("Back", back),
             ("Why", "runs with the saphenous nerve along the same sheath"),
             ("Image", image_field),
             ("Tag", "Pharm"),
@@ -473,6 +473,12 @@ def test_no_stylesheet_anywhere_sets_a_background_without_a_foreground():
 # --------------------------------------------------------------------- images
 def _apkg_with_image(tmp_path, name="sample-a.jpg"):
     """A minimal .apkg carrying one media file, enough for the resolver to find it."""
+    return _apkg_with_images(tmp_path, [name])
+
+
+def _apkg_with_images(tmp_path, names):
+    """A minimal .apkg carrying several media files, so a resolver built against it can
+    find some names and not others (whichever weren't included)."""
     import json
     import sqlite3
     import zipfile
@@ -483,10 +489,13 @@ def _apkg_with_image(tmp_path, name="sample-a.jpg"):
                 "flds text)")
     con.commit()
     con.close()
+    media = {}
     with zipfile.ZipFile(path, "w") as z:
         z.write(db, "collection.anki2")
-        z.writestr("0", b"pretend image bytes")
-        z.writestr("media", json.dumps({"0": name}))
+        for i, name in enumerate(names):
+            z.writestr(str(i), b"pretend image bytes")
+            media[str(i)] = name
+        z.writestr("media", json.dumps(media))
     os.remove(db)
     return path
 
@@ -664,6 +673,62 @@ def test_a_changed_rows_previous_image_is_not_resolved_before_expand(monkeypatch
     caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
     _click(caret["id"], row)
     assert calls == ["sample-b.jpg"], "expanding the row should resolve it exactly once"
+
+
+def test_expanding_a_row_resolves_an_image_field_by_name_not_all_or_nothing(tmp_path):
+    """An Image field can hold more than one picture, and the strip resolves each one
+    independently: one missing file must not take the rest of the chip down with it, and
+    one successful file must not clear a name that never resolved. Every existing image
+    test either fully succeeds or fully fails, so the per-name filter (`_image_text`'s
+    `resolved` set) has never actually been asked to keep some names and drop others in
+    the same chip.
+
+    That filter alone can't be made to fail on its own: with no other picture in the
+    answer, a non-image note whose Image field holds anything at all was always routed
+    around the old write-twice bug entirely (its answer only ever went through the
+    single, already-correct guarded write). So `mechanism.png` is added as the answer's
+    own separate inline picture, giving this test the same failure mode
+    `test_expanding_a_row_renders_an_answers_own_inline_image_in_place` guards, on top of
+    the per-name filter it's actually here to check.
+    """
+    apkg = _apkg_with_images(tmp_path, ["sample-a.jpg", "mechanism.png"])
+    resolve = review._media_resolver(
+        apkg, {"sample-a.jpg": "0", "mechanism.png": "1"}, str(tmp_path / "out"))
+    detail = _basic_note_detail(
+        image_field='<img src="sample-a.jpg"><img src="sample-b.jpg">',
+        back='<img src="mechanism.png"> Femoral nerve block',
+    )
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, False, resolve=resolve)
+    caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
+    _click(caret["id"], row)
+    texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
+    assert "[image: sample-a.jpg]" not in texts, "a resolved name must drop its chip"
+    assert "[image: sample-b.jpg]" in texts, "an unresolved name must keep its chip"
+    assert "<img src=" in texts and "mechanism.png" in texts
+    assert "[image: mechanism.png]" not in texts
+
+
+def test_expanding_a_row_renders_an_answers_own_inline_image_in_place(tmp_path):
+    """The regression this guards: the answer label used to be written twice on first
+    expand when a strip picture also resolved, first in place (with the resolver) and
+    then a second time to strip the Image field's now-redundant chip, and that second
+    write dropped the resolver, silently reverting the answer's own inline picture back
+    to a chip. Needs both a strip picture (an Image field that resolves, so the old
+    second write actually ran) and a separate inline picture in the answer itself.
+    """
+    apkg = _apkg_with_images(tmp_path, ["sample-a.jpg", "mechanism.png"])
+    resolve = review._media_resolver(
+        apkg, {"sample-a.jpg": "0", "mechanism.png": "1"}, str(tmp_path / "out"))
+    detail = _basic_note_detail(
+        image_field='<img src="sample-a.jpg">',
+        back='<img src="mechanism.png"> Femoral nerve block',
+    )
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, False, resolve=resolve)
+    caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
+    _click(caret["id"], row)
+    texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
+    assert "<img src=" in texts and "mechanism.png" in texts
+    assert "[image: mechanism.png]" not in texts
 
 
 # ------------------------------------------------------------------ mock Qt surface
