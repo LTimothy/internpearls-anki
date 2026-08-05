@@ -25,8 +25,8 @@ from .logic import (apkg_media_index, build_feedback_digest, cloze_filled_html,
                     extract_apkg_media, field_image_names, field_preview_html,
                     field_preview_text, note_display_label, plain_text)
 from .palette import colors
-from .ui import (_info, copy_to_clipboard, hint_label, muted_label,
-                 section_label, title_label)
+from .ui import _info, copy_to_clipboard, hint_label, muted_label, title_label
+from .widgets import chip_html, section_header
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
 # would be a blank row on every single card.
@@ -43,35 +43,6 @@ _STRUCTURAL_FIELDS = {"Why", "Dosing", "Tag", "Image"}
 # grey dosing block, and blue cloze fill. Every colour below is asked for by role from
 # palette.colors(), which picks the light or dark set from Anki's own theme at the
 # moment it is called, rather than being decided once at import.
-
-# The marker labels. Their colours come from the palette, so only the wording lives here.
-_MARKER_LABELS = {"new": "NEW", "changed": "UPDATED"}
-
-
-def _marker_html(kind):
-    """A row's kind as a small pill, inside the row's own paragraph.
-
-    Inside rather than beside it because the row is deliberately one rich-text
-    paragraph: a separate marker widget starts each row's text at a different x
-    depending on whether that row has a marker, and wraps it against the marker's edge
-    instead of the row's, which is the same defect the tag column had.
-
-    A bare coloured marker was the obvious design and is not available: measured
-    against the render suite's own palettes, no single colour clears WCAG AA on both a
-    light and a dark window, so a marker with only a foreground is either unreadable on
-    one theme or a new entry on a debt ledger that may only shrink. A pair is legible on
-    both, and follows the rule the dosing block had to learn: never a background
-    without a foreground.
-    """
-    label = _MARKER_LABELS.get(kind)
-    if not label:
-        return ""
-    c = colors()
-    background, foreground = ((c["new_bg"], c["new_fg"]) if kind == "new"
-                              else (c["updated_bg"], c["updated_fg"]))
-    return (f'<span style="background-color: {background}; color: {foreground};'
-            f' font-size: 11px;">&nbsp;{label}&nbsp;</span>&nbsp;&nbsp;')
-
 
 def _preview_style():
     """Every label that can hold card HTML carries this, so a <table> or a <ul> in a
@@ -330,7 +301,7 @@ def _row_html(detail):
     if tag_text:
         tag = html.escape(tag_text)
         primary = f'<span style="color: {colors()["dim"]};">{tag}</span>&nbsp;&nbsp;{primary}'
-    return _preview_style() + _marker_html(detail.get("kind")) + primary
+    return _preview_style() + chip_html(detail.get("kind")) + primary
 
 
 def _rich_label(text):
@@ -670,7 +641,7 @@ def review_cards(parent, decks, flags, unreadable=(), sources=None):
     for deck_name, details in decks:
         if not details:
             continue
-        ilay.addWidget(section_label(deck_name.split("::")[-1], top_margin=14))
+        ilay.addWidget(section_header(deck_name.split("::")[-1]))
         for i, detail in enumerate(details):
             if i:
                 ilay.addWidget(_separator())   # between cards, not after the last
