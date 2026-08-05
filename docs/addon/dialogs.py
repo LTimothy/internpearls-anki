@@ -457,9 +457,9 @@ class _SettingsDialog(QDialog):
         outer.addWidget(self._feedback_cb)
 
         outer.addWidget(hint_label(
-            "Adds a note box under each new card in the review, and offers a summary "
-            "to send back when you close it. Off by default, so the review stays a "
-            "quick read-only preview."))
+            "Adds a note box under each card in the review, whether it's new or was "
+            "just changed, and offers a summary to send back when you close it. Off "
+            "by default, so the review stays a quick read-only preview."))
 
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
