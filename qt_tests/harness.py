@@ -197,6 +197,9 @@ def apkg_details(path):
 
 
 # ----------------------------------------------------------------------- scenes
+_FIXTURE_APKG = None
+
+
 def _fixture_image_apkg():
     """A throwaway .apkg carrying one solid magenta PNG under the filename
     synthetic_details()'s image note references.
@@ -204,13 +207,27 @@ def _fixture_image_apkg():
     Written with real Qt rather than checked in: a binary fixture in this repo would be
     one more thing to keep in step with the note that points at it, and QImage.save is
     already available here.
+
+    Built once per process, in a TemporaryDirectory registered with atexit: the dialog
+    extracts from the .apkg lazily when a row expands, well after this function has
+    returned, so the directory must outlive the call; atexit is what removes it again
+    when the process ends. Contents never vary, so caching the path also saves rebuilding
+    it on every render.
     """
+    global _FIXTURE_APKG
+    if _FIXTURE_APKG is not None:
+        return _FIXTURE_APKG
+    import atexit
     import json
     import sqlite3
     import tempfile
     import zipfile
     _, q = bootstrap()
-    folder = tempfile.mkdtemp()
+    tmpdir = tempfile.TemporaryDirectory(prefix="internpearls_qt_fixture_")
+    atexit.register(tmpdir.cleanup)
+    folder = tmpdir.name
+    # Named .jpg because that's the filename the demo note references, but the bytes
+    # written below are PNG; Qt sniffs image format from content, not the extension.
     png = os.path.join(folder, "example-diagram.jpg")
     image = q.QImage(120, 80, q.QImage.Format.Format_RGB32)
     image.fill(q.QColor("#ff00ff"))
@@ -226,6 +243,7 @@ def _fixture_image_apkg():
         z.write(db, "collection.anki2")
         z.write(png, "0")
         z.writestr("media", json.dumps({"0": "example-diagram.jpg"}))
+    _FIXTURE_APKG = path
     return path
 
 
