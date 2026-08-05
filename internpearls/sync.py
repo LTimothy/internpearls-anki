@@ -188,7 +188,7 @@ def sync_decks():
     fields_line += _collision_note(collisions)
     backup_line = (
         "A pre-sync backup of the Intern Pearls deck was saved; use "
-        "<i>Advanced → Import intern pearls deck</i> to revert to it if needed."
+        "<i>Advanced → Restore intern pearls deck</i> to revert to it if needed."
         if backed_up else
         "No pre-sync backup was taken this time (nothing to back up yet, or it "
         "failed and you chose to continue).")
@@ -1008,7 +1008,7 @@ def update_decks():
                           if restored else "")
             backup_line = (
                 "A pre-sync backup of the Intern Pearls deck was saved; use "
-                "<i>Advanced → Import intern pearls deck</i> to revert to it if needed."
+                "<i>Advanced → Restore intern pearls deck</i> to revert to it if needed."
                 if backed_up else
                 "No pre-sync backup was taken this time (nothing to back up yet, or "
                 "it failed and you chose to continue).")
@@ -1064,7 +1064,7 @@ def update_decks():
     fields_line += _collision_note(collisions)
     backup_line = (
         "A pre-sync backup of the Intern Pearls deck was saved; use "
-        "<i>Advanced → Import intern pearls deck</i> to revert to it if needed."
+        "<i>Advanced → Restore intern pearls deck</i> to revert to it if needed."
         if backed_up else
         "No pre-sync backup was taken this time (nothing to back up yet, or it "
         "failed and you chose to continue).")

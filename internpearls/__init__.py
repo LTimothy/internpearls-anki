@@ -66,18 +66,22 @@ def _menu():
     add(menu, "Manage decks", manage_decks)
     menu.addSeparator()
     adv = menu.addMenu("Advanced")
+    # Four groups: act on the deck source (run either half of Update on its own, or
+    # pull one deck in manually), repair the collection itself, the two backup/restore
+    # pairs (deck-scoped, then whole-collection), and the add-on's own update check.
     add(adv, "Sync decks", sync_decks)
     # register_reconcile_action lets this item's own label show a pending count (e.g.
     # "Reconcile my decks (3 pending)") set by the auto-sync poll, since that poll only
     # ever applies content on its own — see sync.py's comment by _reconcile_action.
     register_reconcile_action(add(adv, "Reconcile my decks", reconcile_decks))
+    add(adv, "Import single deck (manual)", import_single)
+    adv.addSeparator()
     add(adv, "Clean up duplicate cards", clean_up_duplicates)
     add(adv, "Remove empty cards", remove_empty_cards)
-    add(adv, "Import single deck (manual)", import_single)
     add(adv, "Fix note types", update_notetypes)
     adv.addSeparator()
     add(adv, "Backup intern pearls deck", backup_deck_now)
-    add(adv, "Import intern pearls deck", import_deck)
+    add(adv, "Restore intern pearls deck", import_deck)
     add(adv, "Export intern pearls deck", export_deck)
     adv.addSeparator()
     add(adv, "Backup full collection", backup_collection_now)

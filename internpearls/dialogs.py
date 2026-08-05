@@ -467,7 +467,7 @@ class _SettingsDialog(QDialog):
             "Applies to every deck in your collection, not just Intern Pearls ones, "
             "and takes effect immediately, no restart needed."))
 
-        outer.addWidget(section_label("New card review", top_margin=14))
+        outer.addWidget(section_label("Card review", top_margin=14))
 
         self._feedback_cb = QCheckBox("Let me flag problems with new cards as they sync")
         self._feedback_cb.setChecked(collect_feedback)

@@ -52,6 +52,14 @@ def _write_source(tmp_path, deck="Intern Pearls::Intern Custom::Pharm", version=
 
 
 # ------------------------------------------------------------------------ menu
+def _advanced_labels(anki):
+    """Build the real menu and return just the Advanced submenu's item labels,
+    in order."""
+    menu = mock_anki.load_addon_init()
+    sub = next(n for n in menu.tree() if n["t"] == "menu")
+    return [n["label"] for n in sub["items"] if n["t"] == "item"]
+
+
 def test_real_menu_structure():
     menu = mock_anki.load_addon_init()
     tree = menu.tree()
@@ -61,14 +69,27 @@ def test_real_menu_structure():
     assert sub["label"] == "Advanced"
     sub_labels = [n["label"] for n in sub["items"] if n["t"] == "item"]
     assert sub_labels == [
-        "Sync decks", "Reconcile my decks", "Clean up duplicate cards",
-        "Remove empty cards", "Import single deck (manual)", "Fix note types",
+        "Sync decks", "Reconcile my decks", "Import single deck (manual)",
+        "Clean up duplicate cards", "Remove empty cards", "Fix note types",
         "Backup intern pearls deck",
-        "Import intern pearls deck", "Export intern pearls deck",
+        "Restore intern pearls deck", "Export intern pearls deck",
         "Backup full collection", "Restore full collection",
         "Check for add-on updates"]
     # primary items above the first separator, Settings/About below the last
     assert tree[2]["t"] == "sep" and tree[-3]["t"] == "sep"
+
+
+def test_advanced_groups_source_actions_then_repair_actions(anki):
+    """Advanced held thirteen items whose first group mixed running half of Update,
+    repairing the collection, and a one-off import, so neither reader had a group to find.
+    """
+    labels = _advanced_labels(anki)   # follow this file's existing menu-reading helper
+    def at(label):
+        return labels.index(label)
+    assert at("Sync decks") < at("Import single deck (manual)") < at("Clean up duplicate cards")
+    assert at("Clean up duplicate cards") < at("Fix note types") < at("Backup intern pearls deck")
+    assert "Restore intern pearls deck" in labels
+    assert "Import intern pearls deck" not in labels
 
 
 def test_menu_actions_call_real_functions(anki, tmp_path):
