@@ -45,10 +45,11 @@ def main():
     ap.add_argument("--out", default="dialog.png")
     ap.add_argument("--size", default="640x560", help="WxH, default 640x560")
     ap.add_argument("--dark", action="store_true",
-                    help="render against a dark palette. An approximation of Anki's "
-                         "night theme, not a reproduction: it shows whether hardcoded "
-                         "colours survive a dark background, not that night mode is "
-                         "correct")
+                    help="select palette.py's dark colour set, the one a real dialog "
+                         "uses under Anki's night mode, and approximate Anki's window "
+                         "colours for anything that still reads the platform palette. "
+                         "That second part is an approximation, not a reproduction of "
+                         "night mode")
     ap.add_argument("--feedback", action="store_true", help="review: feedback boxes on")
     ap.add_argument("--expand", default="", help="review: row indices to open, e.g. 0,2")
     ap.add_argument("--limit", type=int, default=0, help="review: cap the card count")

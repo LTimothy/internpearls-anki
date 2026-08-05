@@ -41,7 +41,8 @@ def _ask(text, **kw):
 
 
 def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=340,
-                    extra_label=None, on_extra=None, checkbox=None, title=None):
+                    extra_label=None, on_extra=None, checkbox=None, title=None,
+                    open_external_links=False):
     """Like _ask, but for content whose length isn't bounded by anything short: a
     bullet list of cards or decks that can grow into the dozens. A plain QMessageBox
     (what askUser/_ask use) has no scroll area, so long text just makes the box taller,
@@ -77,6 +78,15 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     `title` overrides the window title beyond the plain APP_NAME every other caller
     here is fine with, for a caller (About) whose title carries a suffix the way the
     add-on's other standalone dialogs (Settings, Manage decks) do.
+
+    `open_external_links` defaults to off. This is the shared confirmation wrapper, and
+    several callers interpolate content that is not escaped: a card front, a
+    retired-card identity, a raw note field straight out of the collection. Before
+    Qt's anchor color was fixed, a link in that content rendered as inert text; leaving
+    external links on for every caller would make it clickable, launching the system
+    browser on whatever URL that unescaped content happened to contain. About is the
+    only caller with a link it actually wants opened (its own repository anchor), so it
+    passes `True` explicitly instead of this being the default for everyone.
     """
     dlg = QDialog(mw)
     dlg.setWindowTitle(title or APP_NAME)
@@ -102,7 +112,7 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     # default, so a short body would otherwise float with blank space above it.
     body.setAlignment(Qt.AlignmentFlag.AlignTop)
     body.setTextFormat(Qt.TextFormat.RichText)
-    body.setOpenExternalLinks(True)
+    body.setOpenExternalLinks(open_external_links)
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.Shape.NoFrame)

@@ -472,6 +472,39 @@ def test_about_is_a_dialog_with_a_single_ok_button(anki):
     drive(anki, dialogs.about, respond)
 
 
+def test_about_pending_update_notice_uses_the_warning_role(anki, tmp_path, monkeypatch):
+    """dialogs.about() colours its pending-update notice with palette.colors()["warning"].
+    Nothing else in either suite drives that branch, so a typo in the role name would
+    only ever surface as a KeyError crashing About, for a real user with a pending
+    update notice. Seed state.json with a newer "last known" version so the branch
+    actually runs, the same way the real notice gets populated by a background update
+    check, and drive About the same way the tests above do.
+
+    dialogs.py binds its own STATE name at import time (see conftest.py's `anki`
+    fixture, which patches config/background/updates but not dialogs for this reason),
+    so the seed has to go through dialogs.STATE directly rather than the shared fixture
+    path.
+    """
+    from internpearls import dialogs, palette
+    from internpearls.config import _save_json
+
+    state_path = tmp_path / "state.json"
+    monkeypatch.setattr(dialogs, "STATE", str(state_path))
+    newer = "9.9.9"
+    _save_json(str(state_path), {"last_notified_addon_version": newer})
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        body = find(p["tree"], t="label")
+        assert palette.colors()["warning"] in body["text"]
+        assert newer in body["text"]
+        ok = find(p["tree"], t="button", label="OK")
+        return {"events": [{"id": ok["id"], "click": True}]}
+
+    drive(anki, dialogs.about, respond)
+
+
 def test_about_version_tag_uses_the_palette_not_a_css_keyword(anki):
     from internpearls import dialogs, palette
     active = palette.colors()

@@ -162,6 +162,36 @@ def test_the_about_link_paints_in_the_accent_colour_dark(shot):
         "using its own built-in link colour instead")
 
 
+def test_a_normal_confirmation_does_not_open_external_links(shot):
+    """internpearls/ui.py's _ask_scrollable is the shared confirmation wrapper, and
+    several callers (sync.py) interpolate collection content into its body that is not
+    escaped: a card front, a retired-card identity, a raw note field. Before
+    open_external_links defaulted to off, any anchor hiding in that content would launch
+    the system browser on click. The "confirm" scene is an ordinary caller (no
+    open_external_links argument), so its body must come back closed.
+    """
+    _, q = harness.bootstrap()
+    s = shot("confirm")
+    body = max((w for w in s.dialog.findChildren(q.QLabel) if w.text()),
+               key=lambda w: len(w.text()))
+    assert body.openExternalLinks() is False, (
+        "a plain confirmation dialog is opening external links; unescaped collection "
+        "content routed through _ask_scrollable could launch the system browser")
+
+
+def test_about_opens_external_links(shot):
+    """About is the one caller that wants its body's anchor (the repository link)
+    actually clickable, and its body is fixed add-on text, never collection content, so
+    it passes open_external_links=True explicitly."""
+    _, q = harness.bootstrap()
+    s = shot("about")
+    body = max((w for w in s.dialog.findChildren(q.QLabel) if w.text()),
+               key=lambda w: len(w.text()))
+    assert body.openExternalLinks() is True, (
+        "About is not opening external links: its repository anchor would render as "
+        "inert text")
+
+
 def test_an_expanded_image_row_paints_the_picture_itself(shot):
     """The mock suite can only assert that an <img> tag was written. Whether Qt's rich
     text actually loads a local file and paints it is a pixel question, and it is the
