@@ -110,7 +110,7 @@ def make_model(name="Study Deck - Basic", fields=None, css=".card { color: black
     }
 
 
-def make_apkg(path, notes, model=None, deck=None):
+def make_apkg(path, notes, model=None, deck=None, media=None):
     """Write a mock .apkg the add-on can fully process.
 
     `notes`: list of (guid, fields_list, tags_string). Includes the col.models
@@ -119,6 +119,8 @@ def make_apkg(path, notes, model=None, deck=None):
     a `cards`/`decks` table (mirroring a real Anki export) so a fresh import lands
     each note in a real Anki deck of that name — needed for anything that checks
     where in the collection a synced note actually sits, not just that it exists.
+    `media`, if given, is {filename: bytes}, written as the numbered blobs and JSON
+    index a real export carries.
     """
     model = model or make_model()
     db = path + ".tmp.db"
@@ -151,6 +153,12 @@ def make_apkg(path, notes, model=None, deck=None):
     con.close()
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(db, "collection.anki2")
+        if media:
+            index = {}
+            for i, (name, blob) in enumerate(media.items()):
+                z.writestr(str(i), blob)
+                index[str(i)] = name
+            z.writestr("media", json.dumps(index))
     os.remove(db)
 
 
