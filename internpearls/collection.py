@@ -414,7 +414,7 @@ def installed_matching_collection(installed, scope_tag):
     backup, which rolls mw.col back to an earlier snapshot without touching this
     add-on's own bookkeeping. After that, installed.json can still claim a deck is
     synced when the collection no longer has any of its cards, so Sync decks, Check
-    what will sync, and the Manage decks status pills would all wrongly read "up to
+    what will sync, and the Manage decks deck rows would all wrongly read "up to
     date" for it — nothing looks pending because nothing was ever compared against the
     collection itself. A first version of this check only detected a *total* wipe
     (every synced note gone at once) and missed the common case: a revert that only

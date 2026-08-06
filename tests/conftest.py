@@ -21,6 +21,16 @@ _pkg.__path__ = [os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "internpearls"))]
 sys.modules["internpearls"] = _pkg
 
+# widgets.chip_column_width() measures four probe labels the first time anything asks
+# for it, and every widget the mock builds takes the next widget id. Left cold, that
+# measurement lands mid-flow on whichever run first builds a chip, shifting every id
+# after it on that run alone. The replay driver's whole contract is that a flow's ids
+# are identical on every run of it, so a recorded click would then answer the wrong
+# widget. Spending those four ids here, before any flow starts, is what keeps that true.
+import internpearls.widgets  # noqa: E402
+
+internpearls.widgets.chip_column_width()
+
 
 @pytest.fixture
 def anki(tmp_path, monkeypatch):
