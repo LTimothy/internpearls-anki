@@ -5,7 +5,7 @@ collection or the network live in sync.py / collection.py and are called from he
 """
 from aqt import mw
 from aqt.qt import (QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
-                    QLineEdit, QMessageBox, QScrollArea, QSpinBox, QVBoxLayout,
+                    QLineEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout,
                     QWidget)
 
 from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
@@ -52,6 +52,78 @@ def _github_source_form(repo_default, token_default):
     return repo_edit.text().strip(), token_edit.text().strip(), True
 
 
+# The three sources, in the order they're offered. The example deck leads because it's
+# the only one someone with no decks of their own can actually pick, and this screen is
+# the first thing anybody meets: nothing in the add-on does anything until a source is
+# set. Being first also makes it the dialog's default button, so it's what Enter takes.
+_SOURCE_OPTIONS = (
+    ("example", "Try the example deck",
+     "A small public demo repo you can sync right away. Nothing about it is "
+     "permanent; point this at your own decks whenever you're ready."),
+    ("github", "GitHub repo",
+     "Decks published in a repository. A public one needs only its name, a private "
+     "one also takes a read-only token."),
+    ("local", "Local folder",
+     "A folder on this computer holding manifest.json and its .apkg files."),
+)
+
+
+class _SourceChoiceDialog(QDialog):
+    """Where decks come from, as a vertical choice rather than a row of buttons.
+
+    This used to be a QMessageBox, which could only put its three sources on one row
+    next to Cancel: four same-weight buttons, each with nothing but its own label to
+    explain it, under Qt's stock question icon. Every other dialog here is laid out in
+    the add-on's own vocabulary, and this is the one a new user meets first, so it
+    reads top to bottom instead: one full-width button per source with the sentence
+    that explains it underneath, and Cancel by itself in the button box where it isn't
+    competing with the actual choice.
+
+    Holds no config logic. It records which option was clicked in `choice` (None if
+    cancelled) and configure_source() acts on it.
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME}: Configure deck source")
+        self.setMinimumWidth(460)
+        self.choice = None
+
+        outer = QVBoxLayout(self)
+        outer.setSpacing(12)
+
+        outer.addWidget(title_label("Where should decks come from?"))
+        outer.addWidget(muted_label(
+            "No cards ship with the add-on itself. Point it at a source and it keeps "
+            "those decks up to date, without touching your review history. You can "
+            "change this later from Manage decks."))
+
+        accent = colors()["accent"]
+        for i, (key, label, hint) in enumerate(_SOURCE_OPTIONS):
+            option = QVBoxLayout()
+            option.setSpacing(3)
+            btn = QPushButton(label)
+            btn.setMinimumHeight(32)
+            btn.clicked.connect(lambda _=False, k=key: self._choose(k))
+            option.addWidget(btn)
+            # The recommendation is carried by the word itself, not by the accent
+            # colour alone: a colour is the one part of this nobody reads out loud.
+            lead = f"<span style='color:{accent};'>Recommended.</span> " if not i else ""
+            option.addWidget(hint_label(lead + hint))
+            outer.addLayout(option)
+
+        outer.addStretch()
+
+        bb = QDialogButtonBox()
+        bb.addButton(QDialogButtonBox.StandardButton.Cancel)
+        bb.rejected.connect(self.reject)
+        outer.addWidget(bb)
+
+    def _choose(self, key):
+        self.choice = key
+        self.accept()
+
+
 @_safe
 def configure_source():
     """Set where decks come from: a GitHub repo (token optional; only needed for a
@@ -59,22 +131,11 @@ def configure_source():
     to see the add-on do something before pointing it at real decks."""
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
 
-    box = QMessageBox(mw)
-    box.setWindowTitle(f"{APP_NAME}: Configure deck source")
-    box.setIcon(QMessageBox.Icon.Question)
-    muted = colors()["muted"]
-    box.setText("Where should decks come from?<br><br>"
-                f"<span style='color:{muted};'>No decks of your own yet? Try the example "
-                "deck: a small public demo repo you can sync right away, and swap out "
-                "later.</span>")
-    gh_btn = box.addButton("GitHub repo", QMessageBox.ButtonRole.AcceptRole)
-    local_btn = box.addButton("Local folder", QMessageBox.ButtonRole.AcceptRole)
-    example_btn = box.addButton("Try the example deck", QMessageBox.ButtonRole.AcceptRole)
-    box.addButton(QMessageBox.StandardButton.Cancel)
-    box.exec()
-    clicked = box.clickedButton()
+    chooser = _SourceChoiceDialog(mw)
+    chooser.exec()
+    choice = chooser.choice
 
-    if clicked is gh_btn:
+    if choice == "github":
         repo, token, ok = _github_source_form(conf.get("github_decks_repo", ""),
                                               conf.get("github_token", ""))
         if not ok or not repo:
@@ -82,7 +143,7 @@ def configure_source():
         conf["github_decks_repo"] = repo
         conf["github_token"] = token
         conf["decks_dir"] = ""
-    elif clicked is example_btn:
+    elif choice == "example":
         conf["github_decks_repo"] = EXAMPLE_REPO
         conf["github_token"] = ""
         conf["decks_dir"] = ""
@@ -95,7 +156,7 @@ def configure_source():
             conf["scope_tag"] = EXAMPLE_SCOPE_TAG
         if conf.get("export_deck", EXPORT_DECK) == EXPORT_DECK:
             conf["export_deck"] = EXAMPLE_DECK_NAME
-    elif clicked is local_btn:
+    elif choice == "local":
         path, ok = _prompt("Folder with manifest.json + .apkg files:",
                           default=conf.get("decks_dir", ""))
         if not ok or not path.strip():
@@ -115,7 +176,7 @@ def configure_source():
     # leaving them behind would silently mis-scope every future sync. A custom value the
     # user set themselves is never touched (the example button doesn't overwrite one,
     # and this only resets the exact example values).
-    if clicked is not example_btn:
+    if choice != "example":
         if conf.get("scope_tag") == EXAMPLE_SCOPE_TAG:
             conf["scope_tag"] = "InternPearls"
         if conf.get("export_deck") == EXAMPLE_DECK_NAME:
