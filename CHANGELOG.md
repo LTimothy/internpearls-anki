@@ -3,6 +3,14 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.45.1
+
+- Fixed Update my decks ending in "Something went wrong: wrapped C/C++ object of type
+  QTimer has been deleted". The run itself was fine, but the step that saves any notes
+  you flagged and cleans up afterwards ran a moment too late, once Anki had already
+  taken the screen's widgets away. It now runs while they are still there. Present in
+  v0.44.0 and v0.45.0.
+
 ## v0.45.0
 
 - Every card in a list now starts at the same place. A row's chip sits in a column of

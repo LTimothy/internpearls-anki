@@ -170,7 +170,7 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
 
 
 def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=None,
-                     title=None, min_width=560, min_height=520):
+                     title=None, min_width=560, min_height=520, on_close=None):
     """Like _ask_scrollable, but the body is a caller-built widget rather than an HTML
     string, for a screen whose content is more than one scrollable label can lay out
     well: fixed summary text above a list that should take whatever height the resized
@@ -178,6 +178,16 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
     its own internal layout and scrolling; this only wraps it with the add-on's title,
     the optional checkbox, and the Continue/Cancel buttons, on the same roles and the
     same checkbox-state-written-back-in-place contract _ask_scrollable uses.
+
+    `on_close` runs once the reader has answered, and it exists because of when: adding
+    `body` to this dialog's layout hands it to Qt, so when this function returns and
+    lets go of the dialog, Qt destroys the whole tree. A caller that needs to read its
+    own widgets one last time (Update my decks reads the notes typed into its cards, and
+    stops the timer that debounces saving them) cannot do it afterwards: every one of
+    those objects is freed C++ by then, and touching one raises "wrapped C/C++ object
+    has been deleted". Running here, while the dialog is still held, is the last moment
+    they exist. Note that the mock-Anki suite cannot catch a mistake of this shape,
+    since its widgets are plain Python objects with no C++ lifetime behind them.
     """
     dlg = QDialog(mw)
     dlg.setWindowTitle(title or APP_NAME)
@@ -203,6 +213,8 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
     answered = bool(dlg.exec())
     if box is not None:
         checkbox["checked"] = box.isChecked()
+    if on_close is not None:
+        on_close()
     return answered
 
 
