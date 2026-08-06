@@ -23,7 +23,7 @@ from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayou
 from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
 from .logic import (apkg_media_index, bullets, build_feedback_digest, cloze_filled_html,
                     extract_apkg_media, field_image_names, field_preview_html,
-                    field_preview_text, plain_text)
+                    field_preview_text, plain_text, plural)
 from .palette import colors
 from .ui import _info, copy_to_clipboard, muted_label, title_label
 from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell, row_text_indent,
@@ -651,8 +651,12 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     changed cards (_gather_pending_items) and from the retired/relocated cards it finds
     pending (_retired_moved_items). A header groups a run of rows and a sep draws the
     hairline between two of them. A "deck" row is the per-deck summary that opens the
-    list, unchipped but still on the card rows' own grid so the deck name it names
-    starts where their fronts do. A "retired" or "moved" row renders through
+    list, in a section of its own where nothing is ever chipped and nothing ever
+    expands, so it declines the caret and chip columns (see simple_row) and its deck
+    names share a left edge with the heading directly above them. Alignment is decided
+    per section, by whether anything in that section is chipped, which is why the card
+    sections below keep the columns their own unchipped rows would otherwise not need.
+    A "retired" or "moved" row renders through
     widgets.simple_row rather than `_card_row`: single-line and never expanding, since
     a retired or relocated card is known only by its front (or identity) and a deck,
     with nothing more to read out of the collection for it. `sources` is
@@ -716,7 +720,7 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
             return _separator()
         if item[0] == "deck":
             _, deck_short, counts = item
-            return simple_row(None, deck_short, counts)
+            return simple_row(None, deck_short, counts, card_columns=False)
         if item[0] == "retired":
             return simple_row("retired", item[1])
         if item[0] == "moved":
@@ -824,7 +828,7 @@ def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
         summary_scroll.setMaximumHeight(200)
         summary_scroll.setWidget(summary)
         lay.addWidget(summary_scroll)
-    lay.addWidget(title_label(f"{len(entries)} card(s) flagged"))
+    lay.addWidget(title_label(f"{plural(len(entries), 'card')} flagged"))
     lay.addWidget(muted_label(
         "Copied to your clipboard, ready to paste into a message."
         if copied else
