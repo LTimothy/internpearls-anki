@@ -14,12 +14,12 @@ from aqt.utils import getFile, getSaveFile
 from .config import (DECK_BACKUPS_KEEP, INSTALLED, TARGET_FIELDS, _USER_FILES, _cfg,
                      _load_json, _save_json)
 from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
-                    bullets, changed_templates, empty_cards_dialog_html,
+                    changed_templates, empty_cards_dialog_rows,
                     fields_to_carry_over, manifest_decks_for, model_shape,
                     note_display_label, plan_notetype_changes, plural, remap_cards,
                     select_empty_cards, write_personalized)
-from .palette import colors
-from .ui import _ask, _ask_scrollable, _info, _safe, _warn
+from .review import _CONFIRM_HEIGHT, append_rows, build_list_body, show_result
+from .ui import _ask, _ask_with_widget, _info, _safe, _warn
 
 
 def _ensure_notetypes():
@@ -909,9 +909,12 @@ def backup_collection_now():
 @_safe
 def update_notetypes():
     added = _ensure_notetypes()
-    _info(("<b>Updated note types</b> (cards and scheduling untouched):" +
-           bullets(added)) if added else
-          "Note types are already up to date, no changes needed.")
+    if not added:
+        _info("Note types are already up to date, no changes needed.")
+        return
+    items = []
+    append_rows(items, [("row", None, line, "") for line in added])
+    show_result("Updated note types (cards and scheduling untouched)", items)
 
 
 def find_empty_cards(scope_tag):
@@ -972,12 +975,23 @@ def remove_empty_cards():
             if skipped else ""))
         return
     n_cards = sum(len(r["card_ids"]) for r in rows)
-    safety = ("<br><br>Only the empty cards are removed; the notes themselves, and "
+    safety = ("Only the empty cards are removed; the notes themselves, and "
               "every card that still shows something, are left exactly as they are. A "
               "backup is taken automatically before anything changes.")
-    if not _ask_scrollable(
-            empty_cards_dialog_html(rows, colors()["muted"], skipped) + safety,
-            yes_label=f"Remove {plural(n_cards, 'card')}"):
+    # One kind of row throughout, so nothing is chipped and nothing lines up against a
+    # chip: the caret and chip columns are declined (see widgets.simple_row). The
+    # missing deletion numbers are short and read down the list rather than with the
+    # card's own name, which is exactly what the trailing column is for. Uncapped,
+    # since the rows stream inside a scroll area with the buttons outside it.
+    heading, lines, tail = empty_cards_dialog_rows(rows, skipped)
+    items = []
+    append_rows(items, [("row", None, line["label"], line["gone"]) for line in lines])
+    if not _ask_with_widget(
+        build_list_body(items, top_html=heading,
+                        bottom_html="<br><br>".join(x for x in (tail, safety) if x),
+                        card_columns=False),
+        yes_label=f"Remove {plural(n_cards, 'card')}", min_height=_CONFIRM_HEIGHT
+    ):
         return
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
     if not proceed:
