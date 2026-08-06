@@ -21,7 +21,7 @@ from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayou
                     QTimer, QVBoxLayout, QWidget)
 
 from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _cfg, _load_json, _save_json
-from .logic import (apkg_media_index, build_feedback_digest, cloze_filled_html,
+from .logic import (apkg_media_index, bullets, build_feedback_digest, cloze_filled_html,
                     extract_apkg_media, field_image_names, field_preview_html,
                     field_preview_text, note_display_label, plain_text)
 from .palette import colors
@@ -848,7 +848,7 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     return body, boxes, flush
 
 
-def show_result_with_feedback(summary_html, entries):
+def show_result_with_feedback(title, rows, footer_html, entries):
     """The end of a run, as one dialog instead of two.
 
     A completion summary and a feedback digest used to arrive as separate boxes, back
@@ -857,18 +857,26 @@ def show_result_with_feedback(summary_html, entries):
     she cannot reproduce by running the update again, appears behind it looking like
     yet another popup. They are one dialog now, summary on top, digest below it.
 
+    `title` is the run's own headline ("Update complete (source: X)" or "Update
+    stopped early (source: X)"), `rows` is [html, ...], one line per deck synced or
+    per archive/merge/move outcome, and `footer_html` is whatever reads below them
+    (preserved-field and collision notes, the backup line). Kept apart rather than one
+    pre-joined string so the summary can read in the same title/row vocabulary the run
+    began on (widgets.simple_row per line) instead of a `<ul>` dropped into a QLabel.
+
     Degrades in both directions on purpose: a run with no flagged cards is a plain
-    _info as before, and a digest with no summary (she backed out of the update but
-    still wrote notes) is the digest on its own.
+    _info as before (reassembled into one HTML block, since a plain info box has no
+    room for separate widgets), and a digest with no summary (she backed out of the
+    update but still wrote notes) is the digest on its own.
     """
     if not entries:
-        if summary_html:
-            _info(summary_html)
+        if title:
+            _info(title + bullets(rows) + footer_html)
         return
-    offer_feedback_digest(None, entries, summary_html=summary_html)
+    offer_feedback_digest(None, entries, title=title, rows=rows, footer_html=footer_html)
 
 
-def offer_feedback_digest(parent, entries, summary_html=None):
+def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
     """Put the flagged-card summary on the clipboard and show it.
 
     Shown as well as copied, for two reasons: she sees exactly what's being sent before
@@ -878,6 +886,14 @@ def offer_feedback_digest(parent, entries, summary_html=None):
     can run past a message box's height with nothing to grab. Monospaced and styled as a
     payload block, since it's indent-structured plain text, not prose. Copy again is the
     recovery if something else lands on the clipboard before she gets to paste.
+
+    `title`/`rows`/`footer_html` are the end-of-run summary, in the same title/row
+    vocabulary the confirmation this dialog follows already uses (widgets.section_header,
+    then one widgets.simple_row per line with a hairline between them, no chip: these
+    are outcomes, not pending cards). Left at their defaults for a bare digest with no
+    summary at all (she backed out of the update but still flagged a card), which is
+    why the whole block is skipped when `title` is empty rather than rendered with a
+    blank heading.
     """
     text = build_feedback_digest(entries, version=ADDON_VERSION,
                                  date=datetime.date.today().isoformat())
@@ -890,10 +906,18 @@ def offer_feedback_digest(parent, entries, summary_html=None):
     dlg.setMinimumWidth(520)
     dlg.setMinimumHeight(380)
     lay = QVBoxLayout(dlg)
-    if summary_html:
-        summary = QLabel(summary_html)
-        summary.setWordWrap(True)
-        summary.setTextFormat(Qt.TextFormat.RichText)
+    if title:
+        summary = QWidget()
+        slay = QVBoxLayout(summary)
+        slay.setContentsMargins(0, 0, 0, 0)
+        slay.setSpacing(0)
+        slay.addWidget(section_header(title))
+        for i, row_html in enumerate(rows):
+            if i:
+                slay.addWidget(_separator())   # between rows, not after the last
+            slay.addWidget(simple_row(None, row_html))
+        if footer_html:
+            slay.addWidget(_rich_label(footer_html))
         summary_scroll = QScrollArea()
         summary_scroll.setWidgetResizable(True)
         summary_scroll.setFrameShape(QFrame.Shape.NoFrame)
