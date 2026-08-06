@@ -14,27 +14,42 @@ def _stub_row(built, item):
     return QWidget()
 
 
-def test_chip_html_carries_a_foreground_with_its_background():
-    """The v0.32.1 rule, in markup rather than a stylesheet, so the setStyleSheet lint
-    cannot see it. Matched on "; color:" because "background-color:" contains "color:"."""
+def _pill(cell):
+    """The QLabel inside a chip cell, or None when that cell holds no pill at all."""
+    from aqt.qt import QLabel
+    if cell._layout is None:
+        return None
+    return next((c for c in cell._layout._children if isinstance(c, QLabel)), None)
+
+
+def test_chip_cell_carries_a_foreground_with_its_background():
+    """The v0.32.1 rule. Matched on "; color:" because "background-color:" contains
+    "color:" and would pass with no foreground set at all, which is exactly the bug."""
     from internpearls import widgets
     for kind in widgets.CHIPS:
-        markup = widgets.chip_html(kind)
-        span = markup[markup.index("background-color"):]
-        span = span[:span.index(">")]
-        assert "; color:" in span, f"{kind} chip sets a background with no foreground"
+        style = _pill(widgets.chip_cell(kind)).styleSheet()
+        assert "; color:" in style, f"{kind} chip sets a background with no foreground"
 
 
-def test_chip_html_is_empty_for_an_unknown_kind():
+def test_chip_cell_uses_the_active_palette():
+    from internpearls import palette, widgets
+    active = palette.colors()
+    style = _pill(widgets.chip_cell("new")).styleSheet()
+    assert active["new_bg"] in style and active["new_fg"] in style
+
+
+def test_chip_cell_holds_no_pill_for_an_unknown_kind():
+    """Still a cell, though: the column has to be reserved on an unchipped row or its
+    text starts left of every other row's."""
     from internpearls import widgets
-    assert widgets.chip_html(None) == ""
-    assert widgets.chip_html("nonsense") == ""
+    assert _pill(widgets.chip_cell(None)) is None
+    assert _pill(widgets.chip_cell("nonsense")) is None
 
 
-def test_chip_html_carries_every_kinds_label():
+def test_chip_cell_carries_every_kinds_label():
     from internpearls import widgets
     for kind, label in widgets.CHIPS.items():
-        assert label in widgets.chip_html(kind)
+        assert _pill(widgets.chip_cell(kind)).text() == label
 
 
 def test_section_header_returns_a_label_with_the_given_text():
@@ -45,24 +60,24 @@ def test_section_header_returns_a_label_with_the_given_text():
     assert header.text() == "Sample Section Heading"
 
 
-def test_simple_row_carries_its_chip_inside_the_same_paragraph_as_the_primary_text():
-    """Beside it as its own widget would start each row's text at a different x
-    depending on whether a chip is present, the same defect review._row_html avoids."""
+def test_simple_row_puts_its_chip_in_a_cell_ahead_of_the_primary_text():
+    """The chip is its own fixed-width column, never folded into the primary label:
+    inside that paragraph it would push the text right by however wide its own word
+    happens to be."""
     from aqt.qt import QLabel
     from internpearls import widgets
     row = widgets.simple_row("new", "Sample row text")
-    labels = [c for c in row._layout._children if isinstance(c, QLabel)]
-    assert len(labels) == 1
-    assert "NEW" in labels[0].text()
-    assert "Sample row text" in labels[0].text()
+    cell, primary = row._layout._children[0], row._layout._children[1]
+    assert _pill(cell).text() == "NEW"
+    assert isinstance(primary, QLabel) and primary.text() == "Sample row text"
 
 
-def test_simple_row_with_no_chip_omits_the_marker():
+def test_simple_row_with_no_chip_still_reserves_the_column():
     from internpearls import widgets
     row = widgets.simple_row(None, "Plain row text")
-    label = row._layout._children[0]
-    assert "NEW" not in label.text()
-    assert "Plain row text" in label.text()
+    cell, primary = row._layout._children[0], row._layout._children[1]
+    assert _pill(cell) is None, "an unchipped row must paint no pill"
+    assert primary.text() == "Plain row text"
 
 
 def test_streaming_list_builds_only_its_first_batch():
