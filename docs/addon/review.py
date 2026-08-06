@@ -26,8 +26,8 @@ from .logic import (apkg_media_index, bullets, build_feedback_digest, cloze_fill
                     field_preview_text, plain_text)
 from .palette import colors
 from .ui import _info, copy_to_clipboard, muted_label, title_label
-from .widgets import (StreamingList, chip_cell, chip_column_width, section_header,
-                      simple_row)
+from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell, row_text_indent,
+                      section_header, simple_row)
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
 # would be a blank row on every single card.
@@ -82,12 +82,6 @@ def _preview_style():
 
 _CARET_CLOSED = "▸"
 _CARET_OPEN = "▾"
-
-# The caret's width, and the gap between every column in a row's header. The expanded
-# body indents by the whole run of them (caret, gap, chip column, gap), so the answer
-# lines up under the primary line rather than under the caret.
-_CARET_W = 14
-_CARET_GAP = 6
 
 # The row body's usable width at the dialog's 560px minimum. A picture wider than this
 # is scaled down to it; a smaller one is left alone rather than blown up.
@@ -490,12 +484,12 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     header = QWidget()
     hlay = QHBoxLayout(header)
     hlay.setContentsMargins(0, 0, 0, 0)
-    hlay.setSpacing(_CARET_GAP)
+    hlay.setSpacing(CARET_GAP)
 
     caret.setFlat(True)
     # Unconstrained, this is a real push button at its platform minimum (~80px on
     # macOS) around a 6px glyph, which is a wide dead gutter down the whole list.
-    caret.setFixedWidth(_CARET_W)
+    caret.setFixedWidth(CARET_W)
     caret.setStyleSheet(f"border: none; padding: 0; color: {colors()['dim']};")
     caret.setCursor(Qt.CursorShape.PointingHandCursor)
     caret.clicked.connect(_toggle)
@@ -517,8 +511,7 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     # Every column in front of the primary label, so an expanded body lines up under
     # the line it belongs to rather than under the caret or the chip. Missing the chip
     # column here leaves every body hanging one chip-width left of its own text.
-    blay.setContentsMargins(
-        _CARET_W + _CARET_GAP + chip_column_width() + _CARET_GAP, 2, 0, 2)
+    blay.setContentsMargins(row_text_indent(), 2, 0, 2)
     blay.setSpacing(4)
 
     # A changed field's `was` line belongs directly under the block that field feeds,
@@ -652,15 +645,18 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     wraps whatever this returns with the dialog's title and its Update/Cancel buttons,
     the same as any other confirmation.
 
-    `items` is a mix of ("header", text), ("sep",), ("card", deck_name, detail),
-    ("retired", identity, deck_short), and ("moved", front, dest_deck_short) entries,
-    one per pending row, built by sync.py from every deck's new and changed cards
-    (_gather_pending_items) and from the retired/relocated cards it finds pending
-    (_retired_moved_items). A header groups a run of rows and a sep draws the hairline
-    between two of them. A "retired" or "moved" row renders through widgets.simple_row
-    rather than `_card_row`: single-line and never expanding, since a retired or
-    relocated card is known only by its front (or identity) and a deck, with nothing
-    more to read out of the collection for it. `sources` is {deck_name: .apkg path},
+    `items` is a mix of ("header", text), ("sep",), ("deck", deck_short, counts),
+    ("card", deck_name, detail), ("retired", identity), and ("moved", front,
+    dest_deck_short) entries, one per row, built by sync.py from every deck's new and
+    changed cards (_gather_pending_items) and from the retired/relocated cards it finds
+    pending (_retired_moved_items). A header groups a run of rows and a sep draws the
+    hairline between two of them. A "deck" row is the per-deck summary that opens the
+    list, unchipped but still on the card rows' own grid so the deck name it names
+    starts where their fronts do. A "retired" or "moved" row renders through
+    widgets.simple_row rather than `_card_row`: single-line and never expanding, since
+    a retired or relocated card is known only by its front (or identity) and a deck,
+    with nothing more to read out of the collection for it. `sources` is
+    {deck_name: .apkg path},
     threaded straight into build_resolvers so a row's picture extracts from the same
     already-downloaded file this screen read the rest of the card from.
 
@@ -690,8 +686,12 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(8)
 
-    top = _rich_label(top_html)
-    lay.addWidget(top)
+    # Skipped entirely when there is nothing to say. Now that the per-deck summary is
+    # the list's own first section, a routine update often has no fixed text above the
+    # list at all, and an empty label still claims a line's height plus the layout's
+    # spacing, which reads as the list having been nudged down for no reason.
+    if top_html:
+        lay.addWidget(_rich_label(top_html))
 
     bottom = _rich_label(flagged_line() + safety_html)
 
@@ -714,9 +714,11 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
             return section_header(item[1])
         if item[0] == "sep":
             return _separator()
+        if item[0] == "deck":
+            _, deck_short, counts = item
+            return simple_row(None, deck_short, counts)
         if item[0] == "retired":
-            _, identity, deck_short = item
-            return simple_row("retired", identity, deck_short)
+            return simple_row("retired", item[1])
         if item[0] == "moved":
             _, front, dest_short = item
             return simple_row("moved", front, f"→ {dest_short}")
@@ -784,8 +786,11 @@ def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
 
     `title`/`rows`/`footer_html` are the end-of-run summary, in the same title/row
     vocabulary the confirmation this dialog follows already uses (widgets.section_header,
-    then one widgets.simple_row per line with a hairline between them, no chip: these
-    are outcomes, not pending cards). Left at their defaults for a bare digest with no
+    then one widgets.simple_row per line with a hairline between them). The rows carry
+    no chip and nothing here expands, so they also decline the caret and chip columns
+    (see simple_row): with nothing on this screen to line up against, reserving them
+    would float every outcome line to the right of the heading above it and the backup
+    line below it. Left at their defaults for a bare digest with no
     summary at all (she backed out of the update but still flagged a card), which is
     why the whole block is skipped when `title` is empty rather than rendered with a
     blank heading.
@@ -810,7 +815,7 @@ def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
         for i, row_html in enumerate(rows):
             if i:
                 slay.addWidget(_separator())   # between rows, not after the last
-            slay.addWidget(simple_row(None, row_html))
+            slay.addWidget(simple_row(None, row_html, card_columns=False))
         if footer_html:
             slay.addWidget(_rich_label(footer_html))
         summary_scroll = QScrollArea()
