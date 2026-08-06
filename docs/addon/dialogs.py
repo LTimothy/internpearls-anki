@@ -13,13 +13,14 @@ from .collection import installed_matching_collection
 from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, EXAMPLE_DECK_NAME, EXAMPLE_REPO,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, STATE, _cfg, _load_json)
-from .logic import (bullets, deck_status, manifest_scope_suggestion, parse_fields,
+from .logic import (deck_status, manifest_scope_suggestion, parse_fields,
                     plural, version_at_least)
 from .palette import colors
+from .review import append_rows, build_list_body
 from .sync import _fetch_manifest, update_decks
-from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
-                 link_button, muted_label, section_label, section_rule, title_label,
-                 wait_cursor)
+from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _prompt, _safe, _warn,
+                 hint_label, link_button, muted_label, section_label, section_rule,
+                 title_label, wait_cursor)
 from .widgets import chip_cell
 
 
@@ -231,6 +232,12 @@ def configure_source():
           "Update my decks</i> whenever you're ready.")
 
 
+# Two rows and two sentences, so this one opens shorter than the confirmations that
+# list a whole run's worth of cards (review._CONFIRM_HEIGHT). Still a floor: the list
+# grows the dialog if a future manifest suggests more.
+_SCOPE_DIALOG_H = 260
+
+
 def _offer_manifest_scope(manifest):
     """Offer the deck author's suggested scope_tag / export_deck from the manifest.
 
@@ -251,9 +258,19 @@ def _offer_manifest_scope(manifest):
     if export_deck:
         changes.append(f"Backup deck: <b>{export_deck}</b> (what the automatic "
                        "pre-sync backup covers)")
-    if not _ask("This deck source recommends settings so your own notes on cards "
-                "survive updates and backups cover its decks:"
-                f"{bullets(changes)}Apply them?"):
+    # Two settings, both the same kind of thing, so neither is chipped and neither has
+    # anything to line up against: card_columns declined (see widgets.simple_row).
+    items = []
+    append_rows(items, [("row", None, change, "") for change in changes])
+    # The question this used to close on ("Apply them?") is the accept button's own
+    # label now, so asking it again above the button that answers it would be the
+    # reader's only ambiguity here spelled twice.
+    if not _ask_with_widget(
+        build_list_body(items, card_columns=False, top_html=(
+            "This deck source recommends settings so your own notes on cards survive "
+            "updates and backups cover its decks:")),
+        yes_label="Apply", min_height=_SCOPE_DIALOG_H
+    ):
         return
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
     if scope_tag:
@@ -668,12 +685,14 @@ def about():
         "review history or the annotations you keep in any preserved field. Cards are "
         "matched by ID, preserved fields are snapshotted and restored around every "
         "import, and a backup runs automatically before anything changes."
-        "<br><br><b>Current settings</b>" +
-        bullets([
-            f"Auto-sync: {sync_status}",
-            f"Add-on updates: {update_status}",
-            f"Preserved fields: {', '.join(cfg['protected']) or 'none set'}",
-        ]) +
+        # Three label-and-value lines rather than a bulleted list: they read as part of
+        # this paragraph of prose, which is what About is, and a bullet per setting made
+        # three short facts look like three things to act on.
+        "<br><br><b>Current settings</b><br>"
+        f"Auto-sync: {sync_status}<br>"
+        f"Add-on updates: {update_status}<br>"
+        f"Preserved fields: {', '.join(cfg['protected']) or 'none set'}"
+        "<br><br>"
         "Change these under <i>Manage decks</i> (which decks, which fields, and where "
         "from) or <i>Settings</i> (how automatic)."
         "<br><br>No deck content ships with the add-on itself. Set your source, a "
