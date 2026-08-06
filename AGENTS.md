@@ -167,6 +167,21 @@ relax them without understanding why they're there.
   `qt_tests/test_chip_column.py`; anything that puts a column in front of a
   row's primary label must also widen `_card_row`'s own `blay` indent, or
   every expanded body hangs left of the line it belongs to.
+- **A chip earns its place when a list is mixed, and only then.** Sync decks
+  marks a deck NEW or UPDATED and Reconcile marks a card RETIRED or MOVED, so
+  their rows carry chips and every row in them reserves the caret and chip
+  columns to read down one edge. Clean up duplicates, Remove empty cards, the
+  recommended-settings offer and every end-of-run summary list one kind of thing
+  each, so nothing on them is chipped and they pass `card_columns=False`:
+  reserving a gutter nothing paints indents the whole list away from its own
+  heading. Don't invent a chip kind to give a single-kind list one.
+- **No screen renders an HTML bullet list.** A list of cards, decks, settings or
+  outcomes is rows (`widgets.simple_row` via `review.build_list_body`), inside a
+  scroll area with the dialog's buttons outside it. A `<ul>` in a QLabel has no
+  alignment, no hairlines and no streaming, and it grows a message box until its
+  own buttons are off-screen, which is why the two confirmations that carried one
+  were capped at 15 cards and no longer need to be. `logic.bullets` is gone
+  rather than unused; `qt_tests/test_layout.py` checks every scene for a `<ul>`.
 - **The update screen's card list streams.** It builds its first batch and
   appends as the reader scrolls. Building every pending row up front costs
   about 2ms per card, which is a multi-second freeze on a first sync of a
