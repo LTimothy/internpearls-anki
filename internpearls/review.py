@@ -26,7 +26,8 @@ from .logic import (apkg_media_index, bullets, build_feedback_digest, cloze_fill
                     field_preview_text, plain_text)
 from .palette import colors
 from .ui import _info, copy_to_clipboard, muted_label, title_label
-from .widgets import StreamingList, chip_html, section_header, simple_row
+from .widgets import (StreamingList, chip_cell, chip_column_width, section_header,
+                      simple_row)
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
 # would be a blank row on every single card.
@@ -82,8 +83,9 @@ def _preview_style():
 _CARET_CLOSED = "▸"
 _CARET_OPEN = "▾"
 
-# The caret's width plus its gap to the text. The expanded body indents by exactly
-# this, so the answer lines up under the primary line rather than under the caret.
+# The caret's width, and the gap between every column in a row's header. The expanded
+# body indents by the whole run of them (caret, gap, chip column, gap), so the answer
+# lines up under the primary line rather than under the caret.
 _CARET_W = 14
 _CARET_GAP = 6
 
@@ -340,19 +342,23 @@ def _primary_images(detail):
 
 
 def _row_html(detail):
-    """A collapsed row's whole line: its kind when it has one, then the card's tag, then
-    its primary line.
+    """A collapsed row's whole line: the card's tag when it has one, then its primary
+    line.
 
     One rich-text paragraph rather than a tag widget beside a text widget. Two widgets
     start each row's text at a different x depending on whether that card happens to
     carry a tag, and wrap it against the tag's edge instead of the row's.
+
+    The kind is deliberately not here: a chip is one of a fixed set of four and belongs
+    in its own column (widgets.chip_cell), while a tag is free text that reads as a
+    lead-in to this card's own line.
     """
     primary = _primary_html(detail)
     tag_text = field_preview_text(_field(detail, "Tag"))
     if tag_text:
         tag = html.escape(tag_text)
         primary = f'<span style="color: {colors()["dim"]};">{tag}</span>&nbsp;&nbsp;{primary}'
-    return _preview_style() + chip_html(detail.get("kind")) + primary
+    return _preview_style() + primary
 
 
 def _rich_label(text):
@@ -421,8 +427,9 @@ def _separator():
 
 
 def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
-    """One card as a single row: a caret, its tag if it has one, and its primary
-    line. Clicking the row (the caret or the line itself) reveals the answer, the why
+    """One card as a single row: a caret, its kind's chip column, its tag if it has
+    one, and its primary line. Clicking the row (the caret or the line itself) reveals
+    the answer, the why
     behind a green left rule, and dosing when present, plus, only when feedback
     collection is on, a box for what the learner makes of it.
 
@@ -494,6 +501,10 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     caret.clicked.connect(_toggle)
     hlay.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
 
+    # Top-aligned like the caret: the chip marks the row, so it belongs beside the
+    # first line of a wrapping one rather than centred against the whole block.
+    hlay.addWidget(chip_cell(detail.get("kind")), 0, Qt.AlignmentFlag.AlignTop)
+
     primary = _ClickableLabel(_row_html(detail), _toggle)
     primary.setWordWrap(True)
     primary.setTextFormat(Qt.TextFormat.RichText)
@@ -503,7 +514,11 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
 
     body.setVisible(False)
     blay = QVBoxLayout(body)
-    blay.setContentsMargins(_CARET_W + _CARET_GAP, 2, 0, 2)
+    # Every column in front of the primary label, so an expanded body lines up under
+    # the line it belongs to rather than under the caret or the chip. Missing the chip
+    # column here leaves every body hanging one chip-width left of its own text.
+    blay.setContentsMargins(
+        _CARET_W + _CARET_GAP + chip_column_width() + _CARET_GAP, 2, 0, 2)
     blay.setSpacing(4)
 
     # A changed field's `was` line belongs directly under the block that field feeds,

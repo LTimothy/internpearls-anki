@@ -146,13 +146,27 @@ relax them without understanding why they're there.
 - **A row marker is a background and foreground pair, never a bare colour.**
   Measured against the render suite's own window colours (`#efefef` light,
   `#2f2f31` dark), no single colour clears WCAG AA 4.5:1 on both themes, so a
-  foreground-only marker would be unreadable on one of them. Guarded by two
-  direct tests, not the general contrast suite: `qt_tests/test_contrast.py`
-  measures one dominant foreground/background pair per widget, and a row's
-  own body text always outcompetes a small inline pill, so it cannot see this
-  case at all. `tests/test_review.py` computes WCAG directly over
-  `widgets.CHIPS`, and `qt_tests/test_paint.py` asserts each pill's
-  background colour actually appears in the render.
+  foreground-only marker would be unreadable on one of them.
+  `tests/test_review.py` computes WCAG directly over `widgets.CHIPS`, and
+  `qt_tests/test_paint.py` asserts each pill's background colour actually
+  appears in the render. `qt_tests/test_contrast.py` measures the pair too,
+  but only since the pill became a widget of its own: it reads one dominant
+  foreground/background per widget, so while the pill was an inline span the
+  row's own body text always outcompeted it for that spot.
+- **A chip is a fixed-width column, not part of the row's own paragraph.**
+  `widgets.chip_cell` returns a fixed-width container even for a row with no
+  chip at all, because a chip prepended into the row's rich text starts that
+  row's primary line at a different x for every chip word (49px with NEW, 76
+  with UPDATED, hard left with none), so one list reads as ragged prose
+  rather than a column. The pills are all widened to the widest of the four,
+  measured lazily at the running platform's own font and cached: a value
+  computed at import is measured before a QApplication exists, and a
+  hardcoded one is only ever right on one platform. Moving it back inline
+  also squares the corners, since Qt's rich text silently drops
+  `border-radius` and `padding` on a span. Guarded by
+  `qt_tests/test_chip_column.py`; anything that puts a column in front of a
+  row's primary label must also widen `_card_row`'s own `blay` indent, or
+  every expanded body hangs left of the line it belongs to.
 - **The update screen's card list streams.** It builds its first batch and
   appends as the reader scrolls. Building every pending row up front costs
   about 2ms per card, which is a multi-second freeze on a first sync of a

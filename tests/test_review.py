@@ -224,13 +224,6 @@ def test_review_holds_no_colour_literals_of_its_own():
     assert not literals, f"review.py still hardcodes {sorted(literals)}"
 
 
-def test_row_markers_use_the_active_palette():
-    from internpearls import palette
-    markup = review._row_html(dict(_basic_note_detail(), kind="new"))
-    active = palette.colors()
-    assert active["new_bg"] in markup and active["new_fg"] in markup
-
-
 # ------------------------------------------------------------- rendered structure
 def _walk(node, out=None):
     out = out if out is not None else []
@@ -268,32 +261,25 @@ def test_no_card_row_widget_carries_a_border_of_its_own():
 
 
 # ----------------------------------------------------------------- new vs changed
+def _chip_labels(detail):
+    """Every chip word a rendered row carries. The chip is a widget in its own column
+    now (widgets.chip_cell), not markup inside the row's line, so this reads the row
+    rather than _row_html's string."""
+    from internpearls import widgets
+    return [n.get("text") for n in _row_nodes(detail)
+            if n.get("t") == "label" and n.get("text") in set(widgets.CHIPS.values())]
+
+
 def test_a_new_row_and_a_changed_row_are_marked_differently():
-    new_html = review._row_html(dict(_basic_note_detail(), kind="new"))
-    changed_html = review._row_html(dict(_basic_note_detail(), kind="changed"))
-    assert "NEW" in new_html and "UPDATED" not in new_html
-    assert "UPDATED" in changed_html and "NEW" not in changed_html
+    assert _chip_labels(dict(_basic_note_detail(), kind="new")) == ["NEW"]
+    assert _chip_labels(dict(_basic_note_detail(), kind="changed")) == ["UPDATED"]
 
 
 def test_an_unmarked_row_carries_no_marker_at_all():
     """A review opened for one kind only, and every pre-existing caller, must render
-    exactly as before."""
-    assert "NEW" not in review._row_html(_basic_note_detail())
-    assert "UPDATED" not in review._row_html(_basic_note_detail())
-
-
-def test_every_marker_sets_a_foreground_with_its_background():
-    """The v0.32.1 rule, applied to markup rather than to a stylesheet: this one lives
-    inside the row's rich text, so the setStyleSheet lint cannot see it.
-
-    Matched on "; color:" rather than "color:", which "background-color:" contains and
-    would pass this test with no foreground set at all.
-    """
-    for kind in ("new", "changed"):
-        markup = review._row_html(dict(_basic_note_detail(), kind=kind))
-        span = markup[markup.index("background-color"):]
-        span = span[:span.index(">")]
-        assert "; color:" in span, f"{kind} marker sets a background with no foreground"
+    exactly as before. The row still reserves the chip column, it just paints no pill
+    into it."""
+    assert _chip_labels(_basic_note_detail()) == []
 
 
 def _luminance(hex_colour):
@@ -315,10 +301,11 @@ def _contrast_ratio(a, b):
 
 
 def test_every_marker_pill_clears_wcag_aa_against_its_own_background():
-    """qt_tests/test_contrast.py cannot see this: it measures one dominant foreground
-    and background per widget, and a row's own body text always outcompetes its small
-    inline marker for that spot, so the pill's own colour pair is structurally never
-    what that suite samples. This test is what stands guard over the pair instead.
+    """The pill is a widget of its own now, so qt_tests/test_contrast.py does measure
+    its pair directly; it did not while the pill was an inline span inside the row's
+    line, since that suite reads one dominant foreground and background per widget and
+    a row's own body text always outcompeted a small span for that spot. This stays as
+    the arithmetic check behind that render, needing neither PyQt6 nor a theme.
 
     A bare, foreground-only marker was the obvious design and isn't available: measured
     against the render suite's own light and dark window colours, no single colour
