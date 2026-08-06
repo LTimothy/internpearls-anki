@@ -1,7 +1,7 @@
-"""The card review dialog, and the feedback digest it produces.
+"""The update screen's card rows, the end-of-run summary, and the feedback digest.
 
 Its own module rather than part of dialogs.py because dialogs.py imports sync.py (for
-Manage decks' manifest fetch and the Update my decks action), and this is opened *from*
+Manage decks' manifest fetch and the Update my decks action), and this is built *from*
 sync.py's update flow, so living in dialogs.py would close that import into a cycle.
 
 Presentation only, in both directions: it reads note fields that sync.py already pulled
@@ -20,12 +20,12 @@ from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayou
                     QImage, QLabel, QPlainTextEdit, QPushButton, QScrollArea, Qt,
                     QTimer, QVBoxLayout, QWidget)
 
-from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _cfg, _load_json, _save_json
+from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
 from .logic import (apkg_media_index, bullets, build_feedback_digest, cloze_filled_html,
                     extract_apkg_media, field_image_names, field_preview_html,
-                    field_preview_text, note_display_label, plain_text)
+                    field_preview_text, plain_text)
 from .palette import colors
-from .ui import _info, copy_to_clipboard, hint_label, muted_label, title_label
+from .ui import _info, copy_to_clipboard, muted_label, title_label
 from .widgets import StreamingList, chip_html, section_header, simple_row
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
@@ -129,10 +129,9 @@ def build_resolvers(sources):
     """Per-deck picture resolvers for `sources` ({deck_name: .apkg path}), and the
     TemporaryDirectory they extract into.
 
-    Shared by review_cards and the inline update screen (build_update_body), so a
-    picture only ever gets one extract-on-first-expand pipeline, not two copies of it.
-    The caller must call the returned directory's .cleanup() once whatever screen it
-    feeds has closed.
+    Used by the update screen (build_update_body) to extract a card's picture the first
+    time its row expands. The caller must call the returned directory's .cleanup() once
+    the screen it feeds has closed.
     """
     media_dir = tempfile.TemporaryDirectory()
     resolvers = {}
@@ -148,13 +147,13 @@ def pending_entries(boxes, flags, index, carried):
     """{guid: {note, deck, front}} for everything currently flagged: every box that
     currently holds text, plus any flag with no box here at all.
 
-    Shared by review_cards and the inline update screen, so what gets written to disk
-    mid-session is decided in exactly one place. `carried` is load_saved_feedback()'s
-    own record, read once by the caller: the fallback for a flagged guid that has
-    neither a box nor an `index` entry here, a note left over from an earlier session
-    about a card whose deck already imported last run and so isn't shown at all this
-    time. Rebuilding its deck/front from `index` alone would write the bare GUID in as
-    the front instead of the name the earlier session actually saved.
+    Kept separate from build_update_body so what gets written to disk mid-session is
+    decided in exactly one place. `carried` is load_saved_feedback()'s own record, read
+    once by the caller: the fallback for a flagged guid that has neither a box nor an
+    `index` entry here, a note left over from an earlier session about a card whose
+    deck already imported last run and so isn't shown at all this time. Rebuilding its
+    deck/front from `index` alone would write the bare GUID in as the front instead of
+    the name the earlier session actually saved.
     """
     entries = {g: {"note": t, "deck": index.get(g, ("", ""))[0],
                    "front": index.get(g, ("", g))[1]}
@@ -630,124 +629,6 @@ def clear_saved_feedback():
         pass
 
 
-def review_cards(parent, decks, flags, unreadable=(), sources=None):
-    """Show every card this update would add or rewrite, as one row each, and collect
-    notes on them when the feedback toggle asks for it.
-
-    `decks` is [(deck_name, [detail, ...])], each detail as apkg_note_details returns it.
-    `flags` is {guid: note text}: read to prefill the boxes and rewritten in place on
-    close, so closing and reopening shows what she already wrote instead of quietly
-    dropping it. With feedback collection off, no boxes are ever created, so this is a
-    read-only preview and `flags` comes back untouched.
-
-    `sources` is {deck_name: .apkg path} for the decks whose media can be resolved. A
-    deck missing from it renders exactly as it did before pictures were possible, which
-    is what a download this run could not read has to do.
-
-    A card is flagged by writing something about it. A checkbox on top of a note box
-    would be two ways to say one thing, and a flag with no note ("this card is wrong",
-    but not how) isn't actionable enough to be worth collecting.
-
-    There's no Cancel button, and every exit path keeps what she typed: nothing in this
-    dialog changes anything, so the only thing a Cancel could throw away is her own
-    work, which is never what she'd mean by it.
-
-    That principle is why the boxes also save to disk as she types (save_feedback, on a
-    short debounce so it is not a write per keystroke). Closing this dialog is not the
-    end of the run: the digest that actually hands her notes back comes several steps
-    later, after an import that can fail, and before v0.41.0 anything that ended the run
-    in between dropped them without a word. `unreadable` names decks whose pending
-    cards could not be read, shown as a line here rather than as its own warning box.
-    """
-    collect_feedback = _cfg()["collect_feedback"]
-    dlg = QDialog(parent or mw)
-    dlg.setWindowTitle(f"{APP_NAME}: card review")
-    dlg.setMinimumWidth(560)
-    dlg.setMinimumHeight(520)
-    outer = QVBoxLayout(dlg)
-
-    total = sum(len(details) for _, details in decks)
-    kinds = [d.get("kind") for _, details in decks for d in details]
-    counts = [f"{kinds.count('new')} new" if "new" in kinds else "",
-              f"{kinds.count('changed')} updated" if "changed" in kinds else ""]
-    heading = f"{total} card(s)"
-    detail_line = " · ".join(c for c in counts if c)
-    outer.addWidget(title_label(f"{heading}  ({detail_line})" if detail_line else heading))
-    hint = "Nothing is added until you choose Update. Click a card to open it."
-    if collect_feedback:
-        hint += " Say what's wrong with one and you'll get a summary to send back."
-    outer.addWidget(hint_label(hint))
-
-    if unreadable:
-        outer.addWidget(muted_label(
-            "Couldn't read the pending cards from " + ", ".join(unreadable) +
-            ". The update itself is unaffected; those decks just aren't shown here."))
-
-    inner = QWidget()
-    ilay = QVBoxLayout(inner)
-    ilay.setContentsMargins(0, 0, 0, 0)
-    ilay.setSpacing(0)
-    boxes = {}
-    # Each card's deck and readable front, so a note saved to disk can still name the
-    # card it is about in a later session, when this run's own index is long gone.
-    index = {}
-    resolvers, media_dir = build_resolvers(sources)
-    for deck_name, details in decks:
-        if not details:
-            continue
-        ilay.addWidget(section_header(deck_name.split("::")[-1]))
-        for i, detail in enumerate(details):
-            if i:
-                ilay.addWidget(_separator())   # between cards, not after the last
-            index[detail["guid"]] = (deck_name, note_display_label(
-                [v for _, v in detail.get("fields", [])]))
-            ilay.addWidget(_card_row(detail, flags, boxes, collect_feedback,
-                                     resolve=resolvers.get(deck_name)))
-    ilay.addStretch(1)
-
-    # Read once. A note carried in from an earlier session is about a card this dialog
-    # may not be showing at all (its deck imported last time), so this dialog cannot
-    # name it on its own. pending_entries falls back to what the saved entry itself
-    # knows about its deck and front.
-    carried = load_saved_feedback()
-
-    def _current_entries():
-        return pending_entries(boxes, flags, index, carried)
-
-    # Debounced rather than saving on every keystroke: a burst of typing collapses into
-    # one write, and 400ms is far below the time any of the losing scenarios take.
-    saver = QTimer(dlg)
-    saver.setSingleShot(True)
-    saver.setInterval(400)
-    saver.timeout.connect(lambda: save_feedback(_current_entries()))
-    for box in boxes.values():
-        box.textChanged.connect(saver.start)
-
-    scroll = QScrollArea()
-    scroll.setWidgetResizable(True)
-    scroll.setFrameShape(QFrame.Shape.NoFrame)
-    scroll.setWidget(inner)
-    outer.addWidget(scroll, 1)
-
-    bb = QDialogButtonBox()
-    done = bb.addButton("Done", QDialogButtonBox.ButtonRole.AcceptRole)
-    done.clicked.connect(dlg.accept)
-    outer.addWidget(bb)
-
-    dlg.exec()
-    media_dir.cleanup()
-
-    for guid, box in boxes.items():
-        note = box.toPlainText().strip()
-        if note:
-            flags[guid] = note
-        else:
-            flags.pop(guid, None)   # she cleared it; treat that as unflagging
-    saver.stop()                    # the final state, not whatever the debounce had
-    save_feedback(_current_entries())
-    return flags
-
-
 def build_update_body(items, sources, flags, new_index, collect_feedback,
                       top_html, flagged_line, safety_html):
     """The Update my decks screen's body: fixed summary text, the streaming list of
@@ -761,18 +642,17 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     one per pending row, built by sync.py from every deck's new and changed cards
     (_gather_pending_items) and from the retired/relocated cards it finds pending
     (_retired_moved_items). A header groups a run of rows and a sep draws the hairline
-    between two of them, the same way review_cards' own deck loop does. A "retired" or
-    "moved" row renders through widgets.simple_row rather than `_card_row`: single-line
-    and never expanding, since a retired or relocated card is known only by its front
-    (or identity) and a deck, with nothing more to read out of the collection for it.
-    `sources` is {deck_name: .apkg path}, threaded straight into build_resolvers so a
-    row's pictures extract from the same already-downloaded file review_cards used to
-    read them from.
+    between two of them. A "retired" or "moved" row renders through widgets.simple_row
+    rather than `_card_row`: single-line and never expanding, since a retired or
+    relocated card is known only by its front (or identity) and a deck, with nothing
+    more to read out of the collection for it. `sources` is {deck_name: .apkg path},
+    threaded straight into build_resolvers so a row's picture extracts from the same
+    already-downloaded file this screen read the rest of the card from.
 
     `flags`/`new_index` are the {guid: note}/{guid: (deck, front)} maps update_decks()
     already carries through the run. A row's box writes into `flags` live, on every
-    keystroke, rather than only when a separate review dialog closes: there is no such
-    closing moment left once the rows sit on the confirmation itself.
+    keystroke, since there is no separate closing moment: the rows sit on the
+    confirmation itself.
 
     `flagged_line()` is called fresh on every keystroke to recompute the "N card(s)
     flagged" line shown below the list; `safety_html` is fixed.

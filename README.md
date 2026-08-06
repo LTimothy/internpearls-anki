@@ -34,7 +34,7 @@ No deck source yet? Open Manage decks > Configure source and pick "Try the examp
 
 The main button, and the only one most people ever need. It fetches `manifest.json` from your configured deck source and figures out everything pending in one pass: which decks changed, which retired cards are still lingering in your collection, and which cards a deck reorg needs to relocate — the same two kinds of housekeeping "Reconcile my decks" handles on its own (see the Advanced entry below). For any changed deck, it downloads and matches it against your collection before showing you anything, so the confirmation lists real per-deck counts ("12 kept · 3 new", plus a "changed" count too when a deck has cards whose content was rewritten upstream), not just how big the deck is. A real progress bar with a working Cancel button covers this step (and the later apply step), since it's a live download per deck and a multi-deck check on a slow connection would otherwise look like a frozen add-on with no way out. One confirmation covers all of it — changed decks with their real counts, retired cards, and relocations, and it's explicitly a preview, nothing applies until you click Update — so you know the full scope before anything happens. Cancelling the apply step partway through is safe: whatever decks already finished stay applied, and archiving/relocating is skipped for that run rather than run against a partial sync.
 
-A card already in your collection can come back with its content rewritten upstream, not only a card you don't have yet, and the confirmation treats the two differently: cards you don't have yet are named under "will be added," and cards you already have but whose content changed are named separately under "will change," with your review history staying on them either way. Next to that, a Review button opens every pending card in full instead of leaving it as a number, and its label names what it covers: "Review N card(s)" when both new and changed cards are pending, "Review N new card(s)" when only new ones are, and "Review N changed card(s)" when only changed ones are. It opens the card list on top of the confirmation rather than answering it, so looking through the cards doesn't commit you to anything. Each row carries a small NEW or UPDATED marker, and a changed row shows what each changed field currently says in your collection right under that field, so you can see exactly what's different before anything applies.
+A card already in your collection can come back with its content rewritten upstream, not only a card you don't have yet, and the confirmation shows both, as rows in one list right on the confirmation itself, not behind a button. Every pending card carries a small chip naming what it is: NEW for a card you don't have yet, UPDATED for one whose content changed upstream (with what each changed field currently says in your collection shown right under it), RETIRED for a card being archived because a split, reword, or removal upstream has replaced it, and MOVED for a card whose deck was reorganized and is being relocated to match. Click a NEW or UPDATED row to open it and read the whole card; RETIRED and MOVED rows are a single line each, since there's nothing more to read out of the collection for either kind. The list builds itself in batches as you scroll, so it opens instantly whether a handful of cards are pending or thousands, and your review history stays on every card either way.
 
 If an update also changes how cards look, that choice is a checkbox on this same confirmation rather than a separate question part-way through the run. It is unticked by default, because applying it costs a one-time full AnkiWeb sync; leaving it alone still imports all the content and just keeps your current card appearance, and the next update carrying a look change offers it again.
 
@@ -227,9 +227,15 @@ Everything that does touch Anki is split by concern:
 - `internpearls/background.py` — `_run_in_background` (QueryOp dispatch), the startup
   update check, the auto-sync poll and its timer.
 - `internpearls/dialogs.py` — Manage decks, Settings, About, and source configuration.
-- `internpearls/review.py`: the card review dialog and the feedback digest it
-  produces. Kept out of `dialogs.py` because that module imports `sync.py`, and this is
-  opened from `sync.py`'s update flow, which would make the import circular.
+- `internpearls/review.py`: card row rendering shared by the update screen and the
+  end-of-run summary, and the feedback digest they produce. Kept out of `dialogs.py`
+  because that module imports `sync.py`, and this is built from `sync.py`'s update
+  flow, which would make the import circular.
+- `internpearls/widgets.py`: the shared chip, section heading, single-line row, and
+  `StreamingList` (a scroll area that builds its rows in batches instead of all at
+  once). The update screen, the end-of-run summary, and `review.py`'s card rows all
+  build from this module, so the two ends of a run look alike because they share the
+  same components.
 
 The two checks that run on their own (the add-on-update check and the deck auto-sync
 poll) dispatch their network work through `_run_in_background()`, which uses Anki's
@@ -287,9 +293,8 @@ PyQt6 and no Anki:
 ```bash
 python3 -m pip install PyQt6
 python3 tools/render_dialog.py --list
-python3 tools/render_dialog.py review --expand 1 --feedback --out review.png
-python3 tools/render_dialog.py review --dark          # see "Colors" below
-python3 tools/render_dialog.py review --apkg ~/deck.apkg
+python3 tools/render_dialog.py confirm --expand 1 --feedback --out confirm.png
+python3 tools/render_dialog.py confirm --dark          # see "Colors" below
 ```
 
 It reuses `tests/mock_anki.py` for the whole fake Anki world and swaps only that

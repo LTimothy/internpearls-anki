@@ -39,9 +39,14 @@ dialog changes extend the dialog tests.
 ## Verify before committing
 
 ```bash
-pytest tests/ -v      # must pass
-./build.sh             # repackages internpearls.ankiaddon and refreshes docs/addon/
+python3 -m pytest tests/ -v      # must pass
+QT_QPA_PLATFORM=offscreen .venv-qt/bin/python -m pytest qt_tests/ -q   # must pass, separately
+./build.sh                        # repackages internpearls.ankiaddon and refreshes docs/addon/
 ```
+
+Two independent suites, always as two separate commands: `tests/` runs against a mock
+Qt, `qt_tests/` renders with real PyQt6, and the two cannot share one process. A guard
+in `conftest.py` exits if a single invocation names both paths.
 
 ## Hard constraints
 
@@ -131,7 +136,7 @@ relax them without understanding why they're there.
   with no error — found by testing this exact page in an automated,
   non-foregrounded browser tab. `setTimeout(fn, 0)` yields a real turn of the
   event loop regardless of tab visibility and doesn't have this failure mode.
-- **Review renders a card's media only from an already-downloaded `.apkg`, on
+- **A card row renders its media only from an already-downloaded `.apkg`, on
   expand.** `field_preview_html` names an image unless it is handed a
   resolver, and the resolver extracts on first expand into a per-dialog temp
   dir. Rendering eagerly would extract every picture in a deck (a deck can
@@ -146,8 +151,17 @@ relax them without understanding why they're there.
   measures one dominant foreground/background pair per widget, and a row's
   own body text always outcompetes a small inline pill, so it cannot see this
   case at all. `tests/test_review.py` computes WCAG directly over
-  `review._MARKERS`, and `qt_tests/test_paint.py` asserts each pill's
+  `widgets.CHIPS`, and `qt_tests/test_paint.py` asserts each pill's
   background colour actually appears in the render.
+- **The update screen's card list streams.** It builds its first batch and
+  appends as the reader scrolls. Building every pending row up front costs
+  about 2ms per card, which is a multi-second freeze on a first sync of a
+  large deck, with no feedback and no way out. A timing test guards this; if
+  it fails, the list has been made eager again.
+- **Row, chip and section rendering lives in `widgets.py`**, and both the
+  update screen and the end-of-run result screen build from it. Two screens
+  that look alike because they share components stay alike; two that look
+  alike because someone copied a stylesheet do not.
 - **`remap_cards` owns what "matched" and "new" mean.** `find_changed_notes`
   takes its pair list rather than re-deciding, for the same reason
   `new_notes` is returned from there: a second implementation of that ladder

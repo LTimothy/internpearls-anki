@@ -3,6 +3,18 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.44.0
+
+- Pending cards now sit directly on the update screen, as rows in one list under the
+  summary and above the Update button, instead of behind a separate Review button.
+- Retired and relocated cards are rows in that same list too, each carrying its own
+  chip, so every kind of pending change reads as one list rather than a summary with a
+  button below it.
+- The list streams: it builds its first batch of rows and adds more as you scroll, so
+  the screen opens instantly whether a handful of cards are pending or a whole backlog.
+- The end of a run now uses the same row and heading look the update screen does, so a
+  run reads as one product from open to close.
+
 ## v0.43.0
 
 - Every colour now comes in a light and a dark version, picked from Anki's own theme. The

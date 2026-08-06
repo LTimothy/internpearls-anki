@@ -144,7 +144,7 @@ def test_review_rows_share_a_left_edge(shot):
     1 are tagged, row 2 is not.
     """
     _, q = harness.bootstrap()
-    s = shot("review")
+    s = shot("confirm")
     lefts = {}
     for label in _visible_labels(s.dialog, q):
         for marker, row in (("one short line", 0), ("deliberately long", 1),
