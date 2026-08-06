@@ -1291,6 +1291,7 @@ def test_update_decks_confirmation_shows_real_kept_new_counts(anki, tmp_path):
         label = next((n for n in _walk(p["tree"]) if n.get("t") == "label"
                      and "kept" in (n.get("text") or "")), None)
         seen["text"] = label["text"] if label else None
+        seen.setdefault("all", _labels(p["tree"]))
         btn = _find(p["tree"], t="button", label="Update")
         return {"events": [{"id": btn["id"], "click": True}]}
 
@@ -1298,6 +1299,12 @@ def test_update_decks_confirmation_shows_real_kept_new_counts(anki, tmp_path):
 
     assert seen.get("text"), "expected a kept/new preview line in the confirmation"
     assert "1 kept" in seen["text"] and "1 new" in seen["text"]
+    # A row per deck under its own heading, not an indented bullet list dropped into
+    # the label above the card rows it introduces.
+    assert "1 deck(s) have updates" in seen["all"]
+    assert "<li>" not in seen["all"] and "<ul>" not in seen["all"], (
+        "the per-deck counts read as a row's trailing column now, not as a bulleted "
+        "list inside one label")
 
 
 def _labels(tree):
@@ -1402,6 +1409,14 @@ def test_update_decks_confirmation_shows_retired_and_moved_cards_as_rows(anki, t
     # Neither kind is bulleted text below the summary anymore.
     assert "retired card(s)" not in seen["text"]
     assert "belong to a deck" not in seen["text"]
+
+    # Nor does either kind have a heading of its own: the chip on the row already says
+    # what it is, so the heading is free to say which deck it belongs to. The retired
+    # card's own deck heads its row here, and the moved card's the deck it is leaving.
+    lines = seen["text"].split("\n")
+    assert "Retired" not in lines and "Moved" not in lines, (
+        f"a kind still heads its own section: {lines}")
+    assert "Pharm" in lines and "Regional (old)" in lines
 
     # Neither row expands: no card in this run has a caret to open.
     buttons = [n.get("label") for n in _walk(seen["tree"]) if n.get("t") == "button"]
@@ -2511,3 +2526,89 @@ def test_update_never_asks_about_the_look_in_its_own_dialog(anki, tmp_path):
 
     assert not any("full sync" in a for a in anki.gui.asks)
 
+
+
+def test_update_decks_groups_every_pending_row_under_its_own_deck(anki, tmp_path):
+    """One deck, one section, holding everything pending for it.
+
+    Retired and relocated cards used to hang below the list under headings of their
+    own, so a single deck's work read as three separate lists and its name appeared
+    three times. They belong to a deck like any other row: a retired card to the deck
+    it is retired out of, a relocated one to the deck it is currently sitting in, with
+    only its destination named on the row itself. Within the section the content
+    updates read first, then what is being archived, then what is moving.
+    """
+    from internpearls import sync
+    from internpearls.widgets import CHIPS
+    anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    _her_card(anki, "moved1", "a card leaving this deck")
+    folder = _write_source(
+        tmp_path,
+        {DECK: ("v2", [("g1", _fields("Front one", back="the new answer"), TAGS),
+                       ("g2", _fields("Front two"), TAGS)], None)},
+        retired={DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                                 "superseded_by": []}}},
+        deck_moves={"moved1": {"from": DECK, "to": NEW_DECK}})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen.setdefault("lines", _labels(p["tree"]).split("\n"))
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    lines = seen["lines"]
+    # One "Pharm" heading, the summary row that counts it aside, and no heading named
+    # after a kind rather than a deck.
+    assert lines.count("Pharm") == 2, f"expected one summary row and one heading: {lines}"
+    assert "Retired" not in lines and "Moved" not in lines
+
+    heading = len(lines) - 1 - lines[::-1].index("Pharm")
+    section = lines[heading:]
+    chips = [l for l in section if l in set(CHIPS.values())]
+    assert sorted(chips) == sorted(CHIPS.values()), (
+        f"the deck's section does not hold all four kinds: {chips}")
+    assert chips[-2:] == [CHIPS["retired"], CHIPS["moved"]], (
+        f"archived and relocated cards should close the section: {chips}")
+
+    # The retired row no longer repeats the deck name its heading already gives; the
+    # moved row still names where it is heading, which the heading cannot say.
+    assert "→ Regional" in section
+    assert "bulky crisis card" in section
+
+
+def test_update_decks_gives_a_retired_only_deck_its_own_heading(anki, tmp_path):
+    """A deck with no content update at all still heads its own section when the only
+    thing pending for it is an archive or a relocation: those rows belong to a deck,
+    and no other section would carry them."""
+    from internpearls import sync
+    from internpearls.widgets import CHIPS
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    folder = _write_source(
+        tmp_path, {},
+        retired={DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                                 "superseded_by": []}}})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen.setdefault("lines", _labels(p["tree"]).split("\n"))
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    lines = seen["lines"]
+    assert "Pharm" in lines, f"the retired card's deck should head its row: {lines}"
+    assert lines.index("Pharm") < lines.index(CHIPS["retired"])
+    assert "1 deck(s) have updates:" not in lines, \
+        "nothing is downloading, so there is no deck summary to open the list with"

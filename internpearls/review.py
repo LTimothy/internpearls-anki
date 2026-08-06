@@ -645,15 +645,18 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     wraps whatever this returns with the dialog's title and its Update/Cancel buttons,
     the same as any other confirmation.
 
-    `items` is a mix of ("header", text), ("sep",), ("card", deck_name, detail),
-    ("retired", identity, deck_short), and ("moved", front, dest_deck_short) entries,
-    one per pending row, built by sync.py from every deck's new and changed cards
-    (_gather_pending_items) and from the retired/relocated cards it finds pending
-    (_retired_moved_items). A header groups a run of rows and a sep draws the hairline
-    between two of them. A "retired" or "moved" row renders through widgets.simple_row
-    rather than `_card_row`: single-line and never expanding, since a retired or
-    relocated card is known only by its front (or identity) and a deck, with nothing
-    more to read out of the collection for it. `sources` is {deck_name: .apkg path},
+    `items` is a mix of ("header", text), ("sep",), ("deck", deck_short, counts),
+    ("card", deck_name, detail), ("retired", identity), and ("moved", front,
+    dest_deck_short) entries, one per row, built by sync.py from every deck's new and
+    changed cards (_gather_pending_items) and from the retired/relocated cards it finds
+    pending (_retired_moved_items). A header groups a run of rows and a sep draws the
+    hairline between two of them. A "deck" row is the per-deck summary that opens the
+    list, unchipped but still on the card rows' own grid so the deck name it names
+    starts where their fronts do. A "retired" or "moved" row renders through
+    widgets.simple_row rather than `_card_row`: single-line and never expanding, since
+    a retired or relocated card is known only by its front (or identity) and a deck,
+    with nothing more to read out of the collection for it. `sources` is
+    {deck_name: .apkg path},
     threaded straight into build_resolvers so a row's picture extracts from the same
     already-downloaded file this screen read the rest of the card from.
 
@@ -683,8 +686,12 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(8)
 
-    top = _rich_label(top_html)
-    lay.addWidget(top)
+    # Skipped entirely when there is nothing to say. Now that the per-deck summary is
+    # the list's own first section, a routine update often has no fixed text above the
+    # list at all, and an empty label still claims a line's height plus the layout's
+    # spacing, which reads as the list having been nudged down for no reason.
+    if top_html:
+        lay.addWidget(_rich_label(top_html))
 
     bottom = _rich_label(flagged_line() + safety_html)
 
@@ -707,9 +714,11 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
             return section_header(item[1])
         if item[0] == "sep":
             return _separator()
+        if item[0] == "deck":
+            _, deck_short, counts = item
+            return simple_row(None, deck_short, counts)
         if item[0] == "retired":
-            _, identity, deck_short = item
-            return simple_row("retired", identity, deck_short)
+            return simple_row("retired", item[1])
         if item[0] == "moved":
             _, front, dest_short = item
             return simple_row("moved", front, f"→ {dest_short}")
