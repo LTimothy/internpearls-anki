@@ -791,6 +791,18 @@ def test_list_body_rows_keep_the_card_columns():
     assert cell._layout._children[0].text() == widgets.CHIPS["moved"]
 
 
+def test_list_body_can_decline_the_card_columns_for_the_whole_list():
+    """A list where every row is the same sort of thing has nothing to line up
+    against, so Clean up duplicates and Remove empty cards pass card_columns=False and
+    their rows start at the row's own left edge. Decided per list rather than inferred
+    from a row having no chip: the update screen's card sections keep the columns for
+    their unchipped rows precisely because a chipped row sits beside them."""
+    from aqt.qt import QLabel
+    row = review._list_row(("row", None, "A duplicate card", ""), card_columns=False)
+    assert isinstance(row._layout._children[0], QLabel), (
+        "the row still reserves a column in front of its own text")
+
+
 def test_list_body_skips_fixed_text_it_was_given_none_of():
     """A run with nothing to say above or below the list must not pay a blank label's
     height plus the layout's spacing for it at either end."""
