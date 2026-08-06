@@ -26,8 +26,8 @@ from .logic import (apkg_media_index, bullets, build_feedback_digest, cloze_fill
                     field_preview_text, plain_text)
 from .palette import colors
 from .ui import _info, copy_to_clipboard, muted_label, title_label
-from .widgets import (StreamingList, chip_cell, chip_column_width, section_header,
-                      simple_row)
+from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell, row_text_indent,
+                      section_header, simple_row)
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
 # would be a blank row on every single card.
@@ -82,12 +82,6 @@ def _preview_style():
 
 _CARET_CLOSED = "▸"
 _CARET_OPEN = "▾"
-
-# The caret's width, and the gap between every column in a row's header. The expanded
-# body indents by the whole run of them (caret, gap, chip column, gap), so the answer
-# lines up under the primary line rather than under the caret.
-_CARET_W = 14
-_CARET_GAP = 6
 
 # The row body's usable width at the dialog's 560px minimum. A picture wider than this
 # is scaled down to it; a smaller one is left alone rather than blown up.
@@ -490,12 +484,12 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     header = QWidget()
     hlay = QHBoxLayout(header)
     hlay.setContentsMargins(0, 0, 0, 0)
-    hlay.setSpacing(_CARET_GAP)
+    hlay.setSpacing(CARET_GAP)
 
     caret.setFlat(True)
     # Unconstrained, this is a real push button at its platform minimum (~80px on
     # macOS) around a 6px glyph, which is a wide dead gutter down the whole list.
-    caret.setFixedWidth(_CARET_W)
+    caret.setFixedWidth(CARET_W)
     caret.setStyleSheet(f"border: none; padding: 0; color: {colors()['dim']};")
     caret.setCursor(Qt.CursorShape.PointingHandCursor)
     caret.clicked.connect(_toggle)
@@ -517,8 +511,7 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     # Every column in front of the primary label, so an expanded body lines up under
     # the line it belongs to rather than under the caret or the chip. Missing the chip
     # column here leaves every body hanging one chip-width left of its own text.
-    blay.setContentsMargins(
-        _CARET_W + _CARET_GAP + chip_column_width() + _CARET_GAP, 2, 0, 2)
+    blay.setContentsMargins(row_text_indent(), 2, 0, 2)
     blay.setSpacing(4)
 
     # A changed field's `was` line belongs directly under the block that field feeds,
@@ -784,8 +777,11 @@ def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
 
     `title`/`rows`/`footer_html` are the end-of-run summary, in the same title/row
     vocabulary the confirmation this dialog follows already uses (widgets.section_header,
-    then one widgets.simple_row per line with a hairline between them, no chip: these
-    are outcomes, not pending cards). Left at their defaults for a bare digest with no
+    then one widgets.simple_row per line with a hairline between them). The rows carry
+    no chip and nothing here expands, so they also decline the caret and chip columns
+    (see simple_row): with nothing on this screen to line up against, reserving them
+    would float every outcome line to the right of the heading above it and the backup
+    line below it. Left at their defaults for a bare digest with no
     summary at all (she backed out of the update but still flagged a card), which is
     why the whole block is skipped when `title` is empty rather than rendered with a
     blank heading.
@@ -810,7 +806,7 @@ def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
         for i, row_html in enumerate(rows):
             if i:
                 slay.addWidget(_separator())   # between rows, not after the last
-            slay.addWidget(simple_row(None, row_html))
+            slay.addWidget(simple_row(None, row_html, card_columns=False))
         if footer_html:
             slay.addWidget(_rich_label(footer_html))
         summary_scroll = QScrollArea()
