@@ -27,13 +27,10 @@ def test_every_scene_renders_something(shot, scene):
     s = shot(scene)
     assert not s.image.isNull(), f"scene {scene!r} grabbed a null image"
     assert s.image.width() > 0 and s.image.height() > 0
-    # The branding check applies only to QDialog scenes. QMessageBox does not
-    # round-trip setWindowTitle through windowTitle() (it manages its own title, and
-    # on macOS an alert dialog gets no title bar at all), so windowTitle() reads back
-    # empty even though about() and configure_source() set it correctly. Those two are
-    # QMessageBox scenes; they still render real content, which the image checks above
-    # prove non-vacuously (their whole message is one rich-text QLabel the contrast and
-    # layout sweeps measure).
-    _, q = harness.bootstrap()
-    if not isinstance(s.dialog, q.QMessageBox):
-        assert s.dialog.windowTitle(), f"scene {scene!r} opened a dialog with no title"
+    # Every scene is now a QDialog the add-on lays out itself, so every one of them
+    # carries the "Intern Pearls" title, and this is checked unconditionally. It used
+    # to skip QMessageBox scenes, which never round-trip setWindowTitle through
+    # windowTitle() (a message box manages its own title, and on macOS an alert gets no
+    # title bar at all): About was the first to move to a real dialog, the deck-source
+    # choice was the last.
+    assert s.dialog.windowTitle(), f"scene {scene!r} opened a dialog with no title"
