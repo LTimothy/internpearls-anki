@@ -3,6 +3,29 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.45.0
+
+- Every card in a list now starts at the same place. A row's chip sits in a column of
+  its own rather than inline with the text, so the fronts line up down the whole list
+  instead of starting wherever the chip beside them happened to end, and the chips
+  themselves are rounded pills of one width.
+- Retired and relocated cards sit under the deck they belong to, alongside that deck's
+  new and changed cards, rather than in their own sections at the bottom.
+- No screen shows a bulleted list any more. Sync decks, Reconcile my decks, Clean up
+  duplicate cards, Remove empty cards, and every end-of-run summary use the same rows
+  the update screen does, and the lists that used to stop at fifteen entries with an
+  "and N more" now show everything.
+- Choosing where decks come from is a proper screen: each source gets its own button
+  with a line explaining it, and the one to pick first says so.
+- Manage decks shows each deck's state as a chip, the same chips a sync uses, instead of
+  coloured text.
+- Settings is ruled off into its four groups, and each explanation is cut back to what
+  actually changes the decision.
+- Counts read as sentences: "1 deck has updates", "2 retired cards", never "1 deck(s)"
+  or "1 cards".
+- The caret that opens a card is legible now, and rows separate as clearly on the light
+  theme as on the dark one.
+
 ## v0.44.0
 
 - Pending cards now sit directly on the update screen, as rows in one list under the
