@@ -38,11 +38,17 @@ from .logic import (apkg_note_details, apkg_notes, bullets, decks_to_update,
                     note_display_label, plural, remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .palette import colors
-from .review import (build_update_body, clear_saved_feedback, load_saved_feedback,
-                     show_result_with_feedback)
+from .review import (build_list_body, build_update_body, clear_saved_feedback,
+                     load_saved_feedback, show_result_with_feedback)
 from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _safe, _warn,
                  cancellable_progress, wait_cursor)
 
+
+# Sync decks and Reconcile my decks each list one Advanced action's worth of rows, so
+# their dialogs open shorter than Update my decks, whose list covers everything pending
+# at once and takes _ask_with_widget's own taller default. This is a floor, not a fixed
+# height: a longer list still grows the dialog and then scrolls inside it.
+_CONFIRM_HEIGHT = 380
 
 # The "Reconcile my decks" QAction, set once by __init__.py right after building the
 # menu. Mutated from here and from background.py's auto-sync poll, mirroring
@@ -156,19 +162,32 @@ def sync_decks():
         _info(f"All selected decks are up to date (source: {source}).")
         return
 
-    def _line(d):
+    def _deck_row(d):
+        """One deck's row: the deck as the primary text, its size as the trailing
+        column, and a chip for which of the two things this deck is.
+
+        The chip carries what the old line spelled out in a parenthesis: a deck you
+        have none of yet is NEW, one already in your collection is UPDATED. The count
+        is the manifest's own total for the deck rather than a kept/new split, since
+        Sync decks downloads nothing before this confirmation.
+        """
         short = d["name"].split("::")[-1]
         cards = d.get("cards")
-        tag = "new deck" if d["name"] not in installed else None
-        detail = ", ".join(x for x in (plural(cards, "card") if cards is not None
-                                       else None, tag) if x)
-        return f"{short} ({detail})" if detail else short
+        kind = "changed" if d["name"] in installed else "new"
+        return ("row", kind, short,
+                plural(cards, "card") if cards is not None else "")
 
-    if not _ask(
-        "Update these decks?\n\n  • " + "\n  • ".join(_line(d) for d in todo) +
-        "\n\nYour review history and any personal notes on existing cards are kept "
-        "(matched by card, not overwritten). A backup is taken automatically first, "
-        "so this is safe to undo if anything looks wrong afterward."
+    items = [("header", "Update these decks?")]
+    for i, d in enumerate(todo):
+        if i:
+            items.append(("sep",))
+        items.append(_deck_row(d))
+    if not _ask_with_widget(
+        build_list_body(items, bottom_html=(
+            "Your review history and any personal notes on existing cards are kept "
+            "(matched by card, not overwritten). A backup is taken automatically "
+            "first, so this is safe to undo if anything looks wrong afterward.")),
+        yes_label="Update", min_height=_CONFIRM_HEIGHT
     ):
         return
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
@@ -387,24 +406,49 @@ def _reconcile_pending(manifest, cfg):
     return her, fresh, already, moves, retired_deck, tag, stranded
 
 
-def _stranded_block(stranded, her):
-    """The confirmation section for reworded cards she holds both halves of.
+def _append_rows(items, rows):
+    """Add one group's rows to a build_list_body item list, hairlined between rather
+    than around: a rule above the first row would cut the group off from the sentence
+    that introduces it."""
+    for i, row in enumerate(rows):
+        if i:
+            items.append(("sep",))
+        items.append(row)
+
+
+def _stranded_lead(stranded):
+    """What the reworded-pair section says before naming any of them.
 
     Worded around what she'll notice (two versions of the same card, progress on the
     one that's out of date) rather than around GUIDs, which is the actual cause but not
     something she should have to know about to say yes to this.
     """
-    if not stranded:
-        return ""
-    muted = colors()["muted"]
-    lines = [f"{p['front']} <span style='color:{muted};'>→ {p['successor_front']}</span>"
-             for p in stranded]
     return (f"<b>{plural(len(stranded), 'card')}</b> "
             f"{'is' if len(stranded) == 1 else 'are'} in your collection twice, in an "
             "older and a newer wording of the same question, because the wording "
             "changed after your first import. Your progress on the older copy moves to "
-            "the newer one, then the older copy is archived."
-            + bullets(lines, cap=15))
+            "the newer one, then the older copy is archived.")
+
+
+def _stranded_lines(stranded):
+    """One line per reworded pair: the wording she holds, then the one it becomes.
+
+    Both halves stay in the one line rather than the newer one moving to a trailing
+    column, because a card front is long enough to wrap and the trailing column does
+    not: the pair is a single sentence about one card, not a value to compare down the
+    list.
+    """
+    muted = colors()["muted"]
+    return [f"{p['front']} <span style='color:{muted};'>→ {p['successor_front']}</span>"
+            for p in stranded]
+
+
+def _stranded_block(stranded, her):
+    """The reworded-pair section as one block of prose, for a screen whose other
+    sections are prose too (see update_decks)."""
+    if not stranded:
+        return ""
+    return _stranded_lead(stranded) + bullets(_stranded_lines(stranded), cap=15)
 
 
 def _merge_stranded(stranded, her, protected, retired_deck, tag):
@@ -486,59 +530,72 @@ def reconcile_decks():
     # expect going forward, so the length itself doesn't feel like something went wrong.
     catch_up_note = (
         "<i>This looks like a one-time catch-up — likely your first Reconcile since a "
-        "larger update. Future runs should be much shorter.</i><br><br>"
+        "larger update. Future runs should be much shorter.</i>"
         if len(fresh) + len(moves) + len(stranded) > 20 else "")
 
-    # Both lists are capped for readability, and the confirmation below uses the
-    # scrollable dialog rather than a plain askUser() — a bare QMessageBox has no
-    # scroll area, so a long enough uncapped list (dozens of relocated cards from a
-    # single reorg, as happened here) can push the Yes/No buttons off-screen with no
-    # way to reach them. Capping keeps the dialog itself short in the common case;
-    # the scroll area is the structural guarantee that it can never happen again even
-    # if some future list grows past the cap.
-    muted = colors()["muted"]
-    lines = [f"{r['identity']} <span style='color:{muted};'>"
-             f"({r['deck'].split('::')[-1]})</span>" for r in fresh]
+    # Every card here is a row, marked by what is about to happen to it, exactly as the
+    # same cards read on Update my decks' own list: a retirement is RETIRED and a
+    # relocation is MOVED there too, and the two screens act on the same two ledgers
+    # (see _reconcile_pending), so they show the same thing the same way.
+    #
+    # Each group keeps the sentence that explains it, sitting directly above its own
+    # rows rather than collected at the top, so a reader meets the explanation and the
+    # cards it is about together. The lists themselves are uncapped: the cap existed
+    # because a bare QMessageBox has no scroll area, so a long enough list (dozens of
+    # relocated cards from a single reorg, as happened here) pushed the Yes/No buttons
+    # off-screen with nothing to reach them. The rows stream and the buttons sit
+    # outside the scroll area now, which is the structural version of that fix.
+    items = []
     missing = sum(1 for r in fresh
                   if r["superseded_by"] and r["replacements_present"] == 0)
-    sync_note = (f"<br><b>Note:</b> {missing} of these don't have their replacement "
-                 "cards in your collection yet — run <b>Sync decks</b> first if you "
-                 "want the new versions before archiving the old ones."
-                if missing else "")
     already_note = (f" ({already} more {'was' if already == 1 else 'were'} already "
                     "archived earlier.)" if already else "")
-    archive_block = (
-        f"<b>{plural(len(fresh), 'retired card')}</b> "
-        f"{'is' if len(fresh) == 1 else 'are'} still in your collection — split or "
-        "reworded since, with the replacements already added separately, so "
-        f"{'it just duplicates' if len(fresh) == 1 else 'these just duplicate'} "
-        f"your reviews now.{already_note}"
-        + bullets(lines, cap=15) + sync_note
-    ) if fresh else ""
+    if fresh:
+        items.append(("note",
+                      f"<b>{plural(len(fresh), 'retired card')}</b> "
+                      f"{'is' if len(fresh) == 1 else 'are'} still in your collection — "
+                      "split or reworded since, with the replacements already added "
+                      "separately, so "
+                      f"{'it just duplicates' if len(fresh) == 1 else 'these just duplicate'} "
+                      f"your reviews now.{already_note}"))
+        _append_rows(items, [("row", "retired", r["identity"],
+                              r["deck"].split("::")[-1]) for r in fresh])
+        if missing:
+            items.append(("note",
+                          f"<b>Note:</b> {missing} of these don't have their "
+                          "replacement cards in your collection yet — run <b>Sync "
+                          "decks</b> first if you want the new versions before "
+                          "archiving the old ones."))
+    if stranded:
+        items.append(("note", _stranded_lead(stranded)))
+        # Chipped RETIRED because that is what happens to the half she is looking at:
+        # the older wording is archived once its progress has moved across.
+        _append_rows(items, [("row", "retired", line, "")
+                             for line in _stranded_lines(stranded)])
+    if moves:
+        items.append(("note",
+                      f"<b>{plural(len(moves), 'card')}</b> "
+                      f"{'belongs' if len(moves) == 1 else 'belong'} to a deck that's "
+                      "since been reorganized."))
+        _append_rows(items, [
+            ("row", "moved", mw.col.get_note(her[m["guid"]]).fields[0],
+             f"→ {m['to'].split('::')[-1]}") for m in moves])
 
-    move_lines = [f"{mw.col.get_note(her[m['guid']]).fields[0]} <span "
-                  f"style='color:{muted};'>→ {m['to'].split('::')[-1]}</span>" for m in moves]
-    moves_block = (
-        f"<b>{plural(len(moves), 'card')}</b> "
-        f"{'belongs' if len(moves) == 1 else 'belong'} to a deck that's since been "
-        "reorganized."
-        + bullets(move_lines, cap=15)
-    ) if moves else ""
-
-    stranded_block = _stranded_block(stranded, her)
     safety_note = (
-        "<br><br>Nothing is deleted. Archived cards keep their review history and can "
+        "Nothing is deleted. Archived cards keep their review history and can "
         "be brought back anytime by unsuspending them or moving them out of the "
         "Retired deck" +
         (", and any personal notes on them carry over to the replacement first."
          if fresh else ".") +
         " A backup is taken automatically before anything changes."
     )
-    body = "<br><br>".join(b for b in (archive_block, stranded_block, moves_block) if b)
     yes_label = " and ".join(
         x for x in ("Archive" if fresh or stranded else None,
                     "relocate" if moves else None) if x) or "Apply"
-    if not _ask_scrollable(catch_up_note + body + safety_note, yes_label=yes_label):
+    if not _ask_with_widget(
+        build_list_body(items, top_html=catch_up_note, bottom_html=safety_note),
+        yes_label=yes_label, min_height=_CONFIRM_HEIGHT
+    ):
         return
 
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])

@@ -749,6 +749,60 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     return body, boxes, flush
 
 
+def _list_row(item):
+    """One entry of `build_list_body`'s item list as a widget. See that function for
+    what each shape means."""
+    if item[0] == "header":
+        return section_header(item[1])
+    if item[0] == "note":
+        label = _rich_label(item[1])
+        # The same top margin section_header carries, for the same reason: a note opens
+        # a group, and without it a group's first line sits as close to the last row of
+        # the group above as to its own rows.
+        label.setStyleSheet("margin-top: 14px;")
+        return label
+    if item[0] == "sep":
+        return _separator()
+    _, kind, primary_html, trailing_html = item
+    return simple_row(kind, primary_html, trailing_html)
+
+
+def build_list_body(items, top_html="", bottom_html=""):
+    """A confirmation whose body is a list of rows: fixed text above it, the streaming
+    list itself, fixed text below. `internpearls.ui._ask_with_widget` wraps whatever
+    this returns with the dialog's title and its buttons, the same as build_update_body.
+
+    Sync decks and Reconcile my decks build from this. Neither shows a card that opens
+    into more, so neither needs `_card_row`, the feedback boxes or the picture
+    resolvers build_update_body threads through. What they do need is the same rows,
+    the same hairlines and the same streaming as the screen they each run half of, so
+    they share the list rather than each hand-rolling a container that would drift from
+    it.
+
+    `items` entries:
+
+      ("header", text)                    a bold heading over the rows below it
+      ("note", html)                      a paragraph reading with the rows below it
+      ("sep",)                            the hairline between two rows
+      ("row", kind, primary, trailing)    one row, marked by `kind` (widgets.CHIPS)
+
+    Every row a caller passes here carries a chip, so every section keeps the caret and
+    chip columns (see widgets.simple_row). Alignment is a decision about the section,
+    and these sections have something to line up against; a section of unchipped rows
+    would want the columns declined instead.
+    """
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(8)
+    if top_html:
+        lay.addWidget(_rich_label(top_html))
+    lay.addWidget(StreamingList(_list_row, items), 1)
+    if bottom_html:
+        lay.addWidget(_rich_label(bottom_html))
+    return body
+
+
 def show_result_with_feedback(title, rows, footer_html, entries):
     """The end of a run, as one dialog instead of two.
 
