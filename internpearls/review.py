@@ -490,7 +490,12 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     # Unconstrained, this is a real push button at its platform minimum (~80px on
     # macOS) around a 6px glyph, which is a wide dead gutter down the whole list.
     caret.setFixedWidth(CARET_W)
-    caret.setStyleSheet(f"border: none; padding: 0; color: {colors()['dim']};")
+    # Stronger and heavier than the dim text beside it, at the same width: this glyph is
+    # the only thing on the row saying it opens, and it used to read as punctuation.
+    # Contrast and weight are the whole lever here. A wider gutter would move every
+    # column on the screen, and a larger glyph would outshout the card it belongs to.
+    caret.setStyleSheet(f"border: none; padding: 0; font-weight: 600;"
+                        f" color: {colors()['caret']};")
     caret.setCursor(Qt.CursorShape.PointingHandCursor)
     caret.clicked.connect(_toggle)
     hlay.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)

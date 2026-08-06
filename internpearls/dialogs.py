@@ -54,6 +54,12 @@ def _github_source_form(repo_default, token_default):
     return repo_edit.text().strip(), token_edit.text().strip(), True
 
 
+# Wide enough that no option's one-line hint wraps to three lines, and the margin Qt
+# puts around a dialog layout by default. Named rather than inlined because the two are
+# what the wrapping labels below are told to measure themselves against.
+_SOURCE_DIALOG_W = 460
+_SOURCE_DIALOG_MARGIN = 12
+
 # The three sources, in the order they're offered. The example deck leads because it's
 # the only one someone with no decks of their own can actually pick, and this screen is
 # the first thing anybody meets: nothing in the add-on does anything until a source is
@@ -88,17 +94,23 @@ class _SourceChoiceDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Configure deck source")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(_SOURCE_DIALOG_W)
         self.choice = None
 
         outer = QVBoxLayout(self)
         outer.setSpacing(12)
 
+        # Every label here wraps, so each one's height depends on the width it is given.
+        # Collected as they are built and sized at the end, see the note below.
+        wrapping = []
+
         outer.addWidget(title_label("Where should decks come from?"))
-        outer.addWidget(muted_label(
+        blurb = muted_label(
             "No cards ship with the add-on itself. Point it at a source and it keeps "
             "those decks up to date, without touching your review history. You can "
-            "change this later from Manage decks."))
+            "change this later from Manage decks.")
+        wrapping.append(blurb)
+        outer.addWidget(blurb)
 
         accent = colors()["accent"]
         for i, (key, label, hint) in enumerate(_SOURCE_OPTIONS):
@@ -111,15 +123,30 @@ class _SourceChoiceDialog(QDialog):
             # The recommendation is carried by the word itself, not by the accent
             # colour alone: a colour is the one part of this nobody reads out loud.
             lead = f"<span style='color:{accent};'>Recommended.</span> " if not i else ""
-            option.addWidget(hint_label(lead + hint))
+            note = hint_label(lead + hint)
+            wrapping.append(note)
+            option.addWidget(note)
             outer.addLayout(option)
-
-        outer.addStretch()
 
         bb = QDialogButtonBox()
         bb.addButton(QDialogButtonBox.StandardButton.Cancel)
         bb.rejected.connect(self.reject)
         outer.addWidget(bb)
+        # No addStretch above the buttons, unlike the wrappers in ui.py. Theirs hold a
+        # body whose height depends on how much a caller passed, so the stretch is what
+        # pins their buttons to the bottom of a dialog sized for the longest case. This
+        # one always shows the same three options, so a stretch only ever leaves a band
+        # of empty window above Cancel.
+        #
+        # Removing it is not enough on its own. A wrapping label's height depends on the
+        # width it gets, but the dialog's own sizeHint is computed at the width the
+        # layout would like (around 295px here) rather than the wider one setMinimumWidth
+        # forces, so every paragraph is measured as if it wrapped onto more lines than it
+        # actually will. That over-measurement, not the stretch, is where most of the
+        # empty band came from: 409px of hinted height for 341px of content. Telling the
+        # labels the width they are really going to get is what makes the two agree.
+        for label in wrapping:
+            label.setMinimumWidth(_SOURCE_DIALOG_W - 2 * _SOURCE_DIALOG_MARGIN)
 
     def _choose(self, key):
         self.choice = key
@@ -476,12 +503,14 @@ def manage_decks():
 
 
 class _SettingsDialog(QDialog):
-    """Sync automation and add-on update behavior, kept apart from Manage decks.
+    """How the add-on behaves on its own, kept apart from Manage decks.
 
     Manage decks answers "which decks, which fields" (what gets synced). This dialog
-    answers "how automatic, how often" (whether it happens on its own). Keeping the two
-    separate is what stops either one from turning into a catch-all as more toggles get
-    added.
+    answers "how automatic, how often" (whether it happens on its own), and alongside
+    that the two display choices that belong to no particular deck: dimming bright
+    pictures in Night Mode, and whether an update offers a box for flagging a card.
+    Keeping the two dialogs separate is what stops either one from turning into a
+    catch-all as more toggles get added.
     """
 
     def __init__(self, parent, auto_sync, interval_minutes, notify_updates, auto_update,
@@ -542,7 +571,7 @@ class _SettingsDialog(QDialog):
         outer.addWidget(section_rule())
         outer.addWidget(section_label("Card review"))
 
-        self._feedback_cb = QCheckBox("Let me flag problems with new cards as they sync")
+        self._feedback_cb = QCheckBox("Let me flag problems with cards as they sync")
         self._feedback_cb.setChecked(collect_feedback)
         outer.addWidget(self._feedback_cb)
 
@@ -570,7 +599,7 @@ class _SettingsDialog(QDialog):
 
 @_safe
 def open_settings():
-    """Open Settings: sync automation and add-on update behavior."""
+    """Open Settings: what the add-on does on its own, and how a card is shown."""
     cfg = _cfg()
     dlg = _SettingsDialog(mw, cfg["auto_sync_decks"], cfg["auto_sync_interval_minutes"],
                           cfg["notify_addon_updates"], cfg["auto_update_addon"],
