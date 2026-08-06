@@ -40,6 +40,32 @@ def _find(tree, **want):
     return None
 
 
+def _label_nodes(tree):
+    return [n for n in _walk(tree) if n.get("t") == "label"]
+
+
+def _label_texts(tree):
+    return [n["text"] for n in _label_nodes(tree)]
+
+
+def _reconcile_tree(anki, accept=True):
+    """Run reconcile_decks() to completion and hand back the widget tree its
+    confirmation showed, so a test can assert on the rows it built rather than on the
+    HTML of one label."""
+    from internpearls import sync
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen["tree"] = p["tree"]
+        return _click_reconcile_button(accept)(p)
+
+    drive(anki, sync.reconcile_decks, respond)
+    anki.gui.interactive = False
+    return seen["tree"]
+
+
 def _click_reconcile_button(accept):
     """respond() for reconcile_decks()'s confirmation dialog: click whichever button
     isn't labeled "Cancel" to accept (its label varies — "Archive", "Relocate", or
@@ -78,6 +104,53 @@ def _click_update_button(accept):
     return respond
 
 
+def _click_sync_button(accept=True, ask=None):
+    """respond() for sync_decks()'s confirmation, which is a list of deck rows in a
+    widget body now rather than a plain askUser(), so it needs the same replay driver
+    reconcile and update already use instead of the gui.answers shortcut. Its accept
+    button reads Update, same as update_decks'.
+
+    `ask(text) -> bool` answers whatever askUser() questions the rest of the run raises
+    (the template-change and note-type-conversion offers), and defaults to yes.
+    """
+    def respond(p):
+        if p["kind"] == "dialog":
+            btn = _find(p["tree"], t="button", label="Update" if accept else "Cancel")
+            return {"events": [{"id": btn["id"], "click": True}]}
+        if p["kind"] == "ask":
+            return {"answer": True if ask is None else ask(p.get("text", ""))}
+        return {}   # info/warn: nothing to click, just let it continue
+    return respond
+
+
+def _sync(anki, accept=True, ask=None):
+    """Run sync_decks() to completion, answering its confirmation.
+
+    Leaves the gui non-interactive again afterward, so a test that syncs and then calls
+    something else directly still gets the plain shortcut rather than the replay
+    protocol Runner.start() switched on.
+    """
+    _sync_tree(anki, accept, ask)
+
+
+def _sync_tree(anki, accept=True, ask=None):
+    """_sync(), handing back the widget tree the confirmation showed, so a test can
+    assert on the rows it built. None when the run never got that far (nothing
+    pending, or an unreachable source)."""
+    from internpearls import sync
+    seen = {}
+    click = _click_sync_button(accept, ask)
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            seen["tree"] = p["tree"]
+        return click(p)
+
+    drive(anki, sync.sync_decks, respond)
+    anki.gui.interactive = False
+    return seen.get("tree")
+
+
 def _fields(front, back="the back", notes="", dosing=""):
     return [front, back, "why", "", "Pharm", dosing, notes]
 
@@ -109,6 +182,46 @@ DECK = "Intern Pearls::Intern Custom::Pharm"
 
 
 # ------------------------------------------------------------------- sync decks
+def test_sync_confirmation_lists_each_deck_as_a_row_under_one_heading(anki, tmp_path):
+    """The confirmation used to be a hand-indented bullet per deck inside one
+    askUser() string, with "(12 cards, new deck)" spelled out in a parenthesis. It
+    reads in the same row vocabulary as every other screen now: a heading, then one row
+    per deck, its size in the trailing column and a chip for whether the deck is
+    arriving or being refreshed."""
+    from internpearls import widgets
+    other = "Intern Pearls::Intern Custom::Other"
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    _sync(anki)                     # Pharm is installed; Other is not
+    _configure(anki, _write_source(tmp_path, {
+        DECK:  ("v2", [("g1", _fields("Front one"), TAGS)], None),
+        other: ("v1", [("g2", _fields("Front two"), f"{SCOPE}::Other")], None)}))
+
+    texts = _label_texts(_sync_tree(anki))
+
+    assert not [t for t in texts if "<li>" in t or "<ul>" in t]
+    assert "Update these decks?" in texts
+    assert "Pharm" in texts and "Other" in texts
+    assert texts.count("1 card") == 2                 # each deck's own size, trailing
+    # Pharm is already in the collection, so it reads as an update; Other is arriving.
+    assert [t for t in texts if t in widgets.CHIPS.values()] == [
+        widgets.CHIPS["changed"], widgets.CHIPS["new"]]
+
+
+def test_sync_cancelled_imports_nothing(anki, tmp_path):
+    """Cancel on the confirmation is still a clean no-op: nothing imported, and no
+    version recorded that would make the next run think this deck was applied."""
+    from internpearls import sync
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+
+    _sync(anki, accept=False)
+
+    assert not anki.col.find_notes(f'"tag:{SCOPE}"')
+    assert not anki.col.imports
+    assert not os.path.exists(sync.INSTALLED)
+
+
 def test_first_sync_imports_everything_and_persists_versions(anki, tmp_path):
     from internpearls import sync
     folder = _write_source(tmp_path, {
@@ -116,7 +229,7 @@ def test_first_sync_imports_everything_and_persists_versions(anki, tmp_path):
                       ("g2", _fields("Front two"), TAGS)], None)})
     _configure(anki, folder)
 
-    sync.sync_decks()
+    _sync(anki)
 
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 2
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
@@ -130,10 +243,10 @@ def test_second_sync_with_same_versions_is_a_no_op(anki, tmp_path):
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
     _configure(anki, folder)
-    sync.sync_decks()
+    _sync(anki)
     imports_after_first = len(anki.col.imports)
 
-    sync.sync_decks()
+    _sync(anki)
 
     assert len(anki.col.imports) == imports_after_first
     assert any("up to date" in i for i in anki.gui.infos)
@@ -158,10 +271,10 @@ def test_second_sync_is_a_no_op_when_the_deck_uses_subdecks(anki, tmp_path):
                                "cards": 1}],
         "front_aliases": {}, "retired": {}, "deck_moves": {}}), encoding="utf8")
     _configure(anki, str(folder))
-    sync.sync_decks()
+    _sync(anki)
     imports_after_first = len(anki.col.imports)
 
-    sync.sync_decks()
+    _sync(anki)
 
     assert len(anki.col.imports) == imports_after_first
     assert any("up to date" in i for i in anki.gui.infos)
@@ -178,7 +291,7 @@ def test_sync_recovers_after_a_collection_revert_undoes_a_prior_sync(anki, tmp_p
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
     _configure(anki, folder)
-    sync.sync_decks()
+    _sync(anki)
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
 
     # Simulate a collection revert: the collection rolls back to before the sync, but
@@ -187,7 +300,7 @@ def test_sync_recovers_after_a_collection_revert_undoes_a_prior_sync(anki, tmp_p
     anki.col._cards.clear()
     anki.gui.infos.clear()
 
-    sync.sync_decks()
+    _sync(anki)
 
     assert not any("up to date" in i for i in anki.gui.infos)
     assert any("Sync complete" in i for i in anki.gui.infos)
@@ -206,7 +319,7 @@ def test_sync_recovers_a_single_deck_lost_to_a_partial_collection_revert(anki, t
         DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None),
         deck_b: ("v1", [("g2", _fields("Front two"), f"{SCOPE}::Other")], None)})
     _configure(anki, folder)
-    sync.sync_decks()
+    _sync(anki)
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 2
 
     # Only deck_b's card is erased by the revert; DECK's card and installed entry for
@@ -215,9 +328,8 @@ def test_sync_recovers_a_single_deck_lost_to_a_partial_collection_revert(anki, t
                     if anki.col.get_note(nid).guid == "g2")
     del anki.col._notes[lost_nid]
     anki.gui.infos.clear()
-    anki.gui.answers[:] = [True]
 
-    sync.sync_decks()
+    _sync(anki)
 
     assert not any("up to date" in i for i in anki.gui.infos)
     assert any("Sync complete" in i for i in anki.gui.infos)
@@ -236,7 +348,7 @@ def test_sync_overwrites_content_but_restores_protected_notes(anki, tmp_path):
         DECK: ("v2", [("g1", _fields("Front one", back="NEW back"), TAGS)], None)})
     _configure(anki, folder)
 
-    sync.sync_decks()
+    _sync(anki)
 
     note = anki.col.note_by_guid("g1")
     assert note["Back"] == "NEW back"                    # content updated
@@ -253,13 +365,13 @@ def test_preserved_field_she_never_touched_still_receives_updates(anki, tmp_path
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v1", [("g1", _fields("Front one", dosing="1 mg/kg"), TAGS)], None)}))
     anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
-    sync.sync_decks()
+    _sync(anki)
 
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one", dosing="2 mg/kg (corrected)"), TAGS)],
                None)}))
     anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
-    sync.sync_decks()
+    _sync(anki)
 
     assert anki.col.note_by_guid("g1")["Dosing"] == "2 mg/kg (corrected)"
 
@@ -270,7 +382,7 @@ def test_preserved_field_she_edited_is_kept_and_the_collision_reported(anki, tmp
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v1", [("g1", _fields("Front one", dosing="1 mg/kg"), TAGS)], None)}))
     anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
-    sync.sync_decks()
+    _sync(anki)
     anki.col.note_by_guid("g1")["Dosing"] = "1 mg/kg (my attending says 1.5)"
 
     _configure(anki, _write_source(tmp_path, {
@@ -278,7 +390,7 @@ def test_preserved_field_she_edited_is_kept_and_the_collision_reported(anki, tmp
                None)}))
     anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
     anki.gui.infos.clear()
-    sync.sync_decks()
+    _sync(anki)
 
     assert anki.col.note_by_guid("g1")["Dosing"] == "1 mg/kg (my attending says 1.5)"
     assert any("changed a field you had also written in yourself" in i
@@ -298,7 +410,7 @@ def test_no_collision_reported_for_a_deck_this_run_never_touched(anki, tmp_path)
         DECK:  ("v1", [("g1", _fields("Front one"), TAGS)], None),
         other: ("v1", [("g2", _fields("Front two"), TAGS)], None)}))
     anki.mw._config["protected_fields"] = ["Notes"]
-    sync.sync_decks()                       # first run establishes the baseline
+    _sync(anki)                       # first run establishes the baseline
 
     # only one deck changes now; the other is untouched
     _configure(anki, _write_source(tmp_path, {
@@ -306,7 +418,7 @@ def test_no_collision_reported_for_a_deck_this_run_never_touched(anki, tmp_path)
         other: ("v1", [("g2", _fields("Front two"), TAGS)], None)}))
     anki.mw._config["protected_fields"] = ["Notes"]
     anki.gui.infos.clear()
-    sync.sync_decks()
+    _sync(anki)
 
     assert not any("written in yourself" in i for i in anki.gui.infos)
     assert anki.col.note_by_guid("g2")["Notes"] == "another of hers"
@@ -321,7 +433,7 @@ def test_preserved_field_falls_back_to_always_restoring_without_a_baseline(anki,
         DECK: ("v2", [("g1", _fields("Front one", notes="shipped placeholder"), TAGS)],
                None)}))
 
-    sync.sync_decks()
+    _sync(anki)
 
     assert anki.col.note_by_guid("g1")["Notes"] == "her mnemonic"
 
@@ -334,7 +446,7 @@ def test_preserved_field_name_matches_regardless_of_case(anki, tmp_path):
         DECK: ("v2", [("g1", _fields("Front one"), TAGS)], None)}))
     anki.mw._config["protected_fields"] = ["notes"]
 
-    sync.sync_decks()
+    _sync(anki)
 
     assert anki.col.note_by_guid("g1")["Notes"] == "her mnemonic"
 
@@ -347,15 +459,10 @@ def _cloze_model():
     return make_model(name="Study Deck - Cloze", fields=CLOZE_FIELDS)
 
 
-def _answer_conversion(convert):
-    """respond() for sync_decks() when an update also converts note types: say yes to
-    the import, then `convert` to the "changed format" question, and pass everything
-    else (progress, the final summary) straight through."""
-    def respond(p):
-        if p.get("kind") == "ask":
-            return {"answer": convert if "changed format" in p.get("text", "") else True}
-        return {}
-    return respond
+def _convert(answer):
+    """_sync()'s `ask` for a run that also converts note types: `answer` to the
+    "changed format" question, yes to anything else."""
+    return lambda text: answer if "changed format" in text else True
 
 
 def test_qa_card_converted_to_cloze_keeps_its_card_and_history(anki, tmp_path):
@@ -372,7 +479,7 @@ def test_qa_card_converted_to_cloze_keeps_its_card_and_history(anki, tmp_path):
         DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
                _cloze_model())}))
 
-    drive(anki, sync.sync_decks, lambda p: {"answer": True})
+    _sync(anki)
 
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1        # one card, not two
     note = anki.col.note_by_guid("g1")
@@ -402,7 +509,7 @@ def test_extra_blanks_inherit_the_parent_card_rather_than_starting_new(anki, tmp
         DECK: ("v2", [("g1", ["{{c1::one}} and {{c2::two}} and {{c3::three}}",
                               "why", "", "", ""], TAGS)], _cloze_model())}))
 
-    drive(anki, sync.sync_decks, lambda p: {"answer": True})
+    _sync(anki)
 
     cards = sorted((anki.col.get_card(c) for c in anki.col.note_by_guid("g1").card_ids()),
                    key=lambda c: c.ord)
@@ -428,7 +535,7 @@ def test_extra_blanks_stay_new_when_the_parent_was_never_studied(anki, tmp_path)
         DECK: ("v2", [("g1", ["{{c1::one}} and {{c2::two}}", "why", "", "", ""], TAGS)],
                _cloze_model())}))
 
-    drive(anki, sync.sync_decks, lambda p: {"answer": True})
+    _sync(anki)
 
     for c in (anki.col.get_card(x) for x in anki.col.note_by_guid("g1").card_ids()):
         assert (c.reps, c.ivl) == (0, 0)
@@ -444,7 +551,7 @@ def test_declining_the_conversion_imports_alongside_instead(anki, tmp_path):
         DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
                _cloze_model())}))
 
-    drive(anki, sync.sync_decks, _answer_conversion(False))
+    _sync(anki, ask=_convert(False))
 
     assert anki.col.notetype_changes == []
     assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Basic"
@@ -530,7 +637,7 @@ def test_reworded_front_with_stable_guid_updates_in_place_without_alias(anki, tm
         DECK: ("v2", [("g1", _fields("New wording, third revision"), TAGS)], None)})
     _configure(anki, folder)
 
-    sync.sync_decks()
+    _sync(anki)
 
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
     note = anki.col.note_by_guid("g1")
@@ -551,7 +658,7 @@ def test_front_alias_still_bridges_a_guid_mismatch(anki, tmp_path):
     open(folder + "/manifest.json", "w", encoding="utf8").write(json.dumps(manifest))
     _configure(anki, folder)
 
-    sync.sync_decks()
+    _sync(anki)
 
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
     note = anki.col.get_note(her.id)
@@ -569,9 +676,7 @@ def test_template_change_applied_when_user_says_yes(anki, tmp_path):
         DECK: ("v2", [("g1", _fields("Front one"), TAGS)],
                make_model(css=NEW_CSS))})
     _configure(anki, folder)
-    anki.gui.answers[:] = [True, True]   # confirm sync, then apply template
-
-    sync.sync_decks()
+    _sync(anki)   # accepts the sync, then the template offer
 
     assert anki.col.models.all()[0]["css"] == NEW_CSS
     assert any("schema" in a or "full sync" in a for a in anki.gui.asks)
@@ -584,9 +689,7 @@ def test_template_change_declined_keeps_look_but_imports_content(anki, tmp_path)
         DECK: ("v2", [("g1", _fields("Front one"), TAGS)],
                make_model(css=NEW_CSS))})
     _configure(anki, folder)
-    anki.gui.answers[:] = [True, False]   # confirm sync, decline template
-
-    sync.sync_decks()
+    _sync(anki, ask=lambda _text: False)   # accepts the sync, declines the template
 
     assert anki.col.models.all()[0]["css"] == old_css      # look unchanged
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"   # content imported
@@ -598,7 +701,7 @@ def test_unchanged_template_never_prompts(anki, tmp_path):
         DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
     _configure(anki, folder)
 
-    sync.sync_decks()
+    _sync(anki)
 
     assert not any("Apply the new look" in a for a in anki.gui.asks)
 
@@ -648,8 +751,7 @@ def test_auto_sync_defers_a_template_change_and_nags_once(anki, tmp_path):
     assert sum("card-template" in t for t in anki.gui.tooltips) == 1   # no re-nag
 
     # A manual sync then picks it up and asks.
-    anki.gui.answers[:] = [True, True]
-    sync.sync_decks()
+    _sync(anki)
     assert anki.col.models.all()[0]["css"] == NEW_CSS
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
 
@@ -1042,14 +1144,14 @@ def test_reconcile_does_not_overwrite_replacements_own_notes(anki, tmp_path):
     assert anki.col.note_by_guid("new1a")["Notes"] == "a note she already wrote"
 
 
-def test_reconcile_dialog_caps_a_large_list_and_stays_clickable(anki, tmp_path):
-    """Regression test for the bug this whole scrollable-dialog change exists to fix:
-    a large first-run backlog (e.g. 90 cards relocated by a single reorg) used to build
-    an uncapped bullet list inside a plain askUser() box, which has no scroll area — the
-    dialog could grow taller than the screen with its buttons unreachable. This confirms
-    the list is capped in the rendered text and the accept button is still found and
-    clickable even with a backlog well past the cap."""
-    from internpearls import sync
+def test_reconcile_names_every_card_as_a_row_and_stays_clickable(anki, tmp_path):
+    """A large first-run backlog (e.g. 90 cards relocated by a single reorg) used to
+    build a bullet list inside a plain askUser() box, which has no scroll area, so a
+    long enough one grew the dialog past the screen with its buttons unreachable. It
+    was capped at 15 for that reason. The rows stream and the buttons sit outside the
+    scroll area now, so every card is named, none of them is a bullet, and the accept
+    button is still reachable with a backlog well past that old cap."""
+    from internpearls import widgets
     retired = {}
     for i in range(25):
         _her_card(anki, f"old{i}", f"bulky card {i}")
@@ -1058,23 +1160,38 @@ def test_reconcile_dialog_caps_a_large_list_and_stays_clickable(anki, tmp_path):
     folder = _write_retired_source(tmp_path, {DECK: retired})
     _configure(anki, folder)
 
-    seen = {}
+    texts = _label_texts(_reconcile_tree(anki))
 
-    def respond(p):
-        if p["kind"] == "dialog":
-            label = next(n for n in _walk(p["tree"]) if n.get("t") == "label")
-            seen["text"] = label["text"]
-            btn = next(n for n in _walk(p["tree"])
-                      if n.get("t") == "button" and n.get("label") != "Cancel")
-            return {"events": [{"id": btn["id"], "click": True}]}
-        return {}
-
-    drive(anki, sync.reconcile_decks, respond)
-
-    assert seen["text"].count("<li>") == 16          # 15 shown + 1 "...and N more" line
-    assert "...and 10 more" in seen["text"]
-    assert "one-time catch-up" in seen["text"]
+    assert not [t for t in texts if "<li>" in t or "<ul>" in t]
+    assert set(t for t in texts if t.startswith("bulky card ")) == {
+        f"bulky card {i}" for i in range(25)}
+    assert sum(1 for t in texts if t == widgets.CHIPS["retired"]) == 25
+    assert any("one-time catch-up" in t for t in texts)
     assert any("Archived <b>25 retired cards</b>" in i for i in anki.gui.infos)
+
+
+def test_reconcile_marks_each_row_with_what_happens_to_it(anki, tmp_path):
+    """The same two chips Update my decks puts on these very cards, since both screens
+    read the same two ledgers: a card being archived is RETIRED, one being relocated is
+    MOVED, and each row's deck detail is the trailing column rather than a parenthesis
+    in its own sentence."""
+    from internpearls import widgets
+    _her_card(anki, "old1", "bulky crisis card")
+    _her_card(anki, "g1", "a card whose deck moved", deck=DECK)
+    folder = _write_retired_source(
+        tmp_path,
+        {DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                         "superseded_by": []}}},
+        deck_moves={"g1": {"from": DECK, "to": NEW_DECK}})
+    _configure(anki, folder)
+
+    texts = _label_texts(_reconcile_tree(anki))
+
+    assert [t for t in texts if t in widgets.CHIPS.values()] == [
+        widgets.CHIPS["retired"], widgets.CHIPS["moved"]]
+    assert "bulky crisis card" in texts and "a card whose deck moved" in texts
+    assert "Pharm" in texts                  # the retired card's own deck
+    assert "→ Regional" in texts             # where the moved card is going
 
 
 # ---------------------------------------------------------- reconcile: deck moves
@@ -1181,8 +1298,10 @@ def test_reconcile_leaves_guid_mismatched_card_alone_without_front(anki, tmp_pat
 
 def test_reconcile_dialog_uses_the_palette_not_a_css_keyword(anki, tmp_path):
     """Both the retired-card list and the deck-move list in the confirmation used to
-    hardcode the CSS keyword gray for their secondary detail text."""
-    from internpearls import palette, sync
+    hardcode the CSS keyword gray for their secondary detail text. That detail is each
+    row's own trailing column now, so the colour is on the label rather than inside the
+    string, and it still has to be asked for by role."""
+    from internpearls import palette
     active = palette.colors()
     _her_card(anki, "old1", "bulky crisis card")
     _her_card(anki, "g1", "Lidocaine onset time?", deck=DECK)
@@ -1192,49 +1311,32 @@ def test_reconcile_dialog_uses_the_palette_not_a_css_keyword(anki, tmp_path):
                          "superseded_by": []}}},
         deck_moves={"g1": {"from": DECK, "to": NEW_DECK}})
     _configure(anki, folder)
-    anki.gui.interactive = True
-    seen = {}
 
-    def respond(p):
-        if p["kind"] != "dialog":
-            return {}
-        label = next(n for n in _walk(p["tree"]) if n.get("t") == "label")
-        seen["text"] = label["text"]
-        btn = next(n for n in _walk(p["tree"])
-                  if n.get("t") == "button" and n.get("label") != "Cancel")
-        return {"events": [{"id": btn["id"], "click": True}]}
+    tree = _reconcile_tree(anki)
 
-    drive(anki, sync.reconcile_decks, respond)
-
-    assert "color:gray" not in seen["text"]
-    assert active["muted"] in seen["text"]
+    trailing = [n for n in _label_nodes(tree) if n["text"] in ("Pharm", "→ Regional")]
+    assert len(trailing) == 2, "both rows carry their detail in a trailing column"
+    for node in trailing:
+        assert "gray" not in node["style"]
+        assert active["muted"] in node["style"]
 
 
 def test_stranded_block_uses_the_palette_not_a_css_keyword(anki, tmp_path):
     """The reworded-pair section of the confirmation (a card she holds in both an old
-    and a new wording) used to hardcode the CSS keyword gray too."""
-    from internpearls import palette, sync
+    and a new wording) used to hardcode the CSS keyword gray too. Both wordings stay in
+    the row's own primary line rather than splitting across the trailing column, since
+    a card front is long enough to wrap and that column is not."""
+    from internpearls import palette
     active = palette.colors()
     _her_card(anki, "g_old", "old wording")
     _her_card(anki, "g_new", "new wording")
     _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
-    anki.gui.interactive = True
-    seen = {}
 
-    def respond(p):
-        if p["kind"] != "dialog":
-            return {}
-        label = next(n for n in _walk(p["tree"]) if n.get("t") == "label")
-        seen["text"] = label["text"]
-        btn = next(n for n in _walk(p["tree"])
-                  if n.get("t") == "button" and n.get("label") != "Cancel")
-        return {"events": [{"id": btn["id"], "click": True}]}
+    texts = _label_texts(_reconcile_tree(anki))
 
-    drive(anki, sync.reconcile_decks, respond)
-
-    assert "old wording" in seen["text"] and "new wording" in seen["text"]
-    assert "color:gray" not in seen["text"]
-    assert active["muted"] in seen["text"]
+    line = next(t for t in texts if "old wording" in t and "new wording" in t)
+    assert "color:gray" not in line
+    assert active["muted"] in line
 
 
 # ------------------------------------------------------------- update decks (unified)
@@ -2094,7 +2196,7 @@ def test_sync_re_offers_a_deck_whose_cards_were_rolled_back_to_older_content(
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front two"), TAGS)], None)})
     _configure(anki, folder)
-    sync.sync_decks()
+    _sync(anki)
     assert anki.col.note_by_guid("g1")["Front"] == "Front two"
 
     # A restore rolls the card back to older content. It is still present and still
@@ -2104,7 +2206,7 @@ def test_sync_re_offers_a_deck_whose_cards_were_rolled_back_to_older_content(
     anki.gui.answers.append(True)   # "Continue?" on the restore confirmation
     collection.restore_from_backup()
 
-    sync.sync_decks()
+    _sync(anki)
 
     assert not any("up to date" in i for i in anki.gui.infos)
     assert anki.col.note_by_guid("g1")["Front"] == "Front two"
