@@ -745,6 +745,40 @@ def _gather_pending_items(todo, preview, downloaded):
     return items, failed, sources
 
 
+def _retired_moved_items(fresh, moves, her):
+    """Retired and relocated cards as rows for the same inline list `_gather_pending_items`
+    builds the new and changed rows for, so a retired split/reword and a deck reorg read
+    as more cards in one list rather than as bulleted asides below it.
+
+    Single-line and never expanding (see widgets.simple_row): these are the learner's own
+    cards, known only by front (or identity) and a deck, so there is nothing more to read
+    out of the collection for either kind. Ordered archived, then moved, after whatever
+    `_gather_pending_items` already put in `items` (added, then changing), so the reader
+    meets all four kinds in one sensible sequence: what is being added, what is changing,
+    what is being archived, what is moving.
+
+    Returns a mix of ("header", text), ("sep",), ("retired", identity, deck_short), and
+    ("moved", front, dest_deck_short) entries, empty when there is nothing of either kind
+    pending. `her` is `_reconcile_pending`'s own {guid: nid} map, needed to read a moved
+    card's current front out of the collection.
+    """
+    items = []
+    if fresh:
+        items.append(("header", "Retired"))
+        for i, r in enumerate(fresh):
+            if i:
+                items.append(("sep",))
+            items.append(("retired", r["identity"], r["deck"].split("::")[-1]))
+    if moves:
+        items.append(("header", "Moved"))
+        for i, m in enumerate(moves):
+            if i:
+                items.append(("sep",))
+            front = mw.col.get_note(her[m["guid"]]).fields[0]
+            items.append(("moved", front, m["to"].split("::")[-1]))
+    return items
+
+
 @_safe
 def update_decks():
     """The one-click front door: computes everything pending — deck content updates,
@@ -768,7 +802,7 @@ def update_decks():
 
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     todo = decks_to_update(manifest, installed, cfg["excluded"])
-    her, fresh, already, moves, retired_deck, tag, stranded = _reconcile_pending(
+    her, fresh, _already, moves, retired_deck, tag, stranded = _reconcile_pending(
         manifest, cfg)
 
     if not todo and not fresh and not moves and not stranded:
@@ -856,27 +890,14 @@ def update_decks():
     if todo:
         sections.append(
             f"<b>{len(todo)}</b> deck(s) have updates:" + bullets([_line(d) for d in todo], cap=15))
-    # new_cards and changed_cards no longer get their own bullet-list sections here:
-    # they are what the inline card list below is built from (see
-    # _gather_pending_items), which is the whole point of this screen replacing the old
-    # "Review N card(s)" button. new_cards/changed_cards themselves are still needed
-    # above, to build new_index.
-    if fresh:
-        lines = [f"{r['identity']} <span style='color:{muted};'>"
-                 f"({r['deck'].split('::')[-1]})</span>" for r in fresh]
-        already_note = f" ({already} more were already archived earlier.)" if already else ""
-        sections.append(
-            f"<b>{len(fresh)}</b> retired card(s) are still in your collection — split "
-            "or reworded since, with the replacements added separately, so these just "
-            f"duplicate your reviews now.{already_note}" + bullets(lines, cap=15))
+    # new_cards and changed_cards no longer get their own bullet-list sections here,
+    # and neither do the retired or relocated cards below: all four kinds are what the
+    # inline card list is built from (see _gather_pending_items and
+    # _retired_moved_items), which is the whole point of this screen replacing the old
+    # "Review N card(s)" button and the bulleted lists that used to sit beside it.
+    # new_cards/changed_cards themselves are still needed above, to build new_index.
     if stranded:
         sections.append(_stranded_block(stranded, her))
-    if moves:
-        move_lines = [f"{mw.col.get_note(her[m['guid']]).fields[0]} <span "
-                      f"style='color:{muted};'>→ {m['to'].split('::')[-1]}</span>" for m in moves]
-        sections.append(
-            f"<b>{len(moves)}</b> card(s) belong to a deck that's since been "
-            "reorganized." + bullets(move_lines, cap=15))
 
     # A big first run (a large backlog accumulated before Update was run even once)
     # reads as alarming without context — say up front it's a one-time catch-up.
@@ -934,6 +955,7 @@ def update_decks():
             + ". Your review history and card content are unaffected either way.")
 
     items, unreadable, sources = _gather_pending_items(todo, preview, downloaded)
+    items += _retired_moved_items(fresh, moves, her)
     if unreadable:
         sections.append(
             f"<span style='color:{muted};'>Couldn't read the pending cards from "
