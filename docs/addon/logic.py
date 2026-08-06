@@ -33,6 +33,20 @@ def bullets(items, cap=None):
     return html + "</ul>"
 
 
+def plural(count, noun):
+    """A count and its noun, agreeing: "1 card", "3 cards", "0 cards".
+
+    Zero takes the plural, the way English does, so a line reads "restored on 0 cards"
+    rather than "0 card". Every noun this add-on counts (card, deck, note, review,
+    minute) pluralizes with a plain "s", so there is no irregular form to pass in; a
+    string needing one can take it up then rather than now.
+
+    Lives here, in the module with no Qt in it, so the wording every screen shares is
+    testable without one.
+    """
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
 def night_mode_image_css(enabled):
     """CSS that dims bright white-background images while Anki's Night Mode is on.
 
@@ -1023,15 +1037,19 @@ def duplicate_dialog_html(groups, muted_color):
         keep_leaf = g["keep"]["deck"].split("::")[-1]
         arch = g["archive"]
         arch_leaves = [a["deck"].split("::")[-1] for a in arch]
-        arch_reps = ", ".join(str(a["reps"]) for a in arch)
+        # One archived copy reads as its own count; several read as a joined list under
+        # a single plural, since "3 reviews, 5 reviews" says the same thing twice.
+        arch_reps = (plural(arch[0]["reps"], "review") if len(arch) == 1
+                     else ", ".join(str(a["reps"]) for a in arch) + " reviews")
         if all(leaf == keep_leaf for leaf in arch_leaves):
             detail = (f"{1 + len(arch)} copies in {html.escape(keep_leaf)}: keeping the "
-                      f"one with {g['keep']['reps']} review(s), archiving {len(arch)} "
-                      f"({arch_reps} review(s))")
+                      f"one with {plural(g['keep']['reps'], 'review')}, archiving "
+                      f"{len(arch)} ({arch_reps})")
         else:
-            detail = (f"keeping {html.escape(keep_leaf)} ({g['keep']['reps']} review(s)), "
+            detail = (f"keeping {html.escape(keep_leaf)} "
+                      f"({plural(g['keep']['reps'], 'review')}), "
                       f"archiving {html.escape(', '.join(arch_leaves))} "
-                      f"({arch_reps} review(s))")
+                      f"({arch_reps})")
         lines.append(f"{label} <span style='color:{muted_color};'>{detail}</span>")
     n_archive = sum(len(g["archive"]) for g in groups)
     n_cards = len(groups)
@@ -1097,9 +1115,10 @@ def empty_cards_dialog_html(rows, muted_color, skipped=0):
                "does now, so there is nothing left for them to show:")
     tail = ""
     if skipped:
-        tail = (f"<br><br><b>{skipped}</b> note(s) have no content on any card at all "
-                "and were left alone, since removing those cards would delete the note "
-                "itself.")
+        tail = (f"<br><br><b>{plural(skipped, 'note')}</b> "
+                f"{'has' if skipped == 1 else 'have'} no content on any card at all and "
+                f"{'was' if skipped == 1 else 'were'} left alone, since removing those "
+                "cards would delete the note itself.")
     return heading + bullets(lines, cap=15) + tail
 
 
