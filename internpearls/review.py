@@ -843,8 +843,8 @@ def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
     recovery if something else lands on the clipboard before she gets to paste.
 
     `title`/`rows`/`footer_html` are the end-of-run summary, in the same title/row
-    vocabulary the confirmation this dialog follows already uses (widgets.section_header,
-    then one widgets.simple_row per line with a hairline between them). The rows carry
+    vocabulary the confirmation this dialog follows already uses (ui.title_label, then
+    one widgets.simple_row per line with a hairline between them). The rows carry
     no chip and nothing here expands, so they also decline the caret and chip columns
     (see simple_row): with nothing on this screen to line up against, reserving them
     would float every outcome line to the right of the heading above it and the backup
@@ -869,7 +869,10 @@ def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
         slay = QVBoxLayout(summary)
         slay.setContentsMargins(0, 0, 0, 0)
         slay.setSpacing(0)
-        slay.addWidget(section_header(title))
+        # The run's own outcome, at the dialog's largest size: it is what the whole
+        # screen is reporting. The flagged-card heading below is subordinate to it and
+        # says so by being smaller, which is the way round these two used to read.
+        slay.addWidget(title_label(title))
         for i, row_html in enumerate(rows):
             if i:
                 slay.addWidget(_separator())   # between rows, not after the last
@@ -882,7 +885,7 @@ def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
         summary_scroll.setMaximumHeight(200)
         summary_scroll.setWidget(summary)
         lay.addWidget(summary_scroll)
-    lay.addWidget(title_label(f"{plural(len(entries), 'card')} flagged"))
+    lay.addWidget(section_header(f"{plural(len(entries), 'card')} flagged"))
     lay.addWidget(muted_label(
         "Copied to your clipboard, ready to paste into a message."
         if copied else
