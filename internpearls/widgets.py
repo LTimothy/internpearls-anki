@@ -27,28 +27,80 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
 # when only review.py's two markers existed.
 _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "moved"}
 
+# Everything about a pill except its two colours: the shape and the type size, shared
+# between the real pill and the probe that measures it, so the measurement can never
+# describe a pill nobody paints.
+_CHIP_STYLE = ("border-radius: 3px; padding: 1px 6px; font-size: 11px;"
+               " font-weight: 600;")
 
-def chip_html(kind):
-    """A row's kind as a small inline pill, ready to sit inside a rich-text paragraph.
+# chip_column_width()'s answer, measured once. Deliberately not computed at import:
+# these modules are imported before a QApplication exists, and font metrics before that
+# point are meaningless.
+_CHIP_W = None
 
-    Empty string for `kind` not in CHIPS (including None), so a caller can always
-    prepend the result with no branching of its own.
+
+def chip_column_width():
+    """The width of the chip column, which is also the width of every pill in it.
+
+    Measured off the widest of the four labels at the running platform's own font
+    rather than hardcoded, since the same four words come out at different widths on
+    macOS and on CI, and a fixed pixel value would only ever be right on one of them.
+
+    Widening the three narrower pills to match the widest is what makes the column read
+    as one: four pills of their own natural widths inside a fixed gutter still leave
+    four different right edges down the list.
+    """
+    global _CHIP_W
+    if _CHIP_W is None:
+        widest = 0
+        for label in CHIPS.values():
+            probe = QLabel(label)
+            probe.setStyleSheet(_CHIP_STYLE)
+            # A stylesheet's font only reaches the widget on polish, so an unpolished
+            # sizeHint here would measure the default font instead of the pill's.
+            probe.ensurePolished()
+            widest = max(widest, probe.sizeHint().width())
+        _CHIP_W = widest
+    return _CHIP_W
+
+
+def chip_cell(kind):
+    """A row's kind as a pill, in a fixed-width column of its own.
+
+    The container is what is fixed-width, and a `kind` not in CHIPS (including None)
+    gets an empty one rather than nothing at all, so an unchipped row reserves the same
+    gutter and its text starts at the same x as every other row's. Without that, one
+    list runs its primary text out from five different left edges depending on which
+    word each row's chip happens to be, which reads as ragged prose rather than a
+    column.
+
+    A real widget rather than the inline `<span>` this used to be, because Qt's
+    rich-text engine silently drops both `border-radius` and `padding` on an inline
+    span: measured, a span carrying either one comes out at exactly the width of a span
+    carrying neither. The same declarations on a QLabel round and pad correctly. So
+    alignment and shape are the same fix, not two.
 
     A background always needs its own foreground alongside it, since plain text colour
     comes from the platform palette and a hardcoded background does not flip with it
-    under Night Mode. And the chip lives inside the row's own single rich-text
-    paragraph rather than as a widget beside it, because a separate marker widget
-    starts each row's text at a different x depending on whether that row happens to
-    have one, and wraps against the marker's edge instead of the row's.
+    under Night Mode.
     """
+    cell = QWidget()
+    cell.setFixedWidth(chip_column_width())
     label = CHIPS.get(kind)
     if not label:
-        return ""
+        return cell
+    lay = QHBoxLayout(cell)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
     role = _ROLES[kind]
     c = colors()
-    background, foreground = c[f"{role}_bg"], c[f"{role}_fg"]
-    return (f'<span style="background-color: {background}; color: {foreground};'
-            f' font-size: 11px;">&nbsp;{label}&nbsp;</span>&nbsp;&nbsp;')
+    pill = QLabel(label)
+    pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    pill.setMinimumWidth(chip_column_width())
+    pill.setStyleSheet(f"background-color: {c[f'{role}_bg']}; color: {c[f'{role}_fg']};"
+                       f" {_CHIP_STYLE}")
+    lay.addWidget(pill)
+    return cell
 
 
 def section_header(text):
@@ -66,19 +118,22 @@ def simple_row(chip_kind, primary_html, trailing_html=""):
     No caret, no expansion: for a screen where the row itself is the whole content
     rather than a summary that opens into more.
 
-    The chip rides inside the primary label's own rich text (see chip_html), never as
-    a widget of its own beside it, for the reason chip_html's docstring gives.
-    `trailing_html` is a second, non-wrapping label in muted text off to the row's
-    right (a count, a timestamp) rather than folded into the same paragraph, since it
-    is secondary information the reader compares across rows rather than reads inline
-    with the primary text.
+    The chip is chip_cell's fixed-width column, so a row with one and a row without
+    start their primary text at the same x (see that function). Top-aligned, so a chip
+    beside a wrapping primary sits against its first line rather than floating halfway
+    down it. `trailing_html` is a second, non-wrapping label in muted text off to the
+    row's right (a count, a timestamp) rather than folded into the same paragraph,
+    since it is secondary information the reader compares across rows rather than reads
+    inline with the primary text.
     """
     row = QWidget()
     lay = QHBoxLayout(row)
     lay.setContentsMargins(0, 5, 0, 6)
     lay.setSpacing(6)
 
-    primary = QLabel(chip_html(chip_kind) + primary_html)
+    lay.addWidget(chip_cell(chip_kind), 0, Qt.AlignmentFlag.AlignTop)
+
+    primary = QLabel(primary_html)
     primary.setWordWrap(True)
     primary.setTextFormat(Qt.TextFormat.RichText)
     lay.addWidget(primary, 1)
