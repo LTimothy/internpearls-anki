@@ -2402,6 +2402,68 @@ def test_completion_summary_and_feedback_arrive_as_one_dialog(anki, tmp_path):
         "and must not also arrive as its own info box"
 
 
+def test_result_screen_uses_the_shared_title_and_row_components(anki, tmp_path):
+    """The end-of-run summary used to be one QLabel holding a whole
+    <ul><li>...</li></ul> blob. It now reads with the same vocabulary as the
+    confirmation it follows: a title_label heading, one widgets.simple_row per result
+    line (archived count included), and the digest's own payload block untouched."""
+    from internpearls import sync
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    folder = _write_source(
+        tmp_path, {DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)},
+        retired={DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                                 "superseded_by": ["g1"]}}})
+    _configure(anki, folder)
+    anki.mw._config["collect_card_feedback"] = True
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        title, tree = p.get("title") or "", p["tree"]
+        if "card feedback" in title:
+            seen["digest"] = tree
+            return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
+                                "click": True}]}
+        box = next((n for n in _walk(tree) if n.get("t") == "textarea"), None)
+        events = [{"id": box["id"], "value": "too bulky"}] if box else []
+        events.append(
+            {"id": _find(tree, t="button", label="Update")["id"], "click": True})
+        return {"events": events}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert seen.get("digest"), "the digest dialog should have opened"
+    labels = [n.get("text") or "" for n in _walk(seen["digest"]) if n.get("t") == "label"]
+    joined = "\n".join(labels)
+
+    assert "Update complete" in joined
+    assert any("Archived" in l and "retired card" in l for l in labels), \
+        "the archived-card count should be its own row, not folded into the title"
+    assert not any("<li>" in l or "<ul>" in l for l in labels), \
+        "result lines are separate rows now, not one bulleted list inside one label"
+
+
+def test_result_screen_shows_only_the_digest_when_the_run_was_cancelled(anki, tmp_path):
+    """She backed out of the update but still flagged a card on the way: the digest is
+    the whole dialog, with no leftover title or result rows above it, since there is
+    no completed run to summarize."""
+    def on_screen(tree, seen, decide):
+        box = next(n for n in _walk(tree) if n.get("t") == "textarea")
+        return {"events": [{"id": box["id"], "value": "too bulky"},
+                           {"id": _find(tree, t="button", label=decide)["id"],
+                            "click": True}]}
+
+    seen = _feedback_run(anki, tmp_path, on_screen, decide="Cancel")
+
+    assert seen.get("digest"), "the digest dialog should have opened"
+    labels = [n.get("text") or "" for n in _walk(seen["digest"]) if n.get("t") == "label"]
+    assert not any("Update complete" in l for l in labels), \
+        "a cancelled run has no completion summary to show"
+    assert not any("kept" in l or "Archived" in l for l in labels)
+
+
 def _update_with_look_change(anki, tmp_path, tick):
     """Run update_decks against a deck whose card template changed, ticking (or not)
     the new-look checkbox on the one confirmation."""
