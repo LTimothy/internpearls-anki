@@ -1365,11 +1365,60 @@ def test_update_decks_confirmation_counts_and_names_changed_cards(anki, tmp_path
     assert "Front one" in seen["text"]
 
 
+def test_update_decks_confirmation_shows_retired_and_moved_cards_as_rows(anki, tmp_path):
+    """Retired and relocated cards used to sit below the confirmation as their own
+    bulleted sections; now they're rows in the same list as the new and changed cards,
+    chipped RETIRED and MOVED. A moved row names the deck it's heading to, and neither
+    kind carries a caret to open, since a retired or relocated card is known only by
+    its front and a deck, with nothing more to read out of the collection for it."""
+    from internpearls import sync
+    from internpearls.widgets import CHIPS
+    old_deck = "Intern Pearls::Intern Custom::Regional (old)"
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    _her_card(anki, "moved1", "a card that moved decks", deck=old_deck)
+    folder = _write_source(
+        tmp_path, {},
+        retired={DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
+                                 "superseded_by": []}}},
+        deck_moves={"moved1": {"from": old_deck, "to": DECK}})
+    _configure(anki, folder)
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen["tree"] = p["tree"]
+        seen["text"] = _labels(p["tree"])
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    assert "bulky crisis card" in seen["text"] and CHIPS["retired"] in seen["text"]
+    assert "a card that moved decks" in seen["text"] and CHIPS["moved"] in seen["text"]
+    assert "→ Pharm" in seen["text"]     # the moved row names its destination deck
+
+    # Neither kind is bulleted text below the summary anymore.
+    assert "retired card(s)" not in seen["text"]
+    assert "belong to a deck" not in seen["text"]
+
+    # Neither row expands: no card in this run has a caret to open.
+    buttons = [n.get("label") for n in _walk(seen["tree"]) if n.get("t") == "button"]
+    assert buttons == ["Update", "Cancel"], (
+        f"expected only Update/Cancel, no expand caret, got {buttons}")
+
+
 def test_update_decks_confirmation_uses_the_palette_not_a_css_keyword(anki, tmp_path):
     """The retired-cards and deck-move sections of the confirmation used to hardcode
-    the CSS keyword gray for their secondary detail text. One source carrying a new
-    card, a changed card, a retired card, and a moved card at once exercises every
-    section (and both card rows) in a single render of the confirmation."""
+    the CSS keyword gray for their secondary detail text. Both are rows in the same
+    list as the new and changed cards now, chipped RETIRED and MOVED rather than their
+    own bulleted sections, so a moved row's destination is what carries the colour
+    check today; the fix landed in widgets.simple_row, which sets it through the row's
+    own stylesheet rather than an inline span, so this reads both a rendered label's
+    text and its stylesheet. One source carrying a new card, a changed card, a retired
+    card, and a moved card at once exercises every row kind in a single render of the
+    confirmation."""
     from internpearls import palette, sync
     from internpearls.widgets import CHIPS
     active = palette.colors()
@@ -1392,6 +1441,7 @@ def test_update_decks_confirmation_uses_the_palette_not_a_css_keyword(anki, tmp_
         if p["kind"] != "dialog":
             return {}
         seen.setdefault("text", _labels(p["tree"]))
+        seen.setdefault("styles", "\n".join(n.get("style") or "" for n in _walk(p["tree"])))
         return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
                             "click": True}]}
 
@@ -1399,10 +1449,22 @@ def test_update_decks_confirmation_uses_the_palette_not_a_css_keyword(anki, tmp_
 
     assert "Front two" in seen["text"] and CHIPS["new"] in seen["text"]      # new row
     assert "Front one" in seen["text"] and CHIPS["changed"] in seen["text"]  # changed row
-    assert "retired card(s)" in seen["text"]      # fresh (retired) section rendered
-    assert "belong to a deck" in seen["text"]     # moves section rendered
-    assert "color:gray" not in seen["text"]
-    assert active["muted"] in seen["text"]
+    assert "bulky crisis card" in seen["text"] and CHIPS["retired"] in seen["text"]
+    assert "a card that moved decks" in seen["text"] and CHIPS["moved"] in seen["text"]
+    assert "→ Pharm" in seen["text"]     # the moved row names its destination deck
+
+    # Ordering: added and changing cards read first, then what is archived, then what
+    # is moving, the sequence the brief for this row asks for.
+    new_idx = seen["text"].index(CHIPS["new"])
+    changed_idx = seen["text"].index(CHIPS["changed"])
+    retired_idx = seen["text"].index(CHIPS["retired"])
+    moved_idx = seen["text"].index(CHIPS["moved"])
+    assert max(new_idx, changed_idx) < retired_idx < moved_idx, (
+        "retired cards should read after the content updates, and moved cards after "
+        "the retired ones")
+
+    assert "color:gray" not in seen["text"] and "color:gray" not in seen["styles"]
+    assert active["muted"] in seen["text"] or active["muted"] in seen["styles"]
 
 
 def test_update_decks_does_not_call_an_untouched_card_changed(anki, tmp_path):
