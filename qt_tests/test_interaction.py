@@ -73,3 +73,37 @@ def test_feedback_boxes_appear_only_when_the_setting_is_on(shot):
 
     assert not boxes(off), "note boxes are showing with card feedback turned off"
     assert boxes(on), "note boxes are missing with card feedback turned on"
+
+
+def test_the_update_screens_cleanup_runs_while_its_widgets_are_still_alive():
+    """build_update_body hands back a `flush` that stops the debounce timer, writes the
+    final flag state, and releases the extracted pictures. Everything it touches (that
+    timer, and the feedback boxes pending_entries reads) is parented into the body, so
+    Qt destroys all of it with the dialog the body was handed to.
+
+    Running flush after that wrapper returns therefore reaches freed C++ objects and
+    raises "wrapped C/C++ object of type QTimer has been deleted", which surfaced as the
+    add-on's generic error box on every single Update my decks run. The mock suite
+    cannot see this: its widgets are Python objects with no C++ lifetime behind them, so
+    a destroyed tree still answers happily there.
+
+    The wrapper runs it instead, before it drops the dialog.
+    """
+    _, q = harness.bootstrap()
+    harness.app()
+    from internpearls import review
+    from internpearls.ui import _ask_with_widget
+
+    body, _boxes, flush = review.build_update_body(
+        [("header", "Example Deck")], {}, {}, {}, False, "", lambda: "", "safety")
+
+    ran = []
+    original = q.QDialog.exec
+    q.QDialog.exec = lambda self: 1
+    try:
+        _ask_with_widget(body, yes_label="Update",
+                         on_close=lambda: (flush(), ran.append(True)))
+    finally:
+        q.QDialog.exec = original
+
+    assert ran, "the wrapper never ran the caller's cleanup"
