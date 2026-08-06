@@ -136,6 +136,28 @@ def test_manage_decks_empty_state_starts_at_the_top_not_the_middle(shot):
         "Preserved fields")
 
 
+def test_the_source_options_stack_rather_than_share_a_row(shot):
+    """What the deck-source screen was rebuilt out of: three sources crammed onto one
+    QMessageBox button row beside Cancel, reading as four equal buttons. Each source is
+    a full-width button on its own line now, so they share a left edge, run top to
+    bottom in the offered order, and all sit above Cancel.
+    """
+    _, q = harness.bootstrap()
+    s = shot("configure-source")
+    rects = {b.text(): widget_rect(s.dialog, b)
+             for b in s.dialog.findChildren(q.QPushButton)}
+    options = [rects[label] for label in
+               ("Try the example deck", "GitHub repo", "Local folder")]
+    assert len({r.left() for r in options}) == 1, (
+        f"the options start at different x: {[r.left() for r in options]}")
+    tops = [r.top() for r in options]
+    assert tops == sorted(tops) and len(set(tops)) == 3, (
+        f"the options are not stacked in the offered order: {tops}")
+    assert rects["Cancel"].top() > options[-1].bottom(), (
+        "Cancel sits alongside the sources again; it belongs below them, out of the "
+        "choice")
+
+
 def test_review_rows_share_a_left_edge(shot):
     """Tagged and untagged rows must start at the same x.
 
