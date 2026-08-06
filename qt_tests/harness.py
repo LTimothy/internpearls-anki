@@ -469,17 +469,22 @@ def _scene_confirm(mock, opts):
 
 
 def _scene_result(mock, opts):
-    """The end of a run: completion summary and flagged-card digest in one dialog."""
+    """The end of a run: completion summary and flagged-card digest in one dialog.
+
+    The summary reads in the same title/row vocabulary as the confirmation it
+    follows: a title, then one widgets.simple_row per result line, built the same way
+    sync.py's update_decks() builds them (see its `_finish` calls), rather than one
+    HTML blob with a `<ul>` inside it.
+    """
     from internpearls import review
     mock.mw._config = {"collect_card_feedback": True}
     entries = [{"deck": "Example Deck", "guid": "g1",
                 "front": "Which widget is this, in one short line?",
                 "note": "reads as two facts at once"}]
-    summary = ("<b>Update complete</b> (source: example-decks)"
-               "<ul><li>Example Deck: 29 kept, 3 new</li>"
-               "<li>Archived <b>2</b> retired card(s)</li></ul>"
-               "A backup of the deck was saved before anything changed.")
-    return lambda: review.show_result_with_feedback(summary, entries)
+    title = "Update complete (source: example-decks)"
+    rows = ["Example Deck: 29 kept, 3 new", "Archived <b>2</b> retired card(s)"]
+    footer = "A backup of the deck was saved before anything changed."
+    return lambda: review.show_result_with_feedback(title, rows, footer, entries)
 
 
 SCENES = {
