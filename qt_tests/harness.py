@@ -418,10 +418,15 @@ def _scene_ask_scrollable(mock, opts):
 
 def _scene_confirm(mock, opts):
     """The Update my decks confirmation: fixed summary text above the streaming list
-    of pending new and changed cards, built the same way sync.py's update_decks()
-    builds it (widgets.StreamingList over review._card_row rows), wrapped by
-    ui._ask_with_widget rather than _ask_scrollable, since the list needs to take the
-    dialog's available height instead of sitting inside one scrollable label.
+    of pending new and changed cards, retired cards, and relocated cards, built the
+    same way sync.py's update_decks() builds it (widgets.StreamingList over
+    review._card_row rows for the new/changed cards, and widgets.simple_row for the
+    retired/moved ones), wrapped by ui._ask_with_widget rather than _ask_scrollable,
+    since the list needs to take the dialog's available height instead of sitting
+    inside one scrollable label.
+
+    The retired and moved rows are invented, generic fixture content, same as
+    synthetic_details() above: no real card or deck name belongs in this repo.
     """
     from internpearls import review
     from internpearls.ui import _ask_with_widget
@@ -434,6 +439,10 @@ def _scene_confirm(mock, opts):
         if i:
             items.append(("sep",))
         items.append(("card", "Example Deck", d))
+    items += [("header", "Retired"),
+             ("retired", "An older phrasing of a since-split card", "Example Deck"),
+             ("header", "Moved"),
+             ("moved", "A card whose deck was reorganized", "Regional Basics")]
     sources = {"Example Deck": _fixture_image_apkg()} if opts.get("image") else {}
     top_html = ("<b>1</b> deck(s) have updates:<ul><li>Example Deck (3 kept "
                "(1 changing) &middot; 2 new)</li></ul>")

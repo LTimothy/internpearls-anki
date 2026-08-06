@@ -26,7 +26,7 @@ from .logic import (apkg_media_index, build_feedback_digest, cloze_filled_html,
                     field_preview_text, note_display_label, plain_text)
 from .palette import colors
 from .ui import _info, copy_to_clipboard, hint_label, muted_label, title_label
-from .widgets import StreamingList, chip_html, section_header
+from .widgets import StreamingList, chip_html, section_header, simple_row
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
 # would be a blank row on every single card.
@@ -52,6 +52,13 @@ def _preview_style():
 
     A function rather than a module constant: its colours come from the palette, which
     is chosen from Anki's theme at the moment this is called, not fixed once at import.
+
+    The `a` rule mirrors internpearls.ui._ask_scrollable's own link_style: Qt paints an
+    anchor in its own built-in link colour, never in anything set on the widget, so
+    without a rule here an anchor hiding in unescaped card content (a front, a Why
+    field) would render in a colour that doesn't track the theme. Combined with every
+    caller of `_rich_label` below also closing off `setOpenExternalLinks`, a link in
+    that content reads as inert, on-theme text rather than something clickable.
     """
     c = colors()
     return (
@@ -68,6 +75,7 @@ def _preview_style():
         f" th, td {{ border: 1px solid {c['cell_rule']}; padding: 2px 7px; }}"
         f" th {{ color: {c['dim']}; font-weight: 600; }}"
         " ul, ol { margin: 4px 0; }"
+        f" a {{ color: {c['accent']}; }}"
         "</style>"
     )
 
@@ -349,9 +357,17 @@ def _row_html(detail):
 
 
 def _rich_label(text):
+    """A QLabel for a block of card or confirmation HTML, closed to external links by
+    default: every caller here interpolates content straight out of the collection
+    (a field, a deck name, a retired card's identity), never escaped, so an anchor
+    hiding in it must not be able to launch the system browser on a click. Matches
+    internpearls.ui._ask_scrollable's own default for the same reason; see that
+    function's docstring.
+    """
     lbl = QLabel(_preview_style() + text)
     lbl.setWordWrap(True)
     lbl.setTextFormat(Qt.TextFormat.RichText)
+    lbl.setOpenExternalLinks(False)
     return lbl
 
 
@@ -735,16 +751,23 @@ def review_cards(parent, decks, flags, unreadable=(), sources=None):
 def build_update_body(items, sources, flags, new_index, collect_feedback,
                       top_html, flagged_line, safety_html):
     """The Update my decks screen's body: fixed summary text, the streaming list of
-    pending new and changed cards, then the flagged-card count and the safety note
-    below it. `internpearls.ui._ask_with_widget` wraps whatever this returns with the
-    dialog's title and its Update/Cancel buttons, the same as any other confirmation.
+    pending new and changed cards plus any retired or relocated ones, then the
+    flagged-card count and the safety note below it. `internpearls.ui._ask_with_widget`
+    wraps whatever this returns with the dialog's title and its Update/Cancel buttons,
+    the same as any other confirmation.
 
-    `items` is a mix of ("header", deck_short_name), ("sep",), and ("card", deck_name,
-    detail) entries, one per pending card, built by sync.py from every deck's new and
-    changed cards. A header groups a deck's rows and a sep draws the hairline between
-    two cards, the same way review_cards' own deck loop does. `sources` is
-    {deck_name: .apkg path}, threaded straight into build_resolvers so a row's pictures
-    extract from the same already-downloaded file review_cards used to read them from.
+    `items` is a mix of ("header", text), ("sep",), ("card", deck_name, detail),
+    ("retired", identity, deck_short), and ("moved", front, dest_deck_short) entries,
+    one per pending row, built by sync.py from every deck's new and changed cards
+    (_gather_pending_items) and from the retired/relocated cards it finds pending
+    (_retired_moved_items). A header groups a run of rows and a sep draws the hairline
+    between two of them, the same way review_cards' own deck loop does. A "retired" or
+    "moved" row renders through widgets.simple_row rather than `_card_row`: single-line
+    and never expanding, since a retired or relocated card is known only by its front
+    (or identity) and a deck, with nothing more to read out of the collection for it.
+    `sources` is {deck_name: .apkg path}, threaded straight into build_resolvers so a
+    row's pictures extract from the same already-downloaded file review_cards used to
+    read them from.
 
     `flags`/`new_index` are the {guid: note}/{guid: (deck, front)} maps update_decks()
     already carries through the run. A row's box writes into `flags` live, on every
@@ -796,6 +819,12 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
             return section_header(item[1])
         if item[0] == "sep":
             return _separator()
+        if item[0] == "retired":
+            _, identity, deck_short = item
+            return simple_row("retired", identity, deck_short)
+        if item[0] == "moved":
+            _, front, dest_short = item
+            return simple_row("moved", front, f"→ {dest_short}")
         _, deck_name, detail = item
         row = _card_row(detail, flags, boxes, collect_feedback,
                         resolve=resolvers.get(deck_name))

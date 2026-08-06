@@ -46,10 +46,27 @@ def colour_counts(image, rect=None):
 
 
 def widget_rect(dialog, widget):
-    """The widget's rect in the dialog's own coordinates, clipped to the dialog."""
+    """The widget's rect in the dialog's own coordinates, clipped to the dialog and to
+    every ancestor QScrollArea's own viewport along the way.
+
+    mapTo is pure frame-to-frame addition: it knows nothing about clipping, so a widget
+    scrolled out of a QScrollArea's viewport (a row below the fold in a long list) still
+    reports a rect that can fall inside the dialog's own outer bounds. Without the
+    second clip, that rect reads as present-but-blank instead of correctly reporting
+    empty, which is indistinguishable from a real dropped declaration to a caller like
+    test_declared.py.
+    """
     _, q = harness.bootstrap()
     top_left = widget.mapTo(dialog, q.QPoint(0, 0))
-    return q.QRect(top_left, widget.size()).intersected(dialog.rect())
+    rect = q.QRect(top_left, widget.size()).intersected(dialog.rect())
+    parent = widget.parentWidget()
+    while parent is not None and parent is not dialog:
+        if isinstance(parent, q.QScrollArea):
+            viewport = parent.viewport()
+            vp_top_left = viewport.mapTo(dialog, q.QPoint(0, 0))
+            rect = rect.intersected(q.QRect(vp_top_left, viewport.size()))
+        parent = parent.parentWidget()
+    return rect
 
 
 def text_contrast(shot, widget, sample=12):
