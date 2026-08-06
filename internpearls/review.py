@@ -17,15 +17,15 @@ import tempfile
 
 from aqt import mw
 from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayout,
-                    QImage, QLabel, QPlainTextEdit, QPushButton, QScrollArea, Qt,
-                    QTimer, QVBoxLayout, QWidget)
+                    QImage, QLabel, QPlainTextEdit, QPushButton, QScrollArea,
+                    QSizePolicy, Qt, QTimer, QVBoxLayout, QWidget)
 
 from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
-from .logic import (apkg_media_index, bullets, build_feedback_digest, cloze_filled_html,
+from .logic import (apkg_media_index, build_feedback_digest, cloze_filled_html,
                     extract_apkg_media, field_image_names, field_preview_html,
                     field_preview_text, plain_text, plural)
 from .palette import colors
-from .ui import _info, copy_to_clipboard, muted_label, title_label
+from .ui import _ask_with_widget, copy_to_clipboard, muted_label, title_label
 from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell, row_text_indent,
                       section_header, simple_row)
 
@@ -39,6 +39,14 @@ _SKIP_FIELDS = {"Notes"}
 # field_preview_text) and folded into the primary or answer line instead of shown on
 # its own (see _image_text).
 _STRUCTURAL_FIELDS = {"Why", "Dosing", "Tag", "Image"}
+
+# How tall a build_list_body confirmation opens. Each of them lists one Advanced
+# action's worth of rows, so they start shorter than Update my decks, whose list covers
+# everything pending at once and takes ui._ask_with_widget's own taller default. A
+# floor, not a fixed height: a longer list still grows the dialog and then scrolls
+# inside it. Lives here rather than in sync.py because collection.py builds one of
+# these confirmations too and cannot import sync.py (sync.py imports it).
+_CONFIRM_HEIGHT = 380
 
 # Matches the deck's own CSS so review looks like study: the same green why rule,
 # grey dosing block, and blue cloze fill. Every colour below is asked for by role from
@@ -650,24 +658,25 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     wraps whatever this returns with the dialog's title and its Update/Cancel buttons,
     the same as any other confirmation.
 
-    `items` is a mix of ("header", text), ("sep",), ("deck", deck_short, counts),
-    ("card", deck_name, detail), ("retired", identity), and ("moved", front,
+    `items` is a mix of ("header", text), ("note", html), ("sep",), ("deck", deck_short,
+    counts), ("card", deck_name, detail), ("retired", identity), and ("moved", front,
     dest_deck_short) entries, one per row, built by sync.py from every deck's new and
     changed cards (_gather_pending_items) and from the retired/relocated cards it finds
-    pending (_retired_moved_items). A header groups a run of rows and a sep draws the
-    hairline between two of them. A "deck" row is the per-deck summary that opens the
-    list, in a section of its own where nothing is ever chipped and nothing ever
-    expands, so it declines the caret and chip columns (see simple_row) and its deck
-    names share a left edge with the heading directly above them. Alignment is decided
-    per section, by whether anything in that section is chipped, which is why the card
-    sections below keep the columns their own unchipped rows would otherwise not need.
-    A "retired" or "moved" row renders through
+    pending (_retired_moved_items). The first three are the shapes build_list_body takes
+    too, and are drawn by the same builder: a header groups a run of rows, a note is the
+    sentence introducing one, and a sep draws the hairline between two rows. A "deck"
+    row is the per-deck summary that opens the list, in a section of its own where
+    nothing is ever chipped and nothing ever expands, so it declines the caret and chip
+    columns (see simple_row) and its deck names share a left edge with the heading
+    directly above them. Alignment is decided per section, by whether anything in that
+    section is chipped, which is why the card sections below keep the columns their own
+    unchipped rows would otherwise not need. A "retired" or "moved" row renders through
     widgets.simple_row rather than `_card_row`: single-line and never expanding, since
     a retired or relocated card is known only by its front (or identity) and a deck,
     with nothing more to read out of the collection for it. `sources` is
-    {deck_name: .apkg path},
-    threaded straight into build_resolvers so a row's picture extracts from the same
-    already-downloaded file this screen read the rest of the card from.
+    {deck_name: .apkg path}, threaded straight into build_resolvers so a row's picture
+    extracts from the same already-downloaded file this screen read the rest of the
+    card from.
 
     `flags`/`new_index` are the {guid: note}/{guid: (deck, front)} maps update_decks()
     already carries through the run. A row's box writes into `flags` live, on every
@@ -719,10 +728,8 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
         saver.start()
 
     def _row(item):
-        if item[0] == "header":
-            return section_header(item[1])
-        if item[0] == "sep":
-            return _separator()
+        if item[0] in ("header", "note", "sep"):
+            return _list_row(item)
         if item[0] == "deck":
             _, deck_short, counts = item
             return simple_row(None, deck_short, counts, card_columns=False)
@@ -754,9 +761,9 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     return body, boxes, flush
 
 
-def _list_row(item):
+def _list_row(item, card_columns=True):
     """One entry of `build_list_body`'s item list as a widget. See that function for
-    what each shape means."""
+    what each shape means, and for what `card_columns` decides."""
     if item[0] == "header":
         return section_header(item[1])
     if item[0] == "note":
@@ -769,10 +776,20 @@ def _list_row(item):
     if item[0] == "sep":
         return _separator()
     _, kind, primary_html, trailing_html = item
-    return simple_row(kind, primary_html, trailing_html)
+    return simple_row(kind, primary_html, trailing_html, card_columns=card_columns)
 
 
-def build_list_body(items, top_html="", bottom_html=""):
+def append_rows(items, rows):
+    """Add one group's rows to a build_list_body item list, hairlined between rather
+    than around: a rule above the first row would cut the group off from the sentence
+    that introduces it."""
+    for i, row in enumerate(rows):
+        if i:
+            items.append(("sep",))
+        items.append(row)
+
+
+def build_list_body(items, top_html="", bottom_html="", card_columns=True):
     """A confirmation whose body is a list of rows: fixed text above it, the streaming
     list itself, fixed text below. `internpearls.ui._ask_with_widget` wraps whatever
     this returns with the dialog's title and its buttons, the same as build_update_body.
@@ -789,12 +806,17 @@ def build_list_body(items, top_html="", bottom_html=""):
       ("header", text)                    a bold heading over the rows below it
       ("note", html)                      a paragraph reading with the rows below it
       ("sep",)                            the hairline between two rows
-      ("row", kind, primary, trailing)    one row, marked by `kind` (widgets.CHIPS)
+      ("row", kind, primary, trailing)    one row, marked by `kind` (widgets.CHIPS),
+                                          or by nothing when `kind` is None
 
-    Every row a caller passes here carries a chip, so every section keeps the caret and
-    chip columns (see widgets.simple_row). Alignment is a decision about the section,
-    and these sections have something to line up against; a section of unchipped rows
-    would want the columns declined instead.
+    `card_columns` is the caret-and-chip-column decision widgets.simple_row documents,
+    made once for the whole list because it is a decision about the screen rather than
+    about any one row. A mixed list (Sync decks marks a deck NEW or UPDATED, Reconcile
+    marks a card RETIRED or MOVED) keeps the columns, so its chipped and unchipped rows
+    read as one column of text. A list where every row is the same sort of thing has
+    nothing to line up against, so it declines them and starts flush with the heading
+    above it: Clean up duplicates and Remove empty cards each list one kind of card and
+    pass False.
     """
     body = QWidget()
     lay = QVBoxLayout(body)
@@ -802,13 +824,73 @@ def build_list_body(items, top_html="", bottom_html=""):
     lay.setSpacing(8)
     if top_html:
         lay.addWidget(_rich_label(top_html))
-    lay.addWidget(StreamingList(_list_row, items), 1)
+    lay.addWidget(StreamingList(lambda item: _list_row(item, card_columns), items), 1)
     if bottom_html:
         lay.addWidget(_rich_label(bottom_html))
     return body
 
 
-def show_result_with_feedback(title, rows, footer_html, entries):
+def _summary_block(title, items):
+    """The run's own outcome as widgets: its headline at the dialog's largest size, then
+    one row or paragraph per item in the same vocabulary build_list_body takes.
+
+    The rows carry no chip and nothing here expands, so they decline the caret and chip
+    columns (see widgets.simple_row): with nothing on this screen to line up against,
+    reserving them would float every outcome line to the right of the heading above it
+    and the backup line below it.
+
+    Not a StreamingList: every caller's item count is bounded by how many decks the run
+    touched, so there is no long list to build lazily, and both callers want this block
+    to size to its own content inside whatever scroll area they put it in.
+    """
+    summary = QWidget()
+    slay = QVBoxLayout(summary)
+    slay.setContentsMargins(0, 0, 0, 0)
+    slay.setSpacing(0)
+    slay.addWidget(title_label(title))
+    for item in items:
+        slay.addWidget(_list_row(item, card_columns=False))
+    return summary
+
+
+def _scrolled(widget, max_height):
+    """`widget` in a frameless scroll area that stops growing at `max_height`.
+
+    Sized Preferred rather than the QScrollArea default of Expanding, for the reason
+    ui._ask_scrollable spells out: Expanding claims every pixel of leftover height, so a
+    two-line summary would be stretched to the full cap with blank space inside it.
+    """
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setMaximumHeight(max_height)
+    scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+    scroll.setWidget(widget)
+    return scroll
+
+
+def show_result(title, items):
+    """The end of a run with nothing flagged: the summary on its own, acknowledged and
+    closed.
+
+    A real dialog rather than the _info box this used to be, for the same reason
+    ui._ask_scrollable exists: a message box has no scroll area, so a run reporting a
+    deck per line plus a list of collided cards just grew the box, and a long enough one
+    put its own OK button past the bottom of the screen. It also means the one thing the
+    reader is being told about the run reads in the row vocabulary the confirmation she
+    just answered was built from, instead of as a `<ul>` dropped into a label.
+    """
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.addWidget(_scrolled(_summary_block(title, items), 420))
+    # Leftover height collects here, below the summary and above the button, rather
+    # than being spread through the gaps between the rows.
+    lay.addStretch()
+    _ask_with_widget(body, yes_label="OK", no_label=None, min_width=460, min_height=0)
+
+
+def show_result_with_feedback(title, items, entries):
     """The end of a run, as one dialog instead of two.
 
     A completion summary and a feedback digest used to arrive as separate boxes, back
@@ -817,26 +899,23 @@ def show_result_with_feedback(title, rows, footer_html, entries):
     she cannot reproduce by running the update again, appears behind it looking like
     yet another popup. They are one dialog now, summary on top, digest below it.
 
-    `title` is the run's own headline ("Update complete (source: X)" or "Update
-    stopped early (source: X)"), `rows` is [html, ...], one line per deck synced or
-    per archive/merge/move outcome, and `footer_html` is whatever reads below them
-    (preserved-field and collision notes, the backup line). Kept apart rather than one
-    pre-joined string so the summary can read in the same title/row vocabulary the run
-    began on (widgets.simple_row per line) instead of a `<ul>` dropped into a QLabel.
+    `title` is the run's own headline ("Update complete (source: X)" or "Update stopped
+    early (source: X)"); `items` is everything below it in build_list_body's own
+    vocabulary, so an outcome per deck reads as a row, the preserved-field and collision
+    notes read as paragraphs, and the cards a collision names read as rows of their own.
 
-    Degrades in both directions on purpose: a run with no flagged cards is a plain
-    _info as before (reassembled into one HTML block, since a plain info box has no
-    room for separate widgets), and a digest with no summary (she backed out of the
-    update but still wrote notes) is the digest on its own.
+    Degrades in both directions on purpose: a run with no flagged cards is the summary
+    alone, and a digest with no summary (she backed out of the update but still wrote
+    notes) is the digest on its own.
     """
     if not entries:
         if title:
-            _info(title + bullets(rows) + footer_html)
+            show_result(title, items)
         return
-    offer_feedback_digest(None, entries, title=title, rows=rows, footer_html=footer_html)
+    offer_feedback_digest(None, entries, title=title, items=items)
 
 
-def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
+def offer_feedback_digest(parent, entries, title=None, items=()):
     """Put the flagged-card summary on the clipboard and show it.
 
     Shown as well as copied, for two reasons: she sees exactly what's being sent before
@@ -847,16 +926,11 @@ def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
     payload block, since it's indent-structured plain text, not prose. Copy again is the
     recovery if something else lands on the clipboard before she gets to paste.
 
-    `title`/`rows`/`footer_html` are the end-of-run summary, in the same title/row
-    vocabulary the confirmation this dialog follows already uses (ui.title_label, then
-    one widgets.simple_row per line with a hairline between them). The rows carry
-    no chip and nothing here expands, so they also decline the caret and chip columns
-    (see simple_row): with nothing on this screen to line up against, reserving them
-    would float every outcome line to the right of the heading above it and the backup
-    line below it. Left at their defaults for a bare digest with no
-    summary at all (she backed out of the update but still flagged a card), which is
-    why the whole block is skipped when `title` is empty rather than rendered with a
-    blank heading.
+    `title`/`items` are the end-of-run summary, drawn by _summary_block in the same
+    title/row vocabulary the confirmation this dialog follows already uses. Left at
+    their defaults for a bare digest with no summary at all (she backed out of the
+    update but still flagged a card), which is why the whole block is skipped when
+    `title` is empty rather than rendered with a blank heading.
     """
     text = build_feedback_digest(entries, version=ADDON_VERSION,
                                  date=datetime.date.today().isoformat())
@@ -870,26 +944,10 @@ def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
     dlg.setMinimumHeight(380)
     lay = QVBoxLayout(dlg)
     if title:
-        summary = QWidget()
-        slay = QVBoxLayout(summary)
-        slay.setContentsMargins(0, 0, 0, 0)
-        slay.setSpacing(0)
         # The run's own outcome, at the dialog's largest size: it is what the whole
         # screen is reporting. The flagged-card heading below is subordinate to it and
         # says so by being smaller, which is the way round these two used to read.
-        slay.addWidget(title_label(title))
-        for i, row_html in enumerate(rows):
-            if i:
-                slay.addWidget(_separator())   # between rows, not after the last
-            slay.addWidget(simple_row(None, row_html, card_columns=False))
-        if footer_html:
-            slay.addWidget(_rich_label(footer_html))
-        summary_scroll = QScrollArea()
-        summary_scroll.setWidgetResizable(True)
-        summary_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        summary_scroll.setMaximumHeight(200)
-        summary_scroll.setWidget(summary)
-        lay.addWidget(summary_scroll)
+        lay.addWidget(_scrolled(_summary_block(title, items), 200))
     lay.addWidget(section_header(f"{plural(len(entries), 'card')} flagged"))
     lay.addWidget(muted_label(
         "Copied to your clipboard, ready to paste into a message."
