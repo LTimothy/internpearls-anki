@@ -14,7 +14,7 @@ from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, EXAMPLE_DECK_NAME, EXAMPLE_REPO,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, STATE, _cfg, _load_json)
 from .logic import (bullets, deck_status, manifest_scope_suggestion, parse_fields,
-                    version_at_least)
+                    plural, version_at_least)
 from .palette import colors
 from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
@@ -197,9 +197,9 @@ def configure_source():
               "or repo and try again.")
         return
     _offer_manifest_scope(manifest)
-    _info(f"Saved and connected to <b>{source}</b>, found {len(manifest['decks'])} "
-          "deck(s).<br><br>Run <i>Intern Pearls → Update my decks</i> whenever you're "
-          "ready.")
+    _info(f"Saved and connected to <b>{source}</b>, found "
+          f"{plural(len(manifest['decks']), 'deck')}.<br><br>Run <i>Intern Pearls → "
+          "Update my decks</i> whenever you're ready.")
 
 
 def _offer_manifest_scope(manifest):
@@ -374,7 +374,7 @@ class _DeckManagerDialog(QDialog):
         h.addStretch()
         label, role = _STATE_STYLE[r["state"]]
         cards = r.get("cards")
-        text = f'{cards} cards · {label}' if cards is not None else label
+        text = f'{plural(cards, "card")} · {label}' if cards is not None else label
         pill = QLabel(text)
         pill.setStyleSheet(_pill_style(role))
         h.addWidget(pill)
@@ -449,8 +449,10 @@ def manage_decks():
         return
     kept = sum(1 for r in rows if r["name"] not in conf["excluded_decks"])
     excluded_n = len(rows) - kept
-    scope = (f"All {kept} deck(s) are set to sync" if not excluded_n
-             else f"{kept} of {len(rows)} deck(s) are set to sync ({excluded_n} excluded)")
+    verb = "is" if kept == 1 else "are"
+    scope = (f"{plural(kept, 'deck')} {verb} set to sync" if not excluded_n
+             else f"{kept} of {plural(len(rows), 'deck')} {verb} set to sync "
+                  f"({excluded_n} excluded)")
     # Auto-sync is a separate, independent setting (Intern Pearls -> Settings), so this
     # dialog only reports whether it's currently on, not whether it changed here.
     next_step = (" Auto-sync is on, so these will keep applying on their own."
@@ -579,8 +581,9 @@ def open_settings():
         _stop_auto_sync_timer()
 
     sync_line = (
-        f"Deck sync checks every {values['auto_sync_interval_minutes']} minute(s) and "
-        "applies updates on its own." if values["auto_sync_decks"] else
+        f"Deck sync checks every "
+        f"{plural(values['auto_sync_interval_minutes'], 'minute')} and applies updates "
+        "on its own." if values["auto_sync_decks"] else
         "Deck sync stays manual, use Sync decks when you're ready.")
     if values["auto_update_addon"]:
         update_line = "Add-on updates install automatically."
@@ -598,7 +601,7 @@ def open_settings():
 def about():
     cfg = _cfg()
     sync_status = (
-        f"on, checking every {cfg['auto_sync_interval_minutes']} minute(s)"
+        f"on, checking every {plural(cfg['auto_sync_interval_minutes'], 'minute')}"
         if cfg["auto_sync_decks"] else "off")
     if cfg["auto_update_addon"]:
         update_status = "installs automatically"

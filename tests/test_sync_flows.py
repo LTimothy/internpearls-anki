@@ -624,7 +624,7 @@ def test_auto_sync_applies_decks_inline_and_reports_by_tooltip(anki, tmp_path):
     background._auto_sync_check()
 
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
-    assert any("auto-synced 1 deck(s)" in t for t in anki.gui.tooltips)
+    assert any("auto-synced 1 deck" in t for t in anki.gui.tooltips)
     assert anki.gui.asks == []   # unattended: must never open a dialog
 
 
@@ -672,7 +672,7 @@ def test_auto_sync_recovers_after_a_collection_revert_undoes_a_prior_sync(anki, 
 
     background._auto_sync_check()
 
-    assert any("auto-synced 1 deck(s)" in t for t in anki.gui.tooltips)
+    assert any("auto-synced 1 deck" in t for t in anki.gui.tooltips)
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
 
@@ -696,7 +696,7 @@ def test_auto_sync_nudges_about_retired_cards_without_touching_them(anki, tmp_pa
     background._auto_sync_check()
 
     assert stub.text == "Reconcile my decks (1 pending)"
-    assert any("1 card(s) are ready to tidy up" in t for t in anki.gui.tooltips)
+    assert any("1 card is ready to tidy up" in t for t in anki.gui.tooltips)
     old = anki.col.note_by_guid("old1")
     assert anki.col._cards[old.card_ids()[0]].queue == 0   # untouched, not suspended
     assert not anki.col.imports
@@ -741,7 +741,7 @@ def test_auto_sync_renags_when_the_pending_count_grows(anki, tmp_path):
     background._auto_sync_check()
 
     assert len(anki.gui.tooltips) == 2
-    assert "2 card(s)" in anki.gui.tooltips[-1]
+    assert "2 cards are ready to tidy up" in anki.gui.tooltips[-1]
     assert stub.text == "Reconcile my decks (2 pending)"
 
 
@@ -797,7 +797,7 @@ def test_reconcile_archives_retired_cards(anki, tmp_path):
     # nothing deleted, and no schema bump (so no forced AnkiWeb full sync)
     assert len(anki.col._notes) == notes_before
     assert anki.col.scm == scm_before
-    assert any("Archived <b>1</b>" in i for i in anki.gui.infos)
+    assert any("Archived <b>1 retired card</b>" in i for i in anki.gui.infos)
 
 
 def test_reconcile_archives_a_retired_card_she_holds_under_an_older_guid(anki, tmp_path):
@@ -822,7 +822,7 @@ def test_reconcile_archives_a_retired_card_she_holds_under_an_older_guid(anki, t
     assert anki.col._cards[cid].did == anki.col.decks.id_for_name(RETIRED_DECK)
     assert RETIRED_TAG in anki.col.note_by_guid("her_older_guid").tags
     assert anki.col.note_by_guid("new1a") is not None             # replacement untouched
-    assert any("Archived <b>1</b>" in i for i in anki.gui.infos)
+    assert any("Archived <b>1 retired card</b>" in i for i in anki.gui.infos)
 
 
 def test_reconcile_leaves_a_retired_card_alone_when_neither_guid_nor_front_match(
@@ -884,7 +884,7 @@ def test_reconcile_moves_progress_onto_the_reworded_card_and_archives_the_old(
     assert dead.reps == 4          # its own history is left on it, never cleared
     assert anki.col.note_by_guid("g_new").id in anki.col.updated_cards   # persisted
     assert len(anki.col._notes) == 2                           # nothing deleted
-    assert any("Merged <b>1</b>" in i for i in anki.gui.infos)
+    assert any("Merged <b>1 reworded card</b>" in i for i in anki.gui.infos)
 
 
 def test_reconcile_never_rolls_back_a_reworded_card_she_already_studied(anki, tmp_path):
@@ -1023,7 +1023,7 @@ def test_reconcile_carries_notes_over_to_replacement_before_archiving(anki, tmp_
     drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
 
     assert anki.col.note_by_guid("new1a")["Notes"] == "her mnemonic"
-    assert any("1 personal note(s) carried over" in i for i in anki.gui.infos)
+    assert any("1 personal note carried over" in i for i in anki.gui.infos)
 
 
 def test_reconcile_does_not_overwrite_replacements_own_notes(anki, tmp_path):
@@ -1074,7 +1074,7 @@ def test_reconcile_dialog_caps_a_large_list_and_stays_clickable(anki, tmp_path):
     assert seen["text"].count("<li>") == 16          # 15 shown + 1 "...and N more" line
     assert "...and 10 more" in seen["text"]
     assert "one-time catch-up" in seen["text"]
-    assert any("Archived <b>25</b>" in i for i in anki.gui.infos)
+    assert any("Archived <b>25 retired cards</b>" in i for i in anki.gui.infos)
 
 
 # ---------------------------------------------------------- reconcile: deck moves
@@ -1094,7 +1094,7 @@ def test_reconcile_moves_card_to_reorganized_deck(anki, tmp_path):
     cid = card.card_ids()[0]
     assert anki.col.decks.name(anki.col._cards[cid].did) == NEW_DECK
     assert anki.col.scm == scm_before              # schema-neutral, no forced full sync
-    assert any("Moved <b>1</b>" in i for i in anki.gui.infos)
+    assert any("Moved <b>1 card</b>" in i for i in anki.gui.infos)
 
 
 def test_reconcile_move_is_idempotent(anki, tmp_path):
@@ -1159,7 +1159,7 @@ def test_reconcile_relocates_a_stuck_card_by_front_when_guid_changed(anki, tmp_p
 
     cid = card.card_ids()[0]
     assert anki.col.decks.name(anki.col._cards[cid].did) == NEW_DECK
-    assert any("Moved <b>1</b>" in i for i in anki.gui.infos)
+    assert any("Moved <b>1 card</b>" in i for i in anki.gui.infos)
 
 
 def test_reconcile_leaves_guid_mismatched_card_alone_without_front(anki, tmp_path):
@@ -1301,7 +1301,7 @@ def test_update_decks_confirmation_shows_real_kept_new_counts(anki, tmp_path):
     assert "1 kept" in seen["text"] and "1 new" in seen["text"]
     # A row per deck under its own heading, not an indented bullet list dropped into
     # the label above the card rows it introduces.
-    assert "1 deck(s) have updates" in seen["all"]
+    assert "1 deck has updates" in seen["all"]
     assert "<li>" not in seen["all"] and "<ul>" not in seen["all"], (
         "the per-deck counts read as a row's trailing column now, not as a bulleted "
         "list inside one label")
@@ -1406,9 +1406,11 @@ def test_update_decks_confirmation_shows_retired_and_moved_cards_as_rows(anki, t
     assert "a card that moved decks" in seen["text"] and CHIPS["moved"] in seen["text"]
     assert "→ Pharm" in seen["text"]     # the moved row names its destination deck
 
-    # Neither kind is bulleted text below the summary anymore.
-    assert "retired card(s)" not in seen["text"]
-    assert "belong to a deck" not in seen["text"]
+    # Neither kind is bulleted text below the summary anymore. Matched on the wording
+    # each block opens with rather than on its count, which reads differently for one
+    # card than for several.
+    assert "still in your collection" not in seen["text"]
+    assert "since been reorganized" not in seen["text"]
 
     # Nor does either kind have a heading of its own: the chip on the row already says
     # what it is, so the heading is free to say which deck it belongs to. The retired
@@ -1697,7 +1699,7 @@ def test_review_collects_feedback_when_the_toggle_is_on(anki, tmp_path):
     assert "Back" not in seen["screen"], "field names shouldn't be captioned anymore"
     # Typing into her box updates the confirmation's own flagged count live, since
     # there is no longer a separate review dialog whose closing used to trigger it.
-    assert "1 card(s) flagged" in seen.get("after", "")
+    assert "1 card flagged" in seen.get("after", "")
     # And the digest names the deck, the card, its id, and what she said.
     digest = anki.gui.clipboard[-1]
     assert "Front two" in digest and "dose is wrong" in digest and "g2" in digest
@@ -1958,7 +1960,7 @@ def test_clean_up_duplicates_archives_the_copy_with_fewer_reviews(anki, tmp_path
     assert f"{SCOPE}::retired-duplicate" in anki.col.note_by_guid("new").tags
     kept_cid = anki.col.note_by_guid("old").card_ids()[0]
     assert anki.col._cards[kept_cid].queue == 0       # kept copy untouched
-    assert any("Archived <b>1</b>" in i for i in anki.gui.infos)
+    assert any("Archived <b>1 duplicate card</b>" in i for i in anki.gui.infos)
 
 
 def test_clean_up_duplicates_dialog_uses_the_palette_not_a_css_keyword(anki, tmp_path):
@@ -2244,7 +2246,7 @@ def test_remove_empty_cards_removes_only_the_orphaned_ordinals(anki):
     note = anki.col.note_by_guid("regrouped")
     assert sorted(anki.col._cards[cid].ord for cid in note._card_ids) == [0, 1]
     assert len(anki.col.note_by_guid("intact")._card_ids) == 1
-    assert any("Removed <b>3</b> empty card(s)" in i for i in anki.gui.infos)
+    assert any("Removed <b>3 empty cards</b>" in i for i in anki.gui.infos)
 
 
 def test_remove_empty_cards_leaves_other_peoples_notes_alone(anki):
@@ -2610,5 +2612,5 @@ def test_update_decks_gives_a_retired_only_deck_its_own_heading(anki, tmp_path):
     lines = seen["lines"]
     assert "Pharm" in lines, f"the retired card's deck should head its row: {lines}"
     assert lines.index("Pharm") < lines.index(CHIPS["retired"])
-    assert "1 deck(s) have updates:" not in lines, \
+    assert "1 deck has updates:" not in lines, \
         "nothing is downloading, so there is no deck summary to open the list with"

@@ -23,7 +23,7 @@ from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayou
 from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
 from .logic import (apkg_media_index, bullets, build_feedback_digest, cloze_filled_html,
                     extract_apkg_media, field_image_names, field_preview_html,
-                    field_preview_text, plain_text)
+                    field_preview_text, plain_text, plural)
 from .palette import colors
 from .ui import _info, copy_to_clipboard, muted_label, title_label
 from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell, row_text_indent,
@@ -828,7 +828,7 @@ def offer_feedback_digest(parent, entries, title=None, rows=(), footer_html=""):
         summary_scroll.setMaximumHeight(200)
         summary_scroll.setWidget(summary)
         lay.addWidget(summary_scroll)
-    lay.addWidget(title_label(f"{len(entries)} card(s) flagged"))
+    lay.addWidget(title_label(f"{plural(len(entries), 'card')} flagged"))
     lay.addWidget(muted_label(
         "Copied to your clipboard, ready to paste into a message."
         if copied else

@@ -16,7 +16,7 @@ from .config import (DECK_BACKUPS_KEEP, INSTALLED, TARGET_FIELDS, _USER_FILES, _
 from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
                     bullets, changed_templates, empty_cards_dialog_html,
                     fields_to_carry_over, manifest_decks_for, model_shape,
-                    note_display_label, plan_notetype_changes, remap_cards,
+                    note_display_label, plan_notetype_changes, plural, remap_cards,
                     select_empty_cards, write_personalized)
 from .palette import colors
 from .ui import _ask, _ask_scrollable, _info, _safe, _warn
@@ -829,7 +829,7 @@ def export_deck():
     except Exception as e:
         _warn(f"Export failed: {e}")
         return
-    _info(f"Exported <b>{note_count}</b> note(s) from {deck_name} to:"
+    _info(f"Exported <b>{plural(note_count, 'note')}</b> from {deck_name} to:"
           f"<br><code>{path}</code><br><br>"
           "Review history, deck options, and media are all included, this is a "
           "complete, standalone copy of just this deck.")
@@ -965,8 +965,10 @@ def remove_empty_cards():
     rows, skipped = find_empty_cards(cfg["scope_tag"])
     if not rows:
         _info("No empty cards found." + (
-            f"<br><br>({skipped} note(s) have no content on any card at all and were "
-            "left alone, since removing those cards would delete the note itself.)"
+            f"<br><br>({plural(skipped, 'note')} "
+            f"{'has' if skipped == 1 else 'have'} no content on any card at all and "
+            f"{'was' if skipped == 1 else 'were'} left alone, since removing those "
+            "cards would delete the note itself.)"
             if skipped else ""))
         return
     n_cards = sum(len(r["card_ids"]) for r in rows)
@@ -975,7 +977,7 @@ def remove_empty_cards():
               "backup is taken automatically before anything changes.")
     if not _ask_scrollable(
             empty_cards_dialog_html(rows, colors()["muted"], skipped) + safety,
-            yes_label=f"Remove {n_cards} card(s)"):
+            yes_label=f"Remove {plural(n_cards, 'card')}"):
         return
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
     if not proceed:
@@ -986,5 +988,5 @@ def remove_empty_cards():
     backup_line = ("" if backed_up else
                    "<br><br>(No backup was taken this time: nothing to back up yet, or "
                    "it failed and you chose to continue.)")
-    _info(f"Removed <b>{len(cids)}</b> empty card(s) from "
-          f"<b>{len(rows)}</b> note(s). Nothing else changed." + backup_line)
+    _info(f"Removed <b>{plural(len(cids), 'empty card')}</b> from "
+          f"<b>{plural(len(rows), 'note')}</b>. Nothing else changed." + backup_line)
