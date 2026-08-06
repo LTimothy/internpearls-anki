@@ -323,6 +323,27 @@ def section_label(text, top_margin=0):
     return lbl
 
 
+def section_rule():
+    """The hairline between two sections of a form.
+
+    A real HLine rather than a border-top on the heading below it: Qt won't paint a lone
+    border on a plain container widget, and a selector-less stylesheet on a container
+    propagates into its children, which each then draw their own rule.
+
+    Carries `panel_rule`, the colour a bounded region of a dialog is drawn with, rather
+    than `row_rule`, which is the fainter hairline between two rows of one list. The
+    distinction is what each rule separates: rows of a list are still one thing, so their
+    divider stays quiet, while these sections are four unrelated decisions that happen to
+    share a window, so the line between them is the strongest thing saying so.
+    """
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setFrameShadow(QFrame.Shadow.Plain)
+    line.setFixedHeight(1)
+    line.setStyleSheet(f"color: {colors()['panel_rule']};")
+    return line
+
+
 def muted_label(text):
     """Secondary explanatory text at the dialog's normal font size."""
     lbl = QLabel(text)
