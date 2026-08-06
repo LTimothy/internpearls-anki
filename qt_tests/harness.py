@@ -407,13 +407,17 @@ def _scene_ask_scrollable(mock, opts):
 
 
 def _scene_confirm(mock, opts):
-    """The Update my decks confirmation: fixed summary text above the streaming list
-    of pending new and changed cards, retired cards, and relocated cards, built the
-    same way sync.py's update_decks() builds it (widgets.StreamingList over
-    review._card_row rows for the new/changed cards, and widgets.simple_row for the
-    retired/moved ones), wrapped by ui._ask_with_widget rather than _ask_scrollable,
-    since the list needs to take the dialog's available height instead of sitting
-    inside one scrollable label.
+    """The Update my decks confirmation: fixed summary text above the streaming list,
+    which opens with a per-deck summary section and then carries one section per deck
+    holding everything pending for it, built the same way sync.py's update_decks()
+    builds it (widgets.StreamingList over review._card_row rows for the new/changed
+    cards, and widgets.simple_row for the deck-summary, retired and moved ones),
+    wrapped by ui._ask_with_widget rather than _ask_scrollable, since the list needs to
+    take the dialog's available height instead of sitting inside one scrollable label.
+
+    All four row kinds sit under the one deck heading, which is what the real screen
+    does: a retired card belongs to the deck it is retired out of, and a relocated one
+    to the deck it is currently sitting in, with only its destination named on the row.
 
     The retired and moved rows are invented, generic fixture content, same as
     synthetic_details() above: no real card or deck name belongs in this repo.
@@ -424,18 +428,22 @@ def _scene_confirm(mock, opts):
     if opts.get("limit"):
         details = details[:opts["limit"]]
     mock.mw._config = {"collect_card_feedback": opts.get("feedback", False)}
-    items = [("header", "Example Deck")]
+    items = [("header", "1 deck(s) have updates:"),
+             ("deck", "Example Deck", "3 kept (1 changing) · 2 new"),
+             ("header", "Example Deck")]
     for i, d in enumerate(details):
         if i:
             items.append(("sep",))
         items.append(("card", "Example Deck", d))
-    items += [("header", "Retired"),
-             ("retired", "An older phrasing of a since-split card", "Example Deck"),
-             ("header", "Moved"),
-             ("moved", "A card whose deck was reorganized", "Regional Basics")]
+    items += [("sep",),
+              ("retired", "An older phrasing of a since-split card"),
+              ("sep",),
+              ("moved", "A card whose deck was reorganized", "Regional Basics")]
     sources = {"Example Deck": _fixture_image_apkg()} if opts.get("image") else {}
-    top_html = ("<b>1</b> deck(s) have updates:<ul><li>Example Deck (3 kept "
-               "(1 changing) &middot; 2 new)</li></ul>")
+    # What is left above the list now that the per-deck summary is the list's own first
+    # section: update_decks()'s fixed notes about the run as a whole.
+    top_html = ("<i>This looks like a one-time catch-up, likely your first update in a "
+                "while. Future updates should be much shorter.</i>")
     safety = ("This is a preview: nothing above has been applied yet. Your review "
               "history and any personal notes on existing cards are kept (matched by "
               "card, not overwritten). A backup is taken automatically first.")

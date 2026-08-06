@@ -177,3 +177,107 @@ def test_review_rows_share_a_left_edge(shot):
     assert len(set(lefts.values())) == 1, (
         f"rows start at different x: {lefts}. A tagged row's text must begin where an "
         "untagged row's does.")
+
+
+def _label_left(dialog, q, marker):
+    """The x of the one visible label whose text contains `marker`, in dialog space."""
+    found = [l for l in _visible_labels(dialog, q) if marker in l.text()]
+    assert len(found) == 1, f"expected exactly one label containing {marker!r}, got {len(found)}"
+    return widget_rect(dialog, found[0]).left()
+
+
+def _row_primary_left(dialog, q, trailing_marker):
+    """The x of the primary label in the row whose trailing column holds
+    `trailing_marker`.
+
+    Needed for a per-deck summary row, whose primary text is the deck name and so
+    reads identically to the section heading further down the list. The trailing
+    counts are what tell the two apart.
+    """
+    trailing = [l for l in _visible_labels(dialog, q) if trailing_marker in l.text()]
+    assert len(trailing) == 1, (
+        f"expected one trailing label containing {trailing_marker!r}, got {len(trailing)}")
+    row = trailing[0].parent()
+    primary = [l for l in row.findChildren(q.QLabel) if l.isVisible() and l is not trailing[0]]
+    assert primary, f"the row holding {trailing_marker!r} has no primary label"
+    return widget_rect(dialog, primary[0]).left()
+
+
+def test_every_confirm_row_starts_its_text_at_one_x(shot):
+    """The whole point of the caret and chip columns: one grid for every row on this
+    screen, whatever kind it is.
+
+    A retired or moved row draws no caret and the per-deck summary rows carry no chip,
+    so each of them had its own reason to sit left of the card rows beside it, and the
+    reader sees a single ragged list rather than three tidy ones. Compared against each
+    other, never against a magnitude: the chip column is measured at the running
+    platform's own font.
+    """
+    _, q = harness.bootstrap()
+    s = shot("confirm")
+    lefts = {marker: _label_left(s.dialog, q, marker) for marker in (
+        "one short line",            # a card row: caret and chip
+        "since-split card",          # a retired row: chip, no caret
+        "deck was reorganized")}     # a moved row: chip, no caret
+    # A per-deck summary row: no chip, and a primary that reads the same as the
+    # heading further down, so it is found by its own trailing counts instead.
+    lefts["deck summary"] = _row_primary_left(s.dialog, q, "3 kept")
+    assert len(set(lefts.values())) == 1, (
+        f"rows start their text at different x: {lefts}. Every row on this screen "
+        "reserves the same caret and chip columns, whether or not it fills them.")
+
+
+def test_result_rows_sit_flush_with_the_heading_and_the_footer(shot):
+    """And the mirror of it: a screen with no chips and nothing to expand reserves
+    neither column, so its outcome lines start where its own heading and backup line
+    do. Reserving a chip column here indented every result line by the width of a pill
+    nothing on the screen paints.
+    """
+    _, q = harness.bootstrap()
+    s = shot("result")
+    lefts = {marker: _label_left(s.dialog, q, marker) for marker in (
+        "Update complete",     # the heading
+        "29 kept",             # a result row
+        "Archived",            # another result row
+        "A backup of the deck")}   # the footer
+    assert len(set(lefts.values())) == 1, (
+        f"the result screen's parts start at different x: {lefts}. Its rows carry no "
+        "chip and cannot expand, so they line up with the heading above them.")
+
+
+def test_the_confirm_summary_is_rows_under_one_heading_not_a_bullet_list(shot):
+    """The deck summary that opens the list reads in the same row vocabulary as
+    everything below it: a heading, then one row per deck with its counts in the
+    trailing column. It used to be an indented <ul> dropped into the label above the
+    list, which is the last bulleted list this screen carried.
+    """
+    _, q = harness.bootstrap()
+    s = shot("confirm")
+    texts = [l.text() for l in _visible_labels(s.dialog, q)]
+    assert not [t for t in texts if "<li>" in t or "<ul>" in t], \
+        "the deck summary is built from rows now, not a bulleted list inside a label"
+    assert any(t.startswith("1 deck(s) have updates") for t in texts), \
+        "the summary keeps its own heading"
+    assert any("3 kept (1 changing)" in t and "2 new" in t for t in texts), \
+        "a deck's counts read as the row's trailing column"
+
+
+def test_a_decks_section_holds_all_four_row_kinds(shot):
+    """Retired and moved cards used to hang below the list under headings of their
+    own. Everything pending for one deck now reads under that deck's heading, in the
+    order added, changed, archived, moved, so a reader meets a deck once rather than
+    meeting the same deck name in four places.
+    """
+    _, q = harness.bootstrap()
+    from internpearls import widgets
+    s = shot("confirm")
+    pills = [l.text() for l in _visible_labels(s.dialog, q)
+             if l.text() in set(widgets.CHIPS.values())]
+    assert pills == [widgets.CHIPS["new"], widgets.CHIPS["changed"],
+                     widgets.CHIPS["retired"], widgets.CHIPS["moved"]], (
+        f"the deck's section does not hold all four kinds in order: {pills}")
+    headings = [l.text() for l in _visible_labels(s.dialog, q)
+                if l.text() in ("Retired", "Moved")]
+    assert not headings, (
+        f"a kind still has a heading of its own: {headings}. Each row's chip already "
+        "says what it is; the heading says which deck it belongs to.")

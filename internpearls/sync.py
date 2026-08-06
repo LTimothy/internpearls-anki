@@ -701,47 +701,77 @@ def _preview_content_changes(fetch, todo, her, aliases, her_fields=None):
     return preview, downloaded, False
 
 
-def _gather_pending_items(todo, preview, downloaded):
-    """Every new and changed card this update would apply, read in full and ready for
-    the inline card list on the confirmation.
+def _gather_pending_items(todo, preview, downloaded, extra=None):
+    """Every card this update would touch, grouped under the deck it belongs to and
+    ready for the inline card list on the confirmation.
 
     This always runs, unlike the old Review button's lazy read on a click: the rows are
     always on screen now, and widgets.StreamingList is what keeps building them cheap
     regardless of how many are pending, not deferring the read itself.
 
+    `extra` is `_retired_moved_items`' {deck: [row, ...]}: rows that belong to a deck
+    but are read from the ledgers rather than from a downloaded .apkg. They are folded
+    in under that deck's own heading, after its added and changed cards, so one deck
+    reads as one section covering everything happening to it. A deck whose only pending
+    work is a retirement or a relocation still gets a heading of its own at the end,
+    since it has rows to show and no other section would carry them.
+
     Returns (items, failed, sources). `items` is a mix of ("header", deck_short_name),
-    ("sep",), and ("card", deck_name, detail) entries, one card per pending row, each
-    detail tagged "kind" ("new" or "changed") and, for a changed one, "was" (what her
-    copy currently says), the same two things the old Review button's dialog used to
-    tag before this screen replaced it. `failed` names decks whose pending cards could
-    not be read; the update itself is unaffected, those decks just are not shown here.
-    `sources` is {deck_name: .apkg path}, for the row pictures' resolvers.
+    ("sep",), and ("card", deck_name, detail) entries plus whatever `extra` supplied,
+    one card per pending row, each detail tagged "kind" ("new" or "changed") and, for a
+    changed one, "was" (what her copy currently says), the same two things the old
+    Review button's dialog used to tag before this screen replaced it. `failed` names
+    decks whose pending cards could not be read; the update itself is unaffected, those
+    decks just are not shown here. `sources` is {deck_name: .apkg path}, for the row
+    pictures' resolvers.
     """
     items, failed, sources = [], [], {}
+    extra = dict(extra or {})
+
+    def _extra_for(deck_name):
+        """This deck's ledger rows, including any filed under a subdeck of it.
+
+        A deck spec's name is routinely just the parent path, with cards actually
+        landing in `deck_name::<subdeck>`, so a moved card's own deck path is often a
+        subdeck of the manifest name the card rows are headed by. Matching by prefix as
+        well as exactly is what keeps those in the same section rather than spawning a
+        near-duplicate heading beside it (the same reason installed_matching_collection
+        matches by prefix).
+        """
+        keys = [k for k in extra if k == deck_name or k.startswith(deck_name + "::")]
+        return [row for k in keys for row in extra.pop(k)]
+
+    def _section(heading, rows):
+        items.append(("header", heading))
+        for i, row in enumerate(rows):
+            if i:
+                items.append(("sep",))   # between rows, not before the first
+            items.append(row)
+
     for d in todo:
+        card_rows = []
         pc = preview.get(d["name"])
         src = downloaded.get(d["name"])
-        if not pc or isinstance(src, Exception) or not src:
-            continue
-        if not pc[2] and not pc[3]:
-            continue
-        try:
-            rids = [r for r, _, _ in pc[2]] + list(pc[3])
-            details = apkg_note_details(src, rids)
-        except Exception as e:
-            failed.append(f"{d['name'].split('::')[-1]} ({e})")
-            continue
-        if not details:
-            continue
-        new_rids = {r for r, _, _ in pc[2]}
-        items.append(("header", d["name"].split("::")[-1]))
-        for i, detail in enumerate(details):
-            if i:
-                items.append(("sep",))   # between cards, not before the first
-            detail["kind"] = "new" if detail["rid"] in new_rids else "changed"
-            detail["was"] = pc[3].get(detail["rid"], {})
-            items.append(("card", d["name"], detail))
-        sources[d["name"]] = src
+        if pc and src and not isinstance(src, Exception) and (pc[2] or pc[3]):
+            try:
+                rids = [r for r, _, _ in pc[2]] + list(pc[3])
+                details = apkg_note_details(src, rids)
+            except Exception as e:
+                failed.append(f"{d['name'].split('::')[-1]} ({e})")
+                details = []
+            new_rids = {r for r, _, _ in pc[2]}
+            for detail in details:
+                detail["kind"] = "new" if detail["rid"] in new_rids else "changed"
+                detail["was"] = pc[3].get(detail["rid"], {})
+                card_rows.append(("card", d["name"], detail))
+            if details:
+                sources[d["name"]] = src
+        rows = card_rows + _extra_for(d["name"])
+        if rows:
+            _section(d["name"].split("::")[-1], rows)
+
+    for deck, rows in extra.items():
+        _section(deck.split("::")[-1], rows)
     return items, failed, sources
 
 
@@ -750,33 +780,35 @@ def _retired_moved_items(fresh, moves, her):
     builds the new and changed rows for, so a retired split/reword and a deck reorg read
     as more cards in one list rather than as bulleted asides below it.
 
+    Keyed by the deck each card belongs to, so `_gather_pending_items` can file them
+    under that deck's own heading beside its added and changed cards. The two kinds know
+    their deck from different places: a retired card carries the retirement ledger's own
+    deck (the deck it was retired out of), and a relocated card has only the two ends of
+    its move, of which `from` is where it sits today and so where a reader looking at
+    that deck's section expects to find it. Its destination is the one thing that
+    heading cannot say, so a moved row keeps naming it; a retired row does not repeat
+    the deck name the heading above it already gives.
+
     Single-line and never expanding (see widgets.simple_row): these are the learner's own
     cards, known only by front (or identity) and a deck, so there is nothing more to read
-    out of the collection for either kind. Ordered archived, then moved, after whatever
-    `_gather_pending_items` already put in `items` (added, then changing), so the reader
-    meets all four kinds in one sensible sequence: what is being added, what is changing,
-    what is being archived, what is moving.
+    out of the collection for either kind. Within a deck they come after its cards and in
+    the order archived, then moved, so the reader meets all four kinds in one sensible
+    sequence: what is being added, what is changing, what is being archived, what is
+    moving.
 
-    Returns a mix of ("header", text), ("sep",), ("retired", identity, deck_short), and
-    ("moved", front, dest_deck_short) entries, empty when there is nothing of either kind
-    pending. `her` is `_reconcile_pending`'s own {guid: nid} map, needed to read a moved
-    card's current front out of the collection.
+    Returns {deck: [row, ...]} where each row is ("retired", identity) or ("moved",
+    front, dest_deck_short), empty when there is nothing of either kind pending. `her`
+    is `_reconcile_pending`'s own {guid: nid} map, needed to read a moved card's current
+    front out of the collection.
     """
-    items = []
-    if fresh:
-        items.append(("header", "Retired"))
-        for i, r in enumerate(fresh):
-            if i:
-                items.append(("sep",))
-            items.append(("retired", r["identity"], r["deck"].split("::")[-1]))
-    if moves:
-        items.append(("header", "Moved"))
-        for i, m in enumerate(moves):
-            if i:
-                items.append(("sep",))
-            front = mw.col.get_note(her[m["guid"]]).fields[0]
-            items.append(("moved", front, m["to"].split("::")[-1]))
-    return items
+    by_deck = {}
+    for r in fresh:
+        by_deck.setdefault(r["deck"], []).append(("retired", r["identity"]))
+    for m in moves:
+        front = mw.col.get_note(her[m["guid"]]).fields[0]
+        by_deck.setdefault(m["from"], []).append(
+            ("moved", front, m["to"].split("::")[-1]))
+    return by_deck
 
 
 @_safe
@@ -872,30 +904,34 @@ def update_decks():
     # run's own index.
     recovered = merge_saved_feedback(load_saved_feedback(), flags, new_index)
 
-    def _line(d):
-        # The changed count is a subset of kept, not a third bucket beside it: those
-        # cards count as "changed" precisely because they matched an existing card.
-        # So it's parenthesized onto "kept" rather than joined with the same "·" new
-        # gets, which would read as three disjoint piles adding up to more cards than
-        # the deck actually has.
+    def _deck_summary_row(d):
+        """One deck's line in the summary that opens the list: the deck as the row's
+        primary text, its counts as the trailing muted column.
+
+        The changed count is a subset of kept, not a third bucket beside it: those
+        cards count as "changed" precisely because they matched an existing card. So
+        it's parenthesized onto "kept" rather than joined with the same "·" new gets,
+        which would read as three disjoint piles adding up to more cards than the deck
+        actually has.
+        """
         short = d["name"].split("::")[-1]
         pc = preview.get(d["name"])
         if pc is None:
-            return f"{short} (couldn't preview)"
+            return ("deck", short, "couldn't preview")
         kept = f"{pc[0]} kept" + (f" ({len(pc[3])} changing)" if pc[3] else "")
-        return f"{short} ({kept} · {pc[1]} new)"
+        return ("deck", short, f"{kept} · {pc[1]} new")
 
     muted = colors()["muted"]
     sections = []
-    if todo:
-        sections.append(
-            f"<b>{len(todo)}</b> deck(s) have updates:" + bullets([_line(d) for d in todo], cap=15))
-    # new_cards and changed_cards no longer get their own bullet-list sections here,
-    # and neither do the retired or relocated cards below: all four kinds are what the
-    # inline card list is built from (see _gather_pending_items and
-    # _retired_moved_items), which is the whole point of this screen replacing the old
-    # "Review N card(s)" button and the bulleted lists that used to sit beside it.
-    # new_cards/changed_cards themselves are still needed above, to build new_index.
+    # The deck summary is the list's own first section rather than a bulleted paragraph
+    # above it (see the `items` assembly below), which is also what keeps its heading
+    # next to the rows it counts however many other notes end up in this fixed text.
+    # new_cards and changed_cards get no section here either, and neither do the
+    # retired or relocated cards: all four kinds are what the inline card list is built
+    # from (see _gather_pending_items and _retired_moved_items), which is the whole
+    # point of this screen replacing the old "Review N card(s)" button and the bulleted
+    # lists that used to sit beside it. new_cards/changed_cards themselves are still
+    # needed above, to build new_index.
     if stranded:
         sections.append(_stranded_block(stranded, her))
 
@@ -903,7 +939,7 @@ def update_decks():
     # reads as alarming without context — say up front it's a one-time catch-up.
     catch_up_note = (
         "<i>This looks like a one-time catch-up — likely your first update in a "
-        "while. Future updates should be much shorter.</i><br><br>"
+        "while. Future updates should be much shorter.</i>"
         if len(fresh) + len(moves) + len(stranded) > 20 else "")
     safety_note = (
         "This is a preview: nothing above has been applied yet. Your "
@@ -961,15 +997,26 @@ def update_decks():
             + ", ".join(f"<b>{n}</b>" for n in sorted(pending_templates))
             + ". Your review history and card content are unaffected either way.")
 
-    items, unreadable, sources = _gather_pending_items(todo, preview, downloaded)
-    items += _retired_moved_items(fresh, moves, her)
+    items, unreadable, sources = _gather_pending_items(
+        todo, preview, downloaded, _retired_moved_items(fresh, moves, her))
+    if todo:
+        summary = [("header", f"{len(todo)} deck(s) have updates:")]
+        for i, d in enumerate(todo):
+            if i:
+                summary.append(("sep",))
+            summary.append(_deck_summary_row(d))
+        items = summary + items
     if unreadable:
         sections.append(
             f"<span style='color:{muted};'>Couldn't read the pending cards from "
             + ", ".join(unreadable) + ". The update itself is unaffected; those decks "
             "just aren't shown here.</span>")
 
-    top_html = catch_up_note + "<br><br>".join(sections)
+    # The catch-up note reads as the first of these blocks rather than carrying its own
+    # trailing break: with the per-deck summary now inside the list, every one of these
+    # blocks is optional, and a fixed break belonging to one of them leaves a blank
+    # line hanging above the list on the runs where it is the only thing here.
+    top_html = "<br><br>".join(b for b in [catch_up_note] + sections if b)
     body, _boxes, flush = build_update_body(
         items, sources, flags, new_index, cfg["collect_feedback"], top_html,
         _flagged_line, safety_note)
