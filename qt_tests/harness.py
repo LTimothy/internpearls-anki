@@ -375,6 +375,13 @@ def _scene_about(mock, opts):
 
 
 def _scene_configure_source(mock, opts):
+    """The first screen a new user meets: which of the three sources decks come from.
+
+    Runs the real configure_source(), which opens the choice dialog first, so this
+    captures that dialog rather than any of the forms behind it. render()'s patched
+    exec answers nothing, so the flow returns as if cancelled and never reaches the
+    GitHub form, the folder prompt, or a fetch.
+    """
     from internpearls import dialogs
     return dialogs.configure_source
 
@@ -476,7 +483,7 @@ SCENES = {
     "manage-decks": (_scene_manage_decks,
                      "the deck manager (decks_dir for a source, empty for no decks)"),
     "about": (_scene_about, "the About dialog"),
-    "configure-source": (_scene_configure_source, "the deck-source configuration form"),
+    "configure-source": (_scene_configure_source, "the deck-source choice screen"),
     "confirm": (_scene_confirm, "the Update my decks confirmation (inline card list)"),
     "ask-scrollable": (_scene_ask_scrollable, "a plain _ask_scrollable confirmation"),
     "result": (_scene_result, "the end-of-run summary and feedback digest, one dialog"),

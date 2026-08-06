@@ -271,17 +271,51 @@ def test_settings_saves_feedback_toggle(anki):
 
 
 # --------------------------------------------------------- configure source
+def _source_buttons(tree):
+    """Every button label on the source-choice dialog, in order. Also what tells that
+    dialog apart from the GitHub form behind it: both surface as a "dialog" replay
+    node, so a responder finds the option it wants rather than assuming which one it
+    is looking at."""
+    return [n["label"] for n in walk(tree) if n.get("t") == "button"]
+
+
+def _pick_source(tree, label):
+    """Click one of the source-choice dialog's option buttons, or return None if this
+    dialog isn't it."""
+    btn = find(tree, t="button", label=label)
+    return {"events": [{"id": btn["id"], "click": True}]} if btn else None
+
+
+def test_configure_source_offers_the_three_sources_with_the_example_first(anki):
+    """The choice is its own dialog now, one option per line, with Cancel last and by
+    itself. The example deck leads: it's the only source someone with no decks of their
+    own can pick, and a one-row message box gave it no more weight than the other two.
+    """
+    from internpearls import dialogs
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        assert _source_buttons(p["tree"]) == [
+            "Try the example deck", "GitHub repo", "Local folder", "Cancel"]
+        return _pick_source(p["tree"], "Cancel")
+
+    drive(anki, dialogs.configure_source, respond)
+    # Cancel writes nothing: no config key, and no attempt to connect.
+    assert anki.mw._config == {}
+    assert not anki.gui.warnings
+
+
 def test_configure_source_github_form(anki):
     from internpearls import dialogs
 
     anki.gui.interactive = True
 
     def respond(p):
-        if p["kind"] == "msgbox":
-            assert "Where should decks come from?" in p["text"]
-            gh = next(b for b in p["buttons"] if b["label"] == "GitHub repo")
-            return {"events": [{"id": gh["id"], "click": True}]}
         if p["kind"] == "dialog":
+            pick = _pick_source(p["tree"], "GitHub repo")
+            if pick:
+                return pick
             repo = find(p["tree"], t="line", password=False)
             token = find(p["tree"], t="line", password=True)
             assert repo and token, "repo and masked token fields"
@@ -308,9 +342,8 @@ def test_configure_source_switching_to_local_folder_clears_repo_and_keeps_token(
     path = _write_source(tmp_path)
 
     def respond(p):
-        if p["kind"] == "msgbox":
-            btn = next(b for b in p["buttons"] if b["label"] == "Local folder")
-            return {"events": [{"id": btn["id"], "click": True}]}
+        if p["kind"] == "dialog":
+            return _pick_source(p["tree"], "Local folder")
         if p["kind"] == "prompt":
             return {"text": path, "ok": True}
         # If the repo is left set, _fetch_manifest tries GitHub first and (with no
@@ -326,17 +359,20 @@ def test_configure_source_switching_to_local_folder_clears_repo_and_keeps_token(
 
 
 def test_configure_source_message_uses_the_palette_not_a_css_keyword(anki):
+    """The explanation and the option hints are styled labels now rather than one
+    rich-text message, so the check reads their styles instead of a message string:
+    still the palette's own colours, still never the CSS keyword `gray`."""
     from internpearls import dialogs, palette
     active = palette.colors()
     anki.gui.interactive = True
 
     def respond(p):
-        if p["kind"] == "msgbox":
-            assert "color:gray" not in p["text"]
-            assert active["muted"] in p["text"]
-            cancel = next(b for b in p["buttons"] if b["label"] == "Cancel")
-            return {"events": [{"id": cancel["id"], "click": True}]}
-        return {}
+        labels = [n for n in walk(p["tree"]) if n.get("t") == "label"]
+        painted = "".join(n.get("style", "") + n.get("text", "") for n in labels)
+        assert "color:gray" not in painted and "color: gray" not in painted
+        assert active["muted"] in painted, "the explanation reads as muted text"
+        assert active["accent"] in painted, "the recommended option is marked"
+        return _pick_source(p["tree"], "Cancel")
 
     drive(anki, dialogs.configure_source, respond)
 
@@ -349,10 +385,10 @@ def test_configure_source_switching_to_github_repo_clears_local_folder(anki, tmp
     anki.gui.interactive = True
 
     def respond(p):
-        if p["kind"] == "msgbox":
-            btn = next(b for b in p["buttons"] if b["label"] == "GitHub repo")
-            return {"events": [{"id": btn["id"], "click": True}]}
         if p["kind"] == "dialog":
+            pick = _pick_source(p["tree"], "GitHub repo")
+            if pick:
+                return pick
             repo = find(p["tree"], t="line", password=False)
             ok = find(p["tree"], t="button", label="OK")
             return {"events": [{"id": repo["id"], "value": "example-org/study-decks"},
@@ -501,9 +537,8 @@ def _drive_configure_local_folder(anki, path, answer):
     asks = []
 
     def respond(p):
-        if p["kind"] == "msgbox":
-            btn = next(b for b in p["buttons"] if b["label"] == "Local folder")
-            return {"events": [{"id": btn["id"], "click": True}]}
+        if p["kind"] == "dialog":
+            return _pick_source(p["tree"], "Local folder")
         if p["kind"] == "prompt":
             return {"text": path, "ok": True}
         if p["kind"] == "ask":
