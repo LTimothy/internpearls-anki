@@ -165,14 +165,15 @@ def test_the_about_link_paints_in_the_accent_colour_dark(shot):
 
 def test_a_normal_confirmation_does_not_open_external_links(shot):
     """internpearls/ui.py's _ask_scrollable is the shared confirmation wrapper, and
-    several callers (sync.py) interpolate collection content into its body that is not
-    escaped: a card front, a retired-card identity, a raw note field. Before
-    open_external_links defaulted to off, any anchor hiding in that content would launch
-    the system browser on click. The "confirm" scene is an ordinary caller (no
-    open_external_links argument), so its body must come back closed.
+    several callers (sync.py's reconcile_decks, clean_up_duplicates) interpolate
+    collection content into its body that is not escaped: a card front, a retired-card
+    identity, a raw note field. Before open_external_links defaulted to off, any anchor
+    hiding in that content would launch the system browser on click. The
+    "ask-scrollable" scene is an ordinary caller (no open_external_links argument), so
+    its body must come back closed.
     """
     _, q = harness.bootstrap()
-    s = shot("confirm")
+    s = shot("ask-scrollable")
     body = max((w for w in s.dialog.findChildren(q.QLabel) if w.text()),
                key=lambda w: len(w.text()))
     assert body.openExternalLinks() is False, (

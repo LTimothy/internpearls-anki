@@ -162,6 +162,43 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     return answered
 
 
+def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=None,
+                     title=None, min_width=560, min_height=520):
+    """Like _ask_scrollable, but the body is a caller-built widget rather than an HTML
+    string, for a screen whose content is more than one scrollable label can lay out
+    well: fixed summary text above a list that should take whatever height the resized
+    dialog leaves it, e.g. Update my decks' inline card list. The caller's widget owns
+    its own internal layout and scrolling; this only wraps it with the add-on's title,
+    the optional checkbox, and the Continue/Cancel buttons, on the same roles and the
+    same checkbox-state-written-back-in-place contract _ask_scrollable uses.
+    """
+    dlg = QDialog(mw)
+    dlg.setWindowTitle(title or APP_NAME)
+    dlg.setMinimumWidth(min_width)
+    dlg.setMinimumHeight(min_height)
+    lay = QVBoxLayout(dlg)
+    lay.addWidget(body, 1)
+
+    box = None
+    if checkbox:
+        box = QCheckBox(checkbox["label"])
+        box.setChecked(bool(checkbox.get("checked")))
+        lay.addWidget(box)
+
+    bb = QDialogButtonBox()
+    yes = bb.addButton(yes_label, QDialogButtonBox.ButtonRole.AcceptRole)
+    if no_label:
+        bb.addButton(no_label, QDialogButtonBox.ButtonRole.RejectRole)
+    yes.clicked.connect(dlg.accept)
+    bb.rejected.connect(dlg.reject)
+    lay.addWidget(bb)
+
+    answered = bool(dlg.exec())
+    if box is not None:
+        checkbox["checked"] = box.isChecked()
+    return answered
+
+
 def copy_to_clipboard(text):
     """Put `text` on the system clipboard, returning True if it landed.
 
