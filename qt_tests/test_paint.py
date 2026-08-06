@@ -181,6 +181,31 @@ def test_a_normal_confirmation_does_not_open_external_links(shot):
         "content routed through _ask_scrollable could launch the system browser")
 
 
+def test_the_update_confirmation_does_not_open_external_links(shot):
+    """internpearls/review.py's build_update_body is the Update my decks confirmation
+    itself, the screen that actually interpolates unescaped collection content (deck
+    names, card fronts, retired-card identities, moved-card fronts) into its summary
+    and safety text through `_rich_label`. Task 3 moved this confirmation off
+    _ask_scrollable onto its own widget body, and the coverage above moved with it
+    onto the "ask-scrollable" scene, which no longer exercises build_update_body at
+    all, so nothing asserted this property against the screen that actually carries
+    that content. This is that screen: its top summary and bottom safety labels must
+    both come back closed.
+    """
+    _, q = harness.bootstrap()
+    s = shot("confirm")
+    labels = [w for w in s.dialog.findChildren(q.QLabel)
+             if "have updates" in w.text() or "This is a preview" in w.text()]
+    assert len(labels) == 2, (
+        f"expected the confirmation's top summary and bottom safety labels, found "
+        f"{len(labels)}")
+    for label in labels:
+        assert label.openExternalLinks() is False, (
+            "the update confirmation's summary or safety text is opening external "
+            "links; unescaped collection content in it could launch the system "
+            "browser")
+
+
 def test_about_opens_external_links(shot):
     """About is the one caller that wants its body's anchor (the repository link)
     actually clickable, and its body is fixed add-on text, never collection content, so
