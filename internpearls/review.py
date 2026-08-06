@@ -669,7 +669,7 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     keystroke, since there is no separate closing moment: the rows sit on the
     confirmation itself.
 
-    `flagged_line()` is called fresh on every keystroke to recompute the "N card(s)
+    `flagged_line()` is called fresh on every keystroke to recompute the "N cards
     flagged" line shown below the list; `safety_html` is fixed.
 
     Returns (widget, boxes, flush). `boxes` is {guid: QPlainTextEdit}, built lazily as
