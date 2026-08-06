@@ -195,7 +195,7 @@ def test_the_update_confirmation_does_not_open_external_links(shot):
     _, q = harness.bootstrap()
     s = shot("confirm")
     labels = [w for w in s.dialog.findChildren(q.QLabel)
-             if "have updates" in w.text() or "This is a preview" in w.text()]
+             if "updates:" in w.text() or "This is a preview" in w.text()]
     assert len(labels) == 2, (
         f"expected the confirmation's top summary and bottom safety labels, found "
         f"{len(labels)}")

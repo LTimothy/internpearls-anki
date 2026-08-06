@@ -76,6 +76,22 @@ def test_bullets_cap_no_op_when_under_the_limit():
     assert html == "<ul style='margin:4px 0 4px 0;'><li>a</li><li>b</li></ul>"
 
 
+def test_plural_keeps_the_bare_noun_for_one():
+    assert logic.plural(1, "card") == "1 card"
+    assert logic.plural(1, "retired card") == "1 retired card"
+
+
+def test_plural_adds_the_s_for_several():
+    assert logic.plural(3, "card") == "3 cards"
+    assert logic.plural(12, "deck") == "12 decks"
+
+
+def test_plural_treats_zero_as_plural():
+    """The case a naive "s if count > 1" gets wrong: English says "0 cards", and
+    "Preserved fields restored on 0 card" is exactly the line that would read it."""
+    assert logic.plural(0, "card") == "0 cards"
+
+
 # ---------------------------------------------------------------- version comparison
 def test_version_tuple_parses_dotted_integers():
     assert logic.version_tuple("0.10.2") == (0, 10, 2)

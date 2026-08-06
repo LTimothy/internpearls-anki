@@ -35,7 +35,7 @@ from .logic import (apkg_note_details, apkg_notes, bullets, decks_to_update,
                     duplicate_dialog_html, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, manifest_needs_newer_addon,
-                    note_display_label, remap_cards, write_personalized)
+                    note_display_label, plural, remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .palette import colors
 from .review import (build_update_body, clear_saved_feedback, load_saved_feedback,
@@ -160,7 +160,8 @@ def sync_decks():
         short = d["name"].split("::")[-1]
         cards = d.get("cards")
         tag = "new deck" if d["name"] not in installed else None
-        detail = ", ".join(x for x in (f"{cards} cards" if cards is not None else None, tag) if x)
+        detail = ", ".join(x for x in (plural(cards, "card") if cards is not None
+                                       else None, tag) if x)
         return f"{short} ({detail})" if detail else short
 
     if not _ask(
@@ -183,7 +184,7 @@ def sync_decks():
             cfg, manifest, fetch, todo, installed,
             on_progress=lambda i, n, name: step(i, f"Syncing {name} ({i} of {n})"))
     _offer_template_changes(tpl_changes)
-    fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
+    fields_line = (f"Preserved fields restored on {plural(restored, 'card')}.<br><br>"
                   if restored else "")
     fields_line += _collision_note(collisions)
     backup_line = (
@@ -213,11 +214,11 @@ def _collision_note(collisions):
         if nid:
             fronts.append(f"{mw.col.get_note(nid).fields[0][:70]} ({field})")
     more = f" and {len(collisions) - len(fronts)} more" if len(collisions) > len(fronts) else ""
-    return (f"<br><br>On <b>{len(collisions)}</b> card(s), this update changed a field "
-            "you had also written in yourself. <b>Your version was kept</b> and the "
-            "update to that field was skipped, so nothing you wrote was lost. Worth "
-            "passing these on to whoever maintains the decks if you want your wording "
-            "folded in, or theirs applied instead:" + bullets(fronts) + more)
+    return (f"<br><br>On <b>{plural(len(collisions), 'card')}</b>, this update changed "
+            "a field you had also written in yourself. <b>Your version was kept</b> "
+            "and the update to that field was skipped, so nothing you wrote was lost. "
+            "Worth passing these on to whoever maintains the decks if you want your "
+            "wording folded in, or theirs applied instead:" + bullets(fronts) + more)
 
 
 def _offer_notetype_changes(changes):
@@ -232,13 +233,13 @@ def _offer_notetype_changes(changes):
     if not changes:
         return []
     return change_note_types(changes) if _ask(
-        f"<b>{len(changes)}</b> card(s) in this update changed format (a question and "
-        "answer became a fill-in-the-blank).<br><br>Move your existing cards to the new "
-        "format? They keep their review history and stay one card each. Anki treats "
-        "this as a schema change, so your next AnkiWeb sync will be a one-time full "
-        "sync, choose \"Upload to AnkiWeb\" when asked.<br><br>Choosing No still "
-        "imports them, but as separate new cards, leaving your progress on the old "
-        "versions."
+        f"<b>{plural(len(changes), 'card')}</b> in this update changed format (a "
+        "question and answer became a fill-in-the-blank).<br><br>Move your existing "
+        "cards to the new format? They keep their review history and stay one card "
+        "each. Anki treats this as a schema change, so your next AnkiWeb sync will be "
+        "a one-time full sync, choose \"Upload to AnkiWeb\" when asked.<br><br>"
+        "Choosing No still imports them, but as separate new cards, leaving your "
+        "progress on the old versions."
     ) else []
 
 
@@ -398,9 +399,10 @@ def _stranded_block(stranded, her):
     muted = colors()["muted"]
     lines = [f"{p['front']} <span style='color:{muted};'>→ {p['successor_front']}</span>"
              for p in stranded]
-    return (f"<b>{len(stranded)}</b> card(s) are in your collection twice, in an older "
-            "and a newer wording of the same question, because the wording changed "
-            "after you first imported them. Your progress on the older copy moves to "
+    return (f"<b>{plural(len(stranded), 'card')}</b> "
+            f"{'is' if len(stranded) == 1 else 'are'} in your collection twice, in an "
+            "older and a newer wording of the same question, because the wording "
+            "changed after your first import. Your progress on the older copy moves to "
             "the newer one, then the older copy is archived."
             + bullets(lines, cap=15))
 
@@ -471,9 +473,9 @@ def reconcile_decks():
     if not fresh and not moves and not stranded:
         _refresh_reconcile_action_label(0)
         if already:
-            _info(f"All {already} retired card(s) in your collection are already "
-                  f"archived (suspended and moved to <b>{RETIRED_DECK_LEAF}</b>). "
-                  "Nothing more to do.")
+            _info(f"{plural(already, 'retired card')} in your collection "
+                  f"{'is' if already == 1 else 'are'} already archived (suspended and "
+                  f"moved to <b>{RETIRED_DECK_LEAF}</b>). Nothing more to do.")
         else:
             _info("No retired cards or reorganized decks found in your collection — "
                   f"nothing to tidy up. (Source: {source}.)")
@@ -503,18 +505,23 @@ def reconcile_decks():
                  "cards in your collection yet — run <b>Sync decks</b> first if you "
                  "want the new versions before archiving the old ones."
                 if missing else "")
-    already_note = f" ({already} more were already archived earlier.)" if already else ""
+    already_note = (f" ({already} more {'was' if already == 1 else 'were'} already "
+                    "archived earlier.)" if already else "")
     archive_block = (
-        f"<b>{len(fresh)}</b> retired card(s) are still in your collection — split or "
-        "reworded since, with the replacements already added separately, so these "
-        f"just duplicate your reviews now.{already_note}"
+        f"<b>{plural(len(fresh), 'retired card')}</b> "
+        f"{'is' if len(fresh) == 1 else 'are'} still in your collection — split or "
+        "reworded since, with the replacements already added separately, so "
+        f"{'it just duplicates' if len(fresh) == 1 else 'these just duplicate'} "
+        f"your reviews now.{already_note}"
         + bullets(lines, cap=15) + sync_note
     ) if fresh else ""
 
     move_lines = [f"{mw.col.get_note(her[m['guid']]).fields[0]} <span "
                   f"style='color:{muted};'>→ {m['to'].split('::')[-1]}</span>" for m in moves]
     moves_block = (
-        f"<b>{len(moves)}</b> card(s) belong to a deck that's since been reorganized."
+        f"<b>{plural(len(moves), 'card')}</b> "
+        f"{'belongs' if len(moves) == 1 else 'belong'} to a deck that's since been "
+        "reorganized."
         + bullets(move_lines, cap=15)
     ) if moves else ""
 
@@ -549,18 +556,22 @@ def reconcile_decks():
     result_lines = []
     if n_archived:
         result_lines.append(
-            f"Archived <b>{n_archived}</b> retired card(s) to <b>{retired_deck}</b>: "
-            f"suspended and tagged <code>{tag}</code>, review history kept"
-            + (f" ({carried} personal note(s) carried over to their replacement)"
+            f"Archived <b>{plural(n_archived, 'retired card')}</b> to "
+            f"<b>{retired_deck}</b>: suspended and tagged <code>{tag}</code>, review "
+            "history kept"
+            + (f" ({plural(carried, 'personal note')} carried over to the replacement)"
                if carried else "") + ". Bring any back by unsuspending it or moving "
             "it out of the Retired deck.")
     if n_merged:
         result_lines.append(
-            f"Merged <b>{n_merged}</b> reworded card(s): your progress moved onto the "
-            "current wording, and the older copy was archived alongside the rest.")
+            f"Merged <b>{plural(n_merged, 'reworded card')}</b>: your progress moved "
+            "onto the current wording, and the older copy was archived alongside the "
+            "rest.")
     if n_moved:
-        result_lines.append(f"Moved <b>{n_moved}</b> card(s) to their reorganized deck — "
-                            "content and scheduling untouched.")
+        result_lines.append(
+            f"Moved <b>{plural(n_moved, 'card')}</b> to "
+            f"{'its' if n_moved == 1 else 'their'} reorganized deck — content and "
+            "scheduling untouched.")
     _info("<br><br>".join(result_lines) + backup_line)
 
 
@@ -622,9 +633,10 @@ def clean_up_duplicates():
     backup_line = ("" if backed_up else
                    "<br><br>(No backup was taken this time: nothing to back up yet, or "
                    "it failed and you chose to continue.)")
-    _info(f"Archived <b>{n_archived}</b> duplicate card(s) to <b>{retired_deck}</b>: "
-          f"suspended and tagged <code>{tag}</code>, review history kept"
-          + (f" ({carried} personal note(s) carried over to the kept copy)"
+    _info(f"Archived <b>{plural(n_archived, 'duplicate card')}</b> to "
+          f"<b>{retired_deck}</b>: suspended and tagged <code>{tag}</code>, review "
+          "history kept"
+          + (f" ({plural(carried, 'personal note')} carried over to the kept copy)"
              if carried else "") + ". Bring any back by unsuspending it or moving "
           "it out of the Retired deck." + backup_line)
 
@@ -954,8 +966,8 @@ def update_decks():
             return ""
         carried_txt = (f" {recovered} of them carried over from an earlier session."
                        if recovered else "")
-        return (f"<b>{len(flags)} card(s) flagged.</b>{carried_txt} You'll get a "
-                "summary to send back when this finishes.<br><br>")
+        return (f"<b>{plural(len(flags), 'card')} flagged.</b>{carried_txt} You'll get "
+                "a summary to send back when this finishes.<br><br>")
 
     def _finish(title=None, rows=(), footer_html=""):
         """End the run: the summary and her notes as one dialog, then drop the saved
@@ -1000,7 +1012,8 @@ def update_decks():
     items, unreadable, sources = _gather_pending_items(
         todo, preview, downloaded, _retired_moved_items(fresh, moves, her))
     if todo:
-        summary = [("header", f"{len(todo)} deck(s) have updates:")]
+        summary = [("header", f"{plural(len(todo), 'deck')} "
+                              f"{'has' if len(todo) == 1 else 'have'} updates:")]
         for i, d in enumerate(todo):
             if i:
                 summary.append(("sep",))
@@ -1060,8 +1073,9 @@ def update_decks():
             # decks _run_sync did finish are already fully applied and persisted
             # (see its docstring) — only the decks after the cancel point, and the
             # reconcile pass, are what's left pending for next time.
-            fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
-                          if restored else "")
+            fields_line = (
+                f"Preserved fields restored on {plural(restored, 'card')}.<br><br>"
+                if restored else "")
             backup_line = (
                 "A pre-sync backup of the Intern Pearls deck was saved; use "
                 "<i>Advanced → Restore intern pearls deck</i> to revert to it if needed."
@@ -1106,16 +1120,20 @@ def update_decks():
     result_lines = list(results)
     if n_archived:
         result_lines.append(
-            f"✓ Archived <b>{n_archived}</b> retired card(s) to <b>{retired_deck}</b>"
-            + (f" ({carried} personal note(s) carried over)" if carried else "") + ".")
+            f"✓ Archived <b>{plural(n_archived, 'retired card')}</b> to "
+            f"<b>{retired_deck}</b>"
+            + (f" ({plural(carried, 'personal note')} carried over)" if carried else "")
+            + ".")
     if n_merged:
         result_lines.append(
-            f"✓ Merged <b>{n_merged}</b> reworded card(s): your progress moved onto the "
-            "current wording, older copy archived.")
+            f"✓ Merged <b>{plural(n_merged, 'reworded card')}</b>: your progress moved "
+            "onto the current wording, older copy archived.")
     if n_moved:
-        result_lines.append(f"✓ Moved <b>{n_moved}</b> card(s) to their reorganized deck.")
+        result_lines.append(
+            f"✓ Moved <b>{plural(n_moved, 'card')}</b> to "
+            f"{'its' if n_moved == 1 else 'their'} reorganized deck.")
 
-    fields_line = (f"Preserved fields restored on {restored} card(s).<br><br>"
+    fields_line = (f"Preserved fields restored on {plural(restored, 'card')}.<br><br>"
                   if restored else "")
     fields_line += _collision_note(collisions)
     backup_line = (
@@ -1156,7 +1174,8 @@ def import_single():
     _ensure_notetypes()
     her = _her_front_to_guid(cfg["scope_tag"])
     remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
-    if not _ask(f"{in_place} card(s) will keep their history, {as_new} will be added "
+    if not _ask(f"{plural(in_place, 'card')} will keep "
+                f"{'its' if in_place == 1 else 'their'} history, {as_new} will be added "
                 "as new. A backup is taken automatically first. Import now?"):
         return
     if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"])[0]:
@@ -1179,6 +1198,7 @@ def import_single():
         _save_json(SHIPPED, {**_load_json(SHIPPED, {}), **shipped})
     mw.reset()
     _offer_template_changes(tpl)
-    fields_line = f" Preserved fields restored on {restored} card(s)." if restored else ""
+    fields_line = (f" Preserved fields restored on {plural(restored, 'card')}."
+                   if restored else "")
     _info(f"Imported {os.path.basename(src)}: {in_place} kept history, {as_new} new."
           f"{fields_line}")

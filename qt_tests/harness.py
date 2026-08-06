@@ -428,7 +428,7 @@ def _scene_confirm(mock, opts):
     if opts.get("limit"):
         details = details[:opts["limit"]]
     mock.mw._config = {"collect_card_feedback": opts.get("feedback", False)}
-    items = [("header", "1 deck(s) have updates:"),
+    items = [("header", "1 deck has updates:"),
              ("deck", "Example Deck", "3 kept (1 changing) · 2 new"),
              ("header", "Example Deck")]
     for i, d in enumerate(details):
@@ -480,7 +480,7 @@ def _scene_result(mock, opts):
                 "front": "Which widget is this, in one short line?",
                 "note": "reads as two facts at once"}]
     title = "Update complete (source: example-decks)"
-    rows = ["Example Deck: 29 kept, 3 new", "Archived <b>2</b> retired card(s)"]
+    rows = ["Example Deck: 29 kept, 3 new", "Archived <b>2 retired cards</b>"]
     footer = "A backup of the deck was saved before anything changed."
     return lambda: review.show_result_with_feedback(title, rows, footer, entries)
 
