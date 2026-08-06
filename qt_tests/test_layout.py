@@ -203,15 +203,14 @@ def _row_primary_left(dialog, q, trailing_marker):
     return widget_rect(dialog, primary[0]).left()
 
 
-def test_every_confirm_row_starts_its_text_at_one_x(shot):
-    """The whole point of the caret and chip columns: one grid for every row on this
-    screen, whatever kind it is.
+def test_every_confirm_card_row_starts_its_text_at_one_x(shot):
+    """The whole point of the caret and chip columns: one grid for every row in a
+    section that holds a chipped row, whatever kind each row is.
 
-    A retired or moved row draws no caret and the per-deck summary rows carry no chip,
-    so each of them had its own reason to sit left of the card rows beside it, and the
-    reader sees a single ragged list rather than three tidy ones. Compared against each
-    other, never against a magnitude: the chip column is measured at the running
-    platform's own font.
+    A retired or moved row draws no caret, so each of them had its own reason to sit
+    left of the card rows beside it, and the reader sees a ragged list rather than a
+    tidy one. Compared against each other, never against a magnitude: the chip column
+    is measured at the running platform's own font.
     """
     _, q = harness.bootstrap()
     s = shot("confirm")
@@ -219,12 +218,52 @@ def test_every_confirm_row_starts_its_text_at_one_x(shot):
         "one short line",            # a card row: caret and chip
         "since-split card",          # a retired row: chip, no caret
         "deck was reorganized")}     # a moved row: chip, no caret
-    # A per-deck summary row: no chip, and a primary that reads the same as the
-    # heading further down, so it is found by its own trailing counts instead.
-    lefts["deck summary"] = _row_primary_left(s.dialog, q, "3 kept")
     assert len(set(lefts.values())) == 1, (
-        f"rows start their text at different x: {lefts}. Every row on this screen "
-        "reserves the same caret and chip columns, whether or not it fills them.")
+        f"rows start their text at different x: {lefts}. Every row in a chipped "
+        "section reserves the same caret and chip columns, whether or not it fills "
+        "them.")
+
+
+def test_the_confirm_summary_sits_flush_with_its_own_heading(shot):
+    """Alignment is decided per section, and the per-deck summary is its own section:
+    nothing in it is ever chipped and nothing in it ever expands, so reserving the two
+    card columns floated every deck name out over an empty gutter, right of the heading
+    directly above it. Its rows decline the columns; the card sections below keep them
+    (the test above), which is the same call made twice with different answers.
+    """
+    _, q = harness.bootstrap()
+    s = shot("confirm")
+    # The summary row's primary is the deck name, which reads the same as the section
+    # heading further down the list, so it is found by its own trailing counts instead.
+    summary_left = _row_primary_left(s.dialog, q, "3 kept")
+    heading_left = _label_left(s.dialog, q, "updates:")
+    assert summary_left == heading_left, (
+        f"the summary heading starts at {heading_left} and its deck names at "
+        f"{summary_left}; a section with nothing to line up against reserves no gutter")
+    assert summary_left < _label_left(s.dialog, q, "one short line"), (
+        "the card rows below have lost their own grid, rather than the summary having "
+        "given up a gutter it could never use")
+
+
+def test_a_rows_trailing_column_stops_short_of_the_list_frame(shot):
+    """A summary row's counts and a moved row's destination are the rightmost thing on
+    their row, and used to end exactly at the row's own right edge: the glyphs touched
+    the enclosing list's border line with nothing between them.
+    """
+    _, q = harness.bootstrap()
+    from internpearls import widgets
+    s = shot("confirm")
+    cramped = []
+    for marker in ("3 kept",             # a summary row's counts
+                   "Regional Basics"):   # a moved row's destination
+        found = [l for l in _visible_labels(s.dialog, q) if marker in l.text()]
+        assert len(found) == 1, f"expected one label containing {marker!r}"
+        gap = (widget_rect(s.dialog, found[0].parent()).right()
+               - widget_rect(s.dialog, found[0]).right())
+        if gap < widgets.CARET_GAP:
+            cramped.append(f"{marker!r}: {gap}px")
+    assert not cramped, (
+        "trailing text runs up against its row's right edge: " + ", ".join(cramped))
 
 
 def test_result_rows_sit_flush_with_the_heading_and_the_footer(shot):

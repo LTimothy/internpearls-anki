@@ -651,8 +651,12 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     changed cards (_gather_pending_items) and from the retired/relocated cards it finds
     pending (_retired_moved_items). A header groups a run of rows and a sep draws the
     hairline between two of them. A "deck" row is the per-deck summary that opens the
-    list, unchipped but still on the card rows' own grid so the deck name it names
-    starts where their fronts do. A "retired" or "moved" row renders through
+    list, in a section of its own where nothing is ever chipped and nothing ever
+    expands, so it declines the caret and chip columns (see simple_row) and its deck
+    names share a left edge with the heading directly above them. Alignment is decided
+    per section, by whether anything in that section is chipped, which is why the card
+    sections below keep the columns their own unchipped rows would otherwise not need.
+    A "retired" or "moved" row renders through
     widgets.simple_row rather than `_card_row`: single-line and never expanding, since
     a retired or relocated card is known only by its front (or identity) and a deck,
     with nothing more to read out of the collection for it. `sources` is
@@ -716,7 +720,7 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
             return _separator()
         if item[0] == "deck":
             _, deck_short, counts = item
-            return simple_row(None, deck_short, counts)
+            return simple_row(None, deck_short, counts, card_columns=False)
         if item[0] == "retired":
             return simple_row("retired", item[1])
         if item[0] == "moved":

@@ -81,11 +81,12 @@ def test_simple_row_with_no_chip_still_reserves_the_column():
 
 
 def test_simple_row_can_decline_the_card_columns():
-    """A list where nothing is chipped and nothing expands has nothing to line up
+    """A section where nothing is chipped and nothing expands has nothing to line up
     against, so it declines the columns and starts its text at the row's own left edge.
-    The end-of-run result screen is that list; the update screen, whose unchipped
-    per-deck summary rows sit above chipped card rows, is not. That is why this is the
-    caller's choice rather than something read off `chip_kind` being None."""
+    The end-of-run result screen is one such section, and so is the update screen's own
+    per-deck summary, while the card sections below that summary are not. That is why
+    this is the caller's choice rather than something read off `chip_kind` being
+    None."""
     from aqt.qt import QLabel
     from internpearls import widgets
     row = widgets.simple_row(None, "Plain row text", card_columns=False)
