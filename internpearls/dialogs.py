@@ -18,7 +18,8 @@ from .logic import (bullets, deck_status, manifest_scope_suggestion, parse_field
 from .palette import colors
 from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
-                 link_button, muted_label, section_label, title_label, wait_cursor)
+                 link_button, muted_label, section_label, section_rule, title_label,
+                 wait_cursor)
 from .widgets import chip_cell
 
 
@@ -511,12 +512,11 @@ class _SettingsDialog(QDialog):
         outer.addLayout(interval_row)
 
         outer.addWidget(hint_label(
-            "Checks the source in the background and applies any changed decks without "
-            "asking. A backup is still taken first, the same as a manual sync. The check "
-            "itself is built not to freeze Anki even on a slow or dead connection: it "
-            "fails fast and tries again at the next check."))
+            "Changed decks apply without asking. A backup is still taken first, the "
+            "same as a manual sync."))
 
-        outer.addWidget(section_label("Add-on updates", top_margin=14))
+        outer.addWidget(section_rule())
+        outer.addWidget(section_label("Add-on updates"))
 
         self._notify_cb = QCheckBox("Notify me when a new add-on version is out")
         self._notify_cb.setChecked(notify_updates)
@@ -527,30 +527,28 @@ class _SettingsDialog(QDialog):
         outer.addWidget(self._auto_update_cb)
 
         outer.addWidget(hint_label(
-            "Checked once per launch rather than on a repeating timer, since a new "
-            "add-on release isn't as time-sensitive as a new deck. Either way, Anki "
-            "needs a restart to load the new version."))
+            "Anki needs a restart to load a new version, however it arrives."))
 
-        outer.addWidget(section_label("Night mode", top_margin=14))
+        outer.addWidget(section_rule())
+        outer.addWidget(section_label("Night mode"))
 
         self._dim_images_cb = QCheckBox("Dim bright images in Night Mode")
         self._dim_images_cb.setChecked(dim_images_night_mode)
         outer.addWidget(self._dim_images_cb)
 
         outer.addWidget(hint_label(
-            "Applies to every deck in your collection, not just Intern Pearls ones, "
-            "and takes effect immediately, no restart needed."))
+            "Applies to every deck in your collection, not just Intern Pearls ones."))
 
-        outer.addWidget(section_label("Card review", top_margin=14))
+        outer.addWidget(section_rule())
+        outer.addWidget(section_label("Card review"))
 
         self._feedback_cb = QCheckBox("Let me flag problems with new cards as they sync")
         self._feedback_cb.setChecked(collect_feedback)
         outer.addWidget(self._feedback_cb)
 
         outer.addWidget(hint_label(
-            "Adds a note box under each card in the review, whether it's new or was "
-            "just changed, and offers a summary to send back when you close it. Off "
-            "by default, so the review stays a quick read-only preview."))
+            "Puts a note box under each card on the Update my decks screen, and hands "
+            "back a summary of what you flagged whether or not you go ahead."))
 
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
