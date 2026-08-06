@@ -46,7 +46,7 @@ def _click_reconcile_button(accept):
     "Archive and relocate" — depending on what's pending), or click Cancel to decline.
 
     Runner.start() flips gui.interactive on for the whole replay, so the info/warn
-    calls reconcile_decks() also makes (e.g. the final "Archived N card(s)..." result)
+    calls reconcile_decks() also makes (e.g. the final "Archived N cards..." result)
     need a response too, not just the confirmation dialog itself — pass those straight
     through, there's nothing to click.
     """

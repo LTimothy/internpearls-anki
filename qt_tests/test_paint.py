@@ -185,8 +185,8 @@ def test_the_update_confirmation_does_not_open_external_links(shot):
     """internpearls/review.py's build_update_body is the Update my decks confirmation
     itself, the screen that actually interpolates unescaped collection content (deck
     names, card fronts, retired-card identities, moved-card fronts) into its summary
-    and safety text through `_rich_label`. Task 3 moved this confirmation off
-    _ask_scrollable onto its own widget body, and the coverage above moved with it
+    and safety text through `_rich_label`. When this confirmation moved off
+    _ask_scrollable onto its own widget body, the coverage above moved with it
     onto the "ask-scrollable" scene, which no longer exercises build_update_body at
     all, so nothing asserted this property against the screen that actually carries
     that content. This is that screen: its top summary and bottom safety labels must
