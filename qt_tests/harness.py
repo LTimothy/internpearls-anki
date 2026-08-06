@@ -172,9 +172,9 @@ def synthetic_details():
     block must expand row 1, not row 0.
 
     Rows 0 and 1 also carry a `kind`, one of each ("new" and "changed"), so a render
-    actually paints both row markers widgets.chip_html can produce; row 1's `was` entry
-    paints its previous-value line too. Without this, test_contrast.py's fixture never
-    exercised the marker pill at all.
+    actually paints both row markers widgets.chip_cell can produce for a card; row 1's
+    `was` entry paints its previous-value line too. Without this, test_contrast.py's
+    fixture never exercised the marker pill at all.
     """
     return [
         {"guid": "g1", "notetype": "Study Deck - Basic", "kind": "new",

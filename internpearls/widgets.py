@@ -38,6 +38,14 @@ _CHIP_STYLE = ("border-radius: 3px; padding: 1px 6px; font-size: 11px;"
 # point are meaningless.
 _CHIP_W = None
 
+# The caret column, and the gap between every column in a row's header. A card row
+# draws its expander in that column (review._card_row); a row that cannot expand
+# reserves it and leaves it empty. Sizes live here rather than in review.py because
+# both row builders lay out against them and widgets.py is the one of the two either
+# may import.
+CARET_W = 14
+CARET_GAP = 6
+
 
 def chip_column_width():
     """The width of the chip column, which is also the width of every pill in it.
@@ -62,6 +70,17 @@ def chip_column_width():
             widest = max(widest, probe.sizeHint().width())
         _CHIP_W = widest
     return _CHIP_W
+
+
+def row_text_indent():
+    """How far a row's primary text sits from the row's own left edge: the caret
+    column, the chip column, and the gap on either side of the chip.
+
+    What a card row's expanded body indents by, so its answer lines up under the line
+    it belongs to rather than under the caret. Read from the same three sizes
+    `simple_row` lays out below, so the two row builders cannot drift apart.
+    """
+    return CARET_W + CARET_GAP + chip_column_width() + CARET_GAP
 
 
 def chip_cell(kind):
@@ -113,25 +132,37 @@ def section_header(text):
     return section_label(text, top_margin=14)
 
 
-def simple_row(chip_kind, primary_html, trailing_html=""):
+def simple_row(chip_kind, primary_html, trailing_html="", card_columns=True):
     """One line: an optional chip, the primary content, and optional trailing text.
     No caret, no expansion: for a screen where the row itself is the whole content
     rather than a summary that opens into more.
 
-    The chip is chip_cell's fixed-width column, so a row with one and a row without
-    start their primary text at the same x (see that function). Top-aligned, so a chip
-    beside a wrapping primary sits against its first line rather than floating halfway
-    down it. `trailing_html` is a second, non-wrapping label in muted text off to the
-    row's right (a count, a timestamp) rather than folded into the same paragraph,
-    since it is secondary information the reader compares across rows rather than reads
-    inline with the primary text.
+    `card_columns` reserves the two columns a card row carries in front of its own
+    text (the caret column, then chip_cell's fixed-width chip column), whether or not
+    this row has anything to put in either, so a retired card's row and a new card's
+    row can stand under one deck heading and read as one list rather than two.
+
+    Both columns exist purely to line up against something, so a list holding nothing
+    to line up against passes False and starts its text at the row's left edge, flush
+    with the heading above it and whatever reads below. That is a decision about the
+    list, not about the row: do NOT infer it from `chip_kind` being None instead. The
+    update screen's own unchipped rows (its per-deck summary) sit in a list that is
+    mostly chipped and genuinely need the gutter, and a row reading only its own chip
+    cannot tell those two cases apart.
+
+    Top-aligned, so a chip beside a wrapping primary sits against its first line rather
+    than floating halfway down it. `trailing_html` is a second, non-wrapping label in
+    muted text off to the row's right (a count, a destination) rather than folded into
+    the same paragraph, since it is secondary information the reader compares across
+    rows rather than reads inline with the primary text.
     """
     row = QWidget()
     lay = QHBoxLayout(row)
-    lay.setContentsMargins(0, 5, 0, 6)
-    lay.setSpacing(6)
+    lay.setContentsMargins(CARET_W + CARET_GAP if card_columns else 0, 5, 0, 6)
+    lay.setSpacing(CARET_GAP)
 
-    lay.addWidget(chip_cell(chip_kind), 0, Qt.AlignmentFlag.AlignTop)
+    if card_columns:
+        lay.addWidget(chip_cell(chip_kind), 0, Qt.AlignmentFlag.AlignTop)
 
     primary = QLabel(primary_html)
     primary.setWordWrap(True)

@@ -80,6 +80,30 @@ def test_simple_row_with_no_chip_still_reserves_the_column():
     assert primary.text() == "Plain row text"
 
 
+def test_simple_row_can_decline_the_card_columns():
+    """A list where nothing is chipped and nothing expands has nothing to line up
+    against, so it declines the columns and starts its text at the row's own left edge.
+    The end-of-run result screen is that list; the update screen, whose unchipped
+    per-deck summary rows sit above chipped card rows, is not. That is why this is the
+    caller's choice rather than something read off `chip_kind` being None."""
+    from aqt.qt import QLabel
+    from internpearls import widgets
+    row = widgets.simple_row(None, "Plain row text", card_columns=False)
+    first = row._layout._children[0]
+    assert isinstance(first, QLabel) and first.text() == "Plain row text", (
+        "a row that declined the columns still reserved one ahead of its text")
+
+
+def test_row_text_indent_covers_the_caret_and_the_chip_column():
+    """What an expanded card body indents by. Compared against its own parts rather
+    than a pixel count: the chip column is measured at the running platform's font, so
+    the total is not portable but its composition is."""
+    from internpearls import widgets
+    assert widgets.row_text_indent() == (
+        widgets.CARET_W + widgets.CARET_GAP + widgets.chip_column_width()
+        + widgets.CARET_GAP)
+
+
 def test_streaming_list_builds_only_its_first_batch():
     """The property the whole design rests on: opening the screen must not cost one
     widget per pending card."""
