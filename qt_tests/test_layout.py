@@ -56,8 +56,12 @@ def test_nothing_overflows_the_dialog_horizontally(shot, scene):
 
 
 def test_a_short_confirmation_starts_at_the_top_not_the_middle(shot):
-    """Two ways a short confirmation ends up with blank space above its first line, both
-    guarded here in one measurement:
+    """Two ways a short _ask_scrollable confirmation ends up with blank space above its
+    first line, both guarded here in one measurement. Scoped to the "ask-scrollable"
+    scene, not "confirm": the Update my decks screen moved to a widget body (fixed
+    summary label above a stretching card list) once this rework landed, which the
+    scroll-viewport-centering defect below never applied to in the first place, so this
+    regression test stays on the wrapper it actually guards.
 
     1. The label's text not being top-aligned within its own box (the original bug:
        setWidgetResizable(True) stretches the label's box to fill the scroll viewport,
@@ -76,7 +80,7 @@ def test_a_short_confirmation_starts_at_the_top_not_the_middle(shot):
     colour. That is the actual blank gap a person looking at the dialog sees.
     """
     _, q = harness.bootstrap()
-    s = shot("confirm")
+    s = shot("ask-scrollable")
     body = max((w for w in s.dialog.findChildren(q.QLabel) if w.text()),
                key=lambda w: len(w.text()))
     rect = widget_rect(s.dialog, body)

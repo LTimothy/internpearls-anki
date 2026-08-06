@@ -63,6 +63,21 @@ def _click_reconcile_button(accept):
     return respond
 
 
+def _click_update_button(accept):
+    """respond() for update_decks()'s confirmation. Update and Cancel are always
+    exactly those two labels (unlike reconcile's, which vary), and unlike
+    _click_reconcile_button this can't just grab "the first button that isn't
+    Cancel": the confirmation's own card rows add their own caret buttons ahead of
+    Update in the tree, so that search would click a caret instead."""
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        label = "Update" if accept else "Cancel"
+        btn = _find(p["tree"], t="button", label=label)
+        return {"events": [{"id": btn["id"], "click": True}]}
+    return respond
+
+
 def _fields(front, back="the back", notes="", dosing=""):
     return [front, back, "why", "", "Pharm", dosing, notes]
 
@@ -1240,7 +1255,7 @@ def test_update_decks_syncs_and_reconciles_in_one_pass(anki, tmp_path):
         deck_moves={"moved1": {"from": moved_deck, "to": DECK}})
     _configure(anki, folder)
 
-    drive(anki, sync.update_decks, _click_reconcile_button(accept=True))
+    drive(anki, sync.update_decks, _click_update_button(accept=True))
 
     # Content synced.
     assert anki.col.note_by_guid("new1a")["Front"] == "focused card A"
@@ -1276,8 +1291,7 @@ def test_update_decks_confirmation_shows_real_kept_new_counts(anki, tmp_path):
         label = next((n for n in _walk(p["tree"]) if n.get("t") == "label"
                      and "kept" in (n.get("text") or "")), None)
         seen["text"] = label["text"] if label else None
-        btn = next(n for n in _walk(p["tree"])
-                  if n.get("t") == "button" and n.get("label") != "Cancel")
+        btn = _find(p["tree"], t="button", label="Update")
         return {"events": [{"id": btn["id"], "click": True}]}
 
     drive(anki, sync.update_decks, respond)
@@ -1295,11 +1309,13 @@ def _labels(tree):
 
 
 def test_update_decks_confirmation_names_the_new_cards_not_just_a_count(anki, tmp_path):
-    """Retired and relocated cards were always listed by name; a card being ADDED was
-    the one kind that arrived as a bare count, which is exactly the "it just gets
-    slipped in" gap this closes. The kept card must NOT be listed: this section is
-    about what's new, and padding it with cards she already has would bury that."""
+    """Retired and relocated cards were always listed by name; a card being ADDED used
+    to arrive as a bare count in its own bullet section. Now every new card is a row of
+    its own, right on the confirmation, with a NEW chip. The kept card must NOT show a
+    row: this list is only what's new, and padding it with cards she already has would
+    bury that."""
     from internpearls import sync
+    from internpearls.widgets import CHIPS
     anki.col.add_note("g1", _fields("Front one"), TAGS.split())   # she already has g1
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one"), TAGS),
@@ -1312,21 +1328,22 @@ def test_update_decks_confirmation_names_the_new_cards_not_just_a_count(anki, tm
         if p["kind"] != "dialog":
             return {}
         seen.setdefault("text", _labels(p["tree"]))
-        btn = next(n for n in _walk(p["tree"])
-                  if n.get("t") == "button" and n.get("label") != "Cancel")
+        btn = _find(p["tree"], t="button", label="Update")
         return {"events": [{"id": btn["id"], "click": True}]}
 
     drive(anki, sync.update_decks, respond)
 
-    assert "Front two" in seen["text"], "the new card should be named, not just counted"
-    assert "<b>1</b> card(s) will be added" in seen["text"]
-    assert "Front one" not in seen["text"], "a card she already has isn't new"
+    assert "Front two" in seen["text"], "the new card should show as a row, not just a count"
+    assert CHIPS["new"] in seen["text"], "the new row should carry its NEW chip"
+    assert "Front one" not in seen["text"], "a card she already has isn't new, so it has no row"
 
 
 def test_update_decks_confirmation_counts_and_names_changed_cards(anki, tmp_path):
     """A card whose Back was rewritten upstream used to import silently: it matched, so
-    it counted as "kept" and nothing said its content had moved."""
+    it counted as "kept" and nothing said its content had moved. It must still show up,
+    now as a row of its own with an UPDATED chip rather than its own bullet section."""
     from internpearls import sync
+    from internpearls.widgets import CHIPS
     anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one", back="the new answer"), TAGS)], None)})
@@ -1344,16 +1361,17 @@ def test_update_decks_confirmation_counts_and_names_changed_cards(anki, tmp_path
     drive(anki, sync.update_decks, respond)
 
     assert "1 changing" in seen["text"], "the per-deck line should count changed cards"
-    assert "<b>1</b> card(s) you already have will change" in seen["text"]
+    assert CHIPS["changed"] in seen["text"], "the changed row should carry its chip"
     assert "Front one" in seen["text"]
 
 
 def test_update_decks_confirmation_uses_the_palette_not_a_css_keyword(anki, tmp_path):
-    """The new-cards, changed-cards, retired-cards, and deck-move sections of the
-    confirmation all used to hardcode the CSS keyword gray for their secondary detail
-    text. One source carrying all four at once exercises every section in a single
-    render of the confirmation."""
+    """The retired-cards and deck-move sections of the confirmation used to hardcode
+    the CSS keyword gray for their secondary detail text. One source carrying a new
+    card, a changed card, a retired card, and a moved card at once exercises every
+    section (and both card rows) in a single render of the confirmation."""
     from internpearls import palette, sync
+    from internpearls.widgets import CHIPS
     active = palette.colors()
     old_deck = "Intern Pearls::Intern Custom::Regional (old)"
     anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
@@ -1373,15 +1391,14 @@ def test_update_decks_confirmation_uses_the_palette_not_a_css_keyword(anki, tmp_
     def respond(p):
         if p["kind"] != "dialog":
             return {}
-        label = next(n for n in _walk(p["tree"]) if n.get("t") == "label")
-        seen["text"] = label["text"]
+        seen.setdefault("text", _labels(p["tree"]))
         return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
                             "click": True}]}
 
     drive(anki, sync.update_decks, respond)
 
-    assert "will be added" in seen["text"]        # new_cards section rendered
-    assert "will change" in seen["text"]          # changed_cards section rendered
+    assert "Front two" in seen["text"] and CHIPS["new"] in seen["text"]      # new row
+    assert "Front one" in seen["text"] and CHIPS["changed"] in seen["text"]  # changed row
     assert "retired card(s)" in seen["text"]      # fresh (retired) section rendered
     assert "belong to a deck" in seen["text"]     # moves section rendered
     assert "color:gray" not in seen["text"]
@@ -1390,6 +1407,7 @@ def test_update_decks_confirmation_uses_the_palette_not_a_css_keyword(anki, tmp_
 
 def test_update_decks_does_not_call_an_untouched_card_changed(anki, tmp_path):
     from internpearls import sync
+    from internpearls.widgets import CHIPS
     anki.col.add_note("g1", _fields("Front one"), TAGS.split())
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one"), TAGS),
@@ -1408,12 +1426,17 @@ def test_update_decks_does_not_call_an_untouched_card_changed(anki, tmp_path):
     drive(anki, sync.update_decks, respond)
 
     assert "will change" not in seen["text"]
-    assert "Review 1 new card(s)" in seen["text"], (
-        "with nothing changed the button must still say what kind of cards it shows")
+    assert "Front two" in seen["text"] and CHIPS["new"] in seen["text"], (
+        "with nothing changed the untouched card's row should still show, tagged new")
+    assert "Review" not in seen["text"], "the old Review button is gone"
 
 
-def test_update_decks_review_button_covers_both_kinds(anki, tmp_path):
+def test_update_decks_lists_both_new_and_changed_cards_inline(anki, tmp_path):
+    """The old "Review N card(s)" button opened a second window listing exactly these
+    two cards; now they are rows right on the confirmation itself, one tagged NEW and
+    one tagged UPDATED."""
     from internpearls import sync
+    from internpearls.widgets import CHIPS
     anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one", back="the new answer"), TAGS),
@@ -1431,14 +1454,16 @@ def test_update_decks_review_button_covers_both_kinds(anki, tmp_path):
 
     drive(anki, sync.update_decks, respond)
 
-    assert "Review 2 card(s)" in seen["text"]
+    assert "Front one" in seen["text"] and CHIPS["changed"] in seen["text"]
+    assert "Front two" in seen["text"] and CHIPS["new"] in seen["text"]
+    assert "Review" not in seen["text"], "the old Review button is gone"
 
 
-def test_update_decks_review_button_covers_changed_only(anki, tmp_path):
-    """The button has three forms: both kinds, new-only, and this one, changed-only.
-    A deck where every pending card is a rewrite of one she already has must still
-    say what kind it shows, the same reasoning the new-only case already covers."""
+def test_update_decks_lists_a_changed_only_card_inline(anki, tmp_path):
+    """A deck where every pending card is a rewrite of one she already has must still
+    show that card, tagged UPDATED, with no NEW chip anywhere since nothing is new."""
     from internpearls import sync
+    from internpearls.widgets import CHIPS
     anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one", back="the new answer"), TAGS)], None)})
@@ -1455,12 +1480,14 @@ def test_update_decks_review_button_covers_changed_only(anki, tmp_path):
 
     drive(anki, sync.update_decks, respond)
 
-    assert "Review 1 changed card(s)" in seen["text"]
+    assert "Front one" in seen["text"] and CHIPS["changed"] in seen["text"]
+    assert CHIPS["new"] not in seen["text"]
+    assert "Review" not in seen["text"], "the old Review button is gone"
 
 
 def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
-    """Default: the review previews the incoming cards, with a cloze note's deletions
-    filled in rather than blanked, and collects nothing."""
+    """Default: the confirmation previews the incoming cards inline, with a cloze
+    note's deletions filled in rather than blanked, and collects nothing."""
     from internpearls import sync
     cloze_model = make_model(name="Study Deck - Cloze",
                              fields=["Text", "Why", "Image", "Dosing", "Notes"])
@@ -1474,36 +1501,22 @@ def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
     def respond(p):
         if p["kind"] != "dialog":
             return {}
-        title, tree = p.get("title") or "", p["tree"]
-        if "card review" in title:
-            seen["review"] = _labels(tree)
-            seen["boxes"] = [n for n in _walk(tree) if n.get("t") == "textarea"]
-            done = _find(tree, t="button", label="Done")
-            return {"events": [{"id": done["id"], "click": True}]}
-        if "card feedback" in title:
-            seen["digest_offered"] = True
-            return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
-                                "click": True}]}
-        review = next((n for n in _walk(tree) if n.get("t") == "button"
-                       and "Review" in (n.get("label") or "")), None)
-        if review and "review" not in seen:
-            return {"events": [{"id": review["id"], "click": True}]}
-        seen["after"] = _labels(tree)
-        return {"events": [{"id": _find(tree, t="button", label="Update")["id"],
+        seen["screen"] = _labels(p["tree"])
+        seen["boxes"] = [n for n in _walk(p["tree"]) if n.get("t") == "textarea"]
+        return {"events": [{"id": _find(p["tree"], t="button", label="Update")["id"],
                             "click": True}]}
 
     drive(anki, sync.update_decks, respond)
 
     # The deletion is filled in, not blanked, and the raw cloze markup never leaks,
-    # in the deck's own cloze color so review looks like study.
+    # in the deck's own cloze color so the row reads as study.
     from internpearls import palette
-    assert "lumbar" in seen["review"]
-    assert "{{c1::" not in seen["review"]
-    assert palette.colors()["accent"] in seen["review"]
-    # No feedback box anywhere, and no digest offered on close.
+    assert "lumbar" in seen["screen"]
+    assert "{{c1::" not in seen["screen"]
+    assert palette.colors()["accent"] in seen["screen"]
+    # No feedback box anywhere, and nothing offered to the clipboard.
     assert not seen["boxes"], "no feedback box should render when the toggle is off"
-    assert "digest_offered" not in seen, "nothing was flagged, so no digest to offer"
-    assert "flagged" not in seen.get("after", "")
+    assert "flagged" not in seen["screen"]
     assert not anki.gui.clipboard, "nothing should reach the clipboard"
     # It's still just a preview: the card still imports once Update is chosen.
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
@@ -1524,29 +1537,22 @@ def test_review_renders_a_new_cards_picture_once_its_row_is_opened(anki, tmp_pat
     def respond(p):
         if p["kind"] != "dialog":
             return {}
-        title, tree = p.get("title") or "", p["tree"]
-        if "card review" in title:
+        tree = p["tree"]
+        if "opened" not in seen:
             caret = next(n for n in _walk(tree) if n.get("t") == "button"
-                         and n.get("label") in ("▸", "▾"))
-            if "opened" not in seen:
-                seen["opened"] = True
-                return {"events": [{"id": caret["id"], "click": True}]}
-            seen["review"] = _labels(tree)
-            done = _find(tree, t="button", label="Done")
-            return {"events": [{"id": done["id"], "click": True}]}
-        review = next((n for n in _walk(tree) if n.get("t") == "button"
-                       and "Review" in (n.get("label") or "")), None)
-        if review and "review" not in seen:
-            return {"events": [{"id": review["id"], "click": True}]}
+                        and n.get("label") in ("▸", "▾"))
+            seen["opened"] = True
+            return {"events": [{"id": caret["id"], "click": True}]}
+        seen["screen"] = _labels(tree)
         return {"events": [{"id": _find(tree, t="button", label="Cancel")["id"],
                             "click": True}]}
 
     drive(anki, sync.update_decks, respond)
 
-    assert "<img src=" in seen["review"], (
+    assert "<img src=" in seen["screen"], (
         "the row was opened but its picture is still only named: the .apkg path is not "
-        "reaching the review dialog")
-    assert "sample-a.jpg" in seen["review"]
+        "reaching the row")
+    assert "sample-a.jpg" in seen["screen"]
 
 
 def test_review_rules_separate_cards_without_trailing_the_last_one(anki, tmp_path):
@@ -1567,16 +1573,8 @@ def test_review_rules_separate_cards_without_trailing_the_last_one(anki, tmp_pat
     def respond(p):
         if p["kind"] != "dialog":
             return {}
-        title, tree = p.get("title") or "", p["tree"]
-        if "card review" in title:
-            seen["hlines"] = [n for n in _walk(tree) if n.get("t") == "hline"]
-            return {"events": [{"id": _find(tree, t="button", label="Done")["id"],
-                                "click": True}]}
-        review = next((n for n in _walk(tree) if n.get("t") == "button"
-                       and "Review" in (n.get("label") or "")), None)
-        if review and "hlines" not in seen:
-            return {"events": [{"id": review["id"], "click": True}]}
-        return {"events": [{"id": _find(tree, t="button", label="Update")["id"],
+        seen.setdefault("hlines", [n for n in _walk(p["tree"]) if n.get("t") == "hline"])
+        return {"events": [{"id": _find(p["tree"], t="button", label="Update")["id"],
                             "click": True}]}
 
     drive(anki, sync.update_decks, respond)
@@ -1600,19 +1598,14 @@ def test_review_collects_feedback_when_the_toggle_is_on(anki, tmp_path):
         if p["kind"] != "dialog":
             return {}
         title, tree = p.get("title") or "", p["tree"]
-        if "card review" in title:
-            seen["review"] = _labels(tree)
-            box = next(n for n in _walk(tree) if n.get("t") == "textarea")
-            done = _find(tree, t="button", label="Done")
-            return {"events": [{"id": box["id"], "value": "dose is wrong"},
-                               {"id": done["id"], "click": True}]}
         if "card feedback" in title:
             return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
                                 "click": True}]}
-        review = next((n for n in _walk(tree) if n.get("t") == "button"
-                       and "Review" in (n.get("label") or "")), None)
-        if review and "review" not in seen:
-            return {"events": [{"id": review["id"], "click": True}]}
+        if "typed" not in seen:
+            seen["screen"] = _labels(tree)
+            box = next(n for n in _walk(tree) if n.get("t") == "textarea")
+            seen["typed"] = True
+            return {"events": [{"id": box["id"], "value": "dose is wrong"}]}
         seen["after"] = _labels(tree)
         return {"events": [{"id": _find(tree, t="button", label="Update")["id"],
                             "click": True}]}
@@ -1621,11 +1614,12 @@ def test_review_collects_feedback_when_the_toggle_is_on(anki, tmp_path):
 
     # Her card's primary line, tag, answer, and why are all there, but the old field
     # captions are gone: dropping that chrome is exactly what this rework did.
-    assert "Front two" in seen["review"]
-    assert "Pharm" in seen["review"]
-    assert "the answer" in seen["review"] and "why" in seen["review"]
-    assert "Back" not in seen["review"], "field names shouldn't be captioned anymore"
-    # Coming back from the review, the confirmation says her flag registered.
+    assert "Front two" in seen["screen"]
+    assert "Pharm" in seen["screen"]
+    assert "the answer" in seen["screen"] and "why" in seen["screen"]
+    assert "Back" not in seen["screen"], "field names shouldn't be captioned anymore"
+    # Typing into her box updates the confirmation's own flagged count live, since
+    # there is no longer a separate review dialog whose closing used to trigger it.
     assert "1 card(s) flagged" in seen.get("after", "")
     # And the digest names the deck, the card, its id, and what she said.
     digest = anki.gui.clipboard[-1]
@@ -1651,19 +1645,13 @@ def test_update_decks_declined_still_returns_the_feedback_she_wrote(anki, tmp_pa
         if p["kind"] != "dialog":
             return {}
         title, tree = p.get("title") or "", p["tree"]
-        if "card review" in title:
-            seen["reviewed"] = True
-            box = next(n for n in _walk(tree) if n.get("t") == "textarea")
-            return {"events": [{"id": box["id"], "value": "too bulky"},
-                               {"id": _find(tree, t="button", label="Done")["id"],
-                                "click": True}]}
         if "card feedback" in title:
             return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
                                 "click": True}]}
-        review = next((n for n in _walk(tree) if n.get("t") == "button"
-                       and "Review" in (n.get("label") or "")), None)
-        if review and not seen.get("reviewed"):
-            return {"events": [{"id": review["id"], "click": True}]}
+        if "typed" not in seen:
+            box = next(n for n in _walk(tree) if n.get("t") == "textarea")
+            seen["typed"] = True
+            return {"events": [{"id": box["id"], "value": "too bulky"}]}
         return {"events": [{"id": _find(tree, t="button", label="Cancel")["id"],
                             "click": True}]}
 
@@ -1691,7 +1679,7 @@ def test_update_decks_with_only_content_pending_skips_reconcile_cleanly(anki, tm
         tmp_path, {DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
     _configure(anki, folder)
 
-    drive(anki, sync.update_decks, _click_reconcile_button(accept=True))
+    drive(anki, sync.update_decks, _click_update_button(accept=True))
 
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
     assert any("Update complete" in i for i in anki.gui.infos)
@@ -1703,7 +1691,7 @@ def test_update_decks_with_only_reconcile_pending_skips_sync_cleanly(anki, tmp_p
     folder = _write_source(tmp_path, {}, deck_moves={"g1": {"from": DECK, "to": NEW_DECK}})
     _configure(anki, folder)
 
-    drive(anki, sync.update_decks, _click_reconcile_button(accept=True))
+    drive(anki, sync.update_decks, _click_update_button(accept=True))
 
     assert not anki.col.imports
     cid = anki.col.note_by_guid("g1").card_ids()[0]
@@ -1720,7 +1708,7 @@ def test_update_decks_declined_leaves_everything_untouched(anki, tmp_path):
                                  "superseded_by": []}}})
     _configure(anki, folder)
 
-    drive(anki, sync.update_decks, _click_reconcile_button(accept=False))
+    drive(anki, sync.update_decks, _click_update_button(accept=False))
 
     assert not anki.col.imports
     old = anki.col.note_by_guid("old1")
@@ -1766,7 +1754,7 @@ def test_update_decks_cancel_during_apply_keeps_completed_decks_and_skips_reconc
     _configure(anki, folder)
     aqt_qt.QProgressDialog.cancel_after = {"Updating decks": 1}
 
-    drive(anki, sync.update_decks, _click_reconcile_button(accept=True))
+    drive(anki, sync.update_decks, _click_update_button(accept=True))
 
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
     assert not any(n.guid == "g2" for n in anki.col._notes.values())
@@ -2239,9 +2227,17 @@ def test_remove_empty_cards_declines_cleanly(anki):
 
 
 # ------------------------------------------- feedback persistence & popup merge
-def _feedback_run(anki, tmp_path, on_review, decide="Cancel"):
-    """Drive update_decks through the review dialog, letting the caller decide what to
-    type, and answering everything else. Returns the responder's own scratch dict."""
+def _feedback_run(anki, tmp_path, on_screen, decide="Cancel"):
+    """Drive update_decks through its confirmation, letting the caller decide what to
+    type there and when to click `decide` (via `on_screen(tree, seen, decide)`), and
+    answering the end-of-run feedback digest generically. Returns the responder's own
+    scratch dict.
+
+    There is only one dialog to answer on the way there now, so `on_screen` is called
+    for every pause of that same confirmation, as many times as it likes (typing a box
+    reopens the same dialog with an updated tree rather than closing it, the same way
+    it always did) - it decides for itself when it is done and clicks `decide`.
+    """
     from internpearls import sync
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)})
@@ -2254,19 +2250,11 @@ def _feedback_run(anki, tmp_path, on_review, decide="Cancel"):
         if p["kind"] != "dialog":
             return {}
         title, tree = p.get("title") or "", p["tree"]
-        if "card review" in title:
-            seen["reviewed"] = True
-            return on_review(tree, seen)
         if "card feedback" in title:
             seen["digest"] = tree
             return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
                                 "click": True}]}
-        review = next((n for n in _walk(tree) if n.get("t") == "button"
-                       and "Review" in (n.get("label") or "")), None)
-        if review and not seen.get("reviewed"):
-            return {"events": [{"id": review["id"], "click": True}]}
-        return {"events": [{"id": _find(tree, t="button", label=decide)["id"],
-                            "click": True}]}
+        return on_screen(tree, seen, decide)
 
     drive(anki, sync.update_decks, respond)
     return seen
@@ -2285,20 +2273,19 @@ def test_feedback_is_saved_without_waiting_for_the_dialog_to_close(anki, tmp_pat
     from internpearls import review
     saved = {}
 
-    def on_review(tree, seen):
+    def on_screen(tree, seen, decide):
         box = next(n for n in _walk(tree) if n.get("t") == "textarea")
         if not seen.get("typed"):
             seen["typed"] = True
-            seen.pop("reviewed", None)        # keep answering this same dialog
             return {"events": [{"id": box["id"], "value": "far too bulky"}]}
         assert any(t.started for t in anki.qt_timers), "typing must arm the save"
         for t in anki.qt_timers:
             t.fire()
         saved.update(review.load_saved_feedback())
-        return {"events": [{"id": _find(tree, t="button", label="Done")["id"],
+        return {"events": [{"id": _find(tree, t="button", label=decide)["id"],
                             "click": True}]}
 
-    _feedback_run(anki, tmp_path, on_review)
+    _feedback_run(anki, tmp_path, on_screen)
 
     assert [e["note"] for e in saved.values()] == ["far too bulky"], \
         "the note must be on disk while the dialog is still open"
@@ -2312,11 +2299,11 @@ def test_feedback_from_an_interrupted_run_comes_back_in_the_next_one(anki, tmp_p
     review.save_feedback({"gONE": {"note": "wrong dose", "deck": DECK,
                                    "front": "An earlier card"}})
 
-    def just_close(tree, seen):
-        return {"events": [{"id": _find(tree, t="button", label="Done")["id"],
+    def on_screen(tree, seen, decide):
+        return {"events": [{"id": _find(tree, t="button", label=decide)["id"],
                             "click": True}]}
 
-    _feedback_run(anki, tmp_path, just_close)
+    _feedback_run(anki, tmp_path, on_screen)
 
     assert any("wrong dose" in c for c in anki.gui.clipboard)
     assert any("An earlier card" in c for c in anki.gui.clipboard)
@@ -2327,24 +2314,24 @@ def test_saved_feedback_is_cleared_once_the_digest_has_been_shown(anki, tmp_path
     review.save_feedback({"gONE": {"note": "wrong dose", "deck": DECK,
                                    "front": "An earlier card"}})
 
-    def just_close(tree, seen):
-        return {"events": [{"id": _find(tree, t="button", label="Done")["id"],
+    def on_screen(tree, seen, decide):
+        return {"events": [{"id": _find(tree, t="button", label=decide)["id"],
                             "click": True}]}
 
-    _feedback_run(anki, tmp_path, just_close)
+    _feedback_run(anki, tmp_path, on_screen)
 
     assert review.load_saved_feedback() == {}, "shown once, not offered forever"
 
 
 def test_completion_summary_and_feedback_arrive_as_one_dialog(anki, tmp_path):
     """They used to be two boxes back to back at the end of the run."""
-    def flag_one(tree, seen):
+    def on_screen(tree, seen, decide):
         box = next(n for n in _walk(tree) if n.get("t") == "textarea")
         return {"events": [{"id": box["id"], "value": "too bulky"},
-                           {"id": _find(tree, t="button", label="Done")["id"],
+                           {"id": _find(tree, t="button", label=decide)["id"],
                             "click": True}]}
 
-    seen = _feedback_run(anki, tmp_path, flag_one, decide="Update")
+    seen = _feedback_run(anki, tmp_path, on_screen, decide="Update")
 
     assert seen.get("digest"), "the digest dialog should have opened"
     text = " ".join(str(n) for n in _walk(seen["digest"]))
