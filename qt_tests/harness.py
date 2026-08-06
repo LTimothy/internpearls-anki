@@ -466,6 +466,79 @@ def _scene_confirm(mock, opts):
     return _open
 
 
+def _scene_sync_confirm(mock, opts):
+    """Sync decks' confirmation: one row per deck the source has an update for, its
+    size in the trailing column and a chip for which of the two things that deck is.
+
+    Built the way sync.py's sync_decks() builds it (review.build_list_body over
+    widgets.simple_row rows, wrapped by ui._ask_with_widget), so the screen this
+    renders is the one the Advanced menu opens rather than a mock-up of it. The deck
+    names are invented, same as every other fixture here.
+    """
+    from internpearls import review, sync
+    from internpearls.ui import _ask_with_widget
+    items = [("header", "Update these decks?"),
+             ("row", "changed", "Gadget Care", "6 cards"),
+             ("sep",),
+             ("row", "new", "Widget Basics", "4 cards"),
+             ("sep",),
+             # Long enough to wrap, so the render shows what a wrapped deck name does
+             # to the chip beside it and to the count off to its right.
+             ("row", "new", "A deck whose name runs long enough to wrap onto a second "
+                            "line inside this dialog", "128 cards")]
+    bottom = ("Your review history and any personal notes on existing cards are kept "
+              "(matched by card, not overwritten). A backup is taken automatically "
+              "first, so this is safe to undo if anything looks wrong afterward.")
+    return lambda: _ask_with_widget(
+        review.build_list_body(items, bottom_html=bottom),
+        yes_label="Update", min_height=sync._CONFIRM_HEIGHT)
+
+
+def _scene_reconcile_confirm(mock, opts):
+    """Reconcile my decks' confirmation: each of the three things it can find, each
+    group led by the sentence explaining it and followed by its own rows.
+
+    All three groups show at once, which is the widest this screen ever gets; a real
+    run usually finds one of them. The reworded pair keeps both wordings in the row's
+    own primary line rather than splitting across the trailing column, since a card
+    front is long enough to wrap and that column is not.
+
+    Content is invented, same as every other fixture here.
+    """
+    from internpearls import review, sync
+    from internpearls.palette import colors
+    from internpearls.ui import _ask_with_widget
+    muted = colors()["muted"]
+    items = [
+        ("note", "<b>2 retired cards</b> are still in your collection: split or "
+                 "reworded since, with the replacements already added separately, so "
+                 "these just duplicate your reviews now."),
+        ("row", "retired", "An older phrasing of a since-split card", "Gadget Care"),
+        ("sep",),
+        ("row", "retired", "A card the source has since replaced with two",
+         "Widget Basics"),
+        ("note", "<b>1 card</b> is in your collection twice, in an older and a newer "
+                 "wording of the same question, because the wording changed after your "
+                 "first import. Your progress on the older copy moves to the newer "
+                 "one, then the older copy is archived."),
+        ("row", "retired", "An older wording of a question "
+                           f"<span style='color:{muted};'>→ The wording it has "
+                           "now, long enough to wrap</span>", ""),
+        ("note", "<b>1 card</b> belongs to a deck that's since been reorganized."),
+        ("row", "moved", "A card whose deck was reorganized", "→ Regional Basics"),
+    ]
+    top = ("<i>This looks like a one-time catch-up, likely your first Reconcile since "
+           "a larger update. Future runs should be much shorter.</i>")
+    bottom = ("Nothing is deleted. Archived cards keep their review history and can be "
+              "brought back anytime by unsuspending them or moving them out of the "
+              "Retired deck, and any personal notes on them carry over to the "
+              "replacement first. A backup is taken automatically before anything "
+              "changes.")
+    return lambda: _ask_with_widget(
+        review.build_list_body(items, top_html=top, bottom_html=bottom),
+        yes_label="Archive and relocate", min_height=sync._CONFIRM_HEIGHT)
+
+
 def _scene_result(mock, opts):
     """The end of a run: completion summary and flagged-card digest in one dialog.
 
@@ -494,6 +567,9 @@ SCENES = {
     "configure-source": (_scene_configure_source, "the deck-source choice screen"),
     "confirm": (_scene_confirm, "the Update my decks confirmation (inline card list)"),
     "ask-scrollable": (_scene_ask_scrollable, "a plain _ask_scrollable confirmation"),
+    "sync-confirm": (_scene_sync_confirm, "Sync decks' confirmation (one row per deck)"),
+    "reconcile-confirm": (_scene_reconcile_confirm,
+                          "Reconcile my decks' confirmation (retired, reworded, moved)"),
     "result": (_scene_result, "the end-of-run summary and feedback digest, one dialog"),
 }
 
