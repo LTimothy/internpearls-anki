@@ -111,7 +111,7 @@ def test_manage_decks_exclude_and_save(anki, tmp_path):
         if p["kind"] == "dialog":
             row = find(p["tree"], t="check")
             assert row and "Pharm" in row["label"] and row["checked"]
-            pill = find(p["tree"], t="label", text="1 cards · New")
+            pill = find(p["tree"], t="label", text="1 card · New")
             assert pill, "status pill must show card count and New state"
             save = find(p["tree"], t="button", label="Save")
             return {"events": [{"id": row["id"], "value": False},
@@ -166,7 +166,7 @@ def test_manage_decks_status_pill_recovers_after_a_collection_revert(anki, tmp_p
 
     def respond(p):
         assert p["kind"] == "dialog"
-        pill = find(p["tree"], t="label", text="1 cards · New")
+        pill = find(p["tree"], t="label", text="1 card · New")
         assert pill, "status pill must revert to New once the collection lost the deck"
         cancel = find(p["tree"], t="button", label="Cancel")
         return {"events": [{"id": cancel["id"], "click": True}]}
@@ -217,7 +217,7 @@ def test_settings_saves_all_four_values(anki):
             return {"events": [{"id": auto["id"], "value": True},
                                {"id": spin["id"], "value": 30},
                                {"id": save["id"], "click": True}]}
-        assert "checks every 30 minute(s)" in p["text"]
+        assert "checks every 30 minutes" in p["text"]
         return {}
 
     drive(anki, dialogs.open_settings, respond)

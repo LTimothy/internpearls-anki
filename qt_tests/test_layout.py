@@ -295,7 +295,7 @@ def test_the_confirm_summary_is_rows_under_one_heading_not_a_bullet_list(shot):
     texts = [l.text() for l in _visible_labels(s.dialog, q)]
     assert not [t for t in texts if "<li>" in t or "<ul>" in t], \
         "the deck summary is built from rows now, not a bulleted list inside a label"
-    assert any(t.startswith("1 deck(s) have updates") for t in texts), \
+    assert any(t.startswith("1 deck has updates") for t in texts), \
         "the summary keeps its own heading"
     assert any("3 kept (1 changing)" in t and "2 new" in t for t in texts), \
         "a deck's counts read as the row's trailing column"

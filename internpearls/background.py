@@ -32,7 +32,7 @@ from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, INSTALLED, STATE,
                      SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json)
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
-                    decks_to_update, manifest_needs_newer_addon)
+                    decks_to_update, manifest_needs_newer_addon, plural)
 from .net import _BG_TIMEOUT
 from .sync import (_fetch_manifest, _reconcile_pending, _refresh_reconcile_action_label,
                    _run_sync)
@@ -218,7 +218,8 @@ def _auto_sync_check():
         if pending and pending != _last_reconcile_notified:
             _last_reconcile_notified = pending
             tooltip(
-                f"Intern Pearls: {pending} card(s) are ready to tidy up (retired or "
+                f"Intern Pearls: {plural(pending, 'card')} "
+                f"{'is' if pending == 1 else 'are'} ready to tidy up (retired or "
                 "moved by a deck update) — Advanced → Reconcile my decks.",
                 period=8000, parent=mw)
         elif not pending:
@@ -252,14 +253,16 @@ def _auto_sync_check():
             _tpl_deferred_notified.update(deferred)
             if not (ok or fail or deferred_new):
                 return
-            msg = f"Intern Pearls: auto-synced {ok} deck(s) (source: {result['source']})"
+            msg = (f"Intern Pearls: auto-synced {plural(ok, 'deck')} "
+                   f"(source: {result['source']})")
             if fail:
                 msg += f", {fail} failed, open Sync decks for details"
             if deferred_new:
-                msg += (f", {len(deferred_new)} deck(s) include a card-template "
-                        "update — run Sync decks to review it")
+                msg += (f", {plural(len(deferred_new), 'deck')} "
+                        f"{'includes' if len(deferred_new) == 1 else 'include'} a "
+                        "card-template update — run Sync decks to review it")
             if restored:
-                msg += f", preserved fields restored on {restored} card(s)"
+                msg += f", preserved fields restored on {plural(restored, 'card')}"
             tooltip(msg, period=6000, parent=mw)
         finally:
             _auto_sync_in_progress = False
