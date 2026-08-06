@@ -142,23 +142,26 @@ def simple_row(chip_kind, primary_html, trailing_html="", card_columns=True):
     this row has anything to put in either, so a retired card's row and a new card's
     row can stand under one deck heading and read as one list rather than two.
 
-    Both columns exist purely to line up against something, so a list holding nothing
-    to line up against passes False and starts its text at the row's left edge, flush
-    with the heading above it and whatever reads below. That is a decision about the
-    list, not about the row: do NOT infer it from `chip_kind` being None instead. The
-    update screen's own unchipped rows (its per-deck summary) sit in a list that is
-    mostly chipped and genuinely need the gutter, and a row reading only its own chip
-    cannot tell those two cases apart.
+    Both columns exist purely to line up against something, so a section holding
+    nothing to line up against passes False and starts its text at the row's left edge,
+    flush with the heading above it and whatever reads below. That is a decision about
+    the section, not about the row: do NOT infer it from `chip_kind` being None
+    instead. The update screen's card sections keep the columns for their own unchipped
+    rows, since a chipped row sits beside them; its per-deck summary is a section of
+    its own where nothing is ever chipped and nothing ever expands, so that one
+    declines them even though rows further down the same screen do not.
 
     Top-aligned, so a chip beside a wrapping primary sits against its first line rather
     than floating halfway down it. `trailing_html` is a second, non-wrapping label in
     muted text off to the row's right (a count, a destination) rather than folded into
     the same paragraph, since it is secondary information the reader compares across
-    rows rather than reads inline with the primary text.
+    rows rather than reads inline with the primary text. The row carries a right margin
+    of its own so that label stops short of whatever frame the list is drawn inside
+    rather than running its glyphs up against the border line.
     """
     row = QWidget()
     lay = QHBoxLayout(row)
-    lay.setContentsMargins(CARET_W + CARET_GAP if card_columns else 0, 5, 0, 6)
+    lay.setContentsMargins(CARET_W + CARET_GAP if card_columns else 0, 5, CARET_GAP, 6)
     lay.setSpacing(CARET_GAP)
 
     if card_columns:
