@@ -706,6 +706,15 @@ class QWidget:
         # is what exercises actual scroll geometry.
         return 0
 
+    def ensurePolished(self):
+        pass   # no style engine here, so nothing a stylesheet could resolve into
+
+    def sizeHint(self):
+        # Same reasoning as height(): no font and no layout, so nothing to measure.
+        # widgets.chip_column_width() therefore reads 0 under the mock, which is
+        # correct for a suite that asserts structure; qt_tests/ measures the real one.
+        return types.SimpleNamespace(width=lambda: 0, height=lambda: 0)
+
     def node(self):
         return {"t": "box", "id": self.wid, "style": self._style,
                 "visible": self._visible,
@@ -1366,7 +1375,8 @@ def install():
             PointingHandCursor = 13   # Qt's own value
 
         class AlignmentFlag:
-            AlignTop = 0x20           # Qt's own value
+            AlignTop = 0x20           # Qt's own values
+            AlignCenter = 0x84
 
         class TextFormat:
             RichText = 1
