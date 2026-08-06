@@ -921,7 +921,7 @@ def update_decks():
         return (f"<b>{len(flags)} card(s) flagged.</b>{carried_txt} You'll get a "
                 "summary to send back when this finishes.<br><br>")
 
-    def _finish(summary_html=None):
+    def _finish(title=None, rows=(), footer_html=""):
         """End the run: the summary and her notes as one dialog, then drop the saved
         copy of those notes.
 
@@ -931,6 +931,13 @@ def update_decks():
         throw away the only part of the run that couldn't be reproduced by clicking
         Update again later.
 
+        `title`/`rows`/`footer_html` are the run's own headline, one line per deck or
+        archive/merge/move outcome, and whatever reads below them (preserved-field and
+        collision notes, the backup line), passed straight through to
+        show_result_with_feedback, which renders them in the same title/row vocabulary
+        the confirmation used. Left at their defaults on a Cancel or declined backup,
+        where there is no completed run to summarize at all.
+
         The saved copy is cleared only once the digest has actually been built and
         shown. An exit with nothing flagged leaves the file alone rather than deleting
         it: there is nothing to clear in that case anyway, and treating "no flags this
@@ -938,7 +945,7 @@ def update_decks():
         a second time.
         """
         entries = feedback_entries(flags, new_index)
-        show_result_with_feedback(summary_html, entries)
+        show_result_with_feedback(title, rows, footer_html, entries)
         if entries:
             clear_saved_feedback()
 
@@ -1014,11 +1021,11 @@ def update_decks():
                 if backed_up else
                 "No pre-sync backup was taken this time (nothing to back up yet, or "
                 "it failed and you chose to continue).")
-            _finish(f"<b>Update stopped early</b> (source: {source})" + bullets(results) +
-                    "<br><br>Archiving or relocating retired cards was skipped, since "
+            _finish(f"Update stopped early (source: {source})", results,
+                    "Archiving or relocating retired cards was skipped, since "
                     "that assumes every update above already landed. Nothing else was "
                     "touched; run <b>Update my decks</b> again anytime to pick up where "
-                    "this left off." + fields_line + backup_line)
+                    "this left off.<br><br>" + fields_line + backup_line)
             return
         # Consented to on the confirmation, so nothing is asked here. tpl_changes is
         # what the import actually found; the checkbox is what she agreed to, and the
@@ -1070,8 +1077,7 @@ def update_decks():
         if backed_up else
         "No pre-sync backup was taken this time (nothing to back up yet, or it "
         "failed and you chose to continue).")
-    _finish(f"<b>Update complete</b> (source: {source})" + bullets(result_lines) +
-            fields_line + backup_line)
+    _finish(f"Update complete (source: {source})", result_lines, fields_line + backup_line)
 
 
 @_safe
