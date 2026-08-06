@@ -211,11 +211,6 @@ def synthetic_details():
     ]
 
 
-def apkg_details(path):
-    from internpearls.logic import apkg_note_details
-    return apkg_note_details(os.path.expanduser(path))
-
-
 # ----------------------------------------------------------------------- scenes
 _FIXTURE_APKG = None
 
@@ -265,18 +260,6 @@ def _fixture_image_apkg():
         z.writestr("media", json.dumps({"0": "example-diagram.jpg"}))
     _FIXTURE_APKG = path
     return path
-
-
-def _scene_review(mock, opts):
-    from internpearls import review
-    apkg = opts.get("apkg", "")
-    details = apkg_details(apkg) if apkg else synthetic_details()
-    if opts.get("limit"):
-        details = details[:opts["limit"]]
-    mock.mw._config = {"collect_card_feedback": opts.get("feedback", False)}
-    name = os.path.basename(apkg).replace(".apkg", "") if apkg else "Example Deck"
-    sources = {name: _fixture_image_apkg()} if opts.get("image") else None
-    return lambda: review.review_cards(None, [(name, details)], {}, sources=sources)
 
 
 def _scene_digest(mock, opts):
@@ -488,7 +471,6 @@ def _scene_result(mock, opts):
 
 
 SCENES = {
-    "review": (_scene_review, "the new-card review list (apkg, expand, feedback)"),
     "digest": (_scene_digest, "the flagged-card feedback digest"),
     "settings": (_scene_settings, "the Settings dialog"),
     "manage-decks": (_scene_manage_decks,

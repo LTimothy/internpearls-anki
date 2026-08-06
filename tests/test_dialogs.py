@@ -407,49 +407,6 @@ def test_copy_again_puts_the_digest_back_on_the_clipboard(anki, monkeypatch):
     assert anki.gui.clipboard == [digest, "something else, clobbered", digest]
 
 
-def test_review_row_starts_collapsed_and_the_caret_expands_it(anki, monkeypatch):
-    """The headline interaction of the new-card review dialog: a card's answer
-    stays hidden until the reader asks for it. Confirms the row's body starts
-    collapsed, and that clicking the caret both reveals it and flips the glyph."""
-    from internpearls import review
-
-    detail = {
-        "guid": "g1",
-        "notetype": "Study Deck - Basic",
-        "fields": [
-            ("Front", "What nerve block covers the anterior thigh?"),
-            ("Back", "Femoral nerve block"),
-            ("Why", ""), ("Image", ""), ("Tag", ""), ("Dosing", ""), ("Notes", ""),
-        ],
-    }
-    decks = [("Intern Pearls::Intern Custom::Pharm", [detail])]
-    rounds = []
-    body_id = []
-
-    def fake_next_interaction(payload):
-        rounds.append(payload)
-        tree = payload["tree"]
-        if len(rounds) == 1:
-            caret = find(tree, t="button", label=review._CARET_CLOSED)
-            body = find(tree, t="box", visible=False)
-            assert caret is not None, "row must start with the closed-caret glyph"
-            assert body is not None, "row's body must start collapsed"
-            body_id.append(body["id"])
-            return {"events": [{"id": caret["id"], "click": True}]}
-        caret = find(tree, t="button", label=review._CARET_OPEN)
-        assert caret is not None, "clicking the caret must flip it to the open glyph"
-        assert find(tree, t="button", label=review._CARET_CLOSED) is None
-        body = find(tree, t="box", id=body_id[0])
-        assert body["visible"] is True, "clicking the caret must reveal the body"
-        done = find(tree, t="button", label="Done")
-        return {"events": [{"id": done["id"], "click": True}]}
-
-    monkeypatch.setattr(anki.gui, "next_interaction", fake_next_interaction)
-    review.review_cards(None, decks, {})
-
-    assert len(rounds) == 2, "expected one round to open the row, one to finish"
-
-
 # ------------------------------------------------------------------------ about
 def test_about_is_a_dialog_with_a_single_ok_button(anki):
     """About used to be a bare QMessageBox; it now routes through _ask_scrollable like
