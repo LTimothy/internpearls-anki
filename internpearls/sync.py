@@ -30,25 +30,19 @@ from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json)
-from .logic import (apkg_note_details, apkg_notes, bullets, decks_to_update,
+from .logic import (apkg_note_details, apkg_notes, decks_to_update,
                     feedback_entries, merge_saved_feedback,
-                    duplicate_dialog_html, find_changed_notes, find_deck_moves_needed,
+                    duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, manifest_needs_newer_addon,
                     note_display_label, plural, remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .palette import colors
-from .review import (build_list_body, build_update_body, clear_saved_feedback,
-                     load_saved_feedback, show_result_with_feedback)
-from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _safe, _warn,
-                 cancellable_progress, wait_cursor)
-
-
-# Sync decks and Reconcile my decks each list one Advanced action's worth of rows, so
-# their dialogs open shorter than Update my decks, whose list covers everything pending
-# at once and takes _ask_with_widget's own taller default. This is a floor, not a fixed
-# height: a longer list still grows the dialog and then scrolls inside it.
-_CONFIRM_HEIGHT = 380
+from .review import (_CONFIRM_HEIGHT, append_rows, build_list_body, build_update_body,
+                     clear_saved_feedback, load_saved_feedback, show_result,
+                     show_result_with_feedback)
+from .ui import (_ask, _ask_with_widget, _info, _safe, _warn, cancellable_progress,
+                 wait_cursor)
 
 # The "Reconcile my decks" QAction, set once by __init__.py right after building the
 # menu. Mutated from here and from background.py's auto-sync poll, mirroring
@@ -203,9 +197,6 @@ def sync_decks():
             cfg, manifest, fetch, todo, installed,
             on_progress=lambda i, n, name: step(i, f"Syncing {name} ({i} of {n})"))
     _offer_template_changes(tpl_changes)
-    fields_line = (f"Preserved fields restored on {plural(restored, 'card')}.<br><br>"
-                  if restored else "")
-    fields_line += _collision_note(collisions)
     backup_line = (
         "A pre-sync backup of the Intern Pearls deck was saved; use "
         "<i>Advanced → Restore intern pearls deck</i> to revert to it if needed."
@@ -213,31 +204,48 @@ def sync_decks():
         "No pre-sync backup was taken this time (nothing to back up yet, or it "
         "failed and you chose to continue).")
     title = "Sync stopped early" if cancelled else "Sync complete"
-    stopped_note = ("<br><br>Nothing else was touched; run <b>Sync decks</b> again "
-                    "anytime to pick up where this left off." if cancelled else "")
-    _info(f"<b>{title}</b> (source: {source})" + bullets(results) +
-          fields_line + backup_line + stopped_note)
+    # Each deck's outcome is a row of its own, and everything the run has to say about
+    # the whole of it reads as a paragraph between them, in the same vocabulary the
+    # confirmation this follows was built from.
+    items = []
+    append_rows(items, [("row", None, line, "") for line in results])
+    if restored:
+        items.append(("note", f"Preserved fields restored on {plural(restored, 'card')}."))
+    items += _collision_items(collisions)
+    items.append(("note", backup_line))
+    if cancelled:
+        items.append(("note", "Nothing else was touched; run <b>Sync decks</b> again "
+                              "anytime to pick up where this left off."))
+    show_result(f"{title} (source: {source})", items)
 
 
-def _collision_note(collisions):
-    """A line naming the cards where her own edit and a source update landed on the
-    same field. Hers is kept; this exists so the two versions don't quietly diverge
-    with nobody knowing, which is the one thing the three-way restore can't decide on
-    its own.
+def _collision_items(collisions):
+    """The cards where her own edit and a source update landed on the same field: the
+    explanation, then one row per card. Hers is kept; this exists so the two versions
+    don't quietly diverge with nobody knowing, which is the one thing the three-way
+    restore can't decide on its own.
+
+    Capped at ten, with the remainder counted on a row of its own. The cap is a lookup
+    cost rather than a readability one: naming a card means reading its note out of the
+    collection, and a run where dozens collided has a bigger problem than a short list.
     """
     if not collisions:
-        return ""
+        return []
     fronts = []
     for guid, field in collisions[:10]:
         nid = mw.col.db.scalar("select id from notes where guid = ?", guid)
         if nid:
             fronts.append(f"{mw.col.get_note(nid).fields[0][:70]} ({field})")
-    more = f" and {len(collisions) - len(fronts)} more" if len(collisions) > len(fronts) else ""
-    return (f"<br><br>On <b>{plural(len(collisions), 'card')}</b>, this update changed "
-            "a field you had also written in yourself. <b>Your version was kept</b> "
-            "and the update to that field was skipped, so nothing you wrote was lost. "
-            "Worth passing these on to whoever maintains the decks if you want your "
-            "wording folded in, or theirs applied instead:" + bullets(fronts) + more)
+    if len(collisions) > len(fronts):
+        fronts.append(f"<i>and {len(collisions) - len(fronts)} more</i>")
+    items = [("note",
+              f"On <b>{plural(len(collisions), 'card')}</b>, this update changed a "
+              "field you had also written in yourself. <b>Your version was kept</b> "
+              "and the update to that field was skipped, so nothing you wrote was "
+              "lost. Worth passing these on to whoever maintains the decks if you want "
+              "your wording folded in, or theirs applied instead:")]
+    append_rows(items, [("row", None, front, "") for front in fronts])
+    return items
 
 
 def _offer_notetype_changes(changes):
@@ -406,16 +414,6 @@ def _reconcile_pending(manifest, cfg):
     return her, fresh, already, moves, retired_deck, tag, stranded
 
 
-def _append_rows(items, rows):
-    """Add one group's rows to a build_list_body item list, hairlined between rather
-    than around: a rule above the first row would cut the group off from the sentence
-    that introduces it."""
-    for i, row in enumerate(rows):
-        if i:
-            items.append(("sep",))
-        items.append(row)
-
-
 def _stranded_lead(stranded):
     """What the reworded-pair section says before naming any of them.
 
@@ -443,12 +441,20 @@ def _stranded_lines(stranded):
             for p in stranded]
 
 
-def _stranded_block(stranded, her):
-    """The reworded-pair section as one block of prose, for a screen whose other
-    sections are prose too (see update_decks)."""
+def _stranded_items(stranded):
+    """The reworded-pair group for Update my decks' own list: the sentence that
+    explains it, then one row per pair.
+
+    The same group reconcile_decks builds from the same finding, in the row vocabulary
+    build_update_body's list takes rather than build_list_body's. Chipped RETIRED for
+    the same reason it is there: that is what happens to the half she is looking at,
+    once its progress has moved across.
+    """
     if not stranded:
-        return ""
-    return _stranded_lead(stranded) + bullets(_stranded_lines(stranded), cap=15)
+        return []
+    items = [("note", _stranded_lead(stranded))]
+    append_rows(items, [("retired", line) for line in _stranded_lines(stranded)])
+    return items
 
 
 def _merge_stranded(stranded, her, protected, retired_deck, tag):
@@ -558,8 +564,8 @@ def reconcile_decks():
                       "separately, so "
                       f"{'it just duplicates' if len(fresh) == 1 else 'these just duplicate'} "
                       f"your reviews now.{already_note}"))
-        _append_rows(items, [("row", "retired", r["identity"],
-                              r["deck"].split("::")[-1]) for r in fresh])
+        append_rows(items, [("row", "retired", r["identity"],
+                             r["deck"].split("::")[-1]) for r in fresh])
         if missing:
             items.append(("note",
                           f"<b>Note:</b> {missing} of these don't have their "
@@ -570,14 +576,14 @@ def reconcile_decks():
         items.append(("note", _stranded_lead(stranded)))
         # Chipped RETIRED because that is what happens to the half she is looking at:
         # the older wording is archived once its progress has moved across.
-        _append_rows(items, [("row", "retired", line, "")
-                             for line in _stranded_lines(stranded)])
+        append_rows(items, [("row", "retired", line, "")
+                            for line in _stranded_lines(stranded)])
     if moves:
         items.append(("note",
                       f"<b>{plural(len(moves), 'card')}</b> "
                       f"{'belongs' if len(moves) == 1 else 'belong'} to a deck that's "
                       "since been reorganized."))
-        _append_rows(items, [
+        append_rows(items, [
             ("row", "moved", mw.col.get_note(her[m["guid"]]).fields[0],
              f"→ {m['to'].split('::')[-1]}") for m in moves])
 
@@ -667,13 +673,28 @@ def clean_up_duplicates():
         _info(f"No duplicate cards found. (Source: {source}.)")
         return
 
-    block = duplicate_dialog_html(groups, colors()["muted"])
+    # Every row here is the same thing happening to the same kind of card, so there is
+    # nothing to mark one apart from another and nothing to line up against: no chip,
+    # and the caret and chip columns declined (see widgets.simple_row). The list is
+    # uncapped for the reason Reconcile's is: it streams inside a scroll area with the
+    # buttons outside it, so naming every duplicate can no longer push them off-screen.
+    heading, rows = duplicate_dialog_rows(groups)
+    muted = colors()["muted"]
+    items = []
+    append_rows(items, [
+        ("row", None,
+         f"{r['label']} <span style='color:{muted};'>{r['detail']}</span>", "")
+        for r in rows])
     safety_note = (
-        "<br><br>Nothing is deleted. Archived cards keep their review history and can "
+        "Nothing is deleted. Archived cards keep their review history and can "
         "be brought back anytime by unsuspending them or moving them out of the "
         "Retired deck, and any personal notes on them carry over to the kept copy "
         "first. A backup is taken automatically before anything changes.")
-    if not _ask_scrollable(block + safety_note, yes_label="Archive duplicates"):
+    if not _ask_with_widget(
+        build_list_body(items, top_html=heading, bottom_html=safety_note,
+                        card_columns=False),
+        yes_label="Archive duplicates", min_height=_CONFIRM_HEIGHT
+    ):
         return
 
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
@@ -1000,9 +1021,9 @@ def update_decks():
     # from (see _gather_pending_items and _retired_moved_items), which is the whole
     # point of this screen replacing the old "Review N card(s)" button and the bulleted
     # lists that used to sit beside it. new_cards/changed_cards themselves are still
-    # needed above, to build new_index.
-    if stranded:
-        sections.append(_stranded_block(stranded, her))
+    # needed above, to build new_index. The reworded pairs are the one group that used
+    # to sit up here as prose; they are cards like everything else on this screen, so
+    # they read as rows at the end of the list instead.
 
     # A big first run (a large backlog accumulated before Update was run even once)
     # reads as alarming without context — say up front it's a one-time catch-up.
@@ -1026,7 +1047,7 @@ def update_decks():
         return (f"<b>{plural(len(flags), 'card')} flagged.</b>{carried_txt} You'll get "
                 "a summary to send back when this finishes.<br><br>")
 
-    def _finish(title=None, rows=(), footer_html=""):
+    def _finish(title=None, items=()):
         """End the run: the summary and her notes as one dialog, then drop the saved
         copy of those notes.
 
@@ -1036,12 +1057,12 @@ def update_decks():
         throw away the only part of the run that couldn't be reproduced by clicking
         Update again later.
 
-        `title`/`rows`/`footer_html` are the run's own headline, one line per deck or
-        archive/merge/move outcome, and whatever reads below them (preserved-field and
-        collision notes, the backup line), passed straight through to
-        show_result_with_feedback, which renders them in the same title/row vocabulary
-        the confirmation used. Left at their defaults on a Cancel or declined backup,
-        where there is no completed run to summarize at all.
+        `title` is the run's own headline and `items` is everything below it in
+        build_list_body's vocabulary: a row per deck or archive/merge/move outcome, and
+        a paragraph for each of the preserved-field and collision notes and the backup
+        line. Passed straight through to show_result_with_feedback, which renders them
+        in the same row vocabulary the confirmation used. Left at their defaults on a
+        Cancel or declined backup, where there is no completed run to summarize at all.
 
         The saved copy is cleared only once the digest has actually been built and
         shown. An exit with nothing flagged leaves the file alone rather than deleting
@@ -1050,7 +1071,7 @@ def update_decks():
         a second time.
         """
         entries = feedback_entries(flags, new_index)
-        show_result_with_feedback(title, rows, footer_html, entries)
+        show_result_with_feedback(title, items, entries)
         if entries:
             clear_saved_feedback()
 
@@ -1076,6 +1097,7 @@ def update_decks():
                 summary.append(("sep",))
             summary.append(_deck_summary_row(d))
         items = summary + items
+    items += _stranded_items(stranded)
     if unreadable:
         sections.append(
             f"<span style='color:{muted};'>Couldn't read the pending cards from "
@@ -1130,20 +1152,24 @@ def update_decks():
             # decks _run_sync did finish are already fully applied and persisted
             # (see its docstring) — only the decks after the cancel point, and the
             # reconcile pass, are what's left pending for next time.
-            fields_line = (
-                f"Preserved fields restored on {plural(restored, 'card')}.<br><br>"
-                if restored else "")
             backup_line = (
                 "A pre-sync backup of the Intern Pearls deck was saved; use "
                 "<i>Advanced → Restore intern pearls deck</i> to revert to it if needed."
                 if backed_up else
                 "No pre-sync backup was taken this time (nothing to back up yet, or "
                 "it failed and you chose to continue).")
-            _finish(f"Update stopped early (source: {source})", results,
-                    "Archiving or relocating retired cards was skipped, since "
-                    "that assumes every update above already landed. Nothing else was "
-                    "touched; run <b>Update my decks</b> again anytime to pick up where "
-                    "this left off.<br><br>" + fields_line + backup_line)
+            items = []
+            append_rows(items, [("row", None, line, "") for line in results])
+            items.append(("note",
+                          "Archiving or relocating retired cards was skipped, since "
+                          "that assumes every update above already landed. Nothing else "
+                          "was touched; run <b>Update my decks</b> again anytime to pick "
+                          "up where this left off."))
+            if restored:
+                items.append(
+                    ("note", f"Preserved fields restored on {plural(restored, 'card')}."))
+            items.append(("note", backup_line))
+            _finish(f"Update stopped early (source: {source})", items)
             return
         # Consented to on the confirmation, so nothing is asked here. tpl_changes is
         # what the import actually found; the checkbox is what she agreed to, and the
@@ -1190,16 +1216,19 @@ def update_decks():
             f"✓ Moved <b>{plural(n_moved, 'card')}</b> to "
             f"{'its' if n_moved == 1 else 'their'} reorganized deck.")
 
-    fields_line = (f"Preserved fields restored on {plural(restored, 'card')}.<br><br>"
-                  if restored else "")
-    fields_line += _collision_note(collisions)
     backup_line = (
         "A pre-sync backup of the Intern Pearls deck was saved; use "
         "<i>Advanced → Restore intern pearls deck</i> to revert to it if needed."
         if backed_up else
         "No pre-sync backup was taken this time (nothing to back up yet, or it "
         "failed and you chose to continue).")
-    _finish(f"Update complete (source: {source})", result_lines, fields_line + backup_line)
+    items = []
+    append_rows(items, [("row", None, line, "") for line in result_lines])
+    if restored:
+        items.append(("note", f"Preserved fields restored on {plural(restored, 'card')}."))
+    items += _collision_items(collisions)
+    items.append(("note", backup_line))
+    _finish(f"Update complete (source: {source})", items)
 
 
 @_safe
