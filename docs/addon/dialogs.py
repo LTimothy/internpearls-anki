@@ -19,6 +19,7 @@ from .palette import colors
 from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
                  link_button, muted_label, section_label, title_label, wait_cursor)
+from .widgets import chip_cell
 
 
 def _github_source_form(repo_default, token_default):
@@ -235,17 +236,15 @@ def _offer_manifest_scope(manifest):
 
 
 # -------------------------------------------------------------------- deck manager
-# A deck's sync-state pill maps to a palette role, resolved through colors() at render
-# time so it stays readable on both Anki themes.
-_STATE_STYLE = {
-    "new":     ("New",              "accent"),
-    "update":  ("Update available", "updated_fg"),
-    "current": ("Up to date",       "muted"),
-}
-
-
-def _pill_style(role):
-    return f"color: {colors()[role]}; font-size: 12px;"
+# A deck's sync state as the chip the rest of the add-on already gives that same fact: a
+# deck the collection has none of is NEW, one with a content update waiting is UPDATED,
+# the two kinds Sync decks' own confirmation lists its decks by. Both screens list decks
+# and a reader moves between them, so they say it the same way.
+#
+# "current" maps to no chip on purpose. It is what most rows read most of the time, so a
+# third colour there would compete with the deck names for the whole list; it stays as
+# the muted trailing text _deck_row writes below.
+_STATE_CHIP = {"new": "new", "update": "changed", "current": None}
 
 
 class _DeckManagerDialog(QDialog):
@@ -257,7 +256,7 @@ class _DeckManagerDialog(QDialog):
     without adding a use case of its own.
 
     Mostly a thin rendering layer over already-computed rows (from logic.deck_status):
-    it renders checkboxes and status pills, then hands back the user's choices via
+    it renders checkboxes and state chips, then hands back the user's choices via
     excluded_decks()/protected_fields(). No network or collection access lives here,
     except indirectly through change_source_requested, which the caller acts on after
     this dialog closes. Sync automation and add-on update behavior live in a separate
@@ -362,8 +361,12 @@ class _DeckManagerDialog(QDialog):
     def _deck_row(self, r):
         row = QFrame()
         row.setObjectName("deckRow")
-        row.setStyleSheet(
-            "#deckRow { border: 1px solid rgba(128,128,128,0.35); border-radius: 6px; }")
+        # The outline that makes each deck read as its own card rather than a line in a
+        # block of text, so it needs a value per theme like everything else drawn against
+        # the window: one colour dark enough to see on a light window disappears into a
+        # dark one, and the list goes flat in Night Mode.
+        row.setStyleSheet(f"#deckRow {{ border: 1px solid {colors()['panel_rule']};"
+                          " border-radius: 6px; }")
         h = QHBoxLayout(row)
         h.setContentsMargins(11, 8, 11, 8)
         cb = QCheckBox(r["short"])
@@ -372,12 +375,20 @@ class _DeckManagerDialog(QDialog):
         self._checks[r["name"]] = cb
         h.addWidget(cb)
         h.addStretch()
-        label, role = _STATE_STYLE[r["state"]]
         cards = r.get("cards")
-        text = f'{plural(cards, "card")} · {label}' if cards is not None else label
-        pill = QLabel(text)
-        pill.setStyleSheet(_pill_style(role))
-        h.addWidget(pill)
+        parts = [plural(cards, "card")] if cards is not None else []
+        if _STATE_CHIP[r["state"]] is None:
+            # The one state with no chip still has to say what it is; the other two are
+            # named by the chip beside them and would only repeat themselves here.
+            parts.append("Up to date")
+        if parts:
+            trailing = QLabel(" · ".join(parts))
+            trailing.setStyleSheet(f"color: {colors()['muted']};")
+            h.addWidget(trailing)
+        # Last rather than beside the deck name: a chip after a name is at a different x
+        # on every row, while the fixed-width cell against the row's right edge (empty on
+        # an up-to-date row) keeps the counts and the chips each in a column of their own.
+        h.addWidget(chip_cell(_STATE_CHIP[r["state"]]))
         return row
 
     def _set_all(self, val):
