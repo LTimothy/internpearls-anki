@@ -78,6 +78,8 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 | `excluded_decks` | Deck names opted out of syncing. Also editable from Manage decks. |
 | `export_deck` | The deck that Backup/Restore/Export intern pearls deck and the automatic pre-sync backup operate on (default: `Intern Pearls::Intern Custom`). |
 | `auto_sync_decks`, `auto_sync_interval_minutes`, `notify_addon_updates`, `auto_update_addon` | Sync and update automation, see Settings below and `config.md` for details on each. |
+| `dim_images_night_mode` | Dim bright pictures while Anki is in Night Mode. Applies to every deck in your collection, not just this add-on's. Also editable from Settings. |
+| `collect_card_feedback` | Put a box under each card on the Update my decks screen for noting anything wrong with it. Off by default. Also editable from Settings. |
 
 ### Advanced submenu
 

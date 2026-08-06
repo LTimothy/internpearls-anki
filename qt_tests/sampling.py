@@ -87,9 +87,10 @@ def text_contrast(shot, widget, sample=12):
     A consequence worth stating plainly: a widget carrying two colours reports only the
     stronger. So the review row's dim tag lead-in, and a cloze deletion inline in a
     sentence, are NOT measured at those sites. Both colours are still in the ledger and
-    still substantiated, because the same two colours also appear alone on a flat button
-    (the caret is the dim colour, the link buttons are the accent), and those uses are
-    measured. Inline-span contrast within a mixed label remains uncovered by this suite.
+    still substantiated, because each also paints alone somewhere the suite does look:
+    dim is the whole of a changed field's "was" line, and the accent is what a flat
+    link-style button carries. Those uses are measured. Inline-span contrast within a
+    mixed label remains uncovered by this suite.
     """
     _, q = harness.bootstrap()
     # QLabel and QPushButton say text(); QPlainTextEdit (the feedback digest, which
