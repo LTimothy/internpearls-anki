@@ -158,6 +158,38 @@ def test_the_source_options_stack_rather_than_share_a_row(shot):
         "choice")
 
 
+SETTINGS_SECTIONS = ("Deck sync", "Add-on updates", "Night mode", "Card review")
+
+
+def test_each_settings_section_is_ruled_off_from_the_next(shot):
+    """Settings is four unrelated decisions in one window, and used to read as one
+    column of small grey prose with checkboxes in it: a bold heading was the only thing
+    marking where one section ended and the next began, and a heading is easy to lose
+    between two paragraphs set at the same weight.
+
+    One hairline sits in each gap now. Measured by position rather than by count alone,
+    since three rules bunched anywhere in the dialog would satisfy a count and separate
+    nothing. That the rule's own colour actually paints is test_declared.py's job.
+    """
+    _, q = harness.bootstrap()
+    s = shot("settings")
+    headings = {l.text(): widget_rect(s.dialog, l)
+                for l in _visible_labels(s.dialog, q) if l.text() in SETTINGS_SECTIONS}
+    assert sorted(headings) == sorted(SETTINGS_SECTIONS), (
+        f"expected every section heading, found {sorted(headings)}")
+    rules = [widget_rect(s.dialog, f).top()
+             for f in s.dialog.findChildren(q.QFrame)
+             if f.isVisible() and f.frameShape() == q.QFrame.Shape.HLine]
+    gaps = {}
+    for above, below in zip(SETTINGS_SECTIONS, SETTINGS_SECTIONS[1:]):
+        top, bottom = headings[above].bottom(), headings[below].top()
+        gaps[f"{above} / {below}"] = [y for y in rules if top < y < bottom]
+    wrong = {gap: found for gap, found in gaps.items() if len(found) != 1}
+    assert not wrong, (
+        f"these section gaps do not hold exactly one hairline: {wrong}. Four sections "
+        "read as four groups only if each boundary is drawn.")
+
+
 def test_review_rows_share_a_left_edge(shot):
     """Tagged and untagged rows must start at the same x.
 
