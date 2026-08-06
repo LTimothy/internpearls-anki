@@ -1,9 +1,13 @@
 """Dialog wrappers, error-safety decorators, and shared widget styling.
 
 Thin wrappers so every dialog carries the "Intern Pearls" title (Anki's helpers
-default to the generic "Anki") and list-style messages get real HTML formatting
-instead of hand-indented text. Route any new dialog through these, not the raw
-aqt.utils calls, so a future addition here stays consistent automatically.
+default to the generic "Anki") and so anything longer than a message box can hold gets
+a real scroll area with its buttons outside it. Route any new dialog through these,
+not the raw aqt.utils calls, so a future addition here stays consistent automatically.
+
+A screen that lists cards, decks or settings does not belong in any of these as text:
+it builds rows (widgets.simple_row, review.build_list_body) and comes back through
+_ask_with_widget. Nothing in the add-on renders an HTML bullet list any more.
 
 The label/button helpers at the bottom exist for the same reason: every dialog's
 headings, hints, and link-style buttons share one look defined here, instead of each
@@ -43,13 +47,16 @@ def _ask(text, **kw):
 def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=340,
                     extra_label=None, on_extra=None, checkbox=None, title=None,
                     open_external_links=False):
-    """Like _ask, but for content whose length isn't bounded by anything short: a
-    bullet list of cards or decks that can grow into the dozens. A plain QMessageBox
-    (what askUser/_ask use) has no scroll area, so long text just makes the box taller,
-    and once it's taller than the screen its Yes/No buttons end up off-screen with no
-    way to reach them, an unusable and undismissable dialog. This scrolls the body in a
-    fixed-height viewport instead, with the buttons pinned outside it, so they're
-    always reachable no matter how long the content is.
+    """Like _ask, but for content whose length isn't bounded by anything short. A plain
+    QMessageBox (what askUser/_ask use) has no scroll area, so long text just makes the
+    box taller, and once it's taller than the screen its Yes/No buttons end up
+    off-screen with no way to reach them, an unusable and undismissable dialog. This
+    scrolls the body in a fixed-height viewport instead, with the buttons pinned outside
+    it, so they're always reachable no matter how long the content is.
+
+    For prose. Every screen that lists cards or decks builds rows and goes through
+    _ask_with_widget below; About is the caller this one is left for, and its length is
+    exactly why it needs the scroll area.
 
     yes_label/no_label default to action-neutral "Continue"/"Cancel" rather than
     "Yes"/"No": a caller with a specific action (e.g. "Archive & relocate") should
