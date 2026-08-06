@@ -16,13 +16,11 @@ widgets Anki does. Nothing in this file ships in the .ankiaddon.
 
 Usage:
     python3 tools/render_dialog.py --list
-    python3 tools/render_dialog.py review --out review.png
-    python3 tools/render_dialog.py review --expand 1 --feedback --dark
-    python3 tools/render_dialog.py review --apkg ~/some/deck.apkg
+    python3 tools/render_dialog.py confirm --out confirm.png
+    python3 tools/render_dialog.py confirm --expand 1 --feedback --dark
     python3 tools/render_dialog.py manage-decks --decks-dir ~/some/deck-source
 
-No card content lives in this file: the default fixture is synthetic, and --apkg
-reads a real deck through the add-on's own apkg_note_details.
+No card content lives in this file: every scene's fixture is synthetic.
 """
 import argparse
 import os
@@ -40,7 +38,7 @@ except ImportError:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("scene", nargs="?", default="review")
+    ap.add_argument("scene", nargs="?", default="confirm")
     ap.add_argument("--list", action="store_true", help="list scenes and exit")
     ap.add_argument("--out", default="dialog.png")
     ap.add_argument("--size", default="640x560", help="WxH, default 640x560")
@@ -50,10 +48,9 @@ def main():
                          "colours for anything that still reads the platform palette. "
                          "That second part is an approximation, not a reproduction of "
                          "night mode")
-    ap.add_argument("--feedback", action="store_true", help="review: feedback boxes on")
-    ap.add_argument("--expand", default="", help="review: row indices to open, e.g. 0,2")
-    ap.add_argument("--limit", type=int, default=0, help="review: cap the card count")
-    ap.add_argument("--apkg", default="", help="review: render a real .apkg's notes")
+    ap.add_argument("--feedback", action="store_true", help="confirm: feedback boxes on")
+    ap.add_argument("--expand", default="", help="row indices to open, e.g. 0,2")
+    ap.add_argument("--limit", type=int, default=0, help="confirm: cap the card count")
     ap.add_argument("--decks-dir", default="", help="manage-decks: a local source folder")
     args = ap.parse_args()
 
@@ -70,7 +67,7 @@ def main():
         theme="dark" if args.dark else "light",
         expand=[int(i) for i in args.expand.split(",") if i.strip()],
         size=(width, height),
-        apkg=args.apkg, limit=args.limit, feedback=args.feedback,
+        limit=args.limit, feedback=args.feedback,
         decks_dir=args.decks_dir,
     )
     shot.image.save(args.out)
