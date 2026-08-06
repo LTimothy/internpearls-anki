@@ -157,7 +157,11 @@ def test_manage_decks_status_pill_recovers_after_a_collection_revert(anki, tmp_p
     deck that was never synced, since that's what's actually true of the collection."""
     from internpearls import dialogs, sync
     anki.mw._config = {"decks_dir": _write_source(tmp_path)}
-    sync.sync_decks()
+    # Sync decks confirms through a widget body of deck rows, so it is driven rather
+    # than called outright: its Update button is what answers the confirmation.
+    drive(anki, sync.sync_decks, lambda p: (
+        {"events": [{"id": find(p["tree"], t="button", label="Update")["id"],
+                     "click": True}]} if p["kind"] == "dialog" else {}))
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
 
     anki.col._notes.clear()
