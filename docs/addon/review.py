@@ -26,7 +26,7 @@ from .logic import (apkg_media_index, build_feedback_digest, cloze_filled_html,
                     field_preview_text, note_display_label, plain_text)
 from .palette import colors
 from .ui import _info, copy_to_clipboard, hint_label, muted_label, title_label
-from .widgets import chip_html, section_header
+from .widgets import StreamingList, chip_html, section_header
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
 # would be a blank row on every single card.
@@ -115,6 +115,50 @@ def _media_resolver(apkg_path, index, dest):
         return cache[name]
 
     return resolve
+
+
+def build_resolvers(sources):
+    """Per-deck picture resolvers for `sources` ({deck_name: .apkg path}), and the
+    TemporaryDirectory they extract into.
+
+    Shared by review_cards and the inline update screen (build_update_body), so a
+    picture only ever gets one extract-on-first-expand pipeline, not two copies of it.
+    The caller must call the returned directory's .cleanup() once whatever screen it
+    feeds has closed.
+    """
+    media_dir = tempfile.TemporaryDirectory()
+    resolvers = {}
+    for name, path in (sources or {}).items():
+        media_index = apkg_media_index(path)
+        if media_index:
+            resolvers[name] = _media_resolver(
+                path, media_index, os.path.join(media_dir.name, str(len(resolvers))))
+    return resolvers, media_dir
+
+
+def pending_entries(boxes, flags, index, carried):
+    """{guid: {note, deck, front}} for everything currently flagged: every box that
+    currently holds text, plus any flag with no box here at all.
+
+    Shared by review_cards and the inline update screen, so what gets written to disk
+    mid-session is decided in exactly one place. `carried` is load_saved_feedback()'s
+    own record, read once by the caller: the fallback for a flagged guid that has
+    neither a box nor an `index` entry here, a note left over from an earlier session
+    about a card whose deck already imported last run and so isn't shown at all this
+    time. Rebuilding its deck/front from `index` alone would write the bare GUID in as
+    the front instead of the name the earlier session actually saved.
+    """
+    entries = {g: {"note": t, "deck": index.get(g, ("", ""))[0],
+                   "front": index.get(g, ("", g))[1]}
+               for g, box in boxes.items()
+               for t in [box.toPlainText().strip()] if t}
+    for g, note in flags.items():
+        if g in entries or g in boxes:
+            continue
+        entries[g] = dict(carried.get(g) or {}, note=note) if carried.get(g) else {
+            "note": note, "deck": index.get(g, ("", ""))[0],
+            "front": index.get(g, ("", g))[1]}
+    return entries
 
 
 class _ClickableLabel(QLabel):
@@ -631,13 +675,7 @@ def review_cards(parent, decks, flags, unreadable=(), sources=None):
     # Each card's deck and readable front, so a note saved to disk can still name the
     # card it is about in a later session, when this run's own index is long gone.
     index = {}
-    media_dir = tempfile.TemporaryDirectory()
-    resolvers = {}
-    for name, path in (sources or {}).items():
-        media_index = apkg_media_index(path)
-        if media_index:
-            resolvers[name] = _media_resolver(
-                path, media_index, os.path.join(media_dir.name, str(len(resolvers))))
+    resolvers, media_dir = build_resolvers(sources)
     for deck_name, details in decks:
         if not details:
             continue
@@ -651,28 +689,14 @@ def review_cards(parent, decks, flags, unreadable=(), sources=None):
                                      resolve=resolvers.get(deck_name)))
     ilay.addStretch(1)
 
-    # What is already on disk, read once. A note carried in from an earlier session is
-    # about a card this dialog may not be showing at all (its deck imported last time),
-    # so this dialog cannot name it: only the saved entry still knows its deck and
-    # front. Rebuilding it from `index` instead wrote the GUID in as the front and lost
-    # the card's identity on the very first re-save.
+    # Read once. A note carried in from an earlier session is about a card this dialog
+    # may not be showing at all (its deck imported last time), so this dialog cannot
+    # name it on its own. pending_entries falls back to what the saved entry itself
+    # knows about its deck and front.
     carried = load_saved_feedback()
 
     def _current_entries():
-        entries = {g: {"note": t, "deck": index.get(g, ("", ""))[0],
-                       "front": index.get(g, ("", g))[1]}
-                   for g, box in boxes.items()
-                   for t in [box.toPlainText().strip()] if t}
-        # Notes carried in from an earlier session are pending too: dropping them
-        # because this dialog has no box for that card would lose exactly the notes
-        # this whole mechanism exists to keep.
-        for g, note in flags.items():
-            if g in entries or g in boxes:
-                continue
-            entries[g] = dict(carried.get(g) or {}, note=note) if carried.get(g) else {
-                "note": note, "deck": index.get(g, ("", ""))[0],
-                "front": index.get(g, ("", g))[1]}
-        return entries
+        return pending_entries(boxes, flags, index, carried)
 
     # Debounced rather than saving on every keystroke: a burst of typing collapses into
     # one write, and 400ms is far below the time any of the losing scenarios take.
@@ -706,6 +730,93 @@ def review_cards(parent, decks, flags, unreadable=(), sources=None):
     saver.stop()                    # the final state, not whatever the debounce had
     save_feedback(_current_entries())
     return flags
+
+
+def build_update_body(items, sources, flags, new_index, collect_feedback,
+                      top_html, flagged_line, safety_html):
+    """The Update my decks screen's body: fixed summary text, the streaming list of
+    pending new and changed cards, then the flagged-card count and the safety note
+    below it. `internpearls.ui._ask_with_widget` wraps whatever this returns with the
+    dialog's title and its Update/Cancel buttons, the same as any other confirmation.
+
+    `items` is a mix of ("header", deck_short_name), ("sep",), and ("card", deck_name,
+    detail) entries, one per pending card, built by sync.py from every deck's new and
+    changed cards. A header groups a deck's rows and a sep draws the hairline between
+    two cards, the same way review_cards' own deck loop does. `sources` is
+    {deck_name: .apkg path}, threaded straight into build_resolvers so a row's pictures
+    extract from the same already-downloaded file review_cards used to read them from.
+
+    `flags`/`new_index` are the {guid: note}/{guid: (deck, front)} maps update_decks()
+    already carries through the run. A row's box writes into `flags` live, on every
+    keystroke, rather than only when a separate review dialog closes: there is no such
+    closing moment left once the rows sit on the confirmation itself.
+
+    `flagged_line()` is called fresh on every keystroke to recompute the "N card(s)
+    flagged" line shown below the list; `safety_html` is fixed.
+
+    Returns (widget, boxes, flush). `boxes` is {guid: QPlainTextEdit}, built lazily as
+    the list's own rows are. `flush()` stops the debounce save timer, writes one final
+    unconditional copy of what's flagged to disk, and releases the temporary directory
+    pictures were extracted into; the caller runs it once, right after the dialog this
+    body sits in has closed.
+    """
+    resolvers, media_dir = build_resolvers(sources)
+    boxes = {}
+    carried = load_saved_feedback()
+
+    def _entries():
+        return pending_entries(boxes, flags, new_index, carried)
+
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(8)
+
+    top = _rich_label(top_html)
+    lay.addWidget(top)
+
+    bottom = _rich_label(flagged_line() + safety_html)
+
+    saver = QTimer(body)
+    saver.setSingleShot(True)
+    saver.setInterval(400)
+    saver.timeout.connect(lambda: save_feedback(_entries()))
+
+    def _on_change(guid, box):
+        note = box.toPlainText().strip()
+        if note:
+            flags[guid] = note
+        else:
+            flags.pop(guid, None)   # she cleared it; treat that as unflagging
+        bottom.setText(_preview_style() + flagged_line() + safety_html)
+        saver.start()
+
+    def _row(item):
+        if item[0] == "header":
+            return section_header(item[1])
+        if item[0] == "sep":
+            return _separator()
+        _, deck_name, detail = item
+        row = _card_row(detail, flags, boxes, collect_feedback,
+                        resolve=resolvers.get(deck_name))
+        box = boxes.get(detail["guid"])
+        if box is not None:
+            box.textChanged.connect(lambda g=detail["guid"], b=box: _on_change(g, b))
+        return row
+
+    if items:
+        lay.addWidget(StreamingList(_row, items), 1)
+    else:
+        lay.addStretch()
+
+    lay.addWidget(bottom)
+
+    def flush():
+        saver.stop()                    # the final state, not whatever the debounce had
+        save_feedback(_entries())
+        media_dir.cleanup()
+
+    return body, boxes, flush
 
 
 def show_result_with_feedback(summary_html, entries):

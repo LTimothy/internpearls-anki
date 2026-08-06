@@ -9,7 +9,6 @@ review history exists exactly once. _reconcile_pending is the equivalent single
 source of truth for what "Reconcile my decks" would find pending, shared by
 reconcile_decks() and update_decks() so the two can never disagree.
 """
-import html
 import json
 import os
 import tempfile
@@ -39,9 +38,10 @@ from .logic import (apkg_note_details, apkg_notes, bullets, decks_to_update,
                     note_display_label, remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
 from .palette import colors
-from .review import (clear_saved_feedback, load_saved_feedback,
-                     review_cards, show_result_with_feedback)
-from .ui import _ask, _ask_scrollable, _info, _safe, _warn, cancellable_progress, wait_cursor
+from .review import (build_update_body, clear_saved_feedback, load_saved_feedback,
+                     show_result_with_feedback)
+from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _safe, _warn,
+                 cancellable_progress, wait_cursor)
 
 
 # The "Reconcile my decks" QAction, set once by __init__.py right after building the
@@ -701,6 +701,50 @@ def _preview_content_changes(fetch, todo, her, aliases, her_fields=None):
     return preview, downloaded, False
 
 
+def _gather_pending_items(todo, preview, downloaded):
+    """Every new and changed card this update would apply, read in full and ready for
+    the inline card list on the confirmation.
+
+    This always runs, unlike the old Review button's lazy read on a click: the rows are
+    always on screen now, and widgets.StreamingList is what keeps building them cheap
+    regardless of how many are pending, not deferring the read itself.
+
+    Returns (items, failed, sources). `items` is a mix of ("header", deck_short_name),
+    ("sep",), and ("card", deck_name, detail) entries, one card per pending row, each
+    detail tagged "kind" ("new" or "changed") and, for a changed one, "was" (what her
+    copy currently says), the same two things the old Review button's dialog used to
+    tag before this screen replaced it. `failed` names decks whose pending cards could
+    not be read; the update itself is unaffected, those decks just are not shown here.
+    `sources` is {deck_name: .apkg path}, for the row pictures' resolvers.
+    """
+    items, failed, sources = [], [], {}
+    for d in todo:
+        pc = preview.get(d["name"])
+        src = downloaded.get(d["name"])
+        if not pc or isinstance(src, Exception) or not src:
+            continue
+        if not pc[2] and not pc[3]:
+            continue
+        try:
+            rids = [r for r, _, _ in pc[2]] + list(pc[3])
+            details = apkg_note_details(src, rids)
+        except Exception as e:
+            failed.append(f"{d['name'].split('::')[-1]} ({e})")
+            continue
+        if not details:
+            continue
+        new_rids = {r for r, _, _ in pc[2]}
+        items.append(("header", d["name"].split("::")[-1]))
+        for i, detail in enumerate(details):
+            if i:
+                items.append(("sep",))   # between cards, not before the first
+            detail["kind"] = "new" if detail["rid"] in new_rids else "changed"
+            detail["was"] = pc[3].get(detail["rid"], {})
+            items.append(("card", d["name"], detail))
+        sources[d["name"]] = src
+    return items, failed, sources
+
+
 @_safe
 def update_decks():
     """The one-click front door: computes everything pending — deck content updates,
@@ -812,25 +856,11 @@ def update_decks():
     if todo:
         sections.append(
             f"<b>{len(todo)}</b> deck(s) have updates:" + bullets([_line(d) for d in todo], cap=15))
-    if new_cards:
-        # New cards get named here, not just counted, and the count alone is what this
-        # section exists to replace: retired and relocated cards were already listed by
-        # front, so a card being ADDED was the one kind that used to arrive as a bare
-        # number. note_display_label is plain text (tags stripped, entities decoded), so
-        # it has to be escaped on the way back into this HTML: an unescaped front like
-        # "SpO2 <94%" would otherwise be parsed as a tag and swallow the rest of the line.
-        new_lines = [f"{html.escape(label)} <span style='color:{muted};'>"
-                     f"({deck.split('::')[-1]})</span>" for deck, label, _ in new_cards]
-        sections.append(
-            f"<b>{len(new_cards)}</b> card(s) will be added that you don't have yet."
-            + bullets(new_lines, cap=15))
-    if changed_cards:
-        changed_lines = [f"{html.escape(label)} <span style='color:{muted};'>"
-                         f"({deck.split('::')[-1]})</span>"
-                         for deck, label, _ in changed_cards]
-        sections.append(
-            f"<b>{len(changed_cards)}</b> card(s) you already have will change. Your "
-            "review history stays with them." + bullets(changed_lines, cap=15))
+    # new_cards and changed_cards no longer get their own bullet-list sections here:
+    # they are what the inline card list below is built from (see
+    # _gather_pending_items), which is the whole point of this screen replacing the old
+    # "Review N card(s)" button. new_cards/changed_cards themselves are still needed
+    # above, to build new_index.
     if fresh:
         lines = [f"{r['identity']} <span style='color:{muted};'>"
                  f"({r['deck'].split('::')[-1]})</span>" for r in fresh]
@@ -855,73 +885,20 @@ def update_decks():
         "while. Future updates should be much shorter.</i><br><br>"
         if len(fresh) + len(moves) + len(stranded) > 20 else "")
     safety_note = (
-        "<br><br>This is a preview: nothing above has been applied yet. Your "
+        "This is a preview: nothing above has been applied yet. Your "
         "review history and any personal notes on existing cards are kept (matched "
         "by card, not overwritten). Archived cards keep their history too and can "
         "be brought back anytime by unsuspending them or moving them out of the "
         "Retired deck, nothing here is ever deleted. A backup is taken "
         "automatically first.")
 
-    def _body():
-        carried = (f" {recovered} of them carried over from an earlier session."
-                   if recovered else "")
-        flagged = (f"<br><br><b>{len(flags)} card(s) flagged.</b>{carried} You'll get a "
-                   "summary to send back when this finishes."
-                   if cfg["collect_feedback"] and flags else "")
-        return catch_up_note + "<br><br>".join(sections) + flagged + safety_note
-
-    def _open_review(parent):
-        """Read the new and changed cards in full and hand them to the review dialog.
-
-        Not the only place that pays for apkg_note_details any more:
-        `_preview_content_changes` already calls it per pending deck to build the
-        changed-fields diff, and the `changed_cards` loop above calls it again to name
-        what will change in the confirmation. This call is the one that only runs when
-        she actually asks to see the cards, reading the review dialog's full field set
-        rather than just what those two callers needed. Every call reads the same
-        already-downloaded, already-cached .apkg, so the cost here is a local file
-        read, not another fetch. A deck that can't be read is reported and skipped
-        rather than blocking the rest, matching how a failed preview download already
-        degrades: the update itself doesn't depend on any of this, so a broken preview
-        must never be able to stop it.
-
-        That same downloaded file is what a row's pictures are extracted from when it is
-        opened, so showing one costs a local read rather than another fetch. Each detail
-        is tagged with `kind` ("new" or "changed") and, for a changed one, `was` (what
-        her copy currently says), so the dialog can render both without guessing which
-        is which from the id alone.
-        """
-        decks, failed, sources = [], [], {}
-        for d in todo:
-            pc = preview.get(d["name"])
-            src = downloaded.get(d["name"])
-            if not pc or isinstance(src, Exception) or not src:
-                continue
-            if not pc[2] and not pc[3]:
-                continue
-            try:
-                rids = [r for r, _, _ in pc[2]] + list(pc[3])
-                details = apkg_note_details(src, rids)
-            except Exception as e:
-                failed.append(f"{d['name'].split('::')[-1]} ({e})")
-                continue
-            new_rids = {r for r, _, _ in pc[2]}
-            for detail in details:
-                detail["kind"] = "new" if detail["rid"] in new_rids else "changed"
-                detail["was"] = pc[3].get(detail["rid"], {})
-            decks.append((d["name"], details))
-            sources[d["name"]] = src
-        if not decks:
-            if failed:
-                _warn("Couldn't read the pending cards from:" + bullets(failed) +
-                      "<br>The update itself is unaffected; there is just nothing to "
-                      "show here.")
-            return None
-        # Named inside the review dialog rather than as a warning box in front of it:
-        # it is context for the list she asked to see, and the update does not depend
-        # on any of it.
-        review_cards(parent, decks, flags, unreadable=failed, sources=sources)
-        return _body()
+    def _flagged_line():
+        if not (cfg["collect_feedback"] and flags):
+            return ""
+        carried_txt = (f" {recovered} of them carried over from an earlier session."
+                       if recovered else "")
+        return (f"<b>{len(flags)} card(s) flagged.</b>{carried_txt} You'll get a "
+                "summary to send back when this finishes.<br><br>")
 
     def _finish(summary_html=None):
         """End the run: the summary and her notes as one dialog, then drop the saved
@@ -956,19 +933,22 @@ def update_decks():
             + ", ".join(f"<b>{n}</b>" for n in sorted(pending_templates))
             + ". Your review history and card content are unaffected either way.")
 
-    if new_cards and changed_cards:
-        review_label = f"Review {len(new_cards) + len(changed_cards)} card(s)"
-    elif new_cards:
-        review_label = f"Review {len(new_cards)} new card(s)"
-    elif changed_cards:
-        review_label = f"Review {len(changed_cards)} changed card(s)"
-    else:
-        review_label = None
+    items, unreadable, sources = _gather_pending_items(todo, preview, downloaded)
+    if unreadable:
+        sections.append(
+            f"<span style='color:{muted};'>Couldn't read the pending cards from "
+            + ", ".join(unreadable) + ". The update itself is unaffected; those decks "
+            "just aren't shown here.</span>")
 
-    if not _ask_scrollable(
-            _body(), yes_label="Update",
-            extra_label=review_label,
-            on_extra=_open_review, checkbox=tpl_choice):
+    top_html = catch_up_note + "<br><br>".join(sections)
+    body, _boxes, flush = build_update_body(
+        items, sources, flags, new_index, cfg["collect_feedback"], top_html,
+        _flagged_line, safety_note)
+
+    accepted = _ask_with_widget(body, yes_label="Update", checkbox=tpl_choice)
+    flush()
+
+    if not accepted:
         _finish()
         return
 
