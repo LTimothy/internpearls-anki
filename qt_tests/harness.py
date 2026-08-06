@@ -396,26 +396,67 @@ def _scene_configure_source(mock, opts):
     return dialogs.configure_source
 
 
-def _scene_confirm(mock, opts):
-    """The Update my decks confirmation.
-
-    This one is our own Qt dialog (_ask_scrollable, which exists because a plain
-    QMessageBox has no scroll area and a long card list just makes the box taller), so
-    it renders. The plain _ask and _info message boxes route through mocked aqt.utils
-    and have no real widget to grab, which is why they are not scenes.
+def _scene_ask_scrollable(mock, opts):
+    """A plain _ask_scrollable confirmation: reconcile_decks, clean_up_duplicates,
+    remove_empty_cards, and Sync decks' own "Update these decks?" all render through
+    this wrapper today. Kept as its own scene (distinct from "confirm", which moved to
+    a widget body once it became the Update my decks screen) so this shared wrapper's
+    own behavior, the scroll area, the top-alignment, the closed-by-default external
+    links, stays under render test regardless of what any one caller currently does.
     """
     from internpearls.ui import _ask_scrollable
     body = (
         "<b>Example Deck</b><ul>"
         + "".join(f"<li>{d['fields'][0][1]}</li>" for d in synthetic_details()[:3])
-        + "</ul><p>Nothing is added until you choose Update.</p>")
-    # `checkbox` renders the subordinate decision the confirmation carries (applying a
-    # deck's new card look), which used to interrupt the run with its own question.
+        + "</ul><p>Nothing is added until you choose Continue.</p>")
     checkbox = ({"label": "Also apply the new card look (forces a one-time full "
                           "AnkiWeb sync)", "checked": False}
                 if opts.get("checkbox") else None)
-    return lambda: _ask_scrollable(body, yes_label="Update", no_label="Cancel",
+    return lambda: _ask_scrollable(body, yes_label="Continue", no_label="Cancel",
                                    checkbox=checkbox)
+
+
+def _scene_confirm(mock, opts):
+    """The Update my decks confirmation: fixed summary text above the streaming list
+    of pending new and changed cards, built the same way sync.py's update_decks()
+    builds it (widgets.StreamingList over review._card_row rows), wrapped by
+    ui._ask_with_widget rather than _ask_scrollable, since the list needs to take the
+    dialog's available height instead of sitting inside one scrollable label.
+    """
+    from internpearls import review
+    from internpearls.ui import _ask_with_widget
+    details = synthetic_details()
+    if opts.get("limit"):
+        details = details[:opts["limit"]]
+    mock.mw._config = {"collect_card_feedback": opts.get("feedback", False)}
+    items = [("header", "Example Deck")]
+    for i, d in enumerate(details):
+        if i:
+            items.append(("sep",))
+        items.append(("card", "Example Deck", d))
+    sources = {"Example Deck": _fixture_image_apkg()} if opts.get("image") else {}
+    top_html = ("<b>1</b> deck(s) have updates:<ul><li>Example Deck (3 kept "
+               "(1 changing) &middot; 2 new)</li></ul>")
+    safety = ("This is a preview: nothing above has been applied yet. Your review "
+              "history and any personal notes on existing cards are kept (matched by "
+              "card, not overwritten). A backup is taken automatically first.")
+    flags = {}
+    new_index = {d["guid"]: ("Example Deck", d["fields"][0][1]) for d in details}
+    checkbox = ({"label": "Also apply the new card look (forces a one-time full "
+                          "AnkiWeb sync)", "checked": False}
+               if opts.get("checkbox") else None)
+
+    def _flagged_line():
+        return ""
+
+    def _open():
+        body, _boxes, flush = review.build_update_body(
+            items, sources, flags, new_index, opts.get("feedback", False),
+            top_html, _flagged_line, safety)
+        _ask_with_widget(body, yes_label="Update", checkbox=checkbox)
+        flush()
+
+    return _open
 
 
 def _scene_result(mock, opts):
@@ -440,7 +481,8 @@ SCENES = {
                      "the deck manager (decks_dir for a source, empty for no decks)"),
     "about": (_scene_about, "the About dialog"),
     "configure-source": (_scene_configure_source, "the deck-source configuration form"),
-    "confirm": (_scene_confirm, "the Update my decks confirmation (_ask_scrollable)"),
+    "confirm": (_scene_confirm, "the Update my decks confirmation (inline card list)"),
+    "ask-scrollable": (_scene_ask_scrollable, "a plain _ask_scrollable confirmation"),
     "result": (_scene_result, "the end-of-run summary and feedback digest, one dialog"),
 }
 
