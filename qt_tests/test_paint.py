@@ -35,7 +35,7 @@ def test_the_why_rule_actually_paints_green(shot):
     """
     _, q = harness.bootstrap()
     why_rule = palette.LIGHT["why"]
-    s = shot("review", expand=(0,))
+    s = shot("confirm", expand=(0,))
     why = next(w for w in s.dialog.findChildren(q.QLabel)
                if "common case" in w.text())
     rect = widget_rect(s.dialog, why)
@@ -48,7 +48,7 @@ def test_the_why_rule_actually_paints_green(shot):
 def test_the_dosing_block_paints_its_own_background(shot):
     """Row 1 is the only fixture row with a Dosing field."""
     dosing_bg, dosing_fg = palette.LIGHT["dosing_bg"], palette.LIGHT["dosing_fg"]
-    s = shot("review", expand=(1,))
+    s = shot("confirm", expand=(1,))
     painted = colour_counts(s.image)
     assert painted.get(dosing_bg, 0) > 0, f"the dosing background {dosing_bg} is absent"
     assert painted.get(dosing_fg, 0) > 0, (
@@ -61,7 +61,7 @@ def test_the_dosing_block_stays_readable_on_a_dark_palette(shot):
     """The regression that mattered: a hardcoded background needs a hardcoded
     foreground, or the theme flips one and not the other."""
     dosing_bg, dosing_fg = palette.DARK["dosing_bg"], palette.DARK["dosing_fg"]
-    s = shot("review", theme="dark", expand=(1,))
+    s = shot("confirm", theme="dark", expand=(1,))
     painted = colour_counts(s.image)
     assert painted.get(dosing_bg, 0) > 0 and painted.get(dosing_fg, 0) > 0, (
         "the dosing block loses its own colours on a dark palette")
@@ -69,7 +69,7 @@ def test_the_dosing_block_stays_readable_on_a_dark_palette(shot):
 
 def test_a_cloze_deletion_paints_in_the_decks_blue(shot):
     cloze_colour = palette.LIGHT["accent"]
-    s = shot("review")
+    s = shot("confirm")
     assert colour_counts(s.image).get(cloze_colour, 0) > 0, (
         f"no cloze blue {cloze_colour}: the <style> block is being dropped, so "
         "deletions are rendering as plain text")
@@ -83,7 +83,7 @@ def test_only_one_hairline_is_drawn_between_two_rows(shot):
     line.
     """
     row_rule = palette.LIGHT["row_rule"]
-    s = shot("review")
+    s = shot("confirm")
     widths = set()
     for y in range(s.image.height()):
         run = 0
@@ -116,9 +116,9 @@ def test_a_row_markers_background_actually_paints(shot):
     from internpearls.widgets import CHIPS
     pairs = {"new": (palette.LIGHT["new_bg"], palette.LIGHT["new_fg"]),
              "changed": (palette.LIGHT["updated_bg"], palette.LIGHT["updated_fg"])}
-    s = shot("review")
+    s = shot("confirm")
     painted = colour_counts(s.image)
-    for kind in pairs:   # review only ever renders these two chip kinds (see sync.py)
+    for kind in pairs:   # only these two chip kinds carry a card row (see sync.py)
         label = CHIPS[kind]
         background, _foreground = pairs[kind]
         assert painted.get(background, 0) > 0, (
@@ -230,7 +230,7 @@ def test_an_expanded_image_row_paints_the_picture_itself(shot):
     approximated by a placeholder.
     """
     harness.bootstrap()
-    s = shot("review", expand=(4,), image=True)
+    s = shot("confirm", expand=(4,), image=True)
     assert colour_counts(s.image).get("#ff00ff", 0) > 100, (
         "the extracted picture is not painting: Qt did not load the file the <img> src "
         "points at")

@@ -24,8 +24,8 @@ def test_the_dark_palette_is_actually_dark():
 def test_light_and_dark_render_differently(shot):
     """The end-to-end version: not just that the palette object changed, but that the
     pixels did. This is the assertion the old --dark flag would have failed."""
-    light = shot("review", theme="light")
-    dark = shot("review", theme="dark")
+    light = shot("confirm", theme="light")
+    dark = shot("confirm", theme="dark")
     assert light.image != dark.image, (
         "the dark render is pixel-identical to the light one, so the theme is not "
         "reaching the widgets and every dark assertion here is testing light twice")
