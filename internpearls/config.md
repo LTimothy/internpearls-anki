@@ -80,6 +80,14 @@ loop. GitHub's request volume at that floor is still trivial: one small `manifes
 fetch a minute, well under even the unauthenticated 60-per-hour limit. Defaults to `15`.
 Editable in Intern Pearls → Settings.
 
+## dim_images_night_mode
+
+When on, bright pictures are dimmed while Anki is in Night Mode, so a white-background
+diagram doesn't glare out of a dark card. Applies to every deck in your collection, not
+just this add-on's, since it works by styling images themselves rather than one note
+type. Takes effect immediately, with no Anki restart. Defaults to `false`. Editable in
+Intern Pearls → Settings.
+
 ## collect_card_feedback
 
 When on, the Update my decks screen puts a box under each card it lists for noting

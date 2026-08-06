@@ -301,7 +301,7 @@ def test_settings_saves_feedback_toggle(anki):
     def respond(p):
         if p["kind"] == "dialog":
             feedback = find(p["tree"], t="check",
-                            label="Let me flag problems with new cards as they sync")
+                            label="Let me flag problems with cards as they sync")
             assert feedback is not None
             save = find(p["tree"], t="button", label="Save")
             return {"events": [{"id": feedback["id"], "value": True},
