@@ -19,11 +19,15 @@ ON_WINDOW = ("why", "accent", "dim", "muted", "warning", "updated_fg")
 # Roles that carry their own background, so they answer to it instead.
 PAIRS = (("dosing_fg", "dosing_bg"), ("new_fg", "new_bg"), ("updated_fg", "updated_bg"),
         ("retired_fg", "retired_bg"), ("moved_fg", "moved_bg"))
-# Roles that are not text at all (a rule/divider colour), so no contrast check applies.
-# Named explicitly rather than left implicit, so the completeness test below stays an
-# honest check of every role in palette.py rather than a silent pass on anything absent
-# from ON_WINDOW and PAIRS.
-NON_TEXT_ROLES = ("row_rule", "cell_rule")
+# Roles that are not text at all (a rule/divider colour), so the AA checks above don't
+# apply to them. They still answer to the window they're drawn on, at the separation
+# threshold in the rules test below rather than at AA. Named explicitly rather than left
+# implicit, so the completeness test below stays an honest check of every role in
+# palette.py rather than a silent pass on anything absent from ON_WINDOW and PAIRS.
+NON_TEXT_ROLES = ("row_rule", "cell_rule", "panel_rule")
+# The separation a rule needs from its window to be a line rather than a suggestion of
+# one. Below this the list it divides reads as one undifferentiated block.
+RULE_SEPARATION = 1.25
 
 
 def _luminance(value):
@@ -70,6 +74,30 @@ def test_marker_chips_stand_off_their_window_enough_to_read_as_chips():
         for bg in ("new_bg", "updated_bg", "retired_bg", "moved_bg"):
             got = contrast(colors[bg], WINDOW[theme])
             assert got >= 1.4, f"{theme}/{bg} only {got:.2f}:1 off its window"
+
+
+def test_every_rule_stands_off_its_own_window():
+    """A divider is measured against the window the same way a chip background is: its
+    job is separation, and a rule that doesn't clear the window is a rule nobody sees."""
+    for theme, colors in _sets().items():
+        for role in NON_TEXT_ROLES:
+            got = contrast(colors[role], WINDOW[theme])
+            assert got >= RULE_SEPARATION, (
+                f"{theme}/{role} only {got:.2f}:1 off its window")
+
+
+def test_the_panel_rule_separates_at_least_as_well_on_dark_as_on_light():
+    """The failure this role exists for: the deck rows were outlined in one translucent
+    grey for both themes, which resolves to roughly the same distance from a light
+    window as from a dark one on paper while reading far flatter on the dark one, where
+    the eye has less range to spend. Holding dark at or above light is what keeps
+    Night Mode's deck list a list of cards rather than a block of text.
+    """
+    light = contrast(palette.LIGHT["panel_rule"], WINDOW["light"])
+    dark = contrast(palette.DARK["panel_rule"], WINDOW["dark"])
+    assert dark >= light, (
+        f"the panel rule separates {dark:.2f}:1 on dark against {light:.2f}:1 on "
+        "light: the dark theme is the flatter of the two again")
 
 
 def test_both_sets_define_exactly_the_same_roles():

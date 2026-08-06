@@ -362,8 +362,12 @@ class _DeckManagerDialog(QDialog):
     def _deck_row(self, r):
         row = QFrame()
         row.setObjectName("deckRow")
-        row.setStyleSheet(
-            "#deckRow { border: 1px solid rgba(128,128,128,0.35); border-radius: 6px; }")
+        # The outline that makes each deck read as its own card rather than a line in a
+        # block of text, so it needs a value per theme like everything else drawn against
+        # the window: one colour dark enough to see on a light window disappears into a
+        # dark one, and the list goes flat in Night Mode.
+        row.setStyleSheet(f"#deckRow {{ border: 1px solid {colors()['panel_rule']};"
+                          " border-radius: 6px; }")
         h = QHBoxLayout(row)
         h.setContentsMargins(11, 8, 11, 8)
         cb = QCheckBox(r["short"])
