@@ -280,9 +280,9 @@ _MANAGE_DECKS_FIXTURE = None
 
 def _manage_decks_fixture(mock):
     """A manifest with one deck per sync state (new, update, current), plus the
-    matching installed state file and collection notes, so all three state pills
-    actually paint. Without this the scene's deck list was empty and the pills that
-    read _STATE_STYLE were never measured by the render suite at all. Deck names are
+    matching installed state file and collection notes, so all three states actually
+    paint. Without this the scene's deck list was empty and the rows that read
+    _STATE_CHIP were never measured by the render suite at all. Deck names are
     invented, like the rest of this file.
 
     Built once and cached: this writes real notes into the shared mock collection

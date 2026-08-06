@@ -103,7 +103,7 @@ def test_menu_actions_call_real_functions(anki, tmp_path):
 
 # ----------------------------------------------------------------- manage decks
 def test_manage_decks_exclude_and_save(anki, tmp_path):
-    from internpearls import dialogs
+    from internpearls import dialogs, widgets
     anki.mw._config = {"decks_dir": _write_source(tmp_path)}
     anki.gui.interactive = True
 
@@ -111,8 +111,10 @@ def test_manage_decks_exclude_and_save(anki, tmp_path):
         if p["kind"] == "dialog":
             row = find(p["tree"], t="check")
             assert row and "Pharm" in row["label"] and row["checked"]
-            pill = find(p["tree"], t="label", text="1 card · New")
-            assert pill, "status pill must show card count and New state"
+            assert find(p["tree"], t="label", text=widgets.CHIPS["new"]), \
+                "a deck the collection has none of must carry the NEW chip"
+            assert find(p["tree"], t="label", text="1 card"), \
+                "the row must still show its card count"
             save = find(p["tree"], t="button", label="Save")
             return {"events": [{"id": row["id"], "value": False},
                                {"id": save["id"], "click": True}]}
@@ -150,12 +152,12 @@ def test_manage_decks_save_and_update_now_runs_update_decks(anki, tmp_path):
     assert any("Update complete" in i for i in anki.gui.infos)
 
 
-def test_manage_decks_status_pill_recovers_after_a_collection_revert(anki, tmp_path):
+def test_manage_decks_status_chip_recovers_after_a_collection_revert(anki, tmp_path):
     """installed.json survives a collection revert (it lives outside the collection
-    file), so without reconciliation the status pill would keep reading "Current" for
-    a deck whose cards the revert just erased. It should read "New" again, same as a
-    deck that was never synced, since that's what's actually true of the collection."""
-    from internpearls import dialogs, sync
+    file), so without reconciliation the row would keep reading "Up to date" for a deck
+    whose cards the revert just erased. It should chip as NEW again, same as a deck that
+    was never synced, since that's what's actually true of the collection."""
+    from internpearls import dialogs, sync, widgets
     anki.mw._config = {"decks_dir": _write_source(tmp_path)}
     # Sync decks confirms through a widget body of deck rows, so it is driven rather
     # than called outright: its Update button is what answers the confirmation.
@@ -170,20 +172,57 @@ def test_manage_decks_status_pill_recovers_after_a_collection_revert(anki, tmp_p
 
     def respond(p):
         assert p["kind"] == "dialog"
-        pill = find(p["tree"], t="label", text="1 card · New")
-        assert pill, "status pill must revert to New once the collection lost the deck"
+        assert find(p["tree"], t="label", text=widgets.CHIPS["new"]), \
+            "the row must chip as NEW again once the collection lost the deck"
+        assert find(p["tree"], t="label", text="1 card"), \
+            "the row must still show its card count"
         cancel = find(p["tree"], t="button", label="Cancel")
         return {"events": [{"id": cancel["id"], "click": True}]}
 
     drive(anki, dialogs.manage_decks, respond)
 
 
-def test_deck_state_pills_use_the_palette():
-    from internpearls import dialogs, palette
-    active = palette.colors()
-    for state in ("new", "update", "current"):
-        label, role = dialogs._STATE_STYLE[state]
-        assert role in active, f"{state} pill uses an unknown palette role {role!r}"
+def test_deck_states_reuse_the_shared_chip_kinds():
+    """Manage decks and Sync decks' confirmation both list decks and a reader moves
+    between them, so a deck's state has to be the same chip on both. "current" maps to
+    no chip deliberately: it's the resting state of most rows, and _deck_row leaves it
+    as muted text rather than giving it a colour of its own."""
+    from internpearls import dialogs, logic, widgets
+    for state, kind in dialogs._STATE_CHIP.items():
+        assert kind is None or kind in widgets.CHIPS, (
+            f"{state} names a chip kind {kind!r} nothing paints")
+    assert dialogs._STATE_CHIP["current"] is None
+    manifest = {"decks": [{"name": "A", "version": "v2"}, {"name": "B", "version": "v2"},
+                          {"name": "C", "version": "v1"}]}
+    produced = {r["state"] for r in
+                logic.deck_status(manifest, {"B": "v1", "C": "v1"}, ())}
+    assert produced == set(dialogs._STATE_CHIP), (
+        "a state deck_status returns with no entry here raises when its row builds")
+
+
+def test_a_deck_row_chips_its_state_and_keeps_its_count_muted():
+    """All three states in one place, which no source fixture offers at once: a chipped
+    row says its state once (in the chip, not also in words beside it), and the resting
+    row says "Up to date" in the same muted trailing text that carries the count."""
+    from internpearls import dialogs, palette, widgets
+
+    def labels(state):
+        # _deck_row reads its row dict and files the checkbox under self._checks,
+        # nothing else, so a bare instance is enough to build one without standing up
+        # the whole dialog (and its source fetch) around it.
+        panel = dialogs._DeckManagerDialog.__new__(dialogs._DeckManagerDialog)
+        panel._checks = {}
+        row = panel._deck_row({"name": f"Root::{state}", "short": state, "cards": 4,
+                               "enabled": True, "state": state})
+        return [n for n in walk(row.node()) if n.get("t") == "label"]
+
+    texts = {state: [n["text"] for n in labels(state)]
+             for state in ("new", "update", "current")}
+    assert texts["new"] == ["4 cards", widgets.CHIPS["new"]]
+    assert texts["update"] == ["4 cards", widgets.CHIPS["changed"]]
+    assert texts["current"] == ["4 cards · Up to date"], "the resting row takes no chip"
+    trailing = next(n for n in labels("current") if n["text"].startswith("4 cards"))
+    assert palette.colors()["muted"] in trailing["style"]
 
 
 def test_manage_decks_source_label_uses_the_palette_not_a_css_keyword(anki, tmp_path):
