@@ -47,35 +47,6 @@ def _make_mock_apkg(path, notes, models=None):
     os.remove(db_path)
 
 
-# --------------------------------------------------------------------------- bullets
-def test_bullets_wraps_each_item_in_li():
-    html = logic.bullets(["a", "b"])
-    assert html == "<ul style='margin:4px 0 4px 0;'><li>a</li><li>b</li></ul>"
-
-
-def test_bullets_empty_list():
-    assert logic.bullets([]) == "<ul style='margin:4px 0 4px 0;'></ul>"
-
-
-def test_bullets_uncapped_shows_everything_by_default():
-    html = logic.bullets([str(i) for i in range(50)])
-    assert html.count("<li>") == 50
-    assert "more" not in html
-
-
-def test_bullets_cap_truncates_and_summarizes():
-    html = logic.bullets([str(i) for i in range(50)], cap=10)
-    assert html.count("<li>") == 11   # 10 shown + 1 summary line
-    assert "<li>0</li>" in html and "<li>9</li>" in html
-    assert "<li>10</li>" not in html
-    assert "...and 40 more" in html
-
-
-def test_bullets_cap_no_op_when_under_the_limit():
-    html = logic.bullets(["a", "b"], cap=10)
-    assert html == "<ul style='margin:4px 0 4px 0;'><li>a</li><li>b</li></ul>"
-
-
 def test_plural_keeps_the_bare_noun_for_one():
     assert logic.plural(1, "card") == "1 card"
     assert logic.plural(1, "retired card") == "1 retired card"
@@ -1330,10 +1301,7 @@ def test_note_display_label_handles_a_note_with_nothing_to_show():
     assert logic.note_display_label(["", "   ", None]) == "(card)"
 
 
-# ------------------------------------------------------- duplicate dialog body
-_MUTED = "#63676c"   # a stand-in colour; logic.py is pure and takes it as a parameter
-
-
+# ------------------------------------------------------- duplicate dialog rows
 def _dup_group(label, keep_deck, arch_deck, keep_reps=0, arch_reps=0):
     return {
         "model": "M", "front": "f",
@@ -1342,44 +1310,45 @@ def _dup_group(label, keep_deck, arch_deck, keep_reps=0, arch_reps=0):
     }
 
 
-def test_duplicate_dialog_html_shows_the_label_not_a_raw_image_tag():
+def test_duplicate_dialog_rows_show_the_label_not_a_raw_image_tag():
     groups = [_dup_group("Name this nerve block",
                          "Deck::3. The Blocks", "Deck::3. The Blocks")]
-    html = logic.duplicate_dialog_html(groups, _MUTED)
-    assert "Name this nerve block" in html
-    assert "<img" not in html
+    _heading, rows = logic.duplicate_dialog_rows(groups)
+    assert rows[0]["label"] == "Name this nerve block"
+    assert "<img" not in rows[0]["label"]
 
 
-def test_duplicate_dialog_html_reads_as_a_copy_count_when_decks_match():
+def test_duplicate_dialog_rows_read_as_a_copy_count_when_decks_match():
     groups = [_dup_group("Card A", "Deck::Blocks", "Deck::Blocks", keep_reps=3)]
-    html = logic.duplicate_dialog_html(groups, _MUTED)
-    assert "2 copies in Blocks" in html
-    assert "duplicate copy of" in html and "</b> card." in html
+    heading, rows = logic.duplicate_dialog_rows(groups)
+    assert "2 copies in Blocks" in rows[0]["detail"]
+    assert "duplicate copy of" in heading and "</b> card." in heading
 
 
-def test_duplicate_dialog_html_names_both_decks_when_they_differ():
+def test_duplicate_dialog_rows_name_both_decks_when_they_differ():
     groups = [_dup_group("Card A", "Deck::New", "Deck::Old", keep_reps=5, arch_reps=1)]
-    html = logic.duplicate_dialog_html(groups, _MUTED)
-    assert "keeping New" in html and "archiving Old" in html
+    _heading, rows = logic.duplicate_dialog_rows(groups)
+    assert "keeping New" in rows[0]["detail"] and "archiving Old" in rows[0]["detail"]
 
 
-def test_duplicate_dialog_html_escapes_the_label():
+def test_duplicate_dialog_rows_escape_the_label():
     groups = [_dup_group("A <script> & B", "Deck::X", "Deck::X")]
-    html = logic.duplicate_dialog_html(groups, _MUTED)
-    assert "<script>" not in html and "&lt;script&gt;" in html
+    _heading, rows = logic.duplicate_dialog_rows(groups)
+    assert "<script>" not in rows[0]["label"] and "&lt;script&gt;" in rows[0]["label"]
 
 
-def test_duplicate_dialog_html_pluralizes_the_heading():
+def test_duplicate_dialog_rows_pluralize_the_heading():
     groups = [_dup_group("A", "D::X", "D::X"), _dup_group("B", "D::Y", "D::Y")]
-    html = logic.duplicate_dialog_html(groups, _MUTED)
-    assert "duplicate copies of" in html and "</b> cards." in html
+    heading, _rows = logic.duplicate_dialog_rows(groups)
+    assert "duplicate copies of" in heading and "</b> cards." in heading
 
 
-def test_duplicate_dialog_html_uses_the_passed_colour_not_a_css_keyword():
+def test_duplicate_dialog_rows_carry_no_colour_of_their_own():
+    """The detail is data, not markup: the caller wraps it in the live theme\'s muted
+    colour, which is the only way a pure module can stay out of the palette."""
     groups = [_dup_group("Card A", "Deck::Blocks", "Deck::Blocks", keep_reps=3)]
-    html = logic.duplicate_dialog_html(groups, _MUTED)
-    assert "color:gray" not in html
-    assert _MUTED in html
+    _heading, rows = logic.duplicate_dialog_rows(groups)
+    assert "color" not in rows[0]["detail"] and "<span" not in rows[0]["detail"]
 
 
 def test_find_duplicate_groups_sorted_by_model_then_front():
@@ -1564,27 +1533,37 @@ def test_select_empty_cards_refuses_a_note_that_would_be_deleted():
     assert [s["nid"] for s in skipped] == [1]
 
 
-def test_empty_cards_dialog_html_names_the_missing_deletions():
-    from internpearls.logic import empty_cards_dialog_html
-    html = empty_cards_dialog_html(
-        [{"nid": 1, "card_ids": [11, 12], "label": "a regrouped card", "ords": [3, 4]}],
-        _MUTED)
-    assert "a regrouped card" in html and "c3, c4" in html
-    assert "<b>2</b> empty cards" in html and "<b>1</b> note" in html
+def test_empty_cards_dialog_rows_name_the_missing_deletions():
+    from internpearls.logic import empty_cards_dialog_rows
+    heading, rows, _tail = empty_cards_dialog_rows(
+        [{"nid": 1, "card_ids": [11, 12], "label": "a regrouped card", "ords": [3, 4]}])
+    assert rows[0]["label"] == "a regrouped card" and rows[0]["gone"] == "c3, c4"
+    assert "<b>2</b> empty cards" in heading and "<b>1</b> note" in heading
 
 
-def test_empty_cards_dialog_html_escapes_the_label():
-    from internpearls.logic import empty_cards_dialog_html
-    html = empty_cards_dialog_html(
-        [{"nid": 1, "card_ids": [11], "label": "SpO<sub>2</sub> & <b>x</b>", "ords": [2]}],
-        _MUTED)
-    assert "&lt;sub&gt;" in html and "&amp;" in html
+def test_empty_cards_dialog_rows_escape_the_label():
+    from internpearls.logic import empty_cards_dialog_rows
+    _heading, rows, _tail = empty_cards_dialog_rows(
+        [{"nid": 1, "card_ids": [11], "label": "SpO<sub>2</sub> & <b>x</b>",
+          "ords": [2]}])
+    assert "&lt;sub&gt;" in rows[0]["label"] and "&amp;" in rows[0]["label"]
 
 
-def test_empty_cards_dialog_html_uses_the_passed_colour_not_a_css_keyword():
-    from internpearls.logic import empty_cards_dialog_html
-    html = empty_cards_dialog_html(
-        [{"nid": 1, "card_ids": [11, 12], "label": "a regrouped card", "ords": [3, 4]}],
-        _MUTED)
-    assert "color:gray" not in html
-    assert _MUTED in html
+def test_empty_cards_dialog_rows_carry_no_colour_of_their_own():
+    """The deletion numbers are the row's trailing column, which widgets.simple_row
+    draws in the live theme's muted colour: nothing here may name a colour at all."""
+    from internpearls.logic import empty_cards_dialog_rows
+    _heading, rows, _tail = empty_cards_dialog_rows(
+        [{"nid": 1, "card_ids": [11, 12], "label": "a regrouped card", "ords": [3, 4]}])
+    assert "color" not in rows[0]["gone"] and "<span" not in rows[0]["gone"]
+
+
+def test_empty_cards_dialog_rows_report_the_notes_left_alone():
+    """A note whose every card is empty is reported, never touched: removing its cards
+    would delete the note. That sentence closes the confirmation."""
+    from internpearls.logic import empty_cards_dialog_rows
+    _heading, _rows, tail = empty_cards_dialog_rows(
+        [{"nid": 1, "card_ids": [11], "label": "a regrouped card", "ords": [3]}],
+        skipped=2)
+    assert "<b>2 notes</b>" in tail and "delete the note itself" in tail
+    assert not tail.startswith("<br>"), "the tail is its own paragraph now"

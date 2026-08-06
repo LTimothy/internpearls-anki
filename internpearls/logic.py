@@ -15,24 +15,6 @@ import zipfile
 FS = "\x1f"   # Anki's field separator inside a note's flds column
 
 
-def bullets(items, cap=None):
-    """Render a list as clean HTML for use inside a rich-text dialog.
-
-    If `cap` is set and there are more items than that, show only the first `cap` plus
-    a one-line "...and N more" summary instead of the full list. A long enough list
-    (dozens of retired or relocated cards) is a wall of text no one reads line by line
-    even when it's technically scrollable — capping is a readability fix, not just a
-    sizing one. `cap=None` (the default) preserves the old uncapped behavior.
-    """
-    shown = items if cap is None or len(items) <= cap else items[:cap]
-    extra = len(items) - len(shown)
-    html = "<ul style='margin:4px 0 4px 0;'>" + "".join(
-        f"<li>{item}</li>" for item in shown)
-    if extra:
-        html += f"<li><i>...and {extra} more</i></li>"
-    return html + "</ul>"
-
-
 def plural(count, noun):
     """A count and its noun, agreeing: "1 card", "3 cards", "0 cards".
 
@@ -1018,18 +1000,20 @@ def build_feedback_digest(entries, version="", date=""):
     return "\n".join(lines).rstrip() + "\n"
 
 
-def duplicate_dialog_html(groups, muted_color):
-    """Body of the Clean up duplicates confirmation, from find_duplicate_groups output.
+def duplicate_dialog_rows(groups):
+    """Heading and rows for the Clean up duplicates confirmation, from
+    find_duplicate_groups output.
 
-    Each line leads with the card's readable label (the note's precomputed 'label',
+    Each row leads with the card's readable label (the note's precomputed 'label',
     see collection._her_notes_summary; escaped here since it's data), then says which
     copy is kept and which is archived. When every copy sits in the same deck it reads
     as a copy count rather than repeating that deck name twice.
 
-    `muted_color` is the caller's palette colour for the secondary detail text. This
-    module is pure Python by contract (no aqt/anki import, unit-testable with no Anki
-    install), so it cannot read the live theme itself; the caller, which already knows
-    the theme, supplies the colour instead.
+    Returns (heading, [{"label", "detail"}]) rather than one block of HTML, because the
+    confirmation draws each row as a widget. This module is pure Python by contract (no
+    aqt/anki import, unit-testable with no Anki install), so it can build neither the
+    widget nor the theme colour the detail is drawn in; the caller, which already knows
+    both, does that.
     """
     lines = []
     for g in groups:
@@ -1050,14 +1034,14 @@ def duplicate_dialog_html(groups, muted_color):
                       f"({plural(g['keep']['reps'], 'review')}), "
                       f"archiving {html.escape(', '.join(arch_leaves))} "
                       f"({arch_reps})")
-        lines.append(f"{label} <span style='color:{muted_color};'>{detail}</span>")
+        lines.append({"label": label, "detail": detail})
     n_archive = sum(len(g["archive"]) for g in groups)
     n_cards = len(groups)
     copies = "copy" if n_archive == 1 else "copies"
     cards = "card" if n_cards == 1 else "cards"
     heading = (f"Found <b>{n_archive}</b> duplicate {copies} of <b>{n_cards}</b> {cards}. "
                "Each card was imported more than once. Archiving keeps one copy of each:")
-    return heading + bullets(lines, cap=15)
+    return heading, lines
 
 
 def select_empty_cards(report_notes, scoped_nids):
@@ -1090,23 +1074,22 @@ def select_empty_cards(report_notes, scoped_nids):
     return removable, skipped
 
 
-def empty_cards_dialog_html(rows, muted_color, skipped=0):
-    """Body of the Remove empty cards confirmation, from collection.find_empty_cards.
+def empty_cards_dialog_rows(rows, skipped=0):
+    """Heading, rows and closing note for the Remove empty cards confirmation, from
+    collection.find_empty_cards.
 
-    Each row names the card the way the rest of the add-on labels one, then lists which
-    deletion numbers went missing, since "c3, c4" is what she actually sees on the dead
-    card in review.
+    Each row names the card the way the rest of the add-on labels one, and carries the
+    deletion numbers that went missing, since "c3, c4" is what she actually sees on the
+    dead card in review.
 
-    `muted_color` is the caller's palette colour for the missing-deletions detail, for
-    the same reason duplicate_dialog_html takes one: this module stays pure, so the
-    theme-aware caller passes the colour in rather than this reading the live theme.
+    Returns (heading, [{"label", "gone"}], tail), structured for the same reason
+    duplicate_dialog_rows is: the confirmation draws a widget per row, and this module
+    stays free of both Qt and the live theme.
     """
     lines = []
     for r in rows:
-        label = html.escape(r.get("label") or "")
-        gone = ", ".join(f"c{o}" for o in r.get("ords", []))
-        lines.append(f"{label} <span style='color:{muted_color};'>{gone}</span>"
-                     if gone else label)
+        lines.append({"label": html.escape(r.get("label") or ""),
+                      "gone": ", ".join(f"c{o}" for o in r.get("ords", []))})
     n_cards = sum(len(r["card_ids"]) for r in rows)
     cards = "card" if n_cards == 1 else "cards"
     notes = "note" if len(rows) == 1 else "notes"
@@ -1115,11 +1098,11 @@ def empty_cards_dialog_html(rows, muted_color, skipped=0):
                "does now, so there is nothing left for them to show:")
     tail = ""
     if skipped:
-        tail = (f"<br><br><b>{plural(skipped, 'note')}</b> "
+        tail = (f"<b>{plural(skipped, 'note')}</b> "
                 f"{'has' if skipped == 1 else 'have'} no content on any card at all and "
                 f"{'was' if skipped == 1 else 'were'} left alone, since removing those "
                 "cards would delete the note itself.")
-    return heading + bullets(lines, cap=15) + tail
+    return heading, lines, tail
 
 
 def feedback_entries(flags, index):
