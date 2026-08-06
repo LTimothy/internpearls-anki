@@ -136,11 +136,18 @@ def test_manage_decks_save_and_update_now_runs_update_decks(anki, tmp_path):
     anki.mw._config = {"decks_dir": _write_source(tmp_path)}
     anki.gui.interactive = True
 
+    seen = []
+
     def respond(p):
         if p["kind"] == "dialog":
+            seen.append(p["tree"])
             update_btn = find(p["tree"], t="button", label="Save and update now")
             if update_btn:
                 return {"events": [{"id": update_btn["id"], "click": True}]}
+            # the end-of-run summary, a dialog of its own with a single OK on it
+            done = find(p["tree"], t="button", label="OK")
+            if done:
+                return {"events": [{"id": done["id"], "click": True}]}
             # the confirmation from the real update_decks()
             confirm = find(p["tree"], t="button", label="Update")
             assert confirm, "expected update_decks' own confirmation dialog"
@@ -149,7 +156,8 @@ def test_manage_decks_save_and_update_now_runs_update_decks(anki, tmp_path):
 
     drive(anki, dialogs.manage_decks, respond)
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
-    assert any("Update complete" in i for i in anki.gui.infos)
+    assert any("Update complete" in (n.get("text") or "")
+               for n in walk(seen[-1])), "the run should report itself as complete"
 
 
 def test_manage_decks_status_chip_recovers_after_a_collection_revert(anki, tmp_path):
@@ -161,9 +169,15 @@ def test_manage_decks_status_chip_recovers_after_a_collection_revert(anki, tmp_p
     anki.mw._config = {"decks_dir": _write_source(tmp_path)}
     # Sync decks confirms through a widget body of deck rows, so it is driven rather
     # than called outright: its Update button is what answers the confirmation.
-    drive(anki, sync.sync_decks, lambda p: (
-        {"events": [{"id": find(p["tree"], t="button", label="Update")["id"],
-                     "click": True}]} if p["kind"] == "dialog" else {}))
+    def _answer(p):
+        if p["kind"] != "dialog":
+            return {}
+        # Update on the confirmation, OK on the summary the finished run opens after it.
+        btn = (find(p["tree"], t="button", label="Update")
+               or find(p["tree"], t="button", label="OK"))
+        return {"events": [{"id": btn["id"], "click": True}]}
+
+    drive(anki, sync.sync_decks, _answer)
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
 
     anki.col._notes.clear()
@@ -501,6 +515,10 @@ def test_about_is_a_dialog_with_a_single_ok_button(anki):
         assert p["kind"] == "dialog"
         body = find(p["tree"], t="label")
         assert ADDON_VERSION in body["text"] and "Auto-sync: off" in body["text"]
+        # Its three settings read as lines of the prose around them. About is the one
+        # screen here that genuinely is a block of prose, so they are not rows, but
+        # they are not a bulleted list either.
+        assert "<ul>" not in body["text"] and "<li>" not in body["text"]
         buttons = [n for n in walk(p["tree"]) if n.get("t") == "button"]
         assert [b["label"] for b in buttons] == ["OK"]
         return {"events": [{"id": buttons[0]["id"], "click": True}]}
@@ -574,43 +592,52 @@ def _write_scoped_source(tmp_path):
 
 def _drive_configure_local_folder(anki, path, answer):
     """Run configure_source picking Local folder at `path`, answering the
-    manifest-suggestion question with `answer`. Returns the asks seen."""
+    manifest-suggestion confirmation with `answer`.
+
+    Returns what that confirmation showed, one entry per time it opened. It is a row
+    list in its own dialog rather than a plain askUser box now, so what it recommends
+    is read off its labels; its Apply button is also what tells it apart from the
+    source-choice dialog that opens first.
+    """
     from internpearls import dialogs
     anki.gui.interactive = True
-    asks = []
+    shown = []
 
     def respond(p):
         if p["kind"] == "dialog":
-            return _pick_source(p["tree"], "Local folder")
+            if not find(p["tree"], t="button", label="Apply"):
+                return _pick_source(p["tree"], "Local folder")
+            shown.append("\n".join(n.get("text") or "" for n in walk(p["tree"])
+                                   if n.get("t") == "label"))
+            btn = find(p["tree"], t="button", label="Apply" if answer else "Cancel")
+            return {"events": [{"id": btn["id"], "click": True}]}
         if p["kind"] == "prompt":
             return {"text": path, "ok": True}
-        if p["kind"] == "ask":
-            asks.append(p["text"])
-            return {"answer": answer}
         assert p["kind"] == "info"
         return {}
 
     drive(anki, dialogs.configure_source, respond)
-    return asks
+    return shown
 
 
 def test_configure_source_offers_manifest_scope_and_applies_on_yes(anki, tmp_path):
-    asks = _drive_configure_local_folder(anki, _write_scoped_source(tmp_path), True)
-    assert len(asks) == 1 and "CardioDeck" in asks[0] and "Cardio" in asks[0]
+    shown = _drive_configure_local_folder(anki, _write_scoped_source(tmp_path), True)
+    assert len(shown) == 1 and "CardioDeck" in shown[0] and "Cardio" in shown[0]
+    assert "<li>" not in shown[0] and "<ul>" not in shown[0], \
+        "each recommended setting is a row of its own, not a bullet in one label"
     assert anki.mw._config["scope_tag"] == "CardioDeck"
     assert anki.mw._config["export_deck"] == "Cardio"
 
 
 def test_configure_source_manifest_scope_declined_leaves_config_alone(anki, tmp_path):
-    asks = _drive_configure_local_folder(anki, _write_scoped_source(tmp_path), False)
-    assert len(asks) == 1
+    shown = _drive_configure_local_folder(anki, _write_scoped_source(tmp_path), False)
+    assert len(shown) == 1
     assert anki.mw._config.get("scope_tag") not in ("CardioDeck",)
     assert anki.mw._config.get("export_deck") not in ("Cardio",)
 
 
 def test_configure_source_without_manifest_scope_asks_nothing(anki, tmp_path):
-    asks = _drive_configure_local_folder(anki, _write_source(tmp_path), True)
-    assert asks == []
+    assert _drive_configure_local_folder(anki, _write_source(tmp_path), True) == []
 
 
 def test_ui_helpers_use_the_palette_not_a_css_keyword():

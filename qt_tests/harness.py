@@ -387,18 +387,17 @@ def _scene_configure_source(mock, opts):
 
 
 def _scene_ask_scrollable(mock, opts):
-    """A plain _ask_scrollable confirmation: reconcile_decks, clean_up_duplicates,
-    remove_empty_cards, and Sync decks' own "Update these decks?" all render through
-    this wrapper today. Kept as its own scene (distinct from "confirm", which moved to
-    a widget body once it became the Update my decks screen) so this shared wrapper's
-    own behavior, the scroll area, the top-alignment, the closed-by-default external
-    links, stays under render test regardless of what any one caller currently does.
+    """A plain _ask_scrollable confirmation. About is the only caller left in the
+    add-on: every screen that lists cards or decks builds rows instead. Kept as its own
+    scene, and with content of its own rather than About's, so this shared wrapper's own
+    behavior, the scroll area, the top-alignment, the closed-by-default external links,
+    stays under render test regardless of what any one caller currently does.
     """
     from internpearls.ui import _ask_scrollable
     body = (
-        "<b>Example Deck</b><ul>"
-        + "".join(f"<li>{d['fields'][0][1]}</li>" for d in synthetic_details()[:3])
-        + "</ul><p>Nothing is added until you choose Continue.</p>")
+        "<b>Example Deck</b><br>"
+        + "<br>".join(d["fields"][0][1] for d in synthetic_details()[:3])
+        + "<p>Nothing is added until you choose Continue.</p>")
     checkbox = ({"label": "Also apply the new card look (forces a one-time full "
                           "AnkiWeb sync)", "checked": False}
                 if opts.get("checkbox") else None)
@@ -475,7 +474,7 @@ def _scene_sync_confirm(mock, opts):
     renders is the one the Advanced menu opens rather than a mock-up of it. The deck
     names are invented, same as every other fixture here.
     """
-    from internpearls import review, sync
+    from internpearls import review
     from internpearls.ui import _ask_with_widget
     items = [("header", "Update these decks?"),
              ("row", "changed", "Gadget Care", "6 cards"),
@@ -491,7 +490,7 @@ def _scene_sync_confirm(mock, opts):
               "first, so this is safe to undo if anything looks wrong afterward.")
     return lambda: _ask_with_widget(
         review.build_list_body(items, bottom_html=bottom),
-        yes_label="Update", min_height=sync._CONFIRM_HEIGHT)
+        yes_label="Update", min_height=review._CONFIRM_HEIGHT)
 
 
 def _scene_reconcile_confirm(mock, opts):
@@ -505,7 +504,7 @@ def _scene_reconcile_confirm(mock, opts):
 
     Content is invented, same as every other fixture here.
     """
-    from internpearls import review, sync
+    from internpearls import review
     from internpearls.palette import colors
     from internpearls.ui import _ask_with_widget
     muted = colors()["muted"]
@@ -536,16 +535,16 @@ def _scene_reconcile_confirm(mock, opts):
               "changes.")
     return lambda: _ask_with_widget(
         review.build_list_body(items, top_html=top, bottom_html=bottom),
-        yes_label="Archive and relocate", min_height=sync._CONFIRM_HEIGHT)
+        yes_label="Archive and relocate", min_height=review._CONFIRM_HEIGHT)
 
 
 def _scene_result(mock, opts):
     """The end of a run: completion summary and flagged-card digest in one dialog.
 
     The summary reads in the same title/row vocabulary as the confirmation it
-    follows: a title, then one widgets.simple_row per result line, built the same way
-    sync.py's update_decks() builds them (see its `_finish` calls), rather than one
-    HTML blob with a `<ul>` inside it.
+    follows: a title, then one row per result line and a paragraph for each note about
+    the run as a whole, built the same way sync.py's update_decks() builds them (see
+    its `_finish` calls), rather than one HTML blob with a `<ul>` inside it.
     """
     from internpearls import review
     mock.mw._config = {"collect_card_feedback": True}
@@ -553,9 +552,122 @@ def _scene_result(mock, opts):
                 "front": "Which widget is this, in one short line?",
                 "note": "reads as two facts at once"}]
     title = "Update complete (source: example-decks)"
-    rows = ["Example Deck: 29 kept, 3 new", "Archived <b>2 retired cards</b>"]
-    footer = "A backup of the deck was saved before anything changed."
-    return lambda: review.show_result_with_feedback(title, rows, footer, entries)
+    items = [("row", None, "Example Deck: 29 kept, 3 new", ""),
+             ("sep",),
+             ("row", None, "Archived <b>2 retired cards</b>", ""),
+             ("note", "A backup of the deck was saved before anything changed.")]
+    return lambda: review.show_result_with_feedback(title, items, entries)
+
+
+def _scene_result_only(mock, opts):
+    """The same end of a run with nothing flagged: the summary on its own, in the
+    dialog review.show_result opens for it. This is what Sync decks and Update my decks
+    both finish on for a routine run, so the collision note and the cards it names ride
+    along here too, since that is the longest this screen ever gets.
+    """
+    from internpearls import review
+    items = [("row", None, "Example Deck: 29 kept, 3 new", ""),
+             ("sep",),
+             ("row", None, "Gadget Care: 6 kept, 0 new", ""),
+             ("note", "Preserved fields restored on 12 cards."),
+             ("note", "On <b>2 cards</b>, this update changed a field you had also "
+                      "written in yourself. <b>Your version was kept</b> and the update "
+                      "to that field was skipped, so nothing you wrote was lost."),
+             ("row", None, "Which widget is this, in one short line? (Notes)", ""),
+             ("sep",),
+             ("row", None, "An untagged row, to check the left edge lines up? (Notes)",
+              ""),
+             ("note", "A backup of the deck was saved before anything changed.")]
+    return lambda: review.show_result("Sync complete (source: example-decks)", items)
+
+
+def _scene_scope_offer(mock, opts):
+    """The settings a deck source recommends, offered right after it is configured.
+
+    Two rows of the same kind, so nothing is chipped and the columns are declined,
+    same as the two confirmations below. Runs the real _offer_manifest_scope against an
+    invented manifest; render()'s patched exec answers it, which writes the mock's own
+    config and touches nothing else.
+    """
+    from internpearls import dialogs
+    manifest = {"scope_tag": "ExampleDeck", "export_deck": "Example::Custom"}
+    return lambda: dialogs._offer_manifest_scope(manifest)
+
+
+def _scene_duplicates_confirm(mock, opts):
+    """Clean up duplicates' confirmation: one row per card that arrived twice, each
+    naming which copy is kept and which is archived.
+
+    Every row is the same thing happening to the same kind of card, so nothing here is
+    chipped and the rows decline the caret and chip columns: they start flush with the
+    heading above them. Built through logic.duplicate_dialog_rows and
+    review.build_list_body exactly as sync.py's clean_up_duplicates() builds it.
+    Content is invented, same as every other fixture here.
+    """
+    from internpearls import review
+    from internpearls.logic import duplicate_dialog_rows
+    from internpearls.palette import colors
+    from internpearls.ui import _ask_with_widget
+
+    def group(label, keep_deck, arch_deck, keep_reps, arch_reps):
+        return {"model": "M", "front": label,
+                "keep": {"guid": "k", "label": label, "deck": keep_deck,
+                         "reps": keep_reps},
+                "archive": [{"guid": "a", "label": label, "deck": arch_deck,
+                             "reps": arch_reps}]}
+
+    heading, rows = duplicate_dialog_rows([
+        group("Which widget is this, in one short line?",
+              "Example::Widget Basics", "Example::Widget Basics", 7, 2),
+        # Long enough to wrap, so the render shows where the muted detail lands once
+        # the card's own name has taken more than one line.
+        group("A deliberately long prompt, written to run past the dialog's width so "
+              "the wrap lands under the text and not under the caret",
+              "Example::Gadget Care", "Example::Gizmo Repair", 5, 0)])
+    muted = colors()["muted"]
+    items = []
+    review.append_rows(items, [
+        ("row", None,
+         f"{r['label']} <span style='color:{muted};'>{r['detail']}</span>", "")
+        for r in rows])
+    bottom = ("Nothing is deleted. Archived cards keep their review history and can be "
+              "brought back anytime by unsuspending them or moving them out of the "
+              "Retired deck, and any personal notes on them carry over to the kept copy "
+              "first. A backup is taken automatically before anything changes.")
+    return lambda: _ask_with_widget(
+        review.build_list_body(items, top_html=heading, bottom_html=bottom,
+                               card_columns=False),
+        yes_label="Archive duplicates", min_height=review._CONFIRM_HEIGHT)
+
+
+def _scene_empty_cards_confirm(mock, opts):
+    """Remove empty cards' confirmation: one row per note carrying a card with nothing
+    left to render, the deletion numbers that went missing in the trailing column.
+
+    Single-kind like the duplicates screen above, and declining the same two columns
+    for the same reason. Built through logic.empty_cards_dialog_rows and
+    review.build_list_body exactly as collection.py's remove_empty_cards() builds it.
+    """
+    from internpearls import review
+    from internpearls.logic import empty_cards_dialog_rows
+    from internpearls.ui import _ask_with_widget
+    heading, lines, tail = empty_cards_dialog_rows([
+        {"nid": 1, "card_ids": [11, 12], "ords": [3, 4],
+         "label": "A cloze note fills one deletion, and another one"},
+        {"nid": 2, "card_ids": [13], "ords": [5],
+         "label": "A deliberately long prompt, written to run past the dialog's width "
+                  "so the wrap lands under the text and not under the caret"}],
+        skipped=1)
+    items = []
+    review.append_rows(items,
+                       [("row", None, line["label"], line["gone"]) for line in lines])
+    safety = ("Only the empty cards are removed; the notes themselves, and every card "
+              "that still shows something, are left exactly as they are. A backup is "
+              "taken automatically before anything changes.")
+    return lambda: _ask_with_widget(
+        review.build_list_body(items, top_html=heading, card_columns=False,
+                               bottom_html="<br><br>".join([tail, safety])),
+        yes_label="Remove 3 cards", min_height=review._CONFIRM_HEIGHT)
 
 
 SCENES = {
@@ -570,7 +682,14 @@ SCENES = {
     "sync-confirm": (_scene_sync_confirm, "Sync decks' confirmation (one row per deck)"),
     "reconcile-confirm": (_scene_reconcile_confirm,
                           "Reconcile my decks' confirmation (retired, reworded, moved)"),
+    "scope-offer": (_scene_scope_offer,
+                    "the settings a deck source recommends, offered on configure"),
+    "duplicates-confirm": (_scene_duplicates_confirm,
+                           "Clean up duplicates' confirmation (one row per card)"),
+    "empty-cards-confirm": (_scene_empty_cards_confirm,
+                            "Remove empty cards' confirmation (one row per note)"),
     "result": (_scene_result, "the end-of-run summary and feedback digest, one dialog"),
+    "result-only": (_scene_result_only, "the end-of-run summary with nothing flagged"),
 }
 
 
