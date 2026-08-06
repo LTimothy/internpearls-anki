@@ -744,6 +744,61 @@ def test_expanding_a_row_renders_an_answers_own_inline_image_in_place(tmp_path):
     assert "[image: mechanism.png]" not in texts
 
 
+# -------------------------------------------------------------------- list body
+_LIST_ITEMS = [
+    ("header", "Update these decks?"),
+    ("row", "changed", "Gadget Care", "6 cards"),
+    ("sep",),
+    ("row", "new", "Widget Basics", "4 cards"),
+    ("note", "<b>1 card</b> belongs to a deck that's since been reorganized."),
+    ("row", "moved", "A card whose deck was reorganized", "→ Regional Basics"),
+]
+
+
+def _list_body_nodes(items=None):
+    return _walk(review.build_list_body(items or _LIST_ITEMS,
+                                        top_html="", bottom_html="").node())
+
+
+def test_list_body_builds_a_widget_for_every_item():
+    """Sync decks and Reconcile my decks share this list, so every shape either of them
+    passes has to come out as something: a heading, a paragraph, a hairline, a row."""
+    nodes = _list_body_nodes()
+    texts = [n.get("text") for n in nodes if n.get("t") == "label"]
+    assert "Update these decks?" in texts
+    assert "Gadget Care" in texts and "6 cards" in texts
+    assert "A card whose deck was reorganized" in texts
+    assert any(n.get("t") == "hline" for n in nodes), "the sep draws no hairline"
+
+
+def test_list_body_marks_each_row_with_its_own_chip():
+    from internpearls.widgets import CHIPS
+    texts = [n.get("text") for n in _list_body_nodes() if n.get("t") == "label"]
+    assert [t for t in texts if t in CHIPS.values()] == [
+        CHIPS["changed"], CHIPS["new"], CHIPS["moved"]]
+
+
+def test_list_body_rows_keep_the_card_columns():
+    """Every row a caller passes here carries a chip, so its section has something to
+    line up against and keeps the caret and chip columns. Declining them would start
+    the chipped rows left of where a card row on any other screen starts."""
+    from aqt.qt import QLabel
+    from internpearls import widgets
+    row = review._list_row(("row", "moved", "A relocated card", "→ Regional Basics"))
+    cell = row._layout._children[0]
+    assert not isinstance(cell, QLabel), (
+        "the row starts with its primary label, so the chip column was declined")
+    assert cell._layout._children[0].text() == widgets.CHIPS["moved"]
+
+
+def test_list_body_skips_fixed_text_it_was_given_none_of():
+    """A run with nothing to say above or below the list must not pay a blank label's
+    height plus the layout's spacing for it at either end."""
+    from aqt.qt import QLabel
+    bare = review.build_list_body([("row", "new", "Only a row", "")])
+    assert not [c for c in bare._layout._children if isinstance(c, QLabel)]
+
+
 # ------------------------------------------------------------------ mock Qt surface
 def test_the_mock_qt_provides_the_qimage_review_reads_widths_from():
     """review.py reads an extracted file's natural width to cap it. The mock has to
