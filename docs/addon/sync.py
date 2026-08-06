@@ -1113,8 +1113,11 @@ def update_decks():
         items, sources, flags, new_index, cfg["collect_feedback"], top_html,
         _flagged_line, safety_note)
 
-    accepted = _ask_with_widget(body, yes_label="Update", checkbox=tpl_choice)
-    flush()
+    # flush runs through on_close rather than after this call: it reads the notes typed
+    # into the cards and stops their save timer, and every one of those widgets belongs
+    # to the dialog, so by the time this returns Qt has already freed them.
+    accepted = _ask_with_widget(body, yes_label="Update", checkbox=tpl_choice,
+                                on_close=flush)
 
     if not accepted:
         _finish()
