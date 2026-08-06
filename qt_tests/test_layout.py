@@ -316,6 +316,26 @@ def test_result_rows_sit_flush_with_the_heading_and_the_footer(shot):
         "chip and cannot expand, so they line up with the heading above them.")
 
 
+def test_the_result_heading_reads_larger_than_the_flagged_heading(shot):
+    """The run's own outcome is what the end screen reports; the flagged-card count is
+    a heading inside it. They shipped the other way round, so a completed run announced
+    its subordinate heading in the larger type and its result in the smaller.
+
+    Compared against each other rather than against a size: type sizes are read from
+    the running platform's own font.
+    """
+    _, q = harness.bootstrap()
+    s = shot("result")
+    labels = _visible_labels(s.dialog, q)
+    result = next(l for l in labels if l.text().startswith("Update complete"))
+    flagged = next(l for l in labels if l.text().endswith("flagged"))
+    sizes = (q.QFontInfo(result.font()).pixelSize(),
+             q.QFontInfo(flagged.font()).pixelSize())
+    assert sizes[0] > sizes[1], (
+        f"the result heading paints at {sizes[0]}px and the flagged heading at "
+        f"{sizes[1]}px: the run's result is the headline of the screen reporting it")
+
+
 def test_the_confirm_summary_is_rows_under_one_heading_not_a_bullet_list(shot):
     """The deck summary that opens the list reads in the same row vocabulary as
     everything below it: a heading, then one row per deck with its counts in the
