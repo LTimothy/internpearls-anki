@@ -406,8 +406,32 @@ def test_reconcile_rows_start_their_text_at_one_x(shot):
 
 
 @pytest.mark.parametrize("scene,markers", [
+    ("duplicates-confirm", ("Found <b>2</b> duplicate", "keeping the one with")),
+    ("empty-cards-confirm", ("Found <b>3</b> empty", "no content on any card")),
+])
+def test_a_single_kind_confirmation_starts_flush_with_its_own_heading(
+        shot, scene, markers):
+    """Clean up duplicates and Remove empty cards each list one kind of card, so there
+    is no chip on any row and nothing for an unchipped row to line up against. Both
+    decline the caret and chip columns, which means every row starts where the heading
+    above it and the closing note below it start. Reserving the columns here indented
+    the whole list by the width of a pill neither screen paints.
+    """
+    _, q = harness.bootstrap()
+    s = shot(scene)
+    lefts = {marker: _label_left(s.dialog, q, marker)
+             for marker in markers + ("wrap lands under the text",)}
+    # Within a pixel, not exactly equal: the rows sit inside the list's own frame and
+    # the fixed text above and below it does not, so the border line itself is one
+    # pixel of legitimate difference. A reserved chip column would be seventy-odd.
+    assert max(lefts.values()) - min(lefts.values()) <= 1, (
+        f"{scene}: the list is indented from its own fixed text: {lefts}")
+
+
+@pytest.mark.parametrize("scene,markers", [
     ("sync-confirm", ("6 cards", "128 cards")),
     ("reconcile-confirm", ("Gadget Care", "Regional Basics")),
+    ("empty-cards-confirm", ("c3, c4", "c5")),
 ])
 def test_a_confirmation_rows_trailing_column_stops_short_of_the_frame(
         shot, scene, markers):
@@ -429,11 +453,12 @@ def test_a_confirmation_rows_trailing_column_stops_short_of_the_frame(
         "trailing text runs up against its row's right edge: " + ", ".join(cramped))
 
 
-@pytest.mark.parametrize("scene", ["sync-confirm", "reconcile-confirm"])
-def test_the_advanced_confirmations_carry_no_bullet_list(shot, scene):
-    """The last two screens that listed their cards as HTML bullets inside one label.
-    Every card and every deck on them is a row now, so a <ul> anywhere here means one
-    of the two has fallen back.
+@pytest.mark.parametrize("scene", sorted(harness.SCENES))
+def test_no_screen_carries_a_bullet_list(shot, scene):
+    """No screen in the add-on lists anything as HTML bullets inside one label any
+    more: a card, a deck, a setting or an outcome line is a row. A <ul> anywhere in any
+    scene means one of them has fallen back to a list Qt draws with no alignment, no
+    hairlines and no streaming.
     """
     _, q = harness.bootstrap()
     s = shot(scene)
