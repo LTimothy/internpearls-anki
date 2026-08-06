@@ -320,3 +320,71 @@ def test_a_decks_section_holds_all_four_row_kinds(shot):
     assert not headings, (
         f"a kind still has a heading of its own: {headings}. Each row's chip already "
         "says what it is; the heading says which deck it belongs to.")
+
+
+def test_sync_rows_start_their_text_at_one_x(shot):
+    """Sync decks' confirmation is a list of deck rows now, so it answers the same
+    question the update screen does: every row in a chipped section reserves the same
+    caret and chip columns, whatever its own chip happens to be, so a NEW deck and an
+    UPDATED one read down one edge rather than two.
+    """
+    _, q = harness.bootstrap()
+    s = shot("sync-confirm")
+    lefts = {marker: _row_primary_left(s.dialog, q, marker) for marker in (
+        "6 cards",      # an UPDATED deck
+        "4 cards",      # a NEW deck
+        "128 cards")}   # a NEW deck whose name wraps
+    assert len(set(lefts.values())) == 1, (
+        f"deck rows start their text at different x: {lefts}")
+
+
+def test_reconcile_rows_start_their_text_at_one_x(shot):
+    """And the same for Reconcile my decks, whose three groups each carry a different
+    kind of row: an archived card, a reworded pair, a relocated card. They are one list
+    under three explanations, not three lists.
+    """
+    _, q = harness.bootstrap()
+    s = shot("reconcile-confirm")
+    lefts = {marker: _label_left(s.dialog, q, marker) for marker in (
+        "since-split card",        # a retired row
+        "An older wording",        # a reworded pair, both halves in one line
+        "deck was reorganized")}   # a moved row
+    assert len(set(lefts.values())) == 1, (
+        f"rows start their text at different x: {lefts}")
+
+
+@pytest.mark.parametrize("scene,markers", [
+    ("sync-confirm", ("6 cards", "128 cards")),
+    ("reconcile-confirm", ("Gadget Care", "Regional Basics")),
+])
+def test_a_confirmation_rows_trailing_column_stops_short_of_the_frame(
+        shot, scene, markers):
+    """A deck's size, a retired card's deck and a moved card's destination are the
+    rightmost thing on their rows, and must not run their glyphs up against the border
+    line of the list they are drawn inside."""
+    _, q = harness.bootstrap()
+    from internpearls import widgets
+    s = shot(scene)
+    cramped = []
+    for marker in markers:
+        found = [l for l in _visible_labels(s.dialog, q) if marker in l.text()]
+        assert len(found) == 1, f"expected one label containing {marker!r}"
+        gap = (widget_rect(s.dialog, found[0].parent()).right()
+               - widget_rect(s.dialog, found[0]).right())
+        if gap < widgets.CARET_GAP:
+            cramped.append(f"{marker!r}: {gap}px")
+    assert not cramped, (
+        "trailing text runs up against its row's right edge: " + ", ".join(cramped))
+
+
+@pytest.mark.parametrize("scene", ["sync-confirm", "reconcile-confirm"])
+def test_the_advanced_confirmations_carry_no_bullet_list(shot, scene):
+    """The last two screens that listed their cards as HTML bullets inside one label.
+    Every card and every deck on them is a row now, so a <ul> anywhere here means one
+    of the two has fallen back.
+    """
+    _, q = harness.bootstrap()
+    s = shot(scene)
+    bulleted = [l.text()[:60] for l in _visible_labels(s.dialog, q)
+                if "<li>" in l.text() or "<ul>" in l.text()]
+    assert not bulleted, f"{scene} still renders a bulleted list: {bulleted}"
