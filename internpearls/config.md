@@ -82,6 +82,7 @@ Editable in Intern Pearls → Settings.
 
 ## collect_card_feedback
 
-When on, reviewing the new cards an update would add puts a box under each one for
-noting anything wrong with it, and closing the review offers a summary to send back.
-Off by default: the review is a read-only preview unless you ask for the boxes.
+When on, the Update my decks screen puts a box under each card it lists for noting
+anything wrong with it, and the run hands back a summary to send back afterwards,
+whether or not you go ahead with the update. Off by default: that screen is a
+read-only preview unless you ask for the boxes.
