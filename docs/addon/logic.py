@@ -852,7 +852,7 @@ def field_preview_text(value):
     holding both text and an image reports both, since dropping either would misrepresent
     the card.
     """
-    text = plain_text(value)
+    text = plain_text(render_math_spans(value, tags=False))
     names = [os.path.basename(src) for src in _IMG_SRC_RE.findall(value or "")]
     if not names:
         return text
@@ -913,6 +913,63 @@ def field_image_names(value):
         os.path.basename(src) for src in _IMG_SRC_RE.findall(value or "")))
 
 
+# MathJax spans in a card field (\( ... \) inline, \[ ... \] block) are typeset by
+# Anki's reviewer, but a QLabel has no MathJax engine, so the raw markup reaches the
+# review dialog as literal backslashes. These render the handful of constructs the
+# decks actually write (\text, \frac, sub/superscripts, a few symbol macros) as
+# ordinary text: not typesetting, just readable.
+_MATH_SPAN_RE = re.compile(r"\\\[(.+?)\\\]|\\\((.+?)\\\)", re.DOTALL)
+_MATH_SPACING_RE = re.compile(r"\\[,;:!]|\\quad\b|\\qquad\b")
+_MATH_TEXT_RE = re.compile(r"\\text\s*\{([^{}]*)\}")
+_MATH_FRAC_RE = re.compile(r"\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}")
+_MATH_SUB_RE = re.compile(r"_(?:\{([^{}]*)\}|([^\s{}\\]))")
+_MATH_SUP_RE = re.compile(r"\^(?:\{([^{}]*)\}|([^\s{}\\]))")
+_MATH_CMD_RE = re.compile(r"\\([A-Za-z]+)")
+_MATH_SYMBOLS = {
+    "times": "×", "cdot": "·", "div": "÷", "pm": "±", "approx": "≈",
+    "neq": "≠", "le": "≤", "leq": "≤", "ge": "≥", "geq": "≥",
+    "rightarrow": "→", "to": "→", "leftarrow": "←", "infty": "∞",
+    "Delta": "Δ", "mu": "μ", "pi": "π",
+}
+
+
+def _math_frac_arg(arg):
+    # A numerator or denominator holding an expression needs parens once the bar
+    # becomes a slash: age/4 reads fine, but a+b/c would misplace the +.
+    arg = arg.strip()
+    return f"({arg})" if re.search(r"[+\-\s]", arg) else arg
+
+
+def _render_one_math(body, tags):
+    body = _MATH_SPACING_RE.sub(" ", body).replace(r"\%", "%")
+    prev = None
+    while prev != body:
+        prev = body
+        body = _MATH_TEXT_RE.sub(lambda m: m.group(1), body)
+        body = _MATH_FRAC_RE.sub(
+            lambda m: f"{_math_frac_arg(m.group(1))}/{_math_frac_arg(m.group(2))}", body)
+    sub = "<sub>{}</sub>" if tags else "{}"
+    sup = "<sup>{}</sup>" if tags else "{}"
+    body = _MATH_SUB_RE.sub(lambda m: sub.format(m.group(1) or m.group(2)), body)
+    body = _MATH_SUP_RE.sub(lambda m: sup.format(m.group(1) or m.group(2)), body)
+    body = _MATH_CMD_RE.sub(lambda m: _MATH_SYMBOLS.get(m.group(1), m.group(1)), body)
+    body = body.replace("{", "").replace("}", "")
+    return re.sub(r"\s+", " ", body).strip()
+
+
+def render_math_spans(value, tags=True):
+    """Replace every MathJax span in a field with a plain rendering of its formula.
+
+    `tags` picks the output flavor: real <sub>/<sup> markup for the dialog's rich-text
+    labels, or bare characters (PaCO2, Na+) for the plain-text paths, where plain_text
+    would otherwise turn each stripped tag into a stray space.
+    """
+    if not value or "\\" not in value:
+        return value
+    return _MATH_SPAN_RE.sub(
+        lambda m: _render_one_math(m.group(1) or m.group(2), tags), value)
+
+
 def field_preview_html(value, image_html=None):
     """One card field as HTML the review dialog can render.
 
@@ -936,6 +993,7 @@ def field_preview_html(value, image_html=None):
     if not value:
         return ""
 
+    value = render_math_spans(value)
     resolved_images = {}
     marker_counter = [0]
 

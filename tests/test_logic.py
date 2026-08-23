@@ -693,6 +693,41 @@ def test_field_preview_text_plain_field_is_unchanged():
     assert logic.field_preview_text("") == ""
 
 
+# ----------------------------------------------------------------- render_math_spans
+def test_field_preview_html_renders_a_mathjax_block_as_plain_html():
+    # A QLabel has no MathJax engine, so without this the dialog shows the raw
+    # backslash markup. Real formula from the ABG deck (Winter's).
+    out = logic.field_preview_html(
+        "Winter's formula: "
+        "\\[ \\text{Expected PaCO}_2 = 1.5 \\times \\text{HCO}_3^- + 8 \\;\\; (\\pm 2) \\]")
+    assert out == ("Winter's formula: "
+                   "Expected PaCO<sub>2</sub> = 1.5 × HCO<sub>3</sub><sup>-</sup> + 8 (± 2)")
+
+
+def test_field_preview_html_renders_a_fraction_inline():
+    out = logic.field_preview_html(
+        "\\[ \\text{P/F ratio} = \\frac{\\text{PaO}_2}{\\text{FiO}_2} \\]")
+    assert out == "P/F ratio = PaO<sub>2</sub>/FiO<sub>2</sub>"
+
+
+def test_field_preview_html_parenthesizes_a_fraction_arm_holding_an_expression():
+    out = logic.field_preview_html("\\(= \\frac{\\text{age}}{4} + 4\\)")
+    assert out == "= age/4 + 4"
+
+
+def test_field_preview_text_flattens_mathjax_without_stray_spaces():
+    # The plain path gets bare characters, not <sub>/<sup>: plain_text turns every
+    # stripped tag into a space, which would render "PaCO 2".
+    out = logic.field_preview_text(
+        "\\( \\text{Anion gap} = \\text{Na}^+ - (\\text{Cl}^- + \\text{HCO}_3^-) \\)")
+    assert out == "Anion gap = Na+ - (Cl- + HCO3-)"
+
+
+def test_render_math_spans_leaves_a_field_without_math_alone():
+    plain = 'SpO₂ &lt;94% and a <span class="cloze">blank</span>'
+    assert logic.render_math_spans(plain) == plain
+
+
 # ----------------------------------------------------------------- field_preview_html
 def test_field_preview_html_keeps_the_structure_a_card_was_written_with():
     # A comparison is written as a table because the grid carries the meaning. Reducing
