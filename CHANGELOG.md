@@ -3,6 +3,15 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.45.2
+
+- Formulas now read as formulas in the review dialogs. A card written with MathJax
+  markup used to reach the new-card review (and the "was" rows) as raw backslash
+  code like `\(\text{PaCO}_2\)`; the preview now renders the constructs the decks
+  use as plain text with real sub/superscripts (PaCO₂ = 1.5 × HCO₃⁻ + 8), and
+  fractions as an inline slash. Only the preview changes; the card itself always
+  typeset correctly during actual reviews.
+
 ## v0.45.1
 
 - Fixed Update my decks ending in "Something went wrong: wrapped C/C++ object of type
