@@ -4774,9 +4774,10 @@ def _find_row_button(tree, front_substring, label):
                if n.get("t") == "button" and n.get("label") == label)
 
 
-def _choose_skip_for_then(guid, accept):
-    """respond() that clicks Skip for now on `guid`'s card (found by its front text),
-    then answers the confirmation's accept button with `accept`."""
+def _choose_option_for(guid, label, accept):
+    """respond() that clicks the decision control's `label` button on `guid`'s card
+    (found by its front text), then answers the confirmation's accept button with
+    `accept`."""
     front = _front_for_new_guid(guid)
     state = {}
 
@@ -4788,9 +4789,9 @@ def _choose_skip_for_then(guid, accept):
         done = _dismiss_result(p["tree"])
         if done:
             return done
-        if not state.get("skipped"):
-            state["skipped"] = True
-            btn = _find_row_button(p["tree"], front, "Skip for now")
+        if not state.get("clicked"):
+            state["clicked"] = True
+            btn = _find_row_button(p["tree"], front, label)
             return {"events": [{"id": btn["id"], "click": True}]}
         return _click_update_button(accept)(p)
     return respond
@@ -4799,12 +4800,18 @@ def _choose_skip_for_then(guid, accept):
 def _choose_skip_for(guid):
     """respond() for update_decks(): choose Skip for now on `guid`'s card, then
     accept via Update."""
-    return _choose_skip_for_then(guid, True)
+    return _choose_option_for(guid, "Skip for now", True)
 
 
 def _choose_skip_then_cancel(guid):
     """Same as _choose_skip_for, but declines the confirmation afterward."""
-    return _choose_skip_for_then(guid, False)
+    return _choose_option_for(guid, "Skip for now", False)
+
+
+def _choose_import_for(guid):
+    """respond() for update_decks(): flip a predeclined "new" card's row back to
+    Import (its default), then accept via Update."""
+    return _choose_option_for(guid, "Import", True)
 
 
 def test_update_preview_hides_never_and_presets_skip(anki, tmp_path):
@@ -4870,3 +4877,71 @@ def test_digest_reports_decisions_made_this_run_only(anki, tmp_path):
     digest = logic.build_feedback_digest(entries)
     assert "decision: skipped" in digest
     assert "front b" in digest and "decision: never" in digest
+
+
+def test_an_untouched_decline_keeps_its_stale_cue(anki, tmp_path):
+    """A skip already on record when the confirmation opens, left untouched, must not
+    have its hash/decided/front rebuilt just because she accepted an unrelated update:
+    that would silently clear a pending "changed since decline" cue she never saw."""
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-b": {"state": "skip", "front": "front b", "deck": deck,
+                       "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+
+    _update(anki)   # accepts the confirmation without touching guid-new-b's row
+
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["hash"] == "stale-hash-value1"
+    assert entry["decided"] == "2026-08-01"
+    assert entry["front"] == "front b"
+
+
+def test_digest_reports_only_the_state_that_changed_this_run(anki, tmp_path):
+    """The this-run-only filter, exercised through the real flow rather than
+    logic.feedback_entries directly: a decline already on record when the dialog
+    opened, left untouched, must not read as newly decided; one chosen this run
+    must."""
+    from internpearls import config, sync
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-a": {"state": "skip", "front": "front a", "deck": deck,
+                       "decided": "2026-08-01", "hash": ""}})
+
+    drive(anki, sync.update_decks, respond=_choose_skip_for("guid-new-b"))
+
+    digest = anki.gui.clipboard[-1]
+    assert digest.count("decision: skipped") == 1
+    assert "front b" in digest
+    assert "front a" not in digest
+
+
+def test_flipping_a_predeclined_row_back_to_import_undeclines_it(anki, tmp_path):
+    from internpearls import config, sync
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-b": {"state": "skip", "front": "front b", "deck": deck,
+                       "decided": "2026-08-01", "hash": "some-hash"}})
+
+    drive(anki, sync.update_decks, respond=_choose_import_for("guid-new-b"))
+
+    assert "guid-new-b" not in config.load_declined()
+
+
+def test_a_kept_decline_survives_when_its_row_becomes_new_again(anki, tmp_path):
+    """A "keep" decline only means anything for a "changed" row. If the same guid's
+    note vanishes from her collection (she deleted it) and the next update re-offers
+    it as brand new instead, the row's control can't even show "keep" (a new row only
+    offers Import/Skip/Never), so leaving it untouched must not read as "she flipped
+    it back to default" and silently drop the registry entry."""
+    from internpearls import config
+    deck = _source_updating_card_a(anki, tmp_path)   # guid-a, "front a" -> reworded
+    config.save_declined({
+        "guid-a": {"state": "keep", "front": "front a", "deck": deck,
+                   "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+    del anki.col._notes[anki.col.note_by_guid("guid-a").id]   # she deleted her card
+
+    _update(anki)   # accepts without touching guid-a's row (now rendered as new)
+
+    entry = config.load_declined().get("guid-a")
+    assert entry is not None and entry["state"] == "keep"
