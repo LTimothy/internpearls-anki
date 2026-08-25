@@ -763,17 +763,56 @@ def test_declined_dialog_empty_state(anki):
 
 
 def test_declined_dialog_degrades_a_malformed_entry_instead_of_crashing(anki):
-    """A hand-edited declined.json can carry a garbage value or an unrecognized state;
-    neither should crash the dialog, just leave that row out."""
+    """A hand-edited declined.json can carry a garbage (non-dict) value, which cannot
+    be read as a row at all and is the one thing this dialog drops outright, or a
+    state it doesn't otherwise group by. sync.py's own filter keeps a GUID declined by
+    its presence in the registry alone, whatever its state says, so an unrecognized
+    but real entry must still render, under Other, with a working Offer again: without
+    it there would be no way back for that card at all."""
     from internpearls import config
     config.save_declined({
         "g1": "not a dict",
         "g2": {"state": "future-state", "front": "front c", "deck": "IP::A",
-               "decided": "2026-08-03", "hash": ""}})
+               "decided": "2026-08-03", "hash": ""},
+        "g3": {"state": "another-unknown", "front": "front d", "deck": "IP::A",
+               "decided": "2026-08-04", "hash": ""}})
     tree = _snapshot_declined_dialog(anki)
     texts = _all_text(tree)
-    assert "front c" not in texts
-    assert "You haven't declined any cards." in texts
+    assert "Other" in texts
+    assert "front c" in texts and "front d" in texts
+    assert "You haven't declined any cards." not in texts
+    buttons = [n for n in walk(tree)
+              if n.get("t") == "button" and n.get("label") == "Offer again"]
+    assert len(buttons) == 2, (
+        "one Offer again per rendered entry: the non-dict entry has none, the two "
+        "unrecognized-state entries have one each")
+
+
+def test_offer_again_on_an_other_row_removes_it_without_crashing(anki):
+    from internpearls import config
+    config.save_declined({
+        "g1": {"state": "future-state", "front": "front c", "deck": "IP::A",
+               "decided": "2026-08-03", "hash": ""}})
+    _drive_declined_offer_again(anki, "g1")
+    assert config.load_declined() == {}
+
+
+def test_offer_again_on_an_entry_missing_a_deck_saves_without_invalidating(
+        anki, monkeypatch):
+    """A malformed entry can be missing its "deck" key entirely. Offer again must
+    still remove and save it (the pop is real work regardless of what else is
+    missing), but there is nothing to invalidate: invalidate_installed must not run
+    at all, and certainly never with [None]."""
+    from internpearls import config, dialogs
+    calls = []
+    monkeypatch.setattr(dialogs, "invalidate_installed",
+                        lambda names=None: calls.append(names))
+    config.save_declined({
+        "g1": {"state": "skip", "front": "front e", "decided": "2026-08-05",
+               "hash": ""}})
+    _drive_declined_offer_again(anki, "g1")
+    assert config.load_declined() == {}
+    assert calls == [], f"invalidate_installed must not run here, got {calls}"
 
 
 # --------------------------------------------------------------------- settings
