@@ -482,12 +482,23 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
             answer_label.setText(_preview_style() + new_answer_html)
             answer_label.setVisible(bool(new_answer_html))
 
+    def _name_caret(expanded):
+        """What the caret is called to anyone not reading the glyph: a screen reader
+        announced it as "▸", and a hovering reader got nothing at all. Kept in step with
+        the direction it points, since that is the only other thing saying which way it
+        will go.
+        """
+        name = "Hide card" if expanded else "Show card"
+        caret.setAccessibleName(name)
+        caret.setToolTip(name)
+
     def _toggle():
         expanded = not body.isVisible()
         if expanded:
             _reveal_images()
         body.setVisible(expanded)
         caret.setText(_CARET_OPEN if expanded else _CARET_CLOSED)
+        _name_caret(expanded)
 
     header = QWidget()
     hlay = QHBoxLayout(header)
@@ -505,7 +516,11 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
     caret.setStyleSheet(f"border: none; padding: 0; font-weight: 600;"
                         f" color: {colors()['caret']};")
     caret.setCursor(Qt.CursorShape.PointingHandCursor)
+    # Left in the tab order deliberately, one stop per row and all. ClickFocus would cut
+    # a 300-row list down to no tab stops at all, but the row's own label is a QLabel and
+    # takes no focus, so it would also leave no way to open a card from the keyboard.
     caret.clicked.connect(_toggle)
+    _name_caret(False)
     hlay.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
 
     # Top-aligned like the caret: the chip marks the row, so it belongs beside the
@@ -991,3 +1006,4 @@ def offer_feedback_digest(parent, entries, title=None, items=()):
     close.clicked.connect(dlg.accept)
     lay.addWidget(bb)
     dlg.exec()
+    dlg.deleteLater()   # parented to mw otherwise, which owns it until Anki quits

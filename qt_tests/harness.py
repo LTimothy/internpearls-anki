@@ -735,6 +735,11 @@ def render(scene, theme="light", expand=(), size=(640, 560), **opts):
             self.resize(grown_w, grown_h)
             a.processEvents()
         shots.append(Shot(self.grab().toImage(), self, theme, scene))
+        # Every wrapper releases its dialog once exec() returns, which is the whole
+        # point in Anki and fatal here: the Shot outlives this call and the tests read
+        # the live widget tree off it, so the next processEvents() would free the object
+        # they are still asking questions of. Neutralised per instance, after the grab.
+        self.deleteLater = lambda: None
         return 1
 
     original = q.QDialog.exec
