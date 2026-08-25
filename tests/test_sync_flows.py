@@ -3255,6 +3255,24 @@ def test_import_single_writes_its_personalized_copy_outside_the_source_file(anki
     assert not [f for f in os.listdir(tmp_path) if f.endswith(".sync.apkg")]
 
 
+def test_import_single_filters_a_never_declined_card(anki, tmp_path):
+    """Import single deck used to build its own scratch import with no decline filter
+    at all, so a hand-picked .apkg could re-import a card she said Never to. It must be
+    dropped the same way a regular sync drops it, and the registry entry survives."""
+    from internpearls import config, sync
+    config.save_declined({"g1": {"state": "never", "front": "Front one", "deck": DECK,
+                                 "decided": "2026-08-01", "hash": ""}})
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
+    anki.gui.file_picks = [src]
+
+    sync.import_single()
+
+    fronts = {n.fields[0] for n in anki.col._notes.values()}
+    assert "Front one" not in fronts
+    assert config.load_declined()["g1"]["state"] == "never"
+
+
 # --------------------------------------------------- reconcile nudge (auto-sync)
 def _stranded_and_retired(tmp_path, superseded, retired):
     folder = tmp_path / "source"
@@ -4729,6 +4747,21 @@ def test_run_sync_prunes_moot_registry_entries(anki, tmp_path):
     assert "guid-gone" not in config.load_declined()
 
 
+def test_run_sync_survives_a_garbage_registry_entry(anki, tmp_path):
+    """A hand-edited declined.json can hold a non-dict value for a guid. prune_declined
+    sits between the import and the protected-field restore, so a crash there used to
+    abort the whole sync after her notes were overwritten but before they were restored.
+    It must instead degrade gracefully and let the rest of the run finish."""
+    from internpearls import config, sync
+    deck = _source_updating_card_a(anki, tmp_path)   # guid-a, her mnemonic on Notes
+    config.save_declined({"g-garbage": "not a dict"})
+
+    drive(anki, sync.sync_decks, respond=_accept_everything)
+
+    assert anki.col.note_by_guid("guid-a")["Notes"] == "her mnemonic"
+    assert config.load_declined() == {"g-garbage": "not a dict"}
+
+
 # --------------------------------------------- update_decks: seed, hide, confirm
 
 def _all_text(tree):
@@ -4829,8 +4862,8 @@ def test_update_preview_hides_never_and_presets_skip(anki, tmp_path):
 
 def test_a_changed_row_keeps_one_updated_chip_after_a_kept_decline(anki, tmp_path):
     """A "changed" row already wears the kind chip's own UPDATED pill; a fresh edit
-    since a Keep decline must not add a second one (Task 5's chip rendering added
-    both unconditionally)."""
+    since a Keep decline must not add a second one (an earlier revision added both
+    chips unconditionally)."""
     from internpearls import config
     deck = _source_updating_card_a(anki, tmp_path)   # guid-a, reworded front
     config.save_declined({
@@ -4868,11 +4901,16 @@ def test_cancelling_writes_nothing_to_the_registry(anki, tmp_path):
 def test_digest_reports_decisions_made_this_run_only(anki, tmp_path):
     from internpearls import logic
     entries = logic.feedback_entries(
-        {"g1": "too verbose"}, {"g1": ("IP::A", "front a"), "g2": ("IP::A", "front b")},
-        decisions={"g1": "skipped", "g2": "never"})
+        {"g1": "too verbose"},
+        {"g1": ("IP::A", "front a"), "g2": ("IP::A", "front b"),
+         "g3": ("IP::A", "front c")},
+        decisions={"g1": "skipped", "g2": "never", "g3": "imported after all"})
     digest = logic.build_feedback_digest(entries)
     assert "decision: skipped" in digest
     assert "front b" in digest and "decision: never" in digest
+    # An un-decline (Skip/Keep back to the default) is a decision too, per the spec,
+    # and gets its own reader-facing word.
+    assert "front c" in digest and "decision: imported after all" in digest
 
 
 def test_an_untouched_decline_keeps_its_stale_cue(anki, tmp_path):
@@ -4891,6 +4929,26 @@ def test_an_untouched_decline_keeps_its_stale_cue(anki, tmp_path):
     assert entry["hash"] == "stale-hash-value1"
     assert entry["decided"] == "2026-08-01"
     assert entry["front"] == "front b"
+
+
+def test_actively_reclicking_skip_refreshes_the_stale_hash(anki, tmp_path):
+    """The active-click sibling of test_an_untouched_decline_keeps_its_stale_cue:
+    clicking Skip again on a card whose incoming content changed since she last
+    declined it is a re-review, so the stored hash/decided/front must refresh even
+    though the state itself (skip) doesn't change. Not a new decision, though: it
+    must not show up in the digest."""
+    from internpearls import config, sync
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-b": {"state": "skip", "front": "front b", "deck": deck,
+                       "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+
+    drive(anki, sync.update_decks, respond=_choose_skip_for("guid-new-b"))
+
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["hash"] != "stale-hash-value1" and entry["hash"]
+    assert entry["decided"] != "2026-08-01"
+    assert anki.gui.clipboard == []   # re-confirming an unchanged state isn't a decision
 
 
 def test_digest_reports_only_the_state_that_changed_this_run(anki, tmp_path):
@@ -4941,3 +4999,39 @@ def test_a_kept_decline_survives_when_its_row_becomes_new_again(anki, tmp_path):
 
     entry = config.load_declined().get("guid-a")
     assert entry is not None and entry["state"] == "keep"
+
+
+def test_actively_importing_a_kind_flipped_decline_removes_it(anki, tmp_path):
+    """The active-click sibling of test_a_kept_decline_survives_when_its_row_becomes_
+    new_again: if she actually clicks Import on that re-offered row rather than just
+    leaving it, that IS an explicit un-decline (default states are sparse, so nothing
+    in `decisions` itself can tell the two apart) and the card must import."""
+    from internpearls import config, sync
+    deck = _source_updating_card_a(anki, tmp_path)   # guid-a, "front a" -> reworded
+    config.save_declined({
+        "guid-a": {"state": "keep", "front": "front a", "deck": deck,
+                   "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+    del anki.col._notes[anki.col.note_by_guid("guid-a").id]   # she deleted her card
+    state = {"clicked": False}
+
+    def respond(p):
+        if p["kind"] == "ask":
+            return {"answer": True}
+        if p["kind"] != "dialog":
+            return {}
+        done = _dismiss_result(p["tree"])
+        if done:
+            return done
+        if not state["clicked"]:
+            state["clicked"] = True
+            btn = _find_row_button(p["tree"], "front a, revised", "Import")
+            return {"events": [{"id": btn["id"], "click": True}]}
+        return _click_update_button(True)(p)
+
+    drive(anki, sync.update_decks, respond)
+
+    assert config.load_declined().get("guid-a") is None
+    fronts = {n.fields[0] for n in anki.col._notes.values()}
+    assert "front a, revised" in fronts
+    digest = anki.gui.clipboard[-1]
+    assert "decision: imported after all" in digest

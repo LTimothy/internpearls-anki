@@ -701,10 +701,13 @@ def prune_declined(reg, retired_guids, seen):
     """Drop registry entries that are moot: the note was retired upstream, or it is
     gone from its deck's current package. `seen` covers only decks actually
     downloaded this run, so an entry for a deck not in `seen` is never judged for
-    absence. Mutates `reg`; returns whether anything was removed."""
+    absence. A hand-edited entry that isn't even a dict is left alone unless its
+    guid is retired: there's no "deck" to check it against, and a bad entry must
+    degrade gracefully rather than crash a sync. Mutates `reg`; returns whether
+    anything was removed."""
     dead = [g for g, e in reg.items()
             if g in retired_guids
-            or (e.get("deck") in seen and g not in seen[e["deck"]])]
+            or (isinstance(e, dict) and e.get("deck") in seen and g not in seen[e["deck"]])]
     for g in dead:
         del reg[g]
     return bool(dead)
@@ -1287,9 +1290,10 @@ def feedback_entries(flags, index, decisions=None):
     dropped rather than shown as a bare GUID: it means we no longer know which card she
     meant, and a line naming no card is not something anyone can act on.
 
-    `decisions`, when given, is {guid: reader-facing state} ("skipped"/"kept
-    yours"/"never") for a decision made this run; a guid present there but with no note
-    still gets an entry (empty "note"), carrying the "decision" key the digest renders.
+    `decisions`, when given, is {guid: reader-facing state} ("skipped"/"kept yours"/
+    "never"/"imported after all") for a decision made this run; a guid present there
+    but with no note still gets an entry (empty "note"), carrying the "decision" key
+    the digest renders.
     """
     decisions = decisions or {}
     out = []

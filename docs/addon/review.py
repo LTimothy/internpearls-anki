@@ -763,7 +763,7 @@ def clear_saved_feedback():
 
 
 def build_update_body(items, sources, flags, new_index, decisions,
-                      top_html, status_line, safety_html):
+                      top_html, status_line, safety_html, touched=None):
     """The Update my decks screen's body: fixed summary text, the streaming list of
     pending new and changed cards plus any retired or relocated ones, then the
     status line and the safety note below it. `internpearls.ui._ask_with_widget`
@@ -801,6 +801,13 @@ def build_update_body(items, sources, flags, new_index, decisions,
     recompute the line shown below the list (flag counts, decision tallies, whatever
     the caller wants there); `safety_html` is fixed.
 
+    `touched`, when given, collects every guid whose decision control she actually
+    clicked this run, even a click that lands back on the row's own default or
+    reaffirms the state it was already showing. update_decks() reads this back after
+    the dialog closes to tell an active re-decline (which should refresh the stored
+    hash) and an active un-decline on a kind-flipped row (which should remove the
+    entry) apart from a row simply left as the confirmation seeded it.
+
     Returns (widget, boxes, flush). `boxes` is {guid: QPlainTextEdit}, built lazily as
     the list's own rows are. `flush()` stops the debounce save timer, writes one final
     unconditional copy of what's flagged to disk, and releases the temporary directory
@@ -810,6 +817,7 @@ def build_update_body(items, sources, flags, new_index, decisions,
     resolvers, media_dir = build_resolvers(sources)
     boxes = {}
     carried = load_saved_feedback()
+    touched = touched if touched is not None else set()
 
     # A predeclined card's `decisions` entry has to exist before any row is ever
     # built, not just once its own row happens to render: StreamingList only builds
@@ -866,6 +874,7 @@ def build_update_body(items, sources, flags, new_index, decisions,
         saver.start()
 
     def _on_decide(guid, state):
+        touched.add(guid)
         _refresh_bottom()
 
     def _row(item):

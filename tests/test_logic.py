@@ -1898,3 +1898,16 @@ def test_prune_declined_drops_retired_and_vanished_entries():
 def test_prune_declined_reports_no_change():
     reg = {"g": {"state": "skip", "deck": "IP::A", "front": "z"}}
     assert logic.prune_declined(reg, set(), {"IP::A": {"g"}}) is False
+
+
+def test_prune_declined_survives_a_non_dict_entry():
+    """A hand-edited declined.json can hold a garbage value for a guid. It must not
+    crash the prune, and it is left alone (for the Declined dialog's Other/garbage
+    handling) unless its guid is actually retired, in which case it prunes like any
+    other entry."""
+    reg = {"g-garbage": "not a dict", "g-retired-garbage": "also not a dict",
+           "g-alive": {"state": "skip", "deck": "IP::A", "front": "z"}}
+    changed = logic.prune_declined(
+        reg, retired_guids={"g-retired-garbage"}, seen={"IP::A": {"g-alive"}})
+    assert changed is True
+    assert set(reg) == {"g-garbage", "g-alive"}
