@@ -588,7 +588,12 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
         caption.setVisible(declined)
         if declined:
             caption.setText(_DECLINE_CAPTION[state])
-        show_box = declined or bool(flags.get(guid)) or box.isVisible()
+        # Sticky once there's something to lose (a saved flag or typed-but-unsaved
+        # text), but a decline back to default with nothing written in it closes
+        # again, restoring the quiet Add note affordance rather than leaving an
+        # empty box parked open.
+        has_note = bool(flags.get(guid)) or bool(box.toPlainText().strip())
+        show_box = declined or has_note
         box.setVisible(show_box)
         add_note.setVisible(state == default and not show_box)
         font = primary.font()
@@ -602,7 +607,13 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
 
     if kind in _DEFAULT_DECISION:
         options = _NEW_OPTIONS if kind == "new" else _CHANGED_OPTIONS
-        initial = decisions.get(guid, declined_state or default)
+        # `decisions` is the interface Task 6 persists verbatim, so a predeclined
+        # detail has to actually land in it here, not just drive the control's
+        # displayed state: otherwise an untouched previously-declined row would show
+        # "Skip for now" on screen while the dict still read "import".
+        if guid not in decisions and declined_state and declined_state != default:
+            decisions[guid] = declined_state
+        initial = decisions.get(guid, default)
 
         def _on_change(state):
             if state == default:
