@@ -709,14 +709,13 @@ class _SettingsDialog(QDialog):
 
     Manage decks answers "which decks, which fields" (what gets synced). This dialog
     answers "how automatic, how often" (whether it happens on its own), and alongside
-    that the two display choices that belong to no particular deck: dimming bright
-    pictures in Night Mode, and whether an update offers a box for flagging a card.
-    Keeping the two dialogs separate is what stops either one from turning into a
-    catch-all as more toggles get added.
+    that the one display choice that belongs to no particular deck: dimming bright
+    pictures in Night Mode. Keeping the two dialogs separate is what stops either one
+    from turning into a catch-all as more toggles get added.
     """
 
     def __init__(self, parent, auto_sync, interval_minutes, notify_updates, auto_update,
-                dim_images_night_mode, collect_feedback):
+                dim_images_night_mode):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Settings")
         self.setMinimumWidth(440)
@@ -775,17 +774,6 @@ class _SettingsDialog(QDialog):
         outer.addWidget(hint_label(
             "Applies to every deck in your collection, not just Intern Pearls ones."))
 
-        outer.addWidget(section_rule())
-        outer.addWidget(section_label("Card review"))
-
-        self._feedback_cb = QCheckBox("Let me flag problems with cards as they sync")
-        self._feedback_cb.setChecked(collect_feedback)
-        outer.addWidget(self._feedback_cb)
-
-        outer.addWidget(hint_label(
-            "Puts a note box under each card on the Update my decks screen, and hands "
-            "back a summary of what you flagged whether or not you go ahead."))
-
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
         bb.addButton(QDialogButtonBox.StandardButton.Cancel)
@@ -800,7 +788,6 @@ class _SettingsDialog(QDialog):
             "notify_addon_updates": self._notify_cb.isChecked(),
             "auto_update_addon": self._auto_update_cb.isChecked(),
             "dim_images_night_mode": self._dim_images_cb.isChecked(),
-            "collect_card_feedback": self._feedback_cb.isChecked(),
         }
 
 
@@ -810,7 +797,7 @@ def open_settings():
     cfg = _cfg()
     dlg = _SettingsDialog(mw, cfg["auto_sync_decks"], cfg["auto_sync_interval_minutes"],
                           cfg["notify_addon_updates"], cfg["auto_update_addon"],
-                          cfg["dim_images_night_mode"], cfg["collect_feedback"])
+                          cfg["dim_images_night_mode"])
     saved = bool(dlg.exec())
     values = dlg.values()
     dlg.deleteLater()   # its controls are read above; see ui._ask_scrollable
@@ -819,6 +806,7 @@ def open_settings():
 
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
     conf.update(values)
+    conf.pop("collect_card_feedback", None)   # retired key, shed silently on old installs
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
     # Apply immediately rather than waiting for a restart.
@@ -841,11 +829,8 @@ def open_settings():
     dim_line = ("Bright images will be dimmed in Night Mode."
                if values["dim_images_night_mode"] else
                "Night Mode image dimming is off.")
-    # The one setting invisible until the next run, so it needs to say what it did
-    # here rather than nowhere at all.
-    feedback_line = ("You'll get a note box to flag problems with a card as decks sync."
-                     if values["collect_card_feedback"] else
-                     "No note box for flagging card problems as decks sync.")
+    feedback_line = ("Decline controls for flagging a problem card are always available "
+                     "on the Update my decks screen.")
     _info(f"Settings saved.<br><br>{sync_line}<br>{update_line}<br>{dim_line}"
           f"<br>{feedback_line}")
 

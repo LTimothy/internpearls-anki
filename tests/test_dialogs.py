@@ -768,49 +768,41 @@ def test_saving_manual_deck_sync_steers_to_update_my_decks(anki):
     drive(anki, dialogs.open_settings, respond)
 
 
-def test_card_feedback_is_off_by_default(anki):
-    from internpearls.config import _cfg
-    assert _cfg()["collect_feedback"] is False
-
-
-def test_settings_saves_feedback_toggle(anki):
+def test_settings_dialog_has_no_feedback_checkbox(anki):
+    """The Card review section (a settings-gated feedback toggle) is retired: feedback
+    boxes on the update preview are contextual now, not controlled from here."""
     from internpearls import dialogs
 
     anki.gui.interactive = True
 
     def respond(p):
         if p["kind"] == "dialog":
-            feedback = find(p["tree"], t="check",
-                            label="Let me flag problems with cards as they sync")
-            assert feedback is not None
-            save = find(p["tree"], t="button", label="Save")
-            return {"events": [{"id": feedback["id"], "value": True},
-                               {"id": save["id"], "click": True}]}
+            labels = [n.get("label") or n.get("text") or "" for n in walk(p["tree"])]
+            assert not any("Let me flag problems" in l for l in labels)
+            assert not any("Card review" in l for l in labels)
+            cancel = find(p["tree"], t="button", label="Cancel")
+            return {"events": [{"id": cancel["id"], "click": True}]}
         return {}
 
     drive(anki, dialogs.open_settings, respond)
-    cfg = anki.mw._config
-    assert cfg["collect_card_feedback"] is True
 
 
-def test_settings_saved_summary_reports_the_feedback_toggle(anki):
-    """The saved-summary reported sync/add-on-update/dim lines but never the
-    card-feedback toggle, the one setting invisible until the next run."""
+def test_saving_settings_sheds_the_retired_key(anki):
+    """An old install may still carry `collect_card_feedback` in its config; saving
+    Settings should shed it silently rather than leave it as dead weight forever."""
     from internpearls import dialogs
 
+    anki.mw._config["collect_card_feedback"] = True
     anki.gui.interactive = True
 
     def respond(p):
         if p["kind"] == "dialog":
-            feedback = find(p["tree"], t="check",
-                            label="Let me flag problems with cards as they sync")
             save = find(p["tree"], t="button", label="Save")
-            return {"events": [{"id": feedback["id"], "value": True},
-                               {"id": save["id"], "click": True}]}
-        assert "flag problems" in p["text"]
+            return {"events": [{"id": save["id"], "click": True}]}
         return {}
 
     drive(anki, dialogs.open_settings, respond)
+    assert "collect_card_feedback" not in anki.mw._config
 
 
 # --------------------------------------------------------- configure source

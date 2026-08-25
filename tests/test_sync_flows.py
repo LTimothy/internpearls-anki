@@ -1777,12 +1777,12 @@ def test_update_decks_lists_a_changed_only_card_inline(anki, tmp_path):
     assert "Review" not in seen["text"], "the old Review button is gone"
 
 
-def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
+def test_review_box_starts_empty_with_nothing_summarized(anki, tmp_path):
     """Default: the confirmation previews the incoming cards inline, with a cloze
     note's deletions filled in rather than blanked. A row's feedback box is
-    contextual now, not gated by the card-feedback setting, so it renders on every
-    row regardless, but starts empty; the setting still controls whether anything
-    ends up summarized and copied at the end of the run."""
+    contextual, not gated by any setting, so it renders on every row, but starts
+    empty; leaving it untouched means nothing ends up summarized or copied at the
+    end of the run."""
     from internpearls import sync
     cloze_model = make_model(name="Study Deck - Cloze",
                              fields=["Text", "Why", "Image", "Dosing", "Notes"])
@@ -1814,7 +1814,7 @@ def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
     assert palette.colors()["accent"] in seen["screen"]
     # The box itself still renders (contextual now, not settings-gated) but starts
     # empty, and nothing is offered to the clipboard.
-    assert seen["boxes"], "the feedback box should still render even with the toggle off"
+    assert seen["boxes"], "the feedback box should render on every row"
     assert all(not b["value"] for b in seen["boxes"]), "nothing should pre-fill it"
     assert "flagged" not in seen["screen"]
     assert not anki.gui.clipboard, "nothing should reach the clipboard"
@@ -1885,15 +1885,14 @@ def test_review_rules_separate_cards_without_trailing_the_last_one(anki, tmp_pat
     assert len(seen["hlines"]) == 2, "three cards separate with two rules"
 
 
-def test_review_collects_feedback_when_the_toggle_is_on(anki, tmp_path):
-    """Existing behavior, now opt-in: boxes appear and the digest is offered on close.
-    She sees the answer and the reasoning, not just the front, because "this card is
-    wrong" is a judgment you can't make from a prompt alone."""
+def test_review_collects_feedback_and_offers_the_digest(anki, tmp_path):
+    """Boxes appear on every row and the digest is offered on close, no setting
+    involved. She sees the answer and the reasoning, not just the front, because
+    "this card is wrong" is a judgment you can't make from a prompt alone."""
     from internpearls import sync
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g2", _fields("Front two", "the answer"), TAGS)], None)})
     _configure(anki, folder)
-    anki.mw._config["collect_card_feedback"] = True
     anki.gui.interactive = True
     seen = {}
 
@@ -1940,7 +1939,6 @@ def test_update_decks_declined_still_returns_the_feedback_she_wrote(anki, tmp_pa
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)})
     _configure(anki, folder)
-    anki.mw._config["collect_card_feedback"] = True
     anki.gui.interactive = True
     seen = {}
 
@@ -2627,7 +2625,6 @@ def _feedback_run(anki, tmp_path, on_screen, decide="Cancel"):
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)})
     _configure(anki, folder)
-    anki.mw._config["collect_card_feedback"] = True
     anki.gui.interactive = True
     seen = {}
 
@@ -2737,7 +2734,6 @@ def test_result_screen_uses_the_shared_title_and_row_components(anki, tmp_path):
         retired={DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
                                  "superseded_by": ["g1"]}}})
     _configure(anki, folder)
-    anki.mw._config["collect_card_feedback"] = True
     anki.gui.interactive = True
     seen = {}
 

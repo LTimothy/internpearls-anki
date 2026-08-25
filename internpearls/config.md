@@ -87,10 +87,3 @@ diagram doesn't glare out of a dark card. Applies to every deck in your collecti
 just this add-on's, since it works by styling images themselves rather than one note
 type. Takes effect immediately, with no Anki restart. Defaults to `false`. Editable in
 Intern Pearls → Settings.
-
-## collect_card_feedback
-
-When on, the Update my decks screen puts a box under each card it lists for noting
-anything wrong with it, and the run hands back a summary to send back afterwards,
-whether or not you go ahead with the update. Off by default: that screen is a
-read-only preview unless you ask for the boxes.
