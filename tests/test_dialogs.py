@@ -1391,6 +1391,11 @@ def test_predeclined_detail_renders_its_chips_and_preset_state(anki):
     assert cell.buttons["skip"].isChecked()
     texts = _row_texts(body)
     assert "SKIPPED" in texts and "UPDATED" in texts
+    # decisions is the interface the next task persists verbatim, so the preset state
+    # has to actually land in the dict, not just drive what the control shows.
+    assert decisions == {"guid-new-a": "skip"}
+    cell.buttons["import"].click()
+    assert decisions == {}
 
 
 def test_returning_to_default_pops_the_guid_and_unstrikes_the_row(anki):
@@ -1402,6 +1407,22 @@ def test_returning_to_default_pops_the_guid_and_unstrikes_the_row(anki):
     assert decisions == {"guid-new-a": "never"}
     cell.buttons["import"].click()
     assert decisions == {}
+
+
+def test_returning_to_default_closes_an_empty_box_and_restores_add_note(anki):
+    """An empty feedback box a decline opened closes again on return to the row's
+    default, since nothing was actually written into it worth keeping open, and the
+    quiet Add note affordance comes back so feedback is still reachable."""
+    body, boxes, flush, decisions = _build_body_with_one_new_card()
+    cell = _find_decision_cell(body)
+    cell.buttons["skip"].click()
+    box = _find_feedback_box(body)
+    assert box.isVisible()
+    cell.buttons["import"].click()
+    assert not box.isVisible(), "an empty box should close again on return to default"
+    add_note = next(w for w in _walk_widgets(body)
+                    if getattr(w, "text", None) and w.text() == "Add note")
+    assert add_note.isVisible(), "Add note should reappear once the box is closed"
 
 
 def test_import_row_offers_a_quiet_add_note_that_reveals_the_box(anki):
