@@ -828,6 +828,8 @@ class QPushButton(QWidget):
         super().__init__()
         self._label = label
         self.clicked = Signal()
+        self._checkable = False
+        self._checked = False
 
     def setFlat(self, v):
         pass
@@ -838,10 +840,28 @@ class QPushButton(QWidget):
     def text(self):
         return self._label
 
+    def setCheckable(self, v):
+        self._checkable = bool(v)
+
+    def setChecked(self, v):
+        self._checked = bool(v)
+
+    def isChecked(self):
+        return self._checked
+
+    def click(self):
+        # Real QPushButton.click(): toggles checked state first (if checkable), then
+        # emits clicked. decision_cell's own handler drives the real state change via
+        # set_state, so the value emitted here is not load-bearing for that flow.
+        if self._checkable:
+            self.setChecked(not self._checked)
+        self.clicked.emit(self._checked)
+
     def node(self):
         return {"t": "button", "id": self.wid, "label": self._label,
                 "style": self._style, "enabled": self._enabled,
-                "tooltip": self._tooltip, "accessible": self._accessible}
+                "tooltip": self._tooltip, "accessible": self._accessible,
+                "checked": self._checked}
 
 
 class QCheckBox(QWidget):

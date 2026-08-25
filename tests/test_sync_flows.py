@@ -2877,10 +2877,14 @@ def test_update_decks_groups_every_pending_row_under_its_own_deck(anki, tmp_path
     assert lines.count("Pharm") == 2, f"expected one summary row and one heading: {lines}"
     assert "Retired" not in lines and "Moved" not in lines
 
+    # This flow only ever produces these four kinds; CHIPS carries others (the decline
+    # kinds) that no row here paints, so the expectation is named explicitly rather
+    # than derived from the whole dict.
+    flow_kinds = [CHIPS["new"], CHIPS["changed"], CHIPS["retired"], CHIPS["moved"]]
     heading = len(lines) - 1 - lines[::-1].index("Pharm")
     section = lines[heading:]
     chips = [l for l in section if l in set(CHIPS.values())]
-    assert sorted(chips) == sorted(CHIPS.values()), (
+    assert sorted(chips) == sorted(flow_kinds), (
         f"the deck's section does not hold all four kinds: {chips}")
     assert chips[-2:] == [CHIPS["retired"], CHIPS["moved"]], (
         f"archived and relocated cards should close the section: {chips}")
