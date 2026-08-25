@@ -1425,6 +1425,34 @@ def test_returning_to_default_closes_an_empty_box_and_restores_add_note(anki):
     assert add_note.isVisible(), "Add note should reappear once the box is closed"
 
 
+def test_typed_but_unsaved_text_keeps_the_box_open_on_return_to_default(anki):
+    """The empty-box-closes fix must not also swallow a note she's mid-typing: text
+    sitting in the box, even before it has reached `flags`, keeps it open."""
+    body, boxes, flush, decisions = _build_body_with_one_new_card()
+    cell = _find_decision_cell(body)
+    cell.buttons["skip"].click()
+    box = _find_feedback_box(body)
+    box.setPlainText("wrong dose")
+    cell.buttons["import"].click()
+    assert box.isVisible(), "typed text should keep the box open on return to default"
+
+
+def test_a_predeclined_card_past_the_first_streaming_batch_still_reaches_decisions(anki):
+    """_card_row alone cannot be trusted to seed `decisions`: StreamingList only builds
+    the first batch of rows up front and the rest only once the reader scrolls near the
+    bottom, which never happens here. build_update_body has to seed the dict itself,
+    from `items`, before any row widget exists."""
+    from internpearls import review
+    details = [_new_card_detail(guid=f"guid-{i}") for i in range(60)]
+    details[55] = _new_card_detail(guid="guid-55", declined_state="skip")
+    items = [("card", "Example Deck", d) for d in details]
+    flags, new_index, decisions = {}, {}, {}
+    body, boxes, flush = review.build_update_body(
+        items, {}, flags, new_index, decisions, "", lambda: "", "")
+    assert decisions.get("guid-55") == "skip", (
+        "a predeclined card past the first StreamingList batch never reached decisions")
+
+
 def test_import_row_offers_a_quiet_add_note_that_reveals_the_box(anki):
     """An Import/Apply row is not declined, so its box starts hidden, but a small "Add
     note" affordance can still reveal it (flag-without-decline)."""
