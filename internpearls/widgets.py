@@ -11,7 +11,8 @@ May import config, logic, palette and ui. Must NOT import sync, dialogs or revie
 that's the boundary that keeps this module out of the same import cycle review.py was
 built to dodge.
 """
-from aqt.qt import QHBoxLayout, QLabel, QScrollArea, Qt, QVBoxLayout, QWidget
+from aqt.qt import (QHBoxLayout, QLabel, QPushButton, QScrollArea, Qt, QVBoxLayout,
+                     QWidget)
 
 from .palette import colors
 from .ui import section_label
@@ -19,13 +20,18 @@ from .ui import section_label
 # The chip labels. Their colours come from the palette, so only the wording lives here.
 # "changed" reads UPDATED rather than CHANGED to match the wording review.py's rows
 # already shipped; renaming the label now would be a cosmetic change no task asked for.
-CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOVED"}
+# "skipped"/"kept" mark a decline decision review.py already carried out; they reuse
+# the retired role below rather than a colour of their own, since a skipped or kept
+# card is exactly as inert to the sync as a retired one.
+CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOVED",
+         "skipped": "SKIPPED", "kept": "KEPT YOURS"}
 
 # A chip's palette role prefix, keyed by its kind. Not a 1:1 string match: "changed"
 # reuses the existing "updated_bg"/"updated_fg" pair rather than a "changed_bg" this
 # repo has never had, since the wording and the role were named independently back
 # when only review.py's two markers existed.
-_ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "moved"}
+_ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "moved",
+          "skipped": "retired", "kept": "retired"}
 
 # Everything about a pill except its two colours: the shape and the type size, shared
 # between the real pill and the probe that measures it, so the measurement can never
@@ -119,6 +125,46 @@ def chip_cell(kind):
     pill.setStyleSheet(f"background-color: {c[f'{role}_bg']}; color: {c[f'{role}_fg']};"
                        f" {_CHIP_STYLE}")
     lay.addWidget(pill)
+    return cell
+
+
+def decision_cell(options, state, on_change):
+    """A row's decision as a compact segmented control: one checkable button per
+    option, exactly one checked. Selected colour says what the choice does: accept
+    roles for Import/Apply, updated for Skip/Keep, decline for Never."""
+    _SELECTED_ROLE = {"import": "accept", "apply": "accept",
+                      "skip": "updated", "keep": "updated", "never": "decline"}
+    cell = QWidget()
+    lay = QHBoxLayout(cell)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+    c = colors()
+    cell.buttons = {}
+
+    def _style(value, checked):
+        if not checked:
+            return (f"QPushButton {{ border: 1px solid {c['cell_rule']}; padding: 2px 9px;"
+                    f" font-size: 11px; color: {c['dim']}; background: transparent; }}")
+        role = _SELECTED_ROLE.get(value, "retired")
+        return (f"QPushButton {{ border: 1px solid {c['cell_rule']}; padding: 2px 9px;"
+                f" font-size: 11px; font-weight: 600;"
+                f" color: {c[role + '_fg']}; background: {c[role + '_bg']}; }}")
+
+    def set_state(value):
+        for v, b in cell.buttons.items():
+            b.setChecked(v == value)
+            b.setStyleSheet(_style(v, v == value))
+    cell.set_state = set_state
+
+    for value, label in options:
+        b = QPushButton(label)
+        b.setCheckable(True)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setAccessibleName(label)
+        b.clicked.connect(lambda _=False, v=value: (set_state(v), on_change(v)))
+        cell.buttons[value] = b
+        lay.addWidget(b)
+    set_state(state)
     return cell
 
 
