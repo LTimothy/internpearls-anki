@@ -11,6 +11,10 @@ from internpearls import review
 
 _ADDON_DIR = os.path.dirname(review.__file__)
 
+# Every _card_row call below is about the row's content, not its decision control, so
+# this stands in for the real on_decide callback build_update_body would supply.
+_no_decide = lambda *a, **k: None
+
 
 def _image_note_detail(image_field='<img src="sample-a.jpg">'):
     return {
@@ -233,8 +237,8 @@ def _walk(node, out=None):
     return out
 
 
-def _row_nodes(detail, collect_feedback=False):
-    row = review._card_row(dict(detail, guid="g1"), {}, {}, collect_feedback)
+def _row_nodes(detail):
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, {}, _no_decide)
     return _walk(row.node())
 
 
@@ -256,7 +260,7 @@ def test_no_card_row_widget_carries_a_border_of_its_own():
     a selector-less stylesheet propagates into every child, so each row drew a second
     inset rule under its own header on top of its own.
     """
-    for node in _row_nodes(_basic_note_detail(), collect_feedback=True):
+    for node in _row_nodes(_basic_note_detail()):
         assert "border-bottom" not in (node.get("style") or "")
 
 
@@ -331,7 +335,7 @@ def test_a_changed_row_shows_what_the_field_used_to_say():
     detail = dict(_basic_note_detail(), guid="g1", kind="changed",
                   was={"Back": "the answer she has today"})
     texts = " ".join(n.get("text") or "" for n in _walk(
-        review._card_row(detail, {}, {}, False).node()))
+        review._card_row(detail, {}, {}, {}, _no_decide).node()))
     assert "the answer she has today" in texts
     assert "was" in texts
 
@@ -340,16 +344,23 @@ def test_a_changed_row_shows_nothing_extra_for_an_unchanged_field():
     detail = dict(_basic_note_detail(), guid="g1", kind="changed",
                   was={"Back": "old back"})
     texts = " ".join(n.get("text") or "" for n in _walk(
-        review._card_row(detail, {}, {}, False).node()))
+        review._card_row(detail, {}, {}, {}, _no_decide).node()))
     assert "runs with the saphenous nerve" in texts   # the Why, rendered once
     assert texts.count("was") == 1
 
 
 def _text_nodes(detail):
     """Every label's text in a card row, in the same depth-first order the layout
-    walks them, so a test can compare *positions* rather than just presence."""
-    row = review._card_row(dict(detail, guid="g1"), {}, {}, False)
-    return [n.get("text") or "" for n in _walk(row.node()) if n.get("t") == "label"]
+    walks them, so a test can compare *positions* rather than just presence.
+
+    Excludes the decision control's own "won't be offered again" note: it lives in the
+    header beside the control for a new/changed row regardless of decision state, which
+    is chrome around the card's content rather than part of it, and the ordering tests
+    below are about where a `was` line lands relative to the fields it describes.
+    """
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, {}, _no_decide)
+    return [n.get("text") or "" for n in _walk(row.node())
+           if n.get("t") == "label" and n.get("text") != "won't be offered again"]
 
 
 def _first_index(texts, needle):
@@ -438,7 +449,7 @@ def test_no_widget_sets_a_background_without_setting_a_foreground():
     detail = dict(_basic_note_detail())
     detail["fields"] = [(n, "0.5 mg IV" if n == "Dosing" else v)
                         for n, v in detail["fields"]]
-    styled = [n.get("style") or "" for n in _row_nodes(detail, collect_feedback=True)]
+    styled = [n.get("style") or "" for n in _row_nodes(detail)]
     offenders = [s for s in styled if "background" in s and "color:" not in s]
     assert not offenders, f"background with no foreground: {offenders}"
 
@@ -538,7 +549,7 @@ def test_a_row_names_its_image_until_it_is_expanded(tmp_path):
     review nobody opens extracts nothing."""
     resolve = review._media_resolver(
         _apkg_with_image(tmp_path), {"sample-a.jpg": "0"}, str(tmp_path / "out"))
-    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False,
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, {}, _no_decide,
                            resolve=resolve)
     texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
     assert "[image: sample-a.jpg]" in texts
@@ -549,7 +560,7 @@ def test_a_row_names_its_image_until_it_is_expanded(tmp_path):
 def test_expanding_a_row_renders_its_image_for_real(tmp_path):
     resolve = review._media_resolver(
         _apkg_with_image(tmp_path), {"sample-a.jpg": "0"}, str(tmp_path / "out"))
-    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False,
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, {}, _no_decide,
                            resolve=resolve)
     caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
     _click(caret["id"], row)
@@ -571,7 +582,7 @@ def test_expanding_a_row_rerenders_a_back_field_inline_image_in_place(tmp_path):
         for n, v in detail["fields"]]
     resolve = review._media_resolver(
         _apkg_with_image(tmp_path), {"sample-a.jpg": "0"}, str(tmp_path / "out"))
-    row = review._card_row(dict(detail, guid="g1"), {}, {}, False, resolve=resolve)
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, {}, _no_decide, resolve=resolve)
 
     before = next(n for n in _walk(row.node())
                  if n.get("t") == "label" and "Femoral nerve block" in (n.get("text") or ""))
@@ -600,7 +611,7 @@ def test_expanding_a_row_rerenders_a_why_fields_inline_image_in_place(tmp_path):
     resolve = review._media_resolver(
         _apkg_with_image(tmp_path, name="mechanism.png"), {"mechanism.png": "0"},
         str(tmp_path / "out"))
-    row = review._card_row(dict(detail, guid="g1"), {}, {}, False, resolve=resolve)
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, {}, _no_decide, resolve=resolve)
 
     before = next(n for n in _walk(row.node())
                  if n.get("t") == "label" and "saphenous nerve" in (n.get("text") or ""))
@@ -619,7 +630,7 @@ def test_expanding_a_row_rerenders_a_why_fields_inline_image_in_place(tmp_path):
 def test_a_row_with_no_resolver_keeps_naming_its_image():
     """Sync can hand over a deck whose .apkg could not be read. That row must still
     render, exactly as it did before pictures were possible."""
-    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False)
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, {}, _no_decide)
     caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
     _click(caret["id"], row)
     texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
@@ -638,7 +649,7 @@ def test_expanding_a_row_drops_the_chip_once_the_strip_paints_the_picture(tmp_pa
     """
     resolve = review._media_resolver(
         _apkg_with_image(tmp_path), {"sample-a.jpg": "0"}, str(tmp_path / "out"))
-    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False,
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, {}, _no_decide,
                            resolve=resolve)
     caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
     _click(caret["id"], row)
@@ -654,7 +665,7 @@ def test_expanding_a_row_keeps_the_chip_when_the_picture_cannot_be_resolved():
     failure) must keep the chip, since naming the picture is the fallback for exactly
     this case."""
     resolve = review._media_resolver("unused.apkg", {}, "unused-dest")
-    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False,
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, {}, _no_decide,
                            resolve=resolve)
     caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
     _click(caret["id"], row)
@@ -680,7 +691,7 @@ def test_a_changed_rows_previous_image_is_not_resolved_before_expand(monkeypatch
     monkeypatch.setattr(review, "_collection_image", spy)
     detail = dict(_basic_note_detail(), guid="g1", kind="changed",
                   was={"Back": '<img src="sample-b.jpg">'})
-    row = review._card_row(detail, {}, {}, False)
+    row = review._card_row(detail, {}, {}, {}, _no_decide)
     assert calls == [], "the was-line resolved its picture before the row was ever opened"
 
     caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
@@ -711,7 +722,7 @@ def test_expanding_a_row_resolves_an_image_field_by_name_not_all_or_nothing(tmp_
         image_field='<img src="sample-a.jpg"><img src="sample-b.jpg">',
         back='<img src="mechanism.png"> Femoral nerve block',
     )
-    row = review._card_row(dict(detail, guid="g1"), {}, {}, False, resolve=resolve)
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, {}, _no_decide, resolve=resolve)
     caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
     _click(caret["id"], row)
     texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
@@ -736,7 +747,7 @@ def test_expanding_a_row_renders_an_answers_own_inline_image_in_place(tmp_path):
         image_field='<img src="sample-a.jpg">',
         back='<img src="mechanism.png"> Femoral nerve block',
     )
-    row = review._card_row(dict(detail, guid="g1"), {}, {}, False, resolve=resolve)
+    row = review._card_row(dict(detail, guid="g1"), {}, {}, {}, _no_decide, resolve=resolve)
     caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
     _click(caret["id"], row)
     texts = " ".join(n.get("text") or "" for n in _walk(row.node()))
@@ -839,7 +850,7 @@ def test_the_caret_says_what_it_does_rather_than_only_drawing_a_glyph():
     """"▸" is the whole of what a screen reader had to go on, and a hovering reader got
     nothing at all. The name tracks the direction, since that is the only other thing on
     the row saying which way the click goes."""
-    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False)
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, {}, _no_decide)
     caret = _caret_widget(row)
     assert caret._accessible == "Show card" and caret._tooltip == "Show card"
     caret.clicked.emit()
