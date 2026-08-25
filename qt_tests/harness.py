@@ -682,6 +682,45 @@ def _scene_empty_cards_confirm(mock, opts):
         yes_label="Remove 3 cards", min_height=review._CONFIRM_HEIGHT)
 
 
+_DECLINED_FIXTURE = None
+
+
+def _declined_fixture():
+    """A declined.json with one entry per state, so all three group headings and their
+    Offer again buttons actually render. Built once and cached, same lifetime as the
+    other file-backed fixtures in this module.
+    """
+    global _DECLINED_FIXTURE
+    if _DECLINED_FIXTURE is not None:
+        return _DECLINED_FIXTURE
+    import atexit
+    import json
+    import tempfile
+
+    tmpdir = tempfile.TemporaryDirectory(prefix="internpearls_qt_declined_")
+    atexit.register(tmpdir.cleanup)
+    path = os.path.join(tmpdir.name, "declined.json")
+    with open(path, "w", encoding="utf8") as fh:
+        json.dump({
+            "g1": {"state": "never", "front": "Which widget is this, in one short line?",
+                   "deck": "Example Deck", "decided": "2026-08-01", "hash": ""},
+            "g2": {"state": "skip",
+                   "front": "A deliberately long prompt, written to run past the "
+                            "dialog's width so the wrap lands under the text",
+                   "deck": "Example Deck", "decided": "2026-08-02", "hash": ""},
+            "g3": {"state": "keep", "front": "A card whose deck was reorganized",
+                   "deck": "Example Deck", "decided": "2026-08-03", "hash": ""},
+        }, fh)
+    _DECLINED_FIXTURE = path
+    return path
+
+
+def _scene_declined(mock, opts):
+    from internpearls import config, dialogs
+    config.DECLINED = _declined_fixture()
+    return dialogs.open_declined_cards
+
+
 SCENES = {
     "digest": (_scene_digest, "the flagged-card feedback digest"),
     "settings": (_scene_settings, "the Settings dialog"),
@@ -702,6 +741,8 @@ SCENES = {
                             "Remove empty cards' confirmation (one row per note)"),
     "result": (_scene_result, "the end-of-run summary and feedback digest, one dialog"),
     "result-only": (_scene_result_only, "the end-of-run summary with nothing flagged"),
+    "declined": (_scene_declined,
+                "the Declined cards dialog (one entry per group, Offer again)"),
 }
 
 
