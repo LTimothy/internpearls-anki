@@ -922,12 +922,27 @@ def notetype_changes(src, her, aliases, scope_tag):
     return plan_notetype_changes(by_her, _her_note_types(scope_tag), TARGET_FIELDS)
 
 
-def _apply_deck(src, aliases, her):
+def _apply_deck(src, aliases, her, declined=frozenset()):
     """Import one deck, returning (in_place, as_new, touched) where `touched` is the
     guids this import wrote in her collection: the remapped guid where a note matched
-    one of hers, the .apkg's own otherwise. _capture_shipped needs exactly that set."""
+    one of hers, the .apkg's own otherwise. _capture_shipped needs exactly that set.
+
+    `declined` is the decline registry's guids; matching notes are dropped from the
+    scratch package before Anki sees it, so a skipped or never-imported card never
+    lands and a kept-back card's collection copy is never overwritten. Dropped notes
+    are excluded from the counts and from `touched`."""
     remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
-    touched = {remap.get(rid, guid) for rid, _f, guid in apkg_notes(src)}
+    drop, touched = set(), set()
+    for rid, _f, guid in apkg_notes(src):
+        final = remap.get(rid, guid)
+        if final in declined or guid in declined:
+            drop.add(rid)
+            if remap.pop(rid, None) is not None or guid in her.values():
+                in_place -= 1
+            else:
+                as_new -= 1
+        else:
+            touched.add(final)
     # A unique name in the system temp directory, rather than a fixed one derived from
     # `src` (two runs can otherwise write and import through the same path, and on a
     # shared machine that path is predictable enough to be pre-created as a symlink) or
@@ -936,7 +951,7 @@ def _apply_deck(src, aliases, her):
     # leave a file in if the import raises before the cleanup below.
     fd, out = tempfile.mkstemp(suffix=".sync.apkg")
     os.close(fd)
-    write_personalized(src, remap, out)
+    write_personalized(src, remap, out, drop=drop)
     try:
         _import_apkg(out)
     finally:

@@ -4006,9 +4006,9 @@ def test_a_sync_writes_its_personalized_copy_outside_the_source_folder(anki, tmp
     written = []
     real_write = collection.write_personalized
 
-    def watch(src, remap, out):
+    def watch(src, remap, out, drop=frozenset()):
         written.append(out)
-        return real_write(src, remap, out)
+        return real_write(src, remap, out, drop=drop)
 
     monkeypatch.setattr(collection, "write_personalized", watch)
 
@@ -4631,3 +4631,94 @@ def test_declined_registry_round_trips(anki):
     config.save_declined(entry)
     assert config.load_declined() == entry
     assert os.path.basename(config.DECLINED) == "declined.json"
+
+
+# ------------------------------------------------------- declined-notes filtering
+def _accept_everything(p):
+    """respond() that clicks through Sync decks' confirmation and any askUser()
+    prompt with yes, same as _click_sync_button's own default."""
+    return _click_sync_button()(p)
+
+
+def _run_unattended_poll(anki):
+    """The same unattended driver the auto-sync tests use, turning auto-sync on for
+    whatever source _configure already set rather than replacing it."""
+    from internpearls import background
+    anki.mw._config = {**anki.mw._config, "auto_sync_decks": True}
+    background._auto_sync_check()
+
+
+def _source_with_two_new_cards(anki, tmp_path):
+    """A source with two cards neither yet in her collection, for tests that decline
+    one of them. Returns the Anki deck name."""
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("guid-new-a", _fields("front a"), TAGS),
+                      ("guid-new-b", _fields("front b"), TAGS)], None)})
+    _configure(anki, folder)
+    return DECK
+
+
+def _source_updating_card_a(anki, tmp_path):
+    """She already holds guid-a under "front a"; the rebuilt deck reissues the same
+    GUID with a reworded front. Returns the Anki deck name."""
+    anki.col.add_note("guid-a", _fields("front a", notes="her mnemonic"), [TAGS])
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("guid-a", _fields("front a, revised"), TAGS)], None)})
+    _configure(anki, folder)
+    return DECK
+
+
+def _her_fields(anki, guid):
+    return list(anki.col.note_by_guid(guid).fields)
+
+
+def test_run_sync_drops_declined_notes_before_import(anki, tmp_path):
+    from internpearls import config, sync
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-b": {"state": "never", "front": "front b", "deck": deck,
+                       "decided": "2026-08-25", "hash": ""}})
+
+    drive(anki, sync.sync_decks, respond=_accept_everything)
+
+    fronts = {anki.col.get_note(nid).fields[0] for nid in anki.col.find_notes(f'"tag:{SCOPE}"')}
+    assert "front a" in fronts
+    assert "front b" not in fronts
+
+
+def test_run_sync_keep_leaves_her_copy_untouched(anki, tmp_path):
+    from internpearls import config, sync
+    deck = _source_updating_card_a(anki, tmp_path)   # she has guid-a, source rewords it
+    config.save_declined({
+        "guid-a": {"state": "keep", "front": "front a", "deck": deck,
+                   "decided": "2026-08-25", "hash": ""}})
+    before = _her_fields(anki, "guid-a")
+
+    drive(anki, sync.sync_decks, respond=_accept_everything)
+
+    assert _her_fields(anki, "guid-a") == before
+
+
+def test_unattended_auto_sync_respects_the_registry(anki, tmp_path):
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-b": {"state": "skip", "front": "front b", "deck": deck,
+                       "decided": "2026-08-25", "hash": ""}})
+
+    _run_unattended_poll(anki)
+
+    fronts = {anki.col.get_note(nid).fields[0] for nid in anki.col.find_notes(f'"tag:{SCOPE}"')}
+    assert "front b" not in fronts
+
+
+def test_run_sync_prunes_moot_registry_entries(anki, tmp_path):
+    from internpearls import config, sync
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-gone": {"state": "skip", "front": "old", "deck": deck,
+                      "decided": "2026-08-25", "hash": ""}})
+
+    drive(anki, sync.sync_decks, respond=_accept_everything)
+
+    assert "guid-gone" not in config.load_declined()
