@@ -107,3 +107,46 @@ def test_the_update_screens_cleanup_runs_while_its_widgets_are_still_alive():
         q.QDialog.exec = original
 
     assert ran, "the wrapper never ran the caller's cleanup"
+
+
+def _capture_ask(q, **kw):
+    """Run ui._ask's named-button path against real Qt, without blocking on exec().
+
+    Returns (answer, box). The patched exec clicks nothing, which is what a dismissed
+    dialog leaves behind: clickedButton() is None, so the answer must not read as yes.
+    """
+    from internpearls import ui
+    boxes = []
+
+    def fake_exec(self):
+        boxes.append(self)
+        return 0
+
+    original = q.QMessageBox.exec
+    q.QMessageBox.exec = fake_exec
+    try:
+        answer = ui._ask("This update also changes how some cards look.", **kw)
+    finally:
+        q.QMessageBox.exec = original
+    return answer, boxes[0]
+
+
+def test_a_named_question_cannot_be_agreed_to_by_pressing_return():
+    """Anki's askUserDialog gives every button AcceptRole and sets no default, so Escape
+    and the close box did nothing at all and Return activated whichever button was added
+    first, which on these questions is the one that consents to a schema change. The
+    declining button carries RejectRole and is both the default and the escape button
+    now, so Return, Escape and the close box all mean the safe answer."""
+    _, q = harness.bootstrap()
+    answer, box = _capture_ask(q, yes_label="Apply the new look",
+                               no_label="Keep my current look")
+
+    labels = {b.text().replace("&", ""): b for b in box.buttons()}
+    assert set(labels) == {"Apply the new look", "Keep my current look"}
+    safe = labels["Keep my current look"]
+    assert box.buttonRole(safe) == q.QMessageBox.ButtonRole.RejectRole
+    assert box.buttonRole(labels["Apply the new look"]) == (
+        q.QMessageBox.ButtonRole.AcceptRole)
+    assert box.defaultButton() is safe, "Return would consent to a schema change"
+    assert box.escapeButton() is safe, "Escape and the close box answer nothing"
+    assert answer is False, "a dialog dismissed without a click read as a yes"

@@ -538,3 +538,24 @@ def test_the_look_change_checkbox_sits_with_the_text_that_explains_it(shot):
         return w.mapTo(s.dialog, q.QPoint(0, 0)).y()
 
     assert top(intro[0]) < top(boxes[0]) < min(top(w) for w in lists)
+
+
+def test_the_look_change_checkbox_is_not_read_as_answering_the_format_change(shot):
+    """A run can carry both a look change and a note-type format change, and the format
+    one has its own dialog rather than this checkbox. The box lands under the last of
+    the fixed text, so with the format paragraph written last it sat directly beneath a
+    question it does not answer: the look sentence goes last instead."""
+    _, q = harness.bootstrap()
+    s = shot("confirm", checkbox=True)
+    boxes = [w for w in s.dialog.findChildren(q.QCheckBox) if w.isVisible()]
+    intro = [l for l in _visible_labels(s.dialog, q)
+             if "changed format" in l.text() and "how some cards look" in l.text()]
+    assert len(boxes) == 1 and len(intro) == 1, "the scene lost one of the two"
+    text = intro[0].text()
+    assert text.index("changed format") < text.index("how some cards look"), (
+        "the look sentence is not the last thing above the checkbox")
+
+    def top(w):
+        return w.mapTo(s.dialog, q.QPoint(0, 0)).y()
+
+    assert top(intro[0]) < top(boxes[0])

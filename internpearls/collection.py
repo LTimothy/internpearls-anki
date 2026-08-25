@@ -6,6 +6,7 @@ that are thin user-facing wrappers over those helpers. The sync flows in sync.py
 compose these; nothing here fetches from the network.
 """
 import datetime
+import hashlib
 import os
 import re
 import tempfile
@@ -127,8 +128,16 @@ def _export_deck_to(path, deck_name):
     # import_deck's scoped invalidation always falls back to clearing everything, and
     # Import single deck can't take one at all. The legacy format costs some file size
     # and reads everywhere.
-    opts = ExportAnkiPackageOptions(
-        with_scheduling=True, with_deck_configs=True, with_media=True, legacy=True)
+    # Set field by field, guarded, the way _import_apkg sets its own: these are
+    # protobuf message fields, and a build that has dropped or renamed one raises on a
+    # constructor keyword, taking the whole backup with it rather than the one option.
+    opts = ExportAnkiPackageOptions()
+    for attr, val in (("with_scheduling", True), ("with_deck_configs", True),
+                      ("with_media", True), ("legacy", True)):
+        try:
+            setattr(opts, attr, val)
+        except Exception:
+            pass
     return mw.col.export_anki_package(
         out_path=path, options=opts, limit=DeckIdLimit(deck_id=deck_id))
 
@@ -143,9 +152,19 @@ def _backup_label(label):
 
     Deck names nest with "::" and can carry anything else the learner types, including
     a path separator, so the raw name is not a filename. Collapsed to letters, digits,
-    spaces, dots, dashes and underscores.
+    spaces, dots, dashes and underscores, then given a short hash of the RAW name.
+
+    The hash is what actually keeps two roots apart, exactly as it does in
+    sync._scratch_path: sanitizing alone maps distinct names onto one label ("A/B" and
+    "A:B" both become "A_B", and two names of nothing but non-ASCII both become the
+    same run of underscores). Two roots sharing a label share a filename, so the
+    same-second backups a multi-root run takes overwrite each other while the run
+    reports both covered, and the two roots then prune as a single bucket.
     """
-    return re.sub(r"[^A-Za-z0-9 ._-]", "_", label).strip() if label else ""
+    if not label:
+        return ""
+    clean = re.sub(r"[^A-Za-z0-9 ._-]", "_", label).strip()
+    return f"{clean} {hashlib.sha1(label.encode('utf8')).hexdigest()[:8]}".strip()
 
 
 def _label_of_backup(fname):
@@ -158,6 +177,19 @@ def _label_of_backup(fname):
     return base.split(" ", 1)[1] if " " in base else ""
 
 
+def _in_backup_group(found, label):
+    """Whether a backup already in the folder prunes with `label`'s.
+
+    An exact match is the normal answer. A file written before labels carried a hash
+    has only the sanitized deck name, so it matches no current label at all and would
+    sit in the folder forever; it prunes with the label that starts with it, which is
+    the bucket that would have written it. Two labels that sanitize alike both claim
+    such a file, which is the same ambiguity those older filenames already had, and it
+    bounds them either way.
+    """
+    return found == label or (bool(found) and label.startswith(found + " "))
+
+
 def _backup_deck(deck_name, label=None):
     """Write a timestamped deck backup, pruning old ones.
 
@@ -168,10 +200,10 @@ def _backup_deck(deck_name, label=None):
 
     `label` distinguishes two backups taken in the same second, which only happens when
     one run touches decks under more than one root and each root needs its own file
-    (see _pre_sync_backup_or_confirm_skip). It is sanitized for the filesystem first,
-    since a deck name is free text and routinely holds a "/" or a ":". Left off, the
-    filename is exactly what it has always been, so the ordinary single-deck backup is
-    unchanged.
+    (see _pre_sync_backup_or_confirm_skip). It is sanitized and hashed for the
+    filesystem first (see _backup_label), since a deck name is free text and routinely
+    holds a "/" or a ":". Left off, the filename is exactly what it has always been, so
+    the ordinary single-deck backup is unchanged.
 
     Pruning keeps DECK_BACKUPS_KEEP per label rather than per folder. Ten unlabelled
     backups plus one run over three roots is fourteen files, and a folder-wide prune
@@ -190,7 +222,7 @@ def _backup_deck(deck_name, label=None):
         return None
     backups = sorted((f for f in os.listdir(folder)
                       if f.startswith(_BACKUP_PREFIX) and f.endswith(".apkg")
-                      and _label_of_backup(f) == label),
+                      and _in_backup_group(_label_of_backup(f), label)),
                      reverse=True)
     for old in backups[DECK_BACKUPS_KEEP:]:
         try:
@@ -257,18 +289,20 @@ def _pre_sync_backup_or_confirm_skip(deck_name, decks=None, scope_tag=None):
         # backup was taken") is wrong in both directions: it hides the cover that does
         # exist and hides which deck is the one without it.
         covered = [d for d, path in saved.items() if path]
-        done = (f"Backed up: {', '.join(covered)}.\n\n" if covered else "")
+        done = (f"Backed up: {', '.join(covered)}.<br><br>" if covered else "")
         proceed = _ask(
-            f"Couldn't back up: {', '.join(failed)}.\n\n{done}"
+            f"Couldn't back up: {', '.join(failed)}.<br><br>{done}"
             "Proceed anyway? (You can back up manually first: Advanced → Backup "
-            "intern pearls deck, or Advanced → Backup full collection.)")
+            "intern pearls deck, or Advanced → Backup full collection.)",
+            yes_label="Continue without a backup", no_label="Cancel")
         return proceed, bool(covered)
 
     if scope_tag and mw.col.find_notes(f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'):
         return _ask(
             "Couldn't find a deck to back up: your cards aren't under a deck this "
-            "add-on knows how to export on its own.\n\nProceed without a backup? (You "
-            "can back up manually first: Advanced → Backup full collection.)"), False
+            "add-on knows how to export on its own.<br><br>Proceed without a backup? "
+            "(You can back up manually first: Advanced → Backup full collection.)",
+            yes_label="Continue without a backup", no_label="Cancel"), False
     return True, False   # nothing in the collection to back up yet, e.g. a first sync
 
 
@@ -951,7 +985,8 @@ def restore_from_backup():
     if not _ask(
         "This opens Anki's own backup picker so you can revert your whole collection "
         "(every deck, not just Intern Pearls ones) to an earlier point. Anki will ask "
-        "you to confirm the specific backup before doing anything. Continue?"
+        "you to confirm the specific backup before doing anything. Continue?",
+        yes_label="Choose a backup", no_label="Cancel"
     ):
         return
     # Before onOpenBackup, not after: it reloads the profile, so code after it does
@@ -1005,7 +1040,8 @@ def import_deck():
         src = src[0]
     if not _ask(f"Import {os.path.basename(src)}? Matching cards are updated in "
                 "place, keeping their scheduling; anything not already here is added "
-                "as new. A backup is taken automatically first."):
+                "as new. A backup is taken automatically first.",
+                yes_label="Import", no_label="Cancel"):
         return
     if not _pre_sync_backup_or_confirm_skip(_cfg()["export_deck"])[0]:
         return
@@ -1060,7 +1096,14 @@ def backup_collection_now():
 
 
 @_safe
+@_manual_flow
 def update_notetypes():
+    """Add any missing managed field to the collection's note types.
+
+    Guarded like the other collection-writing menu actions: adding a field bumps the
+    collection schema, and an auto-sync tick landing on top of that is the interleave
+    the flag exists to prevent.
+    """
     added = _ensure_notetypes()
     if not added:
         _info("Note types are already up to date, no changes needed.")
@@ -1147,7 +1190,13 @@ def remove_empty_cards():
         yes_label=f"Remove {plural(n_cards, 'card')}", min_height=_CONFIRM_HEIGHT
     ):
         return
-    proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
+    # Scoped from where the affected cards actually sit. The report above is Anki's own,
+    # narrowed by tag rather than by deck, so an empty card the learner has filed
+    # outside export_deck is still deleted, and a backup of export_deck alone covered
+    # none of it while the confirmation promised one.
+    affected = {mw.col.get_note(r["nid"]).guid: r["nid"] for r in rows}
+    proceed, backed_up = _pre_sync_backup_or_confirm_skip(
+        cfg["export_deck"], decks_holding(list(affected), affected), cfg["scope_tag"])
     if not proceed:
         return
     # Asked again after the confirmation, not reused from before it. The report above

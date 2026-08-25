@@ -34,8 +34,8 @@ from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
                     decks_to_update, manifest_needs_newer_addon, plural)
 from .net import _BG_TIMEOUT, _DOWNLOAD_TIMEOUT
-from .sync import (_fetch_manifest, _reconcile_pending, _refresh_reconcile_action_label,
-                   _run_sync)
+from .sync import (_cached_fetch, _content_backup_decks, _fetch_manifest, _is_local,
+                   _reconcile_pending, _refresh_reconcile_action_label, _run_sync)
 from .ui import _bg_safe, manual_sync_in_progress
 from .updates import _addon_update_work, _refresh_update_action_label
 
@@ -136,6 +136,18 @@ _schema_blocked_notified = set()
 # label it points at are the only things standing between a real backlog and it
 # silently piling up unnoticed.
 _last_reconcile_notified = 0
+# (deck name, version) pairs auto-sync has already held back for a template or
+# note-type change this session. A deferred deck stays pending forever, so without
+# this every single poll re-downloaded its whole .apkg and took a fresh deck backup to
+# reach the same decision it reached the first time, for as long as Anki stayed open.
+# Keyed by version as well as name, so a source that pushes a fix mid-session is
+# picked up rather than skipped along with the version that was deferred.
+_deferred_decks = set()
+# Whether the "couldn't create a backup" tooltip has already been shown this session.
+# A backup that fails once usually fails every time (a deck that can't be exported, a
+# full disk), and the same nag every poll interval is the pattern _tpl_deferred_notified
+# exists to avoid. Cleared again by a tick whose backup succeeds.
+_backup_failure_notified = False
 
 
 @_bg_safe
@@ -198,7 +210,12 @@ def _auto_sync_check():
             return None
         if manifest_needs_newer_addon(manifest, SUPPORTED_MANIFEST_SCHEMA):
             return {"schema_blocked": manifest.get("schema")}
-        todo = decks_to_update(manifest, installed, cfg["excluded"])
+        # Decks already held back this session are dropped here, before any of the work
+        # a pending deck costs: they are pending precisely because only a manual sync
+        # can decide about them, so re-downloading and re-backing-up for them every
+        # poll bought nothing at all (see _deferred_decks).
+        todo = [d for d in decks_to_update(manifest, installed, cfg["excluded"])
+                if (d["name"], d.get("version")) not in _deferred_decks]
         # Always returned (even with todo empty) rather than bailing to None here: a
         # retirement or reorg can ship without bumping any deck's version, so this is
         # the only place that would ever notice one between manual checks — _apply
@@ -208,14 +225,17 @@ def _auto_sync_check():
         # bad download doesn't take out decks that fetched fine; _run_sync's existing
         # per-deck try/except (unchanged) reports it the same way a live fetch failure
         # always has.
+        # Through the session cache, like every interactive fetch: the poll used to be
+        # the one path that ignored it, so a deck it had already downloaded (or that a
+        # preview had) was fetched again on the next tick that found it pending.
         downloaded = {}
         for d in todo:
             try:
-                downloaded[d["name"]] = fetch(d)
+                downloaded[d["name"]] = _cached_fetch(fetch, d)
             except Exception as e:
                 downloaded[d["name"]] = e
         return {"manifest": manifest, "downloaded": downloaded, "source": source,
-                "todo": todo, "installed": installed}
+                "todo": todo}
 
     def _apply(result, error):
         global _auto_sync_in_progress
@@ -225,7 +245,7 @@ def _auto_sync_check():
             _auto_sync_in_progress = False
 
     def _apply_work(result, error):
-        global _last_reconcile_notified
+        global _last_reconcile_notified, _backup_failure_notified
         if error or not result:
             return   # offline, misconfigured, or unreachable — stay quiet
         if "schema_blocked" in result:
@@ -272,14 +292,27 @@ def _auto_sync_check():
         if manual_sync_in_progress():
             return
 
-        # Scoped to the decks this tick is about to import, the same way the interactive
-        # flows scope theirs: an unattended sync applies whatever the manifest lists,
-        # and backing up only export_deck left anything filed outside it unprotected.
+        # Scoped to the decks this tick is about to import and to the decks its imports
+        # will actually rewrite a card in, the same way the interactive flows scope
+        # theirs: an unattended sync applies whatever the manifest lists, wherever the
+        # learner keeps those cards, and backing up only export_deck left anything
+        # filed outside it unprotected. The packages are already on disk from the fetch
+        # phase, so reading which of her notes each one matches costs no network.
         if not _pre_sync_backup_or_skip_silently(
-                cfg["export_deck"], [d["name"] for d in result["todo"]]):
-            tooltip("Intern Pearls: auto-sync skipped, couldn't create a backup "
-                   "first.", period=6000, parent=mw)
+                cfg["export_deck"],
+                [d["name"] for d in result["todo"]]
+                + _content_backup_decks(
+                    [v for v in result["downloaded"].values() if _is_local(v)],
+                    result["manifest"].get("front_aliases", {}), cfg["scope_tag"])):
+            # Once per session, not once per poll: a backup that fails usually keeps
+            # failing, and the same tooltip every interval is noise around a message
+            # that has already been read.
+            if not _backup_failure_notified:
+                _backup_failure_notified = True
+                tooltip("Intern Pearls: auto-sync skipped, couldn't create a backup "
+                       "first.", period=6000, parent=mw)
             return
+        _backup_failure_notified = False
 
         def _already_fetched(d):
             v = result["downloaded"][d["name"]]
@@ -289,7 +322,7 @@ def _auto_sync_check():
 
         results, restored, _, deferred, _, _, _ = _run_sync(
             cfg, result["manifest"], _already_fetched,
-            result["todo"], result["installed"], defer_template_changes=True)
+            result["todo"], defer_template_changes=True)
         ok = sum(1 for r in results if r.startswith("✓"))
         fail = len(results) - ok - len(deferred)
         # A deferred deck stays pending, so every later poll re-defers it. Only
@@ -297,6 +330,10 @@ def _auto_sync_check():
         # poll where re-deferrals were the only "activity".
         deferred_new = [n for n in deferred if n not in _tpl_deferred_notified]
         _tpl_deferred_notified.update(deferred)
+        # Recorded by version too, so later polls skip the download and the backup for
+        # them entirely rather than reaching this same decision again (see _fetch_work).
+        versions = {d["name"]: d.get("version") for d in result["todo"]}
+        _deferred_decks.update((n, versions.get(n)) for n in deferred)
         if not (ok or fail or deferred_new):
             return
         msg = (f"Intern Pearls: auto-synced {plural(ok, 'deck')} "

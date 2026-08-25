@@ -50,8 +50,10 @@ def anki(tmp_path, monkeypatch):
     _mock.mw._config = {}
     _mock.mw.reset_count = 0
     _mock.gui.interactive = False
+    _mock.gui.escape_asks = False
     for lst in (_mock.gui.infos, _mock.gui.warnings, _mock.gui.tooltips,
                 _mock.gui.asks, _mock.gui.answers, _mock.gui.file_picks,
+                _mock.gui.ask_buttons, _mock.gui.ask_defaults,
                 _mock.gui.interactions, _mock.gui.payloads, _mock.gui.clipboard):
         lst.clear()
     mock_anki.reset_run()
@@ -76,6 +78,8 @@ def anki(tmp_path, monkeypatch):
     monkeypatch.setattr(review, "FEEDBACK", str(user_files / "card_feedback.json"))
     monkeypatch.setattr(sync, "SHIPPED", str(user_files / "shipped_fields.json"))
     background._tpl_deferred_notified.clear()
+    background._deferred_decks.clear()   # session-scoped skip list, same reason
+    background._backup_failure_notified = False
     background._last_reconcile_notified = 0
     sync._reconcile_action = None   # a prior test's registered stub must not leak in
     sync._apkg_cache.clear()        # preview-download cache must not leak across tests

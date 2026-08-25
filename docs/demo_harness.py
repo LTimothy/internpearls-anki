@@ -108,7 +108,7 @@ def boot():
 
     cfg = config._cfg()
     manifest, fetch, _ = sync._fetch_manifest(cfg)
-    sync._run_sync(cfg, manifest, fetch, manifest["decks"], {})
+    sync._run_sync(cfg, manifest, fetch, manifest["decks"])
     MOCK.col.decks.names.setdefault("Example Decks", 999)
 
     for i, note in enumerate(sorted(MOCK.col._notes.values(),
@@ -183,19 +183,38 @@ def get_config():
                        "interval": c["auto_sync_interval_minutes"]})
 
 
+def _row_count(items):
+    """How many of `items` are an actual row rather than list scaffolding.
+
+    build_list_body and build_update_body both interleave real rows (a deck, card,
+    retired, moved, or "row" entry) with ("header", ...), ("note", ...) and one
+    ("sep",) between every pair of rows in a group, per review.py's own docstrings.
+    Counting raw items double-counts the backlog: a 35-card list carries about 34
+    seps plus a header, so "items remaining" comes out near double "cards remaining".
+    """
+    return sum(1 for item in items if item[0] not in ("header", "note", "sep"))
+
+
 def list_progress(wid):
-    """shown()/total() for the widgets.StreamingList a "scroll" node's wid names.
+    """Real rows shown/total for the widgets.StreamingList a "scroll" node's wid names.
 
     The mock never puts this in the serialized tree (widgets.py isn't part of this
     demo's own files), so it's read straight off the live widget object mock_anki
     already tracks in its wid registry for the dialog currently on screen. None for
     a plain QScrollArea (dialogs.py/review.py/ui.py's static ones), which never
     truncates and has no such methods.
+
+    Counts real rows, not raw list entries: `shown`/`total` off the widget itself
+    count every item including the header/note/sep scaffolding between rows, so the
+    page's "N more not shown" would otherwise report roughly double the real
+    remaining cards. See _row_count.
     """
     w = mock_anki._widgets.get(wid)
     if not hasattr(w, "shown"):
         return json.dumps(None)
-    return json.dumps({"shown": w.shown(), "total": w.total()})
+    items = w._items
+    return json.dumps({"shown": _row_count(items[:w.shown()]),
+                       "total": _row_count(items)})
 
 
 def list_files(folder):

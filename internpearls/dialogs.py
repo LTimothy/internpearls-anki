@@ -45,9 +45,22 @@ def _github_source_form(repo_default, token_default):
     lay.addWidget(hint_label(
         "Leave blank for a public repo. A private one needs a read-only token; "
         "it's hidden as you type and stored only in this add-on's local config."))
+    # OK used to accept unconditionally, so a blank repo silently discarded everything
+    # typed (a token included). Validated on click instead: a blank repo shows this
+    # warning and leaves the dialog open rather than closing on an answer with nothing
+    # in it.
+    warning = hint_label("")
+    warning.setStyleSheet(f"color: {colors()['warning']}; font-size: 11px;")
+    lay.addWidget(warning)
     bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                           | QDialogButtonBox.StandardButton.Cancel)
-    bb.accepted.connect(dlg.accept)
+
+    def _try_accept():
+        if not repo_edit.text().strip():
+            warning.setText("Enter a repo (owner/name) before continuing.")
+            return
+        dlg.accept()
+    bb.accepted.connect(_try_accept)
     bb.rejected.connect(dlg.reject)
     lay.addWidget(bb)
     ok = bool(dlg.exec())
@@ -242,8 +255,8 @@ def configure_source():
         return
     _offer_manifest_scope(manifest)
     _info(f"Saved and connected to <b>{source}</b>, found "
-          f"{plural(len(manifest['decks']), 'deck')}.<br><br>Run <i>Intern Pearls → "
-          "Update my decks</i> whenever you're ready.")
+          f"{plural(len(manifest.get('decks', [])), 'deck')}.<br><br>Run <i>Intern "
+          "Pearls → Update my decks</i> whenever you're ready.")
 
 
 # Two rows and two sentences, so this one opens shorter than the confirmations that
@@ -402,13 +415,16 @@ class _DeckManagerDialog(QDialog):
     confirmation when actually running it. Removed rather than kept as a duplicate.
     """
 
-    def __init__(self, parent, rows, protected, source, configured, source_failed=False):
+    def __init__(self, parent, rows, protected, source, configured, source_failed=False,
+                stale_excluded=()):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Manage decks")
         self.setMinimumWidth(480)
         self.update_requested = False
         self.change_source_requested = False
         self._checks = {}   # deck name -> QCheckBox
+        self._stale_excluded = list(stale_excluded)
+        self._cleared_stale = set()   # stale names Clear has removed, this dialog only
 
         outer = QVBoxLayout(self)
         outer.setSpacing(10)
@@ -476,6 +492,21 @@ class _DeckManagerDialog(QDialog):
                 "No decks available yet. Use the button above to set up or "
                 "fix your deck source."))
             outer.addStretch()
+
+        # A deck this source no longer offers still has an excluded_decks entry (kept
+        # on purpose, see excluded_decks() below), but nothing showed it or offered to
+        # drop it. Surfaced here rather than folded into the row list, since it isn't a
+        # deck to check or uncheck, just a name to clear.
+        if self._stale_excluded:
+            self._stale_label = muted_label(
+                "Also excluded, not offered by this source: "
+                + ", ".join(self._stale_excluded))
+            outer.addWidget(self._stale_label)
+            clear_row = QHBoxLayout()
+            clear_row.addWidget(link_button(
+                "Clear", on_click=self._clear_stale, align_left=True))
+            clear_row.addStretch()
+            outer.addLayout(clear_row)
 
         outer.addWidget(section_label("Preserved fields"))
         self._pf_edit = QLineEdit(", ".join(protected))
@@ -552,6 +583,14 @@ class _DeckManagerDialog(QDialog):
         self.change_source_requested = True
         self.reject()
 
+    def _clear_stale(self):
+        # Explicit only: nothing here ever clears a stale exclusion on its own, since
+        # excluded_decks()'s own preservation rule is what keeps a deck missing for one
+        # fetch (rather than genuinely gone) from silently coming back ticked.
+        self._cleared_stale = set(self._stale_excluded)
+        self._stale_excluded = []
+        self._stale_label.setText("")
+
     def excluded_decks(self, previous=()):
         """Which decks to exclude: the unticked rows, plus every deck in `previous`
         this dialog never rendered a row for.
@@ -573,7 +612,9 @@ class _DeckManagerDialog(QDialog):
         someone opted out of.
         """
         unticked = [name for name, cb in self._checks.items() if not cb.isChecked()]
-        return unticked + [name for name in previous if name not in self._checks]
+        kept_previous = [name for name in previous
+                         if name not in self._checks and name not in self._cleared_stale]
+        return unticked + kept_previous
 
     def protected_fields(self):
         return parse_fields(self._pf_edit.text())
@@ -608,12 +649,18 @@ def manage_decks(pending=None):
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     rows = deck_status(manifest, installed, excluded) if manifest else []
 
+    # Only once the source actually loaded: a source that failed offers no rows at all
+    # (see excluded_decks' own docstring), and that emptiness must not read as every
+    # excluded deck having gone stale.
+    offered = {r["name"] for r in rows}
+    stale_excluded = [name for name in excluded if name not in offered] if manifest else []
+
     # Whether a source is *set*, not whether it loaded: a broken repo or a folder that
     # has moved is still configured, and offering to "Configure source" for one reads as
     # though nothing had ever been set up.
     dlg = _DeckManagerDialog(mw, rows, protected, source_label,
                              configured=bool(cfg["gh_repo"] or cfg["decks_dir"]),
-                             source_failed=bool(error))
+                             source_failed=bool(error), stale_excluded=stale_excluded)
     result = dlg.exec()
     change_source, update_now = dlg.change_source_requested, dlg.update_requested
     # Merged against what was excluded going in, not read from the checkboxes alone:
@@ -650,8 +697,9 @@ def manage_decks(pending=None):
     # dialog only reports whether it's currently on, not whether it changed here.
     next_step = (" Auto-sync is on, so these will keep applying on their own."
                 if cfg["auto_sync_decks"] else
-                " Nothing pulled yet, run <b>Update my decks</b> when you're ready "
-                "(or use <i>Save and update now</i> next time to do both at once).")
+                " This just saved your choices; nothing was pulled. Run <b>Update "
+                "my decks</b> when you're ready (or use <i>Save and update now</i> "
+                "next time to do both at once).")
     _info(f"Saved. {scope}, preserving {', '.join(conf['protected_fields'])}."
           f"<br><br>{next_step}")
 
@@ -793,7 +841,13 @@ def open_settings():
     dim_line = ("Bright images will be dimmed in Night Mode."
                if values["dim_images_night_mode"] else
                "Night Mode image dimming is off.")
-    _info(f"Settings saved.<br><br>{sync_line}<br>{update_line}<br>{dim_line}")
+    # The one setting invisible until the next run, so it needs to say what it did
+    # here rather than nowhere at all.
+    feedback_line = ("You'll get a note box to flag problems with a card as decks sync."
+                     if values["collect_card_feedback"] else
+                     "No note box for flagging card problems as decks sync.")
+    _info(f"Settings saved.<br><br>{sync_line}<br>{update_line}<br>{dim_line}"
+          f"<br>{feedback_line}")
 
 
 @_safe
