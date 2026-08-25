@@ -57,6 +57,12 @@ DARK = {
 }
 
 
+# Which set a host without `aqt.theme` gets. Real Anki always has the theme manager, so
+# nothing there ever reads this; the live demo runs this module under Pyodide against a
+# mock Anki that has none, and points it at the browser's own colour scheme.
+FALLBACK_DARK = False
+
+
 def is_dark():
     """Whether Anki is in night mode right now.
 
@@ -64,14 +70,15 @@ def is_dark():
     theme picks up the new set. A dialog already on screen keeps its colours until it is
     reopened, same as Anki's own.
 
-    Falls back to the light set if the theme manager is unavailable, which is the safer
+    Falls back to FALLBACK_DARK if the theme manager is unavailable, which is the light
+    set unless a host without `aqt.theme` has said otherwise. Light is the safer default
     direction: light colours on a light window is the historical behaviour.
     """
     try:
         from aqt.theme import theme_manager
         return bool(theme_manager.night_mode)
     except Exception:
-        return False
+        return FALLBACK_DARK
 
 
 def colors():

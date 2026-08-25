@@ -9,6 +9,7 @@ review history exists exactly once. _reconcile_pending is the equivalent single
 source of truth for what "Reconcile my decks" would find pending, shared by
 reconcile_decks() and update_decks() so the two can never disagree.
 """
+import functools
 import json
 import os
 import tempfile
@@ -36,7 +37,7 @@ from .logic import (apkg_note_details, apkg_notes, decks_to_update,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, manifest_needs_newer_addon,
                     note_display_label, plural, remap_cards, write_personalized)
-from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_raw
+from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled, _gh_raw
 from .palette import colors
 from .review import (_CONFIRM_HEIGHT, append_rows, build_list_body, build_update_body,
                      clear_saved_feedback, load_saved_feedback, show_result,
@@ -53,6 +54,40 @@ from .ui import (_ask, _ask_with_widget, _info, _safe, _warn, cancellable_progre
 # up silently between manual checks, which is exactly the divergence problem this
 # whole flow exists to close.
 _reconcile_action = None
+
+# True while an interactive flow (Sync decks, Update my decks, Reconcile my decks,
+# Import single deck) is running. The unattended auto-sync poll checks it and skips its
+# tick rather than interleaving: both write the collection and both persist
+# installed.json, and the poll's apply half lands from a QueryOp callback, which can
+# fire while a manual flow is sitting inside a modal dialog's own event loop.
+_manual_in_progress = False
+
+
+def manual_sync_in_progress():
+    """Whether an interactive sync/reconcile/import flow is running right now.
+
+    Read by background.py's poll, which stays quiet and retries on the next tick rather
+    than queueing behind this. A plain flag rather than a lock: nothing here nests, and
+    the poll has nothing to wait for.
+    """
+    return _manual_in_progress
+
+
+def _manual_flow(fn):
+    """Hold `manual_sync_in_progress()` for the whole of an interactive flow.
+
+    Applied under @_safe so the flag is released even when the flow raises, which is the
+    one thing @_safe's own warning dialog would otherwise leave stuck on.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        global _manual_in_progress
+        _manual_in_progress = True
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _manual_in_progress = False
+    return wrapper
 
 
 def register_reconcile_action(action):
@@ -74,36 +109,86 @@ def _refresh_reconcile_action_label(pending):
         _reconcile_action.setText("Reconcile my decks")
 
 
-def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT):
-    """Return (manifest, fetch_apkg, source_label) where fetch_apkg(deck) -> local
-    .apkg path.
+_scratch_dir = None
+
+
+def _scratch():
+    """A private, per-session directory for downloaded decks and the personalized copies
+    written beside them.
+
+    mkdtemp is mode 0700 and its name is unguessable, unlike the fixed
+    /tmp/<deck>.apkg these downloads used to land on: on a shared machine anyone could
+    pre-create that path as a symlink and have the add-on write (or import) through it.
+    One directory per session rather than one temp file per download, so `_cached_fetch`
+    can keep handing the same preview download to the apply step by path, exactly as it
+    did before.
+    """
+    global _scratch_dir
+    if _scratch_dir is None or not os.path.isdir(_scratch_dir):
+        _scratch_dir = tempfile.mkdtemp(prefix="internpearls-")
+    return _scratch_dir
+
+
+def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TIMEOUT):
+    """Return (manifest, fetch_apkg, source_label) where fetch_apkg(deck, on_chunk=None)
+    returns a local .apkg path.
 
     A GitHub source needs only the repo; the token is optional (blank is fine for a
-    public repo — _http_get simply sends no Authorization header). `timeout` bounds the
-    manifest fetch itself; deck downloads always get the generous _DOWNLOAD_TIMEOUT,
-    since they only happen after first contact already proved the source reachable.
+    public repo, since _http_get simply sends no Authorization header). `timeout` bounds
+    the manifest fetch itself; `download_timeout` bounds each deck download, defaulting
+    to the generous _DOWNLOAD_TIMEOUT since those only happen after first contact
+    already proved the source reachable. The unattended poll overrides it when it has to
+    run those downloads inline on the main thread (see background._auto_sync_check).
+
+    `on_chunk` is net._http_get's, passed straight through, so an interactive caller can
+    hand it `cancellable_progress`'s own `step.pump` and have Cancel work during a
+    download rather than only between decks. The local-folder source takes it and
+    ignores it: there is no transfer to interrupt.
+
+    (None, None, None) means nothing is configured at all, and only that. A source that
+    IS configured but can't be loaded raises instead, with a message naming the actual
+    problem, so a typo'd folder or a corrupt manifest reads as the error it is rather
+    than as "no deck source configured yet". Callers already show a raised message
+    as-is (_fetch_manifest_gated, dialogs.manage_decks' Source line), so both cases
+    surface correctly without either of them special-casing this.
     """
     if cfg["gh_repo"]:
         manifest = json.loads(_gh_raw(cfg["gh_repo"], "manifest.json",
                                       cfg["gh_token"], cfg["gh_ref"], timeout=timeout))
 
-        def fetch(d):
+        def fetch(d, on_chunk=None):
             data = _gh_raw(cfg["gh_repo"], d["apkg"], cfg["gh_token"], cfg["gh_ref"],
-                           timeout=_DOWNLOAD_TIMEOUT)
+                           timeout=download_timeout, on_chunk=on_chunk)
             # d["apkg"] may include subfolders (e.g. decks/Foo.apkg); flatten to just the
-            # filename for the scratch download location, since /tmp/decks/ won't exist.
-            tmp = os.path.join(tempfile.gettempdir(), os.path.basename(d["apkg"]))
+            # filename for the scratch download location, since decks/ won't exist there.
+            tmp = os.path.join(_scratch(), os.path.basename(d["apkg"]))
             with open(tmp, "wb") as fh:
                 fh.write(data)
             return tmp
 
         return manifest, fetch, "GitHub"
 
-    if cfg["decks_dir"] and os.path.isdir(cfg["decks_dir"]):
-        manifest = _load_json(os.path.join(cfg["decks_dir"], "manifest.json"), None)
+    if cfg["decks_dir"]:
+        folder = cfg["decks_dir"]
+        if not os.path.isdir(folder):
+            raise RuntimeError(
+                f"the folder {folder} doesn't exist (check the path, or pick a "
+                "different source)")
+        path = os.path.join(folder, "manifest.json")
+        if not os.path.exists(path):
+            raise RuntimeError(
+                f"{folder} has no manifest.json (point this at the folder that holds "
+                "the manifest and the .apkg files)")
+        try:
+            manifest = _load_json(path, None, strict=True)
+        except Exception as e:
+            raise RuntimeError(f"the manifest.json in {folder} isn't valid JSON "
+                               f"({e})") from e
+        if not manifest:
+            raise RuntimeError(f"the manifest.json in {folder} is empty")
 
-        def fetch(d):
-            return os.path.join(cfg["decks_dir"], d["apkg"])
+        def fetch(d, on_chunk=None):
+            return os.path.join(folder, d["apkg"])
 
         return manifest, fetch, "local folder"
 
@@ -143,6 +228,7 @@ def _fetch_manifest_gated(cfg):
 
 
 @_safe
+@_manual_flow
 def sync_decks():
     cfg = _cfg()
     fetched = _fetch_manifest_gated(cfg)
@@ -184,17 +270,19 @@ def sync_decks():
         yes_label="Update", min_height=_CONFIRM_HEIGHT
     ):
         return
-    proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
+    proceed, backed_up = _pre_sync_backup_or_confirm_skip(
+        cfg["export_deck"], [d["name"] for d in todo], cfg["scope_tag"])
     if not proceed:
         return
 
     # A cancellable, determinate progress window while each deck downloads and
     # imports: the fetches run on the main thread here (unlike auto-sync's
     # background poll), and a multi-deck sync on a slow link otherwise looks like a
-    # hang with no way out.
+    # hang with no way out. step.pump goes to the fetch so Cancel is answered during a
+    # download too, not only in the gap between two decks.
     with cancellable_progress("Syncing decks", len(todo)) as step:
         results, restored, tpl_changes, _, cancelled, collisions, _conv = _run_sync(
-            cfg, manifest, fetch, todo, installed,
+            cfg, manifest, lambda d, **kw: fetch(d, on_chunk=step.pump), todo, installed,
             on_progress=lambda i, n, name: step(i, f"Syncing {name} ({i} of {n})"))
     _offer_template_changes(tpl_changes)
     backup_line = (
@@ -271,7 +359,7 @@ def _offer_notetype_changes(changes):
 
 
 def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
-              defer_template_changes=False):
+              defer_template_changes=False, convert_notetypes=None):
     """Apply every deck in `todo`: fix note types, snapshot protected fields, remap and
     import each deck (keeping the learner's scheduling), restore the snapshotted fields,
     and persist the new installed versions.
@@ -300,12 +388,23 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
     without someone there to consent — so auto-sync passes True, and a deck whose
     update includes a template change is left un-imported and NOT marked installed,
     keeping it pending for the next interactive Sync decks where the user can decide.
+
+    `convert_notetypes` is who owns the note-type-conversion decision. None (Sync decks)
+    means ask per deck, here, via _offer_notetype_changes. True or False means the
+    caller already asked once for the whole run and this loop must not put another
+    question on screen (Update my decks detects the conversions up front from the
+    preview's own downloads and asks before the apply loop starts). Either way the
+    consent is explicit: False converts nothing, and an unattended caller never gets
+    this far, since `defer_template_changes` holds the deck back instead.
     """
     aliases = manifest.get("front_aliases", {})   # from the (private) manifest, not config
     _ensure_notetypes()
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
     her = _her_front_to_guid(cfg["scope_tag"])
     results, tpl_changes, deferred, touched = [], {}, [], set()
+    # This run's own per-deck versions, kept apart from the `installed` snapshot the
+    # caller handed in so the save below can merge rather than overwrite. See there.
+    applied = {}
     converted = 0
     cancelled = False
     for i, d in enumerate(todo, 1):
@@ -329,18 +428,37 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
             # Before the import, not after: once the note is on the right type, the
             # import matches it by GUID and updates it in place, which is the whole
             # point. Afterwards it would be converting a duplicate.
-            changed_nids = _offer_notetype_changes(nt)
+            if convert_notetypes is None:
+                changed_nids = _offer_notetype_changes(nt)
+            else:
+                changed_nids = change_note_types(nt) if (nt and convert_notetypes) else []
             converted += len(changed_nids)
             in_place, as_new, wrote = _apply_deck(src, aliases, her)
+            # Recorded the moment the import returns, before anything else in this
+            # iteration can raise. `touched` is what _restore and _capture_shipped work
+            # from, so a deck missing from it has its protected fields left as the
+            # import overwrote them: the learner's annotations, gone for good. Every
+            # later step here is best-effort by comparison.
+            touched |= wrote
             # After the import, not before: the extra cloze cards only exist once the
             # cloze markup has actually landed on the note.
             seed_converted_siblings(changed_nids)
-            touched |= wrote
-            installed[d["name"]] = d["version"]
+            installed[d["name"]] = applied[d["name"]] = d["version"]
             results.append(f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new")
+        except DownloadCancelled:
+            # The learner clicked Cancel while this deck was still downloading, so
+            # nothing of it has been imported. Same branch as a Cancel between decks
+            # (whatever finished stays applied, and update_decks skips archive/relocate),
+            # rather than a "✗ deck failed" row for something that did not fail.
+            cancelled = True
+            break
         except Exception as e:
             results.append(f"✗ <b>{short}</b>: {e}")
-    _save_json(INSTALLED, installed)
+    # Merged into whatever is on disk now, not written back wholesale: `installed` is a
+    # snapshot taken before the fetch phase, which can be minutes old by the time a
+    # multi-deck run gets here, and saving it as-is would revert any version another
+    # sync recorded in the meantime.
+    _save_json(INSTALLED, {**_load_json(INSTALLED, {}), **applied})
     # Read what the source shipped BEFORE restoring her annotations over it: after
     # _restore, hers is what the note holds, and recording that as the baseline would
     # make her own edit indistinguishable from the source's own value next time.
@@ -479,6 +597,7 @@ def _merge_stranded(stranded, her, protected, retired_deck, tag):
 
 
 @_safe
+@_manual_flow
 def reconcile_decks():
     """Find retired cards still in the learner's collection and archive them, and
     relocate any cards a pure deck reorg has moved to a new deck.
@@ -604,7 +723,9 @@ def reconcile_decks():
     ):
         return
 
-    proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
+    proceed, backed_up = _pre_sync_backup_or_confirm_skip(
+        cfg["export_deck"],
+        [r["deck"] for r in fresh] + [m["from"] for m in moves], cfg["scope_tag"])
     if not proceed:
         return
     carried = carry_over_protected_fields(fresh, her, cfg["protected"])
@@ -697,7 +818,8 @@ def clean_up_duplicates():
     ):
         return
 
-    proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
+    proceed, backed_up = _pre_sync_backup_or_confirm_skip(
+        cfg["export_deck"], None, cfg["scope_tag"])
     if not proceed:
         return
     retired_deck = f'{cfg["export_deck"]}::{RETIRED_DECK_LEAF}'
@@ -731,11 +853,11 @@ def clean_up_duplicates():
 _apkg_cache = {}
 
 
-def _cached_fetch(fetch, d):
+def _cached_fetch(fetch, d, on_chunk=None):
     hit = _apkg_cache.get(d["name"])
     if hit and hit[0] == d.get("version") and os.path.exists(hit[1]):
         return hit[1]
-    path = fetch(d)
+    path = fetch(d, on_chunk=on_chunk)
     _apkg_cache[d["name"]] = (d.get("version"), path)
     return path
 
@@ -776,7 +898,10 @@ def _preview_content_changes(fetch, todo, her, aliases, her_fields=None):
             if not step(i, f"Checking {short} ({i} of {len(todo)})"):
                 return preview, downloaded, True
             try:
-                src = _cached_fetch(fetch, d)
+                # step.pump keeps Cancel live during the download itself, not just
+                # between decks: one deck's fetch is a single blocking read on the main
+                # thread, so without it the button is decorative for that whole stretch.
+                src = _cached_fetch(fetch, d, on_chunk=step.pump)
                 downloaded[d["name"]] = src
                 _, kept, new, new_notes, matched = remap_cards(src, her, aliases)
                 changed = {}
@@ -785,6 +910,11 @@ def _preview_content_changes(fetch, todo, her, aliases, her_fields=None):
                         matched, apkg_note_details(src), her_fields,
                         protected=_cfg()["protected"])
                 preview[d["name"]] = (kept, new, new_notes, changed)
+            except DownloadCancelled:
+                # Cancel clicked mid-download rather than between decks. That is the
+                # same answer, not a deck that failed to preview, so report it as the
+                # cancel it is instead of leaving one row reading "couldn't preview".
+                return preview, downloaded, True
             except Exception as e:
                 downloaded[d["name"]] = e
                 preview[d["name"]] = None
@@ -902,6 +1032,7 @@ def _retired_moved_items(fresh, moves, her):
 
 
 @_safe
+@_manual_flow
 def update_decks():
     """The one-click front door: computes everything pending — deck content updates,
     retired cards still in the collection, and cards a deck reorg needs to relocate —
@@ -974,7 +1105,15 @@ def update_decks():
     # happened: the preview above fetched every pending deck. Knowing it now is what
     # lets the one confirmation carry the decision, instead of interrupting the run
     # with its own question after the import has started.
-    pending_templates = {}
+    # Note-type conversions are read from the same already-downloaded packages, for the
+    # same reason and at the same moment: knowing the whole run's total now is what lets
+    # one question cover it, asked before the apply loop starts, instead of
+    # _offer_notetype_changes interrupting each deck's import with its own modal from
+    # under the progress dialog. Sync decks still asks per deck (see _run_sync's
+    # `convert_notetypes`), exactly as the two flows already differ over templates.
+    pending_templates, pending_conversions = {}, []
+    her_fronts = _her_front_to_guid(cfg["scope_tag"])
+    aliases = manifest.get("front_aliases", {})
     for d in todo:
         src = downloaded.get(d["name"])
         if not src or isinstance(src, Exception):
@@ -983,6 +1122,11 @@ def update_decks():
             pending_templates.update(_template_changes(src))
         except Exception:
             pass    # a deck we can't read here still imports; it just can't offer this
+        try:
+            pending_conversions += notetype_changes(src, her_fronts, aliases,
+                                                    cfg["scope_tag"])
+        except Exception:
+            pass    # same: unreadable here, still imported, just not offered up front
 
     new_index = {guid: (deck, label) for deck, label, guid in new_cards + changed_cards}
     flags = {}
@@ -1007,7 +1151,10 @@ def update_decks():
         short = d["name"].split("::")[-1]
         pc = preview.get(d["name"])
         if pc is None:
-            return ("deck", short, "couldn't preview")
+            # Say what happens anyway: the download failed here, but the deck is still
+            # in this run and Update still tries to import it, so a bare "couldn't
+            # preview" reads as "this deck is being skipped", which it isn't.
+            return ("deck", short, "couldn't preview · still imports")
         kept = f"{pc[0]} kept" + (f" ({len(pc[3])} changing)" if pc[3] else "")
         return ("deck", short, f"{kept} · {pc[1]} new")
 
@@ -1086,6 +1233,14 @@ def update_decks():
             "This update also changes how some cards look (template or styling) for: "
             + ", ".join(f"<b>{n}</b>" for n in sorted(pending_templates))
             + ". Your review history and card content are unaffected either way.")
+    # Disclosed here so the one question asked after this (see below) isn't the first
+    # the reader hears of it. It can't be a second checkbox: _ask_with_widget carries
+    # one, and the look change already has it.
+    if pending_conversions:
+        sections.append(
+            f"<b>{plural(len(pending_conversions), 'card')}</b> in this update changed "
+            "format (a question and answer became a fill-in-the-blank). You'll be asked "
+            "once, before anything imports, whether to move your existing cards across.")
 
     items, unreadable, sources = _gather_pending_items(
         todo, preview, downloaded, _retired_moved_items(fresh, moves, her))
@@ -1113,20 +1268,43 @@ def update_decks():
         items, sources, flags, new_index, cfg["collect_feedback"], top_html,
         _flagged_line, safety_note)
 
+    # "Update" only when there is content to update. With nothing pending but retired
+    # and relocated cards, this run does exactly what Reconcile my decks does, so it
+    # says what that says rather than promising an update that isn't part of it.
+    yes_label = "Update" if todo else (" and ".join(
+        x for x in ("Archive" if fresh or stranded else None,
+                    "relocate" if moves else None) if x) or "Apply")
+
     # flush runs through on_close rather than after this call: it reads the notes typed
     # into the cards and stops their save timer, and every one of those widgets belongs
     # to the dialog, so by the time this returns Qt has already freed them.
-    accepted = _ask_with_widget(body, yes_label="Update", checkbox=tpl_choice,
+    accepted = _ask_with_widget(body, yes_label=yes_label, checkbox=tpl_choice,
                                 on_close=flush)
 
     if not accepted:
         _finish()
         return
 
-    proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
+    proceed, backed_up = _pre_sync_backup_or_confirm_skip(
+        cfg["export_deck"],
+        [d["name"] for d in todo] + [r["deck"] for r in fresh]
+        + [m["from"] for m in moves], cfg["scope_tag"])
     if not proceed:
         _finish()
         return
+
+    # Asked once, here, for the whole run: after the backup and before the first import,
+    # so nothing interrupts the apply loop from under its own progress dialog. Declining
+    # is a real choice with a real cost, which is why it stays a question rather than
+    # becoming a default either way.
+    convert = bool(pending_conversions) and _ask(
+        f"<b>{plural(len(pending_conversions), 'card')}</b> in this update changed "
+        "format (a question and answer became a fill-in-the-blank).<br><br>Move your "
+        "existing cards to the new format? They keep their review history and stay one "
+        "card each. Anki treats this as a schema change, so your next AnkiWeb sync will "
+        "be a one-time full sync, choose \"Upload to AnkiWeb\" when asked.<br><br>"
+        "Choosing No still imports them, but as separate new cards, leaving your "
+        "progress on the old versions.")
 
     results, restored, tpl_changes = [], 0, {}
     if todo:
@@ -1146,7 +1324,8 @@ def update_decks():
         with cancellable_progress("Updating decks", len(todo)) as step:
             results, restored, tpl_changes, _, cancelled, collisions, _conv = _run_sync(
                 cfg, manifest, _already_fetched, todo, installed,
-                on_progress=lambda i, n, name: step(i, f"Applying {name} ({i} of {n})"))
+                on_progress=lambda i, n, name: step(i, f"Applying {name} ({i} of {n})"),
+                convert_notetypes=convert)
 
         if cancelled:
             # Stop here rather than falling through to archive/relocate: that step
@@ -1235,12 +1414,16 @@ def update_decks():
 
 
 @_safe
+@_manual_flow
 def import_single():
     """Import one hand-picked, spec-authored .apkg outside the configured source.
 
     For a deck someone sent you directly, or a build you're testing before pushing it
     to the source repo. Does the same personalization, backup, and note-restore Sync
-    does, just for one file you choose instead of everything the manifest lists.
+    does, just for one file you choose instead of everything the manifest lists, and in
+    the same order _run_sync does it: confirm, back up, then fix note types. That order
+    matters, since _ensure_notetypes can bump the collection schema (a one-time full
+    AnkiWeb sync), and answering No to "Import now?" must not have cost anyone that.
     """
     cfg = _cfg()
     src = getFile(mw, "Choose an Intern Pearls .apkg", cb=None,
@@ -1260,19 +1443,24 @@ def import_single():
                     "will be treated as new instead of matching your existing card, "
                     "so its history won't carry over. Continue anyway?"):
             return
-    _ensure_notetypes()
     her = _her_front_to_guid(cfg["scope_tag"])
     remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
     if not _ask(f"{plural(in_place, 'card')} will keep "
                 f"{'its' if in_place == 1 else 'their'} history, {as_new} will be added "
                 "as new. A backup is taken automatically first. Import now?"):
         return
-    if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"])[0]:
+    if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"], None,
+                                            cfg["scope_tag"])[0]:
         return
+    _ensure_notetypes()
     tpl = _template_changes(src)
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
     touched = {remap.get(rid, guid) for rid, _f, guid in apkg_notes(src)}
-    out = src + ".sync.apkg"
+    # Written into this session's own scratch directory rather than beside the file the
+    # learner picked: that path is hers, may not be writable, and a fixed derived name
+    # in a shared folder is the same predictable-target problem the downloads had.
+    fd, out = tempfile.mkstemp(suffix=".sync.apkg", dir=_scratch())
+    os.close(fd)
     write_personalized(src, remap, out)
     try:
         _import_apkg(out)

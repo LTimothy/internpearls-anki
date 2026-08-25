@@ -9,6 +9,9 @@
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #6b7280;
     --line: #e2e5ea; --accent: #2563eb; --good: #16803c; --warn: #b45309;
+    /* Ink for text sitting ON --accent. A role of its own because --accent is both a
+       button fill and a link colour, and the two want opposite inks on dark. */
+    --accent-ink: #ffffff;
     --pill-keep: #dcfce7; --pill-keep-ink: #15803d;
     --pill-new: #dbeafe; --pill-new-ink: #1d4ed8;
     --shadow: 0 8px 30px rgba(16,24,40,.08);
@@ -17,6 +20,9 @@
     :root {
       --bg: #101418; --panel: #181d23; --ink: #e7eaee; --muted: #9aa4b2;
       --line: #2a323c; --accent: #60a5fa; --good: #4ade80; --warn: #fbbf24;
+      /* White on this accent measures 2.5:1. The accent has to stay this light to
+         read as a link on the dark page, so the ink is what flips: 7.3:1. */
+      --accent-ink: #101418;
       --pill-keep: #143522; --pill-keep-ink: #86efac;
       --pill-new: #1e3a5f; --pill-new-ink: #93c5fd;
       --shadow: 0 8px 30px rgba(0,0,0,.4);
@@ -85,7 +91,8 @@
          border: 1px solid var(--line); background: var(--panel); color: var(--ink);
          cursor: pointer; }
   .btn:hover { border-color: var(--accent); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary { background: var(--accent); border-color: var(--accent);
+         color: var(--accent-ink); }
   .btn:disabled { opacity: .45; cursor: default; }
   .shipped { font-size: 13px; color: var(--good); margin-top: 10px; min-height: 20px; }
 
@@ -118,6 +125,11 @@
             border: 1px solid var(--line); border-radius: 6px;
             background: var(--bg); color: var(--ink); }
   input.dspin { width: 90px; }
+  textarea.dinput { display: block; resize: vertical; }
+  /* The digest view: read-only and fixed-pitch, like the real QPlainTextEdit it
+     stands in for, still on the sunken field background so it reads as a payload. */
+  textarea.dinput[readonly] { resize: none;
+            font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
   .linkbtn { background: none; border: 0; color: var(--accent); font: inherit;
              font-size: 12px; cursor: pointer; padding: 2px 4px; }
   .linkbtn:disabled { color: var(--muted); cursor: default; }
@@ -290,6 +302,12 @@
   const htmlDiv = (html) => { const d = document.createElement("div"); d.innerHTML = html; return d; };
 
   // ===================== Qt widget-tree -> DOM renderer =====================
+  // How a link-style button (ui.link_button: "Change source", "Select all") is told
+  // apart from a push button, built at boot from the palette's own accent values for
+  // both themes. Hardcoding one hex here is what made this detection quietly dead:
+  // the page kept matching an accent the palette had stopped painting, so every link
+  // button in the demo rendered as a bordered push button instead.
+  let linkStyle = /(?!)/;   // matches nothing until boot fills it in
   // The add-on's Qt stylesheets are plain CSS declarations, so they apply
   // directly — the dialogs literally carry their own styling from dialogs.py.
   function renderTree(node, ctx) {
@@ -318,6 +336,22 @@
         ctx.inputs.push(el);
         break;
       }
+      case "textarea": {
+        // The per-card feedback box on the update screen, and the end-of-run digest.
+        // Both are real QPlainTextEdits in the add-on, and mock_anki feeds a value
+        // event back into one the same way it does a QLineEdit, so an editable box
+        // joins ctx.inputs and saves what's typed on the next interaction. A
+        // read-only one has nothing to feed back, so it stays out.
+        el = document.createElement("textarea");
+        el.className = "dinput";
+        el.value = node.value;
+        el.placeholder = node.placeholder || "";
+        el.rows = Math.min(14, (node.value.match(/\n/g) || []).length + 2);
+        el.dataset.wid = node.id;
+        if (node.readonly) el.readOnly = true;
+        else ctx.inputs.push(el);
+        break;
+      }
       case "spin": {
         el = document.createElement("span");
         const inp = document.createElement("input");
@@ -332,7 +366,7 @@
       case "button": {
         el = document.createElement("button");
         el.textContent = node.label;
-        el.className = /color:\s*#2563eb/.test(node.style) ? "linkbtn" : "btn";
+        el.className = linkStyle.test(node.style || "") ? "linkbtn" : "btn";
         el.disabled = !node.enabled;
         if (node.tooltip) el.title = node.tooltip;
         el.onclick = () => ctx.click(node.id);
@@ -647,6 +681,15 @@
       status("Importing the example decks through the add-on's real sync…");
       py.runPython("import sys; sys.path.insert(0, '/app')");
       H = py.pyimport("demo_harness");
+      linkStyle = new RegExp(
+        "color:\\s*(" + JSON.parse(H.accents()).join("|") + ")\\b", "i");
+      // The page's own chrome follows prefers-color-scheme; the add-on's dialogs read
+      // the palette as they're built, which under the mock has no Anki theme to ask.
+      // So hand it this one. A flip mid-session lands on the next dialog opened and
+      // leaves an open one alone, which is what real Anki does with its own theme.
+      const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+      H.set_dark(scheme.matches);
+      scheme.addEventListener("change", (e) => H.set_dark(e.matches));
       H.boot();
       buildMenu();
       refresh();

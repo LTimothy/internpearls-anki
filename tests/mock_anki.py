@@ -292,11 +292,18 @@ class _Decks:
         return self.names.get(name)
 
     def id(self, name, create=True):
-        """Anki's decks.id(): return the deck id, creating the deck if absent."""
+        """Anki's decks.id(): return the deck id, creating the deck if absent.
+
+        Every missing ancestor is created too, exactly as real Anki does: filing a card
+        into "A::B::C" makes A and A::B real decks, which is what lets a deck-scoped
+        export be limited to a parent path that no card sits in directly.
+        """
         if name not in self.names:
             if not create:
                 return None
-            self.names[name] = len(self.names) + 1
+            parts = name.split("::")
+            for i in range(1, len(parts) + 1):
+                self.names.setdefault("::".join(parts[:i]), len(self.names) + 1)
         return self.names[name]
 
     def name(self, did):
@@ -528,11 +535,9 @@ class MockCollection:
                 if deck and not existing.deck:
                     existing.deck = deck
             else:
-                note = self.add_note(guid, values, tags.split(), model, deck)
-                if deck:
-                    top = "::".join(deck.split("::")[:2]) or deck
-                    self.decks.names.setdefault(top, len(self.decks.names) + 1)
-                    self.decks.names.setdefault(deck, len(self.decks.names) + 1)
+                # add_note files it through decks.id(), which registers the deck and
+                # every ancestor of it, same as real Anki.
+                self.add_note(guid, values, tags.split(), model, deck)
 
     def export_anki_package(self, out_path, options, limit):
         """A real (minimal) .apkg of the whole mock collection, so a backup made
@@ -633,8 +638,10 @@ class Signal:
         self._slots.append(fn)
 
     def emit(self, *a):
+        # Passed through rather than dropped: real Qt hands a slot the signal's own
+        # arguments, and a slot that takes one (QCheckBox.toggled -> setEnabled) needs it.
         for fn in list(self._slots):
-            fn()
+            fn(*a)
 
 
 class QWidget:
@@ -643,8 +650,10 @@ class QWidget:
         self._style = ""
         self._layout = None
         self._tooltip = ""
+        self._accessible = ""
         self._enabled = True
         self._visible = True
+        self.deleted = False
 
     def setStyleSheet(self, s):
         self._style = s
@@ -657,6 +666,15 @@ class QWidget:
 
     def setToolTip(self, t):
         self._tooltip = t
+
+    def setAccessibleName(self, name):
+        self._accessible = name
+
+    def deleteLater(self):
+        """Qt's deferred delete. Nothing here owns C++ memory to free, so this records
+        the call: a dialog parented to mw leaks in real Anki unless something asks for
+        it, and this is what lets a flow test assert that something did."""
+        self.deleted = True
 
     def setEnabled(self, v):
         self._enabled = v
@@ -782,7 +800,7 @@ class QPushButton(QWidget):
     def node(self):
         return {"t": "button", "id": self.wid, "label": self._label,
                 "style": self._style, "enabled": self._enabled,
-                "tooltip": self._tooltip}
+                "tooltip": self._tooltip, "accessible": self._accessible}
 
 
 class QCheckBox(QWidget):
@@ -790,16 +808,23 @@ class QCheckBox(QWidget):
         super().__init__()
         self._label = label
         self._checked = False
+        # Real QCheckBox emits this only when the state actually changes, which is what
+        # a control wired to follow a checkbox (Settings' interval spinbox) rides on.
+        self.toggled = Signal()
 
     def setChecked(self, v):
-        self._checked = bool(v)
+        v = bool(v)
+        if v != self._checked:
+            self._checked = v
+            self.toggled.emit(v)
 
     def isChecked(self):
         return self._checked
 
     def node(self):
         return {"t": "check", "id": self.wid, "label": self._label,
-                "checked": self._checked, "style": self._style}
+                "checked": self._checked, "style": self._style,
+                "tooltip": self._tooltip}
 
 
 class QLineEdit(QWidget):
@@ -891,7 +916,8 @@ class QSpinBox(QWidget):
 
     def node(self):
         return {"t": "spin", "id": self.wid, "value": self._value,
-                "min": self._min, "max": self._max, "suffix": self._suffix}
+                "min": self._min, "max": self._max, "suffix": self._suffix,
+                "enabled": self._enabled}
 
 
 class _Layout:
@@ -1384,6 +1410,20 @@ def install():
         class WindowModality:
             WindowModal = 1
 
+    class _QFileDialog:
+        """The native directory picker configure_source opens for a local folder.
+
+        There is no native dialog to open here, so this answers through the same
+        `prompt` payload the rest of this file uses for a typed value: pytest scripts
+        it as a prompt response, and the live demo (which has no filesystem picker of
+        its own either) keeps drawing the text field it already draws.
+        """
+
+        @staticmethod
+        def getExistingDirectory(parent=None, caption="", directory="", *a, **k):
+            text, ok = gui.prompt(caption, default=directory)
+            return text if ok else ""
+
     class _QFontDatabase:
         class SystemFont:
             FixedFont = 0
@@ -1481,8 +1521,13 @@ def install():
 
         def __init__(self, label, cancel_text, minv, maxv, parent=None):
             self._label = label
+            self._title = ""
             self._calls = 0
             self._canceled = False
+            self.deleted = False
+
+        def setWindowTitle(self, t):
+            self._title = t
 
         def setWindowModality(self, m):
             pass
@@ -1508,8 +1553,12 @@ def install():
         def close(self):
             pass
 
+        def deleteLater(self):
+            self.deleted = True
+
     for name, obj in (("Qt", _Qt), ("QApplication", _QApplication),
                       ("QTimer", _QTimer), ("QProgressDialog", _QProgressDialog),
+                      ("QFileDialog", _QFileDialog),
                       ("QFontDatabase", _QFontDatabase), ("QLabel", QLabel),
                       ("QPushButton", QPushButton), ("QAction", QAction),
                       ("QMenu", QMenu), ("QCheckBox", QCheckBox),

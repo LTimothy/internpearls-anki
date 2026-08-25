@@ -169,6 +169,79 @@ def test_streaming_list_extends_by_one_batch_when_the_scrollbar_reaches_the_bott
         "reaching the bottom must build exactly one more batch"
 
 
+def _grown(lst, viewport_height, row_height):
+    """Give a mock list synthetic geometry: a viewport of `viewport_height`, and rows
+    whose container reports `row_height` per built row.
+
+    mock_anki has no layout engine, so every widget reports height 0 and sizeHint 0.
+    These two stand-ins are what let this suite drive _fill_viewport's own arithmetic;
+    qt_tests/test_streaming.py does the same thing against real geometry.
+    """
+    import types
+    lst.viewport().height = lambda: viewport_height
+    lst._rows_container.sizeHint = lambda: types.SimpleNamespace(
+        width=lambda: 0, height=lambda: lst.shown() * row_height)
+
+
+def test_streaming_list_fills_a_viewport_that_outgrew_its_rows():
+    """The grow-before-scroll case. Enlarging the dialog leaves the content shorter than
+    the viewport, so there is nothing to scroll and valueChanged never fires again: the
+    list has to notice on its own or every unbuilt row is stranded."""
+    from internpearls import widgets
+    built = []
+    lst = widgets.StreamingList(lambda item: _stub_row(built, item), list(range(500)),
+                                batch=50)
+    _grown(lst, viewport_height=1000, row_height=10)   # 50 rows = 500px, half the room
+    lst._fill_viewport()
+    assert lst.shown() == 150, (
+        "the list must build until its rows overflow the viewport, not stop at the one "
+        "batch __init__ built against a zero-height viewport")
+    assert len(built) == 150
+
+
+def test_streaming_list_filling_a_viewport_still_leaves_rows_unbuilt():
+    """The streaming property itself: filling the viewport is not filling the list."""
+    from internpearls import widgets
+    built = []
+    lst = widgets.StreamingList(lambda item: _stub_row(built, item), list(range(500)),
+                                batch=50)
+    _grown(lst, viewport_height=300, row_height=10)
+    lst._fill_viewport()
+    assert lst.shown() < lst.total(), "a viewport fill must not build every row"
+
+
+def test_streaming_list_filling_stops_at_the_last_item():
+    """A viewport taller than the whole list must exhaust it rather than overrun."""
+    from internpearls import widgets
+    built = []
+    lst = widgets.StreamingList(lambda item: _stub_row(built, item), list(range(70)),
+                                batch=50)
+    _grown(lst, viewport_height=100000, row_height=10)
+    lst._fill_viewport()
+    assert lst.shown() == 70 and len(built) == 70
+
+
+def test_streaming_list_refills_on_resize():
+    """The wiring, not just the arithmetic: a resize is what tells the list its viewport
+    grew. Driven through the override rather than the real Qt event, which qt_tests/
+    exercises: super().resizeEvent has nothing to call under the mock."""
+    from internpearls import widgets
+    assert "resizeEvent" in vars(widgets.StreamingList), (
+        "nothing refills the list when the dialog is enlarged")
+    built = []
+    lst = widgets.StreamingList(lambda item: _stub_row(built, item), list(range(500)),
+                                batch=50)
+    _grown(lst, viewport_height=1000, row_height=10)
+    calls = []
+    lst._fill_viewport = lambda: calls.append(True)
+    widgets.QScrollArea.resizeEvent = lambda self, event: None   # stand in for super()
+    try:
+        lst.resizeEvent(None)
+    finally:
+        del widgets.QScrollArea.resizeEvent
+    assert calls, "resizeEvent did not refill the viewport"
+
+
 def test_streaming_list_repeated_bottom_scroll_after_exhaustion_does_not_rebuild_or_overrun():
     """Once every item is already shown, scrolling to the bottom again and again must
     neither rebuild rows the caller already has nor try to build past the item list."""

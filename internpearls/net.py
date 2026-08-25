@@ -30,13 +30,36 @@ _DOWNLOAD_TIMEOUT = 60   # seconds; per-read bound for pulling a deck once we're
 # without QueryOp.
 _BG_TIMEOUT = 3          # seconds; fail-fast bound for unattended background checks
 
+# How much of a download is read per `on_chunk` call. Small enough that a slow link
+# still pumps the UI several times a second, large enough that a fast one isn't
+# dominated by the callback.
+_CHUNK = 64 * 1024
 
-def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT):
+
+class DownloadCancelled(RuntimeError):
+    """An `on_chunk` callback asked to stop a download that was still in flight.
+
+    Its own class so a caller can tell "the learner clicked Cancel" apart from a real
+    network failure and word its own message accordingly. Still a RuntimeError, like
+    every other failure this module raises, so a caller that doesn't care catches it
+    anyway.
+    """
+
+
+def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=None):
     """GET `url`, raising a plain RuntimeError with an actionable message on failure.
 
     Every network call in this add-on goes through here, so this is the one place that
     needs to turn urllib's exceptions into something a non-technical error dialog can
     show as-is, rather than a Python traceback repr.
+
+    `on_chunk(bytes_so_far)` opts into a chunked read: it is called after each chunk and
+    returns falsy to abort, raising DownloadCancelled. It exists because a deck download
+    is one blocking call on Anki's UI thread, so nothing repaints and no click is
+    processed for its whole duration, which leaves a progress dialog's Cancel button
+    decorative until something pumps the event loop from in here (that something is
+    `ui.cancellable_progress`'s `pump`). Passing nothing keeps the read exactly what it
+    was, a single call, so no existing caller pays for the loop.
     """
     headers = {"User-Agent": "internpearls-addon"}
     if token:
@@ -46,7 +69,16 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT):
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.read()
+            if on_chunk is None:
+                return r.read()
+            buf = bytearray()
+            while True:
+                chunk = r.read(_CHUNK)
+                if not chunk:
+                    return bytes(buf)
+                buf += chunk
+                if not on_chunk(len(buf)):
+                    raise DownloadCancelled("cancelled before anything was imported")
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             raise RuntimeError(
@@ -65,11 +97,15 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT):
         raise RuntimeError(f"couldn't reach the network ({e.reason})") from e
 
 
-def _gh_raw(repo, path, token, ref, timeout=_CONNECT_TIMEOUT):
-    """Raw bytes of a file in a (possibly private) repo via the contents API."""
+def _gh_raw(repo, path, token, ref, timeout=_CONNECT_TIMEOUT, on_chunk=None):
+    """Raw bytes of a file in a (possibly private) repo via the contents API.
+
+    `on_chunk` is _http_get's, passed through: this is the deck-download path, the one
+    fetch long enough for the learner to want out of it partway.
+    """
     url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={ref}"
     return _http_get(url, token=token, accept="application/vnd.github.raw",
-                     timeout=timeout)
+                     timeout=timeout, on_chunk=on_chunk)
 
 
 def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT):

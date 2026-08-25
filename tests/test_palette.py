@@ -5,6 +5,9 @@ can only see one dominant colour pair per widget: a small inline span like a row
 never the pair it measures. This file is what stands guard over the values themselves, and
 it needs no Qt at all.
 """
+import sys
+import types
+
 from internpearls import palette
 
 AA = 4.5
@@ -187,3 +190,30 @@ def test_colors_follows_ankis_theme(monkeypatch):
     assert palette.colors() == palette.DARK
     monkeypatch.setattr(palette, "is_dark", lambda: False)
     assert palette.colors() == palette.LIGHT
+
+
+def test_the_fallback_carries_the_dark_set_where_there_is_no_theme_manager(monkeypatch):
+    """The live demo runs this module under a mock Anki with no aqt.theme at all, so
+    every dialog it renders took the light set no matter what the reader's browser was
+    set to: light hexes painted onto the page's own dark panels. The fallback is the
+    only place that can be told otherwise, since there is no theme manager to ask.
+    """
+    assert palette.is_dark() is False          # nothing has set the hook
+    assert palette.colors() == palette.LIGHT
+    monkeypatch.setattr(palette, "FALLBACK_DARK", True)
+    assert palette.is_dark() is True
+    assert palette.colors() == palette.DARK
+
+
+def test_ankis_own_theme_outranks_the_fallback(monkeypatch):
+    """The half worth pinning: inside real Anki the theme manager is always there and
+    the hook is dead weight. A fallback that could override Anki's own night mode would
+    be a demo convenience shipped as a bug to every user.
+    """
+    theme = types.ModuleType("aqt.theme")
+    theme.theme_manager = types.SimpleNamespace(night_mode=False)
+    monkeypatch.setitem(sys.modules, "aqt.theme", theme)
+    monkeypatch.setattr(palette, "FALLBACK_DARK", True)
+    assert palette.is_dark() is False
+    theme.theme_manager.night_mode = True
+    assert palette.is_dark() is True
