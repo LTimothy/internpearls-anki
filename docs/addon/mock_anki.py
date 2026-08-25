@@ -71,7 +71,7 @@ def reset_run():
     if _gui:
         _gui.cursor = 0
         for lst in (_gui.infos, _gui.warnings, _gui.tooltips, _gui.asks,
-                    _gui.payloads):
+                    _gui.ask_buttons, _gui.payloads):
             lst.clear()
 
 
@@ -369,6 +369,7 @@ class MockCollection:
         self.decks = _Decks()
         self.db = _Db(self)
         self.imports = []   # paths passed to import_anki_package, for assertions
+        self.exports = []   # (path, options, limit) passed to export_anki_package
         self.updated_cards = []   # nids passed to update_card, for assertions
         self.notetype_changes = []   # note-id batches converted, for assertions
         # Anki exposes suspend via col.sched and tag edits via col.tags; the add-on's
@@ -541,7 +542,15 @@ class MockCollection:
 
     def export_anki_package(self, out_path, options, limit):
         """A real (minimal) .apkg of the whole mock collection, so a backup made
-        here can actually be re-imported through import_anki_package."""
+        here can actually be re-imported through import_anki_package.
+
+        Always written in the legacy (plain collection.anki2) shape, since the mock has
+        no zstd either; `options` and `limit` are recorded in `self.exports` so a test
+        can still assert which format the add-on ASKED Anki for (the part that decides
+        whether a real backup is readable by this add-on's own readers) and which deck
+        it asked for.
+        """
+        self.exports.append((out_path, options, limit))
         db = out_path + ".tmp.db"
         if os.path.exists(db):
             os.remove(db)
@@ -580,6 +589,11 @@ class Gui:
 
     def __init__(self):
         self.infos, self.warnings, self.tooltips, self.asks = [], [], [], []
+        # The button labels of every question asked through aqt.utils.askUserDialog,
+        # which is how ui._ask renders a question whose two answers cost different
+        # things. Recorded beside `asks` (which still holds the text) so a test can
+        # assert the buttons name the action rather than reading Yes/No.
+        self.ask_buttons = []
         self.clipboard = []      # every text copy_to_clipboard() put on the clipboard
         self.answers = []        # non-interactive askUser script
         self.file_picks = []     # non-interactive getFile/getSaveFile script
@@ -660,6 +674,11 @@ class QWidget:
 
     def styleSheet(self):
         return self._style
+
+    def layout(self):
+        """The layout set on this widget, the way real Qt hands one back. ui.py reads it
+        to place a checkbox inside a caller-built body rather than under it."""
+        return self._layout
 
     def setObjectName(self, n):
         pass
@@ -920,6 +939,17 @@ class QSpinBox(QWidget):
                 "enabled": self._enabled}
 
 
+class _LayoutItem:
+    """What QLayout.itemAt returns: a handle whose widget() is the widget it holds, or
+    None for an item that is a nested layout or a spacer."""
+
+    def __init__(self, widget):
+        self._widget = widget
+
+    def widget(self):
+        return self._widget
+
+
 class _Layout:
     kind = "col"
 
@@ -931,6 +961,21 @@ class _Layout:
 
     def addWidget(self, w, *a):
         self._children.append(w)
+
+    def insertWidget(self, i, w, *a):
+        self._children.insert(i, w)
+
+    def count(self):
+        return len(self._children)
+
+    def itemAt(self, i):
+        """Qt hands back a layout ITEM, not the widget: an item wrapping a nested layout
+        answers widget() with None. Modelled rather than flattened, since that None is
+        exactly what a caller walking a layout has to handle."""
+        if not 0 <= i < len(self._children):
+            return None
+        child = self._children[i]
+        return _LayoutItem(child if isinstance(child, QWidget) else None)
 
     def addLayout(self, l):
         self._children.append(l)
@@ -1576,6 +1621,25 @@ def install():
     aqt_utils.showInfo = gui.info
     aqt_utils.showWarning = gui.warn
     aqt_utils.askUser = gui.ask
+
+    class _AskUserDialog:
+        """Anki's askUserDialog: the same yes/no question, with buttons that name the
+        action instead of reading Yes/No. run() returns the clicked button's text.
+
+        Routed through Gui.ask so a scripted answer or a replayed response answers it
+        exactly like a plain askUser does, and so a flow that switches a question to
+        named buttons doesn't switch which mechanism a test has to answer it with. The
+        labels are recorded separately, in gui.ask_buttons.
+        """
+
+        def __init__(self, text, buttons, parent=None, title=None):
+            self.text, self.buttons = text, list(buttons)
+
+        def run(self):
+            gui.ask_buttons.append(tuple(self.buttons))
+            return self.buttons[0] if gui.ask(self.text) else self.buttons[-1]
+
+    aqt_utils.askUserDialog = _AskUserDialog
     aqt_utils.getText = gui.prompt
     aqt_utils.tooltip = lambda text, **kw: gui.tooltips.append(text)
     aqt_utils.getFile = lambda parent, title, cb=None, filter="", dir=None, key=None: \

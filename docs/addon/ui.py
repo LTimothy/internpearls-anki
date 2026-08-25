@@ -9,6 +9,11 @@ A screen that lists cards, decks or settings does not belong in any of these as 
 it builds rows (widgets.simple_row, review.build_list_body) and comes back through
 _ask_with_widget. Nothing in the add-on renders an HTML bullet list any more.
 
+The interleave guard (`_manual_flow`, `manual_sync_in_progress`) lives here for a
+different reason: every menu action that writes the collection has to hold it, and
+those are split across sync.py and collection.py, which cannot share a flag of their
+own without a circular import.
+
 The label/button helpers at the bottom exist for the same reason: every dialog's
 headings, hints, and link-style buttons share one look defined here, instead of each
 dialog carrying its own copy of the stylesheet strings.
@@ -23,8 +28,54 @@ from aqt.qt import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
                     QVBoxLayout)
 from aqt.utils import askUser, getText, showInfo, showWarning, tooltip
 
+try:
+    from aqt.utils import askUserDialog
+except Exception:
+    askUserDialog = None   # older build: _ask falls back to plain Yes/No buttons
+
 from .config import APP_NAME
 from .palette import colors
+
+
+# True while an interactive flow that writes the collection is running: the sync,
+# reconcile and import flows in sync.py, and the Advanced actions in collection.py that
+# import, restore or delete. The unattended auto-sync poll checks it and skips its tick
+# rather than interleaving, since both write the collection and both persist
+# installed.json, and the poll's apply half lands from a QueryOp callback, which can
+# fire while one of these flows is sitting inside a modal dialog's own event loop.
+#
+# It lives here rather than in sync.py or collection.py because both of those need it
+# and sync.py imports collection.py, so a flag in either would be a circular import.
+# ui.py is imported by both, imports neither, and already owns the other decorator
+# every menu action wears (_safe).
+_manual_in_progress = False
+
+
+def manual_sync_in_progress():
+    """Whether an interactive flow that writes the collection is running right now.
+
+    Read by background.py's poll, which stays quiet and retries on the next tick rather
+    than queueing behind this. A plain flag rather than a lock: nothing here nests, and
+    the poll has nothing to wait for.
+    """
+    return _manual_in_progress
+
+
+def _manual_flow(fn):
+    """Hold `manual_sync_in_progress()` for the whole of an interactive flow.
+
+    Applied under @_safe so the flag is released even when the flow raises, which is the
+    one thing @_safe's own warning dialog would otherwise leave stuck on.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        global _manual_in_progress
+        _manual_in_progress = True
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _manual_in_progress = False
+    return wrapper
 
 
 def _info(text, **kw):
@@ -39,8 +90,25 @@ def _warn(text, **kw):
     return showWarning(text, **kw)
 
 
-def _ask(text, **kw):
+def _ask(text, yes_label=None, no_label=None, **kw):
+    """A yes/no confirmation, with buttons that can name the action instead.
+
+    Pass both labels for a question whose two answers cost different things ("Apply the
+    new look" / "Keep my current look"): a bare Yes/No there makes the reader scroll
+    back up to the question to work out what No means, which is the same reason
+    _ask_scrollable defaults to action-neutral labels rather than Yes/No. Anki's
+    askUserDialog is what renders named buttons; anything unexpected about it on a given
+    build falls back to the plain askUser question, so the answer shape is the same
+    either way and only the wording on the buttons is lost.
+    """
     kw.setdefault("title", APP_NAME)
+    if yes_label and no_label and askUserDialog is not None:
+        try:
+            dlg = askUserDialog(text, [yes_label, no_label], parent=mw,
+                                title=kw["title"])
+            return dlg.run() == yes_label
+        except Exception:
+            print(traceback.format_exc())
     return askUser(text, **kw)
 
 
@@ -174,6 +242,25 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     return answered
 
 
+def _place_checkbox(dialog_layout, body, box):
+    """Put the checkbox with the sentence that explains it, not under the list.
+
+    A body's list streams as many rows as the run has pending, so a checkbox added below
+    it can sit hundreds of rows past the paragraph above the list saying what ticking it
+    costs, and a reader who never scrolls back never meets the two together. Inserted
+    directly above the body's own scroll area instead, which puts it under whatever fixed
+    text the body opens with and on the same screen as it. A body with no scroll area to
+    sit above (a plain widget) keeps the old placement, at the bottom of the dialog.
+    """
+    lay = body.layout() if hasattr(body, "layout") else None
+    for i in range(lay.count() if lay is not None else 0):
+        item = lay.itemAt(i)
+        if isinstance(item.widget() if item else None, QScrollArea):
+            lay.insertWidget(i, box)
+            return
+    dialog_layout.addWidget(box)
+
+
 def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=None,
                      title=None, min_width=560, min_height=520, on_close=None):
     """Like _ask_scrollable, but the body is a caller-built widget rather than an HTML
@@ -205,7 +292,7 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
     if checkbox:
         box = QCheckBox(checkbox["label"])
         box.setChecked(bool(checkbox.get("checked")))
-        lay.addWidget(box)
+        _place_checkbox(lay, body, box)
 
     bb = QDialogButtonBox()
     yes = bb.addButton(yes_label, QDialogButtonBox.ButtonRole.AcceptRole)
