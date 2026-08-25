@@ -71,7 +71,7 @@ def reset_run():
     if _gui:
         _gui.cursor = 0
         for lst in (_gui.infos, _gui.warnings, _gui.tooltips, _gui.asks,
-                    _gui.ask_buttons, _gui.payloads):
+                    _gui.ask_buttons, _gui.ask_defaults, _gui.payloads):
             lst.clear()
 
 
@@ -589,11 +589,16 @@ class Gui:
 
     def __init__(self):
         self.infos, self.warnings, self.tooltips, self.asks = [], [], [], []
-        # The button labels of every question asked through aqt.utils.askUserDialog,
-        # which is how ui._ask renders a question whose two answers cost different
-        # things. Recorded beside `asks` (which still holds the text) so a test can
-        # assert the buttons name the action rather than reading Yes/No.
+        # The button labels of every named-button question, in (yes, no) order, and the
+        # label ui._ask made the default on each. Recorded beside `asks` (which still
+        # holds the text) so a test can assert the buttons name the action rather than
+        # reading Yes/No, and that the default is the answer that costs nothing.
         self.ask_buttons = []
+        self.ask_defaults = []
+        # When True, every named-button question is answered by pressing Escape rather
+        # than by clicking: the escape button is the declining one, so this is how a
+        # test asserts that dismissing a question means the safe answer.
+        self.escape_asks = False
         self.clipboard = []      # every text copy_to_clipboard() put on the clipboard
         self.answers = []        # non-interactive askUser script
         self.file_picks = []     # non-interactive getFile/getSaveFile script
@@ -610,12 +615,29 @@ class Gui:
             return resp
         raise NeedInteraction(payload)
 
-    def ask(self, text, **kw):
+    def ask(self, text, buttons=None, **kw):
+        """One yes/no question, however it was rendered.
+
+        `buttons` is (yes label, no label) when ui._ask built a named-button message box
+        rather than a plain askUser, and it only changes what is recorded and what the
+        interactive payload carries: the answer still comes back as a bool from the same
+        `answers` queue or the same replayed response, so a question that gains named
+        buttons doesn't change which mechanism a test answers it with.
+        """
         self.asks.append(text)
+        payload = {"kind": "ask", "text": text}
+        if buttons:
+            self.ask_buttons.append(tuple(buttons))
+            payload["buttons"] = list(buttons)
+        if buttons and self.escape_asks:
+            # Escape and the close box activate the escape button, which ui._ask makes
+            # the declining one. Answered here rather than from the script, in both
+            # modes, since this is a keypress rather than a choice a test is scripting.
+            self.payloads.append(payload)
+            return False
         if not self.interactive:
             return self.answers.pop(0) if self.answers else True
-        resp = self.next_interaction({"kind": "ask", "text": text})
-        return bool(resp.get("answer"))
+        return bool(self.next_interaction(payload).get("answer"))
 
     def info(self, text, **kw):
         self.infos.append(text)
@@ -1177,11 +1199,20 @@ class QDialog(QWidget):
 
 
 class QMessageBox(QWidget):
+    """Enough of Qt's message box to stand in for the one ui._ask builds.
+
+    The roles matter here, not just the labels: the declining button carries RejectRole
+    and is made both the default and the escape button, which is what makes Return and
+    Escape mean the safe answer rather than consenting to a schema change. exec()
+    answers a question built that way through Gui.ask, so every existing test that
+    scripts or replays an answer answers this the same way it always has.
+    """
+
     class Icon:
         Question, Information, Warning = 0, 1, 2
 
     class ButtonRole:
-        AcceptRole = 0
+        AcceptRole, RejectRole = 0, 1
 
     class StandardButton:
         Ok, Cancel = 0x400, 0x400000
@@ -1190,6 +1221,9 @@ class QMessageBox(QWidget):
         super().__init__()
         self._title, self._text = "", ""
         self._buttons = []
+        self._roles = {}
+        self._default = None
+        self._escape = None
         self._clicked = None
 
     def setWindowTitle(self, t):
@@ -1216,12 +1250,21 @@ class QMessageBox(QWidget):
             label = str(arg)
         btn = QPushButton(label)
         self._buttons.append(btn)
+        self._roles[btn.wid] = role
         return btn
+
+    def setDefaultButton(self, btn):
+        self._default = btn
+
+    def setEscapeButton(self, btn):
+        self._escape = btn
 
     def clickedButton(self):
         return self._clicked
 
     def exec(self):
+        if self._escape is not None:
+            return self._exec_named()
         resp = _gui.next_interaction({
             "kind": "msgbox", "id": self.wid, "title": self._title,
             "text": self._text,
@@ -1229,6 +1272,16 @@ class QMessageBox(QWidget):
         for ev in resp.get("events", []):
             if ev.get("click") and ev["id"] in _widgets:
                 self._clicked = _widgets[ev["id"]]
+        return 0
+
+    def _exec_named(self):
+        """A ui._ask question: answered through Gui.ask, recorded with its buttons."""
+        yes = next(b for b in self._buttons
+                   if self._roles.get(b.wid) == QMessageBox.ButtonRole.AcceptRole)
+        no = self._escape
+        _gui.ask_defaults.append(self._default._label if self._default else None)
+        self._clicked = yes if _gui.ask(
+            self._text, buttons=(yes._label, no._label)) else no
         return 0
 
 
@@ -1622,24 +1675,9 @@ def install():
     aqt_utils.showWarning = gui.warn
     aqt_utils.askUser = gui.ask
 
-    class _AskUserDialog:
-        """Anki's askUserDialog: the same yes/no question, with buttons that name the
-        action instead of reading Yes/No. run() returns the clicked button's text.
-
-        Routed through Gui.ask so a scripted answer or a replayed response answers it
-        exactly like a plain askUser does, and so a flow that switches a question to
-        named buttons doesn't switch which mechanism a test has to answer it with. The
-        labels are recorded separately, in gui.ask_buttons.
-        """
-
-        def __init__(self, text, buttons, parent=None, title=None):
-            self.text, self.buttons = text, list(buttons)
-
-        def run(self):
-            gui.ask_buttons.append(tuple(self.buttons))
-            return self.buttons[0] if gui.ask(self.text) else self.buttons[-1]
-
-    aqt_utils.askUserDialog = _AskUserDialog
+    # No askUserDialog: ui._ask builds its own QMessageBox for a named-button question,
+    # since Anki's helper gives every button AcceptRole, which leaves the dialog with no
+    # escape and no default (see ui._ask).
     aqt_utils.getText = gui.prompt
     aqt_utils.tooltip = lambda text, **kw: gui.tooltips.append(text)
     aqt_utils.getFile = lambda parent, title, cb=None, filter="", dir=None, key=None: \
