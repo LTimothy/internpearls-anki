@@ -4621,3 +4621,13 @@ def test_fix_note_types_holds_the_manual_guard_too(anki, monkeypatch):
 
     assert held == [True]
     assert not ui.manual_sync_in_progress()
+
+
+def test_declined_registry_round_trips(anki):
+    from internpearls import config
+    assert config.load_declined() == {}
+    entry = {"g1": {"state": "skip", "front": "f", "deck": "IP::A",
+                    "decided": "2026-08-25", "hash": "ab" * 8}}
+    config.save_declined(entry)
+    assert config.load_declined() == entry
+    assert os.path.basename(config.DECLINED) == "declined.json"
