@@ -560,7 +560,6 @@ def _scene_result(mock, opts):
     its `_finish` calls), rather than one HTML blob with a `<ul>` inside it.
     """
     from internpearls import review
-    mock.mw._config = {"collect_card_feedback": True}
     entries = [{"deck": "Example Deck", "guid": "g1",
                 "front": "Which widget is this, in one short line?",
                 "note": "reads as two facts at once"}]

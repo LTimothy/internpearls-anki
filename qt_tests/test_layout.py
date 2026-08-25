@@ -210,17 +210,17 @@ def test_the_source_options_stack_rather_than_share_a_row(shot):
         "choice")
 
 
-SETTINGS_SECTIONS = ("Deck sync", "Add-on updates", "Night mode", "Card review")
+SETTINGS_SECTIONS = ("Deck sync", "Add-on updates", "Night mode")
 
 
 def test_each_settings_section_is_ruled_off_from_the_next(shot):
-    """Settings is four unrelated decisions in one window, and used to read as one
+    """Settings is three unrelated decisions in one window, and used to read as one
     column of small grey prose with checkboxes in it: a bold heading was the only thing
     marking where one section ended and the next began, and a heading is easy to lose
     between two paragraphs set at the same weight.
 
     One hairline sits in each gap now. Measured by position rather than by count alone,
-    since three rules bunched anywhere in the dialog would satisfy a count and separate
+    since two rules bunched anywhere in the dialog would satisfy a count and separate
     nothing. That the rule's own colour actually paints is test_declared.py's job.
     """
     _, q = harness.bootstrap()
@@ -238,8 +238,8 @@ def test_each_settings_section_is_ruled_off_from_the_next(shot):
         gaps[f"{above} / {below}"] = [y for y in rules if top < y < bottom]
     wrong = {gap: found for gap, found in gaps.items() if len(found) != 1}
     assert not wrong, (
-        f"these section gaps do not hold exactly one hairline: {wrong}. Four sections "
-        "read as four groups only if each boundary is drawn.")
+        f"these section gaps do not hold exactly one hairline: {wrong}. Three sections "
+        "read as three groups only if each boundary is drawn.")
 
 
 def test_review_rows_share_a_left_edge(shot):
