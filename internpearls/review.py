@@ -607,12 +607,9 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
 
     if kind in _DEFAULT_DECISION:
         options = _NEW_OPTIONS if kind == "new" else _CHANGED_OPTIONS
-        # `decisions` is the interface Task 6 persists verbatim, so a predeclined
-        # detail has to actually land in it here, not just drive the control's
-        # displayed state: otherwise an untouched previously-declined row would show
-        # "Skip for now" on screen while the dict still read "import".
-        if guid not in decisions and declined_state and declined_state != default:
-            decisions[guid] = declined_state
+        # A predeclined detail's `decisions` entry is seeded by build_update_body,
+        # before any row (this one included) is ever built, so it just reads back
+        # here like any other decision.
         initial = decisions.get(guid, default)
 
         def _on_change(state):
@@ -811,6 +808,26 @@ def build_update_body(items, sources, flags, new_index, decisions,
     resolvers, media_dir = build_resolvers(sources)
     boxes = {}
     carried = load_saved_feedback()
+
+    # A predeclined card's `decisions` entry has to exist before any row is ever
+    # built, not just once its own row happens to render: StreamingList only builds
+    # the first batch up front and the rest on scroll, so seeding this inside
+    # _card_row would leave a predeclined card past the first batch permanently
+    # missing from the dict a caller reads back. One pass over `items` costs nothing
+    # (no widgets), and only ever writes a state that row's own control can actually
+    # express, so a value the control couldn't show never silently reaches the
+    # persisted dict either.
+    for item in items:
+        if item[0] != "card":
+            continue
+        d = item[2]
+        state = d.get("declined_state")
+        kind = d.get("kind")
+        default = _DEFAULT_DECISION.get(kind)
+        options = {v for v, _ in (_NEW_OPTIONS if kind == "new"
+                                  else _CHANGED_OPTIONS if kind == "changed" else ())}
+        if state and state != default and state in options:
+            decisions.setdefault(d["guid"], state)
 
     def _entries():
         return pending_entries(boxes, flags, new_index, carried)
