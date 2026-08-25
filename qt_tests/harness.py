@@ -715,9 +715,38 @@ def _declined_fixture():
     return path
 
 
+_DECLINED_SINGLE_FIXTURE = None
+
+
+def _declined_single_fixture():
+    """One declined entry, in its own dedicated file separate from _declined_fixture()
+    above. test_declined.py's interaction test clicks its Offer again button for real,
+    which writes the registry back to disk; that write must never land on the shared
+    three-entry fixture the render-only tests depend on staying exactly as seeded.
+    """
+    global _DECLINED_SINGLE_FIXTURE
+    if _DECLINED_SINGLE_FIXTURE is not None:
+        return _DECLINED_SINGLE_FIXTURE
+    import atexit
+    import json
+    import tempfile
+
+    tmpdir = tempfile.TemporaryDirectory(prefix="internpearls_qt_declined_single_")
+    atexit.register(tmpdir.cleanup)
+    path = os.path.join(tmpdir.name, "declined.json")
+    with open(path, "w", encoding="utf8") as fh:
+        json.dump({
+            "g1": {"state": "never", "front": "Which widget is this, in one short line?",
+                   "deck": "Example Deck", "decided": "2026-08-01", "hash": ""},
+        }, fh)
+    _DECLINED_SINGLE_FIXTURE = path
+    return path
+
+
 def _scene_declined(mock, opts):
     from internpearls import config, dialogs
-    config.DECLINED = _declined_fixture()
+    config.DECLINED = (_declined_single_fixture() if opts.get("single")
+                       else _declined_fixture())
     return dialogs.open_declined_cards
 
 
