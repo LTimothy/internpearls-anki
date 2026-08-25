@@ -1164,9 +1164,12 @@ def build_feedback_digest(entries, version="", date=""):
         lines.append(deck.split("::")[-1] if deck else "(unknown deck)")
         for e in items:
             lines.append(f'  "{plain_text(e.get("front"))}"')
+            if e.get("decision"):
+                lines.append(f"  decision: {e['decision']}")
             if e.get("guid"):
                 lines.append(f'  guid {e["guid"]}')
-            lines.append(f'  > {plain_text(e.get("note"))}')
+            if e.get("note"):
+                lines.append(f'  > {plain_text(e.get("note"))}')
             lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -1276,16 +1279,27 @@ def empty_cards_dialog_rows(rows, skipped=0):
     return heading, lines, tail
 
 
-def feedback_entries(flags, index):
+def feedback_entries(flags, index, decisions=None):
     """The flagged cards as digest entries: [{deck, front, guid, note}].
 
     `flags` is {guid: her note}; `index` is {guid: (deck, front)}, which is what turns a
     GUID into something a person can read. A flag whose GUID isn't in the index is
     dropped rather than shown as a bare GUID: it means we no longer know which card she
     meant, and a line naming no card is not something anyone can act on.
+
+    `decisions`, when given, is {guid: reader-facing state} ("skipped"/"kept
+    yours"/"never") for a decision made this run; a guid present there but with no note
+    still gets an entry (empty "note"), carrying the "decision" key the digest renders.
     """
-    return [{"deck": index[g][0], "front": index[g][1], "guid": g, "note": n}
-            for g, n in flags.items() if g in index]
+    decisions = decisions or {}
+    out = []
+    for g in dict.fromkeys(list(flags) + list(decisions)):
+        if g not in index:
+            continue
+        out.append({"deck": index[g][0], "front": index[g][1], "guid": g,
+                    "note": flags.get(g, ""),
+                    **({"decision": decisions[g]} if g in decisions else {})})
+    return out
 
 
 def merge_saved_feedback(saved, flags, index):
