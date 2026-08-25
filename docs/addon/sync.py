@@ -9,6 +9,7 @@ review history exists exactly once. _reconcile_pending is the equivalent single
 source of truth for what "Reconcile my decks" would find pending, shared by
 reconcile_decks() and update_decks() so the two can never disagree.
 """
+import datetime
 import hashlib
 import json
 import os
@@ -37,8 +38,8 @@ from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, decks_to_upd
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, manifest_needs_newer_addon,
-                    note_display_label, note_fields_hash, plural, prune_declined,
-                    remap_cards, write_personalized)
+                    note_display_label, note_fields_hash, plain_text, plural,
+                    prune_declined, remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled, _gh_raw
 from .palette import colors
 from .review import (_CONFIRM_HEIGHT, append_rows, build_list_body, build_update_body,
@@ -1192,7 +1193,7 @@ def _preview_content_changes(fetch, todo, her, aliases, her_fields=None):
     return preview, downloaded, False
 
 
-def _gather_pending_items(todo, preview, downloaded, extra=None):
+def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None):
     """Every card this update would touch, grouped under the deck it belongs to and
     ready for the inline card list on the confirmation.
 
@@ -1207,16 +1208,22 @@ def _gather_pending_items(todo, preview, downloaded, extra=None):
     work is a retirement or a relocation still gets a heading of its own at the end,
     since it has rows to show and no other section would carry them.
 
-    Returns (items, failed, sources). `items` is a mix of ("header", deck_short_name),
-    ("sep",), and ("card", deck_name, detail) entries plus whatever `extra` supplied,
-    one card per pending row, each detail tagged "kind" ("new" or "changed") and, for a
-    changed one, "was" (what her copy currently says), the same two things the old
-    Review button's dialog used to tag before this screen replaced it. `failed` names
-    decks whose pending cards could not be read; the update itself is unaffected, those
-    decks just are not shown here. `sources` is {deck_name: .apkg path}, for the row
-    pictures' resolvers.
+    `registry` is config.load_declined()'s own {guid: entry}. A card previously
+    declined "never" is dropped from the list entirely and counted in `hidden` instead
+    of shown; one declined "skip"/"keep" is kept but tagged `detail["declined_state"]`
+    (its own badge, see review._card_row) and, when the incoming fields hash differs
+    from what was declined, `detail["changed_since_decline"]` too.
+
+    Returns (items, failed, sources, hidden). `items` is a mix of ("header",
+    deck_short_name), ("sep",), and ("card", deck_name, detail) entries plus whatever
+    `extra` supplied, one card per pending row, each detail tagged "kind" ("new" or
+    "changed") and, for a changed one, "was" (what her copy currently says), the same
+    two things the old Review button's dialog used to tag before this screen replaced
+    it. `failed` names decks whose pending cards could not be read; the update itself is
+    unaffected, those decks just are not shown here. `sources` is {deck_name: .apkg
+    path}, for the row pictures' resolvers.
     """
-    items, failed, sources = [], [], {}
+    items, failed, sources, hidden = [], [], {}, 0
     extra = dict(extra or {})
 
     def _extra_for(deck_name):
@@ -1254,6 +1261,15 @@ def _gather_pending_items(todo, preview, downloaded, extra=None):
             for detail in details:
                 detail["kind"] = "new" if detail["rid"] in new_rids else "changed"
                 detail["was"] = pc[3].get(detail["rid"], {})
+                entry = (registry or {}).get(detail["guid"])
+                if entry and entry["state"] == "never":
+                    hidden += 1
+                    continue
+                if entry:
+                    detail["declined_state"] = entry["state"]
+                    incoming = [v for _, v in detail["fields"]]
+                    if entry.get("hash") and entry["hash"] != note_fields_hash(incoming):
+                        detail["changed_since_decline"] = True
                 card_rows.append(("card", d["name"], detail))
             if details:
                 sources[d["name"]] = src
@@ -1263,7 +1279,7 @@ def _gather_pending_items(todo, preview, downloaded, extra=None):
 
     for deck, rows in extra.items():
         _section(deck.split("::")[-1], rows)
-    return items, failed, sources
+    return items, failed, sources, hidden
 
 
 def _retired_moved_items(fresh, moves, her):
@@ -1322,6 +1338,7 @@ def update_decks():
     items for anyone who wants either half on its own.
     """
     cfg = _cfg()
+    reg = load_declined()
     fetched = _fetch_manifest_gated(cfg)
     if not fetched:
         return
@@ -1349,7 +1366,9 @@ def update_decks():
     # Every card this update would add, in deck order then .apkg order. `new_index` maps
     # each one's GUID back to where it came from, because the review dialog only knows
     # GUIDs: without it a flag she writes couldn't say which deck or card it was about.
-    new_cards = []
+    # `incoming_hashes` rides along the same two loops, since both already hold each
+    # card's fields: it's what a Skip/Keep this run records into the declined registry.
+    new_cards, incoming_hashes = [], {}
     for d in todo:
         pc = preview.get(d["name"])
         if not pc:
@@ -1358,6 +1377,7 @@ def update_decks():
             continue
         for _, fields, guid in pc[2]:
             new_cards.append((d["name"], note_display_label(fields), guid))
+            incoming_hashes[guid] = note_fields_hash(fields)
     # The cards this update would rewrite, gathered the same way as the added ones: the
     # review dialog only knows note ids and guids, so the deck and a readable label have
     # to be carried alongside. A deck whose download failed, or whose details can't be
@@ -1374,9 +1394,9 @@ def update_decks():
         except Exception:
             continue    # this deck still imports; it just cannot be listed here
         for detail in details:
-            changed_cards.append((d["name"],
-                                  note_display_label([v for _, v in detail["fields"]]),
-                                  detail["guid"]))
+            incoming = [v for _, v in detail["fields"]]
+            changed_cards.append((d["name"], note_display_label(incoming), detail["guid"]))
+            incoming_hashes[detail["guid"]] = note_fields_hash(incoming)
     # Detected here, not mid-import, because the download that reveals it has already
     # happened: the preview above fetched every pending deck. Knowing it now is what
     # lets the one confirmation carry the decision, instead of interrupting the run
@@ -1462,21 +1482,42 @@ def update_decks():
         "Retired deck, nothing here is ever deleted. A backup is taken "
         "automatically first.")
 
-    def _flagged_line():
-        if not (cfg["collect_feedback"] and flags):
-            return ""
-        if not recovered:
-            carried_txt = ""
-        elif len(flags) == 1:
-            # "1 card flagged. 1 of them carried over" read as a count of something
-            # there is only one of.
-            carried_txt = " It carried over from an earlier session."
-        else:
-            carried_txt = f" {recovered} of them carried over from an earlier session."
-        return (f"<b>{plural(len(flags), 'card')} flagged.</b>{carried_txt} You'll get "
-                "a summary to send back when this finishes.<br><br>")
+    # {"skip": "...", "keep": "...", "never": "..."} counts, read off `decisions` below
+    # (defined just ahead of build_update_body): a row's own control words, not the
+    # digest's reader-facing ones, since this line sits beside the rows themselves.
+    _TALLY_WORDS = {"skip": "skipped for now", "keep": "kept mine for now",
+                    "never": "never"}
 
-    def _finish(title=None, items=()):
+    def _decision_tally():
+        counts = {}
+        for state in decisions.values():
+            counts[state] = counts.get(state, 0) + 1
+        if not counts:
+            return ""
+        return ", ".join(f"{n} {_TALLY_WORDS.get(s, s)}" for s, n in counts.items()) + "."
+
+    def _status_line():
+        parts = []
+        if flags:
+            if not recovered:
+                carried_txt = ""
+            elif len(flags) == 1:
+                # "1 card flagged. 1 of them carried over" read as a count of something
+                # there is only one of.
+                carried_txt = " It carried over from an earlier session."
+            else:
+                carried_txt = f" {recovered} of them carried over from an earlier session."
+            parts.append(f"<b>{plural(len(flags), 'card')} flagged.</b>{carried_txt} "
+                         "You'll get a summary to send back when this finishes.")
+        tally = _decision_tally()
+        if tally:
+            parts.append(tally)
+        if hidden:
+            parts.append(f"{plural(hidden, 'card')} hidden (Never). Restore them under "
+                         "Manage decks > Declined cards.")
+        return ("<br><br>".join(parts) + "<br><br>") if parts else ""
+
+    def _finish(title=None, items=(), run_decisions=None):
         """End the run: the summary and her notes as one dialog, then drop the saved
         copy of those notes.
 
@@ -1492,6 +1533,10 @@ def update_decks():
         line. Passed straight through to show_result_with_feedback, which renders them
         in the same row vocabulary the confirmation used. Left at their defaults on a
         Cancel or declined backup, where there is no completed run to summarize at all.
+        `run_decisions` is the reader-facing {guid: "skipped"/"kept yours"/"never"} for
+        whatever this run actually decided (computed at confirm, once the registry
+        write below has happened); left at its default (none) on a Cancel, since
+        nothing was decided.
 
         The saved copy is cleared only once the digest has actually been built and
         shown. An exit with nothing flagged leaves the file alone rather than deleting
@@ -1499,7 +1544,7 @@ def update_decks():
         run" as "safe to forget" is exactly how a recovered note would get thrown away
         a second time.
         """
-        entries = feedback_entries(flags, new_index)
+        entries = feedback_entries(flags, new_index, run_decisions)
         show_result_with_feedback(title, items, entries)
         if entries:
             clear_saved_feedback()
@@ -1519,8 +1564,9 @@ def update_decks():
             "format (a question and answer became a fill-in-the-blank). You'll be asked "
             "once, before anything imports, whether to move your existing cards across.")
 
-    items, unreadable, sources = _gather_pending_items(
-        todo, preview, downloaded, _retired_moved_items(fresh, moves, her))
+    items, unreadable, sources, hidden = _gather_pending_items(
+        todo, preview, downloaded, _retired_moved_items(fresh, moves, her),
+        registry=reg)
     if todo:
         summary = [("header", f"{plural(len(todo), 'deck')} "
                               f"{'has' if len(todo) == 1 else 'have'} updates:")]
@@ -1550,9 +1596,12 @@ def update_decks():
     # blocks is optional, and a fixed break belonging to one of them leaves a blank
     # line hanging above the list on the runs where it is the only thing here.
     top_html = "<br><br>".join(b for b in [catch_up_note] + sections if b)
+    # Seeded by build_update_body itself from `items`' own predeclined details before
+    # any row is built; read back here once the dialog closes to know what she decided.
+    decisions = {}
     body, _boxes, flush = build_update_body(
-        items, sources, flags, new_index, {}, top_html,
-        _flagged_line, safety_note)
+        items, sources, flags, new_index, decisions, top_html,
+        _status_line, safety_note)
 
     # "Update" only when there is content to update. With nothing pending but retired
     # and relocated cards, this run does exactly what Reconcile my decks does, so it
@@ -1570,6 +1619,29 @@ def update_decks():
     if not accepted:
         _finish()
         return
+
+    # Folded into the declined registry now, before anything else about this run
+    # happens: a Skip/Keep/Never she chose has to survive even if the apply loop below
+    # gets cancelled partway through. `row_guids` is every card that actually had a
+    # control on screen, which is what "she flipped it back to default" means below.
+    row_guids = {item[2]["guid"] for item in items if item[0] == "card"}
+    prior = dict(reg)
+    today = datetime.date.today().isoformat()
+    for guid, state in decisions.items():
+        deck, front = new_index.get(guid, ("", guid))
+        reg[guid] = {"state": state, "front": plain_text(front), "deck": deck,
+                     "decided": today,
+                     "hash": incoming_hashes.get(guid, reg.get(guid, {}).get("hash", ""))}
+    for guid in [g for g, e in reg.items()
+                 if g not in decisions and g in row_guids and prior.get(g)]:
+        del reg[guid]        # she flipped a standing decline back to the default
+    save_declined(reg)
+    # Reader-facing, and only what actually changed this run: a row left exactly as the
+    # registry already had it (the common case for a re-offered decline) isn't "decided"
+    # again, since nothing here can tell that apart from a run where she just never
+    # touched the row.
+    run_decisions = {g: {"skip": "skipped", "keep": "kept yours", "never": "never"}[s]
+                     for g, s in decisions.items() if prior.get(g, {}).get("state") != s}
 
     if todo:
         late_conversions, cancelled = _retry_failed_downloads(
@@ -1678,7 +1750,7 @@ def update_decks():
             # here she may want to act on, so a stopped run reports them too.
             items += _collision_items(collisions)
             items.append(("note", backup_line))
-            _finish(f"Update stopped early (source: {source})", items)
+            _finish(f"Update stopped early (source: {source})", items, run_decisions)
             return
         # Consented to on the confirmation, so nothing is normally asked here: the
         # checkbox is what she agreed to and tpl_changes is what the import found. A
@@ -1743,7 +1815,7 @@ def update_decks():
         items.append(("note", f"Preserved fields restored on {plural(restored, 'card')}."))
     items += _collision_items(collisions)
     items.append(("note", backup_line))
-    _finish(f"Update complete (source: {source})", items)
+    _finish(f"Update complete (source: {source})", items, run_decisions)
 
 
 @_safe
