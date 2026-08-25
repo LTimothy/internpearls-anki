@@ -103,23 +103,23 @@ def test_manage_decks_empty_state_starts_at_the_top_not_the_middle(shot):
     instead of hugging the row above it.
 
     Manage decks has real content above the empty message (title, source line,
-    instructions, the Select all/Select none bar), so this can't scan from the
-    dialog's row 0 the way the confirmation test does; that would just find the
-    title's ink. Instead it bounds the scan between two stable anchors: the bottom of
-    the Select all/Select none bar (the last fixed row before the empty-state region)
-    and the top of the "Preserved fields" section (the next fixed row after it). Only
-    the empty-state message lives in that band, so the first non-background pixel in
-    it is exactly the gap this message opens with.
+    instructions), so this can't scan from the dialog's row 0 the way the confirmation
+    test does; that would just find the title's ink. Instead it bounds the scan between
+    two stable anchors: the bottom of the instructions paragraph (the last fixed row
+    before the empty-state region, since the Select all/Select none bar isn't built at
+    all with no rows to select) and the top of the "Preserved fields" section (the next
+    fixed row after it). Only the empty-state message lives in that band, so the first
+    non-background pixel in it is exactly the gap this message opens with.
     """
     _, q = harness.bootstrap()
     s = shot("manage-decks", empty=True)
     labels = [w for w in s.dialog.findChildren(q.QLabel) if w.text().strip()]
     body = next(w for w in labels if "No decks available" in w.text())
     preserved = next(w for w in labels if w.text() == "Preserved fields")
-    select_all = next(b for b in s.dialog.findChildren(q.QPushButton)
-                      if b.text() == "Select all")
+    instructions = next(w for w in labels
+                        if w.text().startswith("Check the decks you want"))
 
-    top_bound = widget_rect(s.dialog, select_all).bottom()
+    top_bound = widget_rect(s.dialog, instructions).bottom()
     bottom_bound = widget_rect(s.dialog, preserved).top()
     body_rect = widget_rect(s.dialog, body)
 
@@ -134,6 +134,58 @@ def test_manage_decks_empty_state_starts_at_the_top_not_the_middle(shot):
         f"the empty-state message starts painting {gap_above}px below the row "
         "above it; it should hug that row, not float partway down toward "
         "Preserved fields")
+
+
+def test_a_long_source_error_wraps_rather_than_widening_the_dialog(shot):
+    """A local folder that has moved puts its whole path in the Source line, and that
+    line used to be the one label in the panel that never wrapped: measured here, a
+    five-segment path stretched the 480px dialog to 1374px, one line of error text wide.
+    """
+    _, q = harness.bootstrap()
+    long_dir = "/" + "/".join(["a-folder-that-is-not-here"] * 5)
+    s = shot("manage-decks", decks_dir=long_dir)
+    label = next(l for l in _visible_labels(s.dialog, q)
+                 if l.text().startswith("Source:"))
+    assert label.wordWrap(), "the Source line does not wrap"
+    assert label.fontMetrics().horizontalAdvance(label.text()) > s.dialog.width(), (
+        "the fixture path is short enough to fit on one line, so it proves nothing")
+    # 640 is what the harness asks for; anything wider means the dialog had to grow to
+    # its own sizeHint to hold that one line.
+    assert s.dialog.width() <= 640, (
+        f"the error widened the dialog to {s.dialog.width()}px")
+
+
+def test_a_wide_deck_label_is_elided_by_pixels_not_by_character_count():
+    """The character cap cannot keep a row inside the panel on its own: 42 characters
+    of a wide glyph (CJK, or just a run of capitals) paints at several times the width
+    of 42 narrow ones, so a name the cap passes through untouched still runs past the
+    space the cap stands for. Elided against real font metrics instead, which is the
+    one thing the mock suite cannot measure.
+    """
+    _, q = harness.bootstrap()
+    harness.app()
+    from internpearls import dialogs
+    name = "W" * dialogs._DECK_LABEL_MAX
+    assert dialogs._elide(name) == name, (
+        "the fixture must sit inside the character cap, or it proves nothing")
+
+    panel = dialogs._DeckManagerDialog.__new__(dialogs._DeckManagerDialog)
+    panel._checks = {}
+    row = panel._deck_row({"name": f"Root::{name}", "cards": 1, "enabled": True,
+                           "state": "current"}, name)
+    box = row.findChildren(q.QCheckBox)[0]
+    box.ensurePolished()
+    metrics = box.fontMetrics()
+    assert metrics.horizontalAdvance(name) > dialogs._DECK_LABEL_W, (
+        "the fixture already fits the pixel budget, so nothing is being tested")
+    assert metrics.horizontalAdvance(box.text()) <= dialogs._DECK_LABEL_W, (
+        f"the row paints {box.text()!r} at "
+        f"{metrics.horizontalAdvance(box.text())}px, past its {dialogs._DECK_LABEL_W}px "
+        "budget")
+    assert "…" in box.text() and box.toolTip() == f"Root::{name}"
+    # The other half of the rule: an ordinary name, which is most of a list, is left
+    # exactly as it is.
+    assert dialogs._fit_label("Pharmacology") == "Pharmacology"
 
 
 def test_the_source_options_stack_rather_than_share_a_row(shot):
@@ -465,3 +517,24 @@ def test_no_screen_carries_a_bullet_list(shot, scene):
     bulleted = [l.text()[:60] for l in _visible_labels(s.dialog, q)
                 if "<li>" in l.text() or "<ul>" in l.text()]
     assert not bulleted, f"{scene} still renders a bulleted list: {bulleted}"
+
+
+def test_the_look_change_checkbox_sits_with_the_text_that_explains_it(shot):
+    """The checkbox used to be added under the whole body, which puts it below a list
+    that streams as many rows as the update has pending: on a real update the sentence
+    saying what ticking it costs is hundreds of rows above the box that acts on it, and
+    a reader who never scrolls back never meets the two together. It sits between that
+    fixed text and the list now, so both are on screen at once.
+    """
+    _, q = harness.bootstrap()
+    s = shot("confirm", checkbox=True)
+    boxes = [w for w in s.dialog.findChildren(q.QCheckBox) if w.isVisible()]
+    assert len(boxes) == 1, "the confirmation carries exactly one checkbox"
+    intro = [l for l in _visible_labels(s.dialog, q) if "catch-up" in l.text()]
+    lists = [w for w in s.dialog.findChildren(q.QScrollArea) if w.isVisible()]
+    assert intro and lists
+
+    def top(w):
+        return w.mapTo(s.dialog, q.QPoint(0, 0)).y()
+
+    assert top(intro[0]) < top(boxes[0]) < min(top(w) for w in lists)

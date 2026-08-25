@@ -284,6 +284,13 @@ def test_decks_to_update_skips_a_versionless_entry_even_when_installed():
     assert logic.decks_to_update(manifest, {"B": "v1"}) == []
 
 
+def test_decks_to_update_skips_a_non_dict_entry():
+    # A manifest row that isn't a dict at all (e.g. a bare string) must not crash on
+    # .get(); it's skipped like any other malformed row.
+    manifest = {"decks": ["not-a-deck", {"name": "C", "version": "v3"}]}
+    assert [d["name"] for d in logic.decks_to_update(manifest, {})] == ["C"]
+
+
 # ----------------------------------------------------------------------- deck_status
 def test_deck_status_reports_new_update_current():
     manifest = {"decks": [
@@ -327,6 +334,24 @@ def test_deck_status_excluded_deck_still_listed_but_disabled():
     manifest = {"decks": [{"name": "X::A", "version": "v1", "cards": 3}]}
     rows = logic.deck_status(manifest, {}, excluded=["X::A"])
     assert len(rows) == 1 and rows[0]["enabled"] is False
+
+
+def test_deck_status_skips_an_entry_missing_its_name():
+    # d["name"] used to KeyError here, crashing Manage decks on a row that
+    # decks_to_update already tolerated.
+    manifest = {"decks": [{"version": "v1"}, {"name": "C", "version": "v3"}]}
+    assert [r["name"] for r in logic.deck_status(manifest, {})] == ["C"]
+
+
+def test_deck_status_tolerates_an_entry_missing_its_version():
+    manifest = {"decks": [{"name": "X::A"}]}
+    rows = logic.deck_status(manifest, {})
+    assert rows[0]["name"] == "X::A" and rows[0]["state"] == "new"
+
+
+def test_deck_status_skips_a_non_dict_entry():
+    manifest = {"decks": ["not-a-deck", {"name": "C", "version": "v3"}]}
+    assert [r["name"] for r in logic.deck_status(manifest, {})] == ["C"]
 
 
 # ----------------------------------------------------------------------- parse_fields
