@@ -35,8 +35,8 @@ from .logic import (clamp_interval_minutes, decide_addon_update_action,
                     decks_to_update, manifest_needs_newer_addon, plural)
 from .net import _BG_TIMEOUT, _DOWNLOAD_TIMEOUT
 from .sync import (_fetch_manifest, _reconcile_pending, _refresh_reconcile_action_label,
-                   _run_sync, manual_sync_in_progress)
-from .ui import _bg_safe
+                   _run_sync)
+from .ui import _bg_safe, manual_sync_in_progress
 from .updates import _addon_update_work, _refresh_update_action_label
 
 
@@ -272,7 +272,11 @@ def _auto_sync_check():
         if manual_sync_in_progress():
             return
 
-        if not _pre_sync_backup_or_skip_silently(cfg["export_deck"]):
+        # Scoped to the decks this tick is about to import, the same way the interactive
+        # flows scope theirs: an unattended sync applies whatever the manifest lists,
+        # and backing up only export_deck left anything filed outside it unprotected.
+        if not _pre_sync_backup_or_skip_silently(
+                cfg["export_deck"], [d["name"] for d in result["todo"]]):
             tooltip("Intern Pearls: auto-sync skipped, couldn't create a backup "
                    "first.", period=6000, parent=mw)
             return
@@ -300,9 +304,13 @@ def _auto_sync_check():
         if fail:
             msg += f", {fail} failed, open Sync decks for details"
         if deferred_new:
+            # "or note-type format" because both defer here, for the same schema
+            # reason, and a deck held back for a conversion used to be announced as a
+            # look change it doesn't carry (see _run_sync's own deferral row).
             msg += (f", {plural(len(deferred_new), 'deck')} "
                     f"{'includes' if len(deferred_new) == 1 else 'include'} a "
-                    "card-template update — run Sync decks to review it")
+                    "card-template or note-type format update, run Sync decks to "
+                    "review it")
         if restored:
             msg += f", preserved fields restored on {plural(restored, 'card')}"
         tooltip(msg, period=6000, parent=mw)

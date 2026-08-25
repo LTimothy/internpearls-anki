@@ -3,6 +3,56 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.46.1
+
+Follow-up fixes to v0.46.0, from a second review of that release:
+
+- A deck whose preview download failed really does still import now. The
+  confirmation said so, but the apply step used to replay the failed preview
+  instead of trying again; it now retries the download (with Cancel still
+  live), and a file that downloaded fine but couldn't be previewed is kept
+  and used rather than fetched twice.
+- Opening Manage decks while your source was unreachable could silently erase
+  every deck opt-out on Save, and Change source carried that empty state into
+  the reopened dialog. Exclusions now survive a dialog that couldn't show the
+  deck list, a source switch, and decks the current source doesn't offer.
+- The backup taken before a run now also covers the decks touched by
+  retired-card archiving, relocations, and reworded-card merges, wherever
+  those cards actually sit; unattended auto-sync scopes its backup the same
+  way (and skips the run when it can't); Import single deck backs up the
+  decks named inside the chosen file. A run that backed up some decks but not
+  others now says exactly which, instead of claiming no backup was taken, and
+  each deck's backups are pruned separately so one deck's history can't evict
+  another's.
+- These backups are also written in the older package format again, so the
+  add-on's own tools (and older Anki versions) can read them back.
+- Background auto-sync now also waits for the Advanced actions (Clean up
+  duplicates, Restore, Import single deck, Remove empty cards) instead of
+  possibly applying an update while one of their confirmations was open, and
+  Remove empty cards re-checks which cards are still empty after you confirm.
+- Two decks whose files share a name in different folders of the deck source
+  no longer overwrite each other's downloads, and a download in progress can
+  no longer be read half-written.
+- A GitHub source with a broken or empty manifest.json now says so plainly
+  instead of "Couldn't reach the deck source" or "No deck source configured";
+  a manifest entry missing its name no longer breaks Manage decks.
+- The template and format-change questions now use buttons naming the action
+  (such as "Apply the new look") instead of bare Yes/No, and the look-change
+  checkbox sits at the top of the confirmation next to the sentence
+  explaining it rather than below the card list.
+- Cancelling an update no longer drops the report of fields that were kept
+  back from decks that did finish, and a field whose update matches what you
+  had written yourself is no longer reported as a conflict.
+- Everywhere the add-on mentions a held-back "card-template update" it now
+  also names a note-type format change, since both are held for a manual run.
+- Smaller fixes: a long source error wraps instead of stretching the dialog;
+  Select all/none no longer appear when there are no decks to select; wide
+  deck names elide by actual width; the local-folder option says which folder
+  to pick (macOS never showed the picker's own caption); a deck synced from a
+  local folder no longer writes its temporary copy into that folder. In the
+  demo, card rows now start collapsed like the real thing, and a list longer
+  than the demo builds shows how many more rows it holds.
+
 ## v0.46.0
 
 Safety fixes:

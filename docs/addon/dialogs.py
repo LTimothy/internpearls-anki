@@ -6,7 +6,7 @@ collection or the network live in sync.py / collection.py and are called from he
 from aqt import mw
 from aqt.qt import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
                     QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox,
-                    QVBoxLayout, QWidget)
+                    Qt, QVBoxLayout, QWidget)
 
 from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
 from .collection import installed_matching_collection
@@ -76,7 +76,7 @@ _SOURCE_OPTIONS = (
      "Decks published in a repository. A public one needs only its name, a private "
      "one also takes a read-only token."),
     ("local", "Local folder",
-     "A folder on this computer holding manifest.json and its .apkg files."),
+     "Pick the folder on this computer that holds manifest.json and the .apkg files."),
 )
 
 
@@ -195,6 +195,11 @@ def configure_source():
         # that a prompt invites and a picker cannot make. The mock Qt answers this
         # through the same prompt payload the live demo already draws, so the demo
         # keeps a usable path here without a native dialog to open.
+        #
+        # Which folder to pick is said on the option's own line back in _SOURCE_OPTIONS,
+        # where it is always read: macOS opens its native directory picker with no
+        # caption at all, so this one is a convenience on the platforms that show it and
+        # never the only place the instruction appears.
         path = QFileDialog.getExistingDirectory(
             mw, f"{APP_NAME}: folder with manifest.json + .apkg files",
             conf.get("decks_dir", ""))
@@ -300,10 +305,19 @@ def _offer_manifest_scope(manifest):
 # the muted trailing text _deck_row writes below.
 _STATE_CHIP = {"new": "new", "update": "changed", "current": None}
 
-# How many characters of a deck's label a row draws before the middle is elided. The
-# rows sit in a 480px-wide dialog beside a count and a chip, so a long path would
-# otherwise widen the whole panel to fit one deck.
+# How wide a deck's label may paint before the middle is elided, in pixels of whatever
+# font the platform is actually drawing it in: the 480px dialog, less the row's own
+# margins and the count and chip columns it shares the row with.
+_DECK_LABEL_W = 260
+
+# The same cap in characters, for a caller with no font to measure against (the mock Qt
+# tests/ runs on has no font engine, the same reason a sizeHint reads 0 there). Only ever
+# an approximation of the line above: a character is not a fixed width.
 _DECK_LABEL_MAX = 42
+
+# The weight a deck's name is drawn at, on the row's checkbox and on the probe that
+# measures how much of it fits.
+_DECK_LABEL_STYLE = "font-weight: 600;"
 
 
 def _deck_labels(rows):
@@ -339,6 +353,30 @@ def _elide(text):
         return text
     head = (_DECK_LABEL_MAX - 1) // 2
     return text[:head] + "…" + text[-(_DECK_LABEL_MAX - 1 - head):]
+
+
+def _fit_label(text):
+    """`text` elided from the middle to what actually fits _DECK_LABEL_W pixels in the
+    font a deck row paints it in.
+
+    Counting characters cannot do this job on its own: a wide glyph is roughly twice
+    the width of a Latin one, so a label well inside the character cap still runs past
+    the width that cap stands for and widens the panel it was meant to keep narrow.
+    Font metrics measure the string that is actually going to be drawn.
+
+    Measured off a probe carrying the row's own label style rather than a bare default
+    font, the way widgets.chip_column_width measures a pill: bold text is wider, and a
+    measurement taken at the wrong weight is a measurement of a label nobody paints.
+    Falls back to the character cap where there are no metrics to ask, which is the mock
+    Qt tests/ runs on and nothing a real user has.
+    """
+    probe = QCheckBox(text)
+    probe.setStyleSheet(_DECK_LABEL_STYLE)
+    probe.ensurePolished()   # a stylesheet's font only reaches the widget on polish
+    metrics = getattr(probe, "fontMetrics", None)
+    if metrics is None:
+        return _elide(text)
+    return metrics().elidedText(text, Qt.TextElideMode.ElideMiddle, _DECK_LABEL_W)
 
 
 class _DeckManagerDialog(QDialog):
@@ -379,6 +417,9 @@ class _DeckManagerDialog(QDialog):
 
         source_row = QHBoxLayout()
         source_label = QLabel(f"Source: {source}")
+        # A failed local folder puts the whole path in this line, so without wrapping
+        # one long path widens the dialog to the error's own width.
+        source_label.setWordWrap(True)
         # A source that didn't load reads in the warning colour, not the muted one every
         # other value here carries: "error: …" in the same grey as a working source name
         # is the line most easily mistaken for the source simply being called that.
@@ -396,15 +437,18 @@ class _DeckManagerDialog(QDialog):
             "future syncs for it; cards already imported stay in your "
             "collection until you delete them in Anki."))
 
-        bar = QHBoxLayout()
-        for label, val in (("Select all", True), ("Select none", False)):
-            bar.addWidget(link_button(
-                label, on_click=lambda _=False, v=val: self._set_all(v),
-                align_left=True))
-        bar.addStretch()
-        outer.addLayout(bar)
-
         if rows:
+            # Inside the branch: with no rows there is nothing for either link to
+            # select, so above "No decks available yet" they are two inert words
+            # competing with the one button that empty state actually offers.
+            bar = QHBoxLayout()
+            for label, val in (("Select all", True), ("Select none", False)):
+                bar.addWidget(link_button(
+                    label, on_click=lambda _=False, v=val: self._set_all(v),
+                    align_left=True))
+            bar.addStretch()
+            outer.addLayout(bar)
+
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -467,12 +511,12 @@ class _DeckManagerDialog(QDialog):
                           " border-radius: 6px; }")
         h = QHBoxLayout(row)
         h.setContentsMargins(11, 8, 11, 8)
-        cb = QCheckBox(_elide(label))
+        cb = QCheckBox(_fit_label(label))
         cb.setChecked(r["enabled"])
         # The full path, always, whatever the row ended up showing: it is the only thing
         # that names the deck exactly, and both the label rules above can shorten it.
         cb.setToolTip(r["name"])
-        cb.setStyleSheet("font-weight: 600;")
+        cb.setStyleSheet(_DECK_LABEL_STYLE)
         self._checks[r["name"]] = cb
         h.addWidget(cb)
         h.addStretch()
@@ -508,8 +552,28 @@ class _DeckManagerDialog(QDialog):
         self.change_source_requested = True
         self.reject()
 
-    def excluded_decks(self):
-        return [name for name, cb in self._checks.items() if not cb.isChecked()]
+    def excluded_decks(self, previous=()):
+        """Which decks to exclude: the unticked rows, plus every deck in `previous`
+        this dialog never rendered a row for.
+
+        `previous` is what was excluded going in, and merging against it rather than
+        answering from the checkboxes alone is what keeps an opt-out from being zeroed
+        by a dialog that couldn't see it. A source that failed to load renders no rows
+        at all, so an empty checkbox map is not "nothing is excluded", it is "this
+        dialog was never told about a single deck". Save used to write that over every
+        saved exclusion, which then rode along into the reopen after Change source, the
+        one button someone with a broken source is most likely to press.
+
+        The partial case is the same rule one row down: a source offering deck A knows
+        nothing about deck B, so B's exclusion is preserved rather than dropped. That
+        leaves a stale name behind when a source genuinely retires a deck, which costs
+        nothing (an excluded name matching no deck excludes nothing) and is the only
+        direction that cannot silently lose an opt-out. Dropping it means a deck that
+        merely went missing for one fetch comes back ticked and re-imports the cards
+        someone opted out of.
+        """
+        unticked = [name for name, cb in self._checks.items() if not cb.isChecked()]
+        return unticked + [name for name in previous if name not in self._checks]
 
     def protected_fields(self):
         return parse_fields(self._pf_edit.text())
@@ -552,7 +616,10 @@ def manage_decks(pending=None):
                              source_failed=bool(error))
     result = dlg.exec()
     change_source, update_now = dlg.change_source_requested, dlg.update_requested
-    choices = {"excluded": dlg.excluded_decks(), "protected": dlg.protected_fields()}
+    # Merged against what was excluded going in, not read from the checkboxes alone:
+    # this dialog only ever knows about the decks it rendered (see excluded_decks).
+    choices = {"excluded": dlg.excluded_decks(excluded),
+               "protected": dlg.protected_fields()}
     dlg.deleteLater()   # every read of it is above; see ui._ask_scrollable
 
     if change_source:
@@ -632,9 +699,9 @@ class _SettingsDialog(QDialog):
         outer.addLayout(interval_row)
 
         outer.addWidget(hint_label(
-            "Changed decks apply without asking, apart from a deck whose card template "
-            "or look changed, which is held back for a manual run. A backup is still "
-            "taken first, the same as a manual sync."))
+            "Changed decks apply without asking, apart from a deck whose card template, "
+            "look, or note-type format changed, which is held back for a manual run. A "
+            "backup is still taken first, the same as a manual sync."))
 
         outer.addWidget(section_rule())
         outer.addWidget(section_label("Add-on updates"))

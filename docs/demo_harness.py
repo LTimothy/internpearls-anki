@@ -183,6 +183,21 @@ def get_config():
                        "interval": c["auto_sync_interval_minutes"]})
 
 
+def list_progress(wid):
+    """shown()/total() for the widgets.StreamingList a "scroll" node's wid names.
+
+    The mock never puts this in the serialized tree (widgets.py isn't part of this
+    demo's own files), so it's read straight off the live widget object mock_anki
+    already tracks in its wid registry for the dialog currently on screen. None for
+    a plain QScrollArea (dialogs.py/review.py/ui.py's static ones), which never
+    truncates and has no such methods.
+    """
+    w = mock_anki._widgets.get(wid)
+    if not hasattr(w, "shown"):
+        return json.dumps(None)
+    return json.dumps({"shown": w.shown(), "total": w.total()})
+
+
 def list_files(folder):
     out = []
     if folder and os.path.isdir(folder):
