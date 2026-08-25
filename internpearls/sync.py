@@ -20,7 +20,7 @@ from aqt import mw
 from aqt.utils import getFile
 
 from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
-                         _ensure_notetypes, change_note_types,
+                         _declined_drop, _ensure_notetypes, change_note_types,
                          notetype_changes, seed_converted_siblings,
                          _her_front_to_guid, _her_guid_to_deck, _her_guid_to_fields,
                          _her_guid_to_nid,
@@ -1262,7 +1262,7 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None):
                 detail["kind"] = "new" if detail["rid"] in new_rids else "changed"
                 detail["was"] = pc[3].get(detail["rid"], {})
                 entry = (registry or {}).get(detail["guid"])
-                state = entry.get("state") if entry else None
+                state = entry.get("state") if isinstance(entry, dict) else None
                 if state == "never":
                     hidden += 1
                     continue
@@ -1607,9 +1607,10 @@ def update_decks():
     # Seeded by build_update_body itself from `items`' own predeclined details before
     # any row is built; read back here once the dialog closes to know what she decided.
     decisions = {}
+    touched = set()
     body, _boxes, flush = build_update_body(
         items, sources, flags, new_index, decisions, top_html,
-        _status_line, safety_note)
+        _status_line, safety_note, touched)
 
     # "Update" only when there is content to update. With nothing pending but retired
     # and relocated cards, this run does exactly what Reconcile my decks does, so it
@@ -1637,6 +1638,13 @@ def update_decks():
                for item in items if item[0] == "card"}
     prior = dict(reg)
     today = datetime.date.today().isoformat()
+
+    def _prior_entry(g):
+        # A hand-edited registry can hold a garbage (non-dict) value for a guid; that
+        # must read as "no prior decline" here rather than crash the write below.
+        e = prior.get(g)
+        return e if isinstance(e, dict) else {}
+
     # "Decided this run" is the one predicate the write below and the digest both key
     # off of: a guid whose state actually changed from what the registry held when the
     # dialog opened. A row left exactly as it was seeded (the common case for a
@@ -1645,25 +1653,41 @@ def update_decks():
     # keeps a pending "changed since decline" cue from being silently cleared by an
     # unrelated accepted update.
     run_decisions = {g: {"skip": "skipped", "keep": "kept yours", "never": "never"}[s]
-                     for g, s in decisions.items() if prior.get(g, {}).get("state") != s}
+                     for g, s in decisions.items() if _prior_entry(g).get("state") != s}
     for guid in run_decisions:
         deck, front = new_index.get(guid, ("", guid))
         reg[guid] = {"state": decisions[guid], "front": plain_text(front), "deck": deck,
                      "decided": today,
-                     "hash": incoming_hashes.get(guid, reg.get(guid, {}).get("hash", ""))}
+                     "hash": incoming_hashes.get(guid, _prior_entry(guid).get("hash", ""))}
+    # A guid can also sit in `decisions` at the very state the registry already held,
+    # while still being one she actively re-decided: `touched` (review._on_decide)
+    # fires on every click, even one that lands back on the state it was already
+    # showing. That is what a re-review of a stale-hash card looks like, and the
+    # stored hash/front must refresh to match, but it is not a new decision, so it
+    # stays out of `run_decisions` and off the digest.
+    for guid, s in decisions.items():
+        if guid in touched and _prior_entry(guid).get("state") == s:
+            deck, front = new_index.get(guid, ("", guid))
+            reg[guid] = {"state": s, "front": plain_text(front), "deck": deck,
+                         "decided": today,
+                         "hash": incoming_hashes.get(guid, _prior_entry(guid).get("hash", ""))}
     # A guid drops out of `decisions` (review._card_row's _on_change) only when her own
     # click set its control back to that row's default, so absence here normally means
     # she chose that. But a row's control can only ever decline to the one state
     # `_EXPRESSIBLE_DECLINE` names for its current kind (mirrors build_update_body's own
     # seeding check), so a "keep" entry whose row has since gone back to being new, for
     # instance, was never a candidate for seeding in the first place: its absence from
-    # `decisions` says nothing about her intent this run, and must not be read as an
-    # un-decline.
+    # `decisions` says nothing about her intent this run by itself. `touched` is what
+    # tells that apart from an actual un-decline on such a row: an active click that
+    # confirms the (now different) default is just as much a decision as flipping a
+    # kind-matched row back to default always was.
     _EXPRESSIBLE_DECLINE = {"new": "skip", "changed": "keep"}
-    for guid in [g for g, e in reg.items()
-                 if g not in decisions and g in row_kind and prior.get(g)
-                 and prior[g].get("state") == _EXPRESSIBLE_DECLINE.get(row_kind.get(g))]:
+    for guid in [g for g in reg
+                 if g not in decisions and g in row_kind
+                 and (_prior_entry(g).get("state") == _EXPRESSIBLE_DECLINE.get(row_kind.get(g))
+                      or (g in touched and _prior_entry(g).get("state") is not None))]:
         del reg[guid]        # she flipped a standing decline back to the default
+        run_decisions[guid] = "imported after all"
     save_declined(reg)
 
     if todo:
@@ -1878,6 +1902,11 @@ def import_single():
             return
     her = _her_front_to_guid(cfg["scope_tag"])
     remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
+    # Filtered the same way _apply_deck filters a regular sync's import: a declined
+    # note must never land through this path either, whatever counts get shown next.
+    declined = set(load_declined())
+    drop, touched, in_place, as_new = _declined_drop(src, remap, her, declined,
+                                                      in_place, as_new)
     if not _ask(f"{plural(in_place, 'card')} will keep "
                 f"{'its' if in_place == 1 else 'their'} history, {as_new} will be added "
                 "as new. A backup is taken automatically first. Import now?",
@@ -1897,13 +1926,12 @@ def import_single():
     _ensure_notetypes()
     tpl = _template_changes(src)
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
-    touched = {remap.get(rid, guid) for rid, _f, guid in apkg_notes(src)}
     # Written into this session's own scratch directory rather than beside the file the
     # learner picked: that path is hers, may not be writable, and a fixed derived name
     # in a shared folder is the same predictable-target problem the downloads had.
     fd, out = tempfile.mkstemp(suffix=".sync.apkg", dir=_scratch())
     os.close(fd)
-    write_personalized(src, remap, out)
+    write_personalized(src, remap, out, drop=drop)
     try:
         _import_apkg(out)
     finally:
