@@ -386,13 +386,15 @@
         // is always zero, so the extend-on-scroll path it relies on in real Qt
         // never fires. Rather than silently show a partial list as if it were
         // complete, ask the real widget how much of itself it actually built.
+        // list_progress counts real rows, not the header/note/sep entries mixed
+        // into the widget's own item list, so this names actual remaining cards.
         const progress = JSON.parse(H.list_progress(node.id));
         if (progress && progress.total > progress.shown) {
           const more = document.createElement("div");
           more.style.cssText = "padding:8px 4px;color:var(--muted);" +
             "font-size:12px;text-align:center";
           more.textContent = (progress.total - progress.shown) +
-            " more not shown in this demo (list building is streamed in real Anki)";
+            " more cards not shown in this demo (list building is streamed in real Anki)";
           el.appendChild(more);
         }
         return el;
@@ -440,9 +442,15 @@
       return {};
     }
     if (p.kind === "ask") {
+      // p.buttons, when present, is [yes_label, no_label] from ui._ask's own QMessageBox (when
+      // called with named buttons, e.g. "Apply the new look" / "Keep my current look").
+      // A plain yes/no question omits it, so it falls back to today's Yes/No. Same
+      // boolean answer either way; only the button wording changes.
+      const yesLabel = (p.buttons && p.buttons[0]) || "Yes";
+      const noLabel = (p.buttons && p.buttons[1]) || "No";
       return dialogShell("Intern Pearls", htmlDiv(p.text),
-        [["No", false, () => ({ answer: false })],
-         ["Yes", true, () => ({ answer: true })]]);
+        [[noLabel, false, () => ({ answer: false })],
+         [yesLabel, true, () => ({ answer: true })]]);
     }
     if (p.kind === "prompt") {
       const body = htmlDiv("<div>" + p.text + "</div>");

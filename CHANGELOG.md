@@ -3,6 +3,54 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.46.2
+
+Fixes from a third review round, mostly where the v0.46.x fixes meet:
+
+- A deck whose preview download failed no longer skips its consent questions.
+  The retry that v0.46.1 added downloaded the deck at apply time but never
+  looked inside it, so a note-type format change went unasked (and Anki then
+  quietly skipped those cards while the deck was marked up to date). Failed
+  previews are now retried right after you confirm, and anything found in
+  them joins the same single consent flow as every other deck.
+- Backups of two decks whose names reduce to the same filename (names in
+  another alphabet, or differing only in punctuation) no longer overwrite
+  each other; each name now carries a short unique suffix, and older backup
+  files are folded into the same pruning so they don't pile up.
+- Remove empty cards and Clean up duplicates now back up the decks the
+  affected cards actually sit in, not just the configured deck; content
+  updates do the same for cards you've refiled (on Update my decks and
+  auto-sync), and the README now says exactly which flows cover what.
+- The renamed consent dialogs can be dismissed again: Escape and the close
+  button now mean the safe answer, which is also the default, so pressing
+  Enter can never agree to a full AnkiWeb sync unread. The remaining
+  consequential questions (continuing without a backup, importing a file,
+  restoring, installing an update) got named buttons with safe defaults too.
+- Moved, superseded, and kept-back cards on the confirmation and summary
+  screens now show a readable card name instead of raw markup (an image
+  card no longer renders as a broken picture, a cloze card no longer shows
+  its braces).
+- Cancelling an update no longer discards a ticked "apply the new card look"
+  for the decks that finished before the cancel.
+- A deck held back for a template change no longer makes auto-sync
+  re-download it and take a fresh backup on every poll, and a failing backup
+  nags once per session instead of every poll.
+- Reconcile now leaves decks you've opted out of alone, matching what Manage
+  decks promises, and Manage decks shows opt-outs for decks the current
+  source doesn't offer, with a link to clear them.
+- Broken deck sources are no longer announced as "Couldn't reach the deck
+  source" when the source was reached but its manifest is unusable; the two
+  cases now read differently, and a manifest that isn't even a JSON object
+  gets the same plain diagnosis.
+- Smaller fixes: a card both retired and relocated by the same update stays
+  in the Retired deck; the look-change checkbox sits directly under the
+  sentence it answers when a format change is also listed; a blank repo on
+  the GitHub source form warns instead of silently discarding what you typed
+  (including a token); the Settings summary reports the card-feedback
+  toggle; deck backups survive Anki builds missing newer export options; and
+  the demo's "N more not shown" line counts cards rather than list rows and
+  its consent dialogs show the real button labels.
+
 ## v0.46.1
 
 Follow-up fixes to v0.46.0, from a second review of that release:
@@ -27,7 +75,7 @@ Follow-up fixes to v0.46.0, from a second review of that release:
 - These backups are also written in the older package format again, so the
   add-on's own tools (and older Anki versions) can read them back.
 - Background auto-sync now also waits for the Advanced actions (Clean up
-  duplicates, Restore, Import single deck, Remove empty cards) instead of
+  duplicates, both Restore actions, Remove empty cards) instead of
   possibly applying an update while one of their confirmations was open, and
   Remove empty cards re-checks which cards are still empty after you confirm.
 - Two decks whose files share a name in different folders of the deck source

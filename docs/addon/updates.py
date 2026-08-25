@@ -111,7 +111,8 @@ def check_updates():
         _info(f"Intern Pearls Deck Tools is up to date (v{ADDON_VERSION}).")
         return
     if not _ask(f"Update available: v{latest['version']} "
-                f"(you have v{ADDON_VERSION}). Download and install now?"):
+                f"(you have v{ADDON_VERSION}). Download and install now?",
+                yes_label="Install now", no_label="Not now"):
         return
     try:
         mw.addonManager.install(_download_addon_package())

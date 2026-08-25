@@ -443,6 +443,19 @@ def _scene_confirm(mock, opts):
     # section: update_decks()'s fixed notes about the run as a whole.
     top_html = ("<i>This looks like a one-time catch-up, likely your first update in a "
                 "while. Future updates should be much shorter.</i>")
+    if opts.get("checkbox"):
+        # The two paragraphs update_decks writes above the list when a run carries both
+        # kinds of schema change, in its own order: the look sentence goes last because
+        # the checkbox lands directly under whatever ends this text (see
+        # ui._place_checkbox), and a box sitting under the format paragraph reads as
+        # answering a question that has its own dialog.
+        top_html += (
+            "<br><br><b>4 cards</b> in this update changed format (a question and "
+            "answer became a fill-in-the-blank). You'll be asked once, before anything "
+            "imports, whether to move your existing cards across."
+            "<br><br>This update also changes how some cards look (template or "
+            "styling) for: <b>Example Note Type</b>. Your review history and card "
+            "content are unaffected either way.")
     safety = ("This is a preview: nothing above has been applied yet. Your review "
               "history and any personal notes on existing cards are kept (matched by "
               "card, not overwritten). A backup is taken automatically first.")

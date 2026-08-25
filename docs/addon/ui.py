@@ -24,14 +24,9 @@ from contextlib import contextmanager
 
 from aqt import mw
 from aqt.qt import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
-                    QLabel, QProgressDialog, QPushButton, QScrollArea, QSizePolicy, Qt,
-                    QVBoxLayout)
+                    QLabel, QMessageBox, QProgressDialog, QPushButton, QScrollArea,
+                    QSizePolicy, Qt, QVBoxLayout)
 from aqt.utils import askUser, getText, showInfo, showWarning, tooltip
-
-try:
-    from aqt.utils import askUserDialog
-except Exception:
-    askUserDialog = None   # older build: _ask falls back to plain Yes/No buttons
 
 from .config import APP_NAME
 from .palette import colors
@@ -39,10 +34,11 @@ from .palette import colors
 
 # True while an interactive flow that writes the collection is running: the sync,
 # reconcile and import flows in sync.py, and the Advanced actions in collection.py that
-# import, restore or delete. The unattended auto-sync poll checks it and skips its tick
-# rather than interleaving, since both write the collection and both persist
-# installed.json, and the poll's apply half lands from a QueryOp callback, which can
-# fire while one of these flows is sitting inside a modal dialog's own event loop.
+# import, restore, delete, or reconcile note types. The unattended auto-sync poll
+# checks it and skips its tick rather than interleaving, since both write the
+# collection and both persist installed.json, and the poll's apply half lands from a
+# QueryOp callback, which can fire while one of these flows is sitting inside a modal
+# dialog's own event loop.
 #
 # It lives here rather than in sync.py or collection.py because both of those need it
 # and sync.py imports collection.py, so a flag in either would be a circular import.
@@ -96,19 +92,34 @@ def _ask(text, yes_label=None, no_label=None, **kw):
     Pass both labels for a question whose two answers cost different things ("Apply the
     new look" / "Keep my current look"): a bare Yes/No there makes the reader scroll
     back up to the question to work out what No means, which is the same reason
-    _ask_scrollable defaults to action-neutral labels rather than Yes/No. Anki's
-    askUserDialog is what renders named buttons; anything unexpected about it on a given
-    build falls back to the plain askUser question, so the answer shape is the same
-    either way and only the wording on the buttons is lost.
+    _ask_scrollable defaults to action-neutral labels rather than Yes/No.
+
+    The named-button question is a QMessageBox built here rather than Anki's own
+    askUserDialog, which gives every button AcceptRole: that leaves Escape and the
+    window's close box inert, so the dialog cannot be dismissed at all, and sets no
+    default, so Return activates whichever button was added first. On the questions
+    that matter here that first button is the one that consents to a schema change,
+    which is exactly the agreeing-by-not-reading this add-on refuses everywhere else.
+    Below, the declining answer carries RejectRole and is both the default and the
+    escape button, so Return, Escape and the close box all mean the safe answer and
+    only a deliberate click can consent. Qt orders the two by role, so the affirming
+    action still sits where the running platform puts it.
     """
     kw.setdefault("title", APP_NAME)
-    if yes_label and no_label and askUserDialog is not None:
-        try:
-            dlg = askUserDialog(text, [yes_label, no_label], parent=mw,
-                                title=kw["title"])
-            return dlg.run() == yes_label
-        except Exception:
-            print(traceback.format_exc())
+    if yes_label and no_label:
+        box = QMessageBox(mw)
+        box.setWindowTitle(kw["title"])
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(text)
+        yes = box.addButton(yes_label, QMessageBox.ButtonRole.AcceptRole)
+        no = box.addButton(no_label, QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(no)
+        box.setEscapeButton(no)
+        box.exec()
+        answered = box.clickedButton() is yes
+        box.deleteLater()   # parented to mw, so closing alone leaves it behind
+        return answered
     return askUser(text, **kw)
 
 
@@ -251,6 +262,11 @@ def _place_checkbox(dialog_layout, body, box):
     directly above the body's own scroll area instead, which puts it under whatever fixed
     text the body opens with and on the same screen as it. A body with no scroll area to
     sit above (a plain widget) keeps the old placement, at the bottom of the dialog.
+
+    The box lands under the LAST of that fixed text, so a caller writing more than one
+    paragraph there has to put the one this box answers last (see update_decks): a
+    checkbox sitting directly under a paragraph about something else reads as answering
+    that paragraph instead.
     """
     lay = body.layout() if hasattr(body, "layout") else None
     for i in range(lay.count() if lay is not None else 0):
