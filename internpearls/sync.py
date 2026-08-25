@@ -1262,11 +1262,12 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None):
                 detail["kind"] = "new" if detail["rid"] in new_rids else "changed"
                 detail["was"] = pc[3].get(detail["rid"], {})
                 entry = (registry or {}).get(detail["guid"])
-                if entry and entry["state"] == "never":
+                state = entry.get("state") if entry else None
+                if state == "never":
                     hidden += 1
                     continue
-                if entry:
-                    detail["declined_state"] = entry["state"]
+                if state:
+                    detail["declined_state"] = state
                     incoming = [v for _, v in detail["fields"]]
                     if entry.get("hash") and entry["hash"] != note_fields_hash(incoming):
                         detail["changed_since_decline"] = True
@@ -1485,8 +1486,10 @@ def update_decks():
     # {"skip": "...", "keep": "...", "never": "..."} counts, read off `decisions` below
     # (defined just ahead of build_update_body): a row's own control words, not the
     # digest's reader-facing ones, since this line sits beside the rows themselves.
-    _TALLY_WORDS = {"skip": "skipped for now", "keep": "kept mine for now",
-                    "never": "never"}
+    # A fixed word order, not decisions.values()'s own insertion order (click order),
+    # so the tally reads the same regardless of which row she touched first.
+    _TALLY_WORDS = (("skip", "skipped for now"), ("keep", "kept mine for now"),
+                    ("never", "never"))
 
     def _decision_tally():
         counts = {}
@@ -1494,7 +1497,8 @@ def update_decks():
             counts[state] = counts.get(state, 0) + 1
         if not counts:
             return ""
-        return ", ".join(f"{n} {_TALLY_WORDS.get(s, s)}" for s, n in counts.items()) + "."
+        return ", ".join(f"{counts[s]} {word}" for s, word in _TALLY_WORDS
+                         if s in counts) + "."
 
     def _status_line():
         parts = []
@@ -1534,9 +1538,11 @@ def update_decks():
         in the same row vocabulary the confirmation used. Left at their defaults on a
         Cancel or declined backup, where there is no completed run to summarize at all.
         `run_decisions` is the reader-facing {guid: "skipped"/"kept yours"/"never"} for
-        whatever this run actually decided (computed at confirm, once the registry
-        write below has happened); left at its default (none) on a Cancel, since
-        nothing was decided.
+        whatever this run actually decided (computed once, right after the registry
+        write below). Left at its default (none) only on declining the confirmation
+        itself, the one exit before that write ever runs; every later exit, even one
+        that stops before anything imports, already has decisions on disk by then and
+        passes this through so the digest agrees with what the registry now holds.
 
         The saved copy is cleared only once the digest has actually been built and
         shown. An exit with nothing flagged leaves the file alone rather than deleting
@@ -1622,34 +1628,51 @@ def update_decks():
 
     # Folded into the declined registry now, before anything else about this run
     # happens: a Skip/Keep/Never she chose has to survive even if the apply loop below
-    # gets cancelled partway through. `row_guids` is every card that actually had a
-    # control on screen, which is what "she flipped it back to default" means below.
-    row_guids = {item[2]["guid"] for item in items if item[0] == "card"}
+    # gets cancelled partway through. `row_kind` is every card row's own kind, which is
+    # what decides both what its control could show and what "she flipped it back to
+    # default" can mean below.
+    row_kind = {item[2]["guid"]: item[2].get("kind")
+               for item in items if item[0] == "card"}
     prior = dict(reg)
     today = datetime.date.today().isoformat()
-    for guid, state in decisions.items():
-        deck, front = new_index.get(guid, ("", guid))
-        reg[guid] = {"state": state, "front": plain_text(front), "deck": deck,
-                     "decided": today,
-                     "hash": incoming_hashes.get(guid, reg.get(guid, {}).get("hash", ""))}
-    for guid in [g for g, e in reg.items()
-                 if g not in decisions and g in row_guids and prior.get(g)]:
-        del reg[guid]        # she flipped a standing decline back to the default
-    save_declined(reg)
-    # Reader-facing, and only what actually changed this run: a row left exactly as the
-    # registry already had it (the common case for a re-offered decline) isn't "decided"
-    # again, since nothing here can tell that apart from a run where she just never
-    # touched the row.
+    # "Decided this run" is the one predicate the write below and the digest both key
+    # off of: a guid whose state actually changed from what the registry held when the
+    # dialog opened. A row left exactly as it was seeded (the common case for a
+    # re-offered decline nobody touched) is neither rewritten nor reported as decided
+    # again, carrying its prior hash/decided/front forward untouched, which is what
+    # keeps a pending "changed since decline" cue from being silently cleared by an
+    # unrelated accepted update.
     run_decisions = {g: {"skip": "skipped", "keep": "kept yours", "never": "never"}[s]
                      for g, s in decisions.items() if prior.get(g, {}).get("state") != s}
+    for guid in run_decisions:
+        deck, front = new_index.get(guid, ("", guid))
+        reg[guid] = {"state": decisions[guid], "front": plain_text(front), "deck": deck,
+                     "decided": today,
+                     "hash": incoming_hashes.get(guid, reg.get(guid, {}).get("hash", ""))}
+    # A guid drops out of `decisions` (review._card_row's _on_change) only when her own
+    # click set its control back to that row's default, so absence here normally means
+    # she chose that. But a row's control can only ever decline to the one state
+    # `_EXPRESSIBLE_DECLINE` names for its current kind (mirrors build_update_body's own
+    # seeding check), so a "keep" entry whose row has since gone back to being new, for
+    # instance, was never a candidate for seeding in the first place: its absence from
+    # `decisions` says nothing about her intent this run, and must not be read as an
+    # un-decline.
+    _EXPRESSIBLE_DECLINE = {"new": "skip", "changed": "keep"}
+    for guid in [g for g, e in reg.items()
+                 if g not in decisions and g in row_kind and prior.get(g)
+                 and prior[g].get("state") == _EXPRESSIBLE_DECLINE.get(row_kind.get(g))]:
+        del reg[guid]        # she flipped a standing decline back to the default
+    save_declined(reg)
 
     if todo:
         late_conversions, cancelled = _retry_failed_downloads(
             fetch, todo, downloaded, her_fronts, aliases, cfg)
         if cancelled:
             # Nothing has been backed up or imported yet, so this is the same clean
-            # stop cancelling the confirmation itself is, and it ends the same way.
-            _finish()
+            # stop cancelling the confirmation itself is, except the registry write
+            # above already happened by this point, so whatever she decided is
+            # reported through run_decisions rather than silently going unreported.
+            _finish(run_decisions=run_decisions)
             return
         pending_conversions += late_conversions
 
@@ -1668,7 +1691,9 @@ def update_decks():
         + _reworded_backup_decks(manifest.get("superseded_fronts", {}), cfg["scope_tag"]),
         cfg["scope_tag"])
     if not proceed:
-        _finish()
+        # Same as the retry-cancel above: the registry write already happened, so
+        # report what she decided rather than dropping it from the digest.
+        _finish(run_decisions=run_decisions)
         return
 
     # Asked once, here, for the whole run: after the backup and before the first import,
