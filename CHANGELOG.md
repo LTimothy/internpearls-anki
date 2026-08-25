@@ -3,6 +3,38 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.47.0
+
+Per-card decline controls on Update my decks, replacing the old all-or-nothing
+"flag problems" checkbox with a decision on each card:
+
+- Every new-card row now carries an Import / Skip for now / Never choice
+  (Import is the default), and every changed-card row carries an Apply / Keep
+  mine for now choice (Apply is the default). Choosing Skip for now or Keep
+  mine for now opens a small, optional feedback box for that card; every other
+  row still carries a quiet "Add note" link, so writing something down never
+  requires declining a card.
+- Choosing Never collapses the row to a single struck-through line reading
+  "won't be offered again." A card you skip or keep comes back on that deck's
+  next update, already pre-set to the same choice and marked SKIPPED or KEPT
+  YOURS, with a hint if the upstream content changed since you decided; a
+  card you've said Never to isn't shown as a row again at all, and the run
+  just reports how many are being held back.
+- Declined cards are filtered out of the downloaded package before any
+  import, so nothing you skipped, kept back, or said Never to can land in or
+  overwrite your collection, whether you ran Update my decks yourself or
+  auto-sync applied it in the background. Nothing already in your collection
+  is ever deleted.
+- Manage decks has a new "Declined cards" button listing everything you've
+  declined, grouped by why, each with an Offer again button that undoes the
+  decision and re-offers the card on your next update.
+- The end-of-run digest now includes a line for every decision you made this
+  run, with or without a note attached.
+- The "Let me flag problems with cards as they sync" setting is gone;
+  feedback is contextual now, tied to a card's own row instead of a global
+  toggle. An install that had it on or off just drops the setting silently on
+  its next save.
+
 ## v0.46.2
 
 Fixes from a third review round, mostly where the v0.46.x fixes meet:
