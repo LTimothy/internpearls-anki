@@ -4,6 +4,7 @@ Nothing here imports aqt or anki, so it's testable with plain pytest, no Anki
 environment needed. If a function starts needing mw/col, it belongs in __init__.py
 instead, not here.
 """
+import contextlib
 import html
 import json
 import os
@@ -13,6 +14,9 @@ import tempfile
 import zipfile
 
 FS = "\x1f"   # Anki's field separator inside a note's flds column
+
+NEWER_APKG_ERROR = ('This .apkg uses Anki\'s newer export format. Re-export it with '
+                    '"Support older Anki versions" ticked and try again.')
 
 
 def plural(count, noun):
@@ -67,8 +71,17 @@ def manifest_needs_newer_addon(manifest, supported_schema):
     manifest's shape changes in a way an older add-on can't safely read (see that
     repo's own notes). Missing `schema` means an old manifest predating this field,
     always readable, so it defaults to 1 (never newer than any real supported_schema).
+
+    A `schema` that isn't a plain int ("3", 2.0, None) counts as newer rather than
+    raising: a manifest this add-on can't even parse the version of is exactly the case
+    the "update the add-on" path exists for, and comparing it raises TypeError instead.
     """
-    return bool(manifest) and manifest.get("schema", 1) > supported_schema
+    if not manifest:
+        return False
+    schema = manifest.get("schema", 1)
+    if not isinstance(schema, int) or isinstance(schema, bool):
+        return True
+    return schema > supported_schema
 
 
 def manifest_scope_suggestion(manifest, scope_tag, export_deck):
@@ -111,10 +124,21 @@ def decks_to_update(manifest, installed, excluded=None):
     deck manager) — those are skipped regardless of version. Shared by Sync (to know what
     to apply) and Preview sync (to report the same set without touching the collection),
     so the two can never disagree about what's pending.
+
+    An entry missing `name` or `version` is skipped rather than raising: without a name
+    there is nothing to fetch or file cards under, and without a version there is nothing
+    to compare against installed.json. One malformed row must not stop every other deck
+    in the manifest from syncing.
     """
     excluded = set(excluded or ())
-    return [d for d in (manifest or {}).get("decks", [])
-            if d["name"] not in excluded and installed.get(d["name"]) != d["version"]]
+    out = []
+    for d in (manifest or {}).get("decks", []):
+        name, version = d.get("name"), d.get("version")
+        if not name or version is None or name in excluded:
+            continue
+        if installed.get(name) != version:
+            out.append(d)
+    return out
 
 
 def deck_status(manifest, installed, excluded=None):
@@ -343,6 +367,76 @@ def find_stranded_pairs(superseded, her_front_to_guid):
     return out
 
 
+@contextlib.contextmanager
+def _apkg_db(path):
+    """Yield (open sqlite connection, is_newer_format) for an .apkg's real collection.
+
+    A package Anki exports today holds its data in a zstd-compressed collection.anki21b
+    and ships a near-empty collection.anki2 stub beside it, carrying one placeholder note
+    that reads "Please update to the latest Anki version". So the newer member has to
+    win, or every reader here sees that stub instead of the deck: the visible symptom is
+    an import that matches nothing, imports every card as new, and leaves the
+    protected-field restore with no matched note to restore onto.
+
+    zstandard is not stdlib and Anki does not ship it, so on a modern package the
+    decode is impossible here and the reader stops with NEWER_APKG_ERROR: a loud
+    "re-export this file" beats a silent empty result.
+    """
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        newer = "collection.anki21b" in names
+        member = "collection.anki21b" if newer else "collection.anki2"
+        if member not in names:
+            raise RuntimeError("Unexpected .apkg format (no collection found).")
+        with tempfile.TemporaryDirectory() as d:
+            z.extract(member, d)
+            src = os.path.join(d, member)
+            if newer:
+                try:
+                    import zstandard
+                except ImportError:
+                    raise RuntimeError(NEWER_APKG_ERROR) from None
+                db = os.path.join(d, "decoded.anki2")
+                with open(src, "rb") as fh, open(db, "wb") as out:
+                    zstandard.ZstdDecompressor().copy_stream(fh, out)
+            else:
+                db = src
+            con = sqlite3.connect(db)
+            try:
+                yield con, newer
+            finally:
+                con.close()
+
+
+def _apkg_notetypes(con, newer):
+    """{notetype id as str: (notetype name, [field name, ...])} from either format.
+
+    The legacy format keeps all of this in col.models as JSON. The newer schema leaves
+    that column empty and splits its content across real tables: `notetypes` holds the
+    name and `fields` holds one row per field, both as plain text columns, so a name and
+    its field list are recoverable without decoding the protobuf `config` blobs beside
+    them (which is where CSS and template HTML live, see apkg_models).
+    """
+    if newer:
+        out = {str(ntid): (name, []) for ntid, name in
+               con.execute("select id, name from notetypes")}
+        for ntid, name in con.execute(
+                "select ntid, name from fields order by ntid, ord"):
+            entry = out.get(str(ntid))
+            if entry is not None:
+                entry[1].append(name)
+        return out
+    try:
+        models = json.loads(con.execute("select models from col").fetchone()[0])
+    except (sqlite3.Error, TypeError, ValueError, IndexError):
+        return {}
+    out = {}
+    for mid, m in (models or {}).items():
+        ordered = sorted(m.get("flds", []), key=lambda f: f.get("ord", 0))
+        out[str(mid)] = (m.get("name", ""), [f.get("name", "") for f in ordered])
+    return out
+
+
 def apkg_notes(path):
     """Return (note_id, fields, guid) for every note in an .apkg file, where `fields` is
     the note's complete field list.
@@ -352,17 +446,13 @@ def apkg_notes(path):
     caller that shows the card to a person needs the rest: an image note's first field
     is an <img> tag, not a prompt, so field zero alone renders as a broken image instead
     of naming the card. note_display_label picks the right field out of the whole list.
+
+    Both on-disk formats carry the same plain `notes` table, so this reads real notes out
+    of a modern package as well as a legacy one.
     """
-    with zipfile.ZipFile(path) as z:
-        if "collection.anki2" not in z.namelist():
-            raise RuntimeError("Unexpected .apkg format (no collection.anki2).")
-        with tempfile.TemporaryDirectory() as d:
-            z.extract("collection.anki2", d)
-            con = sqlite3.connect(os.path.join(d, "collection.anki2"))
-            rows = [(rid, flds.split(FS), guid) for rid, guid, flds in
-                    con.execute("select id, guid, flds from notes")]
-            con.close()
-    return rows
+    with _apkg_db(path) as (con, _newer):
+        return [(rid, flds.split(FS), guid) for rid, guid, flds in
+                con.execute("select id, guid, flds from notes")]
 
 
 def apkg_media_index(path):
@@ -421,35 +511,15 @@ def apkg_deck_names(path):
 
     Newer files hold a zstd-compressed collection.anki21b whose decks table separates
     path segments with \\x1f, and also ship a near-empty legacy collection.anki2 stub,
-    so the newer name has to win or the stub reads as an empty file. zstandard is not
-    stdlib; Anki bundles it, so it is imported lazily and a missing one raises like any
-    other read failure, leaving the caller to fall back.
+    so the newer name has to win or the stub reads as an empty file. _apkg_db picks the
+    member and decodes it; only the decks table's own shape differs per format here.
     """
-    with zipfile.ZipFile(path) as z:
-        names = z.namelist()
-        newer = "collection.anki21b" in names
-        member = "collection.anki21b" if newer else "collection.anki2"
-        if member not in names:
-            raise RuntimeError("Unexpected .apkg format (no collection found).")
-        with tempfile.TemporaryDirectory() as d:
-            z.extract(member, d)
-            src = os.path.join(d, member)
-            if newer:
-                import zstandard
-                db = os.path.join(d, "decoded.anki2")
-                with open(src, "rb") as fh, open(db, "wb") as out:
-                    zstandard.ZstdDecompressor().copy_stream(fh, out)
-            else:
-                db = src
-            con = sqlite3.connect(db)
-            try:
-                if newer:
-                    rows = [r[0] for r in con.execute("select name from decks")]
-                    return [r.replace("\x1f", "::") for r in rows]
-                blob = con.execute("select decks from col").fetchone()[0]
-                return [d_["name"] for d_ in json.loads(blob).values()]
-            finally:
-                con.close()
+    with _apkg_db(path) as (con, newer):
+        if newer:
+            rows = [r[0] for r in con.execute("select name from decks")]
+            return [r.replace("\x1f", "::") for r in rows]
+        blob = con.execute("select decks from col").fetchone()[0]
+        return [d_["name"] for d_ in json.loads(blob).values()]
 
 
 def manifest_decks_for(deck_names, manifest_names):
@@ -486,25 +556,14 @@ def apkg_note_details(path, rids=None):
     note type isn't described in this .apkg (or an .apkg carrying no models at all)
     falls back to generic "Field N" labels instead of failing, since a plainly-labeled
     preview is worth more to the learner than a raised exception.
+
+    A newer-format .apkg keeps the same information in its `notetypes` and `fields`
+    tables, so it labels just as precisely (_apkg_notetypes reads either).
     """
     wanted = None if rids is None else set(rids)
-    with zipfile.ZipFile(path) as z:
-        if "collection.anki2" not in z.namelist():
-            raise RuntimeError("Unexpected .apkg format (no collection.anki2).")
-        with tempfile.TemporaryDirectory() as d:
-            z.extract("collection.anki2", d)
-            con = sqlite3.connect(os.path.join(d, "collection.anki2"))
-            try:
-                models = json.loads(con.execute("select models from col").fetchone()[0])
-            except (sqlite3.Error, TypeError, ValueError, IndexError):
-                models = {}
-            rows = list(con.execute("select id, guid, mid, flds from notes"))
-            con.close()
-
-    names = {}
-    for mid, m in (models or {}).items():
-        ordered = sorted(m.get("flds", []), key=lambda f: f.get("ord", 0))
-        names[str(mid)] = (m.get("name", ""), [f.get("name", "") for f in ordered])
+    with _apkg_db(path) as (con, newer):
+        names = _apkg_notetypes(con, newer)
+        rows = list(con.execute("select id, guid, mid, flds from notes"))
 
     out = []
     for rid, guid, mid, flds in rows:
@@ -521,22 +580,14 @@ def apkg_note_types(path):
     """{guid: notetype name} for every note in the .apkg.
 
     Cheaper than apkg_note_details, which reads every field of every note to render a
-    review list; this joins notes to the models JSON for the name alone, which is all
-    the note-type-change check needs on the sync path.
+    review list; this joins notes to the note-type names alone, which is all the
+    note-type-change check needs on the sync path. Reads either on-disk format, since a
+    modern package names its note types in the `notetypes` table instead.
     """
-    with zipfile.ZipFile(path) as z:
-        if "collection.anki2" not in z.namelist():
-            raise RuntimeError("Unexpected .apkg format (no collection.anki2).")
-        with tempfile.TemporaryDirectory() as d:
-            z.extract("collection.anki2", d)
-            con = sqlite3.connect(os.path.join(d, "collection.anki2"))
-            try:
-                blob = con.execute("select models from col").fetchone()[0]
-                names = {int(k): v["name"] for k, v in json.loads(blob).items()}
-                return {guid: names.get(mid, "")
-                        for guid, mid in con.execute("select guid, mid from notes")}
-            finally:
-                con.close()
+    with _apkg_db(path) as (con, newer):
+        names = {int(mid): n for mid, (n, _f) in _apkg_notetypes(con, newer).items()}
+        return {guid: names.get(mid, "")
+                for guid, mid in con.execute("select guid, mid from notes")}
 
 
 def base_notetype_name(name):
@@ -590,16 +641,19 @@ def apkg_models(path):
     every note type carried by the .apkg at `path`.
 
     Reads the legacy `col.models` JSON column, the format genanki (and Anki's own
-    legacy exporter) writes — the same collection.anki2 assumption apkg_notes makes.
+    legacy exporter) writes.
+
+    This is the one reader a newer-format package cannot satisfy: its `notetypes` and
+    `templates` tables carry CSS and question/answer HTML inside protobuf-encoded blobs,
+    not text, and decoding those would mean a protobuf dependency for a comparison that
+    only decides whether to offer a template update. So a modern package raises with the
+    re-export instruction instead. Returning {} would read as "no templates differ" and
+    silently drop a card-design change on the floor.
     """
-    with zipfile.ZipFile(path) as z:
-        if "collection.anki2" not in z.namelist():
-            raise RuntimeError("Unexpected .apkg format (no collection.anki2).")
-        with tempfile.TemporaryDirectory() as d:
-            z.extract("collection.anki2", d)
-            con = sqlite3.connect(os.path.join(d, "collection.anki2"))
-            models_json = con.execute("select models from col").fetchone()[0]
-            con.close()
+    with _apkg_db(path) as (con, newer):
+        if newer:
+            raise RuntimeError(NEWER_APKG_ERROR)
+        models_json = con.execute("select models from col").fetchone()[0]
     return {m["name"]: model_shape(m) for m in json.loads(models_json).values()}
 
 
@@ -630,9 +684,19 @@ def write_personalized(src, remap, out):
     """Copy the .apkg at `src` to `out`, rewriting note GUIDs per `remap`.
 
     `remap` is {note_id: new_guid}. Notes not in `remap` are left untouched.
+
+    Legacy format only, and it refuses a newer one rather than doing nothing quietly.
+    Anki reads a modern package's collection.anki21b, so rewriting the collection.anki2
+    stub beside it would apply no guid at all while every caller went on reporting the
+    matched counts remap_cards computed: every front-matched card would import as a
+    duplicate and the learner's history would stay on the copy she already had. Writing
+    the anki21b back needs zstd compression, which nothing here has, so the honest answer
+    is the re-export instruction.
     """
     with tempfile.TemporaryDirectory() as d:
         with zipfile.ZipFile(src) as z:
+            if "collection.anki21b" in z.namelist():
+                raise RuntimeError(NEWER_APKG_ERROR)
             z.extractall(d)
         con = sqlite3.connect(os.path.join(d, "collection.anki2"))
         for rid, g in remap.items():
@@ -710,8 +774,14 @@ def find_changed_notes(matched, details, her_fields, protected=()):
     annotations and every spec ships them empty. A field her note type does not have is
     skipped too: the import's own note-type step adds a genuinely missing field, and
     until it does there is nothing of hers to show.
+
+    `protected` is matched case-insensitively, the way collection.py's _note_field
+    resolves the same free-text names when it snapshots and restores them. The box is
+    free text and the real field names are capitalised, so an exact match here meant a
+    typed "notes" listed the field as about to change while the restore quietly put it
+    back: the preview and the safety net disagreeing about the same setting.
     """
-    skip = set(protected or ())
+    skip = {str(p).lower() for p in (protected or ())}
     by_rid = {d.get("rid"): d for d in details}
     out = {}
     for rid, _apkg_guid, her_guid in matched:
@@ -721,7 +791,7 @@ def find_changed_notes(matched, details, her_fields, protected=()):
             continue
         changed = {}
         for name, value in detail.get("fields", []):
-            if name in skip or name not in hers:
+            if str(name).lower() in skip or name not in hers:
                 continue
             if (hers[name] or "").strip() != (value or "").strip():
                 changed[name] = hers[name]

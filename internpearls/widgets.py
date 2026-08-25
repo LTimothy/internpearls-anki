@@ -196,6 +196,14 @@ class StreamingList(QScrollArea):
     a caller that wants to show it. `fill_all()` is for a test, or a caller that
     genuinely needs every row built (e.g. before printing the whole list), and is safe
     to call on an already-exhausted list: it does nothing rather than rebuilding.
+
+    Batching is driven by two things, not one. Scrolling is the obvious one; the other
+    is the viewport growing past what is already built, which produces no scroll at all:
+    the scrollbar's range collapses to zero, `valueChanged` never fires again, and every
+    unbuilt row is stranded (a confirmation that silently listed 50 of 300 cards for
+    anyone who enlarged the dialog before scrolling). So a resize refills to the bottom
+    of the viewport as well. Both paths still build a batch at a time rather than
+    everything, so the property this class exists for holds either way.
     """
 
     def __init__(self, build_row, items, batch=50):
@@ -238,6 +246,31 @@ class StreamingList(QScrollArea):
         if bar.maximum() - bar.value() <= self.viewport().height():
             self._extend()
 
+    def resizeEvent(self, event):
+        """Refill after Qt has given this list its real height.
+
+        Fires on the first layout (the viewport is 0-tall while __init__ runs, so the
+        one batch built there is a guess) and again on every enlargement, which is the
+        case the scroll handler above cannot see at all: growing the dialog past the
+        built rows leaves nothing to scroll, so `valueChanged` never fires again.
+        """
+        super().resizeEvent(event)
+        self._fill_viewport()
+
+    def _fill_viewport(self):
+        """Build batches until the rows are taller than the viewport, or run out.
+
+        Measured off the rows' own sizeHint rather than the scrollbar's range: the range
+        is only recomputed on Qt's own layout pass, so inside this loop it still reports
+        the height from before the batch just appended, and the loop would build
+        everything. A wrapping row's sizeHint is its unwrapped height, so this can
+        overshoot the viewport by a row or two; it never undershoots, which is the
+        direction that would strand rows again.
+        """
+        while (self._shown < self.total()
+               and self._rows_container.sizeHint().height() <= self.viewport().height()):
+            self._extend()
+
     def _extend(self):
         """Build the next `batch` rows and append them, or do nothing once every item
         has already been built."""
@@ -245,7 +278,13 @@ class StreamingList(QScrollArea):
             return
         end = min(self._shown + self._batch, self.total())
         for item in self._items[self._shown:end]:
-            self._rows_layout.addWidget(self._build_row(item))
+            row = self._build_row(item)
+            self._rows_layout.addWidget(row)
+            # A row appended to an already-visible list is only shown on Qt's next
+            # layout pass, and a hidden item contributes nothing to its layout's
+            # sizeHint. Showing it here is what lets _fill_viewport below measure the
+            # batch it just built rather than the height from before it.
+            row.setVisible(True)
         self._shown = end
 
     def fill_all(self):
