@@ -127,6 +127,26 @@ def test_manage_decks_exclude_and_save(anki, tmp_path):
     assert cfg["protected_fields"] == ["Notes"]
 
 
+def test_manage_decks_save_summary_says_this_save_pulled_nothing(anki, tmp_path):
+    """"Nothing pulled yet, run Update my decks..." reads as "you have never pulled",
+    when it only ever meant this particular Save. A long-synced collection saw the
+    same line."""
+    from internpearls import dialogs
+    anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": save["id"], "click": True}]}
+        assert p["kind"] == "info"
+        assert "Nothing pulled yet" not in p["text"]
+        assert "nothing was pulled" in p["text"]
+        return {}
+
+    drive(anki, dialogs.manage_decks, respond)
+
+
 def test_manage_decks_save_and_update_now_runs_update_decks(anki, tmp_path):
     """Manage decks no longer previews or syncs on its own — "Save and update now"
     hands off to the real update_decks(), whose own confirmation is where the actual
@@ -473,6 +493,108 @@ def test_saving_keeps_an_exclusion_for_a_deck_the_current_source_never_offered(
     assert sorted(anki.mw._config["excluded_decks"]) == sorted([elsewhere, pharm])
 
 
+def test_stale_exclusions_show_a_muted_line_with_a_clear_link(anki, tmp_path):
+    """A deck the current source doesn't offer stays excluded forever with no UI
+    showing it (the preservation above is correct; this is the visibility gap). Pharm
+    IS offered, so it renders as an unticked row, not a stale name; "elsewhere" is
+    what the line has to name."""
+    from internpearls import dialogs
+    pharm = "Intern Pearls::Intern Custom::Pharm"
+    elsewhere = "Some Other Source::Neuro"
+    anki.mw._config = {"decks_dir": _write_source(tmp_path),
+                       "excluded_decks": [elsewhere, pharm]}
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        assert find(p["tree"], t="label",
+                    text=f"Also excluded, not offered by this source: {elsewhere}")
+        assert find(p["tree"], t="button", label="Clear")
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+
+
+def test_no_stale_line_when_every_exclusion_is_still_offered(anki, tmp_path):
+    from internpearls import dialogs
+    anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        assert not find(p["tree"], t="button", label="Clear")
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+
+
+def test_a_broken_source_shows_no_stale_line_even_though_it_renders_no_rows(
+        anki, tmp_path):
+    """A source that never loaded is not the same claim as "every deck went stale":
+    that would tell a reader every excluded deck vanished when really nothing was
+    ever fetched to check against."""
+    from internpearls import dialogs
+    anki.mw._config = {"decks_dir": str(tmp_path / "not-there"),
+                       "excluded_decks": ["Intern Pearls::Intern Custom::Pharm"]}
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        assert not find(p["tree"], t="button", label="Clear")
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+
+
+def test_clearing_stale_exclusions_removes_exactly_those_on_save(anki, tmp_path):
+    from internpearls import dialogs
+    pharm = "Intern Pearls::Intern Custom::Pharm"
+    elsewhere = "Some Other Source::Neuro"
+    anki.mw._config = {"decks_dir": _write_source(tmp_path),
+                       "excluded_decks": [elsewhere, pharm]}
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        clear = find(p["tree"], t="button", label="Clear")
+        save = find(p["tree"], t="button", label="Save")
+        return {"events": [{"id": clear["id"], "click": True},
+                           {"id": save["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+    # pharm stays excluded (it's an offered, unticked row); elsewhere is cleared.
+    assert anki.mw._config["excluded_decks"] == [pharm]
+
+
+def test_saving_without_clearing_still_preserves_a_stale_exclusion(anki, tmp_path):
+    """The existing merge behavior must survive this change untouched: Save alone,
+    with the Clear link never clicked, keeps a stale exclusion exactly as before."""
+    from internpearls import dialogs
+    pharm = "Intern Pearls::Intern Custom::Pharm"
+    elsewhere = "Some Other Source::Neuro"
+    anki.mw._config = {"decks_dir": _write_source(tmp_path),
+                       "excluded_decks": [elsewhere, pharm]}
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        assert find(p["tree"], t="button", label="Clear"), \
+            "the stale line should be offered even if this run never uses it"
+        save = find(p["tree"], t="button", label="Save")
+        return {"events": [{"id": save["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+    assert sorted(anki.mw._config["excluded_decks"]) == sorted([elsewhere, pharm])
+
+
 def test_the_select_links_are_offered_only_where_there_is_something_to_select(
         anki, tmp_path):
     """Above "No decks available yet" the two links are inert: they read as controls
@@ -671,6 +793,26 @@ def test_settings_saves_feedback_toggle(anki):
     assert cfg["collect_card_feedback"] is True
 
 
+def test_settings_saved_summary_reports_the_feedback_toggle(anki):
+    """The saved-summary reported sync/add-on-update/dim lines but never the
+    card-feedback toggle, the one setting invisible until the next run."""
+    from internpearls import dialogs
+
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            feedback = find(p["tree"], t="check",
+                            label="Let me flag problems with cards as they sync")
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": feedback["id"], "value": True},
+                               {"id": save["id"], "click": True}]}
+        assert "flag problems" in p["text"]
+        return {}
+
+    drive(anki, dialogs.open_settings, respond)
+
+
 # --------------------------------------------------------- configure source
 def _source_buttons(tree):
     """Every button label on the source-choice dialog, in order. Also what tells that
@@ -748,6 +890,48 @@ def test_configure_source_github_form(anki):
 
     drive(anki, dialogs.configure_source, respond)
     assert anki.mw._config["github_decks_repo"] == "someone/decks"
+
+
+def test_github_source_blank_repo_keeps_the_dialog_open_with_a_warning(anki):
+    """OK used to accept unconditionally, so a blank repo silently discarded
+    everything typed, a token included, with no way back. Clicking OK with an empty
+    repo must leave the dialog open, with the token still there, and name the missing
+    field rather than just refusing silently."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+    rounds = []
+
+    warning_text = "Enter a repo (owner/name) before continuing."
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            pick = _pick_source(p["tree"], "GitHub repo")
+            if pick:
+                return pick
+            rounds.append(p["tree"])
+            token = find(p["tree"], t="line", password=True)
+            ok = find(p["tree"], t="button", label="OK")
+            if len(rounds) == 1:
+                assert not find(p["tree"], t="label", text=warning_text), \
+                    "the warning must not show before OK is ever clicked"
+                return {"events": [{"id": token["id"], "value": "secret-token"},
+                                   {"id": ok["id"], "click": True}]}
+            # second round: the blank-repo OK click above must not have closed it
+            repo = find(p["tree"], t="line", password=False)
+            assert repo["value"] == "", "the dialog closed on a blank repo"
+            assert token["value"] == "secret-token", \
+                "the token typed before the blank OK click was discarded"
+            assert find(p["tree"], t="label", text=warning_text), \
+                "expected an inline warning naming the missing field"
+            return {"events": [{"id": repo["id"], "value": "someone/decks"},
+                               {"id": ok["id"], "click": True}]}
+        assert p["kind"] == "warn" and "couldn't connect" in p["text"]
+        return {}
+
+    drive(anki, dialogs.configure_source, respond)
+    assert len(rounds) == 2, "the blank-repo OK click should not have closed the dialog"
+    assert anki.mw._config["github_decks_repo"] == "someone/decks"
+    assert anki.mw._config["github_token"] == "secret-token"
 
 
 def test_configure_source_switching_to_local_folder_clears_repo_and_keeps_token(
@@ -862,6 +1046,28 @@ def test_configure_source_switching_to_github_repo_clears_local_folder(anki, tmp
     cfg = anki.mw._config
     assert cfg["github_decks_repo"] == "example-org/study-decks"
     assert cfg["decks_dir"] == ""
+
+
+def test_configure_source_survives_a_manifest_with_no_decks_key(anki, tmp_path):
+    """configure_source() indexed manifest['decks'] directly for its own "found N
+    decks" message, while every other reader of a manifest here uses .get("decks", []).
+    A minimal manifest (no decks key at all) turned a successful connect into a crash."""
+    from internpearls import dialogs
+    folder = tmp_path / "minimal"
+    folder.mkdir()
+    (folder / "manifest.json").write_text(json.dumps({"schema": 2}), encoding="utf8")
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            return _pick_source(p["tree"], "Local folder")
+        if p["kind"] == "prompt":
+            return {"text": str(folder), "ok": True}
+        assert p["kind"] == "info" and "0 decks" in p["text"], p["text"]
+        return {}
+
+    drive(anki, dialogs.configure_source, respond)
+    assert not anki.gui.warnings, "a manifest with no decks key should not crash"
 
 
 # --------------------------------------------------------------- feedback digest
