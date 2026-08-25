@@ -4731,3 +4731,142 @@ def test_run_sync_prunes_moot_registry_entries(anki, tmp_path):
     drive(anki, sync.sync_decks, respond=_accept_everything)
 
     assert "guid-gone" not in config.load_declined()
+
+
+# --------------------------------------------- update_decks: seed, hide, confirm
+
+def _all_text(tree):
+    """Every label's text in the tree, joined into one string so a test can look for
+    a phrase without caring which row it landed on."""
+    return "\n".join(_label_texts(tree))
+
+
+def _snapshot_update_confirmation(anki):
+    """Run update_decks() to its confirmation, capture the tree it showed, then back
+    out without applying anything (the same drive+capture shape _reconcile_tree uses
+    for reconcile_decks())."""
+    from internpearls import sync
+    seen = {}
+    click = _click_update_button(False)
+
+    def respond(p):
+        if p["kind"] == "dialog" and "tree" not in seen:
+            seen["tree"] = p["tree"]
+        return click(p)
+
+    drive(anki, sync.update_decks, respond)
+    return seen["tree"]
+
+
+def _front_for_new_guid(guid):
+    """The front `_source_with_two_new_cards` gave a "guid-new-<letter>" guid."""
+    return f"front {guid.rsplit('-', 1)[-1]}"
+
+
+def _find_row_button(tree, front_substring, label):
+    """The decision-control button labeled `label` on whichever card row's primary
+    line contains `front_substring`. The control sits right after that row's own
+    primary label in document order, ahead of the next row's."""
+    nodes = _walk(tree)
+    start = next(i for i, n in enumerate(nodes)
+                if n.get("t") == "label" and front_substring in (n.get("text") or ""))
+    return next(n for n in nodes[start:]
+               if n.get("t") == "button" and n.get("label") == label)
+
+
+def _choose_skip_for_then(guid, accept):
+    """respond() that clicks Skip for now on `guid`'s card (found by its front text),
+    then answers the confirmation's accept button with `accept`."""
+    front = _front_for_new_guid(guid)
+    state = {}
+
+    def respond(p):
+        if p["kind"] == "ask":
+            return _answer_ask(p, None)
+        if p["kind"] != "dialog":
+            return {}
+        done = _dismiss_result(p["tree"])
+        if done:
+            return done
+        if not state.get("skipped"):
+            state["skipped"] = True
+            btn = _find_row_button(p["tree"], front, "Skip for now")
+            return {"events": [{"id": btn["id"], "click": True}]}
+        return _click_update_button(accept)(p)
+    return respond
+
+
+def _choose_skip_for(guid):
+    """respond() for update_decks(): choose Skip for now on `guid`'s card, then
+    accept via Update."""
+    return _choose_skip_for_then(guid, True)
+
+
+def _choose_skip_then_cancel(guid):
+    """Same as _choose_skip_for, but declines the confirmation afterward."""
+    return _choose_skip_for_then(guid, False)
+
+
+def test_update_preview_hides_never_and_presets_skip(anki, tmp_path):
+    from internpearls import config, sync
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-a": {"state": "never", "front": "front a", "deck": deck,
+                       "decided": "2026-08-01", "hash": ""},
+        "guid-new-b": {"state": "skip", "front": "front b", "deck": deck,
+                       "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+
+    tree = _snapshot_update_confirmation(anki)
+
+    texts = _all_text(tree)
+    assert "front a" not in texts            # never: hidden entirely
+    assert "1 card hidden" in texts          # ...but counted
+    assert "SKIPPED" in texts and "UPDATED" in texts   # skip re-offered, hash stale
+
+
+def test_a_changed_row_keeps_one_updated_chip_after_a_kept_decline(anki, tmp_path):
+    """A "changed" row already wears the kind chip's own UPDATED pill; a fresh edit
+    since a Keep decline must not add a second one (Task 5's chip rendering added
+    both unconditionally)."""
+    from internpearls import config
+    deck = _source_updating_card_a(anki, tmp_path)   # guid-a, reworded front
+    config.save_declined({
+        "guid-a": {"state": "keep", "front": "front a", "deck": deck,
+                   "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+
+    tree = _snapshot_update_confirmation(anki)
+
+    updated = [n for n in _walk(tree)
+              if n.get("t") == "label" and n.get("text") == "UPDATED"]
+    assert len(updated) == 1, f"expected exactly one UPDATED chip, found {len(updated)}"
+
+
+def test_accepting_the_update_writes_decisions_to_the_registry(anki, tmp_path):
+    from internpearls import config, sync
+    _source_with_two_new_cards(anki, tmp_path)
+    drive(anki, sync.update_decks,
+          respond=_choose_skip_for("guid-new-b"))   # click skip, then Update
+    reg = config.load_declined()
+    assert reg["guid-new-b"]["state"] == "skip"
+    assert reg["guid-new-b"]["hash"]            # hash captured from the incoming note
+    assert "guid-new-a" not in reg              # imported normally
+    fronts = {anki.col.get_note(nid).fields[0]
+             for nid in anki.col.find_notes(f'"tag:{SCOPE}"')}
+    assert "front b" not in fronts
+
+
+def test_cancelling_writes_nothing_to_the_registry(anki, tmp_path):
+    from internpearls import config, sync
+    _source_with_two_new_cards(anki, tmp_path)
+    drive(anki, sync.update_decks, respond=_choose_skip_then_cancel("guid-new-b"))
+    assert config.load_declined() == {}
+
+
+def test_digest_reports_decisions_made_this_run_only(anki, tmp_path):
+    from internpearls import logic
+    entries = logic.feedback_entries(
+        {"g1": "too verbose"}, {"g1": ("IP::A", "front a"), "g2": ("IP::A", "front b")},
+        decisions={"g1": "skipped", "g2": "never"})
+    digest = logic.build_feedback_digest(entries)
+    assert "decision: skipped" in digest
+    assert "front b" in digest and "decision: never" in digest
