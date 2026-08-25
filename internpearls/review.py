@@ -552,7 +552,9 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
         hlay.addWidget(chip_cell("skipped" if declined_state == "skip" else "kept"),
                        0, Qt.AlignmentFlag.AlignTop)
     changed_since_decline = bool(detail.get("changed_since_decline"))
-    if changed_since_decline:
+    # A "changed" row already wears the kind chip's own UPDATED pill (above), so this
+    # one only adds a second badge for a "new" row carrying the cue.
+    if changed_since_decline and kind != "changed":
         hlay.addWidget(chip_cell("changed"), 0, Qt.AlignmentFlag.AlignTop)
 
     primary = _ClickableLabel(_row_html(detail), _toggle)
