@@ -25,9 +25,10 @@ from .logic import (apkg_media_index, build_feedback_digest, cloze_filled_html,
                     extract_apkg_media, field_image_names, field_preview_html,
                     field_preview_text, plain_text, plural)
 from .palette import colors
-from .ui import _ask_with_widget, copy_to_clipboard, muted_label, title_label
-from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell, row_text_indent,
-                      section_header, simple_row)
+from .ui import (_ask_with_widget, copy_to_clipboard, hint_label, link_button,
+                 muted_label, title_label)
+from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell, decision_cell,
+                      row_text_indent, section_header, simple_row)
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
 # would be a blank row on every single card.
@@ -428,18 +429,32 @@ def _separator():
     return line
 
 
-def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
+_NEW_OPTIONS = [("import", "Import"), ("skip", "Skip for now"), ("never", "Never")]
+_CHANGED_OPTIONS = [("apply", "Apply"), ("keep", "Keep mine for now")]
+_DEFAULT_DECISION = {"new": "import", "changed": "apply"}
+_DECLINE_CAPTION = {
+    "skip": "You'll see this card again next update.",
+    "keep": "Your card stays as it is. The change is offered again next update.",
+}
+_FEEDBACK_PLACEHOLDER = "What's wrong with this card? Sent to the deck author."
+
+
+def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
     """One card as a single row: a caret, its kind's chip column, its tag if it has
     one, and its primary line. Clicking the row (the caret or the line itself) reveals
-    the answer, the why
-    behind a green left rule, and dosing when present, plus, only when feedback
-    collection is on, a box for what the learner makes of it.
+    the answer, the why behind a green left rule, and dosing when present. A "new" or
+    "changed" row also carries a segmented decision control (widgets.decision_cell) at
+    the right of its header, defaulting to Import/Apply; choosing Skip/Keep reveals a
+    feedback box for what the learner makes of it, and Never collapses the row with a
+    struck-through primary line. An Import/Apply row can still open that same box with
+    its own quiet "Add note" link, so feedback is never gated behind a decline.
 
     Pictures are named until that first expand and rendered from then on. Extraction is
     what opening a row pays for, so a long list stays cheap to scroll and a review nobody
     opens costs nothing at all.
     """
     guid = detail["guid"]
+    kind = detail.get("kind")
     row = QWidget()
     outer = QVBoxLayout(row)
     outer.setContentsMargins(0, 5, 0, 6)
@@ -525,14 +540,91 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
 
     # Top-aligned like the caret: the chip marks the row, so it belongs beside the
     # first line of a wrapping one rather than centred against the whole block.
-    hlay.addWidget(chip_cell(detail.get("kind")), 0, Qt.AlignmentFlag.AlignTop)
+    hlay.addWidget(chip_cell(kind), 0, Qt.AlignmentFlag.AlignTop)
+
+    # A card carrying a prior decline gets a second badge beside its kind chip
+    # (SKIPPED/KEPT YOURS), and one carrying a fresh change since that decline gets a
+    # third (the same UPDATED chip a changed row already wears) plus the hint line
+    # below the header. These keys are only ever set by the caller that already knows
+    # about the decline registry; nothing here writes them.
+    declined_state = detail.get("declined_state")
+    if declined_state in ("skip", "keep"):
+        hlay.addWidget(chip_cell("skipped" if declined_state == "skip" else "kept"),
+                       0, Qt.AlignmentFlag.AlignTop)
+    changed_since_decline = bool(detail.get("changed_since_decline"))
+    if changed_since_decline:
+        hlay.addWidget(chip_cell("changed"), 0, Qt.AlignmentFlag.AlignTop)
 
     primary = _ClickableLabel(_row_html(detail), _toggle)
     primary.setWordWrap(True)
     primary.setTextFormat(Qt.TextFormat.RichText)
     primary.setCursor(Qt.CursorShape.PointingHandCursor)
     hlay.addWidget(primary, 1)
+
+    # The feedback box and its caption are built for every row, whatever its kind, but
+    # stay invisible until something earns them: an existing note carried over in
+    # `flags`, a decline already on the card, or a click on Skip/Keep/Add note below.
+    caption = muted_label("")
+    caption.setVisible(False)
+    box = QPlainTextEdit(flags.get(guid, ""))
+    box.setPlaceholderText(_FEEDBACK_PLACEHOLDER)
+    box.setFixedHeight(50)
+    box.setVisible(bool(flags.get(guid)) or declined_state in ("skip", "keep"))
+    boxes[guid] = box
+
+    default = _DEFAULT_DECISION.get(kind)
+    never_note = hint_label("won't be offered again")
+    never_note.setVisible(False)
+    add_note = link_button("Add note")
+    add_note.setVisible(False)
+
+    def _reveal_box(_checked=False):
+        box.setVisible(True)
+        add_note.setVisible(False)
+    add_note.clicked.connect(_reveal_box)
+
+    def _apply_decision_visuals(state):
+        declined = state in _DECLINE_CAPTION
+        caption.setVisible(declined)
+        if declined:
+            caption.setText(_DECLINE_CAPTION[state])
+        show_box = declined or bool(flags.get(guid)) or box.isVisible()
+        box.setVisible(show_box)
+        add_note.setVisible(state == default and not show_box)
+        font = primary.font()
+        font.setStrikeOut(state == "never")
+        primary.setFont(font)
+        never_note.setVisible(state == "never")
+        if state == "never":
+            body.setVisible(False)
+            caret.setText(_CARET_CLOSED)
+            _name_caret(False)
+
+    if kind in _DEFAULT_DECISION:
+        options = _NEW_OPTIONS if kind == "new" else _CHANGED_OPTIONS
+        initial = decisions.get(guid, declined_state or default)
+
+        def _on_change(state):
+            if state == default:
+                decisions.pop(guid, None)
+            else:
+                decisions[guid] = state
+            _apply_decision_visuals(state)
+            on_decide(guid, state)
+
+        hlay.addStretch()
+        hlay.addWidget(decision_cell(options, initial, _on_change),
+                       0, Qt.AlignmentFlag.AlignTop)
+        hlay.addWidget(add_note, 0, Qt.AlignmentFlag.AlignTop)
+        hlay.addWidget(never_note, 0, Qt.AlignmentFlag.AlignTop)
+        _apply_decision_visuals(initial)
+
     outer.addWidget(header)
+
+    if changed_since_decline:
+        since = ("since you skipped it" if declined_state == "skip"
+                else "since you kept yours")
+        outer.addWidget(muted_label(f"Changed {since}. Worth another look."))
 
     body.setVisible(False)
     blay = QVBoxLayout(body)
@@ -624,14 +716,9 @@ def _card_row(detail, flags, boxes, collect_feedback, resolve=None):
         if name not in was_placed:
             _add_was(name)
 
-    if collect_feedback:
-        box = QPlainTextEdit(flags.get(guid, ""))
-        box.setPlaceholderText("Anything wrong with this card? (optional)")
-        box.setFixedHeight(50)
-        blay.addWidget(box)
-        boxes[guid] = box
-
     outer.addWidget(body)
+    outer.addWidget(caption)
+    outer.addWidget(box)
     return row
 
 
@@ -665,11 +752,11 @@ def clear_saved_feedback():
         pass
 
 
-def build_update_body(items, sources, flags, new_index, collect_feedback,
-                      top_html, flagged_line, safety_html):
+def build_update_body(items, sources, flags, new_index, decisions,
+                      top_html, status_line, safety_html):
     """The Update my decks screen's body: fixed summary text, the streaming list of
     pending new and changed cards plus any retired or relocated ones, then the
-    flagged-card count and the safety note below it. `internpearls.ui._ask_with_widget`
+    status line and the safety note below it. `internpearls.ui._ask_with_widget`
     wraps whatever this returns with the dialog's title and its Update/Cancel buttons,
     the same as any other confirmation.
 
@@ -696,10 +783,13 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     `flags`/`new_index` are the {guid: note}/{guid: (deck, front)} maps update_decks()
     already carries through the run. A row's box writes into `flags` live, on every
     keystroke, since there is no separate closing moment: the rows sit on the
-    confirmation itself.
+    confirmation itself. `decisions` is the matching live map for a row's segmented
+    control, {guid: state}; a row writes into it the same way, sparsely (a guid absent
+    from the dict means that row's default, Import or Apply).
 
-    `flagged_line()` is called fresh on every keystroke to recompute the "N cards
-    flagged" line shown below the list; `safety_html` is fixed.
+    `status_line()` is called fresh on every keystroke and every decision change to
+    recompute the line shown below the list (flag counts, decision tallies, whatever
+    the caller wants there); `safety_html` is fixed.
 
     Returns (widget, boxes, flush). `boxes` is {guid: QPlainTextEdit}, built lazily as
     the list's own rows are. `flush()` stops the debounce save timer, writes one final
@@ -726,12 +816,15 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
     if top_html:
         lay.addWidget(_rich_label(top_html))
 
-    bottom = _rich_label(flagged_line() + safety_html)
+    bottom = _rich_label(status_line() + safety_html)
 
     saver = QTimer(body)
     saver.setSingleShot(True)
     saver.setInterval(400)
     saver.timeout.connect(lambda: save_feedback(_entries()))
+
+    def _refresh_bottom():
+        bottom.setText(_preview_style() + status_line() + safety_html)
 
     def _on_change(guid, box):
         note = box.toPlainText().strip()
@@ -739,8 +832,11 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
             flags[guid] = note
         else:
             flags.pop(guid, None)   # she cleared it; treat that as unflagging
-        bottom.setText(_preview_style() + flagged_line() + safety_html)
+        _refresh_bottom()
         saver.start()
+
+    def _on_decide(guid, state):
+        _refresh_bottom()
 
     def _row(item):
         if item[0] in ("header", "note", "sep"):
@@ -754,7 +850,7 @@ def build_update_body(items, sources, flags, new_index, collect_feedback,
             _, front, dest_short = item
             return simple_row("moved", front, f"→ {dest_short}")
         _, deck_name, detail = item
-        row = _card_row(detail, flags, boxes, collect_feedback,
+        row = _card_row(detail, flags, boxes, decisions, _on_decide,
                         resolve=resolvers.get(deck_name))
         box = boxes.get(detail["guid"])
         if box is not None:

@@ -426,7 +426,6 @@ def _scene_confirm(mock, opts):
     details = synthetic_details()
     if opts.get("limit"):
         details = details[:opts["limit"]]
-    mock.mw._config = {"collect_card_feedback": opts.get("feedback", False)}
     items = [("header", "1 deck has updates:"),
              ("deck", "Example Deck", "3 kept (1 changing) · 2 new"),
              ("header", "Example Deck")]
@@ -461,17 +460,18 @@ def _scene_confirm(mock, opts):
               "card, not overwritten). A backup is taken automatically first.")
     flags = {}
     new_index = {d["guid"]: ("Example Deck", d["fields"][0][1]) for d in details}
+    decisions = {}
     checkbox = ({"label": "Also apply the new card look (forces a one-time full "
                           "AnkiWeb sync)", "checked": False}
                if opts.get("checkbox") else None)
 
-    def _flagged_line():
+    def _status_line():
         return ""
 
     def _open():
         body, _boxes, flush = review.build_update_body(
-            items, sources, flags, new_index, opts.get("feedback", False),
-            top_html, _flagged_line, safety)
+            items, sources, flags, new_index, decisions,
+            top_html, _status_line, safety)
         _ask_with_widget(body, yes_label="Update", checkbox=checkbox)
         flush()
 
@@ -706,11 +706,16 @@ SCENES = {
 }
 
 
-def render(scene, theme="light", expand=(), size=(640, 560), **opts):
+def render(scene, theme="light", expand=(), size=(640, 560), click_labels=(), **opts):
     """Build a scene's dialog, show it offscreen, expand any requested rows, grab it.
 
     Returns a Shot. The live dialog rides along on the Shot because geometry questions
     (mapTo, isVisible, sizeHint) need the widget, not just the image.
+
+    `click_labels` clicks every QPushButton whose text exactly matches one of these
+    strings, in order, after rows are expanded: a decision_cell's "Skip for now" or
+    "Never", or a row's "Add note" link, so a real-Qt test can exercise what a decision
+    actually shows rather than only what the mock's structure records.
 
     QDialog.exec is patched for the duration rather than permanently: a scene that
     opens a nested dialog should still block on it the normal way.
@@ -737,6 +742,12 @@ def render(scene, theme="light", expand=(), size=(640, 560), **opts):
         for i in expand:
             if i < len(carets):
                 carets[i].click()
+        a.processEvents()
+        for label in click_labels:
+            button = next((b for b in self.findChildren(q.QPushButton)
+                          if b.text() == label), None)
+            if button is not None:
+                button.click()
         a.processEvents()
         # A dialog forced below its sizeHint clips content that fits at its natural
         # size, which is a harness artifact rather than a real add-on layout bug, so

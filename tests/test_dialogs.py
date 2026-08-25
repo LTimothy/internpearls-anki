@@ -1280,3 +1280,156 @@ def test_new_chip_kinds_have_labels_and_roles(anki):
     assert widgets.CHIPS["kept"] == "KEPT YOURS"
     assert widgets._ROLES["skipped"] == "retired"
     assert widgets._ROLES["kept"] == "retired"
+
+
+# --------------------------------------------------------- update-body decisions
+def _walk_widgets(root, out=None, seen=None):
+    """Every live widget under `root`, depth-first, the way test_review.py's helper of
+    the same name walks a mock_anki tree: through any attribute that looks like a
+    widget, then through the widget's own layout. Node dicts (walk/find above) carry no
+    callables, so a decision_cell's `.buttons` or a box's `.isVisible()` need the real
+    objects."""
+    seen = seen if seen is not None else set()
+    out = out if out is not None else []
+    if id(root) in seen:
+        return out
+    seen.add(id(root))
+    out.append(root)
+    for v in vars(root).values():
+        if hasattr(v, "wid"):
+            _walk_widgets(v, out, seen)
+    layout = getattr(root, "_layout", None)
+    if layout is not None:
+        for child in getattr(layout, "_children", []) or []:
+            _walk_widgets(child, out, seen)
+    return out
+
+
+def _find_decision_cell(body):
+    return next(w for w in _walk_widgets(body) if hasattr(w, "buttons"))
+
+
+def _find_feedback_box(body):
+    return next((w for w in _walk_widgets(body) if isinstance(w, mock_anki.QPlainTextEdit)),
+               None)
+
+
+def _row_texts(body):
+    return [n.get("text") for n in walk(body.node()) if n.get("t") == "label"]
+
+
+def _card_detail(guid, kind, **extra):
+    detail = {
+        "guid": guid, "kind": kind, "notetype": "Study Deck - Basic",
+        "fields": [("Front", "What nerve block covers the anterior thigh?"),
+                  ("Back", "Femoral nerve block"), ("Why", ""), ("Image", ""),
+                  ("Tag", ""), ("Dosing", ""), ("Notes", "")],
+    }
+    detail.update(extra)
+    return detail
+
+
+def _new_card_detail(guid="guid-new-a", **extra):
+    return _card_detail(guid, "new", **extra)
+
+
+def _changed_card_detail(guid="guid-changed-a", **extra):
+    return _card_detail(guid, "changed", was={"Back": "old back"}, **extra)
+
+
+def _build_body(details):
+    from internpearls import review
+    items = [("card", "Example Deck", d) for d in details]
+    flags, new_index, decisions = {}, {}, {}
+    body, boxes, flush = review.build_update_body(
+        items, {}, flags, new_index, decisions, "", lambda: "", "")
+    return body, boxes, flush, decisions
+
+
+def _build_body_with_one_new_card():
+    return _build_body([_new_card_detail()])
+
+
+def _build_body_with_one_changed_card():
+    return _build_body([_changed_card_detail()])
+
+
+def test_new_card_row_offers_import_skip_never(anki):
+    body, boxes, flush, decisions = _build_body_with_one_new_card()
+    cell = _find_decision_cell(body)
+    assert set(cell.buttons) == {"import", "skip", "never"}
+    assert cell.buttons["import"].isChecked()
+
+
+def test_choosing_skip_reveals_the_feedback_box_and_records_the_decision(anki):
+    body, boxes, flush, decisions = _build_body_with_one_new_card()
+    cell = _find_decision_cell(body)
+    cell.buttons["skip"].click()
+    assert decisions == {"guid-new-a": "skip"}
+    box = _find_feedback_box(body)
+    assert box is not None and box.isVisible()
+
+
+def test_choosing_never_collapses_the_row(anki):
+    body, boxes, flush, decisions = _build_body_with_one_new_card()
+    cell = _find_decision_cell(body)
+    cell.buttons["never"].click()
+    assert decisions == {"guid-new-a": "never"}
+    assert "won't be offered again" in _row_texts(body)
+
+
+def test_changed_card_row_offers_apply_and_keep_only(anki):
+    body, boxes, flush, decisions = _build_body_with_one_changed_card()
+    cell = _find_decision_cell(body)
+    assert set(cell.buttons) == {"apply", "keep"}
+
+
+def test_predeclined_detail_renders_its_chips_and_preset_state(anki):
+    detail = _new_card_detail(declined_state="skip", changed_since_decline=True)
+    body, boxes, flush, decisions = _build_body(details=[detail])
+    cell = _find_decision_cell(body)
+    assert cell.buttons["skip"].isChecked()
+    texts = _row_texts(body)
+    assert "SKIPPED" in texts and "UPDATED" in texts
+
+
+def test_returning_to_default_pops_the_guid_and_unstrikes_the_row(anki):
+    """decisions stays sparse: choosing a non-default state records it, and clicking
+    back to the row's default removes the entry rather than writing it back in."""
+    body, boxes, flush, decisions = _build_body_with_one_new_card()
+    cell = _find_decision_cell(body)
+    cell.buttons["never"].click()
+    assert decisions == {"guid-new-a": "never"}
+    cell.buttons["import"].click()
+    assert decisions == {}
+
+
+def test_import_row_offers_a_quiet_add_note_that_reveals_the_box(anki):
+    """An Import/Apply row is not declined, so its box starts hidden, but a small "Add
+    note" affordance can still reveal it (flag-without-decline)."""
+    body, boxes, flush, decisions = _build_body_with_one_new_card()
+    box = _find_feedback_box(body)
+    assert box is not None and not box.isVisible()
+    add_note = next(w for w in _walk_widgets(body)
+                    if getattr(w, "text", None) and w.text() == "Add note")
+    add_note.click()
+    assert box.isVisible()
+
+
+def test_status_line_is_recomputed_after_a_decision_change(anki):
+    """status_line() (renamed from flagged_line) is re-rendered on a decision change
+    the same way it already was on every feedback keystroke."""
+    from internpearls import review
+    calls = []
+
+    def status_line():
+        calls.append(True)
+        return f"{len(calls)} calls"
+
+    items = [("card", "Example Deck", _new_card_detail())]
+    body, boxes, flush = review.build_update_body(
+        items, {}, {}, {}, {}, "", status_line, "")
+    before = len(calls)
+    cell = _find_decision_cell(body)
+    cell.buttons["skip"].click()
+    assert len(calls) > before, "status_line was not recomputed after a decision change"

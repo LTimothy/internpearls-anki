@@ -1779,7 +1779,10 @@ def test_update_decks_lists_a_changed_only_card_inline(anki, tmp_path):
 
 def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
     """Default: the confirmation previews the incoming cards inline, with a cloze
-    note's deletions filled in rather than blanked, and collects nothing."""
+    note's deletions filled in rather than blanked. A row's feedback box is
+    contextual now, not gated by the card-feedback setting, so it renders on every
+    row regardless, but starts empty; the setting still controls whether anything
+    ends up summarized and copied at the end of the run."""
     from internpearls import sync
     cloze_model = make_model(name="Study Deck - Cloze",
                              fields=["Text", "Why", "Image", "Dosing", "Notes"])
@@ -1809,8 +1812,10 @@ def test_review_is_read_only_when_feedback_is_off(anki, tmp_path):
     assert "lumbar" in seen["screen"]
     assert "{{c1::" not in seen["screen"]
     assert palette.colors()["accent"] in seen["screen"]
-    # No feedback box anywhere, and nothing offered to the clipboard.
-    assert not seen["boxes"], "no feedback box should render when the toggle is off"
+    # The box itself still renders (contextual now, not settings-gated) but starts
+    # empty, and nothing is offered to the clipboard.
+    assert seen["boxes"], "the feedback box should still render even with the toggle off"
+    assert all(not b["value"] for b in seen["boxes"]), "nothing should pre-fill it"
     assert "flagged" not in seen["screen"]
     assert not anki.gui.clipboard, "nothing should reach the clipboard"
     # It's still just a preview: the card still imports once Update is chosen.

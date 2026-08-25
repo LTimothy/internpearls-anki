@@ -61,18 +61,43 @@ def test_the_caret_does_not_eat_a_gutter(shot):
             "pushing every row's text right.")
 
 
-def test_feedback_boxes_appear_only_when_the_setting_is_on(shot):
-    """The Settings toggle: off means the review is a read-only preview with nothing to
-    send afterward."""
+def test_feedback_boxes_stay_hidden_until_a_decision_or_add_note(shot):
+    """The box is contextual now, not gated by the Settings toggle: every new/changed
+    row carries one, but it stays hidden until Skip/Keep is chosen or its row's own
+    "Add note" link is clicked."""
     _, q = harness.bootstrap()
-    off = shot("confirm", expand=(0,), feedback=False)
-    on = shot("confirm", expand=(0,), feedback=True)
 
     def boxes(s):
         return [w for w in s.dialog.findChildren(q.QPlainTextEdit) if w.isVisible()]
 
-    assert not boxes(off), "note boxes are showing with card feedback turned off"
-    assert boxes(on), "note boxes are missing with card feedback turned on"
+    closed = shot("confirm", expand=(0,))
+    assert not boxes(closed), "a note box is showing before any decision was made"
+
+    declined = shot("confirm", expand=(0,), click_labels=("Skip for now",))
+    assert boxes(declined), "choosing Skip did not reveal row 0's note box"
+
+    added = shot("confirm", expand=(0,), click_labels=("Add note",))
+    assert boxes(added), "clicking Add note did not reveal a note box"
+
+    # The box lives beside the card's own expandable body, not inside it, so a
+    # decline reveals it whether or not the row itself is ever opened.
+    still_collapsed = shot("confirm", click_labels=("Skip for now",))
+    assert boxes(still_collapsed), (
+        "choosing Skip on a collapsed row did not reveal its note box")
+
+
+def test_choosing_never_strikes_the_primary_line_and_collapses_the_row(shot):
+    """The mock suite can only see that the primary label's font carries a strikeout
+    flag; whether an already-open row actually collapses back down is a real geometry
+    question."""
+    _, q = harness.bootstrap()
+    s = shot("confirm", expand=(0,), click_labels=("Never",))
+    primary = next(w for w in s.dialog.findChildren(q.QLabel)
+                  if "one short line" in w.text())
+    assert primary.font().strikeOut(), "the primary line is not struck through"
+    carets = _carets(s.dialog, q)
+    assert carets[0].text() == harness.CARET_CLOSED, (
+        "choosing Never did not collapse the row back down")
 
 
 def test_the_update_screens_cleanup_runs_while_its_widgets_are_still_alive():
@@ -95,7 +120,7 @@ def test_the_update_screens_cleanup_runs_while_its_widgets_are_still_alive():
     from internpearls.ui import _ask_with_widget
 
     body, _boxes, flush = review.build_update_body(
-        [("header", "Example Deck")], {}, {}, {}, False, "", lambda: "", "safety")
+        [("header", "Example Deck")], {}, {}, {}, {}, "", lambda: "", "safety")
 
     ran = []
     original = q.QDialog.exec

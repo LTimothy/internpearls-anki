@@ -666,6 +666,20 @@ class Gui:
 
 
 # ============================== Qt widget layer ==============================
+class QFont:
+    """Enough of QFont for a label to carry a strikeout flag, the one property
+    review.py's "never" decision reads back after setting it."""
+
+    def __init__(self):
+        self._strike_out = False
+
+    def setStrikeOut(self, v):
+        self._strike_out = bool(v)
+
+    def strikeOut(self):
+        return self._strike_out
+
+
 class Signal:
     def __init__(self):
         self._slots = []
@@ -751,7 +765,12 @@ class QWidget:
         pass
 
     def setFont(self, font):
-        pass
+        self._font = font
+
+    def font(self):
+        if getattr(self, "_font", None) is None:
+            self._font = QFont()
+        return self._font
 
     def setFrameShape(self, s):
         pass   # QScrollArea/QFrame are QFrame subclasses in real Qt
