@@ -1260,3 +1260,23 @@ def test_ui_helpers_use_the_palette_not_a_css_keyword():
         style = helper("some text").styleSheet()
         assert "gray" not in style, f"{helper.__name__} still uses the gray keyword"
         assert active["muted"] in style
+
+
+def test_decision_cell_selects_and_reports(anki):
+    from internpearls import widgets
+    chosen = []
+    cell = widgets.decision_cell(
+        [("import", "Import"), ("skip", "Skip for now"), ("never", "Never")],
+        "import", chosen.append)
+    cell.buttons["skip"].click()
+    assert chosen == ["skip"]
+    cell.set_state("never")
+    assert cell.buttons["never"].isChecked()
+
+
+def test_new_chip_kinds_have_labels_and_roles(anki):
+    from internpearls import widgets
+    assert widgets.CHIPS["skipped"] == "SKIPPED"
+    assert widgets.CHIPS["kept"] == "KEPT YOURS"
+    assert widgets._ROLES["skipped"] == "retired"
+    assert widgets._ROLES["kept"] == "retired"

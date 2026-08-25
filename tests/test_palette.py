@@ -21,7 +21,8 @@ BASE = {"light": "#ffffff", "dark": "#2f2f31"}
 ON_WINDOW = ("why", "accent", "caret", "dim", "muted", "warning", "updated_fg")
 # Roles that carry their own background, so they answer to it instead.
 PAIRS = (("dosing_fg", "dosing_bg"), ("new_fg", "new_bg"), ("updated_fg", "updated_bg"),
-        ("retired_fg", "retired_bg"), ("moved_fg", "moved_bg"))
+        ("retired_fg", "retired_bg"), ("moved_fg", "moved_bg"),
+        ("accept_fg", "accept_bg"), ("decline_fg", "decline_bg"))
 # Roles that are not text at all (a rule/divider colour), so the AA checks above don't
 # apply to them. They still answer to the window they're drawn on, at the separation
 # threshold in the rules test below rather than at AA. Named explicitly rather than left
