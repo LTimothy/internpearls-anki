@@ -108,7 +108,6 @@ def _cfg():
         "auto_sync_interval_minutes": c.get("auto_sync_interval_minutes",
                                             AUTO_SYNC_INTERVAL_DEFAULT_MIN),
         "dim_images_night_mode": c.get("dim_images_night_mode", False),
-        "collect_feedback": c.get("collect_card_feedback", False),
     }
 
 
