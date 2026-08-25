@@ -60,6 +60,10 @@ FEEDBACK = os.path.join(_USER_FILES, "card_feedback.json")
 # "she edited this" from "the deck author changed this" instead of freezing the
 # field forever. {guid: {field: value}}. See collection._restore.
 SHIPPED = os.path.join(_USER_FILES, "shipped_fields.json")
+# The declined-card registry: {guid: {state, front, deck, decided, hash}}.
+# Lives in user_files/ like the feedback log and for the same reason: it must
+# survive add-on updates and reinstalls.
+DECLINED = os.path.join(_USER_FILES, "declined.json")
 
 AUTO_SYNC_INTERVAL_FLOOR_MIN = 1     # refuse to poll more often than this, however configured
 AUTO_SYNC_INTERVAL_DEFAULT_MIN = 15  # used when the setting is missing or unreadable
@@ -149,3 +153,14 @@ def _save_json(path, data):
         except OSError:
             pass
         raise
+
+
+def load_declined():
+    """The declined-card registry: {guid: {state, front, deck, decided, hash}}.
+    Lives in user_files/ like the feedback log and for the same reason: it must
+    survive add-on updates and reinstalls."""
+    return _load_json(DECLINED, {})
+
+
+def save_declined(reg):
+    _save_json(DECLINED, reg)

@@ -70,13 +70,14 @@ def anki(tmp_path, monkeypatch):
     user_files = tmp_path / "user_files"
     user_files.mkdir(exist_ok=True)
     monkeypatch.setattr(collection, "_USER_FILES", str(user_files))
-    # FEEDBACK (review.py) and SHIPPED (sync.py) are real on-disk paths too, and were
-    # not test-isolated like INSTALLED/STATE above, until now. A test that left a card
-    # flagged or a field baseline behind used to leak into whatever test happened to
-    # run after it in the same session, since both live fixed under the add-on's own
-    # user_files/ rather than under tmp_path.
+    # FEEDBACK (review.py), SHIPPED (sync.py), and DECLINED (config.py) are real on-disk
+    # paths too, and were not test-isolated like INSTALLED/STATE above, until now. A test
+    # that left a card flagged, a field baseline, or a declined entry behind used to leak
+    # into whatever test happened to run after it in the same session, since all live fixed
+    # under the add-on's own user_files/ rather than under tmp_path.
     monkeypatch.setattr(review, "FEEDBACK", str(user_files / "card_feedback.json"))
     monkeypatch.setattr(sync, "SHIPPED", str(user_files / "shipped_fields.json"))
+    monkeypatch.setattr(config, "DECLINED", str(user_files / "declined.json"))
     background._tpl_deferred_notified.clear()
     background._deferred_decks.clear()   # session-scoped skip list, same reason
     background._backup_failure_notified = False
