@@ -709,15 +709,18 @@ def manage_decks(pending=None):
           f"<br><br>{next_step}")
 
 
-# --------------------------------------------------------------- declined cards
-# The order groups render in, and each state's heading. Only non-empty groups render;
-# never-imported leads because it is the strongest signal (skip and keep-my-version are
-# both softer, "not this time" decisions).
+# The order the three known groups render in, and each state's heading. Only
+# non-empty groups render; never-imported leads because it is the strongest signal
+# (skip and keep-my-version are both softer, "not this time" decisions). An entry
+# whose state matches none of these still renders, under "Other", appended last in
+# _rebuild(): sync.py keeps a GUID declined by its presence in the registry alone,
+# regardless of what its state says, so every entry needs a way back to being offered.
 _DECLINE_GROUPS = (("never", "Never imported"), ("skip", "Skipped for now"),
                    ("keep", "Kept your version"))
 
-# Matches _SCOPE_DIALOG_H's role above: a floor a short list opens at, and a cap a long
-# one scrolls past rather than growing the dialog past the screen.
+# The cap review._scrolled stops the list growing the dialog past, once it holds more
+# rows than fit. Unlike _SCOPE_DIALOG_H above, this sets no floor: a short list stays
+# short rather than being padded out to any minimum.
 _DECLINED_LIST_H = 340
 
 
@@ -757,7 +760,7 @@ class _DeclinedDialog(QDialog):
 
         self._rebuild()
 
-    def _row(self, guid, entry):
+    def _row(self, guid, entry, show_state=False):
         row = QWidget()
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
@@ -765,7 +768,13 @@ class _DeclinedDialog(QDialog):
         primary.setWordWrap(True)
         h.addWidget(primary, 1)
         leaf = (entry.get("deck") or "").split("::")[-1]
-        h.addWidget(muted_label(f"{leaf} · {entry.get('decided') or ''}"))
+        meta = f"{leaf} · {entry.get('decided') or ''}"
+        if show_state:
+            # An Other row's heading alone doesn't say what state actually parked it
+            # here, only that it's none of the three this dialog names; the raw value
+            # (or "unknown" if the entry has none at all) is the only place that shows.
+            meta += f" · {entry.get('state') or 'unknown'}"
+        h.addWidget(muted_label(meta))
         btn = QPushButton("Offer again")
         btn.setAccessibleName(guid)
         btn.clicked.connect(lambda _=False, g=guid: self._offer_again(g))
@@ -775,9 +784,11 @@ class _DeclinedDialog(QDialog):
     def _offer_again(self, guid):
         reg = load_declined()
         entry = reg.pop(guid, None)
-        if entry:
+        # `is not None` rather than truthy: an entry that happens to be an empty dict
+        # is still a real entry that was present, and still needs the pop saved.
+        if entry is not None:
             save_declined(reg)
-            if entry.get("deck"):
+            if isinstance(entry, dict) and entry.get("deck"):
                 invalidate_installed([entry["deck"]])
         self._rebuild()
 
@@ -786,26 +797,43 @@ class _DeclinedDialog(QDialog):
             item = self._list_lay.takeAt(0)
             w = item.widget()
             if w is not None:
+                # takeAt only detaches the widget from the layout, not from the
+                # dialog's own widget tree, and deleteLater's actual removal is
+                # deferred past this call: without hiding it explicitly, a taken-out
+                # row still paints (and still answers isVisible()) until Qt gets
+                # around to the deferred delete.
+                w.setVisible(False)
                 w.deleteLater()
 
-        # Malformed entries (a hand-edited file) degrade per-row rather than crashing
-        # the dialog: anything that isn't a dict, or whose state matches no known group,
-        # is silently left out rather than shown half-broken.
+        reg = load_declined()
+        # A non-dict value (a hand-edited file) cannot be read as a row at all and is
+        # the one thing dropped outright. Everything else renders somewhere: a
+        # recognized state under its own heading, anything else under Other, since
+        # sync.py's own filter (declined = set(reg)) keeps a GUID permanently declined
+        # by presence alone regardless of its state, so Other is the learner's only way
+        # back to a card whose state this dialog doesn't otherwise name.
         grouped = {}
-        for guid, entry in load_declined().items():
+        for guid, entry in reg.items():
             if isinstance(entry, dict):
                 grouped.setdefault(entry.get("state"), []).append((guid, entry))
 
-        any_rows = False
+        known_states = {state for state, _ in _DECLINE_GROUPS}
         for state, heading in _DECLINE_GROUPS:
             rows = grouped.get(state)
             if not rows:
                 continue
-            any_rows = True
             self._list_lay.addWidget(section_label(heading, top_margin=8))
             for guid, entry in rows:
                 self._list_lay.addWidget(self._row(guid, entry))
-        if not any_rows:
+
+        other = [pair for state, pairs in grouped.items()
+                for pair in pairs if state not in known_states]
+        if other:
+            self._list_lay.addWidget(section_label("Other", top_margin=8))
+            for guid, entry in other:
+                self._list_lay.addWidget(self._row(guid, entry, show_state=True))
+
+        if not reg:
             self._list_lay.addWidget(muted_label("You haven't declined any cards."))
 
 

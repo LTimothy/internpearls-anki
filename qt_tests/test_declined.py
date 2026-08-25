@@ -38,3 +38,24 @@ def test_every_offer_again_button_has_real_size(shot, theme):
         if rect.width() <= 0 or rect.height() <= 0:
             zero.append(b.accessibleName())
     assert not zero, f"{theme}: Offer again rendered with zero size for {zero}"
+
+
+def test_clicking_offer_again_removes_the_row_and_shows_the_empty_state(shot):
+    """The mock suite proves _rebuild()'s count()/takeAt(0)/deleteLater() loop calls
+    the right methods; this proves it actually clears and repopulates a live layout.
+    Uses the single-entry fixture (opts={"single": True}), since the last row going
+    away must land on the empty state, not just on one fewer row.
+    """
+    _, q = harness.bootstrap()
+    front = "Which widget is this, in one short line?"
+
+    before = shot("declined", single=True)
+    assert any(front in w.text() for w in _visible_labels(before.dialog, q)), (
+        "the fixture's row is not even showing before the click, so this proves nothing")
+
+    after = shot("declined", single=True, click_labels=("Offer again",))
+    texts = [w.text() for w in _visible_labels(after.dialog, q)]
+    assert not any(front in t for t in texts), (
+        "the row is still showing after Offer again was clicked")
+    assert any("You haven't declined any cards." in t for t in texts), (
+        "removing the last entry did not show the empty state")
