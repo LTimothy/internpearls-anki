@@ -31,13 +31,14 @@ from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
                          installed_matching_collection)
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
-                     _load_json, _save_json)
+                     _load_json, _save_json, load_declined, save_declined)
 from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, decks_to_update,
                     feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, manifest_needs_newer_addon,
-                    note_display_label, plural, remap_cards, write_personalized)
+                    note_display_label, note_fields_hash, plural, prune_declined,
+                    remap_cards, write_personalized)
 from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled, _gh_raw
 from .palette import colors
 from .review import (_CONFIRM_HEIGHT, append_rows, build_list_body, build_update_body,
@@ -461,6 +462,9 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     _ensure_notetypes()
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
     her = _her_front_to_guid(cfg["scope_tag"])
+    reg = load_declined()
+    declined = set(reg)
+    seen = {}
     results, tpl_changes, deferred, touched = [], {}, [], set()
     # This run's own per-deck versions, and the only thing written back: the save below
     # merges them into whatever installed.json holds at that moment (see there), so no
@@ -500,13 +504,14 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             else:
                 changed_nids = change_note_types(nt) if (nt and convert_notetypes) else []
             converted += len(changed_nids)
-            in_place, as_new, wrote = _apply_deck(src, aliases, her)
+            in_place, as_new, wrote = _apply_deck(src, aliases, her, declined)
             # Recorded the moment the import returns, before anything else in this
             # iteration can raise. `touched` is what _restore and _capture_shipped work
             # from, so a deck missing from it has its protected fields left as the
             # import overwrote them: the learner's annotations, gone for good. Every
             # later step here is best-effort by comparison.
             touched |= wrote
+            seen[d["name"]] = {g for _, _f, g in apkg_notes(src)}
             # After the import, not before: the extra cloze cards only exist once the
             # cloze markup has actually landed on the note.
             seed_converted_siblings(changed_nids)
@@ -526,6 +531,10 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     # by the time a multi-deck run gets here, and saving that as-is would revert any
     # version another sync recorded in the meantime.
     _save_json(INSTALLED, {**_load_json(INSTALLED, {}), **applied})
+    retired_guids = {g for per_deck in (manifest.get("retired") or {}).values()
+                     for g in per_deck}
+    if prune_declined(reg, retired_guids, seen):
+        save_declined(reg)
     # Read what the source shipped BEFORE restoring her annotations over it: after
     # _restore, hers is what the note holds, and recording that as the baseline would
     # make her own edit indistinguishable from the source's own value next time.
