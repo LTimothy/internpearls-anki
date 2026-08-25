@@ -5,10 +5,11 @@ config and our own JSON state files. No dialogs, no network, no collection acces
 """
 import json
 import os
+import tempfile
 
 from aqt import mw
 
-ADDON_VERSION = "0.45.2"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.46.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # own notes); when it does, an add-on release that understands the new shape must bump
@@ -107,14 +108,44 @@ def _cfg():
     }
 
 
-def _load_json(path, default):
+def _load_json(path, default, strict=False):
+    """Read a JSON file, falling back to `default` when it isn't there.
+
+    `strict` re-raises a parse error instead of swallowing it, so a caller that already
+    knows the file exists (a configured deck source's manifest.json) can tell a corrupt
+    file from an absent one and say which. An absent file still returns `default` even
+    under strict. It is off by default, so every existing caller behaves exactly as it
+    did: a missing or unreadable installed.json still reads as "nothing installed yet".
+    """
     try:
         with open(path, encoding="utf8") as fh:
             return json.load(fh)
+    except FileNotFoundError:
+        return default
     except Exception:
+        if strict:
+            raise
         return default
 
 
 def _save_json(path, data):
-    with open(path, "w", encoding="utf8") as fh:
-        json.dump(data, fh, indent=2)
+    """Write JSON atomically: serialize into a temp file in the same directory, then
+    os.replace it over the target.
+
+    A plain open(path, "w") truncates before writing, so anything that interrupts the
+    write (a crash, a full disk, Anki being force-quit mid-sync) leaves a truncated or
+    empty file where installed.json or the feedback log used to be. os.replace is
+    atomic on every platform Anki runs on, so a reader only ever sees the old file or
+    the complete new one.
+    """
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf8") as fh:
+            json.dump(data, fh, indent=2)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise

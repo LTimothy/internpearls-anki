@@ -7,6 +7,7 @@ compose these; nothing here fetches from the network.
 """
 import datetime
 import os
+import tempfile
 
 from aqt import mw
 from aqt.utils import getFile, getSaveFile
@@ -124,17 +125,23 @@ def _export_deck_to(path, deck_name):
         out_path=path, options=opts, limit=DeckIdLimit(deck_id=deck_id))
 
 
-def _backup_deck(deck_name):
+def _backup_deck(deck_name, label=None):
     """Write a timestamped deck backup, pruning old ones.
 
     This is the fast, targeted counterpart to _backup_collection(): a self-contained
     .apkg of just `deck_name` (with history), not the whole profile. Returns the
     backup's path on success, None if it failed (e.g. the deck doesn't exist in this
     collection yet, which is normal on someone's very first sync).
+
+    `label` distinguishes two backups taken in the same second, which only happens when
+    one run touches decks under more than one root and each root needs its own file
+    (see _pre_sync_backup_or_confirm_skip). Left off, the filename is exactly what it
+    has always been, so the ordinary single-deck backup is unchanged.
     """
     folder = _deck_backup_folder()
     stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
-    path = os.path.join(folder, f"Intern Pearls {stamp}.apkg")
+    suffix = f" {label}" if label else ""
+    path = os.path.join(folder, f"Intern Pearls {stamp}{suffix}.apkg")
     try:
         _export_deck_to(path, deck_name)
     except Exception:
@@ -149,24 +156,65 @@ def _backup_deck(deck_name):
     return path
 
 
-def _pre_sync_backup_or_confirm_skip(deck_name):
-    """Back up before Sync/Import touch the collection, or ask to proceed if it failed.
+def _backup_targets(deck_name, decks):
+    """Which deck(s) a pre-sync backup has to cover for a run touching `decks`.
+
+    `deck_name` (the configured export_deck) covers the ordinary case and stays the
+    answer whenever every deck this run touches sits under it, which keeps the backup as
+    small and fast as it has always been. A run reaching outside it (a source that files
+    decks somewhere else, a relocation moving a card out from under it) gets each
+    touched deck's top-level deck instead, since exporting that covers every subdeck
+    below it. `decks` of None means the caller doesn't know or doesn't need to narrow it,
+    and gets `deck_name` alone.
+    """
+    decks = [d for d in (decks or []) if d]
+    if not decks or all(d == deck_name or d.startswith(deck_name + "::") for d in decks):
+        return [deck_name]
+    roots = []
+    for d in decks:
+        root = d.split("::")[0]
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+def _pre_sync_backup_or_confirm_skip(deck_name, decks=None, scope_tag=None):
+    """Back up before Sync/Import touch the collection, or ask to proceed if it can't.
 
     Defaults to the fast, deck-scoped backup rather than a whole-collection one, since
     that's what most syncs actually need protection against. A full collection backup
     is still one click away under Advanced whenever extra protection is wanted.
 
+    `decks` is the deck names this run will actually change, which is what the backup is
+    scoped from (see _backup_targets). It used to always be export_deck's subtree alone,
+    so a run touching anything outside that got a backup covering none of it while every
+    confirmation promised one.
+
     Returns (proceed, backed_up): proceed=True with backed_up=False means either there
-    was nothing to back up yet (a first sync) or the backup failed and the user chose
-    to continue anyway — callers must not tell the user a backup was saved in that case.
+    was nothing at all to back up (a first sync, where the collection holds none of this
+    add-on's cards yet) or the user chose to continue without one, so callers must not
+    tell the user a backup was saved in that case. `scope_tag` is what separates those
+    two: a collection that already holds cards under it has something to lose, so a run
+    that can't back any of it up asks rather than proceeding silently against a
+    confirmation that promised a backup.
     """
-    if mw.col.decks.id_for_name(deck_name) is None:
-        return True, False   # nothing to back up yet, e.g. someone's very first sync
-    if _backup_deck(deck_name):
-        return True, True
-    return _ask("Couldn't create an automatic backup.\n\n"
-                "Proceed anyway? (You can back up manually first: Advanced → Backup "
-                "intern pearls deck, or Advanced → Backup full collection.)"), False
+    targets = [d for d in _backup_targets(deck_name, decks)
+               if mw.col.decks.id_for_name(d) is not None]
+    if targets:
+        many = len(targets) > 1
+        saved = [_backup_deck(d, d.split("::")[-1] if many else None) for d in targets]
+        if all(saved):
+            return True, True
+        return _ask("Couldn't create an automatic backup.\n\n"
+                    "Proceed anyway? (You can back up manually first: Advanced → Backup "
+                    "intern pearls deck, or Advanced → Backup full collection.)"), False
+
+    if scope_tag and mw.col.find_notes(f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'):
+        return _ask(
+            "Couldn't find a deck to back up: your cards aren't under a deck this "
+            "add-on knows how to export on its own.\n\nProceed without a backup? (You "
+            "can back up manually first: Advanced → Backup full collection.)"), False
+    return True, False   # nothing in the collection to back up yet, e.g. a first sync
 
 
 def _pre_sync_backup_or_skip_silently(deck_name):
@@ -755,7 +803,12 @@ def _apply_deck(src, aliases, her):
     one of hers, the .apkg's own otherwise. _capture_shipped needs exactly that set."""
     remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
     touched = {remap.get(rid, guid) for rid, _f, guid in apkg_notes(src)}
-    out = src + ".sync.apkg"
+    # A unique name in the same directory the download landed in, rather than a fixed
+    # one derived from `src`: two runs can otherwise write and import through the same
+    # path, and on a shared machine that path is predictable enough to be pre-created
+    # as a symlink pointing somewhere else.
+    fd, out = tempfile.mkstemp(suffix=".sync.apkg", dir=os.path.dirname(src) or None)
+    os.close(fd)
     write_personalized(src, remap, out)
     try:
         _import_apkg(out)

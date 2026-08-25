@@ -89,6 +89,8 @@ def _click_reconcile_button(accept):
     through, there's nothing to click.
     """
     def respond(p):
+        if p["kind"] == "ask":
+            return {"answer": True}   # the backup question, when there's nothing to back up
         if p["kind"] != "dialog":
             return {}   # info/warn: nothing to click, just let it continue
         tree = p["tree"]
@@ -101,20 +103,47 @@ def _click_reconcile_button(accept):
     return respond
 
 
-def _click_update_button(accept):
-    """respond() for update_decks()'s confirmation. Update and Cancel are always
-    exactly those two labels (unlike reconcile's, which vary), and unlike
-    _click_reconcile_button this can't just grab "the first button that isn't
-    Cancel": the confirmation's own card rows add their own caret buttons ahead of
-    Update in the tree, so that search would click a caret instead."""
+def _answer_ask(p, ask):
+    """Answer one askUser() question during a replayed flow.
+
+    The automatic-backup question is always answered yes and never routed to a test's
+    own `ask`: every flow raises it whenever the collection holds none of the decks the
+    run would change (a first sync, most fixtures here), and it is about the backup
+    rather than about whatever the test is actually deciding. A test that cares about
+    that question drives the flow with its own respond() instead.
+    """
+    text = p.get("text", "")
+    if "back up" in text:
+        return {"answer": True}
+    return {"answer": True if ask is None else ask(text)}
+
+
+def _click_update_button(accept, ask=None):
+    """respond() for update_decks()'s confirmation. Unlike _click_reconcile_button this
+    can't just grab "the first button that isn't Cancel": the confirmation's own card
+    rows add their own caret buttons ahead of the accept button in the tree, so that
+    search would click a caret instead. It takes the LAST non-Cancel button, which is
+    the accept one, since the button box is added after the body. Its label is usually
+    "Update" but reads as reconcile's ("Archive and relocate") on a run with no content
+    updates pending.
+
+    `ask(text) -> bool` answers the plain askUser() questions the rest of the run raises
+    (the backup question when there is nothing to back up yet, and the note-type
+    conversion offer), and defaults to yes, the same as _click_sync_button.
+    """
     def respond(p):
+        if p["kind"] == "ask":
+            return _answer_ask(p, ask)
         if p["kind"] != "dialog":
             return {}
         done = _dismiss_result(p["tree"])
         if done:
             return done
-        label = "Update" if accept else "Cancel"
-        btn = _find(p["tree"], t="button", label=label)
+        if accept:
+            btn = [n for n in _walk(p["tree"])
+                   if n.get("t") == "button" and n.get("label") != "Cancel"][-1]
+        else:
+            btn = _find(p["tree"], t="button", label="Cancel")
         return {"events": [{"id": btn["id"], "click": True}]}
     return respond
 
@@ -136,18 +165,18 @@ def _click_sync_button(accept=True, ask=None):
             btn = _find(p["tree"], t="button", label="Update" if accept else "Cancel")
             return {"events": [{"id": btn["id"], "click": True}]}
         if p["kind"] == "ask":
-            return {"answer": True if ask is None else ask(p.get("text", ""))}
+            return _answer_ask(p, ask)
         return {}   # info/warn: nothing to click, just let it continue
     return respond
 
 
-def _update(anki, accept=True):
+def _update(anki, accept=True, ask=None):
     """Run update_decks() to completion, answering its confirmation. Returns every
     widget tree the run showed, in order: the confirmation, then the end-of-run
     summary, which is a dialog rather than an info box now."""
     from internpearls import sync
     trees = []
-    click = _click_update_button(accept)
+    click = _click_update_button(accept, ask)
 
     def respond(p):
         if p["kind"] == "dialog":
@@ -1603,9 +1632,11 @@ def test_update_decks_confirmation_shows_retired_and_moved_cards_as_rows(anki, t
     assert "Pharm" in lines and "Regional (old)" in lines
 
     # Neither row expands: no card in this run has a caret to open.
+    # The accept button reads as Reconcile's here, not "Update": this run has no
+    # content update pending, only housekeeping, so promising an update would be wrong.
     buttons = [n.get("label") for n in _walk(seen["tree"]) if n.get("t") == "button"]
-    assert buttons == ["Update", "Cancel"], (
-        f"expected only Update/Cancel, no expand caret, got {buttons}")
+    assert buttons == ["Archive and relocate", "Cancel"], (
+        f"expected only the accept button and Cancel, no expand caret, got {buttons}")
 
 
 def test_update_decks_confirmation_uses_the_palette_not_a_css_keyword(anki, tmp_path):
@@ -2051,9 +2082,9 @@ def test_preview_reuses_cached_download_for_an_unchanged_deck(anki, tmp_path):
 
     calls = []
 
-    def counting_fetch(d):
+    def counting_fetch(d, **kw):
         calls.append(d["name"])
-        return real_fetch(d)
+        return real_fetch(d, **kw)
 
     sync._preview_content_changes(counting_fetch, todo, her, {})
     assert len(calls) == 2   # both decks fetched the first time
@@ -2076,9 +2107,9 @@ def test_preview_refetches_a_deck_whose_version_changed(anki, tmp_path):
     her = _her_front_to_guid(SCOPE)
     calls = []
 
-    def counting_fetch(d):
+    def counting_fetch(d, **kw):
         calls.append(d["version"])
-        return real_fetch(d)
+        return real_fetch(d, **kw)
 
     sync._preview_content_changes(counting_fetch, todo, her, {})
     assert calls == ["v1"]
@@ -2090,9 +2121,9 @@ def test_preview_refetches_a_deck_whose_version_changed(anki, tmp_path):
     manifest2, real_fetch2, _ = sync._fetch_manifest(sync._cfg())
     todo2 = decks_to_update(manifest2, {}, [])
 
-    def counting_fetch2(d):
+    def counting_fetch2(d, **kw):
         calls.append(d["version"])
-        return real_fetch2(d)
+        return real_fetch2(d, **kw)
 
     sync._preview_content_changes(counting_fetch2, todo2, her, {})
     assert calls == ["v1", "v2"]   # version changed, cache missed, re-fetched
@@ -2114,6 +2145,8 @@ def _write_duplicate_source(tmp_path, deck_name):
 
 def _click_duplicate_button(accept):
     def respond(p):
+        if p["kind"] == "ask":
+            return {"answer": True}   # the backup question, when there's nothing to back up
         if p["kind"] != "dialog":
             return {}
         tree = p["tree"]
@@ -2704,6 +2737,8 @@ def test_result_screen_uses_the_shared_title_and_row_components(anki, tmp_path):
     seen = {}
 
     def respond(p):
+        if p["kind"] == "ask":
+            return _answer_ask(p, None)
         if p["kind"] != "dialog":
             return {}
         title, tree = p.get("title") or "", p["tree"]
@@ -2885,3 +2920,529 @@ def test_update_decks_gives_a_retired_only_deck_its_own_heading(anki, tmp_path):
     assert lines.index("Pharm") < lines.index(CHIPS["retired"])
     assert "1 deck has updates:" not in lines, \
         "nothing is downloading, so there is no deck summary to open the list with"
+
+
+# ------------------------------------------------- persistence & guards
+def test_protected_notes_are_restored_even_if_a_later_step_raises(anki, tmp_path,
+                                                                  monkeypatch):
+    """The import overwrites every field on a matched note, so the restore that puts her
+    annotations back is the only thing standing between a sync and losing them. It works
+    off `touched`, and `touched` used to be recorded after seed_converted_siblings ran:
+    anything raising in between dropped that deck out of the set entirely, so its notes
+    were never restored and never recorded as shipped, silently and permanently."""
+    from internpearls import sync
+
+    def boom(_nids):
+        raise RuntimeError("seeding blew up")
+
+    anki.col.add_note("g1", _fields("Front one", notes="her mnemonic"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="new back"), TAGS)], None)}))
+    monkeypatch.setattr(sync, "seed_converted_siblings", boom)
+
+    trees = _sync(anki)
+
+    assert anki.col.note_by_guid("g1")["Back"] == "new back"      # the import landed
+    assert anki.col.note_by_guid("g1")["Notes"] == "her mnemonic"  # and so did the restore
+    assert "seeding blew up" in _summary_text(trees)               # reported, not swallowed
+
+
+def test_sync_keeps_a_version_another_run_recorded_while_it_worked(anki, tmp_path,
+                                                                   monkeypatch):
+    """installed.json used to be written back from the snapshot the run started with,
+    which on a multi-deck sync can be minutes old by the time it saves. Anything a
+    concurrent run (an auto-sync poll firing mid-flight) recorded in between was
+    reverted, so that deck was offered again on the next check."""
+    from internpearls import sync
+    other = "Intern Pearls::Intern Custom::Other"
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    real_apply = sync._apply_deck
+
+    def apply_and_interleave(*a, **kw):
+        sync._save_json(sync.INSTALLED,
+                        {**sync._load_json(sync.INSTALLED, {}), other: "v9"})
+        return real_apply(*a, **kw)
+
+    monkeypatch.setattr(sync, "_apply_deck", apply_and_interleave)
+
+    _sync(anki)
+
+    assert json.load(open(sync.INSTALLED, encoding="utf8")) == {DECK: "v1", other: "v9"}
+
+
+def test_auto_sync_skips_a_tick_while_a_manual_flow_is_running(anki, tmp_path):
+    """Both write the collection and both persist installed.json, and the poll's apply
+    half arrives from a QueryOp callback that can land inside a manual flow's own modal
+    event loop. It should stay quiet and try again next tick."""
+    from internpearls import background, sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+    sync._manual_in_progress = True
+    try:
+        background._auto_sync_check()
+    finally:
+        sync._manual_in_progress = False
+
+    assert not anki.col.imports
+    assert not anki.gui.tooltips
+    assert not background._auto_sync_in_progress   # and the flag isn't left stuck on
+
+    background._auto_sync_check()   # nothing held now: the next tick picks it up
+
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
+def test_auto_sync_releases_its_guard_when_a_poll_finds_nothing(anki, tmp_path):
+    """The flag is taken for the whole run now, fetch phase included, so every exit path
+    out of the apply callback has to clear it. The no-op path is the one that runs on
+    almost every poll, so a leak there wedges auto-sync for the rest of the session."""
+    from internpearls import background
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+    background._auto_sync_check()
+    assert not background._auto_sync_in_progress
+
+    background._auto_sync_check()   # this one finds nothing to do
+
+    assert not background._auto_sync_in_progress
+
+
+def test_a_manual_sync_is_guarded_from_its_first_call_to_its_last(anki, tmp_path,
+                                                                  monkeypatch):
+    """Observed from inside the flow rather than from the replay driver: Runner unwinds
+    the whole call at every dialog and re-runs it from a snapshot, so respond() only
+    ever sees the flag after the flow has already returned. Hooking two points that sit
+    on either side of the confirmation shows it held across it."""
+    from internpearls import sync
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    held = []
+    real_backup, real_apply = sync._pre_sync_backup_or_confirm_skip, sync._apply_deck
+
+    def watch(fn):
+        def wrapper(*a, **kw):
+            held.append(sync.manual_sync_in_progress())
+            return fn(*a, **kw)
+        return wrapper
+
+    monkeypatch.setattr(sync, "_pre_sync_backup_or_confirm_skip", watch(real_backup))
+    monkeypatch.setattr(sync, "_apply_deck", watch(real_apply))
+
+    _sync(anki)
+
+    # Runner replays the whole flow once per dialog, so both hooks fire more than once.
+    assert len(held) >= 2 and all(held)        # before and after the confirmation
+    assert not sync.manual_sync_in_progress()  # released once the flow returns
+
+
+# ------------------------------------------------------------- broken deck source
+def _warned(anki, fn):
+    fn()
+    return " ".join(anki.gui.warnings)
+
+
+def test_a_missing_local_folder_says_so_rather_than_not_configured(anki, tmp_path):
+    from internpearls import sync
+    anki.mw._config = {"decks_dir": str(tmp_path / "nope")}
+
+    text = _warned(anki, sync.sync_decks)
+
+    assert "doesn't exist" in text
+    assert "No deck source configured" not in text
+
+
+def test_a_folder_without_a_manifest_says_which_file_is_missing(anki, tmp_path):
+    from internpearls import sync
+    folder = tmp_path / "empty"
+    folder.mkdir()
+    anki.mw._config = {"decks_dir": str(folder)}
+
+    text = _warned(anki, sync.sync_decks)
+
+    assert "manifest.json" in text
+    assert "No deck source configured" not in text
+
+
+def test_a_corrupt_manifest_says_it_is_not_valid_json(anki, tmp_path):
+    from internpearls import sync
+    folder = tmp_path / "broken"
+    folder.mkdir()
+    (folder / "manifest.json").write_text("{not json at all", encoding="utf8")
+    anki.mw._config = {"decks_dir": str(folder)}
+
+    text = _warned(anki, sync.sync_decks)
+
+    assert "isn't valid JSON" in text
+    assert "No deck source configured" not in text
+
+
+def test_nothing_configured_still_reads_as_nothing_configured(anki):
+    from internpearls import sync
+    anki.mw._config = {}
+
+    text = _warned(anki, sync.sync_decks)
+
+    assert "No deck source configured" in text
+
+
+def test_load_json_distinguishes_an_absent_file_from_a_corrupt_one(tmp_path):
+    import pytest
+    from internpearls.config import _load_json
+    missing = str(tmp_path / "gone.json")
+    corrupt = tmp_path / "bad.json"
+    corrupt.write_text("{", encoding="utf8")
+
+    assert _load_json(missing, {"fallback": 1}, strict=True) == {"fallback": 1}
+    with pytest.raises(Exception):
+        _load_json(str(corrupt), {"fallback": 1}, strict=True)
+    assert _load_json(str(corrupt), {"fallback": 1}) == {"fallback": 1}   # unchanged
+
+
+def test_save_json_leaves_the_old_file_intact_when_the_write_fails(tmp_path, monkeypatch):
+    from internpearls import config
+    path = str(tmp_path / "installed.json")
+    config._save_json(path, {"deck": "v1"})
+
+    def blow_up(*_a, **_k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("json.dump", blow_up)
+    try:
+        config._save_json(path, {"deck": "v2"})
+    except RuntimeError:
+        pass
+
+    assert json.load(open(path, encoding="utf8")) == {"deck": "v1"}
+    assert [f for f in os.listdir(tmp_path) if f.endswith(".tmp")] == []
+
+
+# ------------------------------------------------------------------- backup scope
+def test_backup_covers_every_root_the_run_touches(anki, tmp_path):
+    """The backup used to be export_deck's subtree and nothing else, so a run changing a
+    deck filed anywhere else got a backup covering none of what it was about to
+    overwrite, while the confirmation promised one."""
+    from internpearls import collection
+    outside = "Other Root::Extra"
+    anki.col.add_note("g1", _fields("Front one"), [TAGS], deck=DECK)
+    anki.col.add_note("g2", _fields("Front two"), [TAGS], deck=outside)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="new"), TAGS)], None),
+        outside: ("v2", [("g2", _fields("Front two", back="new"), TAGS)], None)}))
+
+    _sync(anki)
+
+    made = os.listdir(collection._deck_backup_folder())
+    assert len(made) == 2, made
+    assert any("Intern Pearls.apkg" in f for f in made)
+    assert any("Other Root.apkg" in f for f in made)
+
+
+def test_backup_stays_one_file_when_export_deck_covers_the_run(anki, tmp_path):
+    """The ordinary case is unchanged: one deck-scoped export of export_deck, named
+    exactly as it always was."""
+    from internpearls import collection
+    anki.col.add_note("g1", _fields("Front one"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="new"), TAGS)], None)}))
+
+    _sync(anki)
+
+    made = os.listdir(collection._deck_backup_folder())
+    assert len(made) == 1 and made[0].startswith("Intern Pearls 2")
+
+
+def test_backup_asks_before_a_run_it_cannot_cover(anki, tmp_path):
+    """Her cards are under the scope tag but in no deck this add-on can export, so the
+    promised backup can't be taken. That used to pass silently."""
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one"), [TAGS])   # tagged, but in no deck
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="new back"), TAGS)], None)}))
+    asked = []
+
+    def respond(p):
+        if p["kind"] == "ask":
+            asked.append(p["text"])
+            return {"answer": False}          # she declines to go without one
+        if p["kind"] != "dialog":
+            return {}
+        done = _dismiss_result(p["tree"])
+        if done:
+            return done
+        return {"events": [{"id": _find(p["tree"], t="button", label="Update")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.sync_decks, respond)
+    anki.gui.interactive = False
+
+    assert any("back up" in t for t in asked), asked
+    assert anki.col.note_by_guid("g1")["Back"] == "the back"   # declined, nothing imported
+
+
+def test_a_first_sync_with_nothing_to_back_up_asks_nothing(anki, tmp_path):
+    """An empty collection has nothing at risk, so the step is skipped outright rather
+    than asking about a backup that would be of nothing."""
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+
+    _sync(anki)
+
+    assert anki.gui.asks == []
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
+# ------------------------------------------------------- import single deck (manual)
+def _basic_model_missing(field):
+    model = make_model()
+    model["flds"] = [f for f in model["flds"] if f["name"] != field]
+    return model
+
+
+def test_import_single_declined_leaves_the_schema_alone(anki, tmp_path):
+    """Fix-note-types used to run before the "Import now?" question, so saying No could
+    still have added a field and bumped the collection schema, which costs a one-time
+    full AnkiWeb sync. Nothing may touch the collection before consent."""
+    from internpearls import sync
+    anki.col.models._models[:] = [_basic_model_missing("Dosing")]
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
+    anki.gui.file_picks = [src]
+    anki.gui.answers = [False]        # No to "Import now?"
+
+    sync.import_single()
+
+    assert [f["name"] for f in anki.col.models.all()[0]["flds"]].count("Dosing") == 0
+    assert anki.col.scm == 0          # no schema bump
+    assert not anki.col.imports
+
+
+def test_import_single_accepted_still_fixes_note_types_first(anki, tmp_path):
+    """Consent given, the same sequence as a sync runs: back up, fix note types, then
+    import, so the missing field exists before anything is written into it."""
+    from internpearls import sync
+    anki.col.models._models[:] = [_basic_model_missing("Dosing")]
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
+    anki.gui.file_picks = [src]
+
+    sync.import_single()
+
+    assert "Dosing" in [f["name"] for f in anki.col.models.all()[0]["flds"]]
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
+def test_import_single_writes_its_personalized_copy_outside_the_source_file(anki,
+                                                                            tmp_path):
+    """The personalized copy used to be written as `<the file she picked>.sync.apkg`, a
+    predictable path in a folder that is hers rather than ours."""
+    from internpearls import sync
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
+    anki.gui.file_picks = [src]
+
+    sync.import_single()
+
+    assert not os.path.exists(src + ".sync.apkg")
+    assert not [f for f in os.listdir(tmp_path) if f.endswith(".sync.apkg")]
+
+
+# --------------------------------------------------- reconcile nudge (auto-sync)
+def _stranded_and_retired(tmp_path, superseded, retired):
+    folder = tmp_path / "source"
+    folder.mkdir(exist_ok=True)
+    (folder / "manifest.json").write_text(json.dumps({
+        "schema": 2, "decks": [], "front_aliases": {}, "retired": retired,
+        "deck_moves": {}, "superseded_fronts": superseded}), encoding="utf8")
+    return str(folder)
+
+
+def test_auto_sync_counts_reworded_pairs_as_pending_too(anki, tmp_path):
+    """reconcile_decks and update_decks both treat a reworded pair as pending work, so
+    a nudge that left them out disagreed with the screen it points at, and a backlog of
+    nothing but reworded pairs was never mentioned at all."""
+    from internpearls import background, sync
+    stub = _StubAction()
+    sync.register_reconcile_action(stub)
+    _her_card(anki, "g_old", "old wording")
+    _her_card(anki, "g_new", "new wording")
+    anki.mw._config = {"decks_dir": _stranded_source(tmp_path, {"old wording":
+                                                                "new wording"}),
+                       "auto_sync_decks": True}
+
+    background._auto_sync_check()
+
+    assert stub.text == "Reconcile my decks (1 pending)"
+    assert any("1 card is ready to tidy up" in t for t in anki.gui.tooltips)
+    assert anki.col.note_by_guid("g_old").tags == TAGS.split()   # nudged, not acted on
+
+
+def test_auto_sync_does_not_renag_when_the_pending_count_shrinks(anki, tmp_path):
+    """The nudge is documented as firing when a backlog first appears or grows. A plain
+    inequality also fired on a shrink, so tidying part of a backlog immediately nagged
+    about the smaller remainder."""
+    from internpearls import background, sync
+    stub = _StubAction()
+    sync.register_reconcile_action(stub)
+    anki.col.add_note("old1", _fields("first retired card"), TAGS.split())
+    anki.col.add_note("old2", _fields("second retired card"), TAGS.split())
+    both = {DECK: {
+        "old1": {"identity": "first retired card", "reason": "split", "superseded_by": []},
+        "old2": {"identity": "second retired card", "reason": "split",
+                 "superseded_by": []}}}
+    anki.mw._config = {"decks_dir": _write_source(tmp_path, {}, retired=both),
+                       "auto_sync_decks": True}
+    background._auto_sync_check()
+    assert len(anki.gui.tooltips) == 1
+
+    # She tidies one of them up by hand; one is left pending.
+    del anki.col._notes[anki.col.note_by_guid("old2").id]
+
+    background._auto_sync_check()
+
+    assert len(anki.gui.tooltips) == 1                      # no nag on the way down
+    assert stub.text == "Reconcile my decks (1 pending)"    # label still honest
+
+
+def test_auto_sync_nags_again_once_a_shrunken_backlog_grows(anki, tmp_path):
+    """The watermark follows the count down, so growth after a partial tidy-up is a
+    first appearance again rather than being suppressed forever."""
+    from internpearls import background, sync
+    sync.register_reconcile_action(_StubAction())
+    anki.col.add_note("old1", _fields("first retired card"), TAGS.split())
+    anki.col.add_note("old2", _fields("second retired card"), TAGS.split())
+    entry = {"reason": "split", "superseded_by": []}
+    both = {DECK: {"old1": {"identity": "first retired card", **entry},
+                   "old2": {"identity": "second retired card", **entry}}}
+    anki.mw._config = {"decks_dir": _write_source(tmp_path, {}, retired=both),
+                       "auto_sync_decks": True}
+    background._auto_sync_check()
+    del anki.col._notes[anki.col.note_by_guid("old2").id]
+    background._auto_sync_check()          # shrank to 1, quiet
+    assert len(anki.gui.tooltips) == 1
+
+    anki.col.add_note("old2", _fields("second retired card"), TAGS.split())
+    background._auto_sync_check()          # back up to 2
+
+    assert len(anki.gui.tooltips) == 2
+    assert "2 cards are ready to tidy up" in anki.gui.tooltips[-1]
+
+
+# ----------------------------------------------------------- cancel during a download
+def test_cached_fetch_passes_the_pump_through_to_the_fetch(anki, tmp_path):
+    """cancellable_progress's step.pump is what keeps Cancel live during a download, and
+    it only reaches the socket if every layer between forwards it."""
+    from internpearls import sync
+    seen = {}
+
+    def fetch(d, on_chunk=None):
+        seen["on_chunk"] = on_chunk
+        return str(tmp_path / "x.apkg")
+
+    def pump(_n=None):
+        return True
+
+    sync._cached_fetch(fetch, {"name": "deck", "version": "v1"}, on_chunk=pump)
+
+    assert seen["on_chunk"] is pump
+
+
+def test_a_cancelled_download_reads_as_cancelled_not_as_a_failed_deck(anki, tmp_path):
+    """Cancel clicked mid-download is the same answer as Cancel between decks: whatever
+    finished stays applied, and the run reports itself as stopped rather than showing a
+    "✗ deck failed" row for something that did not fail."""
+    from internpearls import sync
+    from internpearls.net import DownloadCancelled
+    manifest = {"decks": [], "front_aliases": {}}
+    todo = [{"name": DECK, "apkg": "a.apkg", "version": "v1"}]
+
+    def fetch(_d, **_kw):
+        raise DownloadCancelled("cancelled before anything was imported")
+
+    results, _restored, _tpl, _deferred, cancelled, _col, _conv = sync._run_sync(
+        sync._cfg(), manifest, fetch, todo, {})
+
+    assert cancelled is True
+    assert results == []
+    assert json.load(open(sync.INSTALLED, encoding="utf8")) == {}
+
+
+# ------------------------------------------ note-type conversions on Update my decks
+def test_update_asks_once_about_conversions_before_anything_imports(anki, tmp_path):
+    """The question used to pop per deck from inside the apply loop, under the progress
+    dialog, after the import had already started. The preview already downloaded every
+    pending deck, so the whole run's conversions are known before the loop begins."""
+    from internpearls import sync
+    other = "Intern Pearls::Intern Custom::Other"
+    anki.col.models._models.append(_cloze_model())
+    _her_card(anki, "g1", "Old Q and A front")
+    anki.col.add_note("g2", _fields("Another Q and A front"), TAGS.split(), deck=other)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
+               _cloze_model()),
+        other: ("v2", [("g2", ["A {{c1::second}} version", "why", "", "", ""], TAGS)],
+                _cloze_model())}))
+    asked = []
+
+    def ask(text):
+        if "changed format" in text:
+            asked.append(len(anki.col.imports))
+        return True
+
+    _update(anki, ask=ask)
+
+    assert asked == [0], "one question, and before the first import"
+    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Cloze"
+    assert anki.col.note_by_guid("g2").note_type()["name"] == "Study Deck - Cloze"
+
+
+def test_update_declining_the_conversion_still_imports_without_asking_again(anki,
+                                                                            tmp_path):
+    from internpearls import sync
+    anki.col.models._models.append(_cloze_model())
+    _her_card(anki, "g1", "Old Q and A front")
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
+               _cloze_model())}))
+    asked = []
+
+    def ask(text):
+        asked.append(text)
+        return False
+
+    _update(anki, ask=ask)
+
+    assert sum("changed format" in t for t in asked) == 1
+    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Basic"
+    assert anki.col.imports    # the content still imported, beside her old note
+
+
+def test_update_confirmation_says_a_conversion_is_coming(anki, tmp_path):
+    """The one question is asked after the confirmation, so the confirmation is where
+    the reader first hears about it rather than being surprised by it."""
+    from internpearls import sync
+    anki.col.models._models.append(_cloze_model())
+    _her_card(anki, "g1", "Old Q and A front")
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
+               _cloze_model())}))
+
+    trees = _update(anki, accept=False)
+
+    assert "changed format" in "\n".join(_label_texts(trees[0]))
+
+
+def test_a_deck_that_could_not_be_previewed_says_it_still_imports(anki, tmp_path):
+    """A bare "couldn't preview" reads as "this deck is being skipped", which it is
+    not: the deck is still in the run and Update still tries to import it."""
+    from internpearls import sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    os.remove(os.path.join(folder, "Pharm.apkg"))
+    _configure(anki, folder)
+
+    trees = _update(anki, accept=False)
+
+    assert "couldn't preview · still imports" in "\n".join(_label_texts(trees[0]))

@@ -61,11 +61,25 @@ def _fetch_addon_version_info(timeout=_CONNECT_TIMEOUT):
 
 
 def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT):
-    """Download the current .ankiaddon package to a temp file and return its path."""
+    """Download the current .ankiaddon package to a temp file and return its path.
+
+    mkstemp rather than a fixed name in the shared temp directory: this file is handed
+    straight to mw.addonManager.install(), so on a multi-user machine a predictable path
+    is one anyone else can pre-create as a symlink, or replace between the write and the
+    install, and have their own code installed as this add-on. mkstemp's name is
+    unguessable and the file is created 0600, owned by us.
+    """
     data = _gh_public_raw("internpearls.ankiaddon", timeout=timeout)
-    path = os.path.join(tempfile.gettempdir(), "internpearls.ankiaddon")
-    with open(path, "wb") as fh:
-        fh.write(data)
+    fd, path = tempfile.mkstemp(prefix="internpearls-", suffix=".ankiaddon")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+    except Exception:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise
     return path
 
 

@@ -3,6 +3,57 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.46.0
+
+Safety fixes:
+
+- A `.apkg` in Anki's newer export format no longer imports as if it were nearly
+  empty. Import single deck used to read only the compatibility stub inside such a
+  file: the preview matched nothing, the import then overwrote every field
+  (protected ones included), and the restore had nothing to restore onto. Deck
+  names, card matching, and note-type checks now read the file's real data where
+  possible, and anything that can't (inside Anki, which ships no zstd decoder)
+  stops up front with a clear ask to re-export with "Support older Anki versions"
+  ticked, before anything touches your collection.
+- If a step after a deck's import failed, that deck's protected fields could be
+  left un-restored for the run. The restore bookkeeping now happens immediately
+  after the import, so a later failure can't skip it.
+- The pre-update backup now covers every top-level deck the run is about to touch,
+  not only the configured export deck, and speaks up when your cards exist but
+  nothing exportable covers them, instead of proceeding silently.
+- Import single deck no longer modifies the note type (which could force a full
+  AnkiWeb sync) before you've confirmed the import and the backup has run.
+- Background auto-sync and a manual sync can no longer interleave: each waits its
+  turn, and a finished run merges its results instead of overwriting what a
+  concurrent run just recorded.
+- Downloaded files and the self-update package now land in private, unpredictable
+  temp locations, and saved state files are written atomically.
+
+Dialog and flow fixes:
+
+- Enlarging the update confirmation before scrolling could leave the card list
+  silently ending at the first batch; the list now keeps filling the taller
+  window (and still builds lazily as you scroll).
+- Cancel in the progress dialog now responds during a deck's download, not only
+  between decks, and a cancelled download reads as cancelled rather than failed.
+- A note-type format change (for example Q&A to cloze) is disclosed on the update
+  confirmation and asked about once, before the run applies anything, instead of
+  as a pop-up part-way through.
+- A configured source that fails to load now shows what's actually wrong (missing
+  folder, missing or invalid manifest.json) in warning colouring, instead of
+  claiming nothing is configured, and the button beside it stays "Change source".
+- The local-folder source is picked with a real folder picker instead of a typed
+  path.
+- Manage decks keeps your unsaved checkbox and protected-field edits when you
+  open Change source; two decks sharing a leaf name are disambiguated and every
+  row carries its full path as a tooltip; the auto-sync interval control follows
+  its checkbox; closed dialogs release their memory instead of holding it until
+  Anki exits.
+- The demo page now renders the card-feedback boxes and the end-of-run digest,
+  and follows your browser's dark mode with the add-on's real dark palette.
+- A manifest with a malformed schema or deck entry now degrades gracefully (the
+  "update the add-on" notice, or skipping the bad entry) instead of erroring out.
+
 ## v0.45.2
 
 - Formulas now read as formulas in the review dialogs. A card written with MathJax

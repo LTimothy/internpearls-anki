@@ -33,9 +33,9 @@ from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
                      SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json)
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
                     decks_to_update, manifest_needs_newer_addon, plural)
-from .net import _BG_TIMEOUT
+from .net import _BG_TIMEOUT, _DOWNLOAD_TIMEOUT
 from .sync import (_fetch_manifest, _reconcile_pending, _refresh_reconcile_action_label,
-                   _run_sync)
+                   _run_sync, manual_sync_in_progress)
 from .ui import _bg_safe
 from .updates import _addon_update_work, _refresh_update_action_label
 
@@ -158,18 +158,42 @@ def _auto_sync_check():
     cfg = _cfg()
     if not cfg["auto_sync_decks"] or _auto_sync_in_progress or mw.col is None:
         return
+    # A manual flow owns the collection and installed.json for as long as it runs, and
+    # its dialogs run their own event loops that this poll's QueryOp callback can land
+    # inside. Skip the tick entirely; the next one picks up whatever is still pending.
+    if manual_sync_in_progress():
+        return
+
+    # Held for the WHOLE run, fetch phase included, and released in _apply's finally on
+    # every path (success, failure, and the nothing-to-do return). The flag used to be
+    # taken only around the import itself, leaving the minutes-long fetch phase
+    # unguarded: a second tick, or a manual sync, could start on top of it.
+    _auto_sync_in_progress = True
 
     # Reconciled here, on the main thread, before any work is handed to the background
     # thread below — installed_matching_collection touches mw.col, which _fetch_work
     # must not do (see _run_in_background's contract). See its docstring for why this
     # matters: without it, a collection restore that rolled back a prior sync would
     # leave auto-sync silently believing everything's still up to date.
-    installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
+    try:
+        installed = installed_matching_collection(_load_json(INSTALLED, {}),
+                                                  cfg["scope_tag"])
+    except Exception:
+        _auto_sync_in_progress = False   # nothing downstream will clear it from here
+        raise
 
     def _fetch_work():
         # _BG_TIMEOUT, not the interactive default: this fires unattended as often as
         # once a minute, so a dead host must fail well inside the poll interval.
-        manifest, fetch, source = _fetch_manifest(cfg, timeout=_BG_TIMEOUT)
+        # The deck downloads below get _BG_TIMEOUT too on a build without QueryOp,
+        # because there they run inline on the main thread: a 60s per-read bound would
+        # freeze Anki for a minute per deck on an unattended poll, which is exactly what
+        # net.py's own tighter bound for unattended checks exists to prevent. With
+        # QueryOp present (every current Anki) they run on a worker thread, where the
+        # generous bound costs nobody anything and a big deck on a slow link finishes.
+        manifest, fetch, source = _fetch_manifest(
+            cfg, timeout=_BG_TIMEOUT,
+            download_timeout=_DOWNLOAD_TIMEOUT if QueryOp is not None else _BG_TIMEOUT)
         if not manifest:
             return None
         if manifest_needs_newer_addon(manifest, SUPPORTED_MANIFEST_SCHEMA):
@@ -194,7 +218,14 @@ def _auto_sync_check():
                 "todo": todo, "installed": installed}
 
     def _apply(result, error):
-        global _auto_sync_in_progress, _last_reconcile_notified
+        global _auto_sync_in_progress
+        try:
+            _apply_work(result, error)
+        finally:
+            _auto_sync_in_progress = False
+
+    def _apply_work(result, error):
+        global _last_reconcile_notified
         if error or not result:
             return   # offline, misconfigured, or unreachable — stay quiet
         if "schema_blocked" in result:
@@ -213,61 +244,76 @@ def _auto_sync_check():
         # the first time a backlog appears or grows, a one-time tooltip pointing at
         # it) honest between manual checks.
         _, fresh, _, moves, _, _, stranded = _reconcile_pending(result["manifest"], cfg)
-        pending = len(fresh) + len(moves)
+        # `stranded` counts too: reconcile_decks and update_decks both treat a reworded
+        # pair as pending work, so leaving it out here made the menu label disagree with
+        # the screen it points at, and a backlog of nothing but reworded pairs was never
+        # nudged about at all.
+        pending = len(fresh) + len(moves) + len(stranded)
         _refresh_reconcile_action_label(pending)
-        if pending and pending != _last_reconcile_notified:
-            _last_reconcile_notified = pending
+        # Only on first appearance or growth, which is what the comment on
+        # _last_reconcile_notified has always described. A plain inequality also fired
+        # on a SHRINK, so partly tidying up a backlog re-nagged about the smaller one
+        # that was left. The watermark still follows the count down, so growing again
+        # after a partial tidy-up does speak up.
+        if pending > _last_reconcile_notified:
             tooltip(
                 f"Intern Pearls: {plural(pending, 'card')} "
-                f"{'is' if pending == 1 else 'are'} ready to tidy up (retired or "
-                "moved by a deck update) — Advanced → Reconcile my decks.",
+                f"{'is' if pending == 1 else 'are'} ready to tidy up (retired, "
+                "reworded, or moved by a deck update) — Advanced → Reconcile my "
+                "decks.",
                 period=8000, parent=mw)
-        elif not pending:
-            _last_reconcile_notified = 0
+        _last_reconcile_notified = pending
 
         if not result["todo"]:
             return   # nothing to sync this poll
+        # Re-checked immediately before applying, not only at the top of the poll: this
+        # callback arrives from a QueryOp and can land after a manual flow has started,
+        # including from inside one of its modal dialogs' event loops.
+        if manual_sync_in_progress():
+            return
 
-        _auto_sync_in_progress = True
-        try:
-            if not _pre_sync_backup_or_skip_silently(cfg["export_deck"]):
-                tooltip("Intern Pearls: auto-sync skipped, couldn't create a backup "
-                       "first.", period=6000, parent=mw)
-                return
+        if not _pre_sync_backup_or_skip_silently(cfg["export_deck"]):
+            tooltip("Intern Pearls: auto-sync skipped, couldn't create a backup "
+                   "first.", period=6000, parent=mw)
+            return
 
-            def _already_fetched(d):
-                v = result["downloaded"][d["name"]]
-                if isinstance(v, Exception):
-                    raise v
-                return v
+        def _already_fetched(d):
+            v = result["downloaded"][d["name"]]
+            if isinstance(v, Exception):
+                raise v
+            return v
 
-            results, restored, _, deferred, _, _, _ = _run_sync(
-                cfg, result["manifest"], _already_fetched,
-                result["todo"], result["installed"], defer_template_changes=True)
-            ok = sum(1 for r in results if r.startswith("✓"))
-            fail = len(results) - ok - len(deferred)
-            # A deferred deck stays pending, so every later poll re-defers it. Only
-            # mention each one once per Anki session, and stay quiet entirely on a
-            # poll where re-deferrals were the only "activity".
-            deferred_new = [n for n in deferred if n not in _tpl_deferred_notified]
-            _tpl_deferred_notified.update(deferred)
-            if not (ok or fail or deferred_new):
-                return
-            msg = (f"Intern Pearls: auto-synced {plural(ok, 'deck')} "
-                   f"(source: {result['source']})")
-            if fail:
-                msg += f", {fail} failed, open Sync decks for details"
-            if deferred_new:
-                msg += (f", {plural(len(deferred_new), 'deck')} "
-                        f"{'includes' if len(deferred_new) == 1 else 'include'} a "
-                        "card-template update — run Sync decks to review it")
-            if restored:
-                msg += f", preserved fields restored on {plural(restored, 'card')}"
-            tooltip(msg, period=6000, parent=mw)
-        finally:
-            _auto_sync_in_progress = False
+        results, restored, _, deferred, _, _, _ = _run_sync(
+            cfg, result["manifest"], _already_fetched,
+            result["todo"], result["installed"], defer_template_changes=True)
+        ok = sum(1 for r in results if r.startswith("✓"))
+        fail = len(results) - ok - len(deferred)
+        # A deferred deck stays pending, so every later poll re-defers it. Only
+        # mention each one once per Anki session, and stay quiet entirely on a
+        # poll where re-deferrals were the only "activity".
+        deferred_new = [n for n in deferred if n not in _tpl_deferred_notified]
+        _tpl_deferred_notified.update(deferred)
+        if not (ok or fail or deferred_new):
+            return
+        msg = (f"Intern Pearls: auto-synced {plural(ok, 'deck')} "
+               f"(source: {result['source']})")
+        if fail:
+            msg += f", {fail} failed, open Sync decks for details"
+        if deferred_new:
+            msg += (f", {plural(len(deferred_new), 'deck')} "
+                    f"{'includes' if len(deferred_new) == 1 else 'include'} a "
+                    "card-template update — run Sync decks to review it")
+        if restored:
+            msg += f", preserved fields restored on {plural(restored, 'card')}"
+        tooltip(msg, period=6000, parent=mw)
 
-    _run_in_background(_fetch_work, _apply)
+    try:
+        _run_in_background(_fetch_work, _apply)
+    except Exception:
+        # _run_in_background normally routes every failure through _apply, which clears
+        # the flag; this covers it failing before it ever gets that far.
+        _auto_sync_in_progress = False
+        raise
 
 
 _auto_sync_timer = None

@@ -108,6 +108,15 @@ def test_manifest_needs_newer_addon_handles_falsy_manifest():
     assert logic.manifest_needs_newer_addon({}, supported_schema=0) is False
 
 
+def test_manifest_schema_that_is_not_an_int_gates_instead_of_raising():
+    # A quoted or otherwise malformed schema used to raise TypeError out of the ">"
+    # comparison, aborting the sync with a stack trace instead of the purpose-built
+    # "update the add-on" message this function exists to trigger.
+    for bad in ("3", "1", 2.0, None, [], {"a": 1}, True):
+        assert logic.manifest_needs_newer_addon(
+            {"schema": bad}, supported_schema=2) is True
+
+
 # ------------------------------------------------------------------ should_notify_update
 def test_should_notify_when_newer_and_never_notified():
     assert logic.should_notify_update("0.14.1", "0.15.0", None) is True
@@ -255,6 +264,24 @@ def test_decks_to_update_excluded_default_is_backward_compatible():
     manifest = _manifest(("A", "v1"))
     # No excluded arg == old behavior: a new deck is still pending.
     assert len(logic.decks_to_update(manifest, {})) == 1
+
+
+def test_decks_to_update_skips_an_entry_missing_its_name_or_version():
+    # Both used to KeyError, so one malformed row in the manifest stopped every other
+    # deck from syncing. There is nothing to fetch without a name and nothing to compare
+    # without a version, so such a row is skipped and the rest still go.
+    manifest = {"decks": [{"version": "v1"},          # no name
+                          {"name": "B"},              # no version
+                          {"name": "", "version": "v9"},
+                          {"name": "C", "version": "v3"}]}
+    assert [d["name"] for d in logic.decks_to_update(manifest, {})] == ["C"]
+
+
+def test_decks_to_update_skips_a_versionless_entry_even_when_installed():
+    # installed.get("B") != None would otherwise mark it pending, and the sync would
+    # then KeyError on d["version"] downstream instead.
+    manifest = {"decks": [{"name": "B"}]}
+    assert logic.decks_to_update(manifest, {"B": "v1"}) == []
 
 
 # ----------------------------------------------------------------------- deck_status
@@ -563,6 +590,19 @@ def test_find_changed_notes_skips_protected_fields():
     her = {"her-1": {"Front": "A prompt", "Notes": "her own annotation"}}
     assert logic.find_changed_notes([(1, "g1", "her-1")], details, her,
                                     protected=["Notes"]) == {}
+
+
+def test_find_changed_notes_matches_a_protected_field_case_insensitively():
+    """The preserved-fields box is free text and the real names are capitalised, so
+    collection.py's _note_field resolves them case-insensitively when it snapshots and
+    restores. This skip was exact-match, so a typed "notes" listed the field as about to
+    change in the preview while the restore quietly put it back."""
+    details = [_detail(1, "Study Deck - Basic",
+                       [("Front", "A prompt"), ("Notes", ""), ("Dosing", "")])]
+    her = {"her-1": {"Front": "A prompt", "Notes": "her own annotation",
+                     "Dosing": "her dose note"}}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her,
+                                    protected=["notes", "DOSING"]) == {}
 
 
 def test_find_changed_notes_compares_by_name_not_position():
@@ -1512,12 +1552,175 @@ def test_apkg_deck_names_prefers_the_newer_format_over_the_legacy_stub(tmp_path,
     assert sorted(logic.apkg_deck_names(p)) == ["Default", "Intern Pearls"]
 
 
+def test_a_newer_apkg_without_a_zstd_decoder_asks_for_a_legacy_reexport(tmp_path, monkeypatch):
+    """Anki's own runtime ships no zstandard module, so inside real Anki the decode
+    is impossible: the user must get the re-export message, not a bare ImportError."""
+    monkeypatch.setitem(sys.modules, "zstandard", None)
+    p = _newer_apkg(tmp_path / "newer_nozstd.apkg", ["Default"])
+    with pytest.raises(RuntimeError, match="Support older Anki versions"):
+        logic.apkg_deck_names(p)
+
+
 def test_apkg_deck_names_converts_unit_separator_to_double_colon(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "zstandard", _FakeZstandardModule)
     p = _newer_apkg(tmp_path / "newer_sep.apkg",
                      ["Intern Pearls\x1fIntern Custom\x1fCA1 Handbook"])
     assert logic.apkg_deck_names(p) == [
         "Intern Pearls::Intern Custom::CA1 Handbook"]
+
+
+# ------------------------------------------------- reading a modern-format .apkg
+def _modern_apkg(path, notes, notetypes, deck_names=("Default",)):
+    """A modern-format .apkg, the shape Anki exports today.
+
+    Checked against a real 25.7.5 export before this fixture was written. The whole
+    collection lives in a zstd-compressed collection.anki21b whose schema is not the
+    legacy one: note types are split across a `notetypes` table (the name) and a `fields`
+    table (one text row per field, ordered by `ord`), and col.models is left an empty
+    string. CSS and template HTML are protobuf blobs in those tables' `config` columns,
+    which is why apkg_models cannot read one.
+
+    Beside it sits the near-empty collection.anki2 stub Anki ships for old clients,
+    carrying nothing but the "Please update to the latest Anki version" placeholder note
+    reproduced verbatim here. A reader that still picks the stub sees that one note and
+    no note types at all, which is exactly the failure these tests pin down.
+
+    `notes` is [(id, guid, [field values], notetype id)]; `notetypes` is
+    {notetype id: (name, [field names])}.
+    """
+    import sqlite3 as _sql
+    import zipfile as _zip
+
+    db = str(path) + ".anki21b.db"
+    con = _sql.connect(db)
+    con.execute("create table col (id integer primary key, models text not null, "
+                "decks text not null)")
+    con.execute("insert into col (id, models, decks) values (1, '', '')")
+    con.execute("create table notes (id integer primary key, guid text not null, "
+                "mid integer not null, flds text not null)")
+    con.execute("create table notetypes (id integer not null primary key, "
+                "name text not null, config blob not null)")
+    con.execute("create table fields (ntid integer not null, ord integer not null, "
+                "name text not null, config blob not null, primary key (ntid, ord)) "
+                "without rowid")
+    con.execute("create table decks (id integer primary key not null, "
+                "name text not null)")
+    for nid, guid, fields, mid in notes:
+        con.execute("insert into notes (id, guid, mid, flds) values (?, ?, ?, ?)",
+                    (nid, guid, mid, logic.FS.join(fields)))
+    for mid, (name, field_names) in notetypes.items():
+        con.execute("insert into notetypes (id, name, config) values (?, ?, ?)",
+                    (mid, name, b"\x1a\x08protobuf"))
+        for ordinal, field_name in enumerate(field_names):
+            con.execute("insert into fields (ntid, ord, name, config) "
+                        "values (?, ?, ?, ?)", (mid, ordinal, field_name, b""))
+    for i, deck_name in enumerate(deck_names):
+        con.execute("insert into decks (id, name) values (?, ?)", (i + 1, deck_name))
+    con.commit()
+    con.close()
+
+    stub = str(path) + ".stub.anki2"
+    scon = _sql.connect(stub)
+    scon.execute("create table notes (id integer primary key, guid text, mid integer, "
+                 "flds text)")
+    scon.execute("insert into notes values (1785086149129, 'z,P#@w=ml[', "
+                 "1785086149128, ?)",
+                 ("Please update to the latest Anki version, then import the "
+                  ".colpkg/.apkg file again." + logic.FS,))
+    scon.execute("create table col (models text, decks text)")
+    scon.execute("insert into col (models, decks) values ('{}', '{}')")
+    scon.commit()
+    scon.close()
+
+    with _zip.ZipFile(path, "w") as z:
+        z.write(db, "collection.anki21b")
+        z.write(stub, "collection.anki2")
+    return str(path)
+
+
+_MODERN_NOTES = [
+    (11, "guid-a", ["Front A", "Back A", "her own annotation"], 77),
+    (12, "guid-b", ['<img src="x.jpg">', "Name this", ""], 88),
+]
+_MODERN_NOTETYPES = {77: ("Study Deck - Basic", ["Front", "Back", "Notes"]),
+                     88: ("Study Deck - Image ID", ["Image", "Prompt", "Notes"])}
+
+
+@pytest.fixture
+def modern_apkg(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "zstandard", _FakeZstandardModule)
+    return _modern_apkg(tmp_path / "modern.apkg", _MODERN_NOTES, _MODERN_NOTETYPES)
+
+
+def test_apkg_notes_reads_the_real_notes_of_a_modern_package(modern_apkg):
+    """The bug: apkg_notes only ever opened collection.anki2, so a package exported by
+    current Anki yielded the stub's single placeholder note. Every match then failed,
+    the importer overwrote every field including the protected ones, and the restore had
+    no matched note to run on."""
+    rows = logic.apkg_notes(modern_apkg)
+    assert [(rid, fields[0], guid) for rid, fields, guid in rows] == [
+        (11, "Front A", "guid-a"), (12, '<img src="x.jpg">', "guid-b")]
+    assert rows[0][1] == ["Front A", "Back A", "her own annotation"]
+    assert not any("Please update" in f for _r, fields, _g in rows for f in fields)
+
+
+def test_remap_cards_matches_a_modern_package_against_her_collection(modern_apkg):
+    """The consequence at the level the import actually depends on: with the stub being
+    read, in_place was 0 and nothing was remapped, so a card she already had came in as
+    a duplicate and her history stayed on the copy she stopped seeing."""
+    remap, in_place, as_new, new_notes, matched = logic.remap_cards(
+        modern_apkg, {"Front A": "her-guid-a"}, {})
+    assert remap == {11: "her-guid-a"}
+    assert (in_place, as_new) == (1, 1)
+    assert [g for _rid, _f, g in new_notes] == ["guid-b"]
+    assert matched == [(11, "guid-a", "her-guid-a")]
+
+
+def test_apkg_note_details_labels_a_modern_package_from_its_notetype_tables(modern_apkg):
+    """col.models is empty in this format, so the labels have to come from the
+    `notetypes`/`fields` tables. Both are plain text columns, so no protobuf is needed
+    and the preview is as precisely labeled as a legacy package's."""
+    basic, image = logic.apkg_note_details(modern_apkg)
+    assert basic["notetype"] == "Study Deck - Basic"
+    assert basic["fields"] == [("Front", "Front A"), ("Back", "Back A"),
+                               ("Notes", "her own annotation")]
+    assert image["notetype"] == "Study Deck - Image ID"
+    assert image["fields"][1] == ("Prompt", "Name this")
+
+
+def test_apkg_note_types_names_a_modern_packages_notetypes(modern_apkg):
+    assert logic.apkg_note_types(modern_apkg) == {
+        "guid-a": "Study Deck - Basic", "guid-b": "Study Deck - Image ID"}
+
+
+def test_apkg_models_refuses_a_modern_package_instead_of_reporting_no_templates(
+        modern_apkg):
+    """CSS and template HTML live in protobuf blobs there, so they genuinely cannot be
+    read. Returning {} would read as "no template differs" and silently drop a card
+    design change, so this raises with the one instruction that fixes it."""
+    with pytest.raises(RuntimeError, match="Support older Anki versions"):
+        logic.apkg_models(modern_apkg)
+
+
+def test_write_personalized_refuses_a_modern_package(tmp_path):
+    """Anki reads the anki21b, so rewriting guids into the stub beside it would apply
+    none of them while remap_cards went on reporting matched counts: every front-matched
+    card imports as a duplicate. Re-compressing the anki21b needs zstd, which nothing
+    here has. The guard fires on the zip member alone, before any decode, so it does not
+    even need zstandard importable."""
+    src = _modern_apkg(tmp_path / "src.apkg", _MODERN_NOTES, _MODERN_NOTETYPES)
+    with pytest.raises(RuntimeError, match="Support older Anki versions"):
+        logic.write_personalized(src, {11: "her-guid-a"}, str(tmp_path / "out.apkg"))
+
+
+def test_modern_readers_still_reject_a_zip_with_no_collection(tmp_path):
+    bogus = str(tmp_path / "bogus.apkg")
+    with zipfile.ZipFile(bogus, "w") as z:
+        z.writestr("nothing.txt", "not a collection")
+    for read in (logic.apkg_notes, logic.apkg_note_details, logic.apkg_note_types,
+                 logic.apkg_models, logic.apkg_deck_names):
+        with pytest.raises(RuntimeError):
+            read(bogus)
 
 
 # ---------------------------------------------------------------- manifest_decks_for

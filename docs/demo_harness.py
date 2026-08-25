@@ -28,7 +28,7 @@ import mock_anki
 MOCK = mock_anki.install()
 
 import internpearls                     # noqa: E402  (real __init__: builds the menu)
-from internpearls import background, collection, config, net, sync  # noqa: E402
+from internpearls import background, collection, config, net, palette, sync  # noqa: E402
 
 SOURCE = os.environ.get("DEMO_SOURCE", "/source")   # env override for local smoke tests
 INTERVALS = ["2.3 mo", "11 d", "27 d", "6 d", "3.1 mo", "16 d", "9 d", "1.2 mo"]
@@ -62,15 +62,15 @@ def _install_demo_net():
     except ImportError:
         # Not under Pyodide (a local smoke test): still serve the example repo
         # from SOURCE; anything else keeps the real urllib path.
-        def _local_get(url, token=None, accept=None, timeout=None):
+        def _local_get(url, token=None, accept=None, timeout=None, on_chunk=None):
             if url.startswith(example):
                 return _from_source(url)
-            return real_get(url, token=token, accept=accept)
+            return real_get(url, token=token, accept=accept, on_chunk=on_chunk)
 
         net._http_get = _local_get
         return
 
-    def _http_get(url, token=None, accept=None, timeout=None):
+    def _http_get(url, token=None, accept=None, timeout=None, on_chunk=None):
         if url.startswith(example):
             return _from_source(url)
         req = XMLHttpRequest.new()
@@ -151,6 +151,26 @@ def set_note(guid, text):
     if "Notes" in n:
         n["Notes"] = text
     return collection_state()
+
+
+def set_dark(flag):
+    """Point the palette at the page's own colour scheme.
+
+    palette.is_dark() asks Anki's theme manager, which the mock has none of, so without
+    this every dialog the demo builds carries the light set, painted onto the page's dark
+    panels when the browser is in dark mode. Read live at build time like the real thing,
+    so a flip lands on the next dialog opened and leaves an open one alone, exactly as
+    Anki's own theme switch does. Real Anki never reaches the fallback: aqt.theme is
+    there and wins.
+    """
+    palette.FALLBACK_DARK = bool(flag)
+
+
+def accents():
+    """Both sets' accent colour, so the page can spot a link-style button by the colour
+    ui.link_button() actually paints rather than by a hex of the page's own that goes
+    stale the moment the palette is retuned."""
+    return json.dumps([palette.LIGHT["accent"], palette.DARK["accent"]])
 
 
 def menu():

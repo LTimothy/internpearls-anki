@@ -4,9 +4,9 @@ Everything here is presentation plus config writes; the flows that touch the
 collection or the network live in sync.py / collection.py and are called from here.
 """
 from aqt import mw
-from aqt.qt import (QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
-                    QLineEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout,
-                    QWidget)
+from aqt.qt import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
+                    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox,
+                    QVBoxLayout, QWidget)
 
 from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
 from .collection import installed_matching_collection
@@ -18,7 +18,7 @@ from .logic import (deck_status, manifest_scope_suggestion, parse_fields,
 from .palette import colors
 from .review import append_rows, build_list_body
 from .sync import _fetch_manifest, update_decks
-from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _prompt, _safe, _warn,
+from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _safe, _warn,
                  hint_label, link_button, muted_label, section_label, section_rule,
                  title_label, wait_cursor)
 from .widgets import chip_cell
@@ -50,9 +50,12 @@ def _github_source_form(repo_default, token_default):
     bb.accepted.connect(dlg.accept)
     bb.rejected.connect(dlg.reject)
     lay.addWidget(bb)
-    if not dlg.exec():
+    ok = bool(dlg.exec())
+    repo, token = repo_edit.text().strip(), token_edit.text().strip()
+    dlg.deleteLater()   # its fields are read above; see ui._ask_scrollable
+    if not ok:
         return "", "", False
-    return repo_edit.text().strip(), token_edit.text().strip(), True
+    return repo, token, True
 
 
 # Wide enough that no option's one-line hint wraps to three lines, and the margin Qt
@@ -164,6 +167,7 @@ def configure_source():
     chooser = _SourceChoiceDialog(mw)
     chooser.exec()
     choice = chooser.choice
+    chooser.deleteLater()
 
     if choice == "github":
         repo, token, ok = _github_source_form(conf.get("github_decks_repo", ""),
@@ -187,9 +191,14 @@ def configure_source():
         if conf.get("export_deck", EXPORT_DECK) == EXPORT_DECK:
             conf["export_deck"] = EXAMPLE_DECK_NAME
     elif choice == "local":
-        path, ok = _prompt("Folder with manifest.json + .apkg files:",
-                          default=conf.get("decks_dir", ""))
-        if not ok or not path.strip():
+        # A picker rather than a typed path: a mistyped folder is the one source error
+        # that a prompt invites and a picker cannot make. The mock Qt answers this
+        # through the same prompt payload the live demo already draws, so the demo
+        # keeps a usable path here without a native dialog to open.
+        path = QFileDialog.getExistingDirectory(
+            mw, f"{APP_NAME}: folder with manifest.json + .apkg files",
+            conf.get("decks_dir", ""))
+        if not path.strip():
             return
         conf["decks_dir"] = path.strip()
         # A lingering repo name would win: _fetch_manifest checks gh_repo first and
@@ -291,6 +300,46 @@ def _offer_manifest_scope(manifest):
 # the muted trailing text _deck_row writes below.
 _STATE_CHIP = {"new": "new", "update": "changed", "current": None}
 
+# How many characters of a deck's label a row draws before the middle is elided. The
+# rows sit in a 480px-wide dialog beside a count and a chip, so a long path would
+# otherwise widen the whole panel to fit one deck.
+_DECK_LABEL_MAX = 42
+
+
+def _deck_labels(rows):
+    """What each row's checkbox is labelled: the deck's leaf name, or the shortest tail
+    of its path that tells it apart from another offered deck with the same leaf.
+
+    A source is free to publish "Cardiology::Basics" and "Renal::Basics", and both
+    reduce to "Basics", so a list of leaves alone leaves two rows nothing to tell them
+    apart by (their state and count often match too). Only the ambiguous rows lengthen:
+    the common case is a list of plain leaf names, and prefixing every one of them with
+    a path nobody needed to read would cost that.
+    """
+    paths = [r["name"].split("::") for r in rows]
+    labels = []
+    for i, parts in enumerate(paths):
+        tail = parts
+        for k in range(1, len(parts) + 1):
+            tail = parts[-k:]
+            if all(other[-k:] != tail for j, other in enumerate(paths) if j != i):
+                break
+        labels.append("::".join(tail))
+    return labels
+
+
+def _elide(text):
+    """`text` shortened from the middle once it passes _DECK_LABEL_MAX.
+
+    From the middle rather than the end because both ends carry meaning here: the tail
+    is the deck's own name and the head is whatever parent _deck_labels kept to
+    disambiguate it. The row's tooltip holds the full path either way.
+    """
+    if len(text) <= _DECK_LABEL_MAX:
+        return text
+    head = (_DECK_LABEL_MAX - 1) // 2
+    return text[:head] + "…" + text[-(_DECK_LABEL_MAX - 1 - head):]
+
 
 class _DeckManagerDialog(QDialog):
     """Pick which decks sync and which fields are preserved, in one clean panel.
@@ -315,7 +364,7 @@ class _DeckManagerDialog(QDialog):
     confirmation when actually running it. Removed rather than kept as a duplicate.
     """
 
-    def __init__(self, parent, rows, protected, source, configured):
+    def __init__(self, parent, rows, protected, source, configured, source_failed=False):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Manage decks")
         self.setMinimumWidth(480)
@@ -330,7 +379,11 @@ class _DeckManagerDialog(QDialog):
 
         source_row = QHBoxLayout()
         source_label = QLabel(f"Source: {source}")
-        source_label.setStyleSheet(f"color: {colors()['muted']};")
+        # A source that didn't load reads in the warning colour, not the muted one every
+        # other value here carries: "error: …" in the same grey as a working source name
+        # is the line most easily mistaken for the source simply being called that.
+        role = "warning" if source_failed else "muted"
+        source_label.setStyleSheet(f"color: {colors()[role]};")
         source_row.addWidget(source_label)
         source_row.addWidget(link_button(
             "Change source" if configured else "Configure source",
@@ -362,8 +415,8 @@ class _DeckManagerDialog(QDialog):
             # The 230px floor only makes sense once there's a list to scroll: it gives
             # a few rows room before a scrollbar kicks in.
             scroll.setMinimumHeight(230)
-            for r in rows:
-                col.addWidget(self._deck_row(r))
+            for r, label in zip(rows, _deck_labels(rows)):
+                col.addWidget(self._deck_row(r, label))
             col.addStretch()
             scroll.setWidget(holder)
             outer.addWidget(scroll, 1)
@@ -403,7 +456,7 @@ class _DeckManagerDialog(QDialog):
         bb.rejected.connect(self.reject)
         outer.addWidget(bb)
 
-    def _deck_row(self, r):
+    def _deck_row(self, r, label):
         row = QFrame()
         row.setObjectName("deckRow")
         # The outline that makes each deck read as its own card rather than a line in a
@@ -414,8 +467,11 @@ class _DeckManagerDialog(QDialog):
                           " border-radius: 6px; }")
         h = QHBoxLayout(row)
         h.setContentsMargins(11, 8, 11, 8)
-        cb = QCheckBox(r["short"])
+        cb = QCheckBox(_elide(label))
         cb.setChecked(r["enabled"])
+        # The full path, always, whatever the row ended up showing: it is the only thing
+        # that names the deck exactly, and both the label rules above can shorten it.
+        cb.setToolTip(r["name"])
         cb.setStyleSheet("font-weight: 600;")
         self._checks[r["name"]] = cb
         h.addWidget(cb)
@@ -446,9 +502,9 @@ class _DeckManagerDialog(QDialog):
 
     def _request_change_source(self):
         # Close without treating this as a save or a plain cancel; the caller checks
-        # change_source_requested first and reopens this same dialog after the source
-        # configuration flow runs, so any in-progress checkbox/field edits here are
-        # simply discarded, same as a Cancel would do.
+        # change_source_requested first, carries the choices made here across, and
+        # reopens this same dialog against whatever the source is then. Changing the
+        # source is not a decision to throw away the ticks and fields already edited.
         self.change_source_requested = True
         self.reject()
 
@@ -460,13 +516,18 @@ class _DeckManagerDialog(QDialog):
 
 
 @_safe
-def manage_decks():
+def manage_decks(pending=None):
     """Open the deck manager: choose which decks sync, which fields are preserved, and
     which source to pull from.
 
     Never dead-ends on a missing or unreachable source; the dialog always opens, with
     an empty deck list and a "Configure source" / "Change source" button front and
     center, since that button is now the only way to reach deck-source configuration.
+
+    `pending` is {"excluded": [...], "protected": [...]} from a dialog that closed to
+    configure the source, and is how those edits survive the reopen below rather than
+    being thrown away by a click that never asked to discard them. Nothing else passes
+    it: the saved config is what a fresh open reads.
     """
     cfg = _cfg()
     manifest, source, error = None, None, None
@@ -478,26 +539,35 @@ def manage_decks():
             error = str(e)
     source_label = source if manifest else (f"error: {error}" if error else "not configured")
 
+    excluded = pending["excluded"] if pending else cfg["excluded"]
+    protected = pending["protected"] if pending else cfg["protected"]
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
-    rows = deck_status(manifest, installed, cfg["excluded"]) if manifest else []
+    rows = deck_status(manifest, installed, excluded) if manifest else []
 
-    dlg = _DeckManagerDialog(mw, rows, cfg["protected"], source_label,
-                             configured=bool(manifest))
+    # Whether a source is *set*, not whether it loaded: a broken repo or a folder that
+    # has moved is still configured, and offering to "Configure source" for one reads as
+    # though nothing had ever been set up.
+    dlg = _DeckManagerDialog(mw, rows, protected, source_label,
+                             configured=bool(cfg["gh_repo"] or cfg["decks_dir"]),
+                             source_failed=bool(error))
     result = dlg.exec()
+    change_source, update_now = dlg.change_source_requested, dlg.update_requested
+    choices = {"excluded": dlg.excluded_decks(), "protected": dlg.protected_fields()}
+    dlg.deleteLater()   # every read of it is above; see ui._ask_scrollable
 
-    if dlg.change_source_requested:
+    if change_source:
         configure_source()
-        manage_decks()   # reopen against whatever the source is now
+        manage_decks(choices)   # reopen against whatever the source is now
         return
     if not result:
         return   # cancelled
 
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
-    conf["excluded_decks"] = dlg.excluded_decks()
-    conf["protected_fields"] = dlg.protected_fields()
+    conf["excluded_decks"] = choices["excluded"]
+    conf["protected_fields"] = choices["protected"]
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
-    if dlg.update_requested:
+    if update_now:
         update_decks()
         return
     if not rows:
@@ -553,13 +623,18 @@ class _SettingsDialog(QDialog):
         self._interval_spin.setRange(AUTO_SYNC_INTERVAL_FLOOR_MIN, 1440)
         self._interval_spin.setValue(interval_minutes)
         self._interval_spin.setSuffix(" min")
+        # Nothing checks on an interval while auto-sync is off, so the control that sets
+        # one follows the checkbox rather than sitting there editable and inert.
+        self._interval_spin.setEnabled(auto_sync)
+        self._auto_sync_cb.toggled.connect(self._interval_spin.setEnabled)
         interval_row.addWidget(self._interval_spin)
         interval_row.addStretch()
         outer.addLayout(interval_row)
 
         outer.addWidget(hint_label(
-            "Changed decks apply without asking. A backup is still taken first, the "
-            "same as a manual sync."))
+            "Changed decks apply without asking, apart from a deck whose card template "
+            "or look changed, which is held back for a manual run. A backup is still "
+            "taken first, the same as a manual sync."))
 
         outer.addWidget(section_rule())
         outer.addWidget(section_label("Add-on updates"))
@@ -621,10 +696,12 @@ def open_settings():
     dlg = _SettingsDialog(mw, cfg["auto_sync_decks"], cfg["auto_sync_interval_minutes"],
                           cfg["notify_addon_updates"], cfg["auto_update_addon"],
                           cfg["dim_images_night_mode"], cfg["collect_feedback"])
-    if not dlg.exec():
+    saved = bool(dlg.exec())
+    values = dlg.values()
+    dlg.deleteLater()   # its controls are read above; see ui._ask_scrollable
+    if not saved:
         return
 
-    values = dlg.values()
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
     conf.update(values)
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
@@ -639,7 +716,7 @@ def open_settings():
         f"Deck sync checks every "
         f"{plural(values['auto_sync_interval_minutes'], 'minute')} and applies updates "
         "on its own." if values["auto_sync_decks"] else
-        "Deck sync stays manual, use Sync decks when you're ready.")
+        "Deck sync stays manual, use Update my decks when you're ready.")
     if values["auto_update_addon"]:
         update_line = "Add-on updates install automatically."
     elif values["notify_addon_updates"]:

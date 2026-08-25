@@ -166,6 +166,11 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     answered = bool(dlg.exec())
     if box is not None:
         checkbox["checked"] = box.isChecked()
+    # Parenting to mw hands Qt ownership, so without this every dialog a session opens
+    # stays alive until Anki quits, card rows and decoded pictures included. Deferred
+    # deletion rather than WA_DeleteOnClose: close runs before exec() returns, so that
+    # attribute would free the checkbox above out from under the line that reads it.
+    dlg.deleteLater()
     return answered
 
 
@@ -215,6 +220,9 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
         checkbox["checked"] = box.isChecked()
     if on_close is not None:
         on_close()
+    # After on_close, never before: that callback is the caller's last read of its own
+    # widgets, and this is what frees them (see _ask_scrollable for why not sooner).
+    dlg.deleteLater()
     return answered
 
 
@@ -306,24 +314,46 @@ def cancellable_progress(title, total):
     which case the caller must stop *before* starting that unit of work — every
     cancel point in this add-on sits between whole decks, never mid-import, so the
     collection is always left in a consistent, already-backed-up state.
+
+    `step.pump()` is that same check without the step: it repaints and processes
+    pending clicks, then reports whether Cancel is still un-clicked. It takes an
+    ignored positional argument so it can be handed straight to `net._http_get`'s
+    `on_chunk`, which is the whole reason it exists. Between two steps sits one deck's
+    download, a single blocking read during which nothing repaints, so Cancel could be
+    clicked and never processed; on a one-deck run that made the button decorative.
+    Pumping from inside the read fixes that without moving any cancel point: a False
+    return there aborts only the in-flight *download* (net raises DownloadCancelled,
+    before that deck's import has begun), and the import boundary stays exactly where it
+    was, so "never abort partway through an import" still holds.
+
+    Pumping runs arbitrary queued events, so it is only safe while nothing else can be
+    clicked: this dialog is WindowModal and parented to `mw`, which blocks input to the
+    main window and everything under it for as long as it is up.
     """
     dlg = QProgressDialog(title, "Cancel", 0, total, mw)
+    dlg.setWindowTitle(APP_NAME)
     dlg.setWindowModality(Qt.WindowModality.WindowModal)
     dlg.setMinimumDuration(0)
     dlg.setAutoClose(True)
     dlg.setValue(0)
 
+    def pump(_bytes_so_far=None):
+        QApplication.processEvents()
+        return not dlg.wasCanceled()
+
     def step(i, label):
         dlg.setLabelText(label)
         dlg.setValue(i - 1)
-        QApplication.processEvents()
-        return not dlg.wasCanceled()
+        return pump()
+
+    step.pump = pump
 
     try:
         yield step
     finally:
         dlg.setValue(total)
         dlg.close()
+        dlg.deleteLater()   # parented to mw, so closing alone leaves it behind
 
 
 # ------------------------------------------------------------------ widget helpers

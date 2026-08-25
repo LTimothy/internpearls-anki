@@ -227,7 +227,7 @@ def test_a_deck_row_chips_its_state_and_keeps_its_count_muted():
         panel = dialogs._DeckManagerDialog.__new__(dialogs._DeckManagerDialog)
         panel._checks = {}
         row = panel._deck_row({"name": f"Root::{state}", "short": state, "cards": 4,
-                               "enabled": True, "state": state})
+                               "enabled": True, "state": state}, state)
         return [n for n in walk(row.node()) if n.get("t") == "label"]
 
     texts = {state: [n["text"] for n in labels(state)]
@@ -237,6 +237,56 @@ def test_a_deck_row_chips_its_state_and_keeps_its_count_muted():
     assert texts["current"] == ["4 cards · Up to date"], "the resting row takes no chip"
     trailing = next(n for n in labels("current") if n["text"].startswith("4 cards"))
     assert palette.colors()["muted"] in trailing["style"]
+
+
+def _bare_deck_row(name, label):
+    """One deck row's checkbox node, built off a bare dialog instance the way the row
+    test above does, so a label rule can be checked without a source fetch."""
+    from internpearls import dialogs
+    panel = dialogs._DeckManagerDialog.__new__(dialogs._DeckManagerDialog)
+    panel._checks = {}
+    row = panel._deck_row({"name": name, "short": name.split("::")[-1], "cards": 1,
+                           "enabled": True, "state": "current"}, label)
+    return find(row.node(), t="check")
+
+
+def test_deck_labels_stay_leaf_names_until_two_decks_share_one():
+    """Prefixing every row with its parent path to cover the rare collision would cost
+    the common case its readable list of names."""
+    from internpearls import dialogs
+    rows = [{"name": "Cardiology::Basics"}, {"name": "Renal::Physiology"}]
+    assert dialogs._deck_labels(rows) == ["Basics", "Physiology"]
+    rows.append({"name": "Renal::Basics"})
+    assert dialogs._deck_labels(rows) == ["Cardiology::Basics", "Physiology",
+                                          "Renal::Basics"]
+
+
+def test_a_disambiguated_deck_label_takes_only_as_much_path_as_it_needs():
+    from internpearls import dialogs
+    rows = [{"name": "A::Blocks::Basics"}, {"name": "B::Blocks::Basics"},
+            {"name": "A::Airway::Basics"}]
+    assert dialogs._deck_labels(rows) == ["A::Blocks::Basics", "B::Blocks::Basics",
+                                          "Airway::Basics"]
+
+
+def test_a_deck_row_carries_its_full_path_as_a_tooltip():
+    """Whatever the row ended up showing, the deck is named exactly somewhere: the leaf
+    alone is ambiguous and a long label is elided."""
+    check = _bare_deck_row("Intern Pearls::Intern Custom::Pharm", "Pharm")
+    assert check["label"] == "Pharm"
+    assert check["tooltip"] == "Intern Pearls::Intern Custom::Pharm"
+
+
+def test_a_very_long_deck_label_is_elided_rather_than_widening_the_dialog():
+    from internpearls import dialogs
+    long_name = "Regional::" + "Ultrasound guided lower limb blocks in detail"
+    check = _bare_deck_row(long_name, long_name)
+    assert len(check["label"]) <= dialogs._DECK_LABEL_MAX
+    assert "…" in check["label"]
+    # Elided from the middle: both ends carry meaning, the parent that disambiguates it
+    # and the deck's own name.
+    assert check["label"].startswith("Regional::") and check["label"].endswith("detail")
+    assert check["tooltip"] == long_name
 
 
 def test_manage_decks_source_label_uses_the_palette_not_a_css_keyword(anki, tmp_path):
@@ -256,6 +306,115 @@ def test_manage_decks_source_label_uses_the_palette_not_a_css_keyword(anki, tmp_
         return {"events": [{"id": cancel["id"], "click": True}]}
 
     drive(anki, dialogs.manage_decks, respond)
+
+
+def test_manage_decks_calls_a_broken_source_an_error_and_still_offers_to_change_it(
+        anki, tmp_path):
+    """A configured source that won't load is still configured. It used to read in the
+    same muted grey as a working source's name (so "error: …" looked like what the
+    source was called) under a button offering to "Configure source", as though nothing
+    had ever been set up.
+    """
+    from internpearls import dialogs, palette
+    anki.mw._config = {"decks_dir": str(tmp_path / "not-there")}
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        source_label = next(n for n in walk(p["tree"])
+                            if n.get("t") == "label"
+                            and (n.get("text") or "").startswith("Source:"))
+        assert "error:" in source_label["text"]
+        assert palette.colors()["warning"] in source_label["style"]
+        assert find(p["tree"], t="button", label="Change source")
+        assert not find(p["tree"], t="button", label="Configure source")
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+
+
+def test_manage_decks_offers_to_configure_a_source_when_none_is_set(anki):
+    """The other half of the rule above: nothing configured is the one case that reads
+    as a setup step, and its line is the ordinary muted value, not an error."""
+    from internpearls import dialogs, palette
+
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        source_label = next(n for n in walk(p["tree"])
+                            if n.get("t") == "label"
+                            and (n.get("text") or "").startswith("Source:"))
+        assert source_label["text"] == "Source: not configured"
+        assert palette.colors()["muted"] in source_label["style"]
+        assert find(p["tree"], t="button", label="Configure source")
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+
+
+def test_change_source_keeps_the_edits_made_before_it(anki, tmp_path):
+    """Changing where decks come from is not a decision to discard the ticks and fields
+    already edited: the reopened dialog used to come back at the saved config, silently
+    losing them."""
+    from internpearls import dialogs
+    anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    anki.gui.interactive = True
+    seen = []
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}   # the saved-settings info box at the end
+        if find(p["tree"], t="button", label="Try the example deck"):
+            return _pick_source(p["tree"], "Cancel")   # leave the source as it was
+        check = find(p["tree"], t="check")
+        fields = find(p["tree"], t="line")
+        seen.append((check["checked"], fields["value"]))
+        if len(seen) == 1:
+            change = find(p["tree"], t="button", label="Change source")
+            return {"events": [{"id": check["id"], "value": False},
+                               {"id": fields["id"], "value": "Notes, Extra"},
+                               {"id": change["id"], "click": True}]}
+        save = find(p["tree"], t="button", label="Save")
+        return {"events": [{"id": save["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+    assert seen[0] == (True, "Notes")
+    assert seen[1] == (False, "Notes, Extra"), \
+        "the reopened dialog came back at the saved config, dropping the edits"
+    cfg = anki.mw._config
+    assert cfg["excluded_decks"] == ["Intern Pearls::Intern Custom::Pharm"]
+    assert cfg["protected_fields"] == ["Notes", "Extra"]
+
+
+# ------------------------------------------------------------------ dialog lifetime
+def test_a_finished_flow_releases_every_dialog_it_opened(anki, tmp_path):
+    """Every dialog here is built with mw as its parent, so Qt owns it for the rest of
+    the session unless something asks for it to go: an update screen's thousands of card
+    rows and decoded pictures accumulate per run otherwise. Each wrapper releases its own
+    dialog once the state on it has been read.
+    """
+    from internpearls import dialogs
+    anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            btn = (find(p["tree"], t="button", label="Save and update now")
+                   or find(p["tree"], t="button", label="Update")
+                   or find(p["tree"], t="button", label="OK"))
+            return {"events": [{"id": btn["id"], "click": True}]}
+        return {}
+
+    drive(anki, dialogs.manage_decks, respond)
+    opened = [w for w in mock_anki._widgets.values()
+              if isinstance(w, mock_anki.QDialog)]
+    assert opened, "the flow opened no dialog at all"
+    assert all(d.deleted for d in opened), (
+        "a dialog was left parented to mw with nothing ever asking for it to go: "
+        + ", ".join(sorted({d._title for d in opened if not d.deleted})))
 
 
 # --------------------------------------------------------------------- settings
@@ -300,6 +459,69 @@ def test_settings_saves_dim_images_toggle(anki):
     drive(anki, dialogs.open_settings, respond)
     cfg = anki.mw._config
     assert cfg["dim_images_night_mode"] is True
+
+
+def test_the_interval_spinbox_follows_the_auto_sync_checkbox(anki):
+    """Nothing checks on an interval while auto-sync is off, so the control that sets one
+    must not sit there editable and inert. Driven across several rounds of the same
+    dialog (a response with no click leaves it open), which is what shows the link is
+    live rather than only right at build time.
+    """
+    from internpearls import dialogs
+    anki.gui.interactive = True
+    enabled = []
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}   # the saved-settings info box at the end
+        auto = find(p["tree"], t="check",
+                    label="Sync decks automatically when updates are available")
+        spin = find(p["tree"], t="spin")
+        enabled.append(spin["enabled"])
+        if len(enabled) < 3:
+            return {"events": [{"id": auto["id"], "value": len(enabled) == 1}]}
+        save = find(p["tree"], t="button", label="Save")
+        return {"events": [{"id": save["id"], "click": True}]}
+
+    drive(anki, dialogs.open_settings, respond)
+    assert enabled == [False, True, False], (
+        "the interval spinbox does not track the auto-sync checkbox")
+
+
+def test_the_auto_sync_hint_says_a_template_change_still_waits_for_a_manual_run(anki):
+    """The one thing auto-sync never applies unattended is a card-template change, which
+    the README treats as the toggle's key safety property. A hint promising only that
+    changed decks apply without asking leaves that out."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        text = " ".join(n.get("text") or "" for n in walk(p["tree"])
+                        if n.get("t") == "label")
+        assert "held back for a manual run" in text
+        assert "backup is still taken first" in text
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.open_settings, respond)
+
+
+def test_saving_manual_deck_sync_steers_to_update_my_decks(anki):
+    """Manage decks' equivalent line already points at Update my decks, the one-click
+    front door; this one pointed at Sync decks, an Advanced submenu item that runs half
+    of it."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": save["id"], "click": True}]}
+        assert "Update my decks" in p["text"] and "Sync decks" not in p["text"]
+        return {}
+
+    drive(anki, dialogs.open_settings, respond)
 
 
 def test_card_feedback_is_off_by_default(anki):
@@ -413,6 +635,47 @@ def test_configure_source_switching_to_local_folder_clears_repo_and_keeps_token(
     assert cfg["decks_dir"] == path
     assert cfg["github_decks_repo"] == ""
     assert cfg["github_token"] == "test-token-abc123"
+
+
+def test_local_folder_is_picked_not_typed_and_opens_at_the_current_one(anki, tmp_path,
+                                                                      monkeypatch):
+    """A folder that doesn't exist is the one source error a typed path invites, and it
+    surfaces later as a broken source rather than at the moment it is entered."""
+    from internpearls import dialogs
+    path = _write_source(tmp_path)
+    anki.mw._config = {"decks_dir": "/a/folder/from/last/time"}
+    anki.gui.interactive = True
+    opened_at = []
+
+    class _Picker:
+        @staticmethod
+        def getExistingDirectory(parent=None, caption="", directory="", *a, **k):
+            opened_at.append(directory)
+            return path
+
+    monkeypatch.setattr(dialogs, "QFileDialog", _Picker)
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            return _pick_source(p["tree"], "Local folder")
+        assert p["kind"] == "info" and "Saved and connected" in p["text"]
+        return {}
+
+    drive(anki, dialogs.configure_source, respond)
+    assert opened_at and opened_at[-1] == "/a/folder/from/last/time", \
+        "the picker must open at the folder already configured"
+    assert anki.mw._config["decks_dir"] == path
+
+
+def test_the_mock_directory_picker_answers_through_the_prompt_payload():
+    """What keeps the live demo working: it has no native picker either, so the mock's
+    stand-in comes back through the same prompt payload the demo already draws, and a
+    cancelled pick reads as an empty path."""
+    from aqt.qt import QFileDialog
+    import mock_anki as m
+    m._gui.file_picks = []
+    m._gui.interactive = False
+    assert QFileDialog.getExistingDirectory(None, "Pick a folder", "/seed") == ""
 
 
 def test_configure_source_message_uses_the_palette_not_a_css_keyword(anki):

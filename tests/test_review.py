@@ -811,6 +811,43 @@ def test_list_body_skips_fixed_text_it_was_given_none_of():
     assert not [c for c in bare._layout._children if isinstance(c, QLabel)]
 
 
+# ---------------------------------------------------------------------- the caret
+def _caret_widget(row):
+    """The row's expander, as the live widget rather than its node: the accessible name
+    is not something a rendered node carries."""
+    return next(w for w in _walk_widgets(row)
+                if getattr(w, "text", None) and w.text() in (review._CARET_CLOSED,
+                                                             review._CARET_OPEN))
+
+
+def _walk_widgets(root):
+    seen, stack, out = set(), [root], []
+    while stack:
+        w = stack.pop()
+        if id(w) in seen:
+            continue
+        seen.add(id(w))
+        out.append(w)
+        stack.extend(v for v in vars(w).values() if hasattr(v, "wid"))
+        layout = getattr(w, "_layout", None)
+        if layout is not None:
+            stack.extend(getattr(layout, "_children", []) or [])
+    return out
+
+
+def test_the_caret_says_what_it_does_rather_than_only_drawing_a_glyph():
+    """"▸" is the whole of what a screen reader had to go on, and a hovering reader got
+    nothing at all. The name tracks the direction, since that is the only other thing on
+    the row saying which way the click goes."""
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, False)
+    caret = _caret_widget(row)
+    assert caret._accessible == "Show card" and caret._tooltip == "Show card"
+    caret.clicked.emit()
+    assert caret._accessible == "Hide card" and caret._tooltip == "Hide card"
+    caret.clicked.emit()
+    assert caret._accessible == "Show card"
+
+
 # ------------------------------------------------------------------ mock Qt surface
 def test_the_mock_qt_provides_the_qimage_review_reads_widths_from():
     """review.py reads an extracted file's natural width to cap it. The mock has to
