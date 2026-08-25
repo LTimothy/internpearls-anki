@@ -657,6 +657,125 @@ def test_a_finished_flow_releases_every_dialog_it_opened(anki, tmp_path):
         + ", ".join(sorted({d._title for d in opened if not d.deleted})))
 
 
+# ------------------------------------------------------------------ declined cards
+def _snapshot_declined_dialog(anki):
+    """Open Declined cards, capture its first rendered tree, then close it."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+    captured = {}
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        captured.setdefault("tree", p["tree"])
+        close = find(p["tree"], t="button", label="Close")
+        return {"events": [{"id": close["id"], "click": True}]}
+
+    drive(anki, dialogs.open_declined_cards, respond)
+    return captured["tree"]
+
+
+def _snapshot_manage_decks(anki):
+    """Open Manage decks, capture its first rendered tree, then cancel out."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+    captured = {}
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        captured.setdefault("tree", p["tree"])
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+    return captured["tree"]
+
+
+def _drive_declined_offer_again(anki, guid):
+    """Open Declined cards, click the Offer again button for `guid`, then close."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+    clicked = {"done": False}
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        if not clicked["done"]:
+            clicked["done"] = True
+            btn = find(p["tree"], t="button", label="Offer again", accessible=guid)
+            return {"events": [{"id": btn["id"], "click": True}]}
+        close = find(p["tree"], t="button", label="Close")
+        return {"events": [{"id": close["id"], "click": True}]}
+
+    drive(anki, dialogs.open_declined_cards, respond)
+
+
+def _write_installed(anki, data):
+    from internpearls.config import INSTALLED, _save_json
+    _save_json(INSTALLED, data)
+
+
+def _all_text(tree):
+    """Every "text" (QLabel) and "label" (QPushButton) string anywhere in the tree,
+    joined into one blob so a caller can check substrings ("Declined cards (1)" is
+    part of a button labelled "Declined cards (1)...") as well as whole strings."""
+    out = []
+    for n in walk(tree):
+        for key in ("text", "label"):
+            if n.get(key) is not None:
+                out.append(n[key])
+    return "\n".join(out)
+
+
+def test_declined_dialog_lists_entries_grouped_by_state(anki):
+    from internpearls import config
+    config.save_declined({
+        "g1": {"state": "never", "front": "front a", "deck": "IP::A",
+               "decided": "2026-08-01", "hash": ""},
+        "g2": {"state": "skip", "front": "front b", "deck": "IP::A",
+               "decided": "2026-08-02", "hash": ""}})
+    tree = _snapshot_declined_dialog(anki)
+    texts = _all_text(tree)
+    assert "Never imported" in texts and "front a" in texts
+    assert "Skipped for now" in texts and "front b" in texts
+
+
+def test_offer_again_removes_the_entry_and_invalidates_the_deck(anki):
+    from internpearls import config, sync
+    config.save_declined({
+        "g1": {"state": "never", "front": "front a", "deck": "IP::A",
+               "decided": "2026-08-01", "hash": ""}})
+    _write_installed(anki, {"IP::A": "1.0"})
+    _drive_declined_offer_again(anki, "g1")
+    assert config.load_declined() == {}
+    assert "IP::A" not in json.load(open(sync.INSTALLED))
+
+
+def test_manage_decks_names_the_declined_count(anki):
+    from internpearls import config
+    config.save_declined({"g1": {"state": "skip", "front": "f", "deck": "IP::A",
+                                 "decided": "2026-08-01", "hash": ""}})
+    tree = _snapshot_manage_decks(anki)
+    assert "Declined cards (1)" in _all_text(tree)
+
+
+def test_declined_dialog_empty_state(anki):
+    tree = _snapshot_declined_dialog(anki)
+    assert "You haven't declined any cards." in _all_text(tree)
+
+
+def test_declined_dialog_degrades_a_malformed_entry_instead_of_crashing(anki):
+    """A hand-edited declined.json can carry a garbage value or an unrecognized state;
+    neither should crash the dialog, just leave that row out."""
+    from internpearls import config
+    config.save_declined({
+        "g1": "not a dict",
+        "g2": {"state": "future-state", "front": "front c", "deck": "IP::A",
+               "decided": "2026-08-03", "hash": ""}})
+    tree = _snapshot_declined_dialog(anki)
+    texts = _all_text(tree)
+    assert "front c" not in texts
+    assert "You haven't declined any cards." in texts
+
+
 # --------------------------------------------------------------------- settings
 def test_settings_saves_all_four_values(anki):
     from internpearls import dialogs
