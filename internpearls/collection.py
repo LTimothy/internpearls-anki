@@ -922,16 +922,13 @@ def notetype_changes(src, her, aliases, scope_tag):
     return plan_notetype_changes(by_her, _her_note_types(scope_tag), TARGET_FIELDS)
 
 
-def _apply_deck(src, aliases, her, declined=frozenset()):
-    """Import one deck, returning (in_place, as_new, touched) where `touched` is the
-    guids this import wrote in her collection: the remapped guid where a note matched
-    one of hers, the .apkg's own otherwise. _capture_shipped needs exactly that set.
+def _declined_drop(src, remap, her, declined, in_place, as_new):
+    """The rids to drop for a decline, plus `touched` and `in_place`/`as_new`
+    corrected to exclude them. `remap` is mutated in place (a dropped note's remap
+    entry removed), so a drop always wins over a remap for the same note.
 
-    `declined` is the decline registry's guids; matching notes are dropped from the
-    scratch package before Anki sees it, so a skipped or never-imported card never
-    lands and a kept-back card's collection copy is never overwritten. Dropped notes
-    are excluded from the counts and from `touched`."""
-    remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
+    Shared by `_apply_deck` and `import_single`, so a decline filters identically
+    whichever path a deck lands in the collection through."""
     drop, touched = set(), set()
     for rid, _f, guid in apkg_notes(src):
         final = remap.get(rid, guid)
@@ -943,6 +940,21 @@ def _apply_deck(src, aliases, her, declined=frozenset()):
                 as_new -= 1
         else:
             touched.add(final)
+    return drop, touched, in_place, as_new
+
+
+def _apply_deck(src, aliases, her, declined=frozenset()):
+    """Import one deck, returning (in_place, as_new, touched) where `touched` is the
+    guids this import wrote in her collection: the remapped guid where a note matched
+    one of hers, the .apkg's own otherwise. _capture_shipped needs exactly that set.
+
+    `declined` is the decline registry's guids; matching notes are dropped from the
+    scratch package before Anki sees it, so a skipped or never-imported card never
+    lands and a kept-back card's collection copy is never overwritten. Dropped notes
+    are excluded from the counts and from `touched`."""
+    remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
+    drop, touched, in_place, as_new = _declined_drop(src, remap, her, declined,
+                                                       in_place, as_new)
     # A unique name in the system temp directory, rather than a fixed one derived from
     # `src` (two runs can otherwise write and import through the same path, and on a
     # shared machine that path is predictable enough to be pre-created as a symlink) or
