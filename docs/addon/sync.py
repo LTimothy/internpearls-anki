@@ -1551,7 +1551,7 @@ def update_decks():
     # line hanging above the list on the runs where it is the only thing here.
     top_html = "<br><br>".join(b for b in [catch_up_note] + sections if b)
     body, _boxes, flush = build_update_body(
-        items, sources, flags, new_index, cfg["collect_feedback"], top_html,
+        items, sources, flags, new_index, {}, top_html,
         _flagged_line, safety_note)
 
     # "Update" only when there is content to update. With nothing pending but retired

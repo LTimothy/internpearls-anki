@@ -75,7 +75,7 @@ def test_update_screen_opens_fast_with_thousands_of_cards_pending():
     start = time.perf_counter()
     try:
         body, _boxes, flush = review.build_update_body(
-            items, {}, flags, new_index, False,
+            items, {}, flags, new_index, {},
             f"<b>{_PENDING}</b> pending cards", lambda: "", "safety note")
         _ask_with_widget(body, yes_label="Update")
     finally:
