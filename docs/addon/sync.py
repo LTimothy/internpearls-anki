@@ -1481,7 +1481,9 @@ def update_decks():
         "by card, not overwritten). Archived cards keep their history too and can "
         "be brought back anytime by unsuspending them or moving them out of the "
         "Retired deck, nothing here is ever deleted. A backup is taken "
-        "automatically first.")
+        "automatically first. Skipped cards come back next update, already marked. "
+        "Cards you never import can be restored under Manage decks > Declined "
+        "cards.")
 
     # {"skip": "...", "keep": "...", "never": "..."} counts, read off `decisions` below
     # (defined just ahead of build_update_body): a row's own control words, not the
