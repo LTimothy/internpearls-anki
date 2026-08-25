@@ -1830,3 +1830,71 @@ def test_empty_cards_dialog_rows_report_the_notes_left_alone():
         skipped=2)
     assert "<b>2 notes</b>" in tail and "delete the note itself" in tail
     assert not tail.startswith("<br>"), "the tail is its own paragraph now"
+
+
+# ------------------------------------------------------------------ decline support
+def test_note_fields_hash_is_stable_and_field_sensitive():
+    a = logic.note_fields_hash(["front", "back"])
+    assert a == logic.note_fields_hash(["front", "back"])
+    assert a != logic.note_fields_hash(["front", "different back"])
+    assert len(a) == 16
+    int(a, 16)   # hex
+
+
+def test_write_personalized_drops_declined_notes(tmp_path):
+    src, out = str(tmp_path / "src.apkg"), str(tmp_path / "out.apkg")
+    _make_mock_apkg(src, [(1, "guid-a", "front a"), (2, "guid-b", "front b")])
+    logic.write_personalized(src, {}, out, drop={2})
+    kept = logic.apkg_notes(out)
+    assert [g for _, _, g in kept] == ["guid-a"]
+
+
+def test_write_personalized_drop_wins_over_remap(tmp_path):
+    src, out = str(tmp_path / "src.apkg"), str(tmp_path / "out.apkg")
+    _make_mock_apkg(src, [(1, "guid-a", "front a")])
+    logic.write_personalized(src, {1: "her-guid"}, out, drop={1})
+    assert logic.apkg_notes(out) == []
+
+
+def test_write_personalized_drop_removes_cards_rows_too(tmp_path):
+    src, out = str(tmp_path / "src.apkg"), str(tmp_path / "out.apkg")
+    _make_mock_apkg(src, [(1, "guid-a", "front a"), (2, "guid-b", "front b")])
+    # Graft a cards table onto the mock package, two cards per note (cloze siblings).
+    import shutil, sqlite3, zipfile
+    work = str(tmp_path / "work")
+    with zipfile.ZipFile(src) as z:
+        z.extractall(work)
+    con = sqlite3.connect(os.path.join(work, "collection.anki2"))
+    con.execute("create table cards (id integer primary key, nid integer)")
+    con.executemany("insert into cards (id, nid) values (?, ?)",
+                    [(10, 1), (11, 1), (20, 2), (21, 2)])
+    con.commit()
+    con.close()
+    with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in os.listdir(work):
+            z.write(os.path.join(work, f), f)
+    logic.write_personalized(src, {}, out, drop={1})
+    with zipfile.ZipFile(out) as z:
+        z.extract("collection.anki2", str(tmp_path / "check"))
+    con = sqlite3.connect(str(tmp_path / "check" / "collection.anki2"))
+    assert [r[0] for r in con.execute("select nid from cards order by id")] == [2, 2]
+    con.close()
+
+
+def test_prune_declined_drops_retired_and_vanished_entries():
+    reg = {
+        "g-retired":  {"state": "never", "deck": "IP::A", "front": "x"},
+        "g-vanished": {"state": "skip",  "deck": "IP::A", "front": "y"},
+        "g-alive":    {"state": "skip",  "deck": "IP::A", "front": "z"},
+        "g-unseen":   {"state": "keep",  "deck": "IP::B", "front": "w"},
+    }
+    changed = logic.prune_declined(
+        reg, retired_guids={"g-retired"},
+        seen={"IP::A": {"g-alive"}})   # IP::B was not downloaded this run
+    assert changed is True
+    assert set(reg) == {"g-alive", "g-unseen"}
+
+
+def test_prune_declined_reports_no_change():
+    reg = {"g": {"state": "skip", "deck": "IP::A", "front": "z"}}
+    assert logic.prune_declined(reg, set(), {"IP::A": {"g"}}) is False

@@ -5,6 +5,7 @@ environment needed. If a function starts needing mw/col, it belongs in __init__.
 instead, not here.
 """
 import contextlib
+import hashlib
 import html
 import json
 import os
@@ -689,10 +690,32 @@ def changed_templates(incoming, existing):
             if name in existing and existing[name] != shape]
 
 
-def write_personalized(src, remap, out):
-    """Copy the .apkg at `src` to `out`, rewriting note GUIDs per `remap`.
+def note_fields_hash(fields):
+    """A short stable digest of a note's field values, for the declined-card
+    registry's changed-since-you-declined cue. 16 hex chars is plenty: collisions
+    only ever cost one missing cue, never a wrong import."""
+    return hashlib.sha256(FS.join(fields).encode("utf8")).hexdigest()[:16]
+
+
+def prune_declined(reg, retired_guids, seen):
+    """Drop registry entries that are moot: the note was retired upstream, or it is
+    gone from its deck's current package. `seen` covers only decks actually
+    downloaded this run, so an entry for a deck not in `seen` is never judged for
+    absence. Mutates `reg`; returns whether anything was removed."""
+    dead = [g for g, e in reg.items()
+            if g in retired_guids
+            or (e.get("deck") in seen and g not in seen[e["deck"]])]
+    for g in dead:
+        del reg[g]
+    return bool(dead)
+
+
+def write_personalized(src, remap, out, drop=frozenset()):
+    """Copy the .apkg at `src` to `out`, rewriting note GUIDs per `remap` and dropping declined notes.
 
     `remap` is {note_id: new_guid}. Notes not in `remap` are left untouched.
+    `drop` is a set of note ids to remove entirely, notes and their cards rows both;
+    a drop always wins over a remap for the same id.
 
     Legacy format only, and it refuses a newer one rather than doing nothing quietly.
     Anki reads a modern package's collection.anki21b, so rewriting the collection.anki2
@@ -708,7 +731,18 @@ def write_personalized(src, remap, out):
                 raise RuntimeError(NEWER_APKG_ERROR)
             z.extractall(d)
         con = sqlite3.connect(os.path.join(d, "collection.anki2"))
+        drop = set(drop)
+        if drop:
+            marks = ",".join("?" * len(drop))
+            con.execute(f"delete from notes where id in ({marks})", tuple(drop))
+            has_cards = con.execute(
+                "select 1 from sqlite_master where type='table' and name='cards'"
+            ).fetchone()
+            if has_cards:
+                con.execute(f"delete from cards where nid in ({marks})", tuple(drop))
         for rid, g in remap.items():
+            if rid in drop:
+                continue
             con.execute("update notes set guid=? where id=?", (g, rid))
         con.commit()
         con.close()
