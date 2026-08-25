@@ -1038,6 +1038,14 @@ class _Layout:
         child = self._children[i]
         return _LayoutItem(child if isinstance(child, QWidget) else None)
 
+    def takeAt(self, i):
+        """Like itemAt, but also removes the child: dialogs._DeclinedDialog._rebuild()
+        clears and repopulates its list this way, same as real Qt."""
+        if not 0 <= i < len(self._children):
+            return None
+        child = self._children.pop(i)
+        return _LayoutItem(child if isinstance(child, QWidget) else None)
+
     def addLayout(self, l):
         self._children.append(l)
 

@@ -9,14 +9,15 @@ from aqt.qt import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
                     Qt, QVBoxLayout, QWidget)
 
 from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
-from .collection import installed_matching_collection
+from .collection import installed_matching_collection, invalidate_installed
 from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, EXAMPLE_DECK_NAME, EXAMPLE_REPO,
-                     EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, STATE, _cfg, _load_json)
+                     EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, STATE, _cfg, _load_json,
+                     load_declined, save_declined)
 from .logic import (deck_status, manifest_scope_suggestion, parse_fields,
                     plural, version_at_least)
 from .palette import colors
-from .review import append_rows, build_list_body
+from .review import _scrolled, append_rows, build_list_body
 from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _safe, _warn,
                  hint_label, link_button, muted_label, section_label, section_rule,
@@ -523,6 +524,10 @@ class _DeckManagerDialog(QDialog):
         outer.addSpacing(10)
 
         bb = QDialogButtonBox()
+        n = len(load_declined())
+        declined_label = f"Declined cards ({n})..." if n else "Declined cards..."
+        declined_btn = bb.addButton(declined_label, QDialogButtonBox.ButtonRole.ActionRole)
+        declined_btn.clicked.connect(lambda: open_declined_cards())
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
         update = bb.addButton("Save and update now", QDialogButtonBox.ButtonRole.ApplyRole)
         bb.addButton(QDialogButtonBox.StandardButton.Cancel)
@@ -702,6 +707,115 @@ def manage_decks(pending=None):
                 "next time to do both at once).")
     _info(f"Saved. {scope}, preserving {', '.join(conf['protected_fields'])}."
           f"<br><br>{next_step}")
+
+
+# --------------------------------------------------------------- declined cards
+# The order groups render in, and each state's heading. Only non-empty groups render;
+# never-imported leads because it is the strongest signal (skip and keep-my-version are
+# both softer, "not this time" decisions).
+_DECLINE_GROUPS = (("never", "Never imported"), ("skip", "Skipped for now"),
+                   ("keep", "Kept your version"))
+
+# Matches _SCOPE_DIALOG_H's role above: a floor a short list opens at, and a cap a long
+# one scrolls past rather than growing the dialog past the screen.
+_DECLINED_LIST_H = 340
+
+
+class _DeclinedDialog(QDialog):
+    """Every card the learner has turned away, grouped by why, with a way to undo it.
+
+    Sync only ever adds, so a declined entry is the one thing standing between a card
+    and being offered again; this is where that decision is visible and reversible.
+    Offer again forgets the entry and drops its deck from installed.json (see
+    collection.invalidate_installed), so the next Update my decks treats the deck as
+    changed and re-offers the card. It never touches the collection itself: a kept-back
+    card the learner already has stays exactly as she left it.
+
+    Reads and writes the registry directly rather than caching it on the instance, so
+    _rebuild() always reflects whatever _offer_again() just changed.
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME}: Declined cards")
+        self.setMinimumWidth(480)
+
+        outer = QVBoxLayout(self)
+        outer.setSpacing(10)
+        outer.addWidget(title_label("Declined cards"))
+
+        holder = QWidget()
+        self._list_lay = QVBoxLayout(holder)
+        self._list_lay.setContentsMargins(0, 0, 6, 0)
+        self._list_lay.setSpacing(8)
+        outer.addWidget(_scrolled(holder, _DECLINED_LIST_H), 1)
+
+        bb = QDialogButtonBox()
+        close = bb.addButton("Close", QDialogButtonBox.ButtonRole.AcceptRole)
+        close.clicked.connect(self.accept)
+        outer.addWidget(bb)
+
+        self._rebuild()
+
+    def _row(self, guid, entry):
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        primary = QLabel(entry.get("front") or "")
+        primary.setWordWrap(True)
+        h.addWidget(primary, 1)
+        leaf = (entry.get("deck") or "").split("::")[-1]
+        h.addWidget(muted_label(f"{leaf} · {entry.get('decided') or ''}"))
+        btn = QPushButton("Offer again")
+        btn.setAccessibleName(guid)
+        btn.clicked.connect(lambda _=False, g=guid: self._offer_again(g))
+        h.addWidget(btn)
+        return row
+
+    def _offer_again(self, guid):
+        reg = load_declined()
+        entry = reg.pop(guid, None)
+        if entry:
+            save_declined(reg)
+            if entry.get("deck"):
+                invalidate_installed([entry["deck"]])
+        self._rebuild()
+
+    def _rebuild(self):
+        while self._list_lay.count():
+            item = self._list_lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        # Malformed entries (a hand-edited file) degrade per-row rather than crashing
+        # the dialog: anything that isn't a dict, or whose state matches no known group,
+        # is silently left out rather than shown half-broken.
+        grouped = {}
+        for guid, entry in load_declined().items():
+            if isinstance(entry, dict):
+                grouped.setdefault(entry.get("state"), []).append((guid, entry))
+
+        any_rows = False
+        for state, heading in _DECLINE_GROUPS:
+            rows = grouped.get(state)
+            if not rows:
+                continue
+            any_rows = True
+            self._list_lay.addWidget(section_label(heading, top_margin=8))
+            for guid, entry in rows:
+                self._list_lay.addWidget(self._row(guid, entry))
+        if not any_rows:
+            self._list_lay.addWidget(muted_label("You haven't declined any cards."))
+
+
+@_safe
+def open_declined_cards():
+    """Open Declined cards: every never-imported, skipped, or kept-back card, grouped
+    by that choice, each with an Offer again button."""
+    dlg = _DeclinedDialog(mw)
+    dlg.exec()
+    dlg.deleteLater()   # parented to mw otherwise, which owns it until Anki quits
 
 
 class _SettingsDialog(QDialog):
