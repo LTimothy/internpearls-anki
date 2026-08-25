@@ -377,11 +377,26 @@
         el.className = "qbuttons";
         for (const c of node.children) el.appendChild(renderTree(c, ctx));
         return el;
-      case "scroll":
+      case "scroll": {
         el = document.createElement("div");
         el.className = "scrollbox";
         for (const c of node.children) el.appendChild(renderTree(c, ctx));
+        // StreamingList (widgets.py) only ever builds its first batch under the
+        // mock: nothing here calls resizeEvent, and the scrollbar's own geometry
+        // is always zero, so the extend-on-scroll path it relies on in real Qt
+        // never fires. Rather than silently show a partial list as if it were
+        // complete, ask the real widget how much of itself it actually built.
+        const progress = JSON.parse(H.list_progress(node.id));
+        if (progress && progress.total > progress.shown) {
+          const more = document.createElement("div");
+          more.style.cssText = "padding:8px 4px;color:var(--muted);" +
+            "font-size:12px;text-align:center";
+          more.textContent = (progress.total - progress.shown) +
+            " more not shown in this demo (list building is streamed in real Anki)";
+          el.appendChild(more);
+        }
         return el;
+      }
       case "frame":
         el = document.createElement("div");
         el.className = "qframe";
@@ -397,6 +412,12 @@
         el = document.createElement("div");
         el.className = node.t === "row" ? "hstack" : "vstack";
         for (const c of node.children) el.appendChild(renderTree(c, ctx));
+        // A "box" node is the only shape carrying `visible` (QWidget.node() in
+        // mock_anki.py); a card row's collapsed body (review._card_row's `body`)
+        // sets it false. Hidden, not skipped: children like the feedback textarea
+        // still join ctx.inputs, so a note typed while a row was open survives it
+        // being collapsed again before Update is clicked.
+        if (node.visible === false) el.style.display = "none";
         return el;
       }
       default:

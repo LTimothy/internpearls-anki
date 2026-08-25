@@ -7,6 +7,7 @@ compose these; nothing here fetches from the network.
 """
 import datetime
 import os
+import re
 import tempfile
 
 from aqt import mw
@@ -20,7 +21,7 @@ from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
                     note_display_label, plan_notetype_changes, plural, remap_cards,
                     select_empty_cards, write_personalized)
 from .review import _CONFIRM_HEIGHT, append_rows, build_list_body, show_result
-from .ui import _ask, _ask_with_widget, _info, _safe, _warn
+from .ui import _ask, _ask_with_widget, _info, _manual_flow, _safe, _warn
 
 
 def _ensure_notetypes():
@@ -119,10 +120,42 @@ def _export_deck_to(path, deck_name):
     deck_id = mw.col.decks.id_for_name(deck_name)
     if deck_id is None:
         raise RuntimeError(f"Couldn't find the {deck_name} deck in this collection.")
+    # legacy=True on purpose. A modern package holds its collection in a zstd-compressed
+    # member, and zstandard is not stdlib and Anki does not ship it, so every reader in
+    # this add-on (logic._apkg_db, and everything built on it) refuses one. A backup
+    # written in that format is therefore unreadable to the very code meant to use it:
+    # import_deck's scoped invalidation always falls back to clearing everything, and
+    # Import single deck can't take one at all. The legacy format costs some file size
+    # and reads everywhere.
     opts = ExportAnkiPackageOptions(
-        with_scheduling=True, with_deck_configs=True, with_media=True, legacy=False)
+        with_scheduling=True, with_deck_configs=True, with_media=True, legacy=True)
     return mw.col.export_anki_package(
         out_path=path, options=opts, limit=DeckIdLimit(deck_id=deck_id))
+
+
+# Every automatic deck backup's filename starts with this, so a prune can tell its own
+# files from anything else sitting in the folder (an export someone dropped there).
+_BACKUP_PREFIX = "Intern Pearls "
+
+
+def _backup_label(label):
+    """A deck name reduced to something a filename can hold, or "" for no label.
+
+    Deck names nest with "::" and can carry anything else the learner types, including
+    a path separator, so the raw name is not a filename. Collapsed to letters, digits,
+    spaces, dots, dashes and underscores.
+    """
+    return re.sub(r"[^A-Za-z0-9 ._-]", "_", label).strip() if label else ""
+
+
+def _label_of_backup(fname):
+    """The label a backup filename carries, "" for an unlabelled one.
+
+    The name is "<prefix><stamp>[ <label>].apkg" and the stamp has no spaces, so the
+    label is whatever follows the first one.
+    """
+    base = fname[len(_BACKUP_PREFIX):-len(".apkg")]
+    return base.split(" ", 1)[1] if " " in base else ""
 
 
 def _backup_deck(deck_name, label=None):
@@ -135,18 +168,29 @@ def _backup_deck(deck_name, label=None):
 
     `label` distinguishes two backups taken in the same second, which only happens when
     one run touches decks under more than one root and each root needs its own file
-    (see _pre_sync_backup_or_confirm_skip). Left off, the filename is exactly what it
-    has always been, so the ordinary single-deck backup is unchanged.
+    (see _pre_sync_backup_or_confirm_skip). It is sanitized for the filesystem first,
+    since a deck name is free text and routinely holds a "/" or a ":". Left off, the
+    filename is exactly what it has always been, so the ordinary single-deck backup is
+    unchanged.
+
+    Pruning keeps DECK_BACKUPS_KEEP per label rather than per folder. Ten unlabelled
+    backups plus one run over three roots is fourteen files, and a folder-wide prune
+    would evict either the other roots' history or, on a big enough run, files this very
+    call just wrote, so the newest backup of a deck could be missing the moment it was
+    needed.
     """
     folder = _deck_backup_folder()
     stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    label = _backup_label(label)
     suffix = f" {label}" if label else ""
-    path = os.path.join(folder, f"Intern Pearls {stamp}{suffix}.apkg")
+    path = os.path.join(folder, f"{_BACKUP_PREFIX}{stamp}{suffix}.apkg")
     try:
         _export_deck_to(path, deck_name)
     except Exception:
         return None
-    backups = sorted((f for f in os.listdir(folder) if f.endswith(".apkg")),
+    backups = sorted((f for f in os.listdir(folder)
+                      if f.startswith(_BACKUP_PREFIX) and f.endswith(".apkg")
+                      and _label_of_backup(f) == label),
                      reverse=True)
     for old in backups[DECK_BACKUPS_KEEP:]:
         try:
@@ -202,12 +246,23 @@ def _pre_sync_backup_or_confirm_skip(deck_name, decks=None, scope_tag=None):
                if mw.col.decks.id_for_name(d) is not None]
     if targets:
         many = len(targets) > 1
-        saved = [_backup_deck(d, d.split("::")[-1] if many else None) for d in targets]
-        if all(saved):
+        saved = {d: _backup_deck(d, d.split("::")[-1] if many else None)
+                 for d in targets}
+        failed = [d for d, path in saved.items() if not path]
+        if not failed:
             return True, True
-        return _ask("Couldn't create an automatic backup.\n\n"
-                    "Proceed anyway? (You can back up manually first: Advanced → Backup "
-                    "intern pearls deck, or Advanced → Backup full collection.)"), False
+        # Named, both halves. A run over several roots that backed up two of three has
+        # something to restore from and something it doesn't, and answering that with a
+        # flat "couldn't create an automatic backup" (then, at the end, "no pre-sync
+        # backup was taken") is wrong in both directions: it hides the cover that does
+        # exist and hides which deck is the one without it.
+        covered = [d for d, path in saved.items() if path]
+        done = (f"Backed up: {', '.join(covered)}.\n\n" if covered else "")
+        proceed = _ask(
+            f"Couldn't back up: {', '.join(failed)}.\n\n{done}"
+            "Proceed anyway? (You can back up manually first: Advanced → Backup "
+            "intern pearls deck, or Advanced → Backup full collection.)")
+        return proceed, bool(covered)
 
     if scope_tag and mw.col.find_notes(f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'):
         return _ask(
@@ -217,16 +272,27 @@ def _pre_sync_backup_or_confirm_skip(deck_name, decks=None, scope_tag=None):
     return True, False   # nothing in the collection to back up yet, e.g. a first sync
 
 
-def _pre_sync_backup_or_skip_silently(deck_name):
+def _pre_sync_backup_or_skip_silently(deck_name, decks=None):
     """Background counterpart to `_pre_sync_backup_or_confirm_skip`: never blocks with a
     dialog. If a backup is needed and fails, the safe default is to abort the auto-sync
     rather than import unprotected — there's no one watching to answer a prompt, so the
     background path must never proceed without the safety net the interactive path asks
     permission to skip.
+
+    `decks` is scoped exactly as the interactive path scopes it (see _backup_targets):
+    an unattended sync imports whatever the manifest lists, so backing up only
+    export_deck left a deck filed outside it changed with no backup covering it at all.
+    Any target that can't be backed up aborts the whole tick rather than importing the
+    rest, which is the same fail-closed answer this has always given for the one deck it
+    used to cover: the next poll retries, and a manual Sync decks can ask.
     """
-    if mw.col.decks.id_for_name(deck_name) is None:
+    targets = [d for d in _backup_targets(deck_name, decks)
+               if mw.col.decks.id_for_name(d) is not None]
+    if not targets:
         return True   # nothing to back up yet, e.g. this deck's very first sync
-    return _backup_deck(deck_name) is not None
+    many = len(targets) > 1
+    saved = [_backup_deck(d, d.split("::")[-1] if many else None) for d in targets]
+    return all(saved)
 
 
 # ----------------------------------------------------------------- notes snapshot
@@ -336,7 +402,11 @@ def _restore(snap, baseline=None, touched=None):
                 continue
             if f in was_shipped and was_shipped[f] == v:
                 continue          # untouched by her; let the source's update stand
-            if f in was_shipped and note[f] != was_shipped[f]:
+            if f in was_shipped and note[f] != was_shipped[f] and note[f] != v:
+                # Only when the two versions actually differ. An update that changed a
+                # field to exactly what she had already written is agreement, not a
+                # conflict, and reporting it asked her to go and reconcile two identical
+                # wordings.
                 collisions.append((guid, f))
             if note[f] != v:
                 note[f] = v
@@ -496,6 +566,27 @@ def installed_matching_collection(installed, scope_tag):
         return any(d == name or d.startswith(name + "::") for d in present)
 
     return {name: version for name, version in installed.items() if _has_cards(name)}
+
+
+def decks_holding(guids, her_guid_to_nid):
+    """The decks the given notes' cards are actually sitting in right now.
+
+    What a pre-run backup has to cover is where a card IS, not where a ledger says it
+    was filed: a learner who reorganizes her own collection moves a card out from under
+    the deck the retirement ledger recorded, and archiving or rewriting it there would
+    then happen in a deck no backup covered. Unknown guids are simply absent from the
+    result, so the caller can fall back to whatever it does know.
+    """
+    out = []
+    for guid in guids:
+        nid = her_guid_to_nid.get(guid)
+        if nid is None:
+            continue
+        for cid in mw.col.get_note(nid).card_ids():
+            name = mw.col.decks.name(mw.col.get_card(cid).did)
+            if name and name not in out:
+                out.append(name)
+    return out
 
 
 def apply_deck_moves(moves, her_guid_to_nid):
@@ -803,11 +894,13 @@ def _apply_deck(src, aliases, her):
     one of hers, the .apkg's own otherwise. _capture_shipped needs exactly that set."""
     remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
     touched = {remap.get(rid, guid) for rid, _f, guid in apkg_notes(src)}
-    # A unique name in the same directory the download landed in, rather than a fixed
-    # one derived from `src`: two runs can otherwise write and import through the same
-    # path, and on a shared machine that path is predictable enough to be pre-created
-    # as a symlink pointing somewhere else.
-    fd, out = tempfile.mkstemp(suffix=".sync.apkg", dir=os.path.dirname(src) or None)
+    # A unique name in the system temp directory, rather than a fixed one derived from
+    # `src` (two runs can otherwise write and import through the same path, and on a
+    # shared machine that path is predictable enough to be pre-created as a symlink) or
+    # one beside `src` itself. For a local-folder source `src` is the learner's own
+    # configured folder, which may be a read-only share, and is hers rather than ours to
+    # leave a file in if the import raises before the cleanup below.
+    fd, out = tempfile.mkstemp(suffix=".sync.apkg")
     os.close(fd)
     write_personalized(src, remap, out)
     try:
@@ -842,12 +935,18 @@ def invalidate_installed(names=None):
 
 # --------------------------------------------------------------- Advanced actions
 @_safe
+@_manual_flow
 def restore_from_backup():
     """Revert the whole collection to a pre-sync (or any other) backup.
 
     This is Anki's own backup restore, unscoped: it replaces every deck and note in the
     profile, not just the ones this add-on manages, since that's what a real collection
     backup contains. Anki asks for confirmation and reloads the profile itself.
+
+    The interleave guard covers this dialog and the installed.json clear beneath it, so
+    an auto-sync tick can't land between the two. It cannot cover Anki's own restore,
+    which happens after this returns; nothing here can, and the poll's own `mw.col is
+    None` check is what holds during the profile reload.
     """
     if not _ask(
         "This opens Anki's own backup picker so you can revert your whole collection "
@@ -889,6 +988,7 @@ def export_deck():
 
 
 @_safe
+@_manual_flow
 def import_deck():
     """Bring an exported/backed-up Intern Pearls .apkg back into this collection.
 
@@ -1003,6 +1103,7 @@ def find_empty_cards(scope_tag):
 
 
 @_safe
+@_manual_flow
 def remove_empty_cards():
     """Remove the empty cards on the learner's own notes, after showing exactly which.
 
@@ -1049,11 +1150,24 @@ def remove_empty_cards():
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(cfg["export_deck"])
     if not proceed:
         return
-    cids = [cid for r in rows for cid in r["card_ids"]]
+    # Asked again after the confirmation, not reused from before it. The report above
+    # was computed before a modal dialog the reader can sit in for as long as she likes,
+    # and an import landing in the meantime (an auto-sync tick, an undo) can give one of
+    # these cards real content back. Acting on the stale list would then delete a card
+    # that now shows something, which is the one thing this add-on must never do. Only
+    # cards on BOTH lists are removed, so nothing new is deleted without having been
+    # shown either.
+    still_empty = {cid for r in find_empty_cards(cfg["scope_tag"])[0]
+                   for cid in r["card_ids"]}
+    cids = [cid for r in rows for cid in r["card_ids"] if cid in still_empty]
+    if not cids:
+        _info("Those cards aren't empty any more, so nothing was removed.")
+        return
+    notes = {r["nid"] for r in rows if any(c in still_empty for c in r["card_ids"])}
     mw.col.remove_cards_and_orphaned_notes(cids)
     mw.reset()
     backup_line = ("" if backed_up else
                    "<br><br>(No backup was taken this time: nothing to back up yet, or "
                    "it failed and you chose to continue.)")
     _info(f"Removed <b>{plural(len(cids), 'empty card')}</b> from "
-          f"<b>{plural(len(rows), 'note')}</b>. Nothing else changed." + backup_line)
+          f"<b>{plural(len(notes), 'note')}</b>. Nothing else changed." + backup_line)

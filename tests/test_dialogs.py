@@ -389,6 +389,124 @@ def test_change_source_keeps_the_edits_made_before_it(anki, tmp_path):
     assert cfg["protected_fields"] == ["Notes", "Extra"]
 
 
+def test_a_source_that_renders_no_decks_cannot_zero_the_saved_exclusions(anki, tmp_path):
+    """The dialog's checkbox map is empty when nothing rendered, and Save used to write
+    that straight over excluded_decks: opening Manage decks while a source was broken
+    silently un-excluded every deck, so the next update re-imported decks that had been
+    opted out of."""
+    from internpearls import dialogs
+    excluded = ["Intern Pearls::Intern Custom::Pharm"]
+    anki.mw._config = {"decks_dir": str(tmp_path / "not-there"),
+                       "excluded_decks": list(excluded)}
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}   # the "no decks available" info box at the end
+        assert not find(p["tree"], t="check"), "a broken source renders no deck rows"
+        save = find(p["tree"], t="button", label="Save")
+        return {"events": [{"id": save["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+    assert anki.mw._config["excluded_decks"] == excluded
+
+
+def test_fixing_a_broken_source_through_change_source_keeps_the_exclusions(
+        anki, tmp_path):
+    """The reproduced regression, end to end: a broken source is the main reason to
+    click Change source, and the carry that keeps the ticks across the reopen was
+    capturing the empty state of a dialog that had rendered no decks. Fixing the source
+    therefore ended with every exclusion gone, and "Save and update now" would have
+    re-imported the opted-out deck immediately."""
+    from internpearls import dialogs
+    pharm = "Intern Pearls::Intern Custom::Pharm"
+    anki.mw._config = {"decks_dir": str(tmp_path / "not-there"),
+                       "excluded_decks": [pharm]}
+    anki.gui.interactive = True
+    good = _write_source(tmp_path)
+    rows_seen = []
+
+    def respond(p):
+        if p["kind"] == "prompt":
+            return {"text": good, "ok": True}   # the folder picker, now pointed at a
+        if p["kind"] != "dialog":               # source that actually loads
+            return {}
+        if find(p["tree"], t="button", label="Try the example deck"):
+            return _pick_source(p["tree"], "Local folder")
+        row = find(p["tree"], t="check")
+        if row is None:
+            change = find(p["tree"], t="button", label="Change source")
+            return {"events": [{"id": change["id"], "click": True}]}
+        rows_seen.append(row["checked"])
+        save = find(p["tree"], t="button", label="Save")
+        return {"events": [{"id": save["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+    assert rows_seen == [False], \
+        "the deck comes back ticked, so its opt-out was lost while the source was broken"
+    assert anki.mw._config["excluded_decks"] == [pharm]
+
+
+def test_saving_keeps_an_exclusion_for_a_deck_the_current_source_never_offered(
+        anki, tmp_path):
+    """A rendered list only knows the decks its own source publishes, so writing it out
+    as the whole truth drops the opt-outs belonging to any other deck. Preserved rather
+    than dropped: a deck that has genuinely gone leaves a name matching nothing, which
+    excludes nothing, while dropping it lets a deck that was missing for one fetch come
+    back ticked."""
+    from internpearls import dialogs
+    pharm = "Intern Pearls::Intern Custom::Pharm"
+    elsewhere = "Some Other Source::Neuro"
+    anki.mw._config = {"decks_dir": _write_source(tmp_path),
+                       "excluded_decks": [elsewhere, pharm]}
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        row = find(p["tree"], t="check")
+        assert row and not row["checked"], "the excluded deck must render unticked"
+        save = find(p["tree"], t="button", label="Save")
+        return {"events": [{"id": save["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+    assert sorted(anki.mw._config["excluded_decks"]) == sorted([elsewhere, pharm])
+
+
+def test_the_select_links_are_offered_only_where_there_is_something_to_select(
+        anki, tmp_path):
+    """Above "No decks available yet" the two links are inert: they read as controls
+    beside the one button that empty state actually offers."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+    found = []
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        found.append(bool(find(p["tree"], t="button", label="Select all")
+                          and find(p["tree"], t="button", label="Select none")))
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    drive(anki, dialogs.manage_decks, respond)
+    anki.mw._config = {"decks_dir": str(tmp_path / "not-there")}
+    drive(anki, dialogs.manage_decks, respond)
+    assert found == [True, False]
+
+
+def test_a_deck_label_falls_back_to_the_character_cap_without_font_metrics():
+    """What a row draws is elided by pixels, measured in the font it is painted in
+    (qt_tests measures that one). The mock Qt has no font engine at all, so the
+    character cap is what answers here, and it stays a plain-string helper for exactly
+    that reason."""
+    from internpearls import dialogs
+    long_name = "Regional::" + "Ultrasound guided lower limb blocks in detail"
+    assert dialogs._fit_label(long_name) == dialogs._elide(long_name)
+    assert dialogs._fit_label("Pharm") == "Pharm"
+
+
 # ------------------------------------------------------------------ dialog lifetime
 def test_a_finished_flow_releases_every_dialog_it_opened(anki, tmp_path):
     """Every dialog here is built with mw as its parent, so Qt owns it for the rest of
@@ -501,6 +619,10 @@ def test_the_auto_sync_hint_says_a_template_change_still_waits_for_a_manual_run(
                         if n.get("t") == "label")
         assert "held back for a manual run" in text
         assert "backup is still taken first" in text
+        # Both held-back kinds by name: a note-type format conversion bumps the schema
+        # exactly as a template change does and is deferred with it (sync._run_sync),
+        # so a hint naming only the template describes half of what waits.
+        assert "card template" in text and "note-type format" in text
         cancel = find(p["tree"], t="button", label="Cancel")
         return {"events": [{"id": cancel["id"], "click": True}]}
 
@@ -583,6 +705,25 @@ def test_configure_source_offers_the_three_sources_with_the_example_first(anki):
     # Cancel writes nothing: no config key, and no attempt to connect.
     assert anki.mw._config == {}
     assert not anki.gui.warnings
+
+
+def test_the_local_folder_option_names_which_folder_to_pick(anki):
+    """macOS opens its native directory picker with no caption, so the caption naming
+    what to pick is invisible on the platform most likely to need it. The instruction
+    lives on the option's own line instead, which is read before the picker opens on
+    every platform."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        text = " ".join(n.get("text") or "" for n in walk(p["tree"])
+                        if n.get("t") == "label")
+        assert "manifest.json" in text and ".apkg" in text, \
+            "the local-folder option has to name the folder the picker will not"
+        return _pick_source(p["tree"], "Cancel")
+
+    drive(anki, dialogs.configure_source, respond)
 
 
 def test_configure_source_github_form(anki):

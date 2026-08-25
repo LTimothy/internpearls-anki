@@ -125,14 +125,16 @@ def decks_to_update(manifest, installed, excluded=None):
     to apply) and Preview sync (to report the same set without touching the collection),
     so the two can never disagree about what's pending.
 
-    An entry missing `name` or `version` is skipped rather than raising: without a name
-    there is nothing to fetch or file cards under, and without a version there is nothing
-    to compare against installed.json. One malformed row must not stop every other deck
-    in the manifest from syncing.
+    An entry missing `name` or `version`, or a non-dict entry, is skipped rather than
+    raising: without a name there is nothing to fetch or file cards under, and without a
+    version there is nothing to compare against installed.json. One malformed row must
+    not stop every other deck in the manifest from syncing.
     """
     excluded = set(excluded or ())
     out = []
     for d in (manifest or {}).get("decks", []):
+        if not isinstance(d, dict):
+            continue
         name, version = d.get("name"), d.get("version")
         if not name or version is None or name in excluded:
             continue
@@ -148,11 +150,18 @@ def deck_status(manifest, installed, excluded=None):
     whether it's `enabled` (not opted out), and a `state` relative to the collection:
     "new" (never synced), "update" (a newer version is available), or "current" (already
     up to date). Pure so the manager dialog stays a thin rendering layer over it.
+
+    An entry missing `name`, or a non-dict entry, is skipped rather than raising, same as
+    `decks_to_update`: Manage decks must not crash on a manifest row Sync already tolerates.
     """
     excluded = set(excluded or ())
     rows = []
     for d in (manifest or {}).get("decks", []):
-        name = d["name"]
+        if not isinstance(d, dict):
+            continue
+        name = d.get("name")
+        if not name:
+            continue
         inst, avail = installed.get(name), d.get("version")
         state = "new" if inst is None else ("current" if inst == avail else "update")
         rows.append({

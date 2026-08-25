@@ -9,9 +9,10 @@ review history exists exactly once. _reconcile_pending is the equivalent single
 source of truth for what "Reconcile my decks" would find pending, shared by
 reconcile_decks() and update_decks() so the two can never disagree.
 """
-import functools
+import hashlib
 import json
 import os
+import re
 import tempfile
 
 from aqt import mw
@@ -26,12 +27,12 @@ from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
                          _pre_sync_backup_or_confirm_skip, _restore,
                          _snapshot, _template_changes, apply_deck_moves,
                          archive_notes, carry_over_protected_fields,
-                         carry_scheduling_forward,
+                         carry_scheduling_forward, decks_holding,
                          installed_matching_collection)
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json)
-from .logic import (apkg_note_details, apkg_notes, decks_to_update,
+from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, decks_to_update,
                     feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
@@ -42,8 +43,8 @@ from .palette import colors
 from .review import (_CONFIRM_HEIGHT, append_rows, build_list_body, build_update_body,
                      clear_saved_feedback, load_saved_feedback, show_result,
                      show_result_with_feedback)
-from .ui import (_ask, _ask_with_widget, _info, _safe, _warn, cancellable_progress,
-                 wait_cursor)
+from .ui import (_ask, _ask_with_widget, _info, _manual_flow, _safe, _warn,
+                 cancellable_progress, wait_cursor)
 
 # The "Reconcile my decks" QAction, set once by __init__.py right after building the
 # menu. Mutated from here and from background.py's auto-sync poll, mirroring
@@ -54,40 +55,6 @@ from .ui import (_ask, _ask_with_widget, _info, _safe, _warn, cancellable_progre
 # up silently between manual checks, which is exactly the divergence problem this
 # whole flow exists to close.
 _reconcile_action = None
-
-# True while an interactive flow (Sync decks, Update my decks, Reconcile my decks,
-# Import single deck) is running. The unattended auto-sync poll checks it and skips its
-# tick rather than interleaving: both write the collection and both persist
-# installed.json, and the poll's apply half lands from a QueryOp callback, which can
-# fire while a manual flow is sitting inside a modal dialog's own event loop.
-_manual_in_progress = False
-
-
-def manual_sync_in_progress():
-    """Whether an interactive sync/reconcile/import flow is running right now.
-
-    Read by background.py's poll, which stays quiet and retries on the next tick rather
-    than queueing behind this. A plain flag rather than a lock: nothing here nests, and
-    the poll has nothing to wait for.
-    """
-    return _manual_in_progress
-
-
-def _manual_flow(fn):
-    """Hold `manual_sync_in_progress()` for the whole of an interactive flow.
-
-    Applied under @_safe so the flag is released even when the flow raises, which is the
-    one thing @_safe's own warning dialog would otherwise leave stuck on.
-    """
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        global _manual_in_progress
-        _manual_in_progress = True
-        try:
-            return fn(*args, **kwargs)
-        finally:
-            _manual_in_progress = False
-    return wrapper
 
 
 def register_reconcile_action(action):
@@ -129,6 +96,45 @@ def _scratch():
     return _scratch_dir
 
 
+def _scratch_path(apkg_path):
+    """Where one manifest .apkg path downloads to inside the session's scratch dir.
+
+    Keyed by the whole manifest path rather than its basename: a source can file two
+    decks as decks/basics/Foo.apkg and decks/advanced/Foo.apkg, and a basename key had
+    the second download overwrite the first, so the apply step imported one deck's
+    content for both. The scratch dir has no subfolders, so the path is flattened to a
+    short hash of itself plus a sanitized filename, which keeps the name recognizable
+    while the hash is what actually keeps two decks apart.
+    """
+    digest = hashlib.sha1(apkg_path.encode("utf8")).hexdigest()[:8]
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(apkg_path)) or "deck.apkg"
+    return os.path.join(_scratch(), f"{digest}-{name}")
+
+
+def _write_scratch(apkg_path, data):
+    """Land a downloaded deck at its keyed scratch path, atomically.
+
+    The background poll's fetch runs on a worker thread and writes the same keyed path
+    an interactive preview writes, so a plain open-and-write can be read half finished
+    by the other side, which is a corrupt .apkg to whoever gets there first. Written to
+    a temp file in the same directory and renamed into place instead: os.replace is
+    atomic, so a concurrent reader sees either the previous file or the whole new one.
+    """
+    fd, tmp = tempfile.mkstemp(dir=_scratch(), suffix=".part")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        path = _scratch_path(apkg_path)
+        os.replace(tmp, path)
+        return path
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TIMEOUT):
     """Return (manifest, fetch_apkg, source_label) where fetch_apkg(deck, on_chunk=None)
     returns a local .apkg path.
@@ -153,18 +159,23 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
     surface correctly without either of them special-casing this.
     """
     if cfg["gh_repo"]:
-        manifest = json.loads(_gh_raw(cfg["gh_repo"], "manifest.json",
-                                      cfg["gh_token"], cfg["gh_ref"], timeout=timeout))
+        raw = _gh_raw(cfg["gh_repo"], "manifest.json", cfg["gh_token"], cfg["gh_ref"],
+                      timeout=timeout)
+        try:
+            manifest = json.loads(raw)
+        except Exception as e:
+            # A repo that answers with something that isn't JSON is reachable and
+            # broken, not unreachable: say which of the two it is, in the same words
+            # the local-folder branch below uses for the same file.
+            raise RuntimeError(f"the manifest.json in {cfg['gh_repo']} isn't valid "
+                               f"JSON ({e})") from e
+        if not manifest:
+            raise RuntimeError(f"the manifest.json in {cfg['gh_repo']} is empty")
 
         def fetch(d, on_chunk=None):
             data = _gh_raw(cfg["gh_repo"], d["apkg"], cfg["gh_token"], cfg["gh_ref"],
                            timeout=download_timeout, on_chunk=on_chunk)
-            # d["apkg"] may include subfolders (e.g. decks/Foo.apkg); flatten to just the
-            # filename for the scratch download location, since decks/ won't exist there.
-            tmp = os.path.join(_scratch(), os.path.basename(d["apkg"]))
-            with open(tmp, "wb") as fh:
-                fh.write(data)
-            return tmp
+            return _write_scratch(d["apkg"], data)
 
         return manifest, fetch, "GitHub"
 
@@ -282,7 +293,7 @@ def sync_decks():
     # download too, not only in the gap between two decks.
     with cancellable_progress("Syncing decks", len(todo)) as step:
         results, restored, tpl_changes, _, cancelled, collisions, _conv = _run_sync(
-            cfg, manifest, lambda d, **kw: fetch(d, on_chunk=step.pump), todo, installed,
+            cfg, manifest, lambda d: fetch(d, on_chunk=step.pump), todo, installed,
             on_progress=lambda i, n, name: step(i, f"Syncing {name} ({i} of {n})"))
     _offer_template_changes(tpl_changes)
     backup_line = (
@@ -353,8 +364,9 @@ def _offer_notetype_changes(changes):
         "cards to the new format? They keep their review history and stay one card "
         "each. Anki treats this as a schema change, so your next AnkiWeb sync will be "
         "a one-time full sync, choose \"Upload to AnkiWeb\" when asked.<br><br>"
-        "Choosing No still imports them, but as separate new cards, leaving your "
-        "progress on the old versions."
+        "Choosing to import them as new still imports them, as separate new cards "
+        "beside the ones you have, leaving your progress on the old versions.",
+        yes_label="Move my cards across", no_label="Import them as new"
     ) else []
 
 
@@ -402,8 +414,9 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
     her = _her_front_to_guid(cfg["scope_tag"])
     results, tpl_changes, deferred, touched = [], {}, [], set()
-    # This run's own per-deck versions, kept apart from the `installed` snapshot the
-    # caller handed in so the save below can merge rather than overwrite. See there.
+    # This run's own per-deck versions, and the only thing written back: the caller's
+    # `installed` snapshot is read-only here, so the save below merges rather than
+    # overwrites (see there) and no caller is handed a half-updated copy of it.
     applied = {}
     converted = 0
     cancelled = False
@@ -421,7 +434,13 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
             nt = notetype_changes(src, her, aliases, cfg["scope_tag"])
             if (tpl or nt) and defer_template_changes:
                 deferred.append(d["name"])
-                results.append(f"• <b>{short}</b>: includes a card-template update, "
+                # Named for what is actually being held back: a template change and a
+                # note-type conversion defer for the same reason, and calling a
+                # conversion a "card-template update" sends the reader looking for a
+                # look change that isn't in this deck at all.
+                what = " and ".join(x for x in ("card-template" if tpl else None,
+                                                "note-type format" if nt else None) if x)
+                results.append(f"• <b>{short}</b>: includes a {what} update, "
                                "waiting for a manual Sync decks")
                 continue
             tpl_changes.update(tpl)
@@ -443,7 +462,7 @@ def _run_sync(cfg, manifest, fetch, todo, installed, on_progress=None,
             # After the import, not before: the extra cloze cards only exist once the
             # cloze markup has actually landed on the note.
             seed_converted_siblings(changed_nids)
-            installed[d["name"]] = applied[d["name"]] = d["version"]
+            applied[d["name"]] = d["version"]
             results.append(f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new")
         except DownloadCancelled:
             # The learner clicked Cancel while this deck was still downloading, so
@@ -482,10 +501,11 @@ def _offer_template_changes(tpl_changes):
     if _ask(
         f"This update also changes how some cards look (template or styling) for: "
         f"{names}.<br><br>Apply the new look now? Anki treats this as a schema "
-        "change, so your next AnkiWeb sync will be a one-time full sync — choose "
-        "\"Upload to AnkiWeb\" when asked.<br><br>Choosing No keeps your current "
-        "card appearance; your review history and card content are unaffected "
-        "either way."
+        "change, so your next AnkiWeb sync will be a one-time full sync: choose "
+        "\"Upload to AnkiWeb\" when asked.<br><br>Keeping your current look keeps "
+        "your card appearance exactly as it is; your review history and card content "
+        "are unaffected either way.",
+        yes_label="Apply the new look", no_label="Keep my current look"
     ):
         _apply_template_changes(tpl_changes)
 
@@ -573,6 +593,47 @@ def _stranded_items(stranded):
     items = [("note", _stranded_lead(stranded))]
     append_rows(items, [("retired", line) for line in _stranded_lines(stranded)])
     return items
+
+
+def _reconcile_backup_decks(fresh, moves, stranded, her):
+    """Every deck a reconcile pass actually writes in, for the pre-run backup to cover.
+
+    A retired card's ledger deck is where the deck source retired it FROM, which stops
+    being true the moment the learner refiles her copy, so her copy's live deck wins and
+    the ledger's is the fallback for a card the collection can't place. A stranded pair
+    appears in neither ledger at all: _merge_stranded rewrites scheduling and protected
+    fields on the successor and archives the predecessor, wherever those two currently
+    sit, which is how a run could rewrite a card in a deck nothing had backed up.
+    """
+    decks = []
+    for r in fresh:
+        decks += decks_holding([r["guid"]], her) or [r["deck"]]
+    decks += [m["from"] for m in moves]
+    for p in stranded:
+        decks += decks_holding([p["guid"], p["successor_guid"]], her)
+    return decks
+
+
+def _reworded_backup_decks(superseded, scope_tag):
+    """Decks holding either wording of any pair the source has ever reworded.
+
+    Wider than the pairs found before a run, and deliberately: update_decks recomputes
+    stranded pairs AFTER its import, because the import itself can create one (a
+    reworded front lands as a second note when her GUID didn't match), and that pair is
+    merged in the same run. Its predecessor is a card she already holds, so it can be
+    found and covered now, before the backup is taken; its successor is either already
+    hers or arrives in a deck this run is backing up anyway.
+    """
+    if not superseded:
+        return []
+    wanted = set(superseded) | set(superseded.values())
+    her_deck = _her_guid_to_deck(scope_tag)
+    decks = []
+    for front, guid in _her_front_to_guid(scope_tag).items():
+        deck = her_deck.get(guid) if front in wanted else None
+        if deck:
+            decks.append(deck)
+    return decks
 
 
 def _merge_stranded(stranded, her, protected, retired_deck, tag):
@@ -725,7 +786,7 @@ def reconcile_decks():
 
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(
         cfg["export_deck"],
-        [r["deck"] for r in fresh] + [m["from"] for m in moves], cfg["scope_tag"])
+        _reconcile_backup_decks(fresh, moves, stranded, her), cfg["scope_tag"])
     if not proceed:
         return
     carried = carry_over_protected_fields(fresh, her, cfg["protected"])
@@ -760,6 +821,7 @@ def reconcile_decks():
 
 
 @_safe
+@_manual_flow
 def clean_up_duplicates():
     """Find sync duplicates (two notes, same type and front text, different GUIDs)
     and archive the losing copy of each, using the same retire machinery Reconcile my
@@ -876,11 +938,13 @@ def _preview_content_changes(fetch, todo, her, aliases, her_fields=None):
     count them. `downloaded` is {deck_name: local_path_or_Exception}, in the same shape
     background.py's auto-sync poll already uses, so the caller can hand it straight to
     _run_sync afterward instead of downloading every deck a second time. A per-deck
-    fetch failure here is recorded, not raised, so one bad download only blanks that
-    deck's preview ("couldn't preview") rather than blocking the whole confirmation;
-    the same failure surfaces for real if Sync then tries to apply it. `cancelled` means
-    the learner clicked Cancel partway through: nothing has touched the collection at
-    this point, so the caller can just stop outright.
+    failure here is recorded, not raised, so one bad download only blanks that deck's
+    preview ("couldn't preview") rather than blocking the whole confirmation; the deck
+    stays in the run and the apply step fetches it again (see update_decks), which is
+    what makes that row's "still imports" true rather than a promise it can't keep. A
+    deck whose file downloaded fine and only failed to parse keeps the file.
+    `cancelled` means the learner clicked Cancel partway through: nothing has touched
+    the collection at this point, so the caller can just stop outright.
 
     Downloads go through _cached_fetch, so re-opening Update my decks without applying
     doesn't re-fetch a deck whose version hasn't changed.
@@ -916,7 +980,11 @@ def _preview_content_changes(fetch, todo, her, aliases, her_fields=None):
                 # cancel it is instead of leaving one row reading "couldn't preview".
                 return preview, downloaded, True
             except Exception as e:
-                downloaded[d["name"]] = e
+                # setdefault, not assignment: the fetch may well have succeeded and only
+                # the read of it failed, and overwriting a perfectly good local file with
+                # the parse error would make the apply step re-download a deck it already
+                # has (or, before the retry below existed, refuse to import it at all).
+                downloaded.setdefault(d["name"], e)
                 preview[d["name"]] = None
     return preview, downloaded, False
 
@@ -1079,7 +1147,9 @@ def update_decks():
     for d in todo:
         pc = preview.get(d["name"])
         if not pc:
-            continue          # this deck's download failed; it already reads "couldn't preview"
+            # This deck couldn't be previewed; its row already says so, and the apply
+            # step fetches it again, so it is only missing from this list, not the run.
+            continue
         for _, fields, guid in pc[2]:
             new_cards.append((d["name"], note_display_label(fields), guid))
     # The cards this update would rewrite, gathered the same way as the added ones: the
@@ -1285,10 +1355,16 @@ def update_decks():
         _finish()
         return
 
+    # The decks this run will write in: the ones it imports into, the ones the cards it
+    # archives and relocates actually sit in, and the ones holding either wording of a
+    # reworded pair, since the merge step below runs against a list recomputed after the
+    # import and so can act on a pair this very run created.
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(
         cfg["export_deck"],
-        [d["name"] for d in todo] + [r["deck"] for r in fresh]
-        + [m["from"] for m in moves], cfg["scope_tag"])
+        [d["name"] for d in todo]
+        + _reconcile_backup_decks(fresh, moves, stranded, her)
+        + _reworded_backup_decks(manifest.get("superseded_fronts", {}), cfg["scope_tag"]),
+        cfg["scope_tag"])
     if not proceed:
         _finish()
         return
@@ -1303,25 +1379,31 @@ def update_decks():
         "existing cards to the new format? They keep their review history and stay one "
         "card each. Anki treats this as a schema change, so your next AnkiWeb sync will "
         "be a one-time full sync, choose \"Upload to AnkiWeb\" when asked.<br><br>"
-        "Choosing No still imports them, but as separate new cards, leaving your "
-        "progress on the old versions.")
+        "Choosing to import them as new still imports them, as separate new cards "
+        "beside the ones you have, leaving your progress on the old versions.",
+        yes_label="Move my cards across", no_label="Import them as new")
 
     results, restored, tpl_changes = [], 0, {}
     if todo:
-        def _already_fetched(d):
-            # Reuses _preview_content_changes' download above instead of fetching
-            # every deck a second time — same pattern background.py's auto-sync
-            # poll uses for the same reason. A deck whose preview download failed
-            # re-raises that same exception here, so _run_sync's own per-deck
-            # try/except reports it exactly like a live fetch failure would.
-            v = downloaded[d["name"]]
-            if isinstance(v, Exception):
-                raise v
-            return v
-
         # A cancellable progress window while each deck imports: the preview step
         # above already covered the download itself.
         with cancellable_progress("Updating decks", len(todo)) as step:
+            def _already_fetched(d):
+                # Reuses _preview_content_changes' download above instead of fetching
+                # every deck a second time, the same pattern background.py's auto-sync
+                # poll uses for the same reason. A deck the preview couldn't fetch is
+                # fetched again here rather than re-raising the cached failure: its row
+                # said the deck still imports, and a failed download is usually a
+                # transient hiccup that a second attempt clears, whereas re-raising made
+                # that row a promise the run could never keep. Cancel stays live during
+                # the retry through the same step.pump the preview used, and a retry
+                # that fails again raises into _run_sync's per-deck try/except, which
+                # reports it as the honest per-deck failure it is.
+                v = downloaded.get(d["name"])
+                if v is not None and not isinstance(v, Exception):
+                    return v
+                return _cached_fetch(fetch, d, on_chunk=step.pump)
+
             results, restored, tpl_changes, _, cancelled, collisions, _conv = _run_sync(
                 cfg, manifest, _already_fetched, todo, installed,
                 on_progress=lambda i, n, name: step(i, f"Applying {name} ({i} of {n})"),
@@ -1350,6 +1432,10 @@ def update_decks():
             if restored:
                 items.append(
                     ("note", f"Preserved fields restored on {plural(restored, 'card')}."))
+            # The decks that did apply before the cancel can have collided with her own
+            # edits exactly as a finished run's can, and those cards are the one thing
+            # here she may want to act on, so a stopped run reports them too.
+            items += _collision_items(collisions)
             items.append(("note", backup_line))
             _finish(f"Update stopped early (source: {source})", items)
             return
@@ -1449,7 +1535,15 @@ def import_single():
                 f"{'its' if in_place == 1 else 'their'} history, {as_new} will be added "
                 "as new. A backup is taken automatically first. Import now?"):
         return
-    if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"], None,
+    # Scoped from the file's own deck names, so a package filing cards outside
+    # export_deck is backed up where those cards will actually land. A package this
+    # build can't read (a modern, zstd-compressed export) falls back to the configured
+    # deck, exactly as this always did.
+    try:
+        file_decks = apkg_deck_names(src)
+    except Exception:
+        file_decks = None
+    if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"], file_decks,
                                             cfg["scope_tag"])[0]:
         return
     _ensure_notetypes()
