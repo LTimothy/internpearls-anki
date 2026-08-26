@@ -1435,6 +1435,17 @@ def update_decks():
     # run's own index.
     recovered = merge_saved_feedback(load_saved_feedback(), flags, new_index)
 
+    # Cards already declined Never are hidden from the list below, so the per-deck
+    # counts must not pitch them as pending either. A new card's guid reads straight
+    # off its deck's preview; a changed card's guid only exists in `changed_cards`,
+    # so those hides are tallied per deck here.
+    never_guids = {g for g, e in reg.items()
+                   if isinstance(e, dict) and e.get("state") == "never"}
+    hidden_changed = {}
+    for deck_name, _label, g in changed_cards:
+        if g in never_guids:
+            hidden_changed[deck_name] = hidden_changed.get(deck_name, 0) + 1
+
     def _deck_summary_row(d):
         """One deck's line in the summary that opens the list: the deck as the row's
         primary text, its counts as the trailing muted column.
@@ -1452,8 +1463,10 @@ def update_decks():
             # in this run and Update still tries to import it, so a bare "couldn't
             # preview" reads as "this deck is being skipped", which it isn't.
             return ("deck", short, "couldn't preview · still imports")
-        kept = f"{pc[0]} kept" + (f" ({len(pc[3])} changing)" if pc[3] else "")
-        return ("deck", short, f"{kept} · {pc[1]} new")
+        changing = len(pc[3]) - hidden_changed.get(d["name"], 0)
+        kept = f"{pc[0]} kept" + (f" ({changing} changing)" if changing else "")
+        new_count = sum(1 for _rid, _fields, g in pc[2] if g not in never_guids)
+        return ("deck", short, f"{kept} · {new_count} new")
 
     muted = colors()["muted"]
     sections = []
