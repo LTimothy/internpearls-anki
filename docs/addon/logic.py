@@ -713,6 +713,27 @@ def prune_declined(reg, retired_guids, seen):
     return bool(dead)
 
 
+def declined_drop(src, remap, her, declined, in_place, as_new):
+    """The rids to drop for a decline, plus `touched` and `in_place`/`as_new`
+    corrected to exclude them. `remap` is mutated in place (a dropped note's remap
+    entry removed), so a drop always wins over a remap for the same note.
+
+    Shared by collection._apply_deck and sync.import_single, so a decline filters
+    identically whichever path a deck lands in the collection through."""
+    drop, touched = set(), set()
+    for rid, _f, guid in apkg_notes(src):
+        final = remap.get(rid, guid)
+        if final in declined or guid in declined:
+            drop.add(rid)
+            if remap.pop(rid, None) is not None or guid in her.values():
+                in_place -= 1
+            else:
+                as_new -= 1
+        else:
+            touched.add(final)
+    return drop, touched, in_place, as_new
+
+
 def write_personalized(src, remap, out, drop=frozenset()):
     """Copy the .apkg at `src` to `out`, rewriting note GUIDs per `remap` and dropping declined notes.
 
