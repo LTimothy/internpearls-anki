@@ -21,8 +21,9 @@ from .ui import section_label
 # "changed" reads UPDATED rather than CHANGED to match the wording review.py's rows
 # already shipped; renaming the label now would be a cosmetic change no task asked for.
 # "skipped"/"kept" mark a decline decision review.py already carried out; they reuse
-# the retired role below rather than a colour of their own, since a skipped or kept
-# card is exactly as inert to the sync as a retired one.
+# the retired role below rather than a colour of their own: both read as "set aside",
+# though a skipped or kept card is re-offered on the deck's next version while a
+# retired one never returns.
 CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOVED",
          "skipped": "SKIPPED", "kept": "KEPT YOURS"}
 
@@ -141,13 +142,14 @@ def decision_cell(options, state, on_change):
     c = colors()
     cell.buttons = {}
 
+    base = f"border: 1px solid {c['cell_rule']}; padding: 2px 9px; font-size: 11px;"
+
     def _style(value, checked):
         if not checked:
-            return (f"QPushButton {{ border: 1px solid {c['cell_rule']}; padding: 2px 9px;"
-                    f" font-size: 11px; color: {c['dim']}; background: transparent; }}")
+            return (f"QPushButton {{ {base}"
+                    f" color: {c['dim']}; background: transparent; }}")
         role = _SELECTED_ROLE.get(value, "retired")
-        return (f"QPushButton {{ border: 1px solid {c['cell_rule']}; padding: 2px 9px;"
-                f" font-size: 11px; font-weight: 600;"
+        return (f"QPushButton {{ {base} font-weight: 600;"
                 f" color: {c[role + '_fg']}; background: {c[role + '_bg']}; }}")
 
     def set_state(value):
