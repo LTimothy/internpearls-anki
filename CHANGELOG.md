@@ -3,6 +3,20 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.47.2
+
+A layout fix for the decline controls' macOS debut:
+
+- Wider card text in the update preview: the confirmation opens wider now, so a
+  card's own words no longer get crushed into a narrow column beside its Import /
+  Skip / Never buttons.
+- Tidier decision buttons: the segmented control reads as one control again, not a
+  row of square, individually bordered buttons with a doubled line between them.
+- Two of that control's labels are shorter (Skip, Keep mine), so they fit the
+  control instead of stretching it.
+- "Add note" now sits at the end of a card's own expanded view instead of its
+  collapsed header, so a closed row doesn't carry a column for it.
+
 ## v0.47.1
 
 Polish on the new decline controls, from the v0.47.0 review round:
