@@ -524,10 +524,9 @@ class _DeckManagerDialog(QDialog):
         outer.addSpacing(10)
 
         bb = QDialogButtonBox()
-        n = len(load_declined())
-        declined_label = f"Declined cards ({n})..." if n else "Declined cards..."
-        declined_btn = bb.addButton(declined_label, QDialogButtonBox.ButtonRole.ActionRole)
-        declined_btn.clicked.connect(lambda: open_declined_cards())
+        self._declined_btn = bb.addButton(self._declined_label(),
+                                          QDialogButtonBox.ButtonRole.ActionRole)
+        self._declined_btn.clicked.connect(self._open_declined)
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
         update = bb.addButton("Save and update now", QDialogButtonBox.ButtonRole.ApplyRole)
         bb.addButton(QDialogButtonBox.StandardButton.Cancel)
@@ -571,6 +570,17 @@ class _DeckManagerDialog(QDialog):
         # an up-to-date row) keeps the counts and the chips each in a column of their own.
         h.addWidget(chip_cell(_STATE_CHIP[r["state"]]))
         return row
+
+    @staticmethod
+    def _declined_label():
+        n = len(load_declined())
+        return f"Declined cards ({n})..." if n else "Declined cards..."
+
+    def _open_declined(self):
+        # Offer again inside that dialog can shrink the registry, so the count is
+        # recomputed when it closes rather than trusted from this dialog's build time.
+        open_declined_cards()
+        self._declined_btn.setText(self._declined_label())
 
     def _set_all(self, val):
         for cb in self._checks.values():
@@ -761,22 +771,27 @@ class _DeclinedDialog(QDialog):
         self._rebuild()
 
     def _row(self, guid, entry, show_state=False):
+        # A non-dict entry (a hand-edited file) has no fields to read; it renders off
+        # an empty dict, which leaves the guid as the row's only name for itself.
+        entry = entry if isinstance(entry, dict) else {}
         row = QWidget()
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
-        primary = QLabel(entry.get("front") or "")
+        primary = QLabel(entry.get("front") or guid)
         primary.setWordWrap(True)
         h.addWidget(primary, 1)
-        leaf = (entry.get("deck") or "").split("::")[-1]
-        meta = f"{leaf} · {entry.get('decided') or ''}"
+        parts = [p for p in ((entry.get("deck") or "").split("::")[-1],
+                             entry.get("decided") or "") if p]
         if show_state:
             # An Other row's heading alone doesn't say what state actually parked it
             # here, only that it's none of the three this dialog names; the raw value
             # (or "unknown" if the entry has none at all) is the only place that shows.
-            meta += f" · {entry.get('state') or 'unknown'}"
-        h.addWidget(muted_label(meta))
+            parts.append(entry.get("state") or "unknown")
+        h.addWidget(muted_label(" · ".join(parts)))
         btn = QPushButton("Offer again")
-        btn.setAccessibleName(guid)
+        # Named by the card, not the bare guid: a screen reader announcing thirty
+        # rows of "Offer again" says nothing about which card each one brings back.
+        btn.setAccessibleName(f"Offer again: {entry.get('front') or guid}")
         btn.clicked.connect(lambda _=False, g=guid: self._offer_again(g))
         h.addWidget(btn)
         return row
@@ -806,16 +821,15 @@ class _DeclinedDialog(QDialog):
                 w.deleteLater()
 
         reg = load_declined()
-        # A non-dict value (a hand-edited file) cannot be read as a row at all and is
-        # the one thing dropped outright. Everything else renders somewhere: a
-        # recognized state under its own heading, anything else under Other, since
-        # sync.py's own filter (declined = set(reg)) keeps a GUID permanently declined
-        # by presence alone regardless of its state, so Other is the learner's only way
-        # back to a card whose state this dialog doesn't otherwise name.
+        # Every entry renders somewhere: a recognized state under its own heading,
+        # anything else under Other, including a non-dict value from a hand-edited
+        # file. sync.py's own filter (declined = set(reg)) keeps a GUID permanently
+        # declined by presence alone regardless of what its entry holds, so Other is
+        # the learner's only way back to a card this dialog can't otherwise name.
         grouped = {}
         for guid, entry in reg.items():
-            if isinstance(entry, dict):
-                grouped.setdefault(entry.get("state"), []).append((guid, entry))
+            state = entry.get("state") if isinstance(entry, dict) else None
+            grouped.setdefault(state, []).append((guid, entry))
 
         known_states = {state for state, _ in _DECLINE_GROUPS}
         for state, heading in _DECLINE_GROUPS:

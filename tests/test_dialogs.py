@@ -690,8 +690,9 @@ def _snapshot_manage_decks(anki):
     return captured["tree"]
 
 
-def _drive_declined_offer_again(anki, guid):
-    """Open Declined cards, click the Offer again button for `guid`, then close."""
+def _drive_declined_offer_again(anki, name):
+    """Open Declined cards, click the Offer again button for the row named `name`
+    (its front, or its guid when the entry has no readable front), then close."""
     from internpearls import dialogs
     anki.gui.interactive = True
     clicked = {"done": False}
@@ -700,7 +701,8 @@ def _drive_declined_offer_again(anki, guid):
         assert p["kind"] == "dialog"
         if not clicked["done"]:
             clicked["done"] = True
-            btn = find(p["tree"], t="button", label="Offer again", accessible=guid)
+            btn = find(p["tree"], t="button", label="Offer again",
+                       accessible=f"Offer again: {name}")
             return {"events": [{"id": btn["id"], "click": True}]}
         close = find(p["tree"], t="button", label="Close")
         return {"events": [{"id": close["id"], "click": True}]}
@@ -744,7 +746,7 @@ def test_offer_again_removes_the_entry_and_invalidates_the_deck(anki):
         "g1": {"state": "never", "front": "front a", "deck": "IP::A",
                "decided": "2026-08-01", "hash": ""}})
     _write_installed(anki, {"IP::A": "1.0"})
-    _drive_declined_offer_again(anki, "g1")
+    _drive_declined_offer_again(anki, "front a")
     assert config.load_declined() == {}
     assert "IP::A" not in json.load(open(sync.INSTALLED))
 
@@ -757,18 +759,46 @@ def test_manage_decks_names_the_declined_count(anki):
     assert "Declined cards (1)" in _all_text(tree)
 
 
+def test_manage_decks_declined_count_refreshes_after_the_dialog_closes(anki,
+                                                                       monkeypatch):
+    """The count is computed when Manage decks builds; Offer again inside the
+    Declined cards dialog can shrink the registry while Manage decks stays open, so
+    the button has to recompute its label when that dialog closes."""
+    from internpearls import config, dialogs
+    config.save_declined({"g1": {"state": "skip", "front": "front a", "deck": "IP::A",
+                                 "decided": "2026-08-01", "hash": ""}})
+    # Stands in for offering every card again inside the nested dialog.
+    monkeypatch.setattr(dialogs, "open_declined_cards",
+                        lambda: config.save_declined({}))
+    anki.gui.interactive = True
+    opened = {"clicked": False}
+
+    def respond(p):
+        tree = p["tree"]
+        btn = find(tree, t="button", label="Declined cards (1)...")
+        if btn and not opened["clicked"]:
+            opened["clicked"] = True
+            return {"events": [{"id": btn["id"], "click": True}]}
+        assert find(tree, t="button", label="Declined cards...") is not None, (
+            "the declined count did not refresh after the dialog closed")
+        cancel = find(tree, t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+
+
 def test_declined_dialog_empty_state(anki):
     tree = _snapshot_declined_dialog(anki)
     assert "You haven't declined any cards." in _all_text(tree)
 
 
 def test_declined_dialog_degrades_a_malformed_entry_instead_of_crashing(anki):
-    """A hand-edited declined.json can carry a garbage (non-dict) value, which cannot
-    be read as a row at all and is the one thing this dialog drops outright, or a
-    state it doesn't otherwise group by. sync.py's own filter keeps a GUID declined by
-    its presence in the registry alone, whatever its state says, so an unrecognized
-    but real entry must still render, under Other, with a working Offer again: without
-    it there would be no way back for that card at all."""
+    """A hand-edited declined.json can carry a garbage (non-dict) value, or a state
+    this dialog doesn't otherwise group by. sync.py's own filter keeps a GUID declined
+    by its presence in the registry alone, whatever its entry holds, so every entry
+    must still render, under Other, with a working Offer again: a dropped one would
+    leave no way back for that card at all. The non-dict entry has no front to show,
+    so its row names it by its bare guid."""
     from internpearls import config
     config.save_declined({
         "g1": "not a dict",
@@ -780,12 +810,24 @@ def test_declined_dialog_degrades_a_malformed_entry_instead_of_crashing(anki):
     texts = _all_text(tree)
     assert "Other" in texts
     assert "front c" in texts and "front d" in texts
+    assert "g1" in texts.split()
     assert "You haven't declined any cards." not in texts
     buttons = [n for n in walk(tree)
               if n.get("t") == "button" and n.get("label") == "Offer again"]
-    assert len(buttons) == 2, (
-        "one Offer again per rendered entry: the non-dict entry has none, the two "
-        "unrecognized-state entries have one each")
+    assert len(buttons) == 3, "one Offer again per entry, the non-dict one included"
+
+
+def test_a_garbage_only_registry_still_offers_a_way_back(anki):
+    """A registry holding only non-dict values used to render an empty dialog with no
+    rows and no empty-state line, under a Manage decks button still counting them."""
+    from internpearls import config
+    config.save_declined({"g-garbage": "not a dict"})
+    tree = _snapshot_declined_dialog(anki)
+    texts = _all_text(tree)
+    assert "Other" in texts and "g-garbage" in texts
+    assert "You haven't declined any cards." not in texts
+    _drive_declined_offer_again(anki, "g-garbage")
+    assert config.load_declined() == {}
 
 
 def test_offer_again_on_an_other_row_removes_it_without_crashing(anki):
@@ -793,7 +835,7 @@ def test_offer_again_on_an_other_row_removes_it_without_crashing(anki):
     config.save_declined({
         "g1": {"state": "future-state", "front": "front c", "deck": "IP::A",
                "decided": "2026-08-03", "hash": ""}})
-    _drive_declined_offer_again(anki, "g1")
+    _drive_declined_offer_again(anki, "front c")
     assert config.load_declined() == {}
 
 
@@ -810,7 +852,7 @@ def test_offer_again_on_an_entry_missing_a_deck_saves_without_invalidating(
     config.save_declined({
         "g1": {"state": "skip", "front": "front e", "decided": "2026-08-05",
                "hash": ""}})
-    _drive_declined_offer_again(anki, "g1")
+    _drive_declined_offer_again(anki, "front e")
     assert config.load_declined() == {}
     assert calls == [], f"invalidate_installed must not run here, got {calls}"
 
