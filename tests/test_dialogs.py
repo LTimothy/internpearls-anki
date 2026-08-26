@@ -1550,13 +1550,19 @@ def test_predeclined_detail_renders_its_chips_and_preset_state(anki):
 
 def test_returning_to_default_pops_the_guid_and_unstrikes_the_row(anki):
     """decisions stays sparse: choosing a non-default state records it, and clicking
-    back to the row's default removes the entry rather than writing it back in."""
+    back to the row's default removes the entry rather than writing it back in. The
+    strikeout Never put on the primary line has to come off again with it."""
     body, boxes, flush, decisions = _build_body_with_one_new_card()
     cell = _find_decision_cell(body)
+    primary = next(w for w in _walk_widgets(body)
+                  if callable(getattr(w, "text", None))
+                  and "anterior thigh" in (w.text() or ""))
     cell.buttons["never"].click()
     assert decisions == {"guid-new-a": "never"}
+    assert primary.font().strikeOut()
     cell.buttons["import"].click()
     assert decisions == {}
+    assert not primary.font().strikeOut()
 
 
 def test_returning_to_default_closes_an_empty_box_and_restores_add_note(anki):
