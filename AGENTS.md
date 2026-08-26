@@ -84,7 +84,10 @@ relax them without understanding why they're there.
   people's decks are untouched. Anything that isn't provably contentless
   still archives.
 - **Persistent state lives under `internpearls/user_files/`.** Everything
-  else in the add-on folder is replaced on update.
+  else in the add-on folder is replaced on update; the declined-card registry
+  (`declined.json`, keyed by GUID, read and written by the card-decision
+  controls) lives there for the same reason `installed.json` and the
+  feedback log do.
 - **Card feedback is written to disk as it is typed, and cleared only once
   the digest has actually been shown.** It is the one thing in a run that
   clicking Update again cannot reproduce, and it used to exist only in memory
@@ -158,11 +161,11 @@ relax them without understanding why they're there.
   chip at all, because a chip prepended into the row's rich text starts that
   row's primary line at a different x for every chip word (49px with NEW, 76
   with UPDATED, hard left with none), so one list reads as ragged prose
-  rather than a column. The pills are all widened to the widest of the four,
-  measured lazily at the running platform's own font and cached: a value
-  computed at import is measured before a QApplication exists, and a
-  hardcoded one is only ever right on one platform. Moving it back inline
-  also squares the corners, since Qt's rich text silently drops
+  rather than a column. The pills are all widened to the widest label that
+  shares their column, measured lazily at the running platform's own font
+  and cached: a value computed at import is measured before a QApplication
+  exists, and a hardcoded one is only ever right on one platform. Moving it
+  back inline also squares the corners, since Qt's rich text silently drops
   `border-radius` and `padding` on a span. Guarded by
   `qt_tests/test_chip_column.py`; anything that puts a column in front of a
   row's primary label must also widen `_card_row`'s own `blay` indent, or
@@ -170,7 +173,11 @@ relax them without understanding why they're there.
 - **A chip earns its place when a list is mixed, and only then.** Sync decks
   marks a deck NEW or UPDATED and Reconcile marks a card RETIRED or MOVED, so
   their rows carry chips and every row in them reserves the caret and chip
-  columns to read down one edge. Clean up duplicates, Remove empty cards, the
+  columns to read down one edge. A card re-offered after an earlier Skip or
+  Never decision carries a second chip beside its own (SKIPPED or KEPT
+  YOURS), plus a third (UPDATED) if it changed again since that decision:
+  `_card_row` adds one `chip_cell` per badge a row actually has, not a
+  single cell shared between them. Clean up duplicates, Remove empty cards, the
   recommended-settings offer and every end-of-run summary list one kind of thing
   each, so nothing on them is chipped and they pass `card_columns=False`:
   reserving a gutter nothing paints indents the whole list away from its own

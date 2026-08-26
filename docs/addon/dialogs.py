@@ -61,6 +61,10 @@ def _github_source_form(repo_default, token_default):
             warning.setText("Enter a repo (owner/name) before continuing.")
             return
         dlg.accept()
+    # The warning is about the field as it was, so typing in it clears the warning:
+    # left standing, it went on telling someone to enter a repo while they were
+    # looking at the one they had just entered.
+    repo_edit.textChanged.connect(lambda _text="": warning.setText(""))
     bb.accepted.connect(_try_accept)
     bb.rejected.connect(dlg.reject)
     lay.addWidget(bb)
@@ -319,6 +323,12 @@ def _offer_manifest_scope(manifest):
 # the muted trailing text _deck_row writes below.
 _STATE_CHIP = {"new": "new", "update": "changed", "current": None}
 
+# The only chips this panel can paint, so its column is measured against those two
+# words rather than against every chip in the add-on: a deck row can never carry a
+# decline chip, and measuring one in widened every pill and gutter here for a state
+# this screen has no way to reach (see widgets.chip_column_width).
+_DECK_CHIPS = ("new", "changed")
+
 # How wide a deck's label may paint before the middle is elided, in pixels of whatever
 # font the platform is actually drawing it in: the 480px dialog, less the row's own
 # margins and the count and chip columns it shares the row with.
@@ -504,8 +514,9 @@ class _DeckManagerDialog(QDialog):
                 + ", ".join(self._stale_excluded))
             outer.addWidget(self._stale_label)
             clear_row = QHBoxLayout()
-            clear_row.addWidget(link_button(
-                "Clear", on_click=self._clear_stale, align_left=True))
+            self._clear_btn = link_button(
+                "Clear", on_click=self._clear_stale, align_left=True)
+            clear_row.addWidget(self._clear_btn)
             clear_row.addStretch()
             outer.addLayout(clear_row)
 
@@ -568,13 +579,13 @@ class _DeckManagerDialog(QDialog):
         # Last rather than beside the deck name: a chip after a name is at a different x
         # on every row, while the fixed-width cell against the row's right edge (empty on
         # an up-to-date row) keeps the counts and the chips each in a column of their own.
-        h.addWidget(chip_cell(_STATE_CHIP[r["state"]]))
+        h.addWidget(chip_cell(_STATE_CHIP[r["state"]], _DECK_CHIPS))
         return row
 
     @staticmethod
     def _declined_label():
         n = len(load_declined())
-        return f"Declined cards ({n})..." if n else "Declined cards..."
+        return f"Declined cards ({n})" if n else "Declined cards"
 
     def _open_declined(self):
         # Offer again inside that dialog can shrink the registry, so the count is
@@ -602,9 +613,16 @@ class _DeckManagerDialog(QDialog):
         # Explicit only: nothing here ever clears a stale exclusion on its own, since
         # excluded_decks()'s own preservation rule is what keeps a deck missing for one
         # fetch (rather than genuinely gone) from silently coming back ticked.
+        #
+        # The line says what is going to happen rather than emptying: nothing is
+        # actually un-excluded until Save (see excluded_decks), so a label that cleared
+        # itself on the click showed the job as done and let Cancel quietly undo it.
+        # The link goes with it, since there is nothing left for it to clear.
         self._cleared_stale = set(self._stale_excluded)
         self._stale_excluded = []
-        self._stale_label.setText("")
+        self._stale_label.setText(
+            "Cleared when you save: " + ", ".join(sorted(self._cleared_stale)))
+        self._clear_btn.setVisible(False)
 
     def excluded_decks(self, previous=()):
         """Which decks to exclude: the unticked rows, plus every deck in `previous`
@@ -726,7 +744,7 @@ def manage_decks(pending=None):
 # _rebuild(): sync.py keeps a GUID declined by its presence in the registry alone,
 # regardless of what its state says, so every entry needs a way back to being offered.
 _DECLINE_GROUPS = (("never", "Never imported"), ("skip", "Skipped for now"),
-                   ("keep", "Kept your version"))
+                   ("keep", "Kept yours"))
 
 # The cap review._scrolled stops the list growing the dialog past, once it holds more
 # rows than fit. Unlike _SCOPE_DIALOG_H above, this sets no floor: a short list stays
@@ -901,10 +919,13 @@ class _SettingsDialog(QDialog):
         interval_row.addStretch()
         outer.addLayout(interval_row)
 
+        # Two kinds of held-back change, not three: a card template and its look are
+        # the same deferral spelled two ways, and listing them apart read as three
+        # separate things auto-sync refuses.
         outer.addWidget(hint_label(
-            "Changed decks apply without asking, apart from a deck whose card template, "
-            "look, or note-type format changed, which is held back for a manual run. A "
-            "backup is still taken first, the same as a manual sync."))
+            "Changed decks apply without asking, apart from a deck whose card template "
+            "or look changed, or whose note-type format did, which is held back for a "
+            "manual run. A backup is still taken first, the same as a manual sync."))
 
         outer.addWidget(section_rule())
         outer.addWidget(section_label("Add-on updates"))
@@ -985,10 +1006,11 @@ def open_settings():
     dim_line = ("Bright images will be dimmed in Night Mode."
                if values["dim_images_night_mode"] else
                "Night Mode image dimming is off.")
-    feedback_line = ("Decline controls for flagging a problem card are always available "
-                     "on the Update my decks screen.")
-    _info(f"Settings saved.<br><br>{sync_line}<br>{update_line}<br>{dim_line}"
-          f"<br>{feedback_line}")
+    # One line per setting this dialog actually holds. It used to close on a fixed
+    # sentence about the update screen's decline controls, which Settings has not
+    # configured since its toggle was removed, so it read as a fifth setting with no
+    # control to find (and named declining as the way to flag a card, which Add note is).
+    _info(f"Settings saved.<br><br>{sync_line}<br>{update_line}<br>{dim_line}")
 
 
 @_safe

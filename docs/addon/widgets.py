@@ -40,10 +40,10 @@ _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "mo
 _CHIP_STYLE = ("border-radius: 3px; padding: 1px 6px; font-size: 11px;"
                " font-weight: 600;")
 
-# chip_column_width()'s answer, measured once. Deliberately not computed at import:
-# these modules are imported before a QApplication exists, and font metrics before that
-# point are meaningless.
-_CHIP_W = None
+# chip_column_width()'s answer per chip set, measured once each. Deliberately not
+# computed at import: these modules are imported before a QApplication exists, and font
+# metrics before that point are meaningless.
+_CHIP_W = {}
 
 # The caret column, and the gap between every column in a row's header. A card row
 # draws its expander in that column (review._card_row); a row that cannot expand
@@ -54,43 +54,58 @@ CARET_W = 14
 CARET_GAP = 6
 
 
-def chip_column_width():
+def chip_column_width(kinds=None):
     """The width of the chip column, which is also the width of every pill in it.
 
-    Measured off the widest of the four labels at the running platform's own font
-    rather than hardcoded, since the same four words come out at different widths on
-    macOS and on CI, and a fixed pixel value would only ever be right on one of them.
+    Measured off the widest label at the running platform's own font rather than
+    hardcoded, since the same words come out at different widths on macOS and on CI,
+    and a fixed pixel value would only ever be right on one of them.
 
-    Widening the three narrower pills to match the widest is what makes the column read
-    as one: four pills of their own natural widths inside a fixed gutter still leave
-    four different right edges down the list.
+    Widening the narrower pills to match the widest is what makes the column read as
+    one: pills of their own natural widths inside a fixed gutter still leave as many
+    different right edges down the list.
+
+    `kinds` is the chips the screen being laid out can actually show, and measuring
+    against those rather than against every chip in the add-on is what keeps one
+    screen's longest word out of another's gutter: KEPT YOURS is half again as wide as
+    NEW, and measuring it into Sync decks, Reconcile and Manage decks widened every
+    pill and every indent on three screens that can never show a decline at all. Left
+    at None it measures every kind, which is what the one screen carrying all of them
+    wants. Cached per set, since a screen's set is the same on every open.
     """
-    global _CHIP_W
-    if _CHIP_W is None:
+    key = tuple(kinds) if kinds is not None else tuple(CHIPS)
+    if key not in _CHIP_W:
         widest = 0
-        for label in CHIPS.values():
+        for kind in key:
+            label = CHIPS.get(kind)
+            if not label:
+                continue
             probe = QLabel(label)
             probe.setStyleSheet(_CHIP_STYLE)
             # A stylesheet's font only reaches the widget on polish, so an unpolished
             # sizeHint here would measure the default font instead of the pill's.
             probe.ensurePolished()
             widest = max(widest, probe.sizeHint().width())
-        _CHIP_W = widest
-    return _CHIP_W
+        _CHIP_W[key] = widest
+    return _CHIP_W[key]
 
 
-def row_text_indent():
+def row_text_indent(chip_columns=1, kinds=None):
     """How far a row's primary text sits from the row's own left edge: the caret
-    column, the chip column, and the gap on either side of the chip.
+    column, then a chip column and its gap for each column the row draws in front of
+    its primary label.
 
     What a card row's expanded body indents by, so its answer lines up under the line
-    it belongs to rather than under the caret. Read from the same three sizes
-    `simple_row` lays out below, so the two row builders cannot drift apart.
+    it belongs to rather than under the caret. Read from the same sizes `simple_row`
+    lays out below, so the two row builders cannot drift apart, and counted from the
+    caller's own leading columns rather than assumed to be one: a row that grows a
+    second column in front of its text and leaves this alone hangs its whole body a
+    chip-width left of the line it belongs to.
     """
-    return CARET_W + CARET_GAP + chip_column_width() + CARET_GAP
+    return CARET_W + CARET_GAP + chip_columns * (chip_column_width(kinds) + CARET_GAP)
 
 
-def chip_cell(kind):
+def chip_cell(kind, kinds=None):
     """A row's kind as a pill, in a fixed-width column of its own.
 
     The container is what is fixed-width, and a `kind` not in CHIPS (including None)
@@ -109,9 +124,14 @@ def chip_cell(kind):
     A background always needs its own foreground alongside it, since plain text colour
     comes from the platform palette and a hardcoded background does not flip with it
     under Night Mode.
+
+    `kinds` is the screen's own chip set, passed straight to chip_column_width: every
+    cell in one list has to be measured against the same set or the column stops being
+    a column.
     """
+    width = chip_column_width(kinds)
     cell = QWidget()
-    cell.setFixedWidth(chip_column_width())
+    cell.setFixedWidth(width)
     label = CHIPS.get(kind)
     if not label:
         return cell
@@ -122,17 +142,21 @@ def chip_cell(kind):
     c = colors()
     pill = QLabel(label)
     pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    pill.setMinimumWidth(chip_column_width())
+    pill.setMinimumWidth(width)
     pill.setStyleSheet(f"background-color: {c[f'{role}_bg']}; color: {c[f'{role}_fg']};"
                        f" {_CHIP_STYLE}")
     lay.addWidget(pill)
     return cell
 
 
-def decision_cell(options, state, on_change):
+def decision_cell(options, state, on_change, card_label=""):
     """A row's decision as a compact segmented control: one checkable button per
     option, exactly one checked. Selected colour says what the choice does: accept
     roles for Import/Apply, updated for Skip/Keep, decline for Never.
+
+    `card_label` names the card these buttons decide about, for anyone not reading the
+    row they sit on: a 300-row list otherwise announces hundreds of controls called
+    nothing but "Import", with no way to tell which card any of them belongs to.
 
     Painted as one rounded group rather than a row of separate buttons: only the
     outer corners round (the first button's left, the last button's right), and
@@ -183,7 +207,7 @@ def decision_cell(options, state, on_change):
         b = QPushButton(label)
         b.setCheckable(True)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setAccessibleName(label)
+        b.setAccessibleName(f"{label}: {card_label}" if card_label else label)
         b.clicked.connect(lambda _=False, v=value: (set_state(v), on_change(v)))
         cell.buttons[value] = b
         lay.addWidget(b)
@@ -201,7 +225,8 @@ def section_header(text):
     return section_label(text, top_margin=14)
 
 
-def simple_row(chip_kind, primary_html, trailing_html="", card_columns=True):
+def simple_row(chip_kind, primary_html, trailing_html="", card_columns=True,
+               chips=None):
     """One line: an optional chip, the primary content, and optional trailing text.
     No caret, no expansion: for a screen where the row itself is the whole content
     rather than a summary that opens into more.
@@ -220,6 +245,10 @@ def simple_row(chip_kind, primary_html, trailing_html="", card_columns=True):
     its own where nothing is ever chipped and nothing ever expands, so that one
     declines them even though rows further down the same screen do not.
 
+    `chips` is the chip kinds this row's own screen can show, passed to chip_cell so
+    the column is measured against those rather than against every chip the add-on has
+    (see chip_column_width). Every row in one list must be given the same set.
+
     Top-aligned, so a chip beside a wrapping primary sits against its first line rather
     than floating halfway down it. `trailing_html` is a second, non-wrapping label in
     muted text off to the row's right (a count, a destination) rather than folded into
@@ -234,7 +263,7 @@ def simple_row(chip_kind, primary_html, trailing_html="", card_columns=True):
     lay.setSpacing(CARET_GAP)
 
     if card_columns:
-        lay.addWidget(chip_cell(chip_kind), 0, Qt.AlignmentFlag.AlignTop)
+        lay.addWidget(chip_cell(chip_kind, chips), 0, Qt.AlignmentFlag.AlignTop)
 
     primary = QLabel(primary_html)
     primary.setWordWrap(True)

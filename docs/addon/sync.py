@@ -21,7 +21,8 @@ from aqt.utils import getFile
 
 from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
                          _ensure_notetypes, change_note_types,
-                         notetype_changes, seed_converted_siblings,
+                         missing_notetype_targets, notetype_changes,
+                         seed_converted_siblings,
                          _her_front_to_guid, _her_guid_to_deck, _her_guid_to_fields,
                          _her_guid_to_nid,
                          _her_notes_summary, _import_apkg,
@@ -34,17 +35,19 @@ from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, load_declined, save_declined)
 from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, declined_drop,
+                    declined_guids,
                     decks_to_update, feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, manifest_needs_newer_addon,
                     note_display_label, note_fields_hash, plain_text, plural,
                     prune_declined, remap_cards, write_personalized)
-from .net import _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled, _gh_raw
+from .net import (_CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled,
+                  TransportError, _gh_raw)
 from .palette import colors
-from .review import (_CONFIRM_HEIGHT, append_rows, build_list_body, build_update_body,
-                     clear_saved_feedback, load_saved_feedback, show_result,
-                     show_result_with_feedback)
+from .review import (_CONFIRM_HEIGHT, NOTHING_CHANGED, append_rows, build_list_body,
+                     build_update_body, clear_saved_feedback, load_saved_feedback,
+                     show_result, show_result_with_feedback)
 from .ui import (_ask, _ask_with_widget, _info, _manual_flow, _safe, _warn,
                  cancellable_progress, wait_cursor)
 
@@ -162,17 +165,21 @@ def _require_manifest_object(manifest, where):
 def _source_warning(e):
     """Warn about a manifest fetch that failed, saying which of the two it was.
 
-    _fetch_manifest raises RuntimeError for a source it found and could not use (a
-    folder with no manifest.json, a manifest that isn't valid JSON, one that isn't an
-    object at all) and lets the transport's own error through for a source it could not
-    reach. Leading both with "Couldn't reach the deck source" contradicted the very
-    message it was quoting, and sent someone looking at their network for a problem
-    sitting in their manifest.
+    A source that was never reached at all (no DNS, refused, timed out) raises
+    net.TransportError; everything else here is a source found and unusable (a folder
+    with no manifest.json, a manifest that isn't valid JSON or isn't an object, an HTTP
+    status about the repo, the branch or the token). Splitting on RuntimeError told
+    those apart nowhere but in the tests: every failure net._http_get raises is a
+    RuntimeError, so an offline learner read "The deck source couldn't be used: the
+    network isn't responding" and was sent to check her GitHub token. The advice below
+    follows the same split, since the two need opposite next steps.
     """
-    lead = (f"The deck source couldn't be used: {e}."
-            if isinstance(e, RuntimeError) else
-            f"Couldn't reach the deck source: {e}")
-    _warn(f"{lead}<br><br>"
+    if isinstance(e, TransportError):
+        _warn(f"Couldn't reach the deck source: {e}<br><br>"
+              "Check your internet connection and try again. If the source itself has "
+              "moved, open <b>Intern Pearls → Manage decks</b> and use Change source.")
+        return
+    _warn(f"The deck source couldn't be used: {e}.<br><br>"
           "Open <b>Intern Pearls → Manage decks</b> and use Change source to check "
           "your GitHub token or local folder.")
 
@@ -334,7 +341,7 @@ def sync_decks():
     # hang with no way out. step.pump goes to the fetch so Cancel is answered during a
     # download too, not only in the gap between two decks.
     with cancellable_progress("Syncing decks", len(todo)) as step:
-        results, restored, tpl_changes, _, cancelled, collisions, _conv = _run_sync(
+        results, restored, tpl_changes, _, cancelled, collisions, converted = _run_sync(
             cfg, manifest, lambda d: fetch(d, on_chunk=step.pump), todo,
             on_progress=lambda i, n, name: step(i, f"Syncing {name} ({i} of {n})"))
     _offer_template_changes(tpl_changes)
@@ -352,12 +359,28 @@ def sync_decks():
     append_rows(items, [("row", None, line, "") for line in results])
     if restored:
         items.append(("note", f"Preserved fields restored on {plural(restored, 'card')}."))
+    items += _converted_items(converted)
     items += _collision_items(collisions)
     items.append(("note", backup_line))
     if cancelled:
         items.append(("note", "Nothing else was touched; run <b>Sync decks</b> again "
                               "anytime to pick up where this left off."))
     show_result(f"{title} (source: {source})", items)
+
+
+def _converted_items(converted):
+    """What a consented note-type conversion actually did, for the end-of-run summary.
+
+    The count came back from _run_sync all along and both callers threw it away, so the
+    one thing a reader agreed to a full AnkiWeb sync for was the one thing the summary
+    never mentioned. Named as moved cards rather than as converted notes, since that is
+    what the question asked about.
+    """
+    if not converted:
+        return []
+    return [("note", f"Moved {plural(converted, 'card')} to the new format, review "
+                     "history kept. Your next AnkiWeb sync is the one-time full sync "
+                     "this was asked about: choose \"Upload to AnkiWeb\".")]
 
 
 def _collision_items(collisions):
@@ -419,7 +442,8 @@ def _offer_notetype_changes(changes):
 
 
 def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
-              defer_template_changes=False, convert_notetypes=None):
+              defer_template_changes=False, convert_notetypes=None,
+              undisclosed_conversions=()):
     """Apply every deck in `todo`: fix note types, snapshot protected fields, remap and
     import each deck (keeping the learner's scheduling), restore the snapshotted fields,
     and persist the new installed versions.
@@ -458,13 +482,18 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     preview's own downloads and asks before the apply loop starts). Either way the
     consent is explicit: False converts nothing, and an unattended caller never gets
     this far, since `defer_template_changes` holds the deck back instead.
+
+    `undisclosed_conversions` names the decks whose conversions that one question could
+    not have covered, because their package still could not be read when it was asked.
+    Such a deck is held back here rather than imported with its conversion silently
+    declined: it stays pending, and the next run's preview puts it on screen up front.
     """
     aliases = manifest.get("front_aliases", {})   # from the (private) manifest, not config
     _ensure_notetypes()
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
     her = _her_front_to_guid(cfg["scope_tag"])
     reg = load_declined()
-    declined = set(reg)
+    declined = declined_guids(reg)
     seen = {}
     results, tpl_changes, deferred, touched = [], {}, [], set()
     # This run's own per-deck versions, and the only thing written back: the save below
@@ -484,7 +513,10 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # A note-type conversion is the same class of thing as a template change:
             # it bumps the schema, so it needs consent and must never happen
             # unattended. Same deferral, one deck held back rather than half-applied.
-            nt = notetype_changes(src, her, aliases, cfg["scope_tag"])
+            # `declined` goes in so a card she turned away is left out of the plan
+            # entirely: its content is dropped from the import below, so converting
+            # her note would move it to a format holding none of the new content.
+            nt = notetype_changes(src, her, aliases, cfg["scope_tag"], declined)
             if (tpl or nt) and defer_template_changes:
                 deferred.append(d["name"])
                 # Named for what is actually being held back: a template change and a
@@ -496,11 +528,30 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 results.append(f"• <b>{short}</b>: includes a {what} update, "
                                "waiting for a manual Sync decks")
                 continue
+            if nt and d["name"] in undisclosed_conversions:
+                # This run's one conversion question was asked before this deck could
+                # be read, so nothing on screen ever named these cards. Held back
+                # rather than imported with the conversion declined on her behalf: the
+                # deck stays pending and the next run asks about it up front.
+                deferred.append(d["name"])
+                results.append(f"• <b>{short}</b>: includes a note-type format update "
+                               "this run couldn't check in time, waiting for the next "
+                               "update")
+                continue
             tpl_changes.update(tpl)
+            # A target note type this collection doesn't hold yet can't be converted
+            # onto at all, and the import that creates it runs after this. So nothing
+            # is asked and nothing is converted; the deck imports (which is what adds
+            # the note type) but its version is deliberately not recorded below, so the
+            # next run finds it pending and moves her cards across for real.
+            missing = ([] if convert_notetypes is False
+                       else missing_notetype_targets(nt))
             # Before the import, not after: once the note is on the right type, the
             # import matches it by GUID and updates it in place, which is the whole
             # point. Afterwards it would be converting a duplicate.
-            if convert_notetypes is None:
+            if missing:
+                changed_nids = []
+            elif convert_notetypes is None:
                 changed_nids = _offer_notetype_changes(nt)
             else:
                 changed_nids = change_note_types(nt) if (nt and convert_notetypes) else []
@@ -516,6 +567,15 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # After the import, not before: the extra cloze cards only exist once the
             # cloze markup has actually landed on the note.
             seed_converted_siblings(changed_nids)
+            if missing:
+                results.append(
+                    f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new "
+                    f"({', '.join(missing)} "
+                    f"{'is not' if len(missing) == 1 else 'are not'} "
+                    "in your collection yet, so your existing cards keep their current "
+                    "format for now; this deck stays pending so the next update can "
+                    "move them across)")
+                continue
             applied[d["name"]] = d["version"]
             results.append(f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new")
         except DownloadCancelled:
@@ -532,10 +592,6 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     # by the time a multi-deck run gets here, and saving that as-is would revert any
     # version another sync recorded in the meantime.
     _save_json(INSTALLED, {**_load_json(INSTALLED, {}), **applied})
-    retired_guids = {g for per_deck in (manifest.get("retired") or {}).values()
-                     for g in per_deck}
-    if prune_declined(reg, retired_guids, seen):
-        save_declined(reg)
     # Read what the source shipped BEFORE restoring her annotations over it: after
     # _restore, hers is what the note holds, and recording that as the baseline would
     # make her own edit indistinguishable from the source's own value next time.
@@ -543,6 +599,20 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     restored, collisions = _restore(snap, _load_json(SHIPPED, {}), touched)
     if shipped:
         _save_json(SHIPPED, {**_load_json(SHIPPED, {}), **shipped})
+    # Registry housekeeping runs last, and inside its own guard. Everything above is
+    # what keeps her annotations: the import has already overwritten the protected
+    # fields by this point, and only _restore puts them back. Between the two, anything
+    # this raised (a hand-edited registry the per-entry hardening can't cover) took the
+    # restore down with it and left the overwrite standing, with the decks recorded as
+    # installed. Ordering, not the exception, is the fix; the guard is so a future
+    # different failure here can't reintroduce it.
+    try:
+        retired_guids = {g for per_deck in (manifest.get("retired") or {}).values()
+                         for g in per_deck}
+        if prune_declined(reg, retired_guids, seen):
+            save_declined(reg)
+    except Exception:
+        pass
     mw.reset()
     return results, restored, tpl_changes, deferred, cancelled, collisions, converted
 
@@ -569,15 +639,18 @@ def _offer_template_changes(tpl_changes):
     return []
 
 
-def _retry_failed_downloads(fetch, todo, downloaded, her_fronts, aliases, cfg):
+def _retry_failed_downloads(fetch, todo, downloaded, her_fronts, aliases, cfg, declined):
     """Download the decks whose preview download failed, before this run asks anything.
 
     `downloaded` is updated in place, so the apply step reuses these files instead of
-    fetching a third time. Returns (conversions, cancelled): the note-type conversions
-    found in them, for the run's single conversion question to cover, and whether the
-    reader clicked Cancel. Nothing has been backed up or imported at this point, so a
-    cancel here is the caller stopping outright rather than carrying on with a button
-    that did nothing.
+    fetching a third time. Returns (conversions, cancelled): {deck name: the note-type
+    conversions found in it}, for the run's single conversion question to cover, and
+    whether the reader clicked Cancel. Keyed by deck rather than one flat list because
+    a deck previewed fine and then swept out of the temp directory before this runs is
+    downloaded again here, and appending its conversions to the ones the preview
+    already found counted every one of its cards twice in that question. Nothing has
+    been backed up or imported at this point, so a cancel here is the caller stopping
+    outright rather than carrying on with a button that did nothing.
 
     This runs where it does because of what a conversion costs. Detected inside the
     apply loop instead, it is first seen under the progress dialog, with nowhere left
@@ -589,11 +662,14 @@ def _retry_failed_downloads(fetch, todo, downloaded, her_fronts, aliases, cfg):
 
     A deck that fails again is left exactly as it was: the apply loop fetches it once
     more, with Cancel live, and reports a second failure as the per-deck failure it is.
+    A third attempt that finally succeeds is the one case where a conversion first
+    surfaces inside the apply loop, and _run_sync's `undisclosed_conversions` is what
+    keeps that deck from importing with a question nobody was ever asked.
     """
     missing = [d for d in todo if not _is_local(downloaded.get(d["name"]))]
     if not missing:
-        return [], False
-    conversions, cancelled = [], False
+        return {}, False
+    conversions, cancelled = {}, False
     with cancellable_progress("Downloading decks", len(missing)) as step:
         for i, d in enumerate(missing, 1):
             short = d["name"].split("::")[-1]
@@ -603,8 +679,8 @@ def _retry_failed_downloads(fetch, todo, downloaded, her_fronts, aliases, cfg):
             try:
                 src = _cached_fetch(fetch, d, on_chunk=step.pump)
                 downloaded[d["name"]] = src
-                conversions += notetype_changes(src, her_fronts, aliases,
-                                                cfg["scope_tag"])
+                conversions[d["name"]] = notetype_changes(
+                    src, her_fronts, aliases, cfg["scope_tag"], declined)
             except DownloadCancelled:
                 cancelled = True
                 break
@@ -658,11 +734,12 @@ def _reconcile_pending(manifest, cfg):
     pairs she holds both halves of (see find_stranded_pairs); its predecessors are
     archived like `fresh`, but only after their scheduling has been carried forward.
 
-    Two things are filtered out of all three before they leave here, so the screens and
-    the actions can't disagree about them: a card sitting in a deck the learner has
+    Three things are filtered out before they leave here, so the screens and the
+    actions can't disagree about them: a card sitting in a deck the learner has
     unchecked in Manage decks (unchecking one promises to stop future syncs for it, and
-    archiving or relocating her cards is not what "stopped" means), and a relocation of
-    a card this same pass is about to archive.
+    archiving or relocating her cards is not what "stopped" means), a relocation of a
+    card this same pass is about to archive, and a retirement of a card that is also
+    half of a reworded pair, which the merge already covers.
     """
     her = _her_guid_to_nid(cfg["scope_tag"])
     # her_front lets both ledgers act on a card whose GUID no longer matches them (an
@@ -700,7 +777,14 @@ def _reconcile_pending(manifest, cfg):
     fresh = [r for r in fresh if not _opted_out(r["guid"])]
     stranded = [p for p in stranded
                 if not (_opted_out(p["guid"]) or _opted_out(p["successor_guid"]))]
-    archived = {r["guid"] for r in fresh} | {p["guid"] for p in stranded}
+    # A card the retirement ledger names AND that she holds both wordings of is one
+    # card, handled once, as the merge: that path carries its scheduling forward as
+    # well as its annotations and then archives it, which is everything the retirement
+    # path does and more. Processed by both, it was written twice, archived twice, and
+    # counted in the summary under "archived" and "merged" alike.
+    merged = {p["guid"] for p in stranded}
+    fresh = [r for r in fresh if r["guid"] not in merged]
+    archived = {r["guid"] for r in fresh} | merged
     # A card in both ledgers is retired, not relocated: archiving moves it into the
     # Retired deck and a relocation immediately afterward pulls it straight back out
     # into a live deck, suspended and tagged, which is neither of the two outcomes.
@@ -1331,9 +1415,9 @@ _UPDATE_SAFETY_NOTE = (
     "by card, not overwritten). Archived cards keep their history too and can "
     "be brought back anytime by unsuspending them or moving them out of the "
     "Retired deck, nothing here is ever deleted. A backup is taken "
-    "automatically first. Skipped cards come back next update, already marked. "
-    "Cards you never import can be restored under Manage decks > Declined "
-    "cards.")
+    "automatically first. Skipped cards come back the next time that deck "
+    "changes, already marked, and any card you've turned away can be offered "
+    "again under Manage decks \u2192 Declined cards.")
 
 
 @_safe
@@ -1375,7 +1459,7 @@ def update_decks():
             fetch, todo, _her_front_to_guid(cfg["scope_tag"]),
             manifest.get("front_aliases", {}), _her_guid_to_fields(cfg["scope_tag"]))
         if cancelled:
-            _info("Update cancelled — nothing was changed.")
+            _info(NOTHING_CHANGED)
             return
 
     # Every card this update would add, in deck order then .apkg order. `new_index` maps
@@ -1422,7 +1506,16 @@ def update_decks():
     # _offer_notetype_changes interrupting each deck's import with its own modal from
     # under the progress dialog. Sync decks still asks per deck (see _run_sync's
     # `convert_notetypes`), exactly as the two flows already differ over templates.
-    pending_templates, pending_conversions = {}, []
+    # Kept per deck rather than as one flat list, so a deck read twice (its preview
+    # download swept out of the temp directory before _retry_failed_downloads runs) is
+    # replaced rather than added to, and so the apply step can tell which decks this
+    # question actually covered.
+    pending_templates, conversions_by_deck = {}, {}
+    # Declined cards are left out of the plan: their content is dropped from the import
+    # (logic.declined_drop), so converting her note would move it to a format holding
+    # none of the new content, on the strength of a question about a card the list
+    # above may not even show.
+    declined = declined_guids(reg)
     her_fronts = _her_front_to_guid(cfg["scope_tag"])
     aliases = manifest.get("front_aliases", {})
     for d in todo:
@@ -1434,10 +1527,11 @@ def update_decks():
         except Exception:
             pass    # a deck we can't read here still imports; it just can't offer this
         try:
-            pending_conversions += notetype_changes(src, her_fronts, aliases,
-                                                    cfg["scope_tag"])
+            conversions_by_deck[d["name"]] = notetype_changes(
+                src, her_fronts, aliases, cfg["scope_tag"], declined)
         except Exception:
             pass    # same: unreadable here, still imported, just not offered up front
+    pending_conversions = [c for cs in conversions_by_deck.values() for c in cs]
 
     new_index = {guid: (deck, label) for deck, label, guid in new_cards + changed_cards}
     flags = {}
@@ -1449,16 +1543,17 @@ def update_decks():
     # run's own index.
     recovered = merge_saved_feedback(load_saved_feedback(), flags, new_index)
 
-    # Cards already declined Never are hidden from the list below, so the per-deck
-    # counts must not pitch them as pending either. A new card's guid reads straight
-    # off its deck's preview; a changed card's guid only exists in `changed_cards`,
-    # so those hides are tallied per deck here.
-    never_guids = {g for g, e in reg.items()
-                   if isinstance(e, dict) and e.get("state") == "never"}
-    hidden_changed = {}
+    # A standing decline drops the card from the import whatever state it holds (see
+    # logic.declined_guids), so the per-deck counts must not pitch any of them as
+    # pending. Counting only the Never ones was the visible half of the bug: a card
+    # with a standing Skip or Keep mine, left untouched, was counted in "N new" or
+    # "N changing" and then dropped, so the preview said "1 new" and the result said
+    # none. A new card's guid reads straight off its deck's preview; a changed card's
+    # guid only exists in `changed_cards`, so those are tallied per deck here.
+    suppressed_changed = {}
     for deck_name, _label, g in changed_cards:
-        if g in never_guids:
-            hidden_changed[deck_name] = hidden_changed.get(deck_name, 0) + 1
+        if g in declined:
+            suppressed_changed[deck_name] = suppressed_changed.get(deck_name, 0) + 1
 
     def _deck_summary_row(d):
         """One deck's line in the summary that opens the list: the deck as the row's
@@ -1477,9 +1572,9 @@ def update_decks():
             # in this run and Update still tries to import it, so a bare "couldn't
             # preview" reads as "this deck is being skipped", which it isn't.
             return ("deck", short, "couldn't preview · still imports")
-        changing = len(pc[3]) - hidden_changed.get(d["name"], 0)
+        changing = len(pc[3]) - suppressed_changed.get(d["name"], 0)
         kept = f"{pc[0]} kept" + (f" ({changing} changing)" if changing else "")
-        new_count = sum(1 for _rid, _fields, g in pc[2] if g not in never_guids)
+        new_count = sum(1 for _rid, _fields, g in pc[2] if g not in declined)
         return ("deck", short, f"{kept} · {new_count} new")
 
     muted = colors()["muted"]
@@ -1507,7 +1602,7 @@ def update_decks():
     # digest's reader-facing ones, since this line sits beside the rows themselves.
     # A fixed word order, not decisions.values()'s own insertion order (click order),
     # so the tally reads the same regardless of which row she touched first.
-    _TALLY_WORDS = (("skip", "skipped for now"), ("keep", "kept mine for now"),
+    _TALLY_WORDS = (("skip", "skipped for now"), ("keep", "kept yours for now"),
                     ("never", "never"))
 
     def _decision_tally():
@@ -1534,11 +1629,12 @@ def update_decks():
         if tally:
             parts.append(tally)
         if hidden:
-            parts.append(f"{plural(hidden, 'card')} hidden (Never). Restore them under "
-                         "Manage decks > Declined cards.")
+            parts.append(f"{plural(hidden, 'card')} hidden (Never). Restore "
+                         f"{'it' if hidden == 1 else 'them'} under Manage decks \u2192 "
+                         "Declined cards.")
         return ("<br><br>".join(parts) + "<br><br>") if parts else ""
 
-    def _finish(title=None, items=(), run_decisions=None):
+    def _finish(title=None, items=(), run_decisions=None, nothing_note=""):
         """End the run: the summary and her notes as one dialog, then drop the saved
         copy of those notes.
 
@@ -1568,7 +1664,7 @@ def update_decks():
         a second time.
         """
         entries = feedback_entries(flags, new_index, run_decisions)
-        show_result_with_feedback(title, items, entries)
+        show_result_with_feedback(title, items, entries, nothing_note=nothing_note)
         if entries:
             clear_saved_feedback()
 
@@ -1714,17 +1810,27 @@ def update_decks():
         run_decisions[guid] = "imported after all"
     save_declined(reg)
 
+    undisclosed = set()
     if todo:
+        # Read off the registry as it now stands, so a card she declined on the
+        # confirmation a moment ago is already out of any conversion planned below.
         late_conversions, cancelled = _retry_failed_downloads(
-            fetch, todo, downloaded, her_fronts, aliases, cfg)
+            fetch, todo, downloaded, her_fronts, aliases, cfg, declined_guids(reg))
         if cancelled:
             # Nothing has been backed up or imported yet, so this is the same clean
             # stop cancelling the confirmation itself is, except the registry write
             # above already happened by this point, so whatever she decided is
             # reported through run_decisions rather than silently going unreported.
-            _finish(run_decisions=run_decisions)
+            _finish(run_decisions=run_decisions, nothing_note=NOTHING_CHANGED)
             return
-        pending_conversions += late_conversions
+        conversions_by_deck.update(late_conversions)
+        pending_conversions = [c for cs in conversions_by_deck.values() for c in cs]
+        # Whatever still isn't on disk after two attempts is a deck the question below
+        # cannot be speaking for: the apply loop fetches it a third time, and a
+        # conversion that only surfaces there would otherwise be declined on her behalf
+        # with nothing ever having asked (see _run_sync's undisclosed_conversions).
+        undisclosed = {d["name"] for d in todo
+                       if not _is_local(downloaded.get(d["name"]))}
 
     # The decks this run will write in: the ones it imports into, the ones its imports
     # will actually rewrite a card in (which is not the same list, see
@@ -1743,7 +1849,7 @@ def update_decks():
     if not proceed:
         # Same as the retry-cancel above: the registry write already happened, so
         # report what she decided rather than dropping it from the digest.
-        _finish(run_decisions=run_decisions)
+        _finish(run_decisions=run_decisions, nothing_note=NOTHING_CHANGED)
         return
 
     # Asked once, here, for the whole run: after the backup and before the first import,
@@ -1760,7 +1866,7 @@ def update_decks():
         "beside the ones you have, leaving your progress on the old versions.",
         yes_label="Move my cards across", no_label="Import them as new")
 
-    results, restored, tpl_changes = [], 0, {}
+    results, restored, tpl_changes, converted = [], 0, {}, 0
     if todo:
         # A cancellable progress window while each deck imports: the preview step
         # above already covered the download itself.
@@ -1782,10 +1888,11 @@ def update_decks():
                 return v if _is_local(v) else _cached_fetch(fetch, d,
                                                             on_chunk=step.pump)
 
-            results, restored, tpl_changes, _, cancelled, collisions, _conv = _run_sync(
+            (results, restored, tpl_changes, _deferred, cancelled, collisions,
+             converted) = _run_sync(
                 cfg, manifest, _already_fetched, todo,
                 on_progress=lambda i, n, name: step(i, f"Applying {name} ({i} of {n})"),
-                convert_notetypes=convert)
+                convert_notetypes=convert, undisclosed_conversions=undisclosed)
 
         if cancelled:
             # Stop here rather than falling through to archive/relocate: that step
@@ -1820,6 +1927,7 @@ def update_decks():
             if looks:
                 items.append(("note", "The new card look was applied for the decks "
                                       "that finished before you stopped."))
+            items += _converted_items(converted)
             # The decks that did apply before the cancel can have collided with her own
             # edits exactly as a finished run's can, and those cards are the one thing
             # here she may want to act on, so a stopped run reports them too.
@@ -1855,6 +1963,12 @@ def update_decks():
             and tag not in mw.col.get_note(her[p["guid"]]).tags
             and not _deck_opted_out(her_deck.get(p["guid"]), cfg["excluded"])
             and not _deck_opted_out(her_deck.get(p["successor_guid"]), cfg["excluded"])]
+        # The same one-card-one-outcome rule _reconcile_pending applies to its own two
+        # lists, reapplied because this recompute can pair a card that pass had already
+        # put in `fresh`: the merge below carries its scheduling forward and archives
+        # it, so archiving it again here would write it twice and count it twice.
+        merged_guids = {p["guid"] for p in stranded}
+        fresh = [r for r in fresh if r["guid"] not in merged_guids]
         carried = carry_over_protected_fields(fresh, her, cfg["protected"])
         n_merged = _merge_stranded(stranded, her, cfg["protected"], retired_deck, tag)
         n_archived = archive_notes([her[r["guid"]] for r in fresh], retired_deck, tag)
@@ -1888,6 +2002,7 @@ def update_decks():
     append_rows(items, [("row", None, line, "") for line in result_lines])
     if restored:
         items.append(("note", f"Preserved fields restored on {plural(restored, 'card')}."))
+    items += _converted_items(converted)
     items += _collision_items(collisions)
     items.append(("note", backup_line))
     _finish(f"Update complete (source: {source})", items, run_decisions)
@@ -1901,9 +2016,10 @@ def import_single():
     For a deck someone sent you directly, or a build you're testing before pushing it
     to the source repo. Does the same personalization, backup, and note-restore Sync
     does, just for one file you choose instead of everything the manifest lists, and in
-    the same order _run_sync does it: confirm, back up, then fix note types. That order
-    matters, since _ensure_notetypes can bump the collection schema (a one-time full
-    AnkiWeb sync), and answering No to "Import now?" must not have cost anyone that.
+    the same order _run_sync does it: confirm, back up, fix note types, then offer any
+    note-type conversion the file carries. That order matters, since _ensure_notetypes
+    and a conversion both bump the collection schema (a one-time full AnkiWeb sync),
+    and answering No to "Import now?" must not have cost anyone that.
     """
     cfg = _cfg()
     src = getFile(mw, "Choose an Intern Pearls .apkg", cb=None,
@@ -1928,12 +2044,33 @@ def import_single():
     remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
     # Filtered the same way _apply_deck filters a regular sync's import: a declined
     # note must never land through this path either, whatever counts get shown next.
-    declined = set(load_declined())
+    declined = declined_guids(load_declined())
     drop, touched, in_place, as_new = declined_drop(src, remap, her, declined,
                                                      in_place, as_new)
+    # A hand-picked file can carry a note-type conversion exactly as a synced deck can,
+    # and this path used to be the one that never looked: the fill-in-the-blank note
+    # GUID-remapped onto her question-and-answer note, which Anki's importer will not
+    # update, so the count below promised history it could not keep. Same plan, same
+    # consent wording, same missing-target guard as the sync path.
+    nt = notetype_changes(src, her, aliases, cfg["scope_tag"], declined)
+    missing = missing_notetype_targets(nt)
+    if nt and not missing:
+        format_line = (f" {plural(len(nt), 'card')} changed format (a question and "
+                       "answer became a fill-in-the-blank); you'll be asked whether to "
+                       f"move your existing {'card' if len(nt) == 1 else 'cards'} "
+                       "across, which is what keeps the history on those.")
+    elif nt:
+        format_line = (f" {plural(len(nt), 'card')} changed format (a question and "
+                       "answer became a fill-in-the-blank), and your collection has no "
+                       f"{', '.join(missing)} note type yet, so the history on "
+                       f"{'that one' if len(nt) == 1 else 'those'} can't carry over "
+                       "this time.")
+    else:
+        format_line = ""
     if not _ask(f"{plural(in_place, 'card')} will keep "
                 f"{'its' if in_place == 1 else 'their'} history, {as_new} will be added "
-                "as new. A backup is taken automatically first. Import now?",
+                f"as new.{format_line} A backup is taken automatically first. "
+                "Import now?",
                 yes_label="Import", no_label="Cancel"):
         return
     # Scoped from the file's own deck names, so a package filing cards outside
@@ -1950,6 +2087,12 @@ def import_single():
     _ensure_notetypes()
     tpl = _template_changes(src)
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
+    # After the snapshot and before the import, the order _run_sync uses: on the right
+    # note type the import matches by GUID and updates in place, and a snapshot taken
+    # first survives whatever the conversion's own field map does. Nothing is asked
+    # when the target type is absent, since there would be nothing to convert onto and
+    # the import is what creates it.
+    changed_nids = [] if missing else _offer_notetype_changes(nt)
     # Written into this session's own scratch directory rather than beside the file the
     # learner picked: that path is hers, may not be writable, and a fixed derived name
     # in a shared folder is the same predictable-target problem the downloads had.
@@ -1963,6 +2106,9 @@ def import_single():
             os.remove(out)
         except OSError:
             pass
+    # After the import, not before: the extra cloze cards only exist once the cloze
+    # markup has actually landed on the note.
+    seed_converted_siblings(changed_nids)
     shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched)
     restored, _ = _restore(snap, _load_json(SHIPPED, {}), touched)
     if shipped:
@@ -1971,5 +2117,7 @@ def import_single():
     _offer_template_changes(tpl)
     fields_line = (f" Preserved fields restored on {plural(restored, 'card')}."
                    if restored else "")
+    moved_line = (f" Moved {plural(len(changed_nids), 'card')} to the new format."
+                  if changed_nids else "")
     _info(f"Imported {os.path.basename(src)}: {in_place} kept history, {as_new} new."
-          f"{fields_line}")
+          f"{moved_line}{fields_line}")
