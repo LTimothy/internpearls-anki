@@ -52,6 +52,32 @@ def test_chip_cell_carries_every_kinds_label():
         assert _pill(widgets.chip_cell(kind)).text() == label
 
 
+def test_decision_cell_selected_colour_role_matches_what_the_choice_does():
+    """The segmented control's selected colour is its one visual statement of what a
+    choice does: accept roles for Import/Apply, updated for Skip/Keep, decline for
+    Never. Pinned per state so a palette or mapping edit cannot silently swap them."""
+    from internpearls import palette, widgets
+    c = palette.colors()
+    cells = {
+        widgets.decision_cell([("import", "Import"), ("skip", "Skip for now"),
+                               ("never", "Never")], "import", lambda v: None):
+            (("import", "accept"), ("skip", "updated"), ("never", "decline")),
+        widgets.decision_cell([("apply", "Apply"), ("keep", "Keep mine for now")],
+                              "apply", lambda v: None):
+            (("apply", "accept"), ("keep", "updated")),
+    }
+    for cell, mapping in cells.items():
+        for state, role in mapping:
+            cell.set_state(state)
+            style = cell.buttons[state].styleSheet()
+            assert c[f"{role}_bg"] in style and c[f"{role}_fg"] in style, (
+                f"selected {state} does not carry the {role} role's colours")
+            for other, b in cell.buttons.items():
+                if other != state:
+                    assert c[f"{role}_bg"] not in b.styleSheet(), (
+                        f"unselected {other} still painted with {role}'s background")
+
+
 def test_section_header_returns_a_label_with_the_given_text():
     from aqt.qt import QLabel
     from internpearls import widgets
