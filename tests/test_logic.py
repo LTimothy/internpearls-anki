@@ -1880,6 +1880,27 @@ def test_write_personalized_drop_removes_cards_rows_too(tmp_path):
     con.close()
 
 
+def test_declined_drop_filters_every_match_path_and_corrects_the_counts(tmp_path):
+    """One note per branch: untouched (guid-a), declined after a front-text remap
+    (guid-b), declined while importing as new (guid-c), and declined on a direct GUID
+    match (her-guid-d). The drop wins over the remap, and each dropped note leaves
+    whichever count it was sitting in."""
+    src = str(tmp_path / "src.apkg")
+    _make_mock_apkg(src, [(1, "guid-a", "front a"), (2, "guid-b", "front b"),
+                          (3, "guid-c", "front c"), (4, "her-guid-d", "front d")])
+    her = {"front b": "her-guid-b", "front d": "her-guid-d"}
+    remap, in_place, as_new, _new, _matched = logic.remap_cards(src, her, {})
+    assert (in_place, as_new) == (2, 2)
+
+    drop, touched, in_place, as_new = logic.declined_drop(
+        src, remap, her, {"her-guid-b", "guid-c", "her-guid-d"}, in_place, as_new)
+
+    assert drop == {2, 3, 4}
+    assert touched == {"guid-a"}
+    assert (in_place, as_new) == (0, 1)
+    assert 2 not in remap
+
+
 def test_prune_declined_drops_retired_and_vanished_entries():
     reg = {
         "g-retired":  {"state": "never", "deck": "IP::A", "front": "x"},
