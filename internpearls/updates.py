@@ -7,6 +7,7 @@ can't drift apart.
 import json
 import os
 import tempfile
+import traceback
 
 from aqt import mw
 from aqt.utils import openLink
@@ -86,14 +87,25 @@ def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT):
 def _addon_update_work(auto_update):
     """Background-safe: fetch the public repo's version info, and if `auto_update` is on
     and a newer version exists, also download the package. No Qt or mw.col access, so
-    it's safe to run off the main thread. Raises on a fetch failure; the caller decides
-    what "stay quiet" means for that.
+    it's safe to run off the main thread. Raises on a *version* fetch failure; the
+    caller decides what "stay quiet" means for that, since without a version there is
+    nothing to say.
+
+    A failed package download is not that: the version fetch already succeeded, so
+    there IS something to say, and a newer release exists whether or not this launch
+    could download it. It comes back as package_path=None, which is the caller's "tell
+    her a newer version is out" branch. Letting it raise instead took the whole result
+    with it, so an auto-update that failed to download said nothing at all and left the
+    menu label unrefreshed too.
     """
     info = _fetch_addon_version_info(timeout=_BG_TIMEOUT)
     package_path = None
     latest = info.get("version", "")
     if auto_update and latest and not version_at_least(ADDON_VERSION, latest):
-        package_path = _download_addon_package(timeout=_DOWNLOAD_TIMEOUT)
+        try:
+            package_path = _download_addon_package(timeout=_DOWNLOAD_TIMEOUT)
+        except Exception:
+            print(traceback.format_exc())
     return {"info": info, "package_path": package_path}
 
 

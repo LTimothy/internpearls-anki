@@ -182,12 +182,17 @@ def _in_backup_group(found, label):
 
     An exact match is the normal answer. A file written before labels carried a hash
     has only the sanitized deck name, so it matches no current label at all and would
-    sit in the folder forever; it prunes with the label that starts with it, which is
-    the bucket that would have written it. Two labels that sanitize alike both claim
-    such a file, which is the same ambiguity those older filenames already had, and it
-    bounds them either way.
+    sit in the folder forever; it prunes with the label whose own sanitized name it is,
+    which is the bucket that would have written it. Two labels that sanitize alike both
+    claim such a file, which is the same ambiguity those older filenames already had,
+    and it bounds them either way.
+
+    Compared against the label with its hash removed rather than by prefix: a current
+    label is "<sanitized name> <hash>", so a plain startswith let the roots "Foo" and
+    "Foo Bar" share a bucket ("Foo Bar <hash>" starts with "Foo "). The older file then
+    counted in Foo Bar's prune too and, being the oldest there, was evicted early.
     """
-    return found == label or (bool(found) and label.startswith(found + " "))
+    return found == label or (bool(found) and label.rsplit(" ", 1)[0] == found)
 
 
 def _backup_deck(deck_name, label=None):
@@ -882,6 +887,9 @@ def change_note_types(changes):
         old_model = mw.col.models.by_name(old_name)
         new_model = mw.col.models.by_name(new_name)
         if not old_model or not new_model:
+            # A target this collection doesn't hold yet is the caller's to notice
+            # before consenting (see missing_notetype_targets); this stays as the
+            # backstop, so nothing here can convert onto a note type that isn't there.
             continue
         nids = [nid for nid in (mw.col.db.scalar(
             "select id from notes where guid = ?", g) for g in guids) if nid]
@@ -905,18 +913,44 @@ def change_note_types(changes):
     return done
 
 
-def notetype_changes(src, her, aliases, scope_tag):
+def missing_notetype_targets(changes):
+    """The note types `changes` would convert onto that this collection doesn't have.
+
+    change_note_types can only move a note onto a note type that already exists, and
+    the import that would create one runs after it. Left unchecked, those pairs were a
+    bare `continue`: nothing converted, nothing counted, nothing said, and the deck
+    recorded as installed at that version, so the conversion was never offered again.
+    A caller that finds anything here holds that deck's version back instead and says
+    so; the import it still runs is what adds the missing note type, so the next run
+    converts and matches.
+    """
+    return sorted({c["new"] for c in changes if not mw.col.models.by_name(c["new"])})
+
+
+def notetype_changes(src, her, aliases, scope_tag, declined):
     """Note-type changes this .apkg would need on the learner's own notes.
 
     Resolves the .apkg's guids through the same matching ladder the import uses, so a
     note matched by front counts, then compares types. Returns plan_notetype_changes'
     list; empty when nothing needs converting, which is the normal case.
+
+    `declined` is logic.declined_guids' set, and a match is left out of the plan
+    entirely. A conversion is only worth anything because the import right after it
+    writes the new format's content onto the converted note, and a declined note is
+    dropped from that import (logic.declined_drop), so converting one moved her note to
+    a fill-in-the-blank type holding no blanks. Both identities are tested, the
+    package's own guid and the guid it would be remapped to, exactly the pair
+    declined_drop tests, so a decline can't be bypassed through either. It is a required
+    argument rather than a defaulted one so a fourth caller has to decide about it
+    instead of quietly planning a conversion for a card she turned away.
     """
     remap, _in_place, _as_new, _new, _matched = remap_cards(src, her, aliases)
     incoming = apkg_note_types(src)
     by_her = {}
     for rid, _fields, guid in apkg_notes(src):
         her_guid = remap.get(rid, guid)
+        if her_guid in declined or guid in declined:
+            continue
         if guid in incoming:
             by_her[her_guid] = incoming[guid]
     return plan_notetype_changes(by_her, _her_note_types(scope_tag), TARGET_FIELDS)

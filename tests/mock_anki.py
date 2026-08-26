@@ -68,11 +68,27 @@ def reset_run():
     they're the script being replayed)."""
     _widgets.clear()
     _widget_seq[0] = 0
+    _reset_chip_measurements()
     if _gui:
         _gui.cursor = 0
         for lst in (_gui.infos, _gui.warnings, _gui.tooltips, _gui.asks,
                     _gui.ask_buttons, _gui.ask_defaults, _gui.payloads):
             lst.clear()
+
+
+def _reset_chip_measurements():
+    """Drop widgets.py's cached chip-column widths, if that module is loaded yet.
+
+    It measures a screen's chip set by building probe labels the first time that set
+    is asked for, and every widget built here takes the next widget id. Cached across
+    a replay, those probes are built on the first run of a flow and on no later one,
+    which shifts every id after them on that run alone and makes a recorded click
+    answer a different widget on the replay. Measuring afresh on every run is what
+    keeps the ids identical, which is the driver's whole contract.
+    """
+    widgets = sys.modules.get("internpearls.widgets")
+    if widgets is not None:
+        widgets._CHIP_W.clear()
 
 
 def _new_wid(w):
@@ -839,7 +855,7 @@ class QLabel(QWidget):
 
     def node(self):
         return {"t": "label", "id": self.wid, "text": self._text,
-                "style": self._style}
+                "style": self._style, "strike": self.font().strikeOut()}
 
 
 class QPushButton(QWidget):
@@ -877,8 +893,12 @@ class QPushButton(QWidget):
         self.clicked.emit(self._checked)
 
     def node(self):
+        # `visible` like every other node: a button hidden once its job is done (Manage
+        # decks' Clear link) is gone from the screen, and a tree that never says so
+        # cannot tell a driver the difference between hidden and still offered.
         return {"t": "button", "id": self.wid, "label": self._label,
                 "style": self._style, "enabled": self._enabled,
+                "visible": self._visible,
                 "tooltip": self._tooltip, "accessible": self._accessible,
                 "checked": self._checked}
 
@@ -916,9 +936,14 @@ class QLineEdit(QWidget):
         self._text = text
         self._placeholder = ""
         self._password = False
+        # Real QLineEdit emits this on a programmatic setText as well as on typing,
+        # which is what a validation message wired to clear itself as the field is
+        # edited rides on.
+        self.textChanged = Signal()
 
     def setText(self, t):
         self._text = t
+        self.textChanged.emit(t)
 
     def text(self):
         return self._text
@@ -1017,6 +1042,10 @@ class _Layout:
     def __init__(self, parent=None):
         self.wid = _new_wid(self)
         self._children = []
+        # (left, top, right, bottom), recorded rather than dropped: a row's own indent
+        # is a layout margin, and a suite with no geometry has nothing else to read it
+        # from (review._card_row indents an expanded body by exactly this).
+        self._margins = (0, 0, 0, 0)
         if parent is not None and isinstance(parent, QWidget):
             parent._layout = self
 
@@ -1059,7 +1088,7 @@ class _Layout:
         pass
 
     def setContentsMargins(self, *a):
-        pass
+        self._margins = tuple(a) if len(a) == 4 else self._margins
 
     def node(self):
         return {"t": self.kind, "id": self.wid,

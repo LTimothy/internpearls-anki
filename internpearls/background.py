@@ -28,7 +28,8 @@ except Exception:
     QueryOp = None
 
 from .collection import _pre_sync_backup_or_skip_silently, installed_matching_collection
-from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
+from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_CEILING_MIN,
+                     AUTO_SYNC_INTERVAL_DEFAULT_MIN,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, INSTALLED, STATE,
                      SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json)
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
@@ -120,9 +121,12 @@ def _check_addon_updates_background():
 
 
 _auto_sync_in_progress = False
-# Decks auto-sync has already said "template update pending, needs a manual sync"
-# about, so the repeating poll doesn't re-announce them every interval. Session-scoped
-# on purpose: a restart is allowed to remind once more.
+# (deck name, version) pairs auto-sync has already said "template update pending, needs
+# a manual sync" about, so the repeating poll doesn't re-announce them every interval.
+# Session-scoped on purpose: a restart is allowed to remind once more. Keyed by version
+# as well as name, like _deferred_decks below and for the same reason: a deck deferred
+# at one version, dealt with by hand, and deferred again at the next was never
+# announced the second time, so the only sign of it was the menu label.
 _tpl_deferred_notified = set()
 # Manifest schema values auto-sync has already told the user require an add-on update.
 # Same session-scoped-once pattern as _tpl_deferred_notified — otherwise a schema
@@ -327,13 +331,15 @@ def _auto_sync_check():
         fail = len(results) - ok - len(deferred)
         # A deferred deck stays pending, so every later poll re-defers it. Only
         # mention each one once per Anki session, and stay quiet entirely on a
-        # poll where re-deferrals were the only "activity".
-        deferred_new = [n for n in deferred if n not in _tpl_deferred_notified]
-        _tpl_deferred_notified.update(deferred)
-        # Recorded by version too, so later polls skip the download and the backup for
-        # them entirely rather than reaching this same decision again (see _fetch_work).
+        # poll where re-deferrals were the only "activity". Recorded by version too, so
+        # later polls skip the download and the backup for them entirely rather than
+        # reaching this same decision again (see _fetch_work).
         versions = {d["name"]: d.get("version") for d in result["todo"]}
-        _deferred_decks.update((n, versions.get(n)) for n in deferred)
+        deferred_keys = [(n, versions.get(n)) for n in deferred]
+        deferred_new = [n for n, v in deferred_keys
+                        if (n, v) not in _tpl_deferred_notified]
+        _tpl_deferred_notified.update(deferred_keys)
+        _deferred_decks.update(deferred_keys)
         if not (ok or fail or deferred_new):
             return
         msg = (f"Intern Pearls: auto-synced {plural(ok, 'deck')} "
@@ -373,23 +379,30 @@ def _stop_auto_sync_timer():
 
 def _restart_auto_sync_timer(minutes):
     """(Re)start the repeating poll at `minutes`, floored so it can't be configured into
-    a busy-loop. GitHub load at this cadence is trivial: one small manifest.json request
-    per interval, well under even the unauthenticated 60-requests-per-hour limit at the
-    one-minute floor, let alone the 5000-per-hour a token gets.
+    a busy-loop and capped so it can't overflow QTimer's own C int. GitHub load at this
+    cadence is trivial: one small manifest.json request per interval, well under even
+    the unauthenticated 60-requests-per-hour limit at the one-minute floor, let alone
+    the 5000-per-hour a token gets.
     """
     _stop_auto_sync_timer()
     global _auto_sync_timer
     interval_ms = clamp_interval_minutes(
-        minutes, AUTO_SYNC_INTERVAL_FLOOR_MIN, AUTO_SYNC_INTERVAL_DEFAULT_MIN) * 60 * 1000
+        minutes, AUTO_SYNC_INTERVAL_FLOOR_MIN, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
+        AUTO_SYNC_INTERVAL_CEILING_MIN) * 60 * 1000
     _auto_sync_timer = QTimer(mw)
     _auto_sync_timer.timeout.connect(_auto_sync_check)
     _auto_sync_timer.start(interval_ms)
 
 
+@_bg_safe
 def _schedule_background_checks():
     """Run once, a couple seconds after Anki finishes starting up: the add-on-update
     check, and, only if auto-sync is on in Settings, an immediate deck check plus the
     repeating poll that keeps checking while Anki stays open.
+
+    Wrapped like the two checks it schedules: this runs from startup wiring with no
+    dialog around it, so anything it raises reaches Anki's own add-on error dialog on
+    every launch. A misconfigured setting is worth a quiet failure, not that.
     """
     QTimer.singleShot(2000, _check_addon_updates_background)
     cfg = _cfg()

@@ -175,6 +175,44 @@ def test_row_text_indent_covers_the_caret_and_the_chip_column():
         + widgets.CARET_GAP)
 
 
+def test_row_text_indent_counts_the_columns_it_is_given():
+    """A row drawing two columns in front of its text indents its body by both, or the
+    body hangs a chip-width left of the line it belongs to."""
+    from internpearls import widgets
+    one, two = widgets.row_text_indent(1), widgets.row_text_indent(2)
+    assert two - one == widgets.chip_column_width() + widgets.CARET_GAP
+
+
+def test_chip_column_width_measures_the_set_it_is_given():
+    """A screen's column is measured against the chips that screen can show. Cached
+    per set, since one screen's longest word must not decide another's gutter; the
+    widths themselves are measured in qt_tests, which has a font engine."""
+    from internpearls import widgets
+    widgets._CHIP_W.clear()
+    widgets.chip_column_width(("new", "changed"))
+    assert list(widgets._CHIP_W) == [("new", "changed")], (
+        "one screen's chip set must not be answered from another's measurement")
+    widgets.chip_column_width()
+    assert tuple(widgets.CHIPS) in widgets._CHIP_W
+
+
+def test_chip_column_width_ignores_a_kind_that_is_not_a_chip():
+    """`kinds` comes from a list's own rows, and a row can carry no chip at all."""
+    from internpearls import widgets
+    assert widgets.chip_column_width((None, "nonsense")) == 0
+
+
+def test_decision_cell_names_each_button_with_the_card_it_decides_about():
+    """A 300-row list otherwise announces hundreds of controls called nothing but
+    "Import", the way the Declined dialog's Offer again buttons used to."""
+    from internpearls import widgets
+    cell = widgets.decision_cell([("import", "Import"), ("skip", "Skip")], "import",
+                                 lambda v: None, card_label="A card front")
+    assert cell.buttons["skip"]._accessible == "Skip: A card front"
+    bare = widgets.decision_cell([("import", "Import")], "import", lambda v: None)
+    assert bare.buttons["import"]._accessible == "Import"
+
+
 def test_streaming_list_builds_only_its_first_batch():
     """The property the whole design rests on: opening the screen must not cost one
     widget per pending card."""

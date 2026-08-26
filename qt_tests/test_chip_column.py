@@ -74,6 +74,41 @@ def test_every_row_starts_its_primary_text_at_the_same_offset():
         "at all.")
 
 
+def _visible_pills(dialog, q):
+    from internpearls import widgets
+    labels = set(widgets.CHIPS.values())
+    return [l for l in dialog.findChildren(q.QLabel)
+            if l.isVisible() and l.text() in labels]
+
+
+def test_a_screen_that_cannot_decline_measures_a_narrower_column():
+    """KEPT YOURS is half again as wide as NEW, and measuring every chip in the add-on
+    into every screen's column widened each pill, gutter and indent on Sync decks,
+    Reconcile and Manage decks for a state none of those three can ever reach."""
+    _, _q = harness.bootstrap()
+    harness.app()
+    from internpearls import widgets
+    deck_screen = widgets.chip_column_width(("new", "changed"))
+    everything = widgets.chip_column_width()
+    assert 0 < deck_screen < everything, (
+        f"a deck screen's chip column measures {deck_screen} against the whole "
+        f"add-on's {everything}: it is still being measured against a chip it cannot "
+        "show")
+
+
+def test_manage_decks_paints_a_narrower_pill_than_the_decline_screen():
+    """The same thing one level up, on the two screens themselves: the measurement is
+    only worth having if each screen's rows are actually built with its own set."""
+    _, q = harness.bootstrap()
+    decks = harness.render("manage-decks")
+    declines = harness.render("confirm", declined=True, size=(660, 900))
+    deck_pills = _visible_pills(decks.dialog, q)
+    decline_pills = _visible_pills(declines.dialog, q)
+    assert deck_pills and decline_pills
+    assert max(p.width() for p in deck_pills) < max(p.width() for p in decline_pills), (
+        "Manage decks' pills are as wide as the screen that can show KEPT YOURS")
+
+
 def _pill(row):
     """The pill inside a row's chip cell, or None on an unchipped row."""
     cell_layout = row.layout().itemAt(0).widget().layout()

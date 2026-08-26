@@ -3,6 +3,54 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.47.3
+
+What a review round found in the card-declining feature, and a few older things
+it turned up along the way:
+
+- A card you declined can no longer have its note type changed underneath it.
+  Declining stopped the new content from being imported, but the format change
+  that came with it was still applied, so a card you turned away could end up
+  converted to a fill-in-the-blank type holding no blanks. The format change now
+  follows the decline: not applied, not asked about, and a deck whose only
+  format change belongs to a declined card is no longer held back from
+  unattended syncing forever.
+- A hand-edited or corrupted declined-card file can no longer cost you your
+  annotations. It used to fail in the one window between an import and the step
+  that puts your own notes back; the file is now checked when it is read, and
+  that step can no longer be skipped by anything failing after it.
+- Agreeing to a format change that has nowhere to land (the first time a deck
+  sends a card type your collection has never held) used to do nothing at all,
+  silently, and mark the deck up to date anyway. It now says what happened and
+  leaves the deck pending, so the next update completes the change for real.
+- Cards you skipped or kept are no longer counted in the update's "new" and
+  "changing" totals, since they aren't going to be imported.
+- A skipped or kept card wears a single chip again, so its own words get the
+  full width of the row instead of sharing it with a stack of badges, and an
+  opened card's text lines up with its own row.
+- The feedback box no longer claims your note is "sent to the deck author":
+  nothing is sent anywhere automatically, and the digest at the end of a run now
+  says plainly that it is on your clipboard for you to paste and send.
+- Skip and Keep say when the card really comes back (the next time that deck
+  changes, or any time from Manage decks) rather than promising a next update
+  that may never arrive on a quiet deck.
+- Being offline is described as being offline again, instead of advising you to
+  check your token or folder for a source that was never reached.
+- Cancelling an update at the download step now says the run stopped and nothing
+  changed, the way cancelling at any other step already did.
+- Import single deck now handles a deck whose card format changed, instead of
+  claiming it would keep the history of cards it cannot.
+- The decision buttons and the caret on each card now name the card they belong
+  to for screen readers.
+- Smaller fixes: a deck held back for a look or format change is announced again
+  when a newer version of it arrives; one deck's backups can no longer be pruned
+  early by another deck whose name starts the same way; an unusable poll interval
+  in a hand-edited config no longer breaks startup; a failed automatic add-on
+  update now tells you an update is waiting; a card that is both retired and
+  reworded is counted once; the Settings summary lists only real settings; the
+  cleared-exclusions line says it takes effect on save; "Keep yours" is worded
+  the same way everywhere; and the demo shows the struck-through Never state.
+
 ## v0.47.2
 
 A layout fix for the decline controls' macOS debut:
