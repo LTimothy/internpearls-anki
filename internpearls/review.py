@@ -23,9 +23,9 @@ from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayou
 from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
 from .logic import (apkg_media_index, build_feedback_digest, cloze_filled_html,
                     extract_apkg_media, field_image_names, field_preview_html,
-                    field_preview_text, plain_text, plural)
+                    field_preview_text, note_display_label, plain_text, plural)
 from .palette import colors
-from .ui import (_ask_with_widget, copy_to_clipboard, hint_label, link_button,
+from .ui import (_ask_with_widget, _info, copy_to_clipboard, hint_label, link_button,
                  muted_label, title_label)
 from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell, decision_cell,
                       row_text_indent, section_header, simple_row)
@@ -430,25 +430,67 @@ def _separator():
 
 
 _NEW_OPTIONS = [("import", "Import"), ("skip", "Skip"), ("never", "Never")]
-_CHANGED_OPTIONS = [("apply", "Apply"), ("keep", "Keep mine")]
+_CHANGED_OPTIONS = [("apply", "Apply"), ("keep", "Keep yours")]
 _DEFAULT_DECISION = {"new": "import", "changed": "apply"}
+
+# Where a declined card actually comes back from, spelled the same way in both captions.
+# A skipped card's deck is still recorded installed at the new version, so it is only
+# re-offered when the source ships another version of that deck: on a deck that rarely
+# changes, "next update" was a promise nothing here can keep, and Declined cards is the
+# one way back that does not depend on the source shipping anything.
+_BACK_FROM_DECLINE = ("offered again the next time this deck changes, or any time from "
+                      "Manage decks → Declined cards")
 _DECLINE_CAPTION = {
-    "skip": "You'll see this card again next update.",
-    "keep": "Your card stays as it is. The change is offered again next update.",
+    "skip": f"Set aside. It's {_BACK_FROM_DECLINE}.",
+    "keep": f"Your card stays as it is. The change is {_BACK_FROM_DECLINE}.",
 }
-_FEEDBACK_PLACEHOLDER = "What's wrong with this card? Sent to the deck author."
+
+# Nothing is transmitted from here: a note is folded into the digest at the end of the
+# run, copied to the clipboard, and pasted by the reader herself. The placeholder used
+# to say it was sent to the deck author, which is the one thing it is not, and asked
+# what was wrong with the card, on a box the neutral Add note link opens too.
+_FEEDBACK_PLACEHOLDER = ("Anything to pass on about this card? You'll get a copy at the "
+                         "end to paste and send.")
 
 
-def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
-    """One card as a single row: a caret, its kind's chip column, its tag if it has
-    one, and its primary line. Clicking the row (the caret or the line itself) reveals
-    the answer, the why behind a green left rule, and dosing when present. A "new" or
+_DECLINE_CHIP = {"skip": "skipped", "keep": "kept"}
+
+
+def _row_chip(detail):
+    """The one chip a card row wears.
+
+    A re-offered decline shows that decline rather than its kind: Skip is only ever
+    offered on a card the collection doesn't have and Keep yours only on a change to
+    one it does, so SKIPPED / KEPT YOURS says which kind the row is as well as what was
+    already decided about it. Stacking both (and, on a card changed since that decline,
+    an UPDATED beside them) cost three fixed-width columns plus the decision control,
+    which at the dialog's own 660px floor left the card's own words about 150px: the
+    exact crush the wider dialog had just undone, on the rows most worth reading. What
+    the third pill said is said better by the hint line under the header, which names
+    the decline it changed since.
+    """
+    return _DECLINE_CHIP.get(detail.get("declined_state")) or detail.get("kind")
+
+
+def _card_label(detail):
+    """The card's own short name, for a control that would otherwise announce itself
+    by its bare verb. Same helper every row that names a card already uses, at a length
+    that reads as a label rather than as the card."""
+    return note_display_label([v for _, v in detail.get("fields", [])], max_len=60)
+
+
+def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=None):
+    """One card as a single row: a caret, its one chip column (see `_row_chip`), its
+    tag if it has one, and its primary line. Clicking the row (the caret or the line
+    itself) reveals the answer, the why behind a green left rule, and dosing when
+    present. A "new" or
     "changed" row also carries a segmented decision control (widgets.decision_cell) at
     the right of its header, defaulting to Import/Apply; choosing Skip/Keep reveals a
     feedback box for what the learner makes of it, and Never collapses the row with a
-    struck-through primary line. An Import/Apply row can still open that same box with
-    its own quiet "Add note" link, at the end of the expanded body, so feedback is
-    never gated behind a decline; it costs the same click as reading the card would.
+    struck-through primary line. Any row whose box is closed, a re-offered decline
+    included, can open that same box with its own quiet "Add note" link, at the end of
+    the expanded body, so feedback is never gated behind a decline; it costs the same
+    click as reading the card would.
 
     Pictures are named until that first expand and rendered from then on. Extraction is
     what opening a row pays for, so a long list stays cheap to scroll and a review nobody
@@ -456,6 +498,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
     """
     guid = detail["guid"]
     kind = detail.get("kind")
+    card_label = _card_label(detail)
     row = QWidget()
     outer = QVBoxLayout(row)
     outer.setContentsMargins(0, 5, 0, 6)
@@ -502,11 +545,15 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
         """What the caret is called to anyone not reading the glyph: a screen reader
         announced it as "▸", and a hovering reader got nothing at all. Kept in step with
         the direction it points, since that is the only other thing saying which way it
-        will go.
+        will go, and carrying the card's own name, since a list of three hundred carets
+        all called "Show card" says nothing about which card any one of them opens.
         """
-        name = "Hide card" if expanded else "Show card"
-        caret.setAccessibleName(name)
-        caret.setToolTip(name)
+        verb = "Hide card" if expanded else "Show card"
+        # The card's name goes to the accessible name and not to the tooltip: a reader
+        # hovering this glyph already has the row's own front an inch to its right,
+        # while a screen reader moving between carets has nothing else at all.
+        caret.setAccessibleName(f"{verb}: {card_label}")
+        caret.setToolTip(verb)
 
     def _toggle():
         expanded = not body.isVisible()
@@ -539,24 +586,19 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
     _name_caret(False)
     hlay.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
 
+    # Every column this row draws in front of its primary label, collected rather than
+    # counted twice: the expanded body indents by exactly these (see `indent` below),
+    # so a column added here can never leave the body hanging left of its own line.
     # Top-aligned like the caret: the chip marks the row, so it belongs beside the
-    # first line of a wrapping one rather than centred against the whole block.
-    hlay.addWidget(chip_cell(kind), 0, Qt.AlignmentFlag.AlignTop)
-
-    # A card carrying a prior decline gets a second badge beside its kind chip
-    # (SKIPPED/KEPT YOURS), and one carrying a fresh change since that decline gets a
-    # third (the same UPDATED chip a changed row already wears) plus the hint line
-    # below the header. These keys are only ever set by the caller that already knows
+    # first line of a wrapping one rather than centred against the whole block. The
+    # decline keys `_row_chip` reads are only ever set by the caller that already knows
     # about the decline registry; nothing here writes them.
     declined_state = detail.get("declined_state")
-    if declined_state in ("skip", "keep"):
-        hlay.addWidget(chip_cell("skipped" if declined_state == "skip" else "kept"),
-                       0, Qt.AlignmentFlag.AlignTop)
     changed_since_decline = bool(detail.get("changed_since_decline"))
-    # A "changed" row already wears the kind chip's own UPDATED pill (above), so this
-    # one only adds a second badge for a "new" row carrying the cue.
-    if changed_since_decline and kind != "changed":
-        hlay.addWidget(chip_cell("changed"), 0, Qt.AlignmentFlag.AlignTop)
+    leading = [chip_cell(_row_chip(detail), chips)]
+    for cell in leading:
+        hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
+    indent = row_text_indent(len(leading), chips)
 
     primary = _ClickableLabel(_row_html(detail), _toggle)
     primary.setWordWrap(True)
@@ -572,7 +614,11 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
     box = QPlainTextEdit(flags.get(guid, ""))
     box.setPlaceholderText(_FEEDBACK_PLACEHOLDER)
     box.setFixedHeight(50)
-    box.setVisible(bool(flags.get(guid)) or declined_state in ("skip", "keep"))
+    # A note already written is what opens this, not a decline the reader made in some
+    # earlier run: ten re-offered skipped cards used to arrive as ten empty boxes
+    # parked open, which is the state _apply_decision_visuals goes out of its way to
+    # avoid everywhere else. Add note (below) is what reopens one on a row like that.
+    box.setVisible(bool(flags.get(guid)))
     boxes[guid] = box
 
     default = _DEFAULT_DECISION.get(kind)
@@ -586,7 +632,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
         add_note.setVisible(False)
     add_note.clicked.connect(_reveal_box)
 
-    def _apply_decision_visuals(state):
+    def _apply_decision_visuals(state, clicked=False):
         declined = state in _DECLINE_CAPTION
         caption.setVisible(declined)
         if declined:
@@ -594,11 +640,16 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
         # Sticky once there's something to lose (a saved flag or typed-but-unsaved
         # text), but a decline back to default with nothing written in it closes
         # again, restoring the quiet Add note affordance rather than leaving an
-        # empty box parked open.
+        # empty box parked open. `clicked` is what keeps that rule true of a decline
+        # the row opened already carrying: declining here and now is a moment worth
+        # offering the box for, while a decline made in an earlier run is not.
         has_note = bool(flags.get(guid)) or bool(box.toPlainText().strip())
-        show_box = declined or has_note
+        show_box = has_note or (declined and clicked)
         box.setVisible(show_box)
-        add_note.setVisible(state == default and not show_box)
+        # Offered whenever the box is closed, whatever the row decided: a re-offered
+        # decline is not a default row, and gating this on the default left exactly
+        # those rows with no way to write a note at all.
+        add_note.setVisible(state != "never" and not show_box)
         font = primary.font()
         font.setStrikeOut(state == "never")
         primary.setFont(font)
@@ -620,11 +671,11 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
                 decisions.pop(guid, None)
             else:
                 decisions[guid] = state
-            _apply_decision_visuals(state)
+            _apply_decision_visuals(state, clicked=True)
             on_decide(guid, state)
 
         hlay.addStretch()
-        hlay.addWidget(decision_cell(options, initial, _on_change),
+        hlay.addWidget(decision_cell(options, initial, _on_change, card_label),
                        0, Qt.AlignmentFlag.AlignTop)
         hlay.addWidget(never_note, 0, Qt.AlignmentFlag.AlignTop)
         _apply_decision_visuals(initial)
@@ -634,14 +685,22 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
     if changed_since_decline:
         since = ("since you skipped it" if declined_state == "skip"
                 else "since you kept yours")
-        outer.addWidget(muted_label(f"Changed {since}. Worth another look."))
+        # In the row's own text column, like the body below it: this line is about the
+        # card, and drawn from the row's left edge it started left of even the caret.
+        hint_row = QWidget()
+        hint_lay = QHBoxLayout(hint_row)
+        hint_lay.setContentsMargins(indent, 0, 0, 0)
+        hint_lay.setSpacing(0)
+        hint_lay.addWidget(muted_label(f"Changed {since}. Worth another look."))
+        outer.addWidget(hint_row)
 
     body.setVisible(False)
     blay = QVBoxLayout(body)
     # Every column in front of the primary label, so an expanded body lines up under
-    # the line it belongs to rather than under the caret or the chip. Missing the chip
-    # column here leaves every body hanging one chip-width left of its own text.
-    blay.setContentsMargins(row_text_indent(), 2, 0, 2)
+    # the line it belongs to rather than under the caret or the chip. Counted from
+    # `leading` above rather than assumed to be one chip: a second column in front of
+    # the label leaves every body hanging a chip-width left of its own text.
+    blay.setContentsMargins(indent, 2, 0, 2)
     blay.setSpacing(4)
 
     # A changed field's `was` line belongs directly under the block that field feeds,
@@ -736,6 +795,28 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
     outer.addWidget(caption)
     outer.addWidget(box)
     return row
+
+
+def _chip_kinds(items):
+    """The chip kinds a list can actually paint, read off the rows it was handed.
+
+    Both item vocabularies at once (build_list_body's ("row", kind, ...) and
+    build_update_body's card/retired/moved rows), since both hand their answer to the
+    same chip_cell. A screen's column is measured against this rather than against
+    every chip the add-on has, so Sync decks, Reconcile and Manage decks stop reserving
+    room for a decline chip none of them can ever show (see widgets.chip_column_width).
+    Derived rather than declared by each caller: the rows are already in hand, and a
+    declared set is one more thing to keep in step with what a screen actually builds.
+    """
+    kinds = []
+    for item in items:
+        if item[0] == "card":
+            kinds.append(_row_chip(item[2]))
+        elif item[0] == "row":
+            kinds.append(item[1])
+        elif item[0] in ("retired", "moved"):
+            kinds.append(item[0])
+    return tuple(dict.fromkeys(k for k in kinds if k))
 
 
 def save_feedback(entries):
@@ -883,20 +964,24 @@ def build_update_body(items, sources, flags, new_index, decisions,
         touched.add(guid)
         _refresh_bottom()
 
+    # Measured once for the whole screen, not per row: every row in one list has to be
+    # given the same chip set or the column stops lining up.
+    chips = _chip_kinds(items)
+
     def _row(item):
         if item[0] in ("header", "note", "sep"):
-            return _list_row(item)
+            return _list_row(item, chips=chips)
         if item[0] == "deck":
             _, deck_short, counts = item
             return simple_row(None, deck_short, counts, card_columns=False)
         if item[0] == "retired":
-            return simple_row("retired", item[1])
+            return simple_row("retired", item[1], chips=chips)
         if item[0] == "moved":
             _, front, dest_short = item
-            return simple_row("moved", front, f"→ {dest_short}")
+            return simple_row("moved", front, f"→ {dest_short}", chips=chips)
         _, deck_name, detail = item
         row = _card_row(detail, flags, boxes, decisions, _on_decide,
-                        resolve=resolvers.get(deck_name))
+                        resolve=resolvers.get(deck_name), chips=chips)
         box = boxes.get(detail["guid"])
         if box is not None:
             box.textChanged.connect(lambda g=detail["guid"], b=box: _on_change(g, b))
@@ -917,9 +1002,10 @@ def build_update_body(items, sources, flags, new_index, decisions,
     return body, boxes, flush
 
 
-def _list_row(item, card_columns=True):
+def _list_row(item, card_columns=True, chips=None):
     """One entry of `build_list_body`'s item list as a widget. See that function for
-    what each shape means, and for what `card_columns` decides."""
+    what each shape means, and for what `card_columns` decides. `chips` is the whole
+    list's own chip set (see _chip_kinds), passed on to every row that draws one."""
     if item[0] == "header":
         return section_header(item[1])
     if item[0] == "note":
@@ -932,7 +1018,8 @@ def _list_row(item, card_columns=True):
     if item[0] == "sep":
         return _separator()
     _, kind, primary_html, trailing_html = item
-    return simple_row(kind, primary_html, trailing_html, card_columns=card_columns)
+    return simple_row(kind, primary_html, trailing_html, card_columns=card_columns,
+                      chips=chips)
 
 
 def append_rows(items, rows):
@@ -980,7 +1067,9 @@ def build_list_body(items, top_html="", bottom_html="", card_columns=True):
     lay.setSpacing(8)
     if top_html:
         lay.addWidget(_rich_label(top_html))
-    lay.addWidget(StreamingList(lambda item: _list_row(item, card_columns), items), 1)
+    chips = _chip_kinds(items)
+    lay.addWidget(
+        StreamingList(lambda item: _list_row(item, card_columns, chips), items), 1)
     if bottom_html:
         lay.addWidget(_rich_label(bottom_html))
     return body
@@ -1046,7 +1135,13 @@ def show_result(title, items):
     _ask_with_widget(body, yes_label="OK", no_label=None, min_width=460, min_height=0)
 
 
-def show_result_with_feedback(title, items, entries):
+# What a run that stopped before it changed anything says, so the two places that can
+# happen (cancelling the preview download, and cancelling the retry after the
+# confirmation) say it the same way rather than one of them saying nothing at all.
+NOTHING_CHANGED = "Update cancelled, nothing was changed."
+
+
+def show_result_with_feedback(title, items, entries, nothing_note=""):
     """The end of a run, as one dialog instead of two.
 
     A completion summary and a feedback digest used to arrive as separate boxes, back
@@ -1063,12 +1158,37 @@ def show_result_with_feedback(title, items, entries):
     Degrades in both directions on purpose: a run with no flagged cards is the summary
     alone, and a digest with no summary (she backed out of the update but still wrote
     notes) is the digest on its own.
+
+    `nothing_note` is the one sentence to show when there is neither: a run that
+    stopped with nothing to summarize and nothing flagged used to return in silence,
+    so cancelling after clicking Update looked exactly like the click having done
+    nothing at all. A plain _info rather than the summary dialog, since a headline with
+    no rows under it is a sentence, not a summary. Left empty by a caller whose own
+    exit needs no announcing (declining the confirmation, where Cancel says it).
     """
     if not entries:
         if title:
             show_result(title, items)
+        elif nothing_note:
+            _info(nothing_note)
         return
     offer_feedback_digest(None, entries, title=title, items=items)
+
+
+def _digest_heading(entries):
+    """What the digest is a digest of, counted as two separate things.
+
+    An entry carries a note, a decision, or both (logic.feedback_entries builds one for
+    a decision with nothing written on it too), and calling all of them flagged told a
+    reader who skipped two cards and flagged none that she had flagged two. Each half
+    is named only when it has something to count.
+    """
+    flagged = sum(1 for e in entries if (e.get("note") or "").strip())
+    decided = sum(1 for e in entries if e.get("decision"))
+    parts = [text for text, n in ((f"{plural(flagged, 'card')} flagged", flagged),
+                                  (f"{plural(decided, 'decision')} recorded", decided))
+             if n]
+    return ", ".join(parts) or plural(len(entries), "card")
 
 
 def offer_feedback_digest(parent, entries, title=None, items=()):
@@ -1104,11 +1224,16 @@ def offer_feedback_digest(parent, entries, title=None, items=()):
         # screen is reporting. The flagged-card heading below is subordinate to it and
         # says so by being smaller, which is the way round these two used to read.
         lay.addWidget(_scrolled(_summary_block(title, items), 200))
-    lay.addWidget(section_header(f"{plural(len(entries), 'card')} flagged"))
+    lay.addWidget(section_header(_digest_heading(entries)))
+    # Nothing here sends anything, and this is the last screen that can say so before
+    # the notes are cleared: "copied, ready to paste" left it possible to read the
+    # digest, close it, and assume the deck author now had it.
     lay.addWidget(muted_label(
-        "Copied to your clipboard, ready to paste into a message."
+        "Nothing is sent automatically. This is on your clipboard: paste it into a "
+        "message to the deck author."
         if copied else
-        "Select and copy the text below to send it."))
+        "Nothing is sent automatically. Select and copy the text below, then paste it "
+        "into a message to the deck author."))
     view = QPlainTextEdit(text)
     view.setReadOnly(True)
     view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))

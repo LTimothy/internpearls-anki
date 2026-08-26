@@ -4532,20 +4532,71 @@ def test_a_broken_manifest_from_github_reads_as_broken_too(anki, monkeypatch):
 
 def test_an_unreachable_source_still_reads_as_unreachable(anki, monkeypatch):
     """The other half of the same fix: a source that genuinely could not be reached
-    keeps the sentence it always had, so the two diagnoses stay distinguishable."""
+    keeps the sentence it always had, so the two diagnoses stay distinguishable.
+
+    Driven through the real net layer rather than a stub raising a bare OSError. That
+    shape is one net.py never produces (every failure there is a RuntimeError), so the
+    old test green-lit a split production had already lost: an offline learner read
+    "The deck source couldn't be used: the network isn't responding" and was told to go
+    check her GitHub token."""
     from internpearls import sync
     anki.mw._config = {"github_decks_repo": "someone/decks"}
-    monkeypatch.setattr(sync, "_gh_raw", _raise_offline)
+    _offline_network(monkeypatch)
 
     sync.sync_decks()
 
     assert anki.gui.warnings[0].startswith(
-        "Couldn't reach the deck source: <urlopen error [Errno 8] nodename nor "
-        "servname provided>")
+        "Couldn't reach the deck source: couldn't reach the network "
+        "([Errno 8] nodename nor servname provided)")
+    assert "internet connection" in anki.gui.warnings[0]
+    assert "GitHub token" not in anki.gui.warnings[0]
 
 
-def _raise_offline(*_a, **_kw):
-    raise OSError("<urlopen error [Errno 8] nodename nor servname provided>")
+def test_a_timed_out_source_reads_as_unreachable_too(anki, monkeypatch):
+    """The other shape net.py raises for a host that never answered."""
+    from internpearls import sync
+    anki.mw._config = {"github_decks_repo": "someone/decks"}
+    _urlopen_raising(monkeypatch, TimeoutError("timed out"))
+
+    sync.sync_decks()
+
+    assert anki.gui.warnings[0].startswith(
+        "Couldn't reach the deck source: the network isn't responding (timed out).")
+
+
+def test_a_source_that_answers_with_an_http_error_is_not_called_unreachable(
+        anki, monkeypatch):
+    """A status code means the host answered, and what it answered is about the repo,
+    the branch or the token: exactly the case the "use Change source" advice fits."""
+    import urllib.error
+    from internpearls import sync
+    anki.mw._config = {"github_decks_repo": "someone/decks"}
+    _urlopen_raising(monkeypatch, urllib.error.HTTPError(
+        "https://api.github.com/", 404, "Not Found", None, None))
+
+    sync.sync_decks()
+
+    assert anki.gui.warnings[0].startswith(
+        "The deck source couldn't be used: not found (check the repo name, branch, "
+        "and file path).")
+    assert "GitHub token" in anki.gui.warnings[0]
+
+
+def _urlopen_raising(monkeypatch, exc):
+    """Make the real net layer's one network call fail with `exc`, so the add-on sees
+    whatever net._http_get turns that into rather than a shape hand-written here."""
+    import urllib.request
+
+    def boom(*_a, **_kw):
+        raise exc
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+
+
+def _offline_network(monkeypatch):
+    import urllib.error
+    _urlopen_raising(monkeypatch, urllib.error.URLError(
+        "[Errno 8] nodename nor servname provided"))
 
 
 def test_a_card_in_both_ledgers_is_archived_rather_than_relocated(anki, tmp_path):
@@ -4857,7 +4908,9 @@ def test_update_preview_hides_never_and_presets_skip(anki, tmp_path):
     texts = _all_text(tree)
     assert "front a" not in texts            # never: hidden entirely
     assert "1 card hidden" in texts          # ...but counted
-    assert "SKIPPED" in texts and "UPDATED" in texts   # skip re-offered, hash stale
+    assert "SKIPPED" in texts                # skip re-offered, marked as such
+    # and the stale hash still says so, on the row's own hint line
+    assert "Changed since you skipped it" in texts
 
 
 def test_deck_summary_counts_exclude_hidden_never_cards(anki, tmp_path):
@@ -4877,11 +4930,13 @@ def test_deck_summary_counts_exclude_hidden_never_cards(anki, tmp_path):
         "the deck summary still counts the hidden Never card as pending")
 
 
-def test_a_changed_row_keeps_one_updated_chip_after_a_kept_decline(anki, tmp_path):
-    """A "changed" row already wears the kind chip's own UPDATED pill; a fresh edit
-    since a Keep decline must not add a second one (an earlier revision added both
-    chips unconditionally)."""
+def test_a_row_wears_exactly_one_chip_after_a_kept_decline(anki, tmp_path):
+    """A re-offered decline carries one chip, the decline's own: an earlier revision
+    stacked the kind chip, the decline chip and a stale-content chip on the same row,
+    which is three fixed-width columns plus the decision control on the rows most worth
+    reading. The stale-content cue is a line under the row instead."""
     from internpearls import config
+    from internpearls.widgets import CHIPS
     deck = _source_updating_card_a(anki, tmp_path)   # guid-a, reworded front
     config.save_declined({
         "guid-a": {"state": "keep", "front": "front a", "deck": deck,
@@ -4889,9 +4944,10 @@ def test_a_changed_row_keeps_one_updated_chip_after_a_kept_decline(anki, tmp_pat
 
     tree = _snapshot_update_confirmation(anki)
 
-    updated = [n for n in _walk(tree)
-              if n.get("t") == "label" and n.get("text") == "UPDATED"]
-    assert len(updated) == 1, f"expected exactly one UPDATED chip, found {len(updated)}"
+    chips = [n["text"] for n in _walk(tree)
+             if n.get("t") == "label" and n.get("text") in set(CHIPS.values())]
+    assert chips == ["KEPT YOURS"], chips
+    assert "Changed since you kept yours" in _all_text(tree)
 
 
 def test_accepting_the_update_writes_decisions_to_the_registry(anki, tmp_path):
@@ -5052,3 +5108,466 @@ def test_actively_importing_a_kind_flipped_decline_removes_it(anki, tmp_path):
     assert "front a, revised" in fronts
     digest = anki.gui.clipboard[-1]
     assert "decision: imported after all" in digest
+
+
+# ------------------------------------ declines and the note-type conversion plan
+def _declined_conversion_source(anki, tmp_path, state):
+    """Her Q-and-A note, a source shipping it as a fill-in-the-blank, and a standing
+    decline on that very card."""
+    from internpearls import config
+    _cloze_conversion_source(anki, tmp_path)
+    config.save_declined({"g1": {"state": state, "front": "Old Q and A front",
+                                 "deck": DECK, "decided": "2026-08-01", "hash": ""}})
+
+
+def _recording_ask(asked, answer=True):
+    def ask(text):
+        asked.append(text)
+        return answer
+    return ask
+
+
+def _assert_her_card_was_left_alone(anki, asked):
+    """A declined card's note keeps its type, its content and its history, and nothing
+    about it was ever put on screen as a question."""
+    note = anki.col.note_by_guid("g1")
+    assert note.note_type()["name"] == "Study Deck - Basic"
+    assert note.fields[0] == "Old Q and A front"
+    assert anki.col.notetype_changes == []
+    assert not any("changed format" in t for t in asked), asked
+
+
+def test_a_skip_declined_card_is_never_converted_or_asked_about(anki, tmp_path):
+    """The conversion plan used to be computed with no idea the card was declined, so
+    her note was moved onto the fill-in-the-blank type while the import that writes the
+    blanks in was dropped: a cloze note holding a question and answer, and no blanks."""
+    _declined_conversion_source(anki, tmp_path, "skip")
+    asked = []
+
+    _sync(anki, ask=_recording_ask(asked))
+
+    _assert_her_card_was_left_alone(anki, asked)
+
+
+def test_a_keep_declined_card_is_never_converted_or_asked_about(anki, tmp_path):
+    _declined_conversion_source(anki, tmp_path, "keep")
+    asked = []
+
+    _sync(anki, ask=_recording_ask(asked))
+
+    _assert_her_card_was_left_alone(anki, asked)
+
+
+def test_a_never_declined_card_is_never_converted_or_asked_about(anki, tmp_path):
+    """The worst of the three: a Never card is hidden from the confirmation entirely,
+    so the question asked about a card the screen refused to show."""
+    _declined_conversion_source(anki, tmp_path, "never")
+    asked = []
+
+    _sync(anki, ask=_recording_ask(asked))
+
+    _assert_her_card_was_left_alone(anki, asked)
+
+
+def test_a_deck_whose_only_conversion_is_declined_is_not_deferred(anki, tmp_path):
+    """Unattended auto-sync holds a deck back for a conversion, and a deck whose only
+    conversion belonged to a declined card was held back forever: nothing would ever
+    convert, so no manual sync could clear it either."""
+    from internpearls import sync
+    from internpearls.config import _cfg
+    _declined_conversion_source(anki, tmp_path, "never")
+    manifest, fetch, _source = sync._fetch_manifest(_cfg())
+
+    results, _restored, _tpl, deferred, _c, _col, converted = sync._run_sync(
+        _cfg(), manifest, fetch, manifest["decks"], defer_template_changes=True)
+
+    assert deferred == [] and converted == 0
+    assert results[0].startswith("✓")
+    assert json.load(open(sync.INSTALLED, encoding="utf8")) == {DECK: "v2"}
+
+
+def test_a_mixed_deck_asks_only_about_the_conversions_left(anki, tmp_path):
+    """One declined card and one not: the question covers the one she can still say
+    yes to, and only that one's note moves."""
+    from internpearls import config
+    anki.col.models._models.append(_cloze_model())
+    _her_card(anki, "g1", "Old Q and A front")
+    _her_card(anki, "g2", "Another Q and A front")
+    config.save_declined({"g1": {"state": "never", "front": "Old Q and A front",
+                                 "deck": DECK, "decided": "2026-08-01", "hash": ""}})
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS),
+                      ("g2", ["Another {{c1::cloze}} version", "why", "", "", ""],
+                       TAGS)], _cloze_model())}))
+    asked = []
+
+    _sync(anki, ask=_recording_ask(asked))
+
+    assert any("<b>1 card</b> in this update changed format" in t for t in asked), asked
+    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Basic"
+    assert anki.col.note_by_guid("g2").note_type()["name"] == "Study Deck - Cloze"
+
+
+# ------------------------------------------ a registry file that isn't a registry
+def test_a_garbage_registry_file_reads_as_an_empty_registry(anki):
+    """Not just a garbage entry: a whole file that parsed as valid JSON and isn't an
+    object at all. It used to pass the sync's own set() over it and only raise later,
+    after the import had overwritten her protected fields."""
+    from internpearls import config
+    for junk in (["a deck"], "just a string", 5):
+        config._save_json(config.DECLINED, junk)
+        assert config.load_declined() == {}
+
+
+def test_a_garbage_registry_file_still_imports_and_restores(anki, tmp_path):
+    from internpearls import config, sync
+    _source_updating_card_a(anki, tmp_path)   # guid-a, her mnemonic on Notes
+    config._save_json(config.DECLINED, ["not", "a", "registry"])
+
+    drive(anki, sync.sync_decks, respond=_accept_everything)
+
+    note = anki.col.note_by_guid("guid-a")
+    assert note.fields[0] == "front a, revised"    # the import ran
+    assert note["Notes"] == "her mnemonic"         # ...and so did the restore after it
+
+
+def test_a_dict_of_garbage_values_still_imports_and_restores(anki, tmp_path):
+    from internpearls import config, sync
+    _source_updating_card_a(anki, tmp_path)
+    config._save_json(config.DECLINED, {"g-one": "not a dict", "g-two": ["nor this"]})
+
+    drive(anki, sync.sync_decks, respond=_accept_everything)
+
+    note = anki.col.note_by_guid("guid-a")
+    assert note.fields[0] == "front a, revised"
+    assert note["Notes"] == "her mnemonic"
+
+
+def test_registry_housekeeping_cannot_skip_the_field_restore(anki, tmp_path,
+                                                             monkeypatch):
+    """The ordering, not the one exception that exposed it. Registry housekeeping used
+    to sit between the import and the restore, so anything it raised left her
+    annotations exactly as the import had overwritten them, with the decks recorded as
+    installed and the snapshot gone."""
+    from internpearls import sync
+
+    def boom(*_a, **_kw):
+        raise AttributeError("'list' object has no attribute 'items'")
+
+    _source_updating_card_a(anki, tmp_path)
+    monkeypatch.setattr(sync, "prune_declined", boom)
+
+    drive(anki, sync.sync_decks, respond=_accept_everything)
+
+    note = anki.col.note_by_guid("guid-a")
+    assert note["Notes"] == "her mnemonic"         # the restore still ran
+    assert note.fields[0] == "front a, revised"
+
+
+# --------------------------------------- a conversion with nowhere to convert onto
+def test_a_conversion_with_no_target_note_type_holds_the_deck_back(anki, tmp_path):
+    """An all-basic collection meeting its source's first fill-in-the-blank card: the
+    note type does not exist yet, so the conversion silently converted nothing while
+    the deck was still recorded as installed and never offered again."""
+    from internpearls import sync
+    _her_card(anki, "g1", "Old Q and A front")     # no cloze note type in here
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
+               _cloze_model())}))
+
+    trees = _sync(anki)
+
+    assert anki.col.notetype_changes == []
+    assert not any("changed format" in a for a in anki.gui.asks)   # nothing asked
+    assert json.load(open(sync.INSTALLED, encoding="utf8")) == {}  # not recorded
+    assert "Study Deck - Cloze is not in your collection yet" in _summary_text(trees)
+
+    # ...and it is self-correcting: that import is what added the note type, so the
+    # next run finds the deck still pending and moves her card across for real.
+    _sync(anki)
+
+    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Cloze"
+    assert json.load(open(sync.INSTALLED, encoding="utf8")) == {DECK: "v2"}
+
+
+def test_a_finished_conversion_is_reported_rather_than_discarded(anki, tmp_path):
+    """The one thing a reader agreed to a one-time full AnkiWeb sync for was the one
+    thing no summary mentioned: both callers threw the count away."""
+    _cloze_conversion_source(anki, tmp_path)
+
+    trees = _sync(anki)
+
+    assert "Moved 1 card to the new format" in _summary_text(trees)
+
+
+# --------------------------------- a conversion only the apply step gets to see
+def _fetch_that_fails_until_apply(sync, monkeypatch):
+    """Every download raises until _run_sync's own fetch: the preview fails, the
+    pre-question retry fails too, and only the third attempt succeeds. Pinned to the
+    phase rather than to an attempt count so it survives Runner's replay."""
+    phase = {"early": True}
+    real_fetch, real_run = sync._cached_fetch, sync._run_sync
+
+    def flaky(fetch, d, on_chunk=None):
+        if phase["early"]:
+            raise RuntimeError("the source hiccuped")
+        return real_fetch(fetch, d, on_chunk=on_chunk)
+
+    def run(*a, **kw):
+        phase["early"] = False
+        try:
+            return real_run(*a, **kw)
+        finally:
+            phase["early"] = True
+
+    monkeypatch.setattr(sync, "_cached_fetch", flaky)
+    monkeypatch.setattr(sync, "_run_sync", run)
+
+
+def test_a_conversion_only_the_apply_step_finds_defers_the_deck(anki, tmp_path,
+                                                                monkeypatch):
+    """The run's one conversion question is decided before the apply loop. A deck that
+    failed both the preview and the retry contributed nothing to it, so the loop found
+    its conversion with convert=False and declined it on her behalf: her cards stayed
+    on the old type, the new ones landed beside them, and the deck was recorded as
+    installed, so nothing offered it again."""
+    from internpearls import sync
+    _cloze_conversion_source(anki, tmp_path)
+    _fetch_that_fails_until_apply(sync, monkeypatch)
+    asked = []
+
+    trees = _update(anki, ask=_recording_ask(asked))
+
+    assert not any("changed format" in t for t in asked), asked
+    assert anki.col.notetype_changes == []
+    note = anki.col.note_by_guid("g1")
+    assert note.note_type()["name"] == "Study Deck - Basic"
+    assert note.fields[0] == "Old Q and A front"        # nothing landed beside it
+    assert json.load(open(sync.INSTALLED, encoding="utf8")) == {}   # still pending
+    assert "note-type format update" in _summary_text(trees)
+
+
+def test_a_swept_preview_download_does_not_double_count_its_conversions(
+        anki, tmp_path, monkeypatch):
+    """A deck previewed fine and then swept out of the temp directory is downloaded
+    again before the question. Adding those conversions to the ones the preview already
+    found counted every card in that deck twice."""
+    from internpearls import sync
+    _cloze_conversion_source(anki, tmp_path)
+    real_retry = sync._retry_failed_downloads
+
+    def sweep(fetch, todo, downloaded, *a, **kw):
+        downloaded.clear()          # as if the tempdir had been swept since
+        return real_retry(fetch, todo, downloaded, *a, **kw)
+
+    monkeypatch.setattr(sync, "_retry_failed_downloads", sweep)
+    asked = []
+
+    _update(anki, ask=_recording_ask(asked))
+
+    assert any("<b>1 card</b> in this update changed format" in t for t in asked), asked
+    assert not any("<b>2 card" in t for t in asked), asked
+
+
+# ------------------------------------ preview counts vs. what actually imports
+def test_deck_summary_counts_exclude_a_standing_skip(anki, tmp_path):
+    """A standing skip drops the card from the import as surely as a Never does, so
+    counting it as pending made the preview say "1 new" and the result say none."""
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-b": {"state": "skip", "front": "front b", "deck": deck,
+                       "decided": "2026-08-01", "hash": ""}})
+
+    texts = _all_text(_snapshot_update_confirmation(anki))
+
+    assert "1 new" in texts
+    assert "2 new" not in texts
+
+
+def test_deck_summary_counts_exclude_a_standing_keep(anki, tmp_path):
+    """Same on the other side of the row: a kept card is not changing, because the
+    update to it is dropped."""
+    from internpearls import config
+    deck = _source_updating_card_a(anki, tmp_path)
+    config.save_declined({
+        "guid-a": {"state": "keep", "front": "front a", "deck": deck,
+                   "decided": "2026-08-01", "hash": ""}})
+
+    texts = _all_text(_snapshot_update_confirmation(anki))
+
+    assert "changing" not in texts
+
+
+def test_one_hidden_card_reads_as_one_card(anki, tmp_path):
+    """"1 card hidden (Never). Restore them under..." counted one card and then
+    pointed at several."""
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-a": {"state": "never", "front": "front a", "deck": deck,
+                       "decided": "2026-08-01", "hash": ""}})
+
+    texts = _all_text(_snapshot_update_confirmation(anki))
+
+    assert "1 card hidden (Never). Restore it under" in texts
+
+
+# --------------------------------------------------- background poll bookkeeping
+def test_a_deck_deferred_again_at_a_new_version_is_announced_again(anki, tmp_path):
+    """The deferral skip-list is keyed by (deck, version); the tooltip's own list was
+    keyed by deck name alone, so a deck deferred at one version, dealt with by hand,
+    and deferred again at the next was never mentioned a second time. The only sign of
+    it was the menu, which is exactly what the tooltip exists to point at."""
+    from internpearls import background
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one"), TAGS)], make_model(css=NEW_CSS))})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+
+    background._auto_sync_check()
+    assert sum("card-template" in t for t in anki.gui.tooltips) == 1
+
+    background._auto_sync_check()
+    assert sum("card-template" in t for t in anki.gui.tooltips) == 1   # no re-nag
+
+    _write_source(tmp_path, {
+        DECK: ("v3", [("g1", _fields("Front one"), TAGS)], make_model(css=NEW_CSS))})
+    background._auto_sync_check()
+
+    assert sum("card-template" in t for t in anki.gui.tooltips) == 2
+
+
+def test_an_absurd_poll_interval_is_capped_rather_than_overflowing(anki):
+    """A hand-edited interval used to become a QTimer interval too big for a C int,
+    which raised out of the startup wiring and gave Anki's own add-on error dialog on
+    every launch until config.json was fixed by hand."""
+    from internpearls import background
+
+    background._restart_auto_sync_timer(99999999)
+
+    timer = background._auto_sync_timer
+    assert timer is not None and timer.started == 7 * 24 * 60 * 60 * 1000
+    assert timer.started < 2 ** 31
+    background._stop_auto_sync_timer()
+
+
+def test_startup_scheduling_never_reaches_ankis_own_error_dialog(anki):
+    """The scheduler wore no background guard at all, so anything it raised was Anki's
+    raw add-on error dialog rather than a quiet failure."""
+    from internpearls import background
+
+    anki.mw._config = {"auto_sync_decks": True,
+                       "auto_sync_interval_minutes": 99999999}
+    background._schedule_background_checks()   # must not raise
+
+    assert background._auto_sync_timer.started == 7 * 24 * 60 * 60 * 1000
+    background._stop_auto_sync_timer()
+
+
+# ------------------------------------------- backup buckets and their neighbours
+def test_a_prehash_backup_belongs_only_to_the_deck_that_wrote_it(anki):
+    """Labels are "<sanitized deck name> <hash>", and an older file carries the name
+    alone. Matching that by prefix let the roots "Foo" and "Foo Bar" share a bucket, so
+    Foo's old file counted in Foo Bar's prune and, being the oldest there, was evicted
+    early."""
+    from internpearls import collection
+    foo, foo_bar = collection._backup_label("Foo"), collection._backup_label("Foo Bar")
+
+    assert collection._in_backup_group("Foo", foo)          # the bucket that wrote it
+    assert not collection._in_backup_group("Foo", foo_bar)  # not its neighbour's
+    assert collection._in_backup_group(foo, foo)            # and an exact match still
+    assert not collection._in_backup_group(foo, foo_bar)
+    assert not collection._in_backup_group("", foo)
+
+
+# ---------------------------------------- a failed auto-update that said nothing
+def test_a_failed_auto_update_download_still_says_a_version_is_out(anki, monkeypatch):
+    """The download raised out of the background work, so the whole result was lost:
+    no tooltip, and the menu label never learned the version either. A newer release
+    exists whether or not this launch could fetch it."""
+    from internpearls import background, updates
+    stub = _StubAction()
+    updates.register_update_action(stub)
+    anki.mw._config = {"auto_update_addon": True, "notify_addon_updates": True}
+    monkeypatch.setattr(updates, "_fetch_addon_version_info",
+                        lambda timeout=None: {"version": "99.0.0"})
+
+    def boom(timeout=None):
+        raise RuntimeError("the download failed")
+
+    monkeypatch.setattr(updates, "_download_addon_package", boom)
+
+    background._check_addon_updates_background()
+
+    assert any("v99.0.0 is available" in t for t in anki.gui.tooltips), anki.gui.tooltips
+    assert stub.text == "Check for add-on updates (v99.0.0 available)"
+
+
+# ------------------------------- a card both ledgers claim is still just one card
+def test_a_card_in_the_retired_ledger_and_a_reworded_pair_is_handled_once(anki,
+                                                                          tmp_path):
+    """Both paths write, both archive, and the summary counted the same card under
+    "archived" and "merged" alike. The merge wins: it carries the card's scheduling
+    forward as well as its annotations, and then archives it, which is everything the
+    retirement path does and more."""
+    from internpearls import sync
+    old = _her_card(anki, "g_old", "the older wording")
+    _her_card(anki, "g_new", "the newer wording")
+    _sched(anki, old, reps=4, ivl=12, due=90, factor=2300, lapses=1, type=2, queue=2)
+    _configure(anki, _stranded_and_retired(
+        tmp_path, {"the older wording": "the newer wording"},
+        {DECK: {"g_old": {"identity": "the older wording", "reason": "reworded",
+                          "superseded_by": ["g_new"]}}}))
+
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
+
+    summary = "\n".join(anki.gui.infos)
+    assert "Merged <b>1 reworded card</b>" in summary
+    assert "Archived" not in summary       # counted once, not once per ledger
+    kept = anki.col.get_card(anki.col.note_by_guid("g_new").card_ids()[0])
+    assert (kept.reps, kept.ivl, kept.due) == (4, 12, 90)   # scheduling carried
+    dead = anki.col.get_card(anki.col.note_by_guid("g_old").card_ids()[0])
+    assert dead.queue == -1 and RETIRED_TAG in anki.col.note_by_guid("g_old").tags
+
+
+# ------------------------------------- import single deck and a format change
+def test_import_single_offers_the_conversion_and_keeps_the_history(anki, tmp_path):
+    """This path never looked for a note-type change at all, so a hand-picked
+    fill-in-the-blank rebuild GUID-remapped onto her question-and-answer note, which
+    Anki's importer will not update, while the confirmation promised the history would
+    carry."""
+    from internpearls import sync
+    anki.col.models._models.append(_cloze_model())
+    _her_card(anki, "g1", "Old Q and A front")
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
+              model=_cloze_model(), deck=DECK)
+    anki.gui.file_picks = [src]
+
+    sync.import_single()
+
+    assert any("changed format" in a for a in anki.gui.asks), anki.gui.asks
+    note = anki.col.note_by_guid("g1")
+    assert note.note_type()["name"] == "Study Deck - Cloze"
+    assert note["Text"] == "A {{c1::cloze}} version"
+    assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1     # one card, not two
+    assert any("Moved 1 card to the new format" in i for i in anki.gui.infos)
+
+
+def test_import_single_says_so_when_there_is_no_note_type_to_convert_onto(anki,
+                                                                          tmp_path):
+    """With the target note type absent there is nothing to convert onto, and the
+    import is what creates it. Nothing is asked, and the count above no longer claims
+    a history those cards cannot keep."""
+    from internpearls import sync
+    _her_card(anki, "g1", "Old Q and A front")
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
+              model=_cloze_model(), deck=DECK)
+    anki.gui.file_picks = [src]
+
+    sync.import_single()
+
+    assert not any("you'll be asked" in a for a in anki.gui.asks), anki.gui.asks
+    assert any("can't carry over this time" in a for a in anki.gui.asks), anki.gui.asks
+    assert anki.col.notetype_changes == []

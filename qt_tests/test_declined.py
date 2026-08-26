@@ -7,7 +7,7 @@ import pytest
 import harness
 from sampling import widget_rect
 
-HEADINGS = ("Never imported", "Skipped for now", "Kept your version")
+HEADINGS = ("Never imported", "Skipped for now", "Kept yours")
 
 
 def _visible_labels(dialog, q):

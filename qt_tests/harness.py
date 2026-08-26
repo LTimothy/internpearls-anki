@@ -426,6 +426,15 @@ def _scene_confirm(mock, opts):
     details = synthetic_details()
     if opts.get("limit"):
         details = details[:opts["limit"]]
+    if opts.get("declined"):
+        # A re-offered decline, changed since it was turned away (row 0), beside an
+        # ordinary new row carrying the same three-option control (row 2). The two
+        # differ only by the decline, which is what lets a test read what the decline
+        # itself costs the card's own words. Row 1 is the changed kind, declined the
+        # way a changed card can be.
+        details[0] = dict(details[0], declined_state="skip", changed_since_decline=True)
+        details[1] = dict(details[1], declined_state="keep")
+        details[2] = dict(details[2], kind="new")
     items = [("header", "1 deck has updates:"),
              ("deck", "Example Deck", "3 kept (1 changing) · 2 new"),
              ("header", "Example Deck")]

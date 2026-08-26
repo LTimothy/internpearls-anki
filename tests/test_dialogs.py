@@ -573,6 +573,36 @@ def test_clearing_stale_exclusions_removes_exactly_those_on_save(anki, tmp_path)
     assert anki.mw._config["excluded_decks"] == [pharm]
 
 
+def test_clearing_stale_exclusions_retires_the_link_and_says_it_waits_for_save(
+        anki, tmp_path):
+    """Clear used to empty the line and leave its link standing with nothing left to
+    clear, while the un-exclusion itself only lands on Save (see excluded_decks), so
+    Cancel silently discarded what the screen had shown as already done."""
+    from internpearls import dialogs
+    elsewhere = "Some Other Source::Neuro"
+    anki.mw._config = {"decks_dir": _write_source(tmp_path),
+                       "excluded_decks": [elsewhere]}
+    anki.gui.interactive = True
+    seen = []
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        clear = find(p["tree"], t="button", label="Clear", visible=True)
+        if clear:
+            return {"events": [{"id": clear["id"], "click": True}]}
+        seen.append(p["tree"])
+        assert find(p["tree"], t="label", text=f"Cleared when you save: {elsewhere}"), (
+            "the line must say the clearing is pending, not show it as done")
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+    assert seen, "the Clear link was still offered after it had been used"
+    # Cancelled, so the pending clear never landed: the exclusion is still there.
+    assert anki.mw._config["excluded_decks"] == [elsewhere]
+
+
 def test_saving_without_clearing_still_preserves_a_stale_exclusion(anki, tmp_path):
     """The existing merge behavior must survive this change untouched: Save alone,
     with the Clear link never clicked, keeps a stale exclusion exactly as before."""
@@ -717,8 +747,8 @@ def _write_installed(anki, data):
 
 def _all_text(tree):
     """Every "text" (QLabel) and "label" (QPushButton) string anywhere in the tree,
-    joined into one blob so a caller can check substrings ("Declined cards (1)" is
-    part of a button labelled "Declined cards (1)...") as well as whole strings."""
+    joined into one blob so a caller can check substrings ("Declined" is part of a
+    button labelled "Declined cards (1)") as well as whole strings."""
     out = []
     for n in walk(tree):
         for key in ("text", "label"):
@@ -775,11 +805,11 @@ def test_manage_decks_declined_count_refreshes_after_the_dialog_closes(anki,
 
     def respond(p):
         tree = p["tree"]
-        btn = find(tree, t="button", label="Declined cards (1)...")
+        btn = find(tree, t="button", label="Declined cards (1)")
         if btn and not opened["clicked"]:
             opened["clicked"] = True
             return {"events": [{"id": btn["id"], "click": True}]}
-        assert find(tree, t="button", label="Declined cards...") is not None, (
+        assert find(tree, t="button", label="Declined cards") is not None, (
             "the declined count did not refresh after the dialog closed")
         cancel = find(tree, t="button", label="Cancel")
         return {"events": [{"id": cancel["id"], "click": True}]}
@@ -968,6 +998,47 @@ def test_saving_manual_deck_sync_steers_to_update_my_decks(anki):
     drive(anki, dialogs.open_settings, respond)
 
 
+def test_the_settings_save_summary_reports_only_settings(anki):
+    """It used to close on a fixed sentence about the update screen's decline controls:
+    a static line about something Settings has not configured since v0.47.0, sitting in
+    a list of four settings and reading as a fifth with no control to find. It also
+    called declining the way to flag a problem card, which Add note is."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+    seen = []
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": save["id"], "click": True}]}
+        seen.append(p["text"])
+        return {}
+
+    drive(anki, dialogs.open_settings, respond)
+    assert seen and "Settings saved." in seen[0]
+    assert "Decline" not in seen[0] and "flagging" not in seen[0]
+    assert seen[0].count("<br>") == 4, (
+        "the summary should carry one line per setting this dialog holds")
+
+
+def test_the_auto_sync_hint_reads_as_two_held_back_kinds_not_three(anki):
+    """A card's template and its look are one deferral spelled two ways; listing them
+    apart read as three separate things auto-sync refuses."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        text = " ".join(n.get("text") or "" for n in walk(p["tree"])
+                        if n.get("t") == "label")
+        assert "card template, look, or note-type format" not in text
+        assert "card template or look changed, or whose note-type format did" in text
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.open_settings, respond)
+
+
 def test_settings_dialog_has_no_feedback_checkbox(anki):
     """The Card review section (a settings-gated feedback toggle) is retired: feedback
     boxes on the update preview are contextual now, not controlled from here."""
@@ -1124,6 +1195,38 @@ def test_github_source_blank_repo_keeps_the_dialog_open_with_a_warning(anki):
     assert len(rounds) == 2, "the blank-repo OK click should not have closed the dialog"
     assert anki.mw._config["github_decks_repo"] == "someone/decks"
     assert anki.mw._config["github_token"] == "secret-token"
+
+
+def test_the_blank_repo_warning_clears_once_a_repo_is_typed(anki):
+    """The warning is about the field as it was. Left standing, it went on telling
+    someone to enter a repo while they were looking at the one they had just typed."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+    warning_text = "Enter a repo (owner/name) before continuing."
+    rounds = []
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        pick = _pick_source(p["tree"], "GitHub repo")
+        if pick:
+            return pick
+        rounds.append(p["tree"])
+        repo = find(p["tree"], t="line", password=False)
+        if len(rounds) == 1:
+            ok = find(p["tree"], t="button", label="OK")
+            return {"events": [{"id": ok["id"], "click": True}]}   # blank: warns
+        if len(rounds) == 2:
+            assert find(p["tree"], t="label", text=warning_text), (
+                "the blank OK click should have warned")
+            # Typing alone, with no second OK click, has to clear it.
+            return {"events": [{"id": repo["id"], "value": "someone/decks"}]}
+        assert not find(p["tree"], t="label", text=warning_text), (
+            "the warning survived the repo being typed in")
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.configure_source, respond)
+    assert len(rounds) == 3
 
 
 def test_configure_source_switching_to_local_folder_clears_repo_and_keeps_token(
@@ -1300,6 +1403,78 @@ def test_copy_again_puts_the_digest_back_on_the_clipboard(anki, monkeypatch):
     assert len(rounds) == 2, "Copy again must not close the dialog on its own"
     digest = anki.gui.clipboard[0]
     assert anki.gui.clipboard == [digest, "something else, clobbered", digest]
+
+
+def _digest_texts(anki, entries):
+    """Every label and button string on the digest dialog, from one pass over it.
+
+    Drives next_interaction directly rather than through drive(), for the reason
+    test_copy_again_puts_the_digest_back_on_the_clipboard spells out: a replayed flow
+    reruns this dialog from the top, and one pass is all these need.
+    """
+    from internpearls import review
+    seen = {}
+    original = anki.gui.next_interaction
+
+    def once(payload):
+        seen["tree"] = payload["tree"]
+        close = find(payload["tree"], t="button", label="Close")
+        return {"events": [{"id": close["id"], "click": True}]}
+
+    anki.gui.next_interaction = once
+    try:
+        review.offer_feedback_digest(None, entries)
+    finally:
+        anki.gui.next_interaction = original
+    return _all_text(seen["tree"])
+
+
+def test_the_digest_says_nothing_is_sent_and_what_to_do_with_it(anki):
+    """Nothing here transmits anything: the digest is copied to the clipboard for her
+    to paste. "Copied, ready to paste" left it possible to read this and close it
+    assuming the deck author now had it."""
+    texts = _digest_texts(anki, [{"deck": "IP::A", "guid": "g1", "front": "Front one",
+                                  "note": "dose looks off"}])
+    assert "Nothing is sent automatically" in texts
+    assert "paste it into a message to the deck author" in texts
+
+
+def test_the_digest_heading_does_not_call_a_decision_a_flag(anki):
+    """A reader who skipped two cards and flagged none was told "2 cards flagged"."""
+    entries = [{"deck": "IP::A", "guid": "g1", "front": "Front one", "note": "",
+                "decision": "skipped"},
+               {"deck": "IP::A", "guid": "g2", "front": "Front two", "note": "",
+                "decision": "skipped"}]
+    texts = _digest_texts(anki, entries)
+    assert "2 decisions recorded" in texts
+    assert "flagged" not in texts
+
+
+def test_a_run_with_nothing_to_report_can_still_say_it_changed_nothing(anki):
+    """Cancelling the post-confirm download left the reader with a progress bar that
+    closed and no word at all, after a click that had said Update."""
+    from internpearls import review
+    review.show_result_with_feedback(None, (), [],
+                                     nothing_note=review.NOTHING_CHANGED)
+    assert anki.gui.infos == [review.NOTHING_CHANGED]
+
+
+def test_a_run_with_nothing_to_report_and_no_note_stays_silent(anki):
+    """Declining the confirmation itself is answered by the click; the caller that
+    passes no note must still get no dialog."""
+    from internpearls import review
+    review.show_result_with_feedback(None, (), [])
+    assert anki.gui.infos == []
+
+
+def test_the_kept_state_is_worded_the_same_way_everywhere(anki):
+    """Three wordings of one state ("Keep mine", "KEPT YOURS", "Kept your version") is
+    three states as far as a reader is concerned. The control's own word is what the
+    chip and the Declined heading echo."""
+    from internpearls import dialogs, review, widgets
+    assert dict(review._CHANGED_OPTIONS)["keep"] == "Keep yours"
+    assert widgets.CHIPS["kept"] == "KEPT YOURS"
+    assert dict(dialogs._DECLINE_GROUPS)["keep"] == "Kept yours"
 
 
 # ------------------------------------------------------------------------ about
@@ -1576,18 +1751,89 @@ def test_changed_card_row_offers_apply_and_keep_only(anki):
     assert set(cell.buttons) == {"apply", "keep"}
 
 
-def test_predeclined_detail_renders_its_chips_and_preset_state(anki):
+def test_predeclined_detail_renders_one_chip_and_its_preset_state(anki):
+    """A re-offered decline wears the decline, and only that: NEW + SKIPPED + UPDATED
+    stacked three fixed-width columns in front of the card's own words, beside a
+    decision control, which is what crushed the front of exactly the rows the "Worth
+    another look" hint points at. The change since the decline is said by that hint,
+    not by a third pill."""
+    from internpearls import widgets
     detail = _new_card_detail(declined_state="skip", changed_since_decline=True)
     body, boxes, flush, decisions = _build_body(details=[detail])
     cell = _find_decision_cell(body)
     assert cell.buttons["skip"].isChecked()
     texts = _row_texts(body)
-    assert "SKIPPED" in texts and "UPDATED" in texts
+    chips = [t for t in texts if t in set(widgets.CHIPS.values())]
+    assert chips == ["SKIPPED"], f"expected one chip, got {chips}"
+    assert any("Worth another look" in (t or "") for t in texts)
     # decisions is the interface the next task persists verbatim, so the preset state
     # has to actually land in the dict, not just drive what the control shows.
     assert decisions == {"guid-new-a": "skip"}
     cell.buttons["import"].click()
     assert decisions == {}
+
+
+def test_a_kept_row_wears_the_kept_chip_rather_than_its_kind(anki):
+    from internpearls import widgets
+    detail = _changed_card_detail(declined_state="keep")
+    body, boxes, flush, decisions = _build_body(details=[detail])
+    chips = [t for t in _row_texts(body) if t in set(widgets.CHIPS.values())]
+    assert chips == [widgets.CHIPS["kept"]]
+
+
+def test_an_expanded_body_indents_by_the_columns_its_row_actually_draws(anki):
+    """The body lines up under the row's own text, and says so by measuring the same
+    leading columns the header laid out rather than assuming there is one chip. A row
+    that grows a second column and leaves this alone hangs its whole body a chip-width
+    left of the line it belongs to."""
+    from internpearls import review, widgets
+    detail = _new_card_detail(declined_state="skip", changed_since_decline=True)
+    row = review._card_row(detail, {}, {}, {}, lambda *a: None,
+                           chips=review._chip_kinds([("card", "D", detail)]))
+    # [header, the changed-since hint, the body, its caption, its feedback box]
+    body = row._layout._children[-3]
+    assert body._layout._margins[0] == widgets.row_text_indent(
+        1, ("skipped",)), "the expanded body no longer indents by its own columns"
+
+
+def test_a_re_offered_decline_opens_with_no_empty_feedback_box(anki):
+    """Ten re-offered skipped cards used to arrive as ten open empty boxes: the parked
+    -open state _apply_decision_visuals avoids everywhere else. Add note is what opens
+    one on a row like this."""
+    body, boxes, flush, decisions = _build_body([_new_card_detail(declined_state="skip")])
+    box = _find_feedback_box(body)
+    assert box is not None and not box.isVisible()
+    add_note = next(w for w in _walk_widgets(body)
+                    if getattr(w, "text", None) and w.text() == "Add note")
+    assert add_note.isVisible(), "a re-offered decline must still be able to add a note"
+
+
+def test_a_re_offered_decline_with_a_saved_note_opens_showing_it(anki):
+    from internpearls import review
+    detail = _new_card_detail(declined_state="skip")
+    items = [("card", "Example Deck", detail)]
+    flags = {detail["guid"]: "dose looks off"}
+    body, boxes, flush = review.build_update_body(
+        items, {}, flags, {}, {}, "", lambda: "", "")
+    box = _find_feedback_box(body)
+    assert box.isVisible() and box.toPlainText() == "dose looks off"
+
+
+def test_declining_here_and_now_still_opens_the_box(anki):
+    body, boxes, flush, decisions = _build_body_with_one_new_card()
+    _find_decision_cell(body).buttons["skip"].click()
+    assert _find_feedback_box(body).isVisible()
+
+
+def test_a_decline_caption_names_the_way_back_rather_than_promising_next_update(anki):
+    """A skipped card's deck is recorded installed at the new version, so it only comes
+    back when the source ships another version of that deck. Declined cards is the way
+    back that does not depend on that ever happening, so the caption names it."""
+    from internpearls import review
+    for state, caption in review._DECLINE_CAPTION.items():
+        assert "Declined cards" in caption, f"{state} caption names no way back"
+        assert "next update" not in caption, (
+            f"{state} caption still promises a re-offer nothing here can schedule")
 
 
 def test_returning_to_default_pops_the_guid_and_unstrikes_the_row(anki):

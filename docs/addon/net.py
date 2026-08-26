@@ -36,6 +36,19 @@ _BG_TIMEOUT = 3          # seconds; fail-fast bound for unattended background ch
 _CHUNK = 64 * 1024
 
 
+class TransportError(RuntimeError):
+    """The host could not be reached at all: DNS failure, refused connection, timeout.
+
+    Its own class because "couldn't reach the source" and "reached it and it can't be
+    used" need opposite advice, and every failure here used to arrive as a plain
+    RuntimeError, so the caller that words those two messages could only ever guess.
+    An offline learner was told to check her GitHub token. Still a RuntimeError, like
+    everything else this module raises, so a caller that doesn't care catches it anyway.
+    An HTTP status is deliberately NOT one of these: a 401, 403 or 404 means the host
+    answered, and what it answered is about the repo, the branch or the token.
+    """
+
+
 class DownloadCancelled(RuntimeError):
     """An `on_chunk` callback asked to stop a download that was still in flight.
 
@@ -47,7 +60,8 @@ class DownloadCancelled(RuntimeError):
 
 
 def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=None):
-    """GET `url`, raising a plain RuntimeError with an actionable message on failure.
+    """GET `url`, raising a RuntimeError with an actionable message on failure, or a
+    TransportError (a RuntimeError too) when the host was never reached at all.
 
     Every network call in this add-on goes through here, so this is the one place that
     needs to turn urllib's exceptions into something a non-technical error dialog can
@@ -90,11 +104,11 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
         raise RuntimeError(f"server returned HTTP {e.code}") from e
     except (TimeoutError, socket.timeout) as e:
         # Bare socket timeout (isn't always wrapped in URLError); surface it fast.
-        raise RuntimeError(
+        raise TransportError(
             "the network isn't responding (timed out). Check your internet connection "
             "and try again.") from e
     except urllib.error.URLError as e:
-        raise RuntimeError(f"couldn't reach the network ({e.reason})") from e
+        raise TransportError(f"couldn't reach the network ({e.reason})") from e
 
 
 def _gh_raw(repo, path, token, ref, timeout=_CONNECT_TIMEOUT, on_chunk=None):

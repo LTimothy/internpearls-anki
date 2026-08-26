@@ -164,6 +164,16 @@ def test_clamp_interval_accepts_numeric_strings():
     assert logic.clamp_interval_minutes("45") == 45
 
 
+def test_clamp_interval_caps_an_absurd_value():
+    """The floor's counterpart. The result becomes a QTimer interval in milliseconds,
+    which is a C int, so a hand-edited config could overflow it and turn every launch
+    into Anki's raw add-on error dialog."""
+    assert logic.clamp_interval_minutes(99999999) == 7 * 24 * 60
+    assert logic.clamp_interval_minutes(99999999, ceiling_minutes=60) == 60
+    # and the capped value is still a sane millisecond count for a C int
+    assert logic.clamp_interval_minutes(99999999) * 60 * 1000 < 2 ** 31
+
+
 # ----------------------------------------------------------- decide_addon_update_action
 def test_decide_update_action_none_when_current():
     assert logic.decide_addon_update_action(
@@ -1899,6 +1909,19 @@ def test_declined_drop_filters_every_match_path_and_corrects_the_counts(tmp_path
     assert touched == {"guid-a"}
     assert (in_place, as_new) == (0, 1)
     assert 2 not in remap
+
+
+def test_declined_guids_is_every_key_whatever_its_entry_says():
+    """The one definition the import, the preview counts and the conversion plan all
+    read, so they cannot disagree about which cards a decline suppresses. Membership is
+    what declined_drop tests, so a garbage entry counts and a state is never consulted:
+    filtering on state alone is how a standing skip/keep was counted as pending and then
+    dropped from the import."""
+    reg = {"g-skip": {"state": "skip"}, "g-keep": {"state": "keep"},
+           "g-never": {"state": "never"}, "g-garbage": "not a dict"}
+    assert logic.declined_guids(reg) == {"g-skip", "g-keep", "g-never", "g-garbage"}
+    assert logic.declined_guids({}) == set()
+    assert logic.declined_guids(None) == set()
 
 
 def test_prune_declined_drops_retired_and_vanished_entries():
