@@ -192,16 +192,23 @@ def should_notify_update(current, latest, last_notified=None):
     return True
 
 
-def clamp_interval_minutes(minutes, floor_minutes=1, default_minutes=15):
+def clamp_interval_minutes(minutes, floor_minutes=1, default_minutes=15,
+                           ceiling_minutes=7 * 24 * 60):
     """Sanitize a configured poll interval: a missing or non-numeric value falls back to
     `default_minutes`; anything below `floor_minutes` is raised to the floor so a typo
-    (or a 0) can't turn into a busy-poll loop against the deck source.
+    (or a 0) can't turn into a busy-poll loop against the deck source, and anything
+    above `ceiling_minutes` is lowered to the ceiling.
+
+    The ceiling matters as much as the floor: the result becomes a QTimer interval in
+    milliseconds, which is a C int, so a hand-edited value big enough to overflow it
+    raised out of the startup wiring and gave Anki's raw add-on error dialog on every
+    launch until config.json was fixed by hand.
     """
     try:
         m = int(minutes)
     except (TypeError, ValueError):
         m = default_minutes
-    return max(floor_minutes, m)
+    return min(ceiling_minutes, max(floor_minutes, m))
 
 
 def decide_addon_update_action(current, latest, auto_update, notify, last_notified=None):
@@ -711,6 +718,19 @@ def prune_declined(reg, retired_guids, seen):
     for g in dead:
         del reg[g]
     return bool(dead)
+
+
+def declined_guids(registry):
+    """Every guid a standing decline suppresses: every key of the registry, whatever
+    state its entry holds.
+
+    The single definition of "declined", so the import, the preview counts and the
+    note-type-conversion plan can't disagree about which cards are in it. Membership
+    alone is what declined_drop tests, so a hand-edited entry whose value isn't even a
+    dict still suppresses its card, and anything that counts or plans around a decline
+    has to read it the same way rather than filtering on `state`.
+    """
+    return set(registry or {})
 
 
 def declined_drop(src, remap, her, declined, in_place, as_new):

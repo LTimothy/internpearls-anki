@@ -316,6 +316,11 @@
       case "label":
         el = document.createElement("div");
         el.innerHTML = node.text;
+        // A "never" decision's row strikes its own primary label in real Anki
+        // (review._card_row sets QFont.setStrikeOut on it). Reads a `strike` key
+        // that mock_anki.py's QLabel.node() does not serialize yet, so this stays
+        // false/harmless until that mock is patched to expose it.
+        if (node.strike) el.style.textDecoration = "line-through";
         break;
       case "check": {
         el = document.createElement("label");

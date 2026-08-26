@@ -9,7 +9,7 @@ import tempfile
 
 from aqt import mw
 
-ADDON_VERSION = "0.47.2"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.47.3"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # own notes); when it does, an add-on release that understands the new shape must bump
@@ -67,6 +67,12 @@ DECLINED = os.path.join(_USER_FILES, "declined.json")
 
 AUTO_SYNC_INTERVAL_FLOOR_MIN = 1     # refuse to poll more often than this, however configured
 AUTO_SYNC_INTERVAL_DEFAULT_MIN = 15  # used when the setting is missing or unreadable
+# And a ceiling, for the same reason the floor exists. The poll interval becomes a
+# QTimer interval in milliseconds, which is a C int: a hand-edited 99999999 overflows it
+# and every launch opens Anki's raw add-on error dialog instead of starting the timer.
+# A week is far past any useful cadence and leaves the millisecond value an order of
+# magnitude inside the limit.
+AUTO_SYNC_INTERVAL_CEILING_MIN = 7 * 24 * 60
 
 # One-time migration: earlier versions wrote this next to __init__.py, so an add-on
 # update would have already wiped it. Move it over if it's still there from a
@@ -157,8 +163,15 @@ def _save_json(path, data):
 def load_declined():
     """The declined-card registry: {guid: {state, front, deck, decided, hash}}.
     Lives in user_files/ like the feedback log and for the same reason: it must
-    survive add-on updates and reinstalls."""
-    return _load_json(DECLINED, {})
+    survive add-on updates and reinstalls.
+
+    A whole file that parsed as valid JSON but isn't an object (a hand-edited array or
+    bare string) reads as an empty registry, exactly as review.load_saved_feedback
+    treats its own file. Without this the sync's own `set(...)` over it succeeds, the
+    imports run, and the first reader that calls .items() raises after the collection
+    has already been written."""
+    reg = _load_json(DECLINED, {})
+    return reg if isinstance(reg, dict) else {}
 
 
 def save_declined(reg):

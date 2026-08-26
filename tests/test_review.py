@@ -852,11 +852,38 @@ def test_the_caret_says_what_it_does_rather_than_only_drawing_a_glyph():
     the row saying which way the click goes."""
     row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, {}, _no_decide)
     caret = _caret_widget(row)
-    assert caret._accessible == "Show card" and caret._tooltip == "Show card"
+    assert caret._accessible.startswith("Show card") and caret._tooltip == "Show card"
     caret.clicked.emit()
-    assert caret._accessible == "Hide card" and caret._tooltip == "Hide card"
+    assert caret._accessible.startswith("Hide card") and caret._tooltip == "Hide card"
     caret.clicked.emit()
-    assert caret._accessible == "Show card"
+    assert caret._accessible.startswith("Show card")
+
+
+def test_the_caret_names_the_card_it_opens():
+    """Three hundred rows of "Show card" name nothing: a reader hearing one has no way
+    to tell which card that caret opens. The row's own label is what says so, the same
+    way the Declined dialog's Offer again buttons already do."""
+    row = review._card_row(dict(_basic_note_detail(), guid="g1"), {}, {}, {}, _no_decide)
+    caret = _caret_widget(row)
+    assert caret._accessible == (
+        "Show card: What nerve block covers the anterior thigh?")
+
+
+def test_a_decision_button_names_the_card_it_decides_about():
+    detail = dict(_basic_note_detail(), guid="g1", kind="new")
+    row = review._card_row(detail, {}, {}, {}, _no_decide)
+    cell = next(w for w in _walk_widgets(row) if hasattr(w, "buttons"))
+    names = {v: b._accessible for v, b in cell.buttons.items()}
+    assert names["skip"] == "Skip: What nerve block covers the anterior thigh?"
+    assert all(name.endswith("anterior thigh?") for name in names.values())
+
+
+def test_a_long_front_is_truncated_in_an_accessible_name():
+    """A whole card read out as a control's name is no more usable than none of it."""
+    detail = dict(_basic_note_detail(), guid="g1")
+    detail["fields"] = [("Front", "word " * 60)] + detail["fields"][1:]
+    caret = _caret_widget(review._card_row(detail, {}, {}, {}, _no_decide))
+    assert len(caret._accessible) < 80 and caret._accessible.endswith("…")
 
 
 def test_add_note_sits_in_the_expanded_body_not_the_collapsed_header():
@@ -873,6 +900,50 @@ def test_add_note_sits_in_the_expanded_body_not_the_collapsed_header():
 
     assert not _has_add_note(header), "Add note still sits in the row's header"
     assert _has_add_note(body), "Add note is missing from the row's expanded body"
+
+
+# ------------------------------------------------------------- what the copy claims
+def test_the_feedback_placeholder_claims_no_transmission():
+    """Nothing is sent from this box: the note joins a digest at the end of the run,
+    which is copied to the clipboard for the reader to paste herself. The placeholder
+    used to say it was sent to the deck author, on a box the neutral Add note link
+    opens too."""
+    placeholder = review._FEEDBACK_PLACEHOLDER.lower()
+    assert "sent to" not in placeholder
+    assert "what's wrong" not in placeholder, (
+        "the same box opens from Add note, which is never tied to declining")
+    assert "paste" in placeholder, "it should say what actually happens to the note"
+
+
+def test_the_digest_heading_counts_notes_and_decisions_apart():
+    """"2 cards flagged" for two cards skipped and none flagged is the digest telling
+    the reader something she did not do."""
+    skipped = [{"guid": "g1", "note": "", "decision": "skipped"},
+               {"guid": "g2", "note": "", "decision": "skipped"}]
+    assert review._digest_heading(skipped) == "2 decisions recorded"
+    assert review._digest_heading([{"guid": "g1", "note": "dose looks off"}]) == (
+        "1 card flagged")
+    both = skipped + [{"guid": "g3", "note": "dose looks off"}]
+    assert review._digest_heading(both) == "1 card flagged, 2 decisions recorded"
+
+
+# ------------------------------------------------------------------ the chip column
+def test_chip_kinds_reads_the_kinds_a_list_actually_holds():
+    """A screen's chip column is measured against the chips that screen can show, and
+    what it can show is what its own rows carry. Both item vocabularies, since both end
+    up at the same chip_cell."""
+    assert review._chip_kinds([("header", "h"), ("row", "new", "a", ""),
+                               ("sep",), ("row", None, "b", "")]) == ("new",)
+    assert review._chip_kinds([("row", "retired", "a", ""),
+                               ("row", "moved", "b", "")]) == ("retired", "moved")
+
+
+def test_chip_kinds_reads_a_card_rows_own_chip_not_its_bare_kind():
+    detail = {"guid": "g1", "kind": "new", "declined_state": "skip", "fields": []}
+    items = [("card", "D", detail), ("card", "D", {"guid": "g2", "kind": "new",
+                                                   "fields": []}),
+             ("retired", "an older phrasing")]
+    assert review._chip_kinds(items) == ("skipped", "new", "retired")
 
 
 # ------------------------------------------------------------------ mock Qt surface
