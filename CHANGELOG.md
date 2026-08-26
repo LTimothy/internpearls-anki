@@ -3,6 +3,24 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.47.1
+
+Polish on the new decline controls, from the v0.47.0 review round:
+
+- The per-deck counts atop Update my decks no longer count cards you've said
+  Never to: a deck whose only pending card is hidden now reads the same as the
+  list below it, instead of promising cards that never appear.
+- Declined cards now lists every registry entry, including one a hand-edited
+  file left unreadable: it renders under Other, named by its internal id, with
+  a working Offer again, so there is always an in-app way back. Previously such
+  an entry silently kept its card declined while the dialog showed nothing.
+- The Manage decks "Declined cards (N)" count updates when that dialog closes,
+  instead of staying stale after you offer cards again.
+- Each Offer again button is named for its card ("Offer again: ..."), so screen
+  readers no longer announce an undifferentiated list of identical buttons.
+- Internal cleanups and new test coverage behind all of the above; no other
+  behavior changes.
+
 ## v0.47.0
 
 Per-card decline controls on Update my decks, replacing the old all-or-nothing
