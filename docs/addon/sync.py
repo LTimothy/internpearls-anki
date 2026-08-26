@@ -1322,6 +1322,20 @@ def _retired_moved_items(fresh, moves, her):
     return by_deck
 
 
+# The fixed reassurance below the update confirmation's list. Module-level so the
+# real-Qt harness renders this exact string in its paint and layout tests rather
+# than a paraphrase that drifts shorter than what the screen actually wraps.
+_UPDATE_SAFETY_NOTE = (
+    "This is a preview: nothing above has been applied yet. Your "
+    "review history and any personal notes on existing cards are kept (matched "
+    "by card, not overwritten). Archived cards keep their history too and can "
+    "be brought back anytime by unsuspending them or moving them out of the "
+    "Retired deck, nothing here is ever deleted. A backup is taken "
+    "automatically first. Skipped cards come back next update, already marked. "
+    "Cards you never import can be restored under Manage decks > Declined "
+    "cards.")
+
+
 @_safe
 @_manual_flow
 def update_decks():
@@ -1488,16 +1502,6 @@ def update_decks():
         "<i>This looks like a one-time catch-up — likely your first update in a "
         "while. Future updates should be much shorter.</i>"
         if len(fresh) + len(moves) + len(stranded) > 20 else "")
-    safety_note = (
-        "This is a preview: nothing above has been applied yet. Your "
-        "review history and any personal notes on existing cards are kept (matched "
-        "by card, not overwritten). Archived cards keep their history too and can "
-        "be brought back anytime by unsuspending them or moving them out of the "
-        "Retired deck, nothing here is ever deleted. A backup is taken "
-        "automatically first. Skipped cards come back next update, already marked. "
-        "Cards you never import can be restored under Manage decks > Declined "
-        "cards.")
-
     # {"skip": "...", "keep": "...", "never": "..."} counts, read off `decisions` below
     # (defined just ahead of build_update_body): a row's own control words, not the
     # digest's reader-facing ones, since this line sits beside the rows themselves.
@@ -1621,7 +1625,7 @@ def update_decks():
     touched = set()
     body, _boxes, flush = build_update_body(
         items, sources, flags, new_index, decisions, top_html,
-        _status_line, safety_note, touched)
+        _status_line, _UPDATE_SAFETY_NOTE, touched)
 
     # "Update" only when there is content to update. With nothing pending but retired
     # and relocated cards, this run does exactly what Reconcile my decks does, so it

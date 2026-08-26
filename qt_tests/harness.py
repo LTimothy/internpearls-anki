@@ -455,9 +455,9 @@ def _scene_confirm(mock, opts):
             "<br><br>This update also changes how some cards look (template or "
             "styling) for: <b>Example Note Type</b>. Your review history and card "
             "content are unaffected either way.")
-    safety = ("This is a preview: nothing above has been applied yet. Your review "
-              "history and any personal notes on existing cards are kept (matched by "
-              "card, not overwritten). A backup is taken automatically first.")
+    # The production string itself, not a shortened stand-in: the paint and layout
+    # tests measure how this label wraps, so a paraphrase would prove the wrong length.
+    from internpearls.sync import _UPDATE_SAFETY_NOTE as safety
     flags = {}
     new_index = {d["guid"]: ("Example Deck", d["fields"][0][1]) for d in details}
     decisions = {}
