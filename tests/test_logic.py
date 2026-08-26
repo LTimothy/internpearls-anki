@@ -1860,7 +1860,6 @@ def test_write_personalized_drop_removes_cards_rows_too(tmp_path):
     src, out = str(tmp_path / "src.apkg"), str(tmp_path / "out.apkg")
     _make_mock_apkg(src, [(1, "guid-a", "front a"), (2, "guid-b", "front b")])
     # Graft a cards table onto the mock package, two cards per note (cloze siblings).
-    import shutil, sqlite3, zipfile
     work = str(tmp_path / "work")
     with zipfile.ZipFile(src) as z:
         z.extractall(work)
