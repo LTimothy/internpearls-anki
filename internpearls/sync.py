@@ -1497,10 +1497,8 @@ def update_decks():
         counts = {}
         for state in decisions.values():
             counts[state] = counts.get(state, 0) + 1
-        if not counts:
-            return ""
-        return ", ".join(f"{counts[s]} {word}" for s, word in _TALLY_WORDS
-                         if s in counts) + "."
+        parts = [f"{counts[s]} {word}" for s, word in _TALLY_WORDS if s in counts]
+        return ", ".join(parts) + "." if parts else ""
 
     def _status_line():
         parts = []
@@ -1645,6 +1643,15 @@ def update_decks():
         e = prior.get(g)
         return e if isinstance(e, dict) else {}
 
+    def _registry_entry(guid, state):
+        # Every guid written below belongs to a card row on the confirmation, and
+        # every row's card was read into incoming_hashes by the preview above, so the
+        # empty-hash default is unreachable in practice and only costs one missing
+        # changed-since-decline cue if that ever changes.
+        deck, front = new_index.get(guid, ("", guid))
+        return {"state": state, "front": plain_text(front), "deck": deck,
+                "decided": today, "hash": incoming_hashes.get(guid, "")}
+
     # "Decided this run" is the one predicate the write below and the digest both key
     # off of: a guid whose state actually changed from what the registry held when the
     # dialog opened. A row left exactly as it was seeded (the common case for a
@@ -1655,10 +1662,7 @@ def update_decks():
     run_decisions = {g: {"skip": "skipped", "keep": "kept yours", "never": "never"}[s]
                      for g, s in decisions.items() if _prior_entry(g).get("state") != s}
     for guid in run_decisions:
-        deck, front = new_index.get(guid, ("", guid))
-        reg[guid] = {"state": decisions[guid], "front": plain_text(front), "deck": deck,
-                     "decided": today,
-                     "hash": incoming_hashes.get(guid, _prior_entry(guid).get("hash", ""))}
+        reg[guid] = _registry_entry(guid, decisions[guid])
     # A guid can also sit in `decisions` at the very state the registry already held,
     # while still being one she actively re-decided: `touched` (review._on_decide)
     # fires on every click, even one that lands back on the state it was already
@@ -1667,17 +1671,16 @@ def update_decks():
     # stays out of `run_decisions` and off the digest.
     for guid, s in decisions.items():
         if guid in touched and _prior_entry(guid).get("state") == s:
-            deck, front = new_index.get(guid, ("", guid))
-            reg[guid] = {"state": s, "front": plain_text(front), "deck": deck,
-                         "decided": today,
-                         "hash": incoming_hashes.get(guid, _prior_entry(guid).get("hash", ""))}
+            reg[guid] = _registry_entry(guid, s)
     # A guid drops out of `decisions` (review._card_row's _on_change) only when her own
     # click set its control back to that row's default, so absence here normally means
-    # she chose that. But a row's control can only ever decline to the one state
-    # `_EXPRESSIBLE_DECLINE` names for its current kind (mirrors build_update_body's own
-    # seeding check), so a "keep" entry whose row has since gone back to being new, for
-    # instance, was never a candidate for seeding in the first place: its absence from
-    # `decisions` says nothing about her intent this run by itself. `touched` is what
+    # she chose that. But the only prior state a visible row can have been seeded with
+    # is the one `_EXPRESSIBLE_DECLINE` names for its current kind (build_update_body's
+    # seeding accepts any non-default state the control offers, which on a new row
+    # includes "never" too, but a "never" entry hides its row upstream and so never
+    # reaches this loop at all), so a "keep" entry whose row has since gone back to
+    # being new, for instance, was never a candidate for seeding in the first place:
+    # its absence from `decisions` says nothing about her intent this run by itself. `touched` is what
     # tells that apart from an actual un-decline on such a row: an active click that
     # confirms the (now different) default is just as much a decision as flipping a
     # kind-matched row back to default always was.
