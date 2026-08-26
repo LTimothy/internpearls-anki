@@ -17,7 +17,7 @@ from aqt.utils import getFile, getSaveFile
 from .config import (DECK_BACKUPS_KEEP, INSTALLED, TARGET_FIELDS, _USER_FILES, _cfg,
                      _load_json, _save_json)
 from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
-                    changed_templates, empty_cards_dialog_rows,
+                    changed_templates, declined_drop, empty_cards_dialog_rows,
                     fields_to_carry_over, manifest_decks_for, model_shape,
                     note_display_label, plan_notetype_changes, plural, remap_cards,
                     select_empty_cards, write_personalized)
@@ -922,27 +922,6 @@ def notetype_changes(src, her, aliases, scope_tag):
     return plan_notetype_changes(by_her, _her_note_types(scope_tag), TARGET_FIELDS)
 
 
-def _declined_drop(src, remap, her, declined, in_place, as_new):
-    """The rids to drop for a decline, plus `touched` and `in_place`/`as_new`
-    corrected to exclude them. `remap` is mutated in place (a dropped note's remap
-    entry removed), so a drop always wins over a remap for the same note.
-
-    Shared by `_apply_deck` and `import_single`, so a decline filters identically
-    whichever path a deck lands in the collection through."""
-    drop, touched = set(), set()
-    for rid, _f, guid in apkg_notes(src):
-        final = remap.get(rid, guid)
-        if final in declined or guid in declined:
-            drop.add(rid)
-            if remap.pop(rid, None) is not None or guid in her.values():
-                in_place -= 1
-            else:
-                as_new -= 1
-        else:
-            touched.add(final)
-    return drop, touched, in_place, as_new
-
-
 def _apply_deck(src, aliases, her, declined=frozenset()):
     """Import one deck, returning (in_place, as_new, touched) where `touched` is the
     guids this import wrote in her collection: the remapped guid where a note matched
@@ -953,8 +932,8 @@ def _apply_deck(src, aliases, her, declined=frozenset()):
     lands and a kept-back card's collection copy is never overwritten. Dropped notes
     are excluded from the counts and from `touched`."""
     remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
-    drop, touched, in_place, as_new = _declined_drop(src, remap, her, declined,
-                                                       in_place, as_new)
+    drop, touched, in_place, as_new = declined_drop(src, remap, her, declined,
+                                                     in_place, as_new)
     # A unique name in the system temp directory, rather than a fixed one derived from
     # `src` (two runs can otherwise write and import through the same path, and on a
     # shared machine that path is predictable enough to be pre-created as a symlink) or

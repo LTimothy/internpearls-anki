@@ -20,7 +20,7 @@ from aqt import mw
 from aqt.utils import getFile
 
 from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
-                         _declined_drop, _ensure_notetypes, change_note_types,
+                         _ensure_notetypes, change_note_types,
                          notetype_changes, seed_converted_siblings,
                          _her_front_to_guid, _her_guid_to_deck, _her_guid_to_fields,
                          _her_guid_to_nid,
@@ -33,8 +33,8 @@ from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, load_declined, save_declined)
-from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, decks_to_update,
-                    feedback_entries, merge_saved_feedback,
+from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, declined_drop,
+                    decks_to_update, feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, manifest_needs_newer_addon,
@@ -1925,8 +1925,8 @@ def import_single():
     # Filtered the same way _apply_deck filters a regular sync's import: a declined
     # note must never land through this path either, whatever counts get shown next.
     declined = set(load_declined())
-    drop, touched, in_place, as_new = _declined_drop(src, remap, her, declined,
-                                                      in_place, as_new)
+    drop, touched, in_place, as_new = declined_drop(src, remap, her, declined,
+                                                     in_place, as_new)
     if not _ask(f"{plural(in_place, 'card')} will keep "
                 f"{'its' if in_place == 1 else 'their'} history, {as_new} will be added "
                 "as new. A backup is taken automatically first. Import now?",
