@@ -73,7 +73,7 @@ def test_feedback_boxes_stay_hidden_until_a_decision_or_add_note(shot):
     closed = shot("confirm", expand=(0,))
     assert not boxes(closed), "a note box is showing before any decision was made"
 
-    declined = shot("confirm", expand=(0,), click_labels=("Skip for now",))
+    declined = shot("confirm", expand=(0,), click_labels=("Skip",))
     assert boxes(declined), "choosing Skip did not reveal row 0's note box"
 
     added = shot("confirm", expand=(0,), click_labels=("Add note",))
@@ -81,7 +81,7 @@ def test_feedback_boxes_stay_hidden_until_a_decision_or_add_note(shot):
 
     # The box lives beside the card's own expandable body, not inside it, so a
     # decline reveals it whether or not the row itself is ever opened.
-    still_collapsed = shot("confirm", click_labels=("Skip for now",))
+    still_collapsed = shot("confirm", click_labels=("Skip",))
     assert boxes(still_collapsed), (
         "choosing Skip on a collapsed row did not reveal its note box")
 

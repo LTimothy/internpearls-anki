@@ -60,7 +60,11 @@ def _declared_colours(widget):
 @pytest.mark.parametrize("scene", ALL_SCENES)
 def test_every_declared_colour_actually_paints(shot, scene, theme):
     _, q = harness.bootstrap()
-    s = shot(scene, theme=theme, expand=_EXPAND_ALL)
+    # Taller than the harness default: with every row expanded, the update preview's
+    # own content now runs past a 560px-tall viewport (each card's own "Add note" line
+    # added real height), which would scroll a later row's caret half out of view and
+    # read as a dropped colour rather than as the scrolling it actually is.
+    s = shot(scene, theme=theme, expand=_EXPAND_ALL, size=(660, 1400))
     missing = []
     for widget in s.dialog.findChildren(q.QWidget):
         if not widget.isVisible():

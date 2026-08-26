@@ -1637,8 +1637,12 @@ def update_decks():
     # flush runs through on_close rather than after this call: it reads the notes typed
     # into the cards and stops their save timer, and every one of those widgets belongs
     # to the dialog, so by the time this returns Qt has already freed them.
+    #
+    # min_width raised past _ask_with_widget's own 560px default: a card's decision
+    # control sits at the right of its header, beside the primary text it shares that
+    # row with, and 560 left too little of the row for the card's own words.
     accepted = _ask_with_widget(body, yes_label=yes_label, checkbox=tpl_choice,
-                                on_close=flush)
+                                on_close=flush, min_width=660)
 
     if not accepted:
         _finish()

@@ -132,19 +132,39 @@ def chip_cell(kind):
 def decision_cell(options, state, on_change):
     """A row's decision as a compact segmented control: one checkable button per
     option, exactly one checked. Selected colour says what the choice does: accept
-    roles for Import/Apply, updated for Skip/Keep, decline for Never."""
+    roles for Import/Apply, updated for Skip/Keep, decline for Never.
+
+    Painted as one rounded group rather than a row of separate buttons: only the
+    outer corners round (the first button's left, the last button's right), and
+    every button after the first drops its own left border so the shared edge
+    between two buttons is drawn once, not twice. `_HEIGHT` is fixed so a selected
+    button's bold weight can't nudge that one button taller than its unselected
+    neighbours.
+    """
     _SELECTED_ROLE = {"import": "accept", "apply": "accept",
                       "skip": "updated", "keep": "updated", "never": "decline"}
+    _RADIUS = 6
+    _HEIGHT = 22
     cell = QWidget()
     lay = QHBoxLayout(cell)
     lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(0)
     c = colors()
     cell.buttons = {}
+    count = len(options)
 
-    base = f"border: 1px solid {c['cell_rule']}; padding: 2px 9px; font-size: 11px;"
+    def _shape(index):
+        left = _RADIUS if index == 0 else 0
+        right = _RADIUS if index == count - 1 else 0
+        return (f"border: 1px solid {c['cell_rule']};"
+                f"{' border-left: none;' if index else ''}"
+                f" border-top-left-radius: {left}px; border-bottom-left-radius: {left}px;"
+                f" border-top-right-radius: {right}px;"
+                f" border-bottom-right-radius: {right}px;"
+                f" min-height: {_HEIGHT}px; max-height: {_HEIGHT}px;")
 
-    def _style(value, checked):
+    def _style(value, checked, index):
+        base = f"{_shape(index)} padding: 2px 9px; font-size: 11px;"
         if not checked:
             return (f"QPushButton {{ {base}"
                     f" color: {c['dim']}; background: transparent; }}")
@@ -153,9 +173,10 @@ def decision_cell(options, state, on_change):
                 f" color: {c[role + '_fg']}; background: {c[role + '_bg']}; }}")
 
     def set_state(value):
-        for v, b in cell.buttons.items():
-            b.setChecked(v == value)
-            b.setStyleSheet(_style(v, v == value))
+        for i, (v, b) in enumerate(cell.buttons.items()):
+            checked = v == value
+            b.setChecked(checked)
+            b.setStyleSheet(_style(v, checked, i))
     cell.set_state = set_state
 
     for value, label in options:

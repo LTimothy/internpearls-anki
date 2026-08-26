@@ -472,7 +472,9 @@ def _scene_confirm(mock, opts):
         body, _boxes, flush = review.build_update_body(
             items, sources, flags, new_index, decisions,
             top_html, _status_line, safety)
-        _ask_with_widget(body, yes_label="Update", checkbox=checkbox)
+        # min_width matches update_decks()'s own call: the wider floor is what leaves a
+        # card's own text room beside its decision control.
+        _ask_with_widget(body, yes_label="Update", checkbox=checkbox, min_width=660)
         flush()
 
     return _open
@@ -782,9 +784,9 @@ def render(scene, theme="light", expand=(), size=(640, 560), click_labels=(), **
     (mapTo, isVisible, sizeHint) need the widget, not just the image.
 
     `click_labels` clicks every QPushButton whose text exactly matches one of these
-    strings, in order, after rows are expanded: a decision_cell's "Skip for now" or
-    "Never", or a row's "Add note" link, so a real-Qt test can exercise what a decision
-    actually shows rather than only what the mock's structure records.
+    strings, in order, after rows are expanded: a decision_cell's "Skip" or "Never", or
+    a row's "Add note" link, so a real-Qt test can exercise what a decision actually
+    shows rather than only what the mock's structure records.
 
     QDialog.exec is patched for the duration rather than permanently: a scene that
     opens a nested dialog should still block on it the normal way.

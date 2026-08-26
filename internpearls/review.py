@@ -92,9 +92,9 @@ def _preview_style():
 _CARET_CLOSED = "▸"
 _CARET_OPEN = "▾"
 
-# The row body's usable width at the dialog's 560px minimum. A picture wider than this
+# The row body's usable width at the dialog's 660px minimum. A picture wider than this
 # is scaled down to it; a smaller one is left alone rather than blown up.
-_IMAGE_MAX_W = 440
+_IMAGE_MAX_W = 540
 
 
 def _image_tag(local_path):
@@ -429,8 +429,8 @@ def _separator():
     return line
 
 
-_NEW_OPTIONS = [("import", "Import"), ("skip", "Skip for now"), ("never", "Never")]
-_CHANGED_OPTIONS = [("apply", "Apply"), ("keep", "Keep mine for now")]
+_NEW_OPTIONS = [("import", "Import"), ("skip", "Skip"), ("never", "Never")]
+_CHANGED_OPTIONS = [("apply", "Apply"), ("keep", "Keep mine")]
 _DEFAULT_DECISION = {"new": "import", "changed": "apply"}
 _DECLINE_CAPTION = {
     "skip": "You'll see this card again next update.",
@@ -447,7 +447,8 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
     the right of its header, defaulting to Import/Apply; choosing Skip/Keep reveals a
     feedback box for what the learner makes of it, and Never collapses the row with a
     struck-through primary line. An Import/Apply row can still open that same box with
-    its own quiet "Add note" link, so feedback is never gated behind a decline.
+    its own quiet "Add note" link, at the end of the expanded body, so feedback is
+    never gated behind a decline; it costs the same click as reading the card would.
 
     Pictures are named until that first expand and rendered from then on. Extraction is
     what opening a row pays for, so a long list stays cheap to scroll and a review nobody
@@ -625,7 +626,6 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
         hlay.addStretch()
         hlay.addWidget(decision_cell(options, initial, _on_change),
                        0, Qt.AlignmentFlag.AlignTop)
-        hlay.addWidget(add_note, 0, Qt.AlignmentFlag.AlignTop)
         hlay.addWidget(never_note, 0, Qt.AlignmentFlag.AlignTop)
         _apply_decision_visuals(initial)
 
@@ -725,6 +725,12 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None):
     for name in changed_names:
         if name not in was_placed:
             _add_was(name)
+
+    # Last in the body, past every field block: reading down to it is the same click
+    # that opens the card at all, which is what keeps this quiet rather than a header
+    # column competing with the decision control for attention.
+    if kind in _DEFAULT_DECISION:
+        blay.addWidget(add_note)
 
     outer.addWidget(body)
     outer.addWidget(caption)
