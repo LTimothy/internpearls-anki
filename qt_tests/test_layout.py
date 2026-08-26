@@ -242,6 +242,20 @@ def test_each_settings_section_is_ruled_off_from_the_next(shot):
         "read as three groups only if each boundary is drawn.")
 
 
+def test_the_confirm_dialog_honours_its_own_wider_floor(shot):
+    """Update my decks raises its minimum width past _ask_with_widget's own 560px
+    default, to 660: a card's decision control sits at the right of its own header
+    line, beside the primary text that row shares, and 560 left too little of the row
+    for the card's own words. The harness resizes to 640px, narrower than the floor,
+    so a dialog that actually respects it must come out wider than what was asked for.
+    """
+    _, q = harness.bootstrap()
+    s = shot("confirm")
+    assert s.dialog.width() >= 660, (
+        f"the confirmation is {s.dialog.width()}px wide; it should not fit inside a "
+        "660px floor")
+
+
 def test_review_rows_share_a_left_edge(shot):
     """Tagged and untagged rows must start at the same x.
 

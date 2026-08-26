@@ -59,10 +59,10 @@ def test_decision_cell_selected_colour_role_matches_what_the_choice_does():
     from internpearls import palette, widgets
     c = palette.colors()
     cells = {
-        widgets.decision_cell([("import", "Import"), ("skip", "Skip for now"),
+        widgets.decision_cell([("import", "Import"), ("skip", "Skip"),
                                ("never", "Never")], "import", lambda v: None):
             (("import", "accept"), ("skip", "updated"), ("never", "decline")),
-        widgets.decision_cell([("apply", "Apply"), ("keep", "Keep mine for now")],
+        widgets.decision_cell([("apply", "Apply"), ("keep", "Keep mine")],
                               "apply", lambda v: None):
             (("apply", "accept"), ("keep", "updated")),
     }
@@ -76,6 +76,50 @@ def test_decision_cell_selected_colour_role_matches_what_the_choice_does():
                 if other != state:
                     assert c[f"{role}_bg"] not in b.styleSheet(), (
                         f"unselected {other} still painted with {role}'s background")
+
+
+def test_decision_cell_renders_as_one_rounded_group_not_separate_buttons():
+    """The segmented control reads as a single control, not a row of square, individually
+    bordered buttons: only the outer corners round, and every button after the first
+    drops its own left border so the shared edge between two buttons paints once."""
+    from internpearls import widgets
+    options = [("import", "Import"), ("skip", "Skip"), ("never", "Never")]
+    cell = widgets.decision_cell(options, "import", lambda v: None)
+    buttons = [cell.buttons[v] for v, _ in options]
+    first, middle, last = buttons[0], buttons[1], buttons[-1]
+
+    assert "border-left: none" not in first.styleSheet(), (
+        "the first button must keep its left border; that's the group's own left edge")
+    for b in buttons[1:]:
+        assert "border-left: none" in b.styleSheet(), (
+            "every button after the first must suppress its own left border, or the "
+            "shared edge between two buttons doubles up")
+
+    assert "border-top-left-radius: 0px" in middle.styleSheet(), (
+        "an interior button must not round any corner")
+    assert "border-top-left-radius: 6px" in first.styleSheet(), (
+        "the first button's left corners must round the group's own left edge")
+    assert "border-top-right-radius: 6px" in last.styleSheet(), (
+        "the last button's right corners must round the group's own right edge")
+    assert "border-top-right-radius: 0px" in first.styleSheet(), (
+        "the first button's right corners belong to the seam with its neighbour, not "
+        "the group's outer edge")
+
+
+def test_decision_cell_height_does_not_shift_between_selected_and_unselected():
+    """A selected button's bold font-weight must not make that one button taller than
+    its unselected neighbours, which would read as the row bobbing on every click."""
+    from internpearls import widgets
+    options = [("import", "Import"), ("skip", "Skip")]
+    cell = widgets.decision_cell(options, "import", lambda v: None)
+    selected, unselected = cell.buttons["import"], cell.buttons["skip"]
+
+    def height_rule(style):
+        return [line.strip() for line in style.split(";")
+               if "min-height" in line or "max-height" in line]
+
+    assert height_rule(selected.styleSheet()) == height_rule(unselected.styleSheet()), (
+        "selected and unselected buttons must pin the same fixed height")
 
 
 def test_section_header_returns_a_label_with_the_given_text():

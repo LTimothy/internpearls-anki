@@ -4827,14 +4827,14 @@ def _choose_option_for(guid, label, accept):
 
 
 def _choose_skip_for(guid):
-    """respond() for update_decks(): choose Skip for now on `guid`'s card, then
-    accept via Update."""
-    return _choose_option_for(guid, "Skip for now", True)
+    """respond() for update_decks(): choose Skip on `guid`'s card, then accept via
+    Update."""
+    return _choose_option_for(guid, "Skip", True)
 
 
 def _choose_skip_then_cancel(guid):
     """Same as _choose_skip_for, but declines the confirmation afterward."""
-    return _choose_option_for(guid, "Skip for now", False)
+    return _choose_option_for(guid, "Skip", False)
 
 
 def _choose_import_for(guid):

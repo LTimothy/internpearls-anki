@@ -1458,7 +1458,7 @@ def test_decision_cell_selects_and_reports(anki):
     from internpearls import widgets
     chosen = []
     cell = widgets.decision_cell(
-        [("import", "Import"), ("skip", "Skip for now"), ("never", "Never")],
+        [("import", "Import"), ("skip", "Skip"), ("never", "Never")],
         "import", chosen.append)
     cell.buttons["skip"].click()
     assert chosen == ["skip"]
@@ -1653,10 +1653,16 @@ def test_a_predeclined_card_past_the_first_streaming_batch_still_reaches_decisio
 
 def test_import_row_offers_a_quiet_add_note_that_reveals_the_box(anki):
     """An Import/Apply row is not declined, so its box starts hidden, but a small "Add
-    note" affordance can still reveal it (flag-without-decline)."""
+    note" affordance, at the end of the row's expanded body, can still reveal it
+    (flag-without-decline)."""
+    from internpearls import review
     body, boxes, flush, decisions = _build_body_with_one_new_card()
     box = _find_feedback_box(body)
     assert box is not None and not box.isVisible()
+    caret = next(w for w in _walk_widgets(body)
+                if getattr(w, "text", None) and w.text() in (review._CARET_CLOSED,
+                                                             review._CARET_OPEN))
+    caret.clicked.emit()   # Add note lives in the expanded body now
     add_note = next(w for w in _walk_widgets(body)
                     if getattr(w, "text", None) and w.text() == "Add note")
     add_note.click()
