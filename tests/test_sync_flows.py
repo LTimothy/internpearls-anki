@@ -4860,6 +4860,23 @@ def test_update_preview_hides_never_and_presets_skip(anki, tmp_path):
     assert "SKIPPED" in texts and "UPDATED" in texts   # skip re-offered, hash stale
 
 
+def test_deck_summary_counts_exclude_hidden_never_cards(anki, tmp_path):
+    """The per-deck summary line must agree with the rows below it: a card hidden by
+    a Never decline is not pending, so its deck cannot count it as new."""
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-a": {"state": "never", "front": "front a", "deck": deck,
+                       "decided": "2026-08-01", "hash": ""}})
+
+    tree = _snapshot_update_confirmation(anki)
+
+    texts = _all_text(tree)
+    assert "1 new" in texts
+    assert "2 new" not in texts, (
+        "the deck summary still counts the hidden Never card as pending")
+
+
 def test_a_changed_row_keeps_one_updated_chip_after_a_kept_decline(anki, tmp_path):
     """A "changed" row already wears the kind chip's own UPDATED pill; a fresh edit
     since a Keep decline must not add a second one (an earlier revision added both
