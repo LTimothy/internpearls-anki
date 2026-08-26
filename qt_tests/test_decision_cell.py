@@ -6,7 +6,7 @@ test_chip_column.py's _row_grid builds a bare row.
 """
 import harness
 
-NEW_CARD_OPTIONS = [("import", "Import"), ("skip", "Skip for now"), ("never", "Never")]
+NEW_CARD_OPTIONS = [("import", "Import"), ("skip", "Skip"), ("never", "Never")]
 
 
 def _build(theme):
@@ -22,11 +22,17 @@ def _build(theme):
     return cell
 
 
-def test_every_button_renders_wider_than_an_empty_label_would():
+def test_every_button_renders_wider_than_a_single_character_would():
     """A non-zero sizeHint alone would also pass for a button whose label never
     reached the font metrics (padding/border still contribute something). Comparing
-    against an identically-styled empty-text button is what proves the option's own
-    text painted."""
+    against an identically-styled one-character button is what proves the rest of the
+    option's own label actually painted.
+
+    Compared against one character rather than none: some platform styles apply a
+    floor width to a button carrying literally no text, which comes out wider than a
+    short option like "Skip" legitimately paints and would sink the comparison for a
+    reason that has nothing to do with whether the label painted.
+    """
     _, q = harness.bootstrap()
     for theme in ("light", "dark"):
         cell = _build(theme)
@@ -34,14 +40,13 @@ def test_every_button_renders_wider_than_an_empty_label_would():
             hint = button.sizeHint()
             assert hint.width() > 0 and hint.height() > 0, (
                 f"{theme}/{value} rendered with a zero sizeHint")
-            # Same border/padding/font stylesheet, empty text: isolates the label's
-            # own contribution to the width from the chrome every option shares.
-            twin = q.QPushButton("")
+            twin = q.QPushButton(button.text()[0])
             twin.setStyleSheet(button.styleSheet())
-            blank_width = twin.sizeHint().width()
-            assert hint.width() > blank_width, (
+            one_char_width = twin.sizeHint().width()
+            assert hint.width() > one_char_width, (
                 f"{theme}/{value} is no wider ({hint.width()}) than the same button "
-                f"with no text ({blank_width}): its label doesn't seem to be painting")
+                f"carrying only its first character ({one_char_width}): the rest of "
+                "its label doesn't seem to be painting")
 
 
 def test_exactly_one_button_is_checked():

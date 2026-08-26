@@ -859,6 +859,22 @@ def test_the_caret_says_what_it_does_rather_than_only_drawing_a_glyph():
     assert caret._accessible == "Show card"
 
 
+def test_add_note_sits_in_the_expanded_body_not_the_collapsed_header():
+    """Add note is only worth reaching once a reader is already looking at the card's
+    own text, so it lives in the body a caret expands, not in the header a collapsed
+    row already shows: a collapsed row carries no Add note column at all."""
+    detail = dict(_basic_note_detail(), guid="g1", kind="new")
+    row = review._card_row(detail, {}, {}, {}, _no_decide)
+    header, body = row._layout._children[0], row._layout._children[1]
+
+    def _has_add_note(widget):
+        return any(getattr(w, "text", None) and w.text() == "Add note"
+                  for w in _walk_widgets(widget))
+
+    assert not _has_add_note(header), "Add note still sits in the row's header"
+    assert _has_add_note(body), "Add note is missing from the row's expanded body"
+
+
 # ------------------------------------------------------------------ mock Qt surface
 def test_the_mock_qt_provides_the_qimage_review_reads_widths_from():
     """review.py reads an extracted file's natural width to cap it. The mock has to
