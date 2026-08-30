@@ -715,7 +715,8 @@ def change_notes_for(manifest_notes, guid, fields):
         return []
     h = note_fields_hash(list(fields))
     return [e for e in reversed(entries)
-            if isinstance(e, dict) and e.get("note") and e.get("hash") == h]
+            if isinstance(e, dict) and isinstance(e.get("note"), str)
+            and e.get("note") and e.get("hash") == h]
 
 
 def prune_declined(reg, retired_guids, seen):
