@@ -398,6 +398,41 @@ def _was_label(detail, field_name):
     return label, old
 
 
+def _change_note_html(note):
+    """The row's account of why this card changed. Feedback is shown verbatim in
+    quotes; the add-on cannot know which learner sent it, so the suffix says "from
+    feedback", never "your feedback"."""
+    text = html.escape(note.get("note", ""))
+    if note.get("kind") == "feedback":
+        return (f"<i>&ldquo;{text}&rdquo;</i>&nbsp;&nbsp;"
+                f"<span style='color:{colors()['dim']}; font-size:11px'>"
+                f"&middot; from feedback</span>")
+    return f"<i>{text}</i>"
+
+
+def _change_note_row(note, indent):
+    """One `change_notes` entry as a row under the card header: a 3px accent bar (the
+    same idiom as the Why rule, but in `updated_bg` rather than `why`) and the note's
+    own text, in the row's text column so it reads as part of that card.
+
+    Built on `muted_label` for its word-wrap and its base colour, with the stylesheet
+    replaced rather than appended: Qt silently ignores a lone border-left on a QLabel
+    unless the border shorthand is reset first (see `_was_label`'s Why rule for the
+    same fix), so the reset has to come before border-left in this one string.
+    """
+    row = QWidget()
+    lay = QHBoxLayout(row)
+    lay.setContentsMargins(indent, 0, 0, 0)
+    lay.setSpacing(0)
+    label = muted_label(_change_note_html(note))
+    label.setTextFormat(Qt.TextFormat.RichText)
+    c = colors()
+    label.setStyleSheet(f"border: none; border-left: 3px solid {c['updated_bg']};"
+                        f" padding-left: 8px; color: {c['muted']};")
+    lay.addWidget(label)
+    return row
+
+
 def _collection_image(name):
     """One of the learner's own media files as an <img>, or None when it is not there.
 
@@ -495,6 +530,10 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     Pictures are named until that first expand and rendered from then on. Extraction is
     what opening a row pays for, so a long list stays cheap to scroll and a review nobody
     opens costs nothing at all.
+
+    A `change_notes` entry, when the deck source attached one, renders directly under
+    the header (see `_change_note_row`): the deck source's own account of why this card
+    changed, visible whether the row is collapsed or open.
     """
     guid = detail["guid"]
     kind = detail.get("kind")
@@ -681,6 +720,9 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         _apply_decision_visuals(initial)
 
     outer.addWidget(header)
+
+    for note in detail.get("change_notes") or []:
+        outer.addWidget(_change_note_row(note, indent))
 
     if changed_since_decline:
         since = ("since you skipped it" if declined_state == "skip"
