@@ -264,6 +264,31 @@ def test_no_card_row_widget_carries_a_border_of_its_own():
         assert "border-bottom" not in (node.get("style") or "")
 
 
+# ------------------------------------------------------------- change notes
+def test_change_note_line_renders_feedback_and_maintainer():
+    html_fb = review._change_note_html({"kind": "feedback", "note": 'use a <table>'})
+    assert "&ldquo;" in html_fb and "&rdquo;" in html_fb
+    assert "&lt;table&gt;" in html_fb          # note text is escaped
+    assert "from feedback" in html_fb
+    html_mn = review._change_note_html({"kind": "maintainer", "note": "split out"})
+    assert "split out" in html_mn and "from feedback" not in html_mn
+
+
+def test_a_change_note_renders_in_the_row_and_absence_renders_nothing():
+    """A detail carrying `change_notes` puts the note's text in the row; a detail
+    without the key renders no such label at all."""
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
+                 change_notes=[{"kind": "feedback",
+                               "note": "an example reviewer request",
+                               "hash": "0" * 16}])
+    texts = _text_nodes(detail)
+    assert any("an example reviewer request" in t for t in texts)
+
+    without_notes = dict(_basic_note_detail(), guid="g2", kind="changed")
+    texts_without = _text_nodes(without_notes)
+    assert not any("an example reviewer request" in t for t in texts_without)
+
+
 # ----------------------------------------------------------------- new vs changed
 def _chip_labels(detail):
     """Every chip word a rendered row carries. The chip is a widget in its own column
