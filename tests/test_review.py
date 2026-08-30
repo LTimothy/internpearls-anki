@@ -289,6 +289,39 @@ def test_a_change_note_renders_in_the_row_and_absence_renders_nothing():
     assert not any("an example reviewer request" in t for t in texts_without)
 
 
+def _find_note_row(root, text):
+    """The live change-note row widget carrying `text`, not just its rendered node:
+    visibility is a live-widget property, not something `.node()` walks report here."""
+    for w in _walk_widgets(root):
+        children = getattr(getattr(w, "_layout", None), "_children", None)
+        if children and any(getattr(c, "text", None) and text in (c.text() or "")
+                            for c in children):
+            return w
+    return None
+
+
+def test_choosing_never_hides_change_note_rows_and_restores_them_on_return():
+    """A Never row struck through as gone must not still show what a reviewer said
+    about it underneath: the row's own change-note lines have to hide with it, and come
+    back if the reader changes her mind about Never within the same run."""
+    detail = dict(_basic_note_detail(), guid="g1", kind="new",
+                 change_notes=[{"kind": "feedback", "note": "an example reviewer request",
+                               "hash": "0" * 16}])
+    decisions = {}
+    row = review._card_row(detail, {}, {}, decisions, lambda *a, **k: None)
+    cell = next(w for w in _walk_widgets(row) if hasattr(w, "buttons"))
+    note_row = _find_note_row(row, "an example reviewer request")
+    assert note_row is not None and note_row.isVisible()
+
+    cell.buttons["never"].click()
+    assert decisions == {"g1": "never"}
+    assert not note_row.isVisible(), "a Never row still shows its change note"
+
+    cell.buttons["import"].click()
+    assert decisions == {}
+    assert note_row.isVisible(), "returning to the default decision should restore the note row"
+
+
 # ----------------------------------------------------------------- new vs changed
 def _chip_labels(detail):
     """Every chip word a rendered row carries. The chip is a widget in its own column
