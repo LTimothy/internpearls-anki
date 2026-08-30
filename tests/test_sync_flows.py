@@ -230,14 +230,16 @@ def _fields(front, back="the back", notes="", dosing=""):
     return [front, back, "why", "", "Pharm", dosing, notes]
 
 
-def _write_source(tmp_path, decks, retired=None, deck_moves=None):
+def _write_source(tmp_path, decks, retired=None, deck_moves=None, change_notes=None):
     """decks: {deck_name: (version, notes, model_or_None)} -> source folder path.
-    `retired`/`deck_moves`, if given, ride along in the same manifest — update_decks()
-    tests need a source that carries both a content update and a reconcile ledger."""
+    `retired`/`deck_moves`/`change_notes`, if given, ride along in the same manifest, so
+    update_decks() tests can build a source that carries a content update alongside a
+    reconcile ledger or the deck source's own change notes."""
     folder = tmp_path / "source"
     folder.mkdir(exist_ok=True)
     manifest = {"schema": 1, "decks": [], "front_aliases": {},
-                "retired": retired or {}, "deck_moves": deck_moves or {}}
+                "retired": retired or {}, "deck_moves": deck_moves or {},
+                "change_notes": change_notes or {}}
     for name, spec in decks.items():
         version, notes, model = spec[0], spec[1], spec[2]
         media = spec[3] if len(spec) > 3 else None
@@ -1775,6 +1777,94 @@ def test_update_decks_lists_a_changed_only_card_inline(anki, tmp_path):
     assert "Front one" in seen["text"] and CHIPS["changed"] in seen["text"]
     assert CHIPS["new"] not in seen["text"]
     assert "Review" not in seen["text"], "the old Review button is gone"
+
+
+def _capture_update_items(monkeypatch):
+    """Monkeypatches sync.build_update_body to record the `items` list it's built from
+    on every confirmation it renders, while still calling through to the real function
+    so the dialog (and drive()'s click-through) behaves exactly as it does normally.
+
+    `items` mixes ("header", ...), ("sep",), and ("card", deck_name, detail) entries;
+    this is the only place a test can see a row's raw `detail` dict rather than only
+    the text a widget renders from it.
+    """
+    from internpearls import sync
+    captured = []
+    real = sync.build_update_body
+
+    def spy(items, *a, **kw):
+        captured.append(items)
+        return real(items, *a, **kw)
+
+    monkeypatch.setattr(sync, "build_update_body", spy)
+    return captured
+
+
+def _card_detail(items, guid):
+    for item in items:
+        if item[0] == "card" and item[2]["guid"] == guid:
+            return item[2]
+    return None
+
+
+def test_change_notes_attach_to_changed_rows(anki, tmp_path, monkeypatch):
+    """A manifest note whose hash matches the incoming content attaches to that
+    changed card's detail; a stale-hash note for the same guid does not."""
+    from internpearls.logic import note_fields_hash
+    anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
+    new_fields = _fields("Front one", back="the new answer")
+    matching = {"kind": "changed", "note": "rewrote the answer for accuracy",
+               "hash": note_fields_hash(new_fields)}
+    stale = {"kind": "changed", "note": "an earlier, since-superseded note",
+            "hash": note_fields_hash(_fields("Front one", back="a different answer"))}
+    folder = _write_source(
+        tmp_path, {DECK: ("v2", [("g1", new_fields, TAGS)], None)},
+        change_notes={"g1": [stale, matching]})
+    _configure(anki, folder)
+    captured = _capture_update_items(monkeypatch)
+
+    _update(anki, accept=False)
+
+    detail = _card_detail(captured[0], "g1")
+    assert detail["kind"] == "changed"
+    assert detail["change_notes"] == [matching]
+
+
+def test_change_notes_on_new_rows_only_for_installed_decks(anki, tmp_path, monkeypatch):
+    """A brand-new card's manifest note is withheld on a deck's first sync (every card
+    would carry one, which reads as history it doesn't have) but attached once the deck
+    is already installed and this is just one more card arriving."""
+    from internpearls.logic import note_fields_hash
+    other = "Intern Pearls::Intern Custom::Other"
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    _sync(anki)   # Pharm is now installed; Other never has been
+
+    new_pharm = _fields("Front two")
+    new_other = _fields("Front three")
+    change_notes = {
+        "g2": [{"kind": "new", "note": "added to round out coverage",
+               "hash": note_fields_hash(new_pharm)}],
+        "g3": [{"kind": "new", "note": "added to round out coverage",
+               "hash": note_fields_hash(new_other)}],
+    }
+    folder = _write_source(
+        tmp_path,
+        {DECK: ("v2", [("g1", _fields("Front one"), TAGS),
+                       ("g2", new_pharm, TAGS)], None),
+         other: ("v1", [("g3", new_other, f"{SCOPE}::Other")], None)},
+        change_notes=change_notes)
+    _configure(anki, folder)
+    captured = _capture_update_items(monkeypatch)
+
+    _update(anki, accept=False)
+
+    pharm_detail = _card_detail(captured[0], "g2")
+    other_detail = _card_detail(captured[0], "g3")
+    assert pharm_detail["kind"] == "new"
+    assert pharm_detail["change_notes"] == change_notes["g2"]
+    assert other_detail["kind"] == "new"
+    assert "change_notes" not in other_detail
 
 
 def test_review_box_starts_empty_with_nothing_summarized(anki, tmp_path):
