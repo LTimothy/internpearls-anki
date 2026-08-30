@@ -3,6 +3,13 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.48.0
+
+A deck source can now attach a short note to a changed or newly added card
+explaining why it changed. Reviewer feedback shows quoted, marked "from
+feedback"; a maintainer's own note shows the same way, unquoted. Either kind
+only appears when it describes the exact content on offer.
+
 ## v0.47.3
 
 What a review round found in the card-declining feature, and a few older things
