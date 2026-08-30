@@ -704,6 +704,20 @@ def note_fields_hash(fields):
     return hashlib.sha256(FS.join(fields).encode("utf8")).hexdigest()[:16]
 
 
+def change_notes_for(manifest_notes, guid, fields):
+    """The manifest's notes describing exactly this incoming content: entries under
+    `guid` whose hash matches these field values, newest first. A hash mismatch means
+    the note was written about some other version of the card (a stale cached
+    manifest, usually), and captioning content a note does not describe is worse than
+    showing nothing."""
+    entries = manifest_notes.get(guid) if isinstance(manifest_notes, dict) else None
+    if not isinstance(entries, list):
+        return []
+    h = note_fields_hash(list(fields))
+    return [e for e in reversed(entries)
+            if isinstance(e, dict) and e.get("note") and e.get("hash") == h]
+
+
 def prune_declined(reg, retired_guids, seen):
     """Drop registry entries that are moot: the note was retired upstream, or it is
     gone from its deck's current package. `seen` covers only decks actually
