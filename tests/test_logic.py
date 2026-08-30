@@ -1980,3 +1980,12 @@ def test_change_notes_for_tolerates_junk():
     assert logic.change_notes_for(None, "g1", fields) == []
     assert logic.change_notes_for({"g1": "junk"}, "g1", fields) == []
     assert logic.change_notes_for(notes, "missing", fields) == []
+
+
+def test_change_notes_for_drops_non_string_notes():
+    fields = ["F"]
+    h = logic.note_fields_hash(fields)
+    notes = {"g1": [{"note": 12345, "hash": h}, {"note": None, "hash": h},
+                    {"note": ["x"], "hash": h}, {"note": {"k": "v"}, "hash": h},
+                    {"note": "ok", "hash": h}]}
+    assert [e["note"] for e in logic.change_notes_for(notes, "g1", fields)] == ["ok"]

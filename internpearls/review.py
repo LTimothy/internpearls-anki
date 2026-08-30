@@ -427,6 +427,9 @@ def _change_note_row(note, indent):
     label = muted_label(_change_note_html(note))
     label.setTextFormat(Qt.TextFormat.RichText)
     c = colors()
+    # The bar is decorative and deliberately quiet; the text carries the meaning, in
+    # the measured `muted`/`dim` roles. `updated_bg` is borrowed here for its tie to
+    # the UPDATED chip, not for its own contrast against the window.
     label.setStyleSheet(f"border: none; border-left: 3px solid {c['updated_bg']};"
                         f" padding-left: 8px; color: {c['muted']};")
     lay.addWidget(label)
@@ -556,6 +559,12 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     # same first-expand schedule as everything else even on a row `resolve` is None for.
     was_rerender = []
     revealed = []
+    # The rows _change_note_row builds for this card, kept local so
+    # _apply_decision_visuals can hide them under Never and restore them if the
+    # decision moves off Never again; they don't exist yet the first time that
+    # function runs, but a predeclined "never" never reaches this row at all
+    # (sync.py drops it before it's built), so the initial call has nothing to hide.
+    note_rows = []
 
     def _reveal_images():
         if revealed:
@@ -693,6 +702,8 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         font.setStrikeOut(state == "never")
         primary.setFont(font)
         never_note.setVisible(state == "never")
+        for note_row in note_rows:
+            note_row.setVisible(state != "never")
         if state == "never":
             body.setVisible(False)
             caret.setText(_CARET_CLOSED)
@@ -722,7 +733,9 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     outer.addWidget(header)
 
     for note in detail.get("change_notes") or []:
-        outer.addWidget(_change_note_row(note, indent))
+        note_row = _change_note_row(note, indent)
+        note_rows.append(note_row)
+        outer.addWidget(note_row)
 
     if changed_since_decline:
         since = ("since you skipped it" if declined_state == "skip"
