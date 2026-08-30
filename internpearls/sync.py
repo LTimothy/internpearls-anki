@@ -34,8 +34,8 @@ from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, load_declined, save_declined)
-from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, declined_drop,
-                    declined_guids,
+from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes_for,
+                    declined_drop, declined_guids,
                     decks_to_update, feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
@@ -1277,7 +1277,8 @@ def _preview_content_changes(fetch, todo, her, aliases, her_fields=None):
     return preview, downloaded, False
 
 
-def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None):
+def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
+                          change_notes=None, installed=None):
     """Every card this update would touch, grouped under the deck it belongs to and
     ready for the inline card list on the confirmation.
 
@@ -1303,9 +1304,12 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None):
     `extra` supplied, one card per pending row, each detail tagged "kind" ("new" or
     "changed") and, for a changed one, "was" (what her copy currently says), the same
     two things the old Review button's dialog used to tag before this screen replaced
-    it. `failed` names decks whose pending cards could not be read; the update itself is
-    unaffected, those decks just are not shown here. `sources` is {deck_name: .apkg
-    path}, for the row pictures' resolvers.
+    it. A detail can also carry "change_notes", the deck source's own account of why the
+    card changed, attached for changed cards always and for new cards only in a deck
+    already installed (a first sync would caption every card with history). `failed`
+    names decks whose pending cards could not be read; the update itself is unaffected,
+    those decks just are not shown here. `sources` is {deck_name: .apkg path}, for the
+    row pictures' resolvers.
     """
     items, failed, sources, hidden = [], [], {}, 0
     extra = dict(extra or {})
@@ -1355,6 +1359,12 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None):
                     incoming = [v for _, v in detail["fields"]]
                     if entry.get("hash") and entry["hash"] != note_fields_hash(incoming):
                         detail["changed_since_decline"] = True
+                if change_notes and (detail["kind"] == "changed"
+                                     or d["name"] in (installed or {})):
+                    incoming = [v for _, v in detail["fields"]]
+                    notes = change_notes_for(change_notes, detail["guid"], incoming)
+                    if notes:
+                        detail["change_notes"] = notes
                 card_rows.append(("card", d["name"], detail))
             if details:
                 sources[d["name"]] = src
@@ -1685,7 +1695,7 @@ def update_decks():
 
     items, unreadable, sources, hidden = _gather_pending_items(
         todo, preview, downloaded, _retired_moved_items(fresh, moves, her),
-        registry=reg)
+        registry=reg, change_notes=manifest.get("change_notes"), installed=installed)
     if todo:
         summary = [("header", f"{plural(len(todo), 'deck')} "
                               f"{'has' if len(todo) == 1 else 'have'} updates:")]
