@@ -175,6 +175,9 @@ def synthetic_details():
     actually paints both row markers widgets.chip_cell can produce for a card; row 1's
     `was` entry paints its previous-value line too. Without this, test_contrast.py's
     fixture never exercised the marker pill at all.
+
+    Row 1 also carries `change_notes`, so a render exercises the because line under an
+    UPDATED row too.
     """
     return [
         {"guid": "g1", "notetype": "Study Deck - Basic", "kind": "new",
@@ -185,6 +188,8 @@ def synthetic_details():
                     ("Notes", "")]},
         {"guid": "g2", "notetype": "Study Deck - Basic", "kind": "changed",
          "was": {"Back": "A wrapping basic note, before its Back field was rewritten."},
+         "change_notes": [{"kind": "feedback", "note": "an example reviewer request",
+                           "hash": "0" * 16}],
          "fields": [("Front", "A deliberately long prompt, written to run past the "
                               "dialog's width so the wrap lands under the text and "
                               "not under the caret, which is where it used to go?"),

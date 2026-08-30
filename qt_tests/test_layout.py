@@ -554,6 +554,19 @@ def test_the_look_change_checkbox_sits_with_the_text_that_explains_it(shot):
     assert top(intro[0]) < top(boxes[0]) < min(top(w) for w in lists)
 
 
+def test_a_change_note_reads_on_the_collapsed_row(shot):
+    """A deck source can caption a pending card with why it changed. That line sits
+    directly under the row's header, above the was-diff and the changed-since hint, so
+    it has to read on arrival, before the row is ever expanded (row 1 in the fixture
+    carries it; see synthetic_details).
+    """
+    _, q = harness.bootstrap()
+    s = shot("confirm")
+    texts = [l.text() for l in _visible_labels(s.dialog, q)]
+    assert any("an example reviewer request" in t for t in texts), (
+        "the change note does not appear on the collapsed confirm scene")
+
+
 def test_the_look_change_checkbox_is_not_read_as_answering_the_format_change(shot):
     """A run can carry both a look change and a note-type format change, and the format
     one has its own dialog rather than this checkbox. The box lands under the last of
