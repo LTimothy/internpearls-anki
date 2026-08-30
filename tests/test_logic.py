@@ -1954,3 +1954,29 @@ def test_prune_declined_survives_a_non_dict_entry():
         reg, retired_guids={"g-retired-garbage"}, seen={"IP::A": {"g-alive"}})
     assert changed is True
     assert set(reg) == {"g-garbage", "g-alive"}
+
+
+# ----------------------------------------------------------------- change_notes_for
+def test_change_notes_for_matches_hash():
+    fields = ["Front", "Back"]
+    h = logic.note_fields_hash(fields)
+    notes = {"g1": [{"kind": "feedback", "note": "older", "hash": h},
+                    {"kind": "feedback", "note": "newer", "hash": h}]}
+    got = logic.change_notes_for(notes, "g1", fields)
+    assert [e["note"] for e in got] == ["newer", "older"]
+
+
+def test_change_notes_for_drops_stale_hash():
+    notes = {"g1": [{"kind": "feedback", "note": "old", "hash": "0" * 16}]}
+    assert logic.change_notes_for(notes, "g1", ["Front", "Back"]) == []
+
+
+def test_change_notes_for_tolerates_junk():
+    fields = ["F"]
+    h = logic.note_fields_hash(fields)
+    notes = {"g1": ["not a dict", {"hash": h}, {"note": "", "hash": h},
+                    {"note": "ok", "hash": h}]}
+    assert [e["note"] for e in logic.change_notes_for(notes, "g1", fields)] == ["ok"]
+    assert logic.change_notes_for(None, "g1", fields) == []
+    assert logic.change_notes_for({"g1": "junk"}, "g1", fields) == []
+    assert logic.change_notes_for(notes, "missing", fields) == []
