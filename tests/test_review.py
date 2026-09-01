@@ -501,6 +501,19 @@ def test_a_reworded_cloze_change_shows_the_old_text_filled_not_raw():
     assert "An older sentence" in row
 
 
+def test_a_rewritten_field_falls_back_to_the_verbatim_old_value():
+    """A rewrite marked up word by word is a wall of struck and highlighted text
+    harder to read than either version alone (word_diff_ratio below the floor), so
+    it renders the old value plainly instead, like any other undiffable change."""
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
+                  was={"Why": "The pattern is about where the drug has to reach "
+                              "in the body before it can act at all."})
+    texts = _text_nodes(detail)
+    row = next(t for t in texts if "<b>Why</b>" in t)
+    assert "was" in row and "where the drug has to reach" in row
+    assert "<s>" not in row
+
+
 def test_a_marked_up_change_falls_back_to_the_verbatim_old_value():
     """A field carrying real markup (a table, a list) cannot be word-diffed without
     tearing its tags apart, so it keeps the verbatim old value behind a was."""

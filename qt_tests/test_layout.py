@@ -364,6 +364,27 @@ def test_a_rows_trailing_column_stops_short_of_the_list_frame(shot):
         "trailing text runs up against its row's right edge: " + ", ".join(cramped))
 
 
+def test_the_card_source_tag_sits_under_its_rows_chip(shot):
+    """The where-this-came-from label lives in the chip column, stacked under the
+    row's NEW/UPDATED chip, not as a line in the text column where it read as part
+    of the card. One tag per reference, so a two-question card renders two small
+    lines instead of one string overflowing the fixed-width gutter."""
+    _, q = harness.bootstrap()
+    from internpearls import widgets
+    s = shot("confirm")
+    labels = _visible_labels(s.dialog, q)
+    assert not any("[T10Q2] [T4Q11]" in l.text() for l in labels), \
+        "a multi-reference source should split into one tag per reference"
+    tag = next(l for l in labels if l.text() == "[T4Q11]")
+    tag_rect = widget_rect(s.dialog, tag)
+    chips = [l for l in labels if l.text() in set(widgets.CHIPS.values())]
+    over = [c for c in chips
+            if widget_rect(s.dialog, c).left() <= tag_rect.center().x()
+            <= widget_rect(s.dialog, c).right()
+            and widget_rect(s.dialog, c).bottom() <= tag_rect.top()]
+    assert over, "the [T4Q11] tag is not sitting under any chip in the chip column"
+
+
 def test_the_what_changed_group_states_the_delta_not_two_paragraphs(shot):
     """An expanded changed card carries one What changed group: a prose change reads
     as a single word-diff line (struck removals), and a blanks-only cloze change

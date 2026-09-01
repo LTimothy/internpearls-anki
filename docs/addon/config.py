@@ -9,7 +9,7 @@ import tempfile
 
 from aqt import mw
 
-ADDON_VERSION = "0.50.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.51.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # own notes); when it does, an add-on release that understands the new shape must bump

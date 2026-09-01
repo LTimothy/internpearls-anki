@@ -194,7 +194,7 @@ def synthetic_details():
                     ("Image", ""), ("Tag", "Widgets"), ("Dosing", ""),
                     ("Notes", "")]},
         {"guid": "g2", "notetype": "Study Deck - Basic", "kind": "changed",
-         "was": {"Back": "A wrapping basic note, before its Back field was rewritten."},
+         "was": {"Back": "A wrapping basic note carrying extra dosing."},
          "card_source": "[T10Q2] [T4Q11]",
          "change_notes": [{"kind": "feedback", "note": "an example reviewer request",
                            "hash": "0" * 16}],
