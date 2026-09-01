@@ -237,6 +237,16 @@ def test_fetch_card_image_checks_content_type(monkeypatch):
         net.fetch_card_image("https://example.com/x.png")
 
 
+def test_fetch_card_image_refuses_svg(monkeypatch):
+    """A downloaded SVG bypasses ai_logic.svg_to_media's script check entirely, so a
+    web image is raster only; a model that wants an SVG draws one instead."""
+    from internpearls import net
+    _urlopen(monkeypatch, _Response(
+        b"<svg></svg>", headers={"Content-Type": "image/svg+xml"}))
+    with pytest.raises(RuntimeError):
+        net.fetch_card_image("https://example.com/x.svg")
+
+
 def test_fetch_card_image_happy(monkeypatch):
     from internpearls import net
     body = b"\x89PNG\r\n\x1a\n00"

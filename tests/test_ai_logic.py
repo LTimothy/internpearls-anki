@@ -464,3 +464,47 @@ def test_svg_to_media_rejects_non_integer_index():
     import pytest
     with pytest.raises(ValueError):
         ai_logic.svg_to_media("<svg></svg>", "../evil")
+
+
+def test_svg_to_media_rejects_event_handler_attribute():
+    import pytest
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media('<svg onload="alert(1)"><rect/></svg>', 0)
+
+
+def test_svg_to_media_rejects_event_handler_with_space_before_equals():
+    import pytest
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media('<svg onload ="alert(1)"><rect/></svg>', 0)
+
+
+def test_svg_to_media_rejects_event_handler_mixed_case():
+    import pytest
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media('<svg OnLoad="alert(1)"><rect/></svg>', 0)
+
+
+def test_svg_to_media_rejects_javascript_uri():
+    import pytest
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media(
+            '<svg><a xlink:href="javascript:alert(1)"><text>x</text></a></svg>', 0)
+
+
+def test_svg_to_media_accepts_a_real_diagram():
+    """The rejection checks must not catch the shapes, text, groups, and styling a
+    model-drawn diagram is actually made of."""
+    markup = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+        '<path d="M10 10 L90 90" stroke="black" fill="none"/>'
+        '<rect x="5" y="5" width="20" height="20" fill="#3366cc" stroke="black" '
+        'stroke-width="2"/>'
+        '<text x="10" y="50" font-size="12">Femoral nerve</text>'
+        '<g transform="translate(10,10)">'
+        '<circle cx="5" cy="5" r="3" style="fill:red;stroke:none"/>'
+        '</g>'
+        '</svg>'
+    )
+    name, data = ai_logic.svg_to_media(markup, 1)
+    assert name == "generated-1.svg"
+    assert data == markup.encode("utf8")
