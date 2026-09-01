@@ -76,3 +76,9 @@ def test_parse_rejects_bad_image_entry():
            '"images": [{"source": "ftp://nope"}]}]')
     cards, errors = ai_logic.parse_cards_json(bad, ALLOWED, FIELD_MAP)
     assert cards == [] and any("image" in e.lower() for e in errors)
+
+
+def test_parse_rejects_tags_as_string():
+    bad = '[{"note_type": "Basic", "fields": {"Front": "x", "Back": "y"}, "tags": "LAST"}]'
+    cards, errors = ai_logic.parse_cards_json(bad, ALLOWED, FIELD_MAP)
+    assert cards == [] and any("tags" in e.lower() for e in errors)
