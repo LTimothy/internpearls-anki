@@ -245,3 +245,18 @@ def test_parse_malformed_nested_shapes_never_raises():
     ]
     for kind, line in cases:
         assert ai_logic.parse_stream_event(kind, line) is None
+
+
+def test_bundled_skill_loads_and_reads_like_a_skill():
+    text = ai_logic.load_bundled_skill()
+    assert "internpearls-authoring" in text
+    assert "Never generate a raster image" in text
+
+
+def test_active_skills_ordering_and_disable():
+    deck = {"text": "DECK SKILL", "enabled": True}
+    both = ai_logic.active_skills(deck)
+    assert len(both) == 2 and both[1] == "DECK SKILL"
+    assert both[0].startswith("---")   # bundled first
+    assert len(ai_logic.active_skills({"text": "x", "enabled": False})) == 1
+    assert len(ai_logic.active_skills(None)) == 1
