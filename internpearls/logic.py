@@ -14,6 +14,8 @@ import sqlite3
 import tempfile
 import zipfile
 
+from .ai_logic import is_generated_guid
+
 FS = "\x1f"   # Anki's field separator inside a note's flds column
 
 NEWER_APKG_ERROR = ('This .apkg uses Anki\'s newer export format. Re-export it with '
@@ -875,6 +877,8 @@ def remap_cards(src, her, aliases):
         her_guid = her.get(front)
         if her_guid is None and front in aliases:
             her_guid = her.get(aliases[front])
+        if is_generated_guid(her_guid):
+            her_guid = None   # locally generated cards are invisible to sync matching
         if her_guid is None:
             new_notes.append((rid, fields, apkg_guid))
         else:
