@@ -437,3 +437,30 @@ def test_extract_pdf_broken_pypdf_import_raises_valueerror(tmp_path, monkeypatch
         ai_logic.extract_attachment(os.path.join(FIXTURES, "sample.pdf"), str(tmp_path))
     assert "sample.pdf" in str(exc.value)
     assert "pypdf" in str(exc.value)
+
+
+# --- svg_to_media: model-drawn SVG as a card image ---
+
+
+def test_svg_to_media_and_script_rejection():
+    import pytest
+    name, data = ai_logic.svg_to_media("<svg xmlns='x'><rect/></svg>", 2)
+    assert name == "generated-2.svg" and data.startswith(b"<svg")
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media("<svg><script>alert(1)</script></svg>", 0)
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media("<div>not svg</div>", 0)
+
+
+def test_svg_to_media_script_check_is_case_insensitive():
+    import pytest
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media("<svg><SCRIPT>alert(1)</SCRIPT></svg>", 0)
+
+
+def test_svg_to_media_rejects_non_integer_index():
+    """The filename is built from `index` verbatim; coercing to int keeps a stray
+    string from ever landing a path separator in a media filename."""
+    import pytest
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media("<svg></svg>", "../evil")

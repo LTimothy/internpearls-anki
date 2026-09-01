@@ -15,10 +15,13 @@ import pytest
 class _Response:
     """The context-manager object urlopen returns, reading `payload` out in whatever
     sizes it is asked for (a bare read() empties it in one go, the way the real one
-    does)."""
+    does). `headers` and `url` default to empty/None since most callers here don't
+    care; the image-fetch tests set them to exercise content-type and redirect checks."""
 
-    def __init__(self, payload):
+    def __init__(self, payload, headers=None, url=None):
         self._data = payload
+        self.headers = headers or {}
+        self._url = url
         self.reads = []
 
     def __enter__(self):
@@ -34,6 +37,9 @@ class _Response:
             chunk, self._data = self._data[:size], self._data[size:]
         self.reads.append(len(chunk))
         return chunk
+
+    def geturl(self):
+        return self._url
 
 
 def _urlopen(monkeypatch, result, capture=None):
@@ -213,3 +219,77 @@ def test_the_addon_fetches_itself_through_the_api_not_the_raw_cdn(monkeypatch):
     net._gh_public_raw("version.json")
     assert seen[0][0].full_url.startswith("https://api.github.com/repos/")
     assert "raw.githubusercontent.com" not in seen[0][0].full_url
+
+
+# --- fetch_card_image: review-time download of a model-suggested image URL ---
+
+
+def test_fetch_card_image_rejects_http_url():
+    from internpearls import net
+    with pytest.raises(RuntimeError):
+        net.fetch_card_image("http://example.com/x.png")
+
+
+def test_fetch_card_image_checks_content_type(monkeypatch):
+    from internpearls import net
+    _urlopen(monkeypatch, _Response(b"<html>", headers={"Content-Type": "text/html"}))
+    with pytest.raises(RuntimeError):
+        net.fetch_card_image("https://example.com/x.png")
+
+
+def test_fetch_card_image_happy(monkeypatch):
+    from internpearls import net
+    body = b"\x89PNG\r\n\x1a\n00"
+    _urlopen(monkeypatch, _Response(
+        body, headers={"Content-Type": "image/png", "Content-Length": str(len(body))}))
+    data, ext = net.fetch_card_image("https://example.com/pic.png")
+    assert data == body and ext == "png"
+
+
+def test_fetch_card_image_content_type_with_parameters_is_accepted(monkeypatch):
+    """A server that adds a charset parameter must not be rejected on a bare string
+    mismatch against the bare media type."""
+    from internpearls import net
+    body = b"\x89PNG..."
+    _urlopen(monkeypatch, _Response(
+        body, headers={"Content-Type": "image/png; charset=binary"}))
+    data, ext = net.fetch_card_image("https://example.com/pic.png")
+    assert data == body and ext == "png"
+
+
+def test_fetch_card_image_rejects_oversize_declared_by_content_length(monkeypatch):
+    from internpearls import net
+    _urlopen(monkeypatch, _Response(
+        b"x" * 20, headers={"Content-Type": "image/png", "Content-Length": "20"}))
+    with pytest.raises(RuntimeError):
+        net.fetch_card_image("https://example.com/pic.png", max_bytes=10)
+
+
+def test_fetch_card_image_rejects_oversize_stream_with_no_content_length(monkeypatch):
+    """The header lying or missing entirely must not let bytes past the cap: the
+    running total from the actual read has to be what's enforced."""
+    from internpearls import net
+    _urlopen(monkeypatch, _Response(
+        b"x" * 50, headers={"Content-Type": "image/png"}))
+    with pytest.raises(RuntimeError):
+        net.fetch_card_image("https://example.com/pic.png", max_bytes=10)
+
+
+def test_fetch_card_image_accepts_exactly_the_cap(monkeypatch):
+    from internpearls import net
+    body = b"x" * 10
+    _urlopen(monkeypatch, _Response(body, headers={"Content-Type": "image/png"}))
+    data, ext = net.fetch_card_image("https://example.com/pic.png", max_bytes=10)
+    assert len(data) == 10
+
+
+def test_fetch_card_image_rejects_a_redirect_to_http(monkeypatch):
+    """urllib follows redirects by default; a server that 302s an https URL to a plain
+    http one must not let the download silently succeed over an insecure channel."""
+    from internpearls import net
+    _urlopen(monkeypatch, _Response(
+        b"\x89PNG", headers={"Content-Type": "image/png"},
+        url="http://evil.example.com/pic.png"))
+    with pytest.raises(RuntimeError) as e:
+        net.fetch_card_image("https://example.com/pic.png")
+    assert "https" in str(e.value)
