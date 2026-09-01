@@ -389,13 +389,13 @@ def test_every_marker_pill_clears_wcag_aa_against_its_own_background():
             f"background {background}; WCAG AA needs {AA}:1")
 
 
-def test_a_changed_row_shows_what_the_field_used_to_say():
+def test_a_changed_row_carries_a_what_changed_group():
     detail = dict(_basic_note_detail(), guid="g1", kind="changed",
                   was={"Back": "the answer she has today"})
     texts = " ".join(n.get("text") or "" for n in _walk(
         review._card_row(detail, {}, {}, {}, _no_decide).node()))
-    assert "the answer she has today" in texts
     assert "What changed" in texts
+    assert "<b>Back</b>" in texts
 
 
 def test_a_changed_row_shows_nothing_extra_for_an_unchanged_field():
@@ -447,9 +447,12 @@ def test_change_rows_sit_together_after_every_field_block():
     why_i = _first_index(texts, "runs with the saphenous nerve")
     dosing_i = _first_index(texts, "0.5 mg/kg IV")
     heading_i = _first_index(texts, "What changed")
-    why_was_i = _first_index(texts, "older explanation")
-    dosing_was_i = _first_index(texts, "older source")
-    assert max(why_i, dosing_i) < heading_i < why_was_i < dosing_was_i
+    # Both changed fields are rewrites here, so each renders as its receipt summary
+    # line; the positional claim is about those lines, in note-type field order.
+    why_row_i = _first_index(texts, "<b>Why</b>")
+    dosing_row_i = next(i for i, t in enumerate(texts)
+                        if "<b>Dosing</b>" in t and i > heading_i)
+    assert max(why_i, dosing_i) < heading_i < why_row_i < dosing_row_i
 
 
 def test_a_plain_prose_change_renders_as_one_word_diff():
@@ -458,8 +461,10 @@ def test_a_plain_prose_change_renders_as_one_word_diff():
     colour pair, and the line named for its field."""
     from internpearls import palette
     detail = dict(_basic_note_detail(), guid="g1", kind="changed",
-                  was={"Back": "Give 1 mg/kg over 10 minutes."})
-    detail["fields"] = [(n, "Give 1.5 mg/kg over 2 minutes." if n == "Back" else v)
+                  was={"Back": "Give 1 mg/kg over 10 minutes, repeating once "
+                               "if needed."})
+    detail["fields"] = [(n, "Give 1.5 mg/kg over 2 minutes, repeating once "
+                            "if needed." if n == "Back" else v)
                         for n, v in detail["fields"]]
     texts = _text_nodes(detail)
     row = next(t for t in texts if "<b>Back</b>" in t)
@@ -486,43 +491,99 @@ def test_a_blanks_only_cloze_change_names_the_moved_blank():
     assert "{{c1" not in row
 
 
-def test_a_reworded_cloze_change_shows_the_old_text_filled_not_raw():
-    """A cloze whose sentence was also reworded falls back to the verbatim old value,
-    with its deletions filled the same way the header line fills them: the one thing
-    it must never show is raw {{c1::…}} markup."""
+def _show_yours(row):
+    """Click the row's Show yours link, the way a reader would."""
+    button = next(n for n in _walk(row.node())
+                  if n.get("t") == "button" and n.get("label") == "Show yours")
+    _click(button["id"], row)
+
+
+def test_a_rewritten_field_is_a_receipt_line_with_the_old_text_behind_a_click():
+    """The design both independent reviews converged on: a rewrite renders as one
+    summary line ("rewritten, shortened (16 → 8 words)") with the old text revealed
+    only by the Show yours link. Neither rejected treatment can come back: no diff
+    markup anywhere, and no always-on paragraph of old text."""
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
+                  was={"Why": "The pattern is about where the drug has to reach "
+                              "in the body before it can act at all."})
+    row = review._card_row(detail, {}, {}, {}, _no_decide)
+    texts = [n.get("text") or "" for n in _walk(row.node())]
+    summary = next(t for t in texts if "<b>Why</b>" in t)
+    assert "rewritten" in summary
+    assert "<s>" not in summary
+    assert not any("where the drug has to reach" in t for t in texts), \
+        "the old text should stay hidden until Show yours is clicked"
+
+    _show_yours(row)
+    revealed = [w for w in _walk_widgets(row)
+                if "where the drug has to reach" in getattr(w, "_text", "")]
+    assert revealed, "Show yours should reveal the old text"
+    assert all(w.isVisible() for w in revealed)
+    assert "<s>" not in revealed[0]._text, "the revealed old text is unmarked prose"
+
+
+def test_the_receipt_line_counts_the_words_when_the_length_really_moved():
+    shrunk = review._rewrite_summary("one two three four five six seven eight",
+                                     "alpha beta gamma")
+    assert shrunk == "rewritten, shortened (8 → 3 words)"
+    grown = review._rewrite_summary("alpha beta gamma",
+                                    "one two three four five six seven eight")
+    assert grown == "rewritten, expanded (3 → 8 words)"
+    same = review._rewrite_summary("alpha beta gamma delta", "one two three four")
+    assert same == "rewritten"
+    assert review._rewrite_summary('<img src="a.jpg">', '<img src="b.jpg">') == "replaced"
+    assert review._rewrite_summary("some old words", "<br>") == "cleared"
+
+
+def test_show_yours_builds_the_old_text_lazily_and_toggles():
+    """The old-text label holds nothing until the first click (a 50-row batch must
+    not pay for forty paragraphs nobody opens), and the link toggles to Hide yours
+    and back."""
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
+                  was={"Why": "An entirely different older explanation of the "
+                              "same mechanism, replaced wholesale."})
+    row = review._card_row(detail, {}, {}, {}, _no_decide)
+    assert not any("older explanation" in (n.get("text") or "")
+                  for n in _walk(row.node()))
+    _show_yours(row)
+    assert any(n.get("label") == "Hide yours" for n in _walk(row.node())
+              if n.get("t") == "button")
+    hide = next(n for n in _walk(row.node())
+                if n.get("t") == "button" and n.get("label") == "Hide yours")
+    _click(hide["id"], row)
+    hidden = [w for w in _walk_widgets(row)
+              if "older explanation" in getattr(w, "_text", "")]
+    assert hidden and not any(w.isVisible() for w in hidden), \
+        "Hide yours should hide the old text again, not destroy or keep showing it"
+
+
+def test_a_reworded_clozes_revealed_old_text_is_filled_not_raw():
+    """A cloze whose sentence was also reworded is a rewrite, so the old value sits
+    behind Show yours; when revealed, its deletions render filled the same way the
+    header line fills them, never as raw {{c1::…}} markup."""
     detail = {"guid": "g1", "kind": "changed", "notetype": "Study Deck - Cloze",
               "was": {"Text": "An older sentence blanking {{c1::a moved value}}."},
               "fields": [("Text", "A newer sentence blanking {{c1::a moved value}}."),
                          ("Why", ""), ("Image", ""), ("Dosing", ""), ("Notes", "")]}
-    texts = _text_nodes(detail)
-    row = next(t for t in texts if "<b>Text</b>" in t)
-    assert "{{c1" not in row
-    assert '<span class="cloze">a moved value</span>' in row
-    assert "An older sentence" in row
+    row = review._card_row(detail, {}, {}, {}, _no_decide)
+    _show_yours(row)
+    revealed = next(n.get("text") for n in _walk(row.node())
+                    if "An older sentence" in (n.get("text") or ""))
+    assert "{{c1" not in revealed
+    assert '<span class="cloze">a moved value</span>' in revealed
 
 
-def test_a_rewritten_field_falls_back_to_the_verbatim_old_value():
-    """A rewrite marked up word by word is a wall of struck and highlighted text
-    harder to read than either version alone (word_diff_ratio below the floor), so
-    it renders the old value plainly instead, like any other undiffable change."""
-    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
-                  was={"Why": "The pattern is about where the drug has to reach "
-                              "in the body before it can act at all."})
-    texts = _text_nodes(detail)
-    row = next(t for t in texts if "<b>Why</b>" in t)
-    assert "was" in row and "where the drug has to reach" in row
-    assert "<s>" not in row
-
-
-def test_a_marked_up_change_falls_back_to_the_verbatim_old_value():
+def test_a_marked_up_changes_revealed_old_text_keeps_its_structure():
     """A field carrying real markup (a table, a list) cannot be word-diffed without
-    tearing its tags apart, so it keeps the verbatim old value behind a was."""
+    tearing its tags apart, so it takes the receipt treatment; the reveal renders
+    the old markup whole."""
     detail = dict(_basic_note_detail(), guid="g1", kind="changed",
                   was={"Back": "<table><tr><td>the old cell</td></tr></table>"})
-    texts = _text_nodes(detail)
-    row = next(t for t in texts if "<b>Back</b>" in t)
-    assert "was" in row and "the old cell" in row
-    assert "<s>" not in row
+    row = review._card_row(detail, {}, {}, {}, _no_decide)
+    _show_yours(row)
+    revealed = next(n.get("text") for n in _walk(row.node())
+                    if "the old cell" in (n.get("text") or ""))
+    assert "<table>" in revealed and "<s>" not in revealed
 
 
 def test_separator_is_an_hline_carrying_the_rule_colour():
@@ -766,12 +827,12 @@ def test_expanding_a_row_keeps_the_chip_when_the_picture_cannot_be_resolved():
     assert "[image: sample-a.jpg]" in texts
 
 
-def test_a_changed_rows_previous_image_is_not_resolved_before_expand(monkeypatch):
-    """A collapsed changed row's `was` line resolves its picture through
-    `_collection_image`, a real `mw.col.media.dir()` call, an `os.path.exists`, and a
-    QImage decode per picture. Building the row must not pay for any of that before it
-    is ever opened, same invariant the strip's own resolver already keeps: a review
-    nobody opens costs nothing.
+def test_a_changed_rows_previous_image_is_not_resolved_before_show_yours(monkeypatch):
+    """An old version's picture resolves through `_collection_image`, a real
+    `mw.col.media.dir()` call, an `os.path.exists`, and a QImage decode per picture.
+    Building the row must not pay for any of that, and neither must merely expanding
+    it: the old version renders only when Show yours is clicked, which is the one
+    moment anyone has asked to see it.
     """
     calls = []
     real = review._collection_image
@@ -784,11 +845,14 @@ def test_a_changed_rows_previous_image_is_not_resolved_before_expand(monkeypatch
     detail = dict(_basic_note_detail(), guid="g1", kind="changed",
                   was={"Back": '<img src="sample-b.jpg">'})
     row = review._card_row(detail, {}, {}, {}, _no_decide)
-    assert calls == [], "the was-line resolved its picture before the row was ever opened"
+    assert calls == [], "the old version resolved its picture at build time"
 
     caret = next(n for n in _walk(row.node()) if n.get("t") == "button")
     _click(caret["id"], row)
-    assert calls == ["sample-b.jpg"], "expanding the row should resolve it exactly once"
+    assert calls == [], "expanding alone should not resolve the old version's picture"
+
+    _show_yours(row)
+    assert calls == ["sample-b.jpg"], "Show yours should resolve it exactly once"
 
 
 def test_expanding_a_row_resolves_an_image_field_by_name_not_all_or_nothing(tmp_path):
