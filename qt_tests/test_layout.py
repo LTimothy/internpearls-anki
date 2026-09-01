@@ -364,6 +364,46 @@ def test_a_rows_trailing_column_stops_short_of_the_list_frame(shot):
         "trailing text runs up against its row's right edge: " + ", ".join(cramped))
 
 
+def test_the_what_changed_group_states_the_delta_not_two_paragraphs(shot):
+    """An expanded changed card carries one What changed group: a prose change reads
+    as a single word-diff line (struck removals), and a blanks-only cloze change
+    names the moved blank instead of reprinting the sentence with raw braces."""
+    _, q = harness.bootstrap()
+    s = shot("confirm", expand=(0, 1, 2, 3, 4))
+    texts = [l.text() for l in _visible_labels(s.dialog, q)]
+    assert any("What changed" in t for t in texts), \
+        "expected the What changed heading on an expanded changed row"
+    diff_row = next(t for t in texts if "<b>Back</b>" in t)
+    assert "<s>" in diff_row, "a prose change should strike its removed words"
+    cloze_row = next(t for t in texts if "<b>Text</b>" in t)
+    assert "no longer blanked" in cloze_row
+    assert "{{c" not in cloze_row, "raw cloze braces must never reach the screen"
+
+
+def test_decision_cells_stop_short_of_the_list_viewport_edge(shot):
+    """A card row's decision control used to end on the streaming list viewport's last
+    pixel: its rounded right corner sat under the list's frame line, which on macOS
+    read as the Never button being cut off, and the overlay scrollbar drew on top of
+    it whenever the list scrolled. The list keeps a real right gutter now.
+    """
+    _, q = harness.bootstrap()
+    from internpearls.widgets import StreamingList
+    s = shot("confirm")
+    sl = s.dialog.findChild(StreamingList)
+    vp_right = widget_rect(s.dialog, sl.viewport()).right()
+    cells = [w for w in sl.widget().findChildren(q.QWidget)
+             if hasattr(w, "buttons") and w.isVisible()]
+    assert cells, "expected the confirm scene to render decision cells"
+    cramped = []
+    for cell in cells:
+        gap = vp_right - widget_rect(s.dialog, cell).right()
+        if gap < 6:
+            cramped.append(f"{gap}px")
+    assert not cramped, (
+        "a decision cell runs up against the list viewport's right edge: "
+        + ", ".join(cramped))
+
+
 def test_result_rows_sit_flush_with_the_heading_and_the_footer(shot):
     """And the mirror of it: a screen with no chips and nothing to expand reserves
     neither column, so its outcome lines start where its own heading and backup line
@@ -430,8 +470,11 @@ def test_a_decks_section_holds_all_four_row_kinds(shot):
     s = shot("confirm")
     pills = [l.text() for l in _visible_labels(s.dialog, q)
              if l.text() in set(widgets.CHIPS.values())]
+    # Two UPDATED pills: the fixture's basic row 1 and its cloze row 3 both carry the
+    # changed kind (the cloze one exercises the named-blank change line).
     assert pills == [widgets.CHIPS["new"], widgets.CHIPS["changed"],
-                     widgets.CHIPS["retired"], widgets.CHIPS["moved"]], (
+                     widgets.CHIPS["changed"], widgets.CHIPS["retired"],
+                     widgets.CHIPS["moved"]], (
         f"the deck's section does not hold all four kinds in order: {pills}")
     headings = [l.text() for l in _visible_labels(s.dialog, q)
                 if l.text() in ("Retired", "Moved")]
