@@ -1,4 +1,6 @@
 """Pure-logic tests for AI card generation. No Anki install needed."""
+import os
+
 from internpearls import ai_logic
 
 
@@ -277,3 +279,101 @@ def test_active_skills_ordering_and_disable():
     assert both[0].startswith("---")   # bundled first
     assert len(ai_logic.active_skills({"text": "x", "enabled": False})) == 1
     assert len(ai_logic.active_skills(None)) == 1
+
+
+# A hand-written minimal PDF byte string (no real xref table) was tried first
+# and rejected by pypdf's parser ("startxref not found"). tests/fixtures/sample.pdf
+# was generated once with the vendored pypdf's own PdfWriter (see git history)
+# and committed instead, so this test exercises real text extraction.
+FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
+
+
+def test_extract_pdf_text(tmp_path):
+    out = ai_logic.extract_attachment(os.path.join(FIXTURES, "sample.pdf"), str(tmp_path))
+    assert "Hello LAST" in out["text"]
+    assert out["images"] == []
+
+
+def test_extract_image_copies_file(tmp_path):
+    png = tmp_path / "slide3.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 20)
+    dest = tmp_path / "scratch"
+    dest.mkdir()
+    out = ai_logic.extract_attachment(str(png), str(dest))
+    assert out["text"] == "" and out["images"] == ["slide3.png"]
+    assert (dest / "slide3.png").exists()
+
+
+def test_extract_unknown_extension_raises(tmp_path):
+    p = tmp_path / "notes.docx"
+    p.write_bytes(b"x")
+    import pytest
+    with pytest.raises(ValueError):
+        ai_logic.extract_attachment(str(p), str(tmp_path))
+
+
+def test_extract_pdf_images_use_safe_collision_proof_names(tmp_path):
+    # tests/fixtures/with_image.pdf embeds one 2x2 raster image on its one page,
+    # generated once with the vendored pypdf's own writer (see git history).
+    out = ai_logic.extract_attachment(os.path.join(FIXTURES, "with_image.pdf"), str(tmp_path))
+    assert out["images"] == ["with_image-p1-img0.png"]
+    assert (tmp_path / "with_image-p1-img0.png").exists()
+
+
+def test_extract_pdf_image_names_dont_collide_across_pdfs(tmp_path):
+    # Two different source PDFs extracting page 1 image 0 must not overwrite
+    # each other's output: the original stem is part of every image filename.
+    src_bytes = open(os.path.join(FIXTURES, "with_image.pdf"), "rb").read()
+    a, b = tmp_path / "with_image.pdf", tmp_path / "renamed.pdf"
+    a.write_bytes(src_bytes)
+    b.write_bytes(src_bytes)
+    out_a = ai_logic.extract_attachment(str(a), str(tmp_path))
+    out_b = ai_logic.extract_attachment(str(b), str(tmp_path))
+    assert out_a["images"] == ["with_image-p1-img0.png"]
+    assert out_b["images"] == ["renamed-p1-img0.png"]
+    assert (tmp_path / "with_image-p1-img0.png").exists()
+    assert (tmp_path / "renamed-p1-img0.png").exists()
+
+
+def test_extract_pdf_stem_sanitized_against_path_traversal(tmp_path):
+    # A hostile-looking basename (already stripped of any directory component
+    # by os.path.basename, but still containing traversal-shaped characters)
+    # must not leak "/" or ".." into the generated image filename.
+    hostile = tmp_path / "..-evil-p1-img0.pdf"
+    hostile.write_bytes(open(os.path.join(FIXTURES, "with_image.pdf"), "rb").read())
+    out = ai_logic.extract_attachment(str(hostile), str(tmp_path))
+    assert out["images"] == ["_-evil-p1-img0-p1-img0.png"]
+    assert os.sep not in out["images"][0] and ".." not in out["images"][0]
+
+
+def test_extract_pdf_image_extension_sanitized_against_hostile_name(tmp_path, monkeypatch):
+    # pypdf's own ImageFile.name docstring warns it "can contain arbitrary
+    # characters" (read from the PDF's internal resource naming) and must be
+    # sanitized before use as a filename. Simulate a hostile value for it.
+    pypdf = ai_logic._pypdf()
+    fake_img = pypdf._page.ImageFile()
+    fake_img.name = "../../etc/passwd"
+    fake_img.data = b"not-really-an-image"
+    monkeypatch.setattr(pypdf._page.PageObject, "images", property(lambda self: [fake_img]))
+
+    out = ai_logic.extract_attachment(os.path.join(FIXTURES, "sample.pdf"), str(tmp_path))
+    assert out["images"] == ["sample-p1-img0.png"]
+    assert (tmp_path / "sample-p1-img0.png").read_bytes() == b"not-really-an-image"
+
+
+def test_extract_pdf_bad_page_does_not_lose_other_pages_text(tmp_path, monkeypatch):
+    # tests/fixtures/two_page.pdf has "First page text" / "Second page text" on
+    # its two pages, generated once with the vendored pypdf's own writer.
+    pypdf = ai_logic._pypdf()
+    real_extract_text = pypdf._page.PageObject.extract_text
+
+    def flaky_extract_text(self, *args, **kwargs):
+        text = real_extract_text(self, *args, **kwargs)
+        if "First" in text:
+            raise RuntimeError("simulated page decode failure")
+        return text
+
+    monkeypatch.setattr(pypdf._page.PageObject, "extract_text", flaky_extract_text)
+    out = ai_logic.extract_attachment(os.path.join(FIXTURES, "two_page.pdf"), str(tmp_path))
+    assert "Second page text" in out["text"]
+    assert "First page text" not in out["text"]
