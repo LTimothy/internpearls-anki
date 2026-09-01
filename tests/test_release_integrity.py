@@ -30,18 +30,21 @@ CHANGELOG = os.path.join(ROOT, "CHANGELOG.md")
 
 def _packaged_names():
     """What build.sh puts in the zip: every top-level module, the three metadata files
-    Anki reads, and every file under skills/ (with its directory structure kept, unlike
-    the flattened top-level modules). Derived from the source tree rather than
-    hardcoded, so a new module or skill file can't be left out of the package and out
-    of this test at the same time.
+    Anki reads, and every file under skills/ and vendor/ (with directory structure
+    kept, unlike the flattened top-level modules). Derived from the source tree
+    rather than hardcoded, so a new module, skill file, or vendored file can't be
+    left out of the package and out of this test at the same time.
     """
     names = [f for f in os.listdir(ADDON) if f.endswith(".py")]
     names += ["manifest.json", "config.json", "config.md"]
-    skills_dir = os.path.join(ADDON, "skills")
-    for dirpath, _, files in os.walk(skills_dir):
-        for f in files:
-            rel = os.path.relpath(os.path.join(dirpath, f), ADDON)
-            names.append(rel.replace(os.sep, "/"))
+    for subdir in ("skills", "vendor"):
+        base = os.path.join(ADDON, subdir)
+        for dirpath, _, files in os.walk(base):
+            if "__pycache__" in dirpath.split(os.sep):
+                continue
+            for f in files:
+                rel = os.path.relpath(os.path.join(dirpath, f), ADDON)
+                names.append(rel.replace(os.sep, "/"))
     return sorted(names)
 
 
