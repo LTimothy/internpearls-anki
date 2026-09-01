@@ -199,3 +199,89 @@ def build_prompt(skills, source, note_types, field_map, count, instructions="",
         if feedback.strip():
             parts.append("## Feedback on the whole set\n" + feedback.strip())
     return "\n\n".join(parts) + "\n"
+
+
+_WEB_TOOLS = {"WebSearch", "WebFetch", "web_search", "web_fetch",
+              "google_web_search"}
+_WINDOW_S = 7 * 86400
+
+
+def _usage_tokens(usage):
+    return sum(int(usage.get(k, 0) or 0) for k in
+               ("input_tokens", "cache_creation_input_tokens",
+                "cache_read_input_tokens", "output_tokens", "total_tokens"))
+
+
+def parse_stream_event(kind, line):
+    try:
+        d = json.loads(line)
+    except Exception:
+        return None
+    if not isinstance(d, dict):
+        return None
+    t = d.get("type")
+    if kind == "claude":
+        if t == "result":
+            return {"type": "result", "text": d.get("result") or "",
+                    "tokens": _usage_tokens(d.get("usage") or {})}
+        if t == "assistant":
+            for block in (d.get("message") or {}).get("content") or []:
+                if block.get("type") == "tool_use":
+                    name = block.get("name", "")
+                    if name in _WEB_TOOLS:
+                        return {"type": "phase", "phase": "Verify online"}
+                    return {"type": "phase", "phase": "Working"}
+        return None
+    if kind == "codex":
+        if t == "token_count":
+            rl = d.get("rate_limits") or {}
+            if rl:
+                return {"type": "rate_limits",
+                        "primary_pct": float((rl.get("primary") or {})
+                                             .get("used_percent") or 0),
+                        "secondary_pct": float((rl.get("secondary") or {})
+                                               .get("used_percent") or 0),
+                        "resets": (rl.get("primary") or {})
+                                  .get("resets_at") or ""}
+            return {"type": "usage",
+                    "tokens": _usage_tokens(d.get("info") or {})}
+        if t in ("item.completed", "turn.completed") and d.get("text"):
+            return {"type": "result", "text": d["text"],
+                    "tokens": _usage_tokens(d.get("usage") or {})}
+        return None
+    if kind == "agy":
+        if t == "result":
+            return {"type": "result", "text": d.get("result") or d.get("text")
+                    or "", "tokens": _usage_tokens(d.get("usage") or {})}
+        if t == "step_update":
+            return {"type": "phase", "phase": str(d.get("step_type") or
+                                                  "Working")}
+        return None
+    return None
+
+
+def record_usage(reg, kind, tokens, now):
+    runs = [r for r in reg.get(kind, []) if now - r["ts"] <= _WINDOW_S]
+    runs.append({"ts": now, "tokens": int(tokens)})
+    reg = dict(reg)
+    reg[kind] = runs
+    return reg
+
+
+def usage_line(reg, kind, now, free_tier=False):
+    runs = [r for r in reg.get(kind, []) if now - r["ts"] <= _WINDOW_S]
+    today = [r for r in runs if now - r["ts"] <= 86400]
+    tokens = sum(r["tokens"] for r in today)
+    line = (f"Today via this add-on: {len(today)} runs, "
+            f"~{round(tokens / 1000)}k tokens")
+    if free_tier:
+        line += f" ({len(today)} runs today on the free tier)"
+    return line
+
+
+def rate_limit_line(evt):
+    # int() truncation, not :.0f: Python's format rounds .5 to even (87.5 -> "88"),
+    # which understates percent left; truncating always rounds in the user's favor.
+    return (f"5h window {int(100 - evt['primary_pct'])}% left, "
+            f"week {int(100 - evt['secondary_pct'])}% left"
+            + (f", resets {evt['resets']}" if evt.get("resets") else ""))

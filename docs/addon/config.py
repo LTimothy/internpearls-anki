@@ -176,3 +176,17 @@ def load_declined():
 
 def save_declined(reg):
     _save_json(DECLINED, reg)
+
+
+# Rolling per-backend usage counters for AI generation ({kind: [{ts, tokens}]},
+# pruned to 7 days) plus recent run durations ({kind-mode: [seconds]}).
+AI_USAGE = os.path.join(_USER_FILES, "ai_usage.json")
+
+
+def load_ai_usage():
+    reg = _load_json(AI_USAGE, {})
+    return reg if isinstance(reg, dict) else {}
+
+
+def save_ai_usage(reg):
+    _save_json(AI_USAGE, reg)
