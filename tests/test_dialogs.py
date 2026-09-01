@@ -1745,10 +1745,32 @@ def test_choosing_never_collapses_the_row(anki):
     assert "won't be offered again" in _row_texts(body)
 
 
-def test_changed_card_row_offers_apply_and_keep_only(anki):
+def test_changed_card_row_offers_apply_keep_and_never(anki):
+    """Keep yours is a not-this-time; Never is its permanent form. Without the
+    third option the only way to stop being asked about one card was to keep declining
+    it every time the deck changed."""
     body, boxes, flush, decisions = _build_body_with_one_changed_card()
     cell = _find_decision_cell(body)
-    assert set(cell.buttons) == {"apply", "keep"}
+    assert set(cell.buttons) == {"apply", "keep", "frozen"}
+    assert cell.buttons["apply"].isChecked()
+
+
+def test_choosing_never_on_a_changed_card_says_it_is_permanent(anki):
+    body, boxes, flush, decisions = _build_body_with_one_changed_card()
+    cell = _find_decision_cell(body)
+    cell.buttons["frozen"].click()
+    assert decisions == {"guid-changed-a": "frozen"}
+    texts = _row_texts(body)
+    assert "won't be offered again" in texts
+    # The two soft declines promise the card comes back on its own. This one must not.
+    assert "the next time this deck changes" not in texts
+
+
+def test_never_on_a_changed_card_opens_the_note_box(anki):
+    body, boxes, flush, decisions = _build_body_with_one_changed_card()
+    _find_decision_cell(body).buttons["frozen"].click()
+    box = _find_feedback_box(body)
+    assert box is not None and box.isVisible()
 
 
 def test_predeclined_detail_renders_one_chip_and_its_preset_state(anki):
@@ -1932,3 +1954,16 @@ def test_status_line_is_recomputed_after_a_decision_change(anki):
     cell = _find_decision_cell(body)
     cell.buttons["skip"].click()
     assert len(calls) > before, "status_line was not recomputed after a decision change"
+
+
+def test_declined_dialog_names_a_frozen_card_for_what_it_is(anki):
+    """"Never imported" is the wrong words for a card she has and kept: what she turned
+    down was every future version of it, so it needs its own heading or the only way
+    back is under Other."""
+    from internpearls import config
+    config.save_declined({
+        "g1": {"state": "frozen", "front": "front a", "deck": "IP::A",
+               "decided": "2026-08-31", "hash": ""}})
+    texts = _all_text(_snapshot_declined_dialog(anki))
+    assert "Kept yours, no more updates" in texts and "front a" in texts
+    assert "Never imported" not in texts
