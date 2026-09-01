@@ -118,3 +118,33 @@ def test_check_long_answer_warns():
 def test_clean_card_gets_ok():
     checks = ai_logic.mechanical_checks([_card(Front="q", Back="a", Why="w")], {})
     assert checks[0] == [{"code": "ok", "level": "ok", "message": "checks pass"}]
+
+
+def test_prompt_stable_prefix_across_revision():
+    kw = dict(skills=["SKILL A"], source="SRC", note_types=["Basic"],
+              field_map=FIELD_MAP, count=5)
+    first = ai_logic.build_prompt(**kw)
+    second = ai_logic.build_prompt(**kw, cards=[_card(Front="q", Back="a")],
+                                   feedback="shorter", notes={0: "trim"})
+    assert second.startswith(first.split("## Current draft")[0].rstrip()) or \
+        second.startswith(first[:len(first) // 2])
+    # the changing material must sit after everything shared
+    assert second.index("SRC") < second.index("shorter")
+
+
+def test_prompt_carries_contract_and_keep_verbatim():
+    p = ai_logic.build_prompt(
+        skills=["S"], source="SRC", note_types=["Basic"], field_map=FIELD_MAP,
+        count=3, cards=[_card(Front="keepme", Back="a"),
+                        _card(Front="fixme", Back="b")],
+        feedback="overall shorter", notes={1: "split this"})
+    assert "JSON" in p and "note_type" in p
+    assert "keep verbatim" in p.lower()
+    assert p.index("keepme") < p.index("split this")
+
+
+def test_prompt_lists_attachments_and_fields():
+    p = ai_logic.build_prompt(skills=["S"], source="x", note_types=["Basic"],
+                              field_map=FIELD_MAP, count=2,
+                              attachments=["slide3.png"])
+    assert "slide3.png" in p and '"Front"' in p
