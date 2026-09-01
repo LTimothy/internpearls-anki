@@ -13,8 +13,7 @@ import zipfile
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "internpearls"))
-import logic  # noqa: E402
+from internpearls import logic  # noqa: E402
 
 
 def _make_mock_apkg(path, notes, models=None):
@@ -593,6 +592,27 @@ def test_remap_cards_matched_and_new_together_account_for_every_note(tmp_path):
     _, _, _, new_notes, matched = logic.remap_cards(
         apkg, her={"One": "her-one"}, aliases={})
     assert len(matched) + len(new_notes) == 3
+
+
+def test_remap_cards_never_touches_generated_guids(tmp_path):
+    """A learner's locally generated card must never be matched/remapped by sync, even
+    when an incoming deck card's front text (or alias) happens to coincide with it."""
+    from internpearls import ai_logic
+    generated = ai_logic.generated_guid()
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [
+        (1, "deck-guid-front", "What is LAST?"),
+        (2, "deck-guid-alias", "New wording of a generated card"),
+    ])
+    her = {"What is LAST?": generated}
+    aliases = {"New wording of a generated card": "Old wording of a generated card"}
+    her["Old wording of a generated card"] = generated
+
+    remap, in_place, as_new, new_notes, matched = logic.remap_cards(apkg, her, aliases)
+
+    assert as_new == 2 and in_place == 0
+    assert remap == {} and matched == []
+    assert {rid for rid, _, _ in new_notes} == {1, 2}
 
 
 # ------------------------------------------------------------------ find_changed_notes
