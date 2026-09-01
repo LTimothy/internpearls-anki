@@ -400,3 +400,17 @@ def extract_attachment(path, dest_dir):
             pass   # a page whose images will not decode still yields its text
 
     return {"text": "\n".join(t for t in texts if t.strip()), "images": images}
+
+
+def svg_to_media(markup, index):
+    """Model-drawn SVG as a media file: (filename, bytes), or ValueError for anything
+    that isn't SVG or carries a literal <script> tag. SVG renders inside Anki's own
+    webview, so a script tag is executable content on a card, not decoration; rejected
+    rather than sanitized. `index` is coerced to int so it can never carry a path
+    separator into the filename."""
+    m = (markup or "").strip()
+    if not m.startswith("<svg"):
+        raise ValueError("not svg markup")
+    if "<script" in m.lower():
+        raise ValueError("svg with script rejected")
+    return f"generated-{int(index)}.svg", m.encode("utf8")
