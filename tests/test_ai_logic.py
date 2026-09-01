@@ -247,6 +247,23 @@ def test_parse_malformed_nested_shapes_never_raises():
         assert ai_logic.parse_stream_event(kind, line) is None
 
 
+def test_parse_tool_use_with_non_string_name_never_raises():
+    # A tool_use block with a non-string name field is structurally valid JSON
+    # but has an unusable name. Should return a phase event (treating it like
+    # an unrecognized tool name), never raise.
+    cases = [
+        ("claude", _json.dumps({"type": "assistant",
+                                "message": {"content": [{"type": "tool_use",
+                                                        "name": ["nested", "list"]}]}})),
+        ("claude", _json.dumps({"type": "assistant",
+                                "message": {"content": [{"type": "tool_use",
+                                                        "name": {"a": 1}}]}})),
+    ]
+    for kind, line in cases:
+        result = ai_logic.parse_stream_event(kind, line)
+        assert result == {"type": "phase", "phase": "Working"}
+
+
 def test_bundled_skill_loads_and_reads_like_a_skill():
     text = ai_logic.load_bundled_skill()
     assert "internpearls-authoring" in text
