@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # tests/fake_cli.py -- pretend agent CLI for ai_cli tests. Behavior via argv[1]:
-#   ok        read stdin, emit one phase line then a claude-style result line
-#   slow      sleep 30s before answering (for timeout/cancel tests)
-#   garbage   emit non-JSON noise then exit 0
-#   fail      exit 2 with stderr
+#   ok              read stdin, emit one phase line then a claude-style result line
+#   slow            sleep 30s before answering (for timeout/cancel tests)
+#   event_then_slow emit one phase line, then sleep 30s (for a mid-run-exception test:
+#                   the caller's on_event fires while this process is still alive)
+#   garbage         emit non-JSON noise then exit 0
+#   fail            exit 2 with stderr
 import json
 import sys
 import time
@@ -13,6 +15,10 @@ prompt = sys.stdin.read()
 if mode == "fail":
     print("boom", file=sys.stderr)
     sys.exit(2)
+if mode == "event_then_slow":
+    print(json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "WebSearch", "input": {}}]}}), flush=True)
+    time.sleep(30)
 if mode == "slow":
     time.sleep(30)
 if mode == "garbage":

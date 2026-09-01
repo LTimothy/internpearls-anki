@@ -9,9 +9,11 @@ are attached (that is how it views them).
 """
 import os
 import shutil
+import signal
 import subprocess
 import threading
 import time
+import warnings
 
 from .ai_logic import parse_stream_event
 
@@ -152,22 +154,36 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
             if done.is_set() and proc.poll() is not None:
                 break
             if cancel and cancel():
-                _kill(proc)
                 raise GenerationCancelled("cancelled")
             if time.monotonic() - start > timeout:
-                _kill(proc)
                 raise GenerationError(
                     "the assistant timed out; try Quick draft or a shorter source")
             time.sleep(0.05)
         # stderr is read here, before the finally block below closes it, so
         # a failure message survives the cleanup.
         err_text = (proc.stderr.read() or "").strip()
+    except BaseException:
+        # Cancel, timeout, a bad event shape, or a broken on_event callback
+        # can all land here with the child still running. Kill it before the
+        # finally block's proc.wait() below, or that wait blocks for up to 5s
+        # on a live process and can raise TimeoutExpired in its place, which
+        # would both mask the real exception and skip the rest of cleanup.
+        if proc.poll() is None:
+            _kill(proc)
+        raise
     finally:
         # A killed process still has to be waited on, or it leaks as a zombie;
         # the reader thread and the pipes need to be cleaned up too, or a
-        # generation loop leaks file descriptors one run at a time.
-        proc.wait(timeout=5)
+        # generation loop leaks file descriptors one run at a time. None of
+        # this may raise, or it replaces whatever exception is propagating.
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
         t.join(timeout=2)
+        if t.is_alive():
+            warnings.warn("ai_cli: reader thread outlived cleanup; a pipe "
+                          "may be leaking", ResourceWarning)
         for stream in (proc.stdin, proc.stdout, proc.stderr):
             try:
                 stream.close()
@@ -182,7 +198,6 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
 
 
 def _kill(proc):
-    import signal
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except Exception:
