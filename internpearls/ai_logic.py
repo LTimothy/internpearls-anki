@@ -328,3 +328,68 @@ def active_skills(deck_skill):
     if deck_skill and deck_skill.get("enabled") and deck_skill.get("text"):
         skills.append(deck_skill["text"])
     return skills
+
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+_VENDOR_DIR = os.path.join(os.path.dirname(__file__), "vendor")
+_SAFE_STEM_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _pypdf():
+    """Import the vendored pypdf, adding its directory to sys.path on first
+    use only. Never imported at module load time, so a build missing the
+    vendor directory still lets a normal Anki launch import this module."""
+    import sys
+    if _VENDOR_DIR not in sys.path:
+        sys.path.insert(0, _VENDOR_DIR)
+    import pypdf
+    return pypdf
+
+
+def extract_attachment(path, dest_dir):
+    """Extract source material from one attached file. Images are copied into
+    dest_dir as-is; a PDF's text is returned and its embedded images are
+    written into dest_dir under collision-safe names. A page that fails to
+    extract text or decode images is skipped rather than failing the whole
+    document. Raises ValueError for an unsupported extension, or a PDF that
+    can't be parsed at all (encrypted, corrupt, or not really a PDF)."""
+    ext = os.path.splitext(path)[1].lower()
+    base = os.path.basename(path)
+    if ext in IMAGE_EXTS:
+        import shutil
+        shutil.copy(path, os.path.join(dest_dir, base))
+        return {"text": "", "images": [base]}
+    if ext != ".pdf":
+        raise ValueError(f"unsupported attachment type: {ext}")
+
+    pypdf = _pypdf()
+    try:
+        reader = pypdf.PdfReader(path)
+        pages = reader.pages
+    except Exception as e:
+        raise ValueError(f"could not read PDF {base}: {e}") from e
+
+    # stem sanitized so a hostile filename can't traverse dest_dir or collide
+    # with another PDF's extracted images
+    stem = _SAFE_STEM_RE.sub("_", os.path.splitext(base)[0]) or "pdf"
+    texts, images = [], []
+    for pnum, page in enumerate(pages, 1):
+        try:
+            texts.append(page.extract_text() or "")
+        except Exception:
+            pass
+        try:
+            for inum, img in enumerate(page.images):
+                # pypdf's own docs warn img.name "can contain arbitrary
+                # characters" (it's read from the PDF's internal resource
+                # naming) - sanitize before it becomes a filename extension
+                raw_ext = os.path.splitext(img.name)[1].lstrip(".").lower()
+                img_ext = "." + raw_ext if re.fullmatch(r"[a-z0-9]{1,5}", raw_ext) else ".png"
+                name = f"{stem}-p{pnum}-img{inum}{img_ext}"
+                with open(os.path.join(dest_dir, name), "wb") as fh:
+                    fh.write(img.data)
+                images.append(name)
+        except Exception:
+            pass   # a page whose images will not decode still yields its text
+
+    return {"text": "\n".join(t for t in texts if t.strip()), "images": images}
