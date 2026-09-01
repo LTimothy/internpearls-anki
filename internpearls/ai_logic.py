@@ -206,13 +206,35 @@ _WEB_TOOLS = {"WebSearch", "WebFetch", "web_search", "web_fetch",
 _WINDOW_S = 7 * 86400
 
 
+def _num(v, cast):
+    """Coerce a value pulled out of untrusted vendor JSON, or fall back to 0."""
+    try:
+        return cast(v)
+    except (TypeError, ValueError):
+        return cast(0)
+
+
 def _usage_tokens(usage):
-    return sum(int(usage.get(k, 0) or 0) for k in
+    if not isinstance(usage, dict):
+        return 0
+    # total_tokens, when present, already covers the input/output components;
+    # summing both would double-count, so prefer it and never add the two.
+    if "total_tokens" in usage:
+        return _num(usage.get("total_tokens"), int)
+    return sum(_num(usage.get(k, 0), int) for k in
                ("input_tokens", "cache_creation_input_tokens",
-                "cache_read_input_tokens", "output_tokens", "total_tokens"))
+                "cache_read_input_tokens", "output_tokens"))
+
+
+def _as_dict(v):
+    return v if isinstance(v, dict) else {}
 
 
 def parse_stream_event(kind, line):
+    """Parse one line of subprocess output from a vendor CLI. Fed raw, possibly
+    malformed JSON straight from a subprocess, so any shape that isn't exactly
+    what's expected (missing keys, wrong nested types) must return None rather
+    than raise."""
     try:
         d = json.loads(line)
     except Exception:
@@ -222,11 +244,14 @@ def parse_stream_event(kind, line):
     t = d.get("type")
     if kind == "claude":
         if t == "result":
+            if "result" not in d:
+                return None  # not a real result line, nothing to report
             return {"type": "result", "text": d.get("result") or "",
-                    "tokens": _usage_tokens(d.get("usage") or {})}
+                    "tokens": _usage_tokens(d.get("usage"))}
         if t == "assistant":
-            for block in (d.get("message") or {}).get("content") or []:
-                if block.get("type") == "tool_use":
+            content = _as_dict(d.get("message")).get("content")
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
                     name = block.get("name", "")
                     if name in _WEB_TOOLS:
                         return {"type": "phase", "phase": "Verify online"}
@@ -234,25 +259,27 @@ def parse_stream_event(kind, line):
         return None
     if kind == "codex":
         if t == "token_count":
-            rl = d.get("rate_limits") or {}
-            if rl:
+            rl = d.get("rate_limits")
+            if isinstance(rl, dict) and rl:
+                primary_raw, secondary_raw = rl.get("primary"), rl.get("secondary")
+                if not isinstance(primary_raw, dict) and not isinstance(secondary_raw, dict):
+                    return None  # rate_limits present but unusable; not a "no limits" line
+                primary, secondary = _as_dict(primary_raw), _as_dict(secondary_raw)
                 return {"type": "rate_limits",
-                        "primary_pct": float((rl.get("primary") or {})
-                                             .get("used_percent") or 0),
-                        "secondary_pct": float((rl.get("secondary") or {})
-                                               .get("used_percent") or 0),
-                        "resets": (rl.get("primary") or {})
-                                  .get("resets_at") or ""}
-            return {"type": "usage",
-                    "tokens": _usage_tokens(d.get("info") or {})}
+                        "primary_pct": _num(primary.get("used_percent"), float),
+                        "secondary_pct": _num(secondary.get("used_percent"), float),
+                        "resets": primary.get("resets_at") or ""}
+            info = d.get("info")
+            return ({"type": "usage", "tokens": _usage_tokens(info)}
+                    if isinstance(info, dict) else None)
         if t in ("item.completed", "turn.completed") and d.get("text"):
             return {"type": "result", "text": d["text"],
-                    "tokens": _usage_tokens(d.get("usage") or {})}
+                    "tokens": _usage_tokens(d.get("usage"))}
         return None
     if kind == "agy":
         if t == "result":
             return {"type": "result", "text": d.get("result") or d.get("text")
-                    or "", "tokens": _usage_tokens(d.get("usage") or {})}
+                    or "", "tokens": _usage_tokens(d.get("usage"))}
         if t == "step_update":
             return {"type": "phase", "phase": str(d.get("step_type") or
                                                   "Working")}
@@ -281,7 +308,7 @@ def usage_line(reg, kind, now, free_tier=False):
 
 def rate_limit_line(evt):
     # int() truncation, not :.0f: Python's format rounds .5 to even (87.5 -> "88"),
-    # which understates percent left; truncating always rounds in the user's favor.
+    # which overstates percent left; truncating to 87 is the conservative direction.
     return (f"5h window {int(100 - evt['primary_pct'])}% left, "
             f"week {int(100 - evt['secondary_pct'])}% left"
             + (f", resets {evt['resets']}" if evt.get("resets") else ""))

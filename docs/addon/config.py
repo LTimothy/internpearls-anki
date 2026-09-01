@@ -178,8 +178,8 @@ def save_declined(reg):
     _save_json(DECLINED, reg)
 
 
-# Rolling per-backend usage counters for AI generation ({kind: [{ts, tokens}]},
-# pruned to 7 days) plus recent run durations ({kind-mode: [seconds]}).
+# Rolling per-backend usage counters for AI generation: {kind: [{ts, tokens}]},
+# pruned to 7 days.
 AI_USAGE = os.path.join(_USER_FILES, "ai_usage.json")
 
 
