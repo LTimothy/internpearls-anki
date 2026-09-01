@@ -253,7 +253,7 @@ def parse_stream_event(kind, line):
             for block in content if isinstance(content, list) else []:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     name = block.get("name", "")
-                    if name in _WEB_TOOLS:
+                    if isinstance(name, str) and name in _WEB_TOOLS:
                         return {"type": "phase", "phase": "Verify online"}
                     return {"type": "phase", "phase": "Working"}
         return None
