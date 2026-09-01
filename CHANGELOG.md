@@ -3,6 +3,50 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.50.0
+
+An opened changed card now says what changed instead of making you find it.
+
+Each field's old value used to render in full directly under its new one, so an
+expanded card read as an alternation of card and ghost: the note, then the old
+text, then the explanation, then the old explanation, with the actual difference
+buried in two near-identical paragraphs. The card now reads clean top to bottom,
+followed by one quiet "What changed" group that states each field's delta once:
+
+- A reworded field shows as a single line with the dropped words struck through
+  and the added words highlighted, so a corrected dose reads as "Give ~~1~~ 1.5
+  mg/kg over ~~10~~ 2 to 3 minutes" rather than as two sentences to compare by
+  eye.
+- A fill-in-the-blank card whose words survived but whose blanks moved names the
+  moved blanks ("no longer blanked: pencil-point") instead of reprinting the
+  whole sentence. Old cloze text also never renders as raw {{c1::…}} markup any
+  more; where the full old version is still the honest thing to show (the
+  sentence was reworded too), its blanks render filled and blue, the same way
+  the card's own line does.
+- A field carrying a table, list, or picture keeps the verbatim old value, since
+  a word diff would tear its structure apart.
+
+## v0.49.1
+
+Room to read the update screen, which had grown dense enough that the cards it
+lists were the part with the least space:
+
+- It opens noticeably larger now, sized to your screen rather than to the small
+  floor it used to start at, and it is still resizable either way. The extra
+  height goes to the list of cards.
+- The standing reassurance below the list is shorter and set as small print. It
+  says the same things, in four lines rather than nine, so it stops being the
+  tallest block on a screen that exists to show cards.
+- The Apply / Keep yours / Never buttons no longer look cut off. They were being
+  drawn flush against the list's own edge, so the last button's border sat under
+  the frame line and the scrollbar could pass over it.
+
+Separately, the message you get when a deck brings a card format your collection
+has never held now says what it is: the import adds that format, so one more run
+of Update my decks finishes moving your existing cards onto it. It reported this
+as a bare absence before, which read as an error rather than as the second half
+of a normal two-step update.
+
 ## v0.49.0
 
 A deck source can now also ship a short label saying where a card came from, such

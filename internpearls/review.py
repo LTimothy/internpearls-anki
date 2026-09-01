@@ -21,9 +21,10 @@ from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayou
                     QSizePolicy, Qt, QTimer, QVBoxLayout, QWidget)
 
 from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
-from .logic import (apkg_media_index, build_feedback_digest, cloze_filled_html,
-                    extract_apkg_media, field_image_names, field_preview_html,
-                    field_preview_text, note_display_label, plain_text, plural)
+from .logic import (apkg_media_index, build_feedback_digest, cloze_answer_changes,
+                    cloze_filled_html, extract_apkg_media, field_image_names,
+                    field_preview_html, field_preview_text, merged_word_diff,
+                    note_display_label, plain_text, plural)
 from .palette import colors
 from .ui import (_ask_with_widget, _info, copy_to_clipboard, hint_label, link_button,
                  muted_label, title_label)
@@ -249,18 +250,6 @@ def _primary_field(detail):
     return fields[0] if fields else None
 
 
-def _primary_field_names(detail):
-    """Every field name that feeds the card's primary line: `_primary_field`'s own
-    name, plus, for an image note, the Image field folded in beside it (see
-    `_primary_html`). Used to route a `was` line for any of them to the top of the
-    expanded body, since none of these fields has a block of its own down there."""
-    names = ["Image"] if _is_image_note(detail) else []
-    primary = _primary_field(detail)
-    if primary:
-        names.append(primary[0])
-    return names
-
-
 def _primary_html(detail):
     """The card's collapsed-row line, always its primary line whatever the note type:
     a cloze note's text with its deletions filled in (the fact under review lives in
@@ -314,21 +303,6 @@ def _answer_html(detail, resolved=frozenset(), image_html=None):
     return answer
 
 
-def _answer_field_names(detail):
-    """Every field name `_answer_html` draws its expanded-body block from, mirroring
-    that function's own branching: a cloze's Image field is its whole answer block;
-    otherwise the second content field (Back for a basic note, Answer for an image
-    note), plus, for a non-image note, its own optional Image field folded in beside
-    it. Used to route a `was` line for any of them under the answer block."""
-    if _is_cloze(detail):
-        return ["Image"]
-    fields = _content_fields(detail)
-    names = [fields[1][0]] if len(fields) >= 2 else []
-    if not _is_image_note(detail):
-        names.append("Image")
-    return names
-
-
 def _primary_images(detail):
     """The pictures the collapsed line can only name: the Image field, plus any inline
     in the primary field itself.
@@ -379,23 +353,95 @@ def _rich_label(text):
     return lbl
 
 
-def _was_label(detail, field_name):
-    """(label, old value) for what a changed field says in the collection today, or
-    None when it has not moved.
+def _plain_prose(value):
+    """Whether a field value is plain prose `merged_word_diff` can be shown for: text
+    carrying no tags, no cloze braces, and no math markup. Splitting any of those on
+    spaces would tear the markup apart mid-token, so a field carrying them keeps the
+    verbatim rendering instead. Entities pass, since they render as themselves on
+    either side of a diff."""
+    return bool(value) and "<" not in value and "{{" not in value and "\\" not in value
 
-    Rendered rather than quoted, and dimmed, so a comparison reads as the same card in
-    two states rather than as two cards. Her copy's pictures are already in the
-    collection's own media folder, so they need no extraction, but a QImage decode still
-    costs real work per picture: the label starts out naming any picture rather than
-    painting it, and the caller is the one that resolves it, on the same first-expand
-    schedule as everything else in the body, so a collapsed row decodes nothing.
+
+def _diff_html(segments):
+    """`merged_word_diff`'s segments as one rich-text line: dropped words struck
+    through, added words carried on the UPDATED chip's own colour pair, unchanged
+    words left to the line's dim base colour. One line that states the whole change,
+    instead of two near-identical paragraphs the reader has to compare word by word.
+
+    Strikethrough is the same convention a Never row already uses: text she will not
+    have. The chip pair for additions ties them to the UPDATED marker at the row's
+    head, and is a background/foreground pairing the palette already guarantees.
     """
-    old = (detail.get("was") or {}).get(field_name)
+    c = colors()
+    parts = []
+    for op, text in segments:
+        if op == "removed":
+            parts.append(f"<s>{text}</s>")
+        elif op == "added":
+            parts.append(f"<span style='background-color: {c['updated_bg']};"
+                         f" color: {c['updated_fg']};'>{text}</span>")
+        else:
+            parts.append(text)
+    return " ".join(parts)
+
+
+def _blank_changes_html(removed, added):
+    """A blanks-only cloze change said outright, naming the moved blanks in the same
+    cloze blue the filled sentence above paints them in. The filled words themselves
+    did not change, so repeating the whole sentence would show a difference nowhere
+    in it; which words are blanked IS the change."""
+    def named(answers):
+        return ", ".join(f'<span class="cloze">{a}</span>' for a in answers)
+
+    parts = []
+    if removed:
+        parts.append(f"no longer blanked: {named(removed)}")
+    if added:
+        parts.append(f"newly blanked: {named(added)}")
+    return " &middot; ".join(parts) or "the blanks were regrouped into different cards"
+
+
+def _change_row_html(detail, name, image_html=None):
+    """One changed field's line in the What changed group, choosing the tightest
+    honest rendering for what kind of change it is:
+
+    - a cloze Text whose words survived but whose blanks moved names the moved blanks
+      (`cloze_answer_changes`), instead of reprinting the sentence;
+    - plain prose on both sides renders as a single word-level diff (`_diff_html`);
+    - anything else (markup, pictures, math, a reworded cloze) shows the old value
+      verbatim behind a "was", with a cloze's deletions filled the same way the
+      primary line fills them, never as raw {{c1::…}} braces.
+
+    A field that used to be empty says so rather than rendering a "was" with nothing
+    after it. `image_html` is the picture resolver for the verbatim path: her copy's
+    pictures are already in the collection's media folder, but a QImage decode still
+    costs real work, so the caller passes it only on first expand and the line names
+    its pictures until then, like every other block in the body.
+    """
+    old = (detail.get("was") or {}).get(name) or ""
+    new = _field(detail, name)
+    label = f"<b>{html.escape(name)}</b>&nbsp;&nbsp;"
     if not old:
-        return None
-    label = _rich_label(f"<b>was</b> &nbsp;{field_preview_html(old)}")
-    label.setStyleSheet(f"color: {colors()['dim']};")
-    return label, old
+        return label + "was empty"
+    if _is_cloze(detail) and name == "Text":
+        changes = cloze_answer_changes(old, new)
+        if changes is not None:
+            return label + _blank_changes_html(*changes)
+        filled = cloze_filled_html(field_preview_html(old, image_html=image_html),
+                                   escape=False)
+        return f"{label}was &nbsp;{filled}"
+    if _plain_prose(old) and _plain_prose(new):
+        return label + _diff_html(merged_word_diff(old, new))
+    return f"{label}was &nbsp;{field_preview_html(old, image_html=image_html)}"
+
+
+def _changes_heading():
+    """The small heading over the What changed group, so the dim lines under it read
+    as one comparison block rather than as more of the card."""
+    label = QLabel("What changed")
+    label.setStyleSheet(f"color: {colors()['dim']}; font-size: 11px;"
+                        " font-weight: 600; margin-top: 4px;")
+    return label
 
 
 def _change_note_html(note):
@@ -417,8 +463,8 @@ def _change_note_row(note, indent):
 
     Built on `muted_label` for its word-wrap and its base colour, with the stylesheet
     replaced rather than appended: Qt silently ignores a lone border-left on a QLabel
-    unless the border shorthand is reset first (see `_was_label`'s Why rule for the
-    same fix), so the reset has to come before border-left in this one string.
+    unless the border shorthand is reset first (the same fix the Why rule in
+    `_card_row` carries), so the reset has to come before border-left in this string.
     """
     row = QWidget()
     lay = QHBoxLayout(row)
@@ -595,9 +641,11 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     # Image field's chip in alongside its own text), so `_reveal_images` re-renders it
     # once, directly through `_answer_html`, rather than through this generic list.
     rerender = []
-    # A changed field's `was` line, separately: it resolves from the learner's own
-    # collection (_collection_image) rather than the deck's .apkg, so it stays on the
-    # same first-expand schedule as everything else even on a row `resolve` is None for.
+    # The What changed group's rows, separately: a verbatim line's pictures resolve
+    # from the learner's own collection (_collection_image) rather than the deck's
+    # .apkg, so they stay on the same first-expand schedule as everything else even on
+    # a row `resolve` is None for. Held as (label, field name) and re-rendered whole
+    # through _change_row_html, so the rebuild can never drift from the first build.
     was_rerender = []
     revealed = []
     # The rows _card_source_row and _change_note_row build for this card, kept local so
@@ -611,9 +659,9 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         if revealed:
             return
         revealed.append(True)
-        for label, value in was_rerender:
-            was_html = field_preview_html(value, image_html=_collection_image)
-            label.setText(f"{_preview_style()}<b>was</b> &nbsp;{was_html}")
+        for label, name in was_rerender:
+            label.setText(_preview_style()
+                          + _change_row_html(detail, name, image_html=_collection_image))
         if resolve is None:
             return
         image_names = _primary_images(detail)
@@ -813,32 +861,6 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     blay.setContentsMargins(indent, 2, 0, 2)
     blay.setSpacing(4)
 
-    # A changed field's `was` line belongs directly under the block that field feeds,
-    # per name, so the comparison reads as the same card in two states rather than as
-    # one detached list. `was_placed` tracks which changed names have already found a
-    # home; anything left over falls to the catch-all at the very end instead of
-    # vanishing, which covers a field with no block of its own (Tag) and a field whose
-    # block didn't render this time (its current value went blank).
-    changed_names = _changed_field_names(detail)
-    primary_names = set(_primary_field_names(detail))
-    answer_names = set(_answer_field_names(detail))
-    was_placed = set()
-
-    def _add_was(name):
-        was = _was_label(detail, name)
-        if was is not None:
-            label, value = was
-            blay.addWidget(label)
-            was_rerender.append((label, value))
-
-    # The primary field (Front / a cloze's Text / an image note's Image+Prompt) is the
-    # collapsed header line above the body, not a block inside it, so its `was` line
-    # opens the body instead, reading as belonging to the line directly above it.
-    for name in changed_names:
-        if name in primary_names:
-            _add_was(name)
-            was_placed.add(name)
-
     images = _rich_label("")
     images.setVisible(False)
     blay.addWidget(images)
@@ -851,10 +873,6 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     if answer_html:
         answer_label = _rich_label(answer_html)
         blay.addWidget(answer_label)
-        for name in changed_names:
-            if name in answer_names:
-                _add_was(name)
-                was_placed.add(name)
 
     why_value = _field(detail, "Why")
     why_html = field_preview_html(why_value)
@@ -868,9 +886,6 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
                                 f" padding-left: 8px; color: {why_colour};")
         blay.addWidget(why_label)
         rerender.append((why_label, why_value))
-        if "Why" in changed_names:
-            _add_was("Why")
-            was_placed.add("Why")
 
     # Dosing is deliberately left out of rerender: it is a citation, never a picture,
     # and re-rendering it from field_preview_html would drop the "Dosing" label prefix.
@@ -884,16 +899,21 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         dosing_label.setStyleSheet(f"background: {c['dosing_bg']}; color: {c['dosing_fg']};"
                                    f" padding: 6px; border-radius: 4px;")
         blay.addWidget(dosing_label)
-        if "Dosing" in changed_names:
-            _add_was("Dosing")
-            was_placed.add("Dosing")
 
-    # Anything still unplaced (Tag, or a field whose own block stayed empty) has
-    # nowhere of its own to sit under, but still needs to surface rather than
-    # disappear, so it goes at the end rather than wedged into an unrelated block.
-    for name in changed_names:
-        if name not in was_placed:
-            _add_was(name)
+    # Everything this update rewrites, as one quiet group after the card rather than a
+    # `was` line wedged under each block. Interleaved, the body read as an alternation
+    # of card and ghost (why, then old why; note, then old text) and never as either
+    # one whole; this way the card above reads clean, and the group below states each
+    # field's delta once, in the note type's own field order. Field-name labels are
+    # what map a line back to its block, doing the job adjacency used to do.
+    changed_names = _changed_field_names(detail)
+    if changed_names:
+        blay.addWidget(_changes_heading())
+        for name in changed_names:
+            row_label = _rich_label(_change_row_html(detail, name))
+            row_label.setStyleSheet(f"color: {colors()['dim']};")
+            blay.addWidget(row_label)
+            was_rerender.append((row_label, name))
 
     # Last in the body, past every field block: reading down to it is the same click
     # that opens the card at all, which is what keeps this quiet rather than a header
@@ -1051,6 +1071,12 @@ def build_update_body(items, sources, flags, new_index, decisions,
     if top_html:
         lay.addWidget(_rich_label(top_html))
 
+    # The safety note is standing reassurance, not this run's news, so it renders as
+    # small print: at body size it was the tallest block on the screen, taking height
+    # the list itself is here for. The status line above it keeps the body size, since
+    # it reports what she just did.
+    safety_html = (f"<span style='color: {colors()['muted']}; font-size: 11px;'>"
+                   f"{safety_html}</span>")
     bottom = _rich_label(status_line() + safety_html)
 
     saver = QTimer(body)

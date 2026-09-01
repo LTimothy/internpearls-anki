@@ -278,7 +278,8 @@ def _place_checkbox(dialog_layout, body, box):
 
 
 def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=None,
-                     title=None, min_width=560, min_height=520, on_close=None):
+                     title=None, min_width=560, min_height=520, on_close=None,
+                     open_size=None):
     """Like _ask_scrollable, but the body is a caller-built widget rather than an HTML
     string, for a screen whose content is more than one scrollable label can lay out
     well: fixed summary text above a list that should take whatever height the resized
@@ -286,6 +287,12 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
     its own internal layout and scrolling; this only wraps it with the add-on's title,
     the optional checkbox, and the Continue/Cancel buttons, on the same roles and the
     same checkbox-state-written-back-in-place contract _ask_scrollable uses.
+
+    `open_size` is the (width, height) the dialog opens at, clamped to the screen it
+    lands on so a laptop display never gets a dialog taller than itself; the minimums
+    above still hold and the dialog stays resizable either way. Left at None the dialog
+    opens at its minimums, which is right for a short confirmation; the update screen
+    passes a larger size because its list is the densest thing the add-on draws.
 
     `on_close` runs once the reader has answered, and it exists because of when: adding
     `body` to this dialog's layout hands it to Qt, so when this function returns and
@@ -301,6 +308,16 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
     dlg.setWindowTitle(title or APP_NAME)
     dlg.setMinimumWidth(min_width)
     dlg.setMinimumHeight(min_height)
+    if open_size:
+        w, h = open_size
+        # Best-effort clamp: the mock Qt the tests run on has no screens to ask, and a
+        # failure to measure one should cost the clamp, never the resize.
+        try:
+            geo = QApplication.primaryScreen().availableGeometry()
+            w, h = min(w, geo.width() - 60), min(h, geo.height() - 80)
+        except Exception:
+            pass
+        dlg.resize(max(w, min_width), max(h, min_height))
     lay = QVBoxLayout(dlg)
     lay.addWidget(body, 1)
 
