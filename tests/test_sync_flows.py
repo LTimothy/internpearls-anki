@@ -5661,3 +5661,19 @@ def test_import_single_says_so_when_there_is_no_note_type_to_convert_onto(anki,
     assert not any("you'll be asked" in a for a in anki.gui.asks), anki.gui.asks
     assert any("can't carry over this time" in a for a in anki.gui.asks), anki.gui.asks
     assert anki.col.notetype_changes == []
+
+
+def test_update_preview_hides_a_frozen_card_the_way_it_hides_a_never(anki, tmp_path):
+    """Stop updating has to mean it. A frozen guid drops out of the confirmation
+    entirely rather than coming back every time the deck changes, which is the whole
+    difference between it and Keep yours."""
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-a": {"state": "frozen", "front": "front a", "deck": deck,
+                       "decided": "2026-08-31", "hash": ""}})
+
+    texts = _all_text(_snapshot_update_confirmation(anki))
+    assert "front a" not in texts
+    assert "1 card hidden" in texts
+    assert "front b" in texts

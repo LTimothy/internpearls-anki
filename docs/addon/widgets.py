@@ -166,7 +166,8 @@ def decision_cell(options, state, on_change, card_label=""):
     neighbours.
     """
     _SELECTED_ROLE = {"import": "accept", "apply": "accept",
-                      "skip": "updated", "keep": "updated", "never": "decline"}
+                      "skip": "updated", "keep": "updated",
+                      "never": "decline", "frozen": "decline"}
     _RADIUS = 6
     _HEIGHT = 22
     cell = QWidget()

@@ -177,10 +177,12 @@ def synthetic_details():
     fixture never exercised the marker pill at all.
 
     Row 1 also carries `change_notes`, so a render exercises the because line under an
-    UPDATED row too.
+    UPDATED row too, and both rows carry a `card_source`, which sits above it and is
+    the one line that shows on a NEW row as well.
     """
     return [
         {"guid": "g1", "notetype": "Study Deck - Basic", "kind": "new",
+         "card_source": "[T10Q2]",
          "fields": [("Front", "Which widget is this, in one short line?"),
                     ("Back", "A basic note with a tag."),
                     ("Why", "Short rows are the common case."),
@@ -188,6 +190,7 @@ def synthetic_details():
                     ("Notes", "")]},
         {"guid": "g2", "notetype": "Study Deck - Basic", "kind": "changed",
          "was": {"Back": "A wrapping basic note, before its Back field was rewritten."},
+         "card_source": "[T10Q2] [T4Q11]",
          "change_notes": [{"kind": "feedback", "note": "an example reviewer request",
                            "hash": "0" * 16}],
          "fields": [("Front", "A deliberately long prompt, written to run past the "
