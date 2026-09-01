@@ -24,12 +24,13 @@ from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
 from .logic import (apkg_media_index, build_feedback_digest, cloze_answer_changes,
                     cloze_filled_html, extract_apkg_media, field_image_names,
                     field_preview_html, field_preview_text, merged_word_diff,
-                    note_display_label, plain_text, plural)
+                    note_display_label, plain_text, plural, word_diff_ratio)
 from .palette import colors
 from .ui import (_ask_with_widget, _info, copy_to_clipboard, hint_label, link_button,
                  muted_label, title_label)
-from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell, decision_cell,
-                      row_text_indent, section_header, simple_row)
+from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell,
+                      chip_column_width, decision_cell, row_text_indent,
+                      section_header, simple_row)
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
 # would be a blank row on every single card.
@@ -401,13 +402,25 @@ def _blank_changes_html(removed, added):
     return " &middot; ".join(parts) or "the blanks were regrouped into different cards"
 
 
+# The floor under a change's difflib-style similarity (word_diff_ratio) for the
+# word-diff rendering: below it, more of the merged line is markup than message, and
+# the verbatim old value reads better. 0.6 is difflib's own conventional "still
+# similar" cutoff, and it splits the shipped cases cleanly: a corrected value or a
+# dropped clause sits far above it, a rewritten explanation far below.
+_DIFF_MIN_SIMILARITY = 0.6
+
+
 def _change_row_html(detail, name, image_html=None):
     """One changed field's line in the What changed group, choosing the tightest
     honest rendering for what kind of change it is:
 
     - a cloze Text whose words survived but whose blanks moved names the moved blanks
       (`cloze_answer_changes`), instead of reprinting the sentence;
-    - plain prose on both sides renders as a single word-level diff (`_diff_html`);
+    - plain prose on both sides renders as a single word-level diff (`_diff_html`),
+      but only while the versions are mostly the same text (`word_diff_ratio`): a
+      rewritten paragraph marked up word by word is a wall of struck and highlighted
+      text harder to read than either version alone, so a rewrite falls back to the
+      verbatim old value like any other undiffable change;
     - anything else (markup, pictures, math, a reworded cloze) shows the old value
       verbatim behind a "was", with a cloze's deletions filled the same way the
       primary line fills them, never as raw {{c1::…}} braces.
@@ -431,7 +444,9 @@ def _change_row_html(detail, name, image_html=None):
                                    escape=False)
         return f"{label}was &nbsp;{filled}"
     if _plain_prose(old) and _plain_prose(new):
-        return label + _diff_html(merged_word_diff(old, new))
+        segments = merged_word_diff(old, new)
+        if word_diff_ratio(segments) >= _DIFF_MIN_SIMILARITY:
+            return label + _diff_html(segments)
     return f"{label}was &nbsp;{field_preview_html(old, image_html=image_html)}"
 
 
@@ -482,26 +497,40 @@ def _change_note_row(note, indent):
     return row
 
 
-def _card_source_row(label, indent):
-    """The deck source's short label for where a card came from, as a quiet line in
-    the row's own text column.
+def _chip_with_source(detail, chips):
+    """The row's chip column, with the deck source's where-this-came-from label as a
+    small tag directly under the chip when the card carries one.
 
-    Sits above any change note, and reads differently from one on purpose: a change
-    note is a sentence about why this card is being offered, while this is a tag,
-    true whether or not anything changed. So no accent bar and no quotes, just `dim`
-    at the change note's size, which is what a reference number should look like.
+    Under the chip rather than as a line in the text column, where it used to sit: a
+    reference number in the flow of the card's own words read as part of the card,
+    weirdly placed under whichever line happened to be above it. The chip column is
+    already the row's metadata gutter (NEW, UPDATED), and a question ID is the same
+    kind of fact about the card, so it stacks there and the text column stays purely
+    the card. One tag per whitespace-separated reference, so a card drawn from two
+    questions reads as two small lines rather than one overflowing the column.
 
-    The string is the deck source's, rendered as plain text: it is never parsed here,
-    and it is escaped rather than trusted, since it arrives from a fetched manifest.
+    The string is the deck source's, rendered as plain text: never parsed here, and
+    escaped rather than trusted, since it arrives from a fetched manifest.
     """
-    row = QWidget()
-    lay = QHBoxLayout(row)
-    lay.setContentsMargins(indent, 0, 0, 0)
-    lay.setSpacing(0)
-    text = muted_label(html.escape(label))
-    text.setStyleSheet(f"color: {colors()['dim']}; font-size: 11px;")
-    lay.addWidget(text)
-    return row
+    cell = chip_cell(_row_chip(detail), chips)
+    label = (detail.get("card_source") or "").strip()
+    if not label:
+        return cell
+    wrap = QWidget()
+    lay = QVBoxLayout(wrap)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(1)
+    lay.addWidget(cell)
+    dim = colors()["dim"]
+    for ref in label.split():
+        tag = QLabel(html.escape(ref))
+        tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tag.setStyleSheet(f"color: {dim}; font-size: 10px;")
+        lay.addWidget(tag)
+    # The chip column's own fixed width, so a tag can never widen the gutter and
+    # push every row's text out of line.
+    wrap.setFixedWidth(chip_column_width(chips))
+    return wrap
 
 
 def _collection_image(name):
@@ -620,10 +649,10 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     what opening a row pays for, so a long list stays cheap to scroll and a review nobody
     opens costs nothing at all.
 
-    A `card_source` label and any `change_notes` entries render directly under the
-    header, visible whether the row is collapsed or open: where the card came from (see
-    `_card_source_row`) and the deck source's own account of why it changed (see
-    `_change_note_row`).
+    A `card_source` label renders as a small tag under the row's chip (see
+    `_chip_with_source`), and any `change_notes` entries render directly under the
+    header, visible whether the row is collapsed or open: the deck source's own
+    account of why the card changed (see `_change_note_row`).
     """
     guid = detail["guid"]
     kind = detail.get("kind")
@@ -648,11 +677,13 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     # through _change_row_html, so the rebuild can never drift from the first build.
     was_rerender = []
     revealed = []
-    # The rows _card_source_row and _change_note_row build for this card, kept local so
+    # The rows _change_note_row builds for this card, kept local so
     # _apply_decision_visuals can hide them under Never and restore them if the
     # decision moves off Never again; they don't exist yet the first time that
     # function runs, but a predeclined "never" never reaches this row at all
     # (sync.py drops it before it's built), so the initial call has nothing to hide.
+    # The card_source tag is not one of them: it lives in the chip column and stays
+    # visible under Never, since it names the card the struck line is about.
     note_rows = []
 
     def _reveal_images():
@@ -732,7 +763,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     # about the decline registry; nothing here writes them.
     declined_state = detail.get("declined_state")
     changed_since_decline = bool(detail.get("changed_since_decline"))
-    leading = [chip_cell(_row_chip(detail), chips)]
+    leading = [_chip_with_source(detail, chips)]
     for cell in leading:
         hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
     indent = row_text_indent(len(leading), chips)
@@ -829,11 +860,6 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         _apply_decision_visuals(initial)
 
     outer.addWidget(header)
-
-    if detail.get("card_source"):
-        source_row = _card_source_row(detail["card_source"], indent)
-        note_rows.append(source_row)
-        outer.addWidget(source_row)
 
     for note in detail.get("change_notes") or []:
         note_row = _change_note_row(note, indent)
