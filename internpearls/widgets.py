@@ -323,7 +323,11 @@ class StreamingList(QScrollArea):
 
         body = QWidget()
         outer = QVBoxLayout(body)
-        outer.setContentsMargins(0, 0, 0, 0)
+        # A real right gutter, because rows used to run flush to the viewport's last
+        # pixel: a decision cell's rounded right corner sat under the frame line, which
+        # on macOS read as the buttons being cut off, and the overlay scrollbar drew on
+        # top of whatever a row put there (a count, a Never button).
+        outer.setContentsMargins(0, 0, 10, 0)
         outer.setSpacing(0)
         outer.addWidget(self._rows_container)
         outer.addStretch()   # keeps a short list pinned to the top, not floating

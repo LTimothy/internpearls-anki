@@ -5560,7 +5560,12 @@ def test_a_conversion_with_no_target_note_type_holds_the_deck_back(anki, tmp_pat
     assert anki.col.notetype_changes == []
     assert not any("changed format" in a for a in anki.gui.asks)   # nothing asked
     assert json.load(open(sync.INSTALLED, encoding="utf8")) == {}  # not recorded
-    assert "Study Deck - Cloze is not in your collection yet" in _summary_text(trees)
+    # Named as the second pass it is, and naming the button that runs it: reported as a
+    # bare absence, this read as a failure to the one person who has ever seen it.
+    summary = _summary_text(trees)
+    assert "no Study Deck - Cloze note type until this import added it" in summary
+    assert "One more pass needed" in summary
+    assert "Update my decks</b> again" in summary
 
     # ...and it is self-correcting: that import is what added the note type, so the
     # next run finds the deck still pending and moves her card across for real.

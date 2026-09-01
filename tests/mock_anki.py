@@ -777,6 +777,9 @@ class QWidget:
     def setFixedWidth(self, v):
         pass
 
+    def resize(self, w, h):
+        pass
+
     def setCursor(self, c):
         pass
 

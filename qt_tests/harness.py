@@ -179,6 +179,11 @@ def synthetic_details():
     Row 1 also carries `change_notes`, so a render exercises the because line under an
     UPDATED row too, and both rows carry a `card_source`, which sits above it and is
     the one line that shows on a NEW row as well.
+
+    Row 1's `was` is plain prose sharing words with its current value, so a render
+    paints the What changed group's word-diff line (struck removals, highlighted
+    additions); row 3's cloze `was` differs only in its deletions, so a render paints
+    the named-blank line instead.
     """
     return [
         {"guid": "g1", "notetype": "Study Deck - Basic", "kind": "new",
@@ -205,7 +210,9 @@ def synthetic_details():
          "fields": [("Front", "An untagged row, to check the left edge lines up?"),
                     ("Back", "No tag on this one."), ("Why", ""),
                     ("Image", ""), ("Tag", ""), ("Dosing", ""), ("Notes", "")]},
-        {"guid": "g4", "notetype": "Study Deck - Cloze",
+        {"guid": "g4", "notetype": "Study Deck - Cloze", "kind": "changed",
+         "was": {"Text": "A cloze note fills {{c1::one}} deletion, and "
+                         "{{c2::another}} {{c3::one}}, in the deck's own blue."},
          "fields": [("Text", "A cloze note fills {{c1::one}} deletion, and "
                              "{{c2::another}} one, in the deck's own blue."),
                     ("Why", "Deletions are shown filled: the fact is in them."),
@@ -489,9 +496,12 @@ def _scene_confirm(mock, opts):
         body, _boxes, flush = review.build_update_body(
             items, sources, flags, new_index, decisions,
             top_html, _status_line, safety)
-        # min_width matches update_decks()'s own call: the wider floor is what leaves a
-        # card's own text room beside its decision control.
-        _ask_with_widget(body, yes_label="Update", checkbox=checkbox, min_width=660)
+        # min_width and open_size match update_decks()'s own call: the wider floor is
+        # what leaves a card's own text room beside its decision control. render()'s
+        # fake exec re-sizes to each test's requested size afterwards, so open_size
+        # here only proves the call accepts it, not what any test measures at.
+        _ask_with_widget(body, yes_label="Update", checkbox=checkbox, min_width=660,
+                         open_size=(880, 800))
         flush()
 
     return _open
