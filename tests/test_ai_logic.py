@@ -168,3 +168,63 @@ def test_prompt_lists_attachments_and_fields():
                               field_map=FIELD_MAP, count=2,
                               attachments=["slide3.png"])
     assert "slide3.png" in p and '"Front"' in p
+
+
+import json as _json
+
+
+def test_parse_claude_result_event():
+    line = _json.dumps({"type": "result", "subtype": "success",
+                        "result": "[{\"x\": 1}]",
+                        "usage": {"input_tokens": 900, "output_tokens": 100}})
+    evt = ai_logic.parse_stream_event("claude", line)
+    assert evt == {"type": "result", "text": "[{\"x\": 1}]", "tokens": 1000}
+
+
+def test_parse_claude_tool_use_maps_to_phase():
+    line = _json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "WebSearch", "input": {}}]}})
+    evt = ai_logic.parse_stream_event("claude", line)
+    assert evt == {"type": "phase", "phase": "Verify online"}
+
+
+def test_parse_codex_token_count_with_rate_limits():
+    line = _json.dumps({"type": "token_count",
+                        "info": {"total_tokens": 5000},
+                        "rate_limits": {
+                            "primary": {"used_percent": 12.5,
+                                        "resets_at": "2026-08-26T20:00:00Z"},
+                            "secondary": {"used_percent": 40.0}}})
+    evt = ai_logic.parse_stream_event("codex", line)
+    assert evt["type"] == "rate_limits"
+    assert evt["primary_pct"] == 12.5 and evt["secondary_pct"] == 40.0
+
+
+def test_parse_garbage_line_is_none():
+    assert ai_logic.parse_stream_event("claude", "not json") is None
+    assert ai_logic.parse_stream_event("agy", "{}") is None
+
+
+def test_usage_rolling_window_and_line():
+    reg = {}
+    reg = ai_logic.record_usage(reg, "claude", 18000, now=1000000)
+    reg = ai_logic.record_usage(reg, "claude", 2000, now=1000600)
+    old = 1000000 - 8 * 86400
+    reg = ai_logic.record_usage(reg, "claude", 99999, now=old)
+    line = ai_logic.usage_line(reg, "claude", now=1000700)
+    assert "2 runs" in line and "20" in line          # 20k tokens, 2 runs
+    assert "99" not in line                            # >7 days pruned
+    assert "this add-on" in line
+
+
+def test_usage_line_free_tier_counts_runs():
+    reg = ai_logic.record_usage({}, "agy", 3000, now=500)
+    assert "runs today" in ai_logic.usage_line(reg, "agy", now=600,
+                                               free_tier=True)
+
+
+def test_rate_limit_line():
+    s = ai_logic.rate_limit_line({"type": "rate_limits", "primary_pct": 12.5,
+                                  "secondary_pct": 40.0,
+                                  "resets": "2026-08-26T20:00:00Z"})
+    assert "87" in s and "60" in s   # percent LEFT, not used
