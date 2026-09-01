@@ -153,3 +153,56 @@ def mechanical_checks(cards, existing_fronts):
             entries = [{"code": "ok", "level": "ok", "message": "checks pass"}]
         out.append(entries)
     return out
+
+
+_CONTRACT = """## Output contract
+Reply with ONLY a JSON list, no prose before or after. Each element:
+{"note_type": <one of the allowed types>,
+ "fields": {<every field for that type, "" when empty>},
+ "tags": [<short topic tags>],
+ "images": [{"source": "attached:<filename>" | "url:https://..." | "svg:<svg...>",
+             "alt": "<what it shows>", "attribution": "<source credit>"}],
+ "rationale": "<one line: why this card earns its place>"}
+Never invent an image; never generate a raster image. Images come only from the
+attached files, a real web source found during verification, or simple SVG you
+draw yourself for structural diagrams."""
+
+
+def build_prompt(skills, source, note_types, field_map, count, instructions="",
+                 attachments=(), cards=None, feedback="", notes=None,
+                 checks=None):
+    notes = notes or {}
+    parts = []
+    for s in skills:
+        parts.append(s.strip())
+    schema = {t: field_map[t] for t in note_types}
+    parts.append("## Allowed note types and their fields\n"
+                 + json.dumps(schema, indent=1))
+    parts.append(_CONTRACT)
+    parts.append(f"## Task\nDraft about {count} flashcards from the source "
+                 "material below. Quality over count.")
+    if instructions.strip():
+        parts.append("## User instructions\n" + instructions.strip())
+    if attachments:
+        parts.append("## Attached files\n"
+                     + "\n".join(f"- {name}" for name in attachments))
+    parts.append("## Source material\n" + source.strip())
+    if cards is not None:
+        lines = []
+        for i, card in enumerate(cards):
+            tag = notes.get(i)
+            head = f"### Card {i + 1}" + ("" if tag else " (keep verbatim)")
+            lines.append(head + "\n" + json.dumps(
+                {"note_type": card["note_type"], "fields": card["fields"],
+                 "tags": card["tags"], "images": card["images"]}, indent=1))
+            if tag:
+                lines.append(f"Revision note for card {i + 1}: {tag}")
+            if checks and any(c["level"] != "ok" for c in checks[i]):
+                lines.append("Automated checks: " + "; ".join(
+                    c["message"] for c in checks[i] if c["level"] != "ok"))
+        parts.append("## Current draft\nRevise per the notes and feedback. "
+                     "Return the FULL updated list. Cards marked keep verbatim "
+                     "must be returned unchanged.\n" + "\n".join(lines))
+        if feedback.strip():
+            parts.append("## Feedback on the whole set\n" + feedback.strip())
+    return "\n\n".join(parts) + "\n"
