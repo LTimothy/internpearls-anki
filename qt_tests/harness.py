@@ -489,9 +489,12 @@ def _scene_confirm(mock, opts):
         body, _boxes, flush = review.build_update_body(
             items, sources, flags, new_index, decisions,
             top_html, _status_line, safety)
-        # min_width matches update_decks()'s own call: the wider floor is what leaves a
-        # card's own text room beside its decision control.
-        _ask_with_widget(body, yes_label="Update", checkbox=checkbox, min_width=660)
+        # min_width and open_size match update_decks()'s own call: the wider floor is
+        # what leaves a card's own text room beside its decision control. render()'s
+        # fake exec re-sizes to each test's requested size afterwards, so open_size
+        # here only proves the call accepts it, not what any test measures at.
+        _ask_with_widget(body, yes_label="Update", checkbox=checkbox, min_width=660,
+                         open_size=(880, 800))
         flush()
 
     return _open

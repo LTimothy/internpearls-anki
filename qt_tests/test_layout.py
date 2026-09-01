@@ -364,6 +364,30 @@ def test_a_rows_trailing_column_stops_short_of_the_list_frame(shot):
         "trailing text runs up against its row's right edge: " + ", ".join(cramped))
 
 
+def test_decision_cells_stop_short_of_the_list_viewport_edge(shot):
+    """A card row's decision control used to end on the streaming list viewport's last
+    pixel: its rounded right corner sat under the list's frame line, which on macOS
+    read as the Never button being cut off, and the overlay scrollbar drew on top of
+    it whenever the list scrolled. The list keeps a real right gutter now.
+    """
+    _, q = harness.bootstrap()
+    from internpearls.widgets import StreamingList
+    s = shot("confirm")
+    sl = s.dialog.findChild(StreamingList)
+    vp_right = widget_rect(s.dialog, sl.viewport()).right()
+    cells = [w for w in sl.widget().findChildren(q.QWidget)
+             if hasattr(w, "buttons") and w.isVisible()]
+    assert cells, "expected the confirm scene to render decision cells"
+    cramped = []
+    for cell in cells:
+        gap = vp_right - widget_rect(s.dialog, cell).right()
+        if gap < 6:
+            cramped.append(f"{gap}px")
+    assert not cramped, (
+        "a decision cell runs up against the list viewport's right edge: "
+        + ", ".join(cramped))
+
+
 def test_result_rows_sit_flush_with_the_heading_and_the_footer(shot):
     """And the mirror of it: a screen with no chips and nothing to expand reserves
     neither column, so its outcome lines start where its own heading and backup line

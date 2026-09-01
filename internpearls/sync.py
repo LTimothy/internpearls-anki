@@ -569,13 +569,15 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # cloze markup has actually landed on the note.
             seed_converted_siblings(changed_nids)
             if missing:
+                # Worded as the routine second pass it is, rather than as a fault: the
+                # first report of this read as an error and the run that completed it
+                # as luck, when that second run is the designed fix.
                 results.append(
-                    f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new "
-                    f"({', '.join(missing)} "
-                    f"{'is not' if len(missing) == 1 else 'are not'} "
-                    "in your collection yet, so your existing cards keep their current "
-                    "format for now; this deck stays pending so the next update can "
-                    "move them across)")
+                    f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new. "
+                    "One more pass needed: your collection had no "
+                    f"{', '.join(missing)} note type until this import added it, so "
+                    "this deck stays pending. Run <b>Update my decks</b> again to "
+                    "finish moving your existing cards to the new format.")
                 continue
             applied[d["name"]] = d["version"]
             results.append(f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new")
@@ -1430,14 +1432,10 @@ def _retired_moved_items(fresh, moves, her):
 # real-Qt harness renders this exact string in its paint and layout tests rather
 # than a paraphrase that drifts shorter than what the screen actually wraps.
 _UPDATE_SAFETY_NOTE = (
-    "This is a preview: nothing above has been applied yet. Your "
-    "review history and any personal notes on existing cards are kept (matched "
-    "by card, not overwritten). Archived cards keep their history too and can "
-    "be brought back anytime by unsuspending them or moving them out of the "
-    "Retired deck, nothing here is ever deleted. A backup is taken "
-    "automatically first. Skipped cards come back the next time that deck "
-    "changes, already marked, and any card you've turned away can be offered "
-    "again under Manage decks \u2192 Declined cards.")
+    "This is a preview: nothing is applied until you confirm below, and a backup "
+    "is taken automatically first. Your review history and your own notes on cards "
+    "are always kept, and nothing here is ever deleted. Anything you skip or turn "
+    "away can be offered again under Manage decks \u2192 Declined cards.")
 
 
 @_safe
@@ -1758,8 +1756,12 @@ def update_decks():
     # min_width raised past _ask_with_widget's own 560px default: a card's decision
     # control sits at the right of its header, beside the primary text it shares that
     # row with, and 560 left too little of the row for the card's own words.
+    #
+    # open_size opens it well above both minimums, clamped to the screen. This is the
+    # densest screen the add-on draws, and at the bare floor the list got a thin slice
+    # of the height while every row crushed its card text against its decision control.
     accepted = _ask_with_widget(body, yes_label=yes_label, checkbox=tpl_choice,
-                                on_close=flush, min_width=660)
+                                on_close=flush, min_width=660, open_size=(880, 800))
 
     if not accepted:
         _finish()
