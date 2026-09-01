@@ -395,16 +395,21 @@ def test_a_changed_row_shows_what_the_field_used_to_say():
     texts = " ".join(n.get("text") or "" for n in _walk(
         review._card_row(detail, {}, {}, {}, _no_decide).node()))
     assert "the answer she has today" in texts
-    assert "was" in texts
+    assert "What changed" in texts
 
 
 def test_a_changed_row_shows_nothing_extra_for_an_unchanged_field():
     detail = dict(_basic_note_detail(), guid="g1", kind="changed",
                   was={"Back": "old back"})
-    texts = " ".join(n.get("text") or "" for n in _walk(
-        review._card_row(detail, {}, {}, {}, _no_decide).node()))
-    assert "runs with the saphenous nerve" in texts   # the Why, rendered once
-    assert texts.count("was") == 1
+    texts = [n.get("text") or "" for n in _walk(
+        review._card_row(detail, {}, {}, {}, _no_decide).node())]
+    joined = " ".join(texts)
+    assert "runs with the saphenous nerve" in joined   # the Why, rendered once
+    # One What changed group holding exactly the one changed field's line: an
+    # unchanged field must not earn a row there.
+    assert joined.count("What changed") == 1
+    assert sum(1 for t in texts if "<b>Back</b>" in t) == 1
+    assert not any("<b>Front</b>" in t or "<b>Why</b>" in t for t in texts)
 
 
 def _text_nodes(detail):
@@ -425,58 +430,13 @@ def _first_index(texts, needle):
     return next(i for i, t in enumerate(texts) if needle in t)
 
 
-def test_a_changed_why_shows_its_previous_value_after_the_current_one():
-    """The defect this guards: every `was` line used to land at one fixed spot, after
-    the answer and before Why, so a changed Why's previous value rendered ABOVE the
-    current Why instead of under it. Positional, not just "both appear": the pre-fix
-    layout puts the fixed slot (and so this `was` line) before the Why block, which
-    would put `was_i` before `current_i` and fail this assertion.
-    """
-    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
-                  was={"Why": "an older explanation of the same mechanism"})
-    texts = _text_nodes(detail)
-    current_i = _first_index(texts, "runs with the saphenous nerve")
-    was_i = _first_index(texts, "an older explanation of the same mechanism")
-    assert was_i > current_i
-
-
-def test_a_changed_dosing_shows_its_previous_value_after_the_current_one():
-    """Same defect as Why, for Dosing: the fixed slot sat before the dosing block, so
-    a changed Dosing's `was` line rendered above the current dosing instead of under
-    it. Positional for the same reason as the Why test above.
-    """
-    detail = dict(_basic_note_detail(), guid="g1", kind="changed")
-    detail["fields"] = [(n, "0.5 mg/kg IV" if n == "Dosing" else v)
-                        for n, v in detail["fields"]]
-    detail["was"] = {"Dosing": "1 mg/kg IV, per an older source"}
-    texts = _text_nodes(detail)
-    current_i = _first_index(texts, "0.5 mg/kg IV")
-    was_i = _first_index(texts, "1 mg/kg IV, per an older source")
-    assert was_i > current_i
-
-
-def test_a_changed_primary_field_shows_its_previous_value_first_in_the_body():
-    """Front is the collapsed header line, never rendered inside the expandable body
-    at all, so its `was` line used to appear detached from anything, sitting in the
-    fixed slot after the answer. It belongs first in the body instead, immediately
-    under the header it describes. Checked as adjacency (immediately after the header
-    label) rather than just "before the answer": the pre-fix layout also puts it
-    before Why and Dosing, so a looser check would pass against the defect too.
-    """
-    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
-                  was={"Front": "what block used to cover the anterior thigh?"})
-    texts = _text_nodes(detail)
-    header_i = _first_index(texts, "What nerve block covers the anterior thigh?")
-    was_i = _first_index(texts, "what block used to cover the anterior thigh?")
-    assert was_i == header_i + 1
-
-
-def test_two_changed_fields_show_was_lines_after_their_own_fields_in_order():
-    """Why and Dosing changed together: each `was` line lands after its own current
-    field, not both dumped together in one spot, and the two lines keep the note
-    type's own field order (Why before Dosing). Fully positional: the pre-fix fixed
-    slot puts both `was` lines before either block renders, so `why_i < why_was_i`
-    alone already fails against it (why_was_i would be smaller, not larger).
+def test_change_rows_sit_together_after_every_field_block():
+    """The comparison lives in one What changed group at the end of the body, not as
+    a `was` line wedged under each block. Interleaved, the body read as an alternation
+    of card and ghost and never as either one whole; grouped, the card above reads
+    clean and the group states each delta once. Positional: the group's heading and
+    both change rows land after the current Why and Dosing blocks, in the note type's
+    own field order (Why before Dosing).
     """
     detail = dict(_basic_note_detail(), guid="g1", kind="changed")
     detail["fields"] = [(n, "0.5 mg/kg IV" if n == "Dosing" else v)
@@ -485,10 +445,71 @@ def test_two_changed_fields_show_was_lines_after_their_own_fields_in_order():
                      "Dosing": "1 mg/kg IV, per an older source"}
     texts = _text_nodes(detail)
     why_i = _first_index(texts, "runs with the saphenous nerve")
-    why_was_i = _first_index(texts, "an older explanation of the same mechanism")
     dosing_i = _first_index(texts, "0.5 mg/kg IV")
-    dosing_was_i = _first_index(texts, "1 mg/kg IV, per an older source")
-    assert why_i < why_was_i < dosing_i < dosing_was_i
+    heading_i = _first_index(texts, "What changed")
+    why_was_i = _first_index(texts, "older explanation")
+    dosing_was_i = _first_index(texts, "older source")
+    assert max(why_i, dosing_i) < heading_i < why_was_i < dosing_was_i
+
+
+def test_a_plain_prose_change_renders_as_one_word_diff():
+    """Two near-identical paragraphs the reader compares by eye become one line: the
+    dropped words struck through, the added words carried on the UPDATED chip's
+    colour pair, and the line named for its field."""
+    from internpearls import palette
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
+                  was={"Back": "Give 1 mg/kg over 10 minutes."})
+    detail["fields"] = [(n, "Give 1.5 mg/kg over 2 minutes." if n == "Back" else v)
+                        for n, v in detail["fields"]]
+    texts = _text_nodes(detail)
+    row = next(t for t in texts if "<b>Back</b>" in t)
+    assert "<s>1</s>" in row and "<s>10</s>" in row
+    assert ">1.5</span>" in row and ">2</span>" in row
+    assert palette.colors()["updated_bg"] in row
+    # One line, not two: the shared words appear once, unmarked.
+    assert row.count("mg/kg") == 1 and "<s>mg/kg</s>" not in row
+
+
+def test_a_blanks_only_cloze_change_names_the_moved_blank():
+    """When a cloze's words survive and only its deletions move, the filled old text
+    is word-for-word the header line again, so the row names the moved blanks instead
+    of reprinting the sentence (and never shows raw {{c1::…}} braces)."""
+    detail = {"guid": "g1", "kind": "changed", "notetype": "Study Deck - Cloze",
+              "was": {"Text": "A {{c1::pencil-point}} tip is best at "
+                              "{{c2::25 to 27 gauge}}."},
+              "fields": [("Text", "A pencil-point tip is best at "
+                                  "{{c2::25 to 27 gauge}}."),
+                         ("Why", ""), ("Image", ""), ("Dosing", ""), ("Notes", "")]}
+    texts = _text_nodes(detail)
+    row = next(t for t in texts if "<b>Text</b>" in t)
+    assert "no longer blanked" in row and "pencil-point" in row
+    assert "{{c1" not in row
+
+
+def test_a_reworded_cloze_change_shows_the_old_text_filled_not_raw():
+    """A cloze whose sentence was also reworded falls back to the verbatim old value,
+    with its deletions filled the same way the header line fills them: the one thing
+    it must never show is raw {{c1::…}} markup."""
+    detail = {"guid": "g1", "kind": "changed", "notetype": "Study Deck - Cloze",
+              "was": {"Text": "An older sentence blanking {{c1::a moved value}}."},
+              "fields": [("Text", "A newer sentence blanking {{c1::a moved value}}."),
+                         ("Why", ""), ("Image", ""), ("Dosing", ""), ("Notes", "")]}
+    texts = _text_nodes(detail)
+    row = next(t for t in texts if "<b>Text</b>" in t)
+    assert "{{c1" not in row
+    assert '<span class="cloze">a moved value</span>' in row
+    assert "An older sentence" in row
+
+
+def test_a_marked_up_change_falls_back_to_the_verbatim_old_value():
+    """A field carrying real markup (a table, a list) cannot be word-diffed without
+    tearing its tags apart, so it keeps the verbatim old value behind a was."""
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed",
+                  was={"Back": "<table><tr><td>the old cell</td></tr></table>"})
+    texts = _text_nodes(detail)
+    row = next(t for t in texts if "<b>Back</b>" in t)
+    assert "was" in row and "the old cell" in row
+    assert "<s>" not in row
 
 
 def test_separator_is_an_hline_carrying_the_rule_colour():
