@@ -5,6 +5,7 @@ GUID namespace, and usage arithmetic. Everything here is unit-testable with
 plain pytest; subprocess and Qt live in ai_cli.py and ai_dialog.py.
 """
 import binascii
+import hashlib
 import json
 import os
 import re
@@ -355,23 +356,29 @@ def extract_attachment(path, dest_dir):
     can't be parsed at all (encrypted, corrupt, or not really a PDF)."""
     ext = os.path.splitext(path)[1].lower()
     base = os.path.basename(path)
+    # stem sanitized so a hostile filename can't traverse dest_dir or collide
+    # with another attachment's output; same scheme used for PDF-embedded images below
+    stem = _SAFE_STEM_RE.sub("_", os.path.splitext(base)[0]) or "attachment"
     if ext in IMAGE_EXTS:
-        import shutil
-        shutil.copy(path, os.path.join(dest_dir, base))
-        return {"text": "", "images": [base]}
+        with open(path, "rb") as fh:
+            data = fh.read()
+        # content hash disambiguates two distinct attachments sharing a basename
+        # (e.g. two "figure1.png" uploads) without needing to see dest_dir's state
+        digest = hashlib.sha256(data).hexdigest()[:8]
+        name = f"{stem}-{digest}{ext}"
+        with open(os.path.join(dest_dir, name), "wb") as fh:
+            fh.write(data)
+        return {"text": "", "images": [name]}
     if ext != ".pdf":
         raise ValueError(f"unsupported attachment type: {ext}")
 
-    pypdf = _pypdf()
     try:
+        pypdf = _pypdf()
         reader = pypdf.PdfReader(path)
         pages = reader.pages
     except Exception as e:
         raise ValueError(f"could not read PDF {base}: {e}") from e
 
-    # stem sanitized so a hostile filename can't traverse dest_dir or collide
-    # with another PDF's extracted images
-    stem = _SAFE_STEM_RE.sub("_", os.path.splitext(base)[0]) or "pdf"
     texts, images = [], []
     for pnum, page in enumerate(pages, 1):
         try:
