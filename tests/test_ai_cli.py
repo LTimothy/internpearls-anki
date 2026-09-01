@@ -130,3 +130,45 @@ def test_build_argv_codex_images_flag():
 def test_image_capable_table():
     assert ai_cli.image_capable("claude") and ai_cli.image_capable("codex")
     assert not ai_cli.image_capable("agy")
+
+
+def test_build_argv_agy_adds_sandbox_when_supported(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
+    assert "--sandbox" in argv
+
+
+def test_build_argv_agy_omits_sandbox_when_unsupported(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: False)
+    argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
+    assert "--sandbox" not in argv
+
+
+def test_build_argv_agy_never_skips_permissions(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
+    assert "--dangerously-skip-permissions" not in argv
+
+
+def test_supports_flag_missing_binary_returns_false():
+    assert ai_cli.supports_flag("/no/such/binary-xyz", "--sandbox") is False
+
+
+def test_supports_flag_caches_per_path_and_flag(monkeypatch):
+    ai_cli._flag_support_cache.clear()
+    calls = []
+    real_run = ai_cli.subprocess.run
+
+    def spying_run(argv, *a, **kw):
+        calls.append(tuple(argv))
+        return real_run(argv, *a, **kw)
+
+    monkeypatch.setattr(ai_cli.subprocess, "run", spying_run)
+    ai_cli.supports_flag("/no/such/binary-xyz", "--sandbox")
+    ai_cli.supports_flag("/no/such/binary-xyz", "--sandbox")
+    assert len(calls) == 1
+
+
+def test_backends_all_have_safety_posture():
+    for kind, info in ai_cli.BACKENDS.items():
+        assert info.get("safety"), f"{kind} is missing a safety posture string"
