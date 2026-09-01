@@ -3,6 +3,27 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.49.1
+
+Room to read the update screen, which had grown dense enough that the cards it
+lists were the part with the least space:
+
+- It opens noticeably larger now, sized to your screen rather than to the small
+  floor it used to start at, and it is still resizable either way. The extra
+  height goes to the list of cards.
+- The standing reassurance below the list is shorter and set as small print. It
+  says the same things, in four lines rather than nine, so it stops being the
+  tallest block on a screen that exists to show cards.
+- The Apply / Keep yours / Never buttons no longer look cut off. They were being
+  drawn flush against the list's own edge, so the last button's border sat under
+  the frame line and the scrollbar could pass over it.
+
+Separately, the message you get when a deck brings a card format your collection
+has never held now says what it is: the import adds that format, so one more run
+of Update my decks finishes moving your existing cards onto it. It reported this
+as a bare absence before, which read as an error rather than as the second half
+of a normal two-step update.
+
 ## v0.49.0
 
 A deck source can now also ship a short label saying where a card came from, such

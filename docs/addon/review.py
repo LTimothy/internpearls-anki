@@ -1051,6 +1051,12 @@ def build_update_body(items, sources, flags, new_index, decisions,
     if top_html:
         lay.addWidget(_rich_label(top_html))
 
+    # The safety note is standing reassurance, not this run's news, so it renders as
+    # small print: at body size it was the tallest block on the screen, taking height
+    # the list itself is here for. The status line above it keeps the body size, since
+    # it reports what she just did.
+    safety_html = (f"<span style='color: {colors()['muted']}; font-size: 11px;'>"
+                   f"{safety_html}</span>")
     bottom = _rich_label(status_line() + safety_html)
 
     saver = QTimer(body)
