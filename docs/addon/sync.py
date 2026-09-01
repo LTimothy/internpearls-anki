@@ -11,6 +11,7 @@ reconcile_decks() and update_decks() so the two can never disagree.
 """
 import datetime
 import hashlib
+import html
 import json
 import os
 import re
@@ -34,7 +35,8 @@ from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
                          installed_matching_collection)
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
-                     _load_json, _save_json, load_declined, save_declined)
+                     _load_json, _save_json, load_declined, load_deck_skill,
+                     save_declined, save_deck_skill)
 from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes_for,
                     source_label_for,
                     declined_drop, declined_guids,
@@ -50,8 +52,8 @@ from .palette import colors
 from .review import (_CONFIRM_HEIGHT, NOTHING_CHANGED, append_rows, build_list_body,
                      build_update_body, clear_saved_feedback, load_saved_feedback,
                      show_result, show_result_with_feedback)
-from .ui import (_ask, _ask_with_widget, _info, _manual_flow, _safe, _warn,
-                 cancellable_progress, wait_cursor)
+from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _manual_flow, _safe,
+                 _warn, cancellable_progress, wait_cursor)
 
 # The "Reconcile my decks" QAction, set once by __init__.py right after building the
 # menu. Mutated from here and from background.py's auto-sync poll, mirroring
@@ -289,6 +291,58 @@ def _fetch_manifest_gated(cfg):
     return manifest, fetch, source
 
 
+def _check_deck_skill(cfg, manifest, fetch):
+    """Fetch a deck source's own card-authoring skill (manifest["skill"] =
+    {"path", "version"}) and gate it behind explicit consent, same idiom as
+    _offer_template_changes: show the FULL text and ask before trusting it with
+    anything, since this text goes on to drive an agent CLI with web access.
+
+    No "skill" entry is the overwhelming majority of manifests and is a complete
+    no-op: no fetch, no dialog, no state touched. `fetch` is the same per-path
+    callable sync_decks/update_decks already use for deck .apkg files (built by
+    _fetch_manifest for the configured source, GitHub or local folder), reused here
+    with a fake {"apkg": path} so this needs no source-specific fetch code of its
+    own. A fetch failure (network, missing file, unreadable) must never block a
+    deck sync, so it's swallowed rather than surfaced; the skill is an
+    enhancement, decks are the product.
+
+    Consent is keyed by content hash: unchanged hash is silent (including across
+    a version bump with no text change), any other hash re-asks, showing the full
+    new text. Declining leaves whatever was previously consented to (if anything)
+    exactly as it was, answering "not this version" rather than "forget what I
+    agreed to before".
+    """
+    entry = manifest.get("skill") if isinstance(manifest, dict) else None
+    if not isinstance(entry, dict) or not entry.get("path"):
+        return
+    try:
+        local = fetch({"apkg": entry["path"], "version": entry.get("version")})
+        with open(local, "rb") as fh:
+            raw = fh.read()
+    except Exception:
+        return
+    digest = hashlib.sha256(raw).hexdigest()
+    stored = load_deck_skill()
+    if stored and stored.get("hash") == digest:
+        return
+    text = raw.decode("utf8", "replace")
+    version = entry.get("version")
+    verb = "updated its" if stored else "added a"
+    version_note = f" (version {version})" if version else ""
+    body = html.escape(text).replace("\n", "<br>")
+    if _ask_scrollable(
+        f"Your deck source has {verb} card-authoring skill{version_note}. It adds "
+        "instructions the AI follows when drafting cards for these decks, and it "
+        "runs with web access when generation is set to Thorough mode.<br><br>"
+        "Read the full text before allowing it:<br><br>" + body,
+        yes_label="Use this skill", no_label="Not now"
+    ):
+        save_deck_skill({"text": text, "version": str(version or ""),
+                         "hash": digest,
+                         "consented_on": datetime.date.today().isoformat(),
+                         "enabled": True})
+
+
 @_safe
 @_manual_flow
 def sync_decks():
@@ -297,6 +351,7 @@ def sync_decks():
     if not fetched:
         return
     manifest, fetch, source = fetched
+    _check_deck_skill(cfg, manifest, fetch)
 
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     todo = decks_to_update(manifest, installed, cfg["excluded"])
@@ -1469,6 +1524,7 @@ def update_decks():
     if not fetched:
         return
     manifest, fetch, source = fetched
+    _check_deck_skill(cfg, manifest, fetch)
 
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     todo = decks_to_update(manifest, installed, cfg["excluded"])
