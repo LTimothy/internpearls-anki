@@ -1072,6 +1072,22 @@ def merged_word_diff(old, new):
     return out
 
 
+def word_diff_ratio(segments):
+    """How much of a merged_word_diff is unchanged text, as difflib's own 0..1 ratio
+    (2 * matched words / total words on both sides).
+
+    What the caller gates readability on: a small edit renders beautifully as one
+    marked-up line, but the same treatment on a rewritten paragraph is a wall of
+    struck and highlighted text that is harder to read than either version alone.
+    The ratio says which of those a change is. Empty-on-both-sides reads as 1.0,
+    since there is nothing to mark either way.
+    """
+    equal = sum(len(text.split()) for op, text in segments if op == "equal")
+    changed = sum(len(text.split()) for op, text in segments if op != "equal")
+    total = 2 * equal + changed
+    return (2 * equal / total) if total else 1.0
+
+
 def cloze_answer_changes(old, new):
     """Which deletions moved between two versions of a cloze Text field:
     (no_longer_blanked, newly_blanked) answer texts, or None when the surrounding

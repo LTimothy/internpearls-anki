@@ -24,12 +24,13 @@ from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
 from .logic import (apkg_media_index, build_feedback_digest, cloze_answer_changes,
                     cloze_filled_html, extract_apkg_media, field_image_names,
                     field_preview_html, field_preview_text, merged_word_diff,
-                    note_display_label, plain_text, plural)
+                    note_display_label, plain_text, plural, word_diff_ratio)
 from .palette import colors
 from .ui import (_ask_with_widget, _info, copy_to_clipboard, hint_label, link_button,
                  muted_label, title_label)
-from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell, decision_cell,
-                      row_text_indent, section_header, simple_row)
+from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell,
+                      chip_column_width, decision_cell, row_text_indent,
+                      section_header, simple_row)
 
 # The learner's own annotation space, left empty by every spec on purpose. Showing it
 # would be a blank row on every single card.
@@ -386,12 +387,18 @@ def _diff_html(segments):
 
 
 def _blank_changes_html(removed, added):
-    """A blanks-only cloze change said outright, naming the moved blanks in the same
-    cloze blue the filled sentence above paints them in. The filled words themselves
-    did not change, so repeating the whole sentence would show a difference nowhere
-    in it; which words are blanked IS the change."""
+    """A blanks-only cloze change said outright, naming the moved blanks in bold. The
+    filled words themselves did not change, so repeating the whole sentence would show
+    a difference nowhere in it; which words are blanked IS the change.
+
+    Bold rather than the cloze blue the answers used to carry: accent is also the
+    colour of every clickable link in this body (Add note, Show yours), and a blue
+    word that answers no click is an affordance lie. Inside the revealed old version
+    the blue spans stay, since there they are card content rendered as the card
+    renders it, not words in a summary line.
+    """
     def named(answers):
-        return ", ".join(f'<span class="cloze">{a}</span>' for a in answers)
+        return ", ".join(f"<b>{a}</b>" for a in answers)
 
     parts = []
     if removed:
@@ -401,25 +408,32 @@ def _blank_changes_html(removed, added):
     return " &middot; ".join(parts) or "the blanks were regrouped into different cards"
 
 
-def _change_row_html(detail, name, image_html=None):
-    """One changed field's line in the What changed group, choosing the tightest
-    honest rendering for what kind of change it is:
+# The floor under a change's difflib-style similarity (word_diff_ratio) for the
+# word-diff rendering: below it, the change reads as a rewrite and takes the summary
+# line instead. 0.75 rather than difflib's conventional 0.6, because the bound that
+# matters here is how much of the MERGED line ends up marked: at 0.6 similarity about
+# 57% of the rendered line is struck or highlighted (markup outweighing message, the
+# exact wall this floor exists to stop), while 0.75 caps it near 40%. Both design
+# reviews asked for a majority-marked line to be unreachable, and this one constant
+# is that guarantee.
+_DIFF_MIN_SIMILARITY = 0.75
 
+
+def _inline_change_html(detail, name, old, new):
+    """One changed field as a single self-contained line, or None when the change is
+    a rewrite that takes `_rewrite_row`'s summary-and-reveal treatment instead:
+
+    - a field that used to be empty says so ("was empty");
     - a cloze Text whose words survived but whose blanks moved names the moved blanks
       (`cloze_answer_changes`), instead of reprinting the sentence;
-    - plain prose on both sides renders as a single word-level diff (`_diff_html`);
-    - anything else (markup, pictures, math, a reworded cloze) shows the old value
-      verbatim behind a "was", with a cloze's deletions filled the same way the
-      primary line fills them, never as raw {{c1::…}} braces.
+    - plain prose on both sides renders as a single word-level diff (`_diff_html`),
+      while the versions stay mostly the same text (`word_diff_ratio`).
 
-    A field that used to be empty says so rather than rendering a "was" with nothing
-    after it. `image_html` is the picture resolver for the verbatim path: her copy's
-    pictures are already in the collection's media folder, but a QImage decode still
-    costs real work, so the caller passes it only on first expand and the line names
-    its pictures until then, like every other block in the body.
+    Everything else is a replacement rather than an edit: a rewritten paragraph, a
+    restructured table, a swapped picture, a reworded cloze. None of those can be
+    shown as one honest line, so they return None and the caller builds the widget
+    that summarizes the change and holds the old version behind a click.
     """
-    old = (detail.get("was") or {}).get(name) or ""
-    new = _field(detail, name)
     label = f"<b>{html.escape(name)}</b>&nbsp;&nbsp;"
     if not old:
         return label + "was empty"
@@ -427,12 +441,140 @@ def _change_row_html(detail, name, image_html=None):
         changes = cloze_answer_changes(old, new)
         if changes is not None:
             return label + _blank_changes_html(*changes)
-        filled = cloze_filled_html(field_preview_html(old, image_html=image_html),
-                                   escape=False)
-        return f"{label}was &nbsp;{filled}"
+        return None
     if _plain_prose(old) and _plain_prose(new):
-        return label + _diff_html(merged_word_diff(old, new))
-    return f"{label}was &nbsp;{field_preview_html(old, image_html=image_html)}"
+        segments = merged_word_diff(old, new)
+        if word_diff_ratio(segments) >= _DIFF_MIN_SIMILARITY:
+            return label + _diff_html(segments)
+    return None
+
+
+def _rewrite_summary(old, new):
+    """The receipt line's verb phrase for a replaced field: what happened and how
+    much, without showing any of the changed text.
+
+    "rewritten" carries the similarity verdict that routed the change here; the
+    word-count delta is the only magnitude fact a glance needs, and it is appended
+    only when the length genuinely moved (by a quarter or more), so a same-size
+    rewrite stays one word. A field whose visible text vanished says "cleared", and
+    one with no visible text to count (a swapped picture) says "replaced".
+    """
+    old_words = len(plain_text(old).split())
+    new_words = len(plain_text(new).split())
+    if not old_words:
+        return "replaced"
+    if not new_words:
+        return "cleared"
+    if new_words <= old_words * 0.75:
+        return f"rewritten, shortened ({old_words} → {plural(new_words, 'word')})"
+    if new_words >= old_words * 1.25:
+        return f"rewritten, expanded ({old_words} → {plural(new_words, 'word')})"
+    return "rewritten"
+
+
+def _old_version_html(detail, name, old):
+    """The old field rendered the way the card itself renders: structure kept,
+    pictures resolved from the learner's own collection (they are her cards, already
+    on disk), and a cloze's deletions filled in blue like the header line, never raw
+    {{c1::…}} braces. Built on first reveal, not at batch-build time."""
+    rendered = field_preview_html(old, image_html=_collection_image)
+    if _is_cloze(detail) and name == "Text":
+        rendered = cloze_filled_html(rendered, escape=False)
+    return rendered
+
+
+def _rewrite_row(detail, name, old, new, card_label):
+    """A rewritten field as a one-line receipt with the old version behind a click:
+    "Why  rewritten, shortened (104 → 66 words)   Show yours".
+
+    The design both independent reviews converged on. The new version is already the
+    card rendered above, so for the reader deciding Apply the old text is reference
+    material, not content: the summary line is everything she needs at a glance, and
+    the reader weighing Keep yours pays one click (the same flat-link idiom as Add
+    note, worded in the decision button's own vocabulary) to see what "yours" says.
+
+    The reveal is the old field verbatim and unmarked, behind a muted left rule that
+    mirrors the green why rule's shape: same structural device, different palette
+    role, so ruled block reads as "a whole explanation" and the colour says which
+    era it belongs to. Built lazily on the first click, so a 50-row batch pays for
+    one short label and one flat button per rewritten field and decodes nothing.
+    """
+    row = QWidget()
+    lay = QVBoxLayout(row)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(2)
+
+    line = QWidget()
+    hlay = QHBoxLayout(line)
+    hlay.setContentsMargins(0, 0, 0, 0)
+    hlay.setSpacing(8)
+    summary = _rich_label(f"<b>{html.escape(name)}</b>&nbsp;&nbsp;"
+                          f"{_rewrite_summary(old, new)}")
+    summary.setStyleSheet(f"color: {colors()['dim']};")
+    # A one-line receipt by design, so it must not wrap: a word-wrapped QLabel asks
+    # the layout for a "reasonable" width rather than its full text, and with the
+    # link beside it the phrase folded onto three short lines in an all-but-empty row.
+    summary.setWordWrap(False)
+    hlay.addWidget(summary, 0)
+    link = link_button("Show yours")
+    # Collapsed to its text height, the same styling that keeps the caret compact:
+    # without border and padding rules a flat button still carries the platform's
+    # native button metrics (32px on macOS), which stretched every receipt line to
+    # double its text and read as a band of dead space between the rows.
+    link.setStyleSheet(f"color: {colors()['accent']}; font-size: 12px;"
+                       " border: none; padding: 0;")
+    link.setCursor(Qt.CursorShape.PointingHandCursor)
+    hlay.addWidget(link, 0)
+    hlay.addStretch()
+    lay.addWidget(line)
+
+    old_label = _rich_label("")
+    old_label.setVisible(False)
+    c = colors()
+    # The border: none reset is load-bearing, same as the why rule: Qt ignores a lone
+    # border-left on a QLabel unless the shorthand is set first.
+    old_label.setStyleSheet(f"border: none; border-left: 3px solid {c['muted']};"
+                            f" padding-left: 8px; color: {c['dim']};")
+    lay.addWidget(old_label)
+
+    def _name_link(showing):
+        # Named for the card, like the caret and the decision buttons: a list of
+        # forty links all called "Show yours" says nothing about which card's old
+        # version any one of them opens.
+        verb = "Hide yours" if showing else "Show yours"
+        link.setText(verb)
+        link.setAccessibleName(f"{verb}: {card_label}")
+
+    # An explicit built flag rather than "is the label still empty": _rich_label
+    # seeds every label with the preview <style> block, so its text is never empty
+    # and an emptiness check would skip the build forever.
+    built = []
+
+    def _toggle(_checked=False):
+        showing = not old_label.isVisible()
+        if showing and not built:
+            built.append(True)
+            old_label.setText(_preview_style() + _old_version_html(detail, name, old))
+        old_label.setVisible(showing)
+        _name_link(showing)
+
+    link.clicked.connect(_toggle)
+    _name_link(False)
+    return row
+
+
+def _change_row(detail, name, card_label):
+    """One changed field's row in the What changed group: a plain line for a change
+    one line can state honestly (`_inline_change_html`), or the receipt-and-reveal
+    widget for a rewrite (`_rewrite_row`)."""
+    old = (detail.get("was") or {}).get(name) or ""
+    new = _field(detail, name)
+    inline = _inline_change_html(detail, name, old, new)
+    if inline is None:
+        return _rewrite_row(detail, name, old, new, card_label)
+    label = _rich_label(inline)
+    label.setStyleSheet(f"color: {colors()['dim']};")
+    return label
 
 
 def _changes_heading():
@@ -482,26 +624,40 @@ def _change_note_row(note, indent):
     return row
 
 
-def _card_source_row(label, indent):
-    """The deck source's short label for where a card came from, as a quiet line in
-    the row's own text column.
+def _chip_with_source(detail, chips):
+    """The row's chip column, with the deck source's where-this-came-from label as a
+    small tag directly under the chip when the card carries one.
 
-    Sits above any change note, and reads differently from one on purpose: a change
-    note is a sentence about why this card is being offered, while this is a tag,
-    true whether or not anything changed. So no accent bar and no quotes, just `dim`
-    at the change note's size, which is what a reference number should look like.
+    Under the chip rather than as a line in the text column, where it used to sit: a
+    reference number in the flow of the card's own words read as part of the card,
+    weirdly placed under whichever line happened to be above it. The chip column is
+    already the row's metadata gutter (NEW, UPDATED), and a question ID is the same
+    kind of fact about the card, so it stacks there and the text column stays purely
+    the card. One tag per whitespace-separated reference, so a card drawn from two
+    questions reads as two small lines rather than one overflowing the column.
 
-    The string is the deck source's, rendered as plain text: it is never parsed here,
-    and it is escaped rather than trusted, since it arrives from a fetched manifest.
+    The string is the deck source's, rendered as plain text: never parsed here, and
+    escaped rather than trusted, since it arrives from a fetched manifest.
     """
-    row = QWidget()
-    lay = QHBoxLayout(row)
-    lay.setContentsMargins(indent, 0, 0, 0)
-    lay.setSpacing(0)
-    text = muted_label(html.escape(label))
-    text.setStyleSheet(f"color: {colors()['dim']}; font-size: 11px;")
-    lay.addWidget(text)
-    return row
+    cell = chip_cell(_row_chip(detail), chips)
+    label = (detail.get("card_source") or "").strip()
+    if not label:
+        return cell
+    wrap = QWidget()
+    lay = QVBoxLayout(wrap)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(1)
+    lay.addWidget(cell)
+    dim = colors()["dim"]
+    for ref in label.split():
+        tag = QLabel(html.escape(ref))
+        tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tag.setStyleSheet(f"color: {dim}; font-size: 10px;")
+        lay.addWidget(tag)
+    # The chip column's own fixed width, so a tag can never widen the gutter and
+    # push every row's text out of line.
+    wrap.setFixedWidth(chip_column_width(chips))
+    return wrap
 
 
 def _collection_image(name):
@@ -620,10 +776,10 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     what opening a row pays for, so a long list stays cheap to scroll and a review nobody
     opens costs nothing at all.
 
-    A `card_source` label and any `change_notes` entries render directly under the
-    header, visible whether the row is collapsed or open: where the card came from (see
-    `_card_source_row`) and the deck source's own account of why it changed (see
-    `_change_note_row`).
+    A `card_source` label renders as a small tag under the row's chip (see
+    `_chip_with_source`), and any `change_notes` entries render directly under the
+    header, visible whether the row is collapsed or open: the deck source's own
+    account of why the card changed (see `_change_note_row`).
     """
     guid = detail["guid"]
     kind = detail.get("kind")
@@ -641,27 +797,24 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     # Image field's chip in alongside its own text), so `_reveal_images` re-renders it
     # once, directly through `_answer_html`, rather than through this generic list.
     rerender = []
-    # The What changed group's rows, separately: a verbatim line's pictures resolve
-    # from the learner's own collection (_collection_image) rather than the deck's
-    # .apkg, so they stay on the same first-expand schedule as everything else even on
-    # a row `resolve` is None for. Held as (label, field name) and re-rendered whole
-    # through _change_row_html, so the rebuild can never drift from the first build.
-    was_rerender = []
+    # The What changed group needs no rerender list of its own any more: its inline
+    # lines are text-only by construction (the plain-prose gate), and a rewrite's old
+    # version, the one place a picture can appear, is rendered at reveal-click time
+    # (see _rewrite_row), which is even later than the first expand.
     revealed = []
-    # The rows _card_source_row and _change_note_row build for this card, kept local so
+    # The rows _change_note_row builds for this card, kept local so
     # _apply_decision_visuals can hide them under Never and restore them if the
     # decision moves off Never again; they don't exist yet the first time that
     # function runs, but a predeclined "never" never reaches this row at all
     # (sync.py drops it before it's built), so the initial call has nothing to hide.
+    # The card_source tag is not one of them: it lives in the chip column and stays
+    # visible under Never, since it names the card the struck line is about.
     note_rows = []
 
     def _reveal_images():
         if revealed:
             return
         revealed.append(True)
-        for label, name in was_rerender:
-            label.setText(_preview_style()
-                          + _change_row_html(detail, name, image_html=_collection_image))
         if resolve is None:
             return
         image_names = _primary_images(detail)
@@ -732,7 +885,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     # about the decline registry; nothing here writes them.
     declined_state = detail.get("declined_state")
     changed_since_decline = bool(detail.get("changed_since_decline"))
-    leading = [chip_cell(_row_chip(detail), chips)]
+    leading = [_chip_with_source(detail, chips)]
     for cell in leading:
         hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
     indent = row_text_indent(len(leading), chips)
@@ -830,11 +983,6 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
 
     outer.addWidget(header)
 
-    if detail.get("card_source"):
-        source_row = _card_source_row(detail["card_source"], indent)
-        note_rows.append(source_row)
-        outer.addWidget(source_row)
-
     for note in detail.get("change_notes") or []:
         note_row = _change_note_row(note, indent)
         note_rows.append(note_row)
@@ -910,10 +1058,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     if changed_names:
         blay.addWidget(_changes_heading())
         for name in changed_names:
-            row_label = _rich_label(_change_row_html(detail, name))
-            row_label.setStyleSheet(f"color: {colors()['dim']};")
-            blay.addWidget(row_label)
-            was_rerender.append((row_label, name))
+            blay.addWidget(_change_row(detail, name, card_label))
 
     # Last in the body, past every field block: reading down to it is the same click
     # that opens the card at all, which is what keeps this quiet rather than a header
