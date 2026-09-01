@@ -3,6 +3,15 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.52.1
+
+The receipt lines sit tight now. The Show yours link, though flat, still
+carried the platform's native button height, which stretched every receipt row
+to double its text and read as a band of dead space between the lines; it sits
+at text height now, like the row's expand caret. The summary phrase also no
+longer folds itself onto three short lines beside the link: it is a one-liner
+by design and renders as one.
+
 ## v0.52.0
 
 A rewritten field now reads as a receipt, not a wall. Two treatments had been
