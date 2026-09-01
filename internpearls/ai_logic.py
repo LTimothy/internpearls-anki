@@ -15,8 +15,12 @@ GENERATED_DECK_LEAF = "Generated"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.S)
 _IMAGE_SOURCE_RE = re.compile(r"^(attached:[\w .\-]+|url:https://\S+|svg:<svg.*)$", re.S)
+_TAG_RE = re.compile(r"<[^>]+>")
+_CLOZE_OK_RE = re.compile(r"\{\{c\d+::[^{}]+?\}\}")
+_BRACES_RE = re.compile(r"\{\{|\}\}")
 PRIMARY_FIELD = {"Study Deck - Basic": "Front", "Study Deck - Cloze": "Text",
                  "Study Deck - Image ID": "Image", "Basic": "Front"}
+LONG_ANSWER_WORDS = 60
 
 
 def generated_guid():
@@ -91,3 +95,61 @@ def parse_cards_json(text, allowed_types, field_map):
             "rationale": str(raw.get("rationale", "")),
         })
     return ([], errors) if errors else (cards, [])
+
+
+def _plain(html):
+    """Strip HTML tags from text."""
+    return _TAG_RE.sub("", html or "").strip()
+
+
+def _norm_front(text):
+    """Normalize front text for duplicate detection: strip tags, lowercase, collapse whitespace."""
+    return " ".join(_plain(text).lower().split())
+
+
+def mechanical_checks(cards, existing_fronts):
+    """Check drafted cards for duplicates, cloze syntax, and length.
+
+    Args:
+        cards: list of card dicts with note_type, fields, tags, images, rationale
+        existing_fronts: {normalized front: original front} for her collection.
+            Build it collection-side with the same _norm_front over _her_front_to_guid
+            keys; passing {} skips duplicate detection (throttled/offline reads must
+            never block generation).
+
+    Returns:
+        list[list[dict]]: one list per card, each entry is a check result with
+        keys: code ("duplicate"|"cloze"|"long-answer"|"ok"), level ("block"|"warn"|"ok"),
+        message (str), and optional "existing" (for duplicate entries).
+    """
+    out = []
+    for card in cards:
+        entries = []
+        ntype, fields = card["note_type"], card["fields"]
+        primary = PRIMARY_FIELD.get(ntype, next(iter(fields)))
+        norm = _norm_front(fields.get(primary, ""))
+
+        if norm and norm in existing_fronts:
+            entries.append({"code": "duplicate", "level": "block",
+                            "existing": existing_fronts[norm],
+                            "message": "possible duplicate of an existing card"})
+
+        if ntype == "Study Deck - Cloze":
+            text = fields.get("Text", "")
+            good = _CLOZE_OK_RE.findall(text)
+            if not good:
+                entries.append({"code": "cloze", "level": "block",
+                                "message": "cloze note has no valid deletion"})
+            elif len(_BRACES_RE.findall(text)) != 2 * len(good):
+                entries.append({"code": "cloze", "level": "block",
+                                "message": "malformed cloze braces"})
+
+        answer = fields.get("Back") or fields.get("Why") or ""
+        if len(_plain(answer).split()) > LONG_ANSWER_WORDS:
+            entries.append({"code": "long-answer", "level": "warn",
+                            "message": "answer is long; consider trimming"})
+
+        if not entries:
+            entries = [{"code": "ok", "level": "ok", "message": "checks pass"}]
+        out.append(entries)
+    return out

@@ -82,3 +82,39 @@ def test_parse_rejects_tags_as_string():
     bad = '[{"note_type": "Basic", "fields": {"Front": "x", "Back": "y"}, "tags": "LAST"}]'
     cards, errors = ai_logic.parse_cards_json(bad, ALLOWED, FIELD_MAP)
     assert cards == [] and any("tags" in e.lower() for e in errors)
+
+
+def _card(ntype="Study Deck - Basic", **fields):
+    base = {k: "" for k in FIELD_MAP[ntype]}
+    base.update(fields)
+    return {"note_type": ntype, "fields": base, "tags": [], "images": [],
+            "rationale": ""}
+
+
+def test_check_duplicate_against_collection():
+    cards = [_card(Front="What is LAST?", Back="x")]
+    checks = ai_logic.mechanical_checks(cards, {"what is last?": "What is LAST?"})
+    assert any(c["code"] == "duplicate" and c["level"] == "block"
+               for c in checks[0])
+
+
+def test_check_cloze_syntax():
+    ok = _card("Study Deck - Cloze", Text="{{c1::1.5 mL/kg}} bolus")
+    bad = _card("Study Deck - Cloze", Text="{{c1:broken}} and {{c2::fine}")
+    none = _card("Study Deck - Cloze", Text="no deletions at all")
+    checks = ai_logic.mechanical_checks([ok, bad, none], {})
+    assert all(c["code"] != "cloze" for c in checks[0])
+    assert any(c["code"] == "cloze" and c["level"] == "block" for c in checks[1])
+    assert any(c["code"] == "cloze" for c in checks[2])
+
+
+def test_check_long_answer_warns():
+    long_back = " ".join(["word"] * 120)
+    checks = ai_logic.mechanical_checks([_card(Front="q", Back=long_back)], {})
+    assert any(c["code"] == "long-answer" and c["level"] == "warn"
+               for c in checks[0])
+
+
+def test_clean_card_gets_ok():
+    checks = ai_logic.mechanical_checks([_card(Front="q", Back="a", Why="w")], {})
+    assert checks[0] == [{"code": "ok", "level": "ok", "message": "checks pass"}]
