@@ -17,7 +17,7 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.S)
 _IMAGE_SOURCE_RE = re.compile(r"^(attached:[\w .\-]+|url:https://\S+|svg:<svg.*)$", re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
 _CLOZE_OK_RE = re.compile(r"\{\{c\d+::[^{}]+?\}\}")
-_BRACES_RE = re.compile(r"\{\{|\}\}")
+_CLOZE_OPEN_RE = re.compile(r"\{\{c\d+")
 PRIMARY_FIELD = {"Study Deck - Basic": "Front", "Study Deck - Cloze": "Text",
                  "Study Deck - Image ID": "Image", "Basic": "Front"}
 LONG_ANSWER_WORDS = 60
@@ -108,19 +108,11 @@ def _norm_front(text):
 
 
 def mechanical_checks(cards, existing_fronts):
-    """Check drafted cards for duplicates, cloze syntax, and length.
-
-    Args:
-        cards: list of card dicts with note_type, fields, tags, images, rationale
-        existing_fronts: {normalized front: original front} for her collection.
-            Build it collection-side with the same _norm_front over _her_front_to_guid
-            keys; passing {} skips duplicate detection (throttled/offline reads must
-            never block generation).
-
-    Returns:
-        list[list[dict]]: one list per card, each entry is a check result with
-        keys: code ("duplicate"|"cloze"|"long-answer"|"ok"), level ("block"|"warn"|"ok"),
-        message (str), and optional "existing" (for duplicate entries).
+    """Check drafted cards for duplicates, cloze syntax, and length. existing_fronts
+    is {normalized front: original front} for her collection, built collection-side
+    with the same _norm_front over _her_front_to_guid keys; {} skips duplicate
+    detection (throttled/offline reads must never block generation). Returns one
+    list of check-result dicts (code, level, message, optional "existing") per card.
     """
     out = []
     for card in cards:
@@ -137,14 +129,15 @@ def mechanical_checks(cards, existing_fronts):
         if ntype == "Study Deck - Cloze":
             text = fields.get("Text", "")
             good = _CLOZE_OK_RE.findall(text)
+            openers = _CLOZE_OPEN_RE.findall(text)
             if not good:
                 entries.append({"code": "cloze", "level": "block",
                                 "message": "cloze note has no valid deletion"})
-            elif len(_BRACES_RE.findall(text)) != 2 * len(good):
+            elif len(openers) > len(good):
                 entries.append({"code": "cloze", "level": "block",
                                 "message": "malformed cloze braces"})
 
-        answer = fields.get("Back") or fields.get("Why") or ""
+        answer = fields.get("Back", "") + " " + fields.get("Why", "")
         if len(_plain(answer).split()) > LONG_ANSWER_WORDS:
             entries.append({"code": "long-answer", "level": "warn",
                             "message": "answer is long; consider trimming"})
