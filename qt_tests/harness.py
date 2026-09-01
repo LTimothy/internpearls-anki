@@ -179,6 +179,11 @@ def synthetic_details():
     Row 1 also carries `change_notes`, so a render exercises the because line under an
     UPDATED row too, and both rows carry a `card_source`, which sits above it and is
     the one line that shows on a NEW row as well.
+
+    Row 1's `was` is plain prose sharing words with its current value, so a render
+    paints the What changed group's word-diff line (struck removals, highlighted
+    additions); row 3's cloze `was` differs only in its deletions, so a render paints
+    the named-blank line instead.
     """
     return [
         {"guid": "g1", "notetype": "Study Deck - Basic", "kind": "new",
@@ -205,7 +210,9 @@ def synthetic_details():
          "fields": [("Front", "An untagged row, to check the left edge lines up?"),
                     ("Back", "No tag on this one."), ("Why", ""),
                     ("Image", ""), ("Tag", ""), ("Dosing", ""), ("Notes", "")]},
-        {"guid": "g4", "notetype": "Study Deck - Cloze",
+        {"guid": "g4", "notetype": "Study Deck - Cloze", "kind": "changed",
+         "was": {"Text": "A cloze note fills {{c1::one}} deletion, and "
+                         "{{c2::another}} {{c3::one}}, in the deck's own blue."},
          "fields": [("Text", "A cloze note fills {{c1::one}} deletion, and "
                              "{{c2::another}} one, in the deck's own blue."),
                     ("Why", "Deletions are shown filled: the fact is in them."),
