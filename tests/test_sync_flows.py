@@ -781,6 +781,118 @@ def test_unchanged_template_never_prompts(anki, tmp_path):
     assert not any("Apply the new look" in a for a in anki.gui.asks)
 
 
+# ------------------------------------------------------------- deck-skill consent
+def _write_skill(folder, path="skills/deck/SKILL.md", version="1.0",
+                 text="# Deck skill v1\nBe concise."):
+    """Add a manifest "skill" entry to a source folder _write_source already built,
+    and write the skill file itself at that path. Mutates the folder's
+    manifest.json in place, same shape update_decks/sync_decks read
+    (manifest["skill"] = {"path", "version"})."""
+    manifest_path = os.path.join(folder, "manifest.json")
+    manifest = json.loads(open(manifest_path, encoding="utf8").read())
+    manifest["skill"] = {"path": path, "version": version}
+    open(manifest_path, "w", encoding="utf8").write(json.dumps(manifest))
+    skill_path = os.path.join(folder, path)
+    os.makedirs(os.path.dirname(skill_path), exist_ok=True)
+    open(skill_path, "wb").write(text.encode("utf8"))
+
+
+def _run_with_skill_answer(anki, fn, consent):
+    """Drive `fn` (sync_decks or update_decks) to completion. `consent=True/False`
+    answers the deck-skill consent dialog ("Use this skill" / "Not now") if one
+    appears; `consent=None` asserts NO such dialog appears, so a test asserting
+    "no re-ask" fails loudly instead of silently answering a question it didn't
+    expect. Every other dialog (an "up to date" info box here, since these tests
+    use a source with no deck content) just passes through. Returns the skill
+    dialog's own label texts (joined), or "" if none appeared, so a test can check
+    what the dialog actually said."""
+    seen = []
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        assert consent is not None, f"unexpected dialog: {_label_texts(p['tree'])}"
+        seen.append("\n".join(_label_texts(p["tree"])))
+        label = "Use this skill" if consent else "Not now"
+        btn = _find(p["tree"], t="button", label=label)
+        assert btn, f"no {label!r} button in the skill consent dialog"
+        return {"events": [{"id": btn["id"], "click": True}]}
+    drive(anki, fn, respond)
+    return seen[0] if seen else ""
+
+
+def test_deck_skill_absent_from_manifest_is_a_complete_noop(anki, tmp_path):
+    from internpearls import config, sync
+    folder = _write_source(tmp_path, {})   # no "skill" key at all
+    _configure(anki, folder)
+
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)   # no dialog
+
+    assert config.load_deck_skill() is None
+
+
+def test_deck_skill_first_appearance_asks_full_text_and_consenting_stores_it(
+        anki, tmp_path):
+    from internpearls import config, sync
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder, version="1.0", text="# Deck skill v1\nBe concise.")
+    _configure(anki, folder)
+
+    dialog_text = _run_with_skill_answer(anki, sync.update_decks, consent=True)
+
+    stored = config.load_deck_skill()
+    assert stored and stored["enabled"] and stored["version"] == "1.0"
+    assert "Be concise" in stored["text"]
+    assert "Thorough mode" in dialog_text
+    assert "Be concise" in dialog_text   # the FULL skill text, not a summary
+
+
+def test_deck_skill_unchanged_hash_never_reasks(anki, tmp_path):
+    from internpearls import config, sync
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder, version="1.0", text="# Deck skill v1\nBe concise.")
+    _configure(anki, folder)
+    _run_with_skill_answer(anki, sync.update_decks, consent=True)
+
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)   # no re-ask
+
+    assert "Be concise" in config.load_deck_skill()["text"]
+
+
+def test_deck_skill_changed_content_reasks_and_declining_keeps_the_old_one(
+        anki, tmp_path):
+    from internpearls import config, sync
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder, version="1.0", text="# Deck skill v1\nBe concise.")
+    _configure(anki, folder)
+    _run_with_skill_answer(anki, sync.update_decks, consent=True)
+
+    _write_skill(folder, version="2.0", text="# Deck skill v2\nNew rules.")
+    _run_with_skill_answer(anki, sync.update_decks, consent=False)
+
+    stored = config.load_deck_skill()
+    assert stored["enabled"] and "Be concise" in stored["text"]
+    assert "New rules" not in stored["text"]
+
+
+def test_deck_skill_fetch_failure_never_blocks_the_sync(anki, tmp_path):
+    """A skill entry pointing at a file that doesn't exist on the source must not
+    stop the deck sync itself from completing."""
+    from internpearls import config, sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    manifest_path = os.path.join(folder, "manifest.json")
+    manifest = json.loads(open(manifest_path, encoding="utf8").read())
+    manifest["skill"] = {"path": "skills/missing/SKILL.md", "version": "1.0"}
+    open(manifest_path, "w", encoding="utf8").write(json.dumps(manifest))
+    _configure(anki, folder)
+
+    trees = _update(anki)   # no skill dialog fires; the deck-content confirmation does
+
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+    assert config.load_deck_skill() is None
+
+
 class _StubAction:
     """Stands in for the real "Reconcile my decks" QAction in tests that don't build
     the actual menu (conftest.py deliberately never runs __init__.py) — just enough
