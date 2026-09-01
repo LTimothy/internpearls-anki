@@ -1002,6 +1002,27 @@ def test_reconcile_archives_a_retired_card_she_holds_under_an_older_guid(anki, t
     assert any("Archived <b>1 retired card</b>" in i for i in anki.gui.infos)
 
 
+def test_reconcile_never_archives_a_locally_generated_card_matched_by_front(
+        anki, tmp_path):
+    """The same front fallback that finds an older-GUID card above must never resolve
+    onto one of the learner's own AI-generated cards: its front coinciding with a
+    retired entry's identity is not a deck source telling us that card is retired."""
+    from internpearls import ai_logic, sync
+    card = _her_card(anki, ai_logic.generated_guid(), "bulky crisis card")
+    _her_card(anki, "new1a", "focused card A")
+    folder = _write_retired_source(tmp_path, {
+        DECK: {"canonical_guid": {"identity": "bulky crisis card", "reason": "split",
+                                  "superseded_by": ["new1a"]}}})
+    _configure(anki, folder)
+
+    sync.reconcile_decks()
+
+    cid = card.card_ids()[0]
+    assert anki.col._cards[cid].queue == 0                        # still in review
+    assert anki.col.decks.name(anki.col._cards[cid].did) == DECK
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
+
+
 def test_reconcile_leaves_a_retired_card_alone_when_neither_guid_nor_front_match(
         anki, tmp_path):
     """The fallback only ever acts on a front it actually finds. A retired entry whose
@@ -1114,6 +1135,45 @@ def test_reconcile_leaves_a_reworded_card_alone_when_she_only_has_the_old_one(
 
     card = anki.col.get_card(old.card_ids()[0])
     assert card.queue == 0 and card.did == anki.col.decks.id_for_name(DECK)
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
+
+
+def test_reconcile_never_merges_a_locally_generated_card_as_the_stranded_predecessor(
+        anki, tmp_path):
+    """A generated card's front might coincidentally match the old half of a reworded
+    pair. It must never be treated as that stale predecessor: no scheduling carried
+    off it onto anything else, and no archiving."""
+    from internpearls import ai_logic, sync
+    old = _her_card(anki, ai_logic.generated_guid(), "old wording")
+    _her_card(anki, "g_new", "new wording")
+    _sched(anki, old, reps=4, ivl=12)
+    _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
+
+    sync.reconcile_decks()
+
+    card = anki.col.get_card(old.card_ids()[0])
+    assert card.queue == 0 and card.did == anki.col.decks.id_for_name(DECK)
+    assert card.reps == 4                                 # her own progress, untouched
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
+
+
+def test_reconcile_never_writes_carried_scheduling_onto_a_generated_successor(
+        anki, tmp_path):
+    """The other half of the same risk: a generated card's front matching the NEW
+    wording of a reworded pair must never receive a predecessor's scheduling, and the
+    predecessor must not be archived against it either."""
+    from internpearls import ai_logic, sync
+    old = _her_card(anki, "g_old", "old wording")
+    new = _her_card(anki, ai_logic.generated_guid(), "new wording")
+    _sched(anki, old, reps=4, ivl=12, due=90, factor=2300, lapses=1, type=2, queue=2)
+    _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
+
+    sync.reconcile_decks()
+
+    dead = anki.col.get_card(old.card_ids()[0])
+    assert dead.queue == 2 and dead.reps == 4             # untouched: not merged/archived
+    kept = anki.col.get_card(new.card_ids()[0])
+    assert kept.reps == 0                                 # never received old's scheduling
     assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
 
 
@@ -1352,6 +1412,24 @@ def test_reconcile_relocates_a_stuck_card_by_front_when_guid_changed(anki, tmp_p
     cid = card.card_ids()[0]
     assert anki.col.decks.name(anki.col._cards[cid].did) == NEW_DECK
     assert any("Moved <b>1 card</b>" in i for i in anki.gui.infos)
+
+
+def test_reconcile_never_relocates_a_locally_generated_card_matched_by_front(
+        anki, tmp_path):
+    """Same front-fallback risk on the deck-move ledger as the retired one above: a
+    generated card's front must never pull it into a deck source's relocation."""
+    from internpearls import ai_logic, sync
+    front = "Lidocaine onset time?"
+    card = _her_card(anki, ai_logic.generated_guid(), front, deck=DECK)
+    folder = _write_retired_source(tmp_path, {}, deck_moves={
+        "canonical_guid": {"from": DECK, "to": NEW_DECK, "front": front}})
+    _configure(anki, folder)
+
+    sync.reconcile_decks()
+
+    cid = card.card_ids()[0]
+    assert anki.col.decks.name(anki.col._cards[cid].did) == DECK
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
 
 
 def test_reconcile_leaves_guid_mismatched_card_alone_without_front(anki, tmp_path):
