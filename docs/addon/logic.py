@@ -5,6 +5,7 @@ environment needed. If a function starts needing mw/col, it belongs in __init__.
 instead, not here.
 """
 import contextlib
+import difflib
 import hashlib
 import html
 import json
@@ -1037,6 +1038,72 @@ def cloze_filled_html(text, escape=True, mark_groups=None):
         return f'<span class="cloze">{m.group(2)}{badge}</span>'
 
     return _CLOZE_RE.sub(fill, text)
+
+
+def merged_word_diff(old, new):
+    """Both versions of a changed plain-text field as one word-level sequence:
+    [(op, text)] segments in reading order, op one of "equal", "removed", "added".
+
+    This is what lets the update screen show a change as a single line instead of two
+    near-identical paragraphs the reader has to compare by eye. Word-level rather than
+    character-level because a card edit is words: a dropped clause, a corrected value,
+    a rewording. Whitespace is normalized to single spaces, which is how the rendered
+    field reads anyway.
+
+    Plain text only, by contract: the caller gates on the field carrying no markup,
+    since splitting HTML on spaces would tear tags apart. Junk detection is off; a
+    field is a few dozen words and difflib's popularity heuristic exists for inputs
+    orders of magnitude longer, where it can silently degrade a diff this short.
+    """
+    a, b = (old or "").split(), (new or "").split()
+    out = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
+            a=a, b=b, autojunk=False).get_opcodes():
+        if tag in ("replace", "delete"):
+            out.append(("removed", " ".join(a[i1:i2])))
+        if tag in ("replace", "insert"):
+            out.append(("added", " ".join(b[j1:j2])))
+        if tag == "equal":
+            out.append(("equal", " ".join(a[i1:i2])))
+    return out
+
+
+def cloze_answer_changes(old, new):
+    """Which deletions moved between two versions of a cloze Text field:
+    (no_longer_blanked, newly_blanked) answer texts, or None when the surrounding
+    words changed too.
+
+    The filled renderings of a blanks-only change are word-for-word identical, so a
+    text diff of them shows nothing and a verbatim old copy repeats the whole sentence
+    for one moved blank. Naming the moved blanks is the change itself. None means the
+    sentence was also reworded, where only showing the full old version is honest;
+    the caller falls back to that. Both lists empty means the deletions were only
+    regrouped (same answers, different numbering), which changes how the note splits
+    into cards but blanks nothing new.
+
+    Answers are compared as multisets, so a sentence blanking the same word twice
+    reports a change only when a copy actually appears or disappears.
+    """
+    def fill(text):
+        return plain_text(_CLOZE_RE.sub(lambda m: m.group(2), text or ""))
+
+    if fill(old) != fill(new):
+        return None
+    old_answers = [m.group(2) for m in _CLOZE_RE.finditer(old or "")]
+    new_answers = [m.group(2) for m in _CLOZE_RE.finditer(new or "")]
+    removed, remaining = [], list(new_answers)
+    for answer in old_answers:
+        if answer in remaining:
+            remaining.remove(answer)
+        else:
+            removed.append(answer)
+    added, remaining = [], list(old_answers)
+    for answer in new_answers:
+        if answer in remaining:
+            remaining.remove(answer)
+        else:
+            added.append(answer)
+    return removed, added
 
 
 def field_preview_text(value):

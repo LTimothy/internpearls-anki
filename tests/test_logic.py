@@ -2016,3 +2016,65 @@ def test_source_label_for_tolerates_junk():
 def test_source_label_for_clips_a_runaway_label():
     got = logic.source_label_for({"g1": "[T1Q1] " * 200}, "g1")
     assert len(got) == logic.SOURCE_LABEL_MAX
+
+
+# ---------------------------------------------------------------- merged_word_diff
+def test_merged_word_diff_marks_a_replaced_value_and_keeps_shared_words_once():
+    got = logic.merged_word_diff("Give 1 mg/kg over 10 minutes.",
+                                 "Give 1.5 mg/kg over 2 minutes.")
+    assert got == [("equal", "Give"), ("removed", "1"), ("added", "1.5"),
+                   ("equal", "mg/kg over"), ("removed", "10"), ("added", "2"),
+                   ("equal", "minutes.")]
+
+
+def test_merged_word_diff_marks_a_dropped_leading_clause():
+    got = logic.merged_word_diff("Old clause first, then the shared tail.",
+                                 "then the shared tail.")
+    assert got[0] == ("removed", "Old clause first,")
+    assert ("equal", "then the shared tail.") in got
+    assert not [seg for seg in got if seg[0] == "added"]
+
+
+def test_merged_word_diff_handles_an_empty_side():
+    assert logic.merged_word_diff("", "all new words") == [("added", "all new words")]
+    assert logic.merged_word_diff("all gone words", "") == [("removed", "all gone words")]
+    assert logic.merged_word_diff("", "") == []
+
+
+# ------------------------------------------------------------ cloze_answer_changes
+def test_cloze_answer_changes_names_a_dropped_blank():
+    old = "A {{c1::pencil-point}} tip is best at {{c2::25 to 27 gauge}}."
+    new = "A pencil-point tip is best at {{c2::25 to 27 gauge}}."
+    assert logic.cloze_answer_changes(old, new) == (["pencil-point"], [])
+
+
+def test_cloze_answer_changes_names_a_new_blank():
+    old = "A pencil-point tip is best at {{c1::25 to 27 gauge}}."
+    new = "A {{c2::pencil-point}} tip is best at {{c1::25 to 27 gauge}}."
+    assert logic.cloze_answer_changes(old, new) == ([], ["pencil-point"])
+
+
+def test_cloze_answer_changes_refuses_when_the_words_changed_too():
+    """A reworded sentence has no blanks-only story to tell; None sends the caller to
+    the verbatim fallback, which is the only honest rendering there."""
+    old = "An older sentence blanking {{c1::a value}}."
+    new = "A newer sentence blanking {{c1::a value}}."
+    assert logic.cloze_answer_changes(old, new) is None
+
+
+def test_cloze_answer_changes_treats_a_pure_regroup_as_empty_lists():
+    old = "{{c1::alpha}} and {{c1::beta}} together."
+    new = "{{c1::alpha}} and {{c2::beta}} together."
+    assert logic.cloze_answer_changes(old, new) == ([], [])
+
+
+def test_cloze_answer_changes_compares_repeated_answers_as_a_multiset():
+    old = "{{c1::salt}} before and {{c2::salt}} after."
+    new = "{{c1::salt}} before and salt after."
+    assert logic.cloze_answer_changes(old, new) == (["salt"], [])
+
+
+def test_cloze_answer_changes_ignores_the_hint_half_of_a_deletion():
+    old = "Best at {{c1::25 gauge::a size}}."
+    new = "Best at {{c1::25 gauge}}."
+    assert logic.cloze_answer_changes(old, new) == ([], [])
