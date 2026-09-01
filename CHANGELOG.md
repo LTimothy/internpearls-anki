@@ -3,6 +3,29 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.52.0
+
+A rewritten field now reads as a receipt, not a wall. Two treatments had been
+tried and both fell short: marking a rewrite up word by word buried the change
+in strikethrough and highlights, and showing the old text plainly parked a
+second full paragraph under every rewritten card. Two independent design
+reviews converged on the same answer, and this is it:
+
+- The default is one line: "Why  rewritten, shortened (104 → 66 words)", with
+  the word counts appearing only when the length really moved. The new version
+  is already the card shown above, so at a glance that line is everything an
+  Apply decision needs.
+- A "Show yours" link (the same quiet link style as Add note, named in the
+  Keep yours button's own vocabulary) reveals the old version in place: clean,
+  unmarked, behind a grey rule that mirrors the green rule on the card's own
+  explanation, so the two read as the same kind of block from two moments. It
+  is built only when clicked, so long lists stay as fast as before.
+- The word-diff line for small edits keeps its place, with its bar raised: a
+  change now takes the diff treatment only while the marked words stay well
+  under half the line, so a mostly-marked line can no longer ship.
+- In the blanks-moved line, the named blank is bold now rather than blue,
+  keeping blue for things that actually respond to a click.
+
 ## v0.51.0
 
 Two refinements to the What changed group, from its first day in real use:

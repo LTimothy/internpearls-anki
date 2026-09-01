@@ -401,6 +401,29 @@ def test_the_what_changed_group_states_the_delta_not_two_paragraphs(shot):
     assert "{{c" not in cloze_row, "raw cloze braces must never reach the screen"
 
 
+def test_a_rewrite_is_a_receipt_line_until_show_yours_is_clicked(shot):
+    """A rewritten field renders as its one-line summary with the old text absent
+    from the screen entirely; clicking Show yours reveals the old text verbatim and
+    unmarked. Both rejected treatments stay dead: no diff markup on a rewrite, no
+    always-on paragraph of old text."""
+    _, q = harness.bootstrap()
+    s = shot("confirm", expand=(0, 1, 2, 3, 4))
+    texts = [l.text() for l in _visible_labels(s.dialog, q)]
+    receipt = next(t for t in texts if "<b>Why</b>" in t and "rewritten" in t)
+    assert "<s>" not in receipt
+    assert not any("An earlier explanation of the wrap point" in t for t in texts), \
+        "the old text should not paint before Show yours is clicked"
+    links = [b for b in s.dialog.findChildren(q.QPushButton)
+             if b.text() == "Show yours"]
+    assert links, "expected a Show yours link on the rewrite row"
+
+    clicked = shot("confirm", expand=(0, 1, 2, 3, 4), click_labels=("Show yours",))
+    revealed = [l for l in _visible_labels(clicked.dialog, q)
+                if "An earlier explanation of the wrap point" in l.text()]
+    assert revealed, "Show yours should reveal the old text"
+    assert "<s>" not in revealed[0].text(), "the revealed old text is unmarked prose"
+
+
 def test_decision_cells_stop_short_of_the_list_viewport_edge(shot):
     """A card row's decision control used to end on the streaming list viewport's last
     pixel: its rounded right corner sat under the list's frame line, which on macOS
