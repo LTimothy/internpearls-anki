@@ -108,9 +108,27 @@ def test_check_cloze_syntax():
     assert any(c["code"] == "cloze" for c in checks[2])
 
 
+def test_check_cloze_syntax_ignores_literal_braces_in_prose():
+    # one real deletion, plus prose that just talks about cloze syntax
+    card = _card("Study Deck - Cloze",
+                  Text="{{c1::normal answer}} but the syntax uses {{ and }} in Anki")
+    checks = ai_logic.mechanical_checks([card], {})
+    assert all(c["code"] != "cloze" for c in checks[0])
+
+
 def test_check_long_answer_warns():
     long_back = " ".join(["word"] * 120)
     checks = ai_logic.mechanical_checks([_card(Front="q", Back=long_back)], {})
+    assert any(c["code"] == "long-answer" and c["level"] == "warn"
+               for c in checks[0])
+
+
+def test_check_long_answer_warns_on_short_back_long_why():
+    # house style: short Back, long Why. Neither field alone trips the
+    # threshold, but what the learner reads on the back does.
+    long_why = " ".join(["word"] * 120)
+    checks = ai_logic.mechanical_checks(
+        [_card(Front="q", Back="short", Why=long_why)], {})
     assert any(c["code"] == "long-answer" and c["level"] == "warn"
                for c in checks[0])
 
@@ -126,8 +144,10 @@ def test_prompt_stable_prefix_across_revision():
     first = ai_logic.build_prompt(**kw)
     second = ai_logic.build_prompt(**kw, cards=[_card(Front="q", Back="a")],
                                    feedback="shorter", notes={0: "trim"})
-    assert second.startswith(first.split("## Current draft")[0].rstrip()) or \
-        second.startswith(first[:len(first) // 2])
+    # the ENTIRE generation-turn prompt (including its trailing newline, which
+    # the revision turn simply continues past with a blank line) must be a
+    # literal prefix of the revision prompt, or vendor prompt caching can't hit.
+    assert second.startswith(first)
     # the changing material must sit after everything shared
     assert second.index("SRC") < second.index("shorter")
 
