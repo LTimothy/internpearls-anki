@@ -1989,3 +1989,30 @@ def test_change_notes_for_drops_non_string_notes():
                     {"note": ["x"], "hash": h}, {"note": {"k": "v"}, "hash": h},
                     {"note": "ok", "hash": h}]}
     assert [e["note"] for e in logic.change_notes_for(notes, "g1", fields)] == ["ok"]
+
+
+# ---------------------------------------------------------------- source_label_for
+def test_source_label_for_returns_the_decks_own_string():
+    assert logic.source_label_for({"g1": "[T10Q2]"}, "g1") == "[T10Q2]"
+    assert logic.source_label_for({"g1": " [T10Q2] [T4Q11] "}, "g1") == "[T10Q2] [T4Q11]"
+
+
+def test_source_label_for_is_absent_rather_than_empty_when_there_is_none():
+    assert logic.source_label_for({"g1": "[T10Q2]"}, "g2") == ""
+    assert logic.source_label_for({}, "g1") == ""
+    assert logic.source_label_for(None, "g1") == ""
+
+
+def test_source_label_for_tolerates_junk():
+    """One bad entry in a fetched manifest costs that card its label and nothing else.
+    None of these may raise."""
+    assert logic.source_label_for({"g1": 12345}, "g1") == ""
+    assert logic.source_label_for({"g1": None}, "g1") == ""
+    assert logic.source_label_for({"g1": ["[T1Q1]"]}, "g1") == ""
+    assert logic.source_label_for({"g1": "   "}, "g1") == ""
+    assert logic.source_label_for("not a dict", "g1") == ""
+
+
+def test_source_label_for_clips_a_runaway_label():
+    got = logic.source_label_for({"g1": "[T1Q1] " * 200}, "g1")
+    assert len(got) == logic.SOURCE_LABEL_MAX

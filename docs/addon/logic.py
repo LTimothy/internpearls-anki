@@ -719,6 +719,32 @@ def change_notes_for(manifest_notes, guid, fields):
             and e.get("note") and e.get("hash") == h]
 
 
+SOURCE_LABEL_MAX = 120
+
+
+def source_label_for(manifest_sources, guid):
+    """A deck source's own short label for where a card came from, e.g. `[T10Q2]`, or
+    "" when it ships none.
+
+    Opaque on purpose. The string is built by whoever publishes the deck, out of
+    whatever a card's provenance means for that deck, and nothing here parses it or
+    assumes a shape. Unlike a change note it carries no claim about why the card
+    changed, so it needs no hash gate: it is derived from the same build as the
+    content it sits next to.
+
+    Anything that is not a plain string is dropped rather than rendered, and a
+    runaway label is clipped, since one bad entry in a fetched manifest must not
+    break a row or push everything else off it.
+    """
+    if not isinstance(manifest_sources, dict):
+        return ""
+    label = manifest_sources.get(guid)
+    if not isinstance(label, str):
+        return ""
+    label = label.strip()
+    return label[:SOURCE_LABEL_MAX] if label else ""
+
+
 def prune_declined(reg, retired_guids, seen):
     """Drop registry entries that are moot: the note was retired upstream, or it is
     gone from its deck's current package. `seen` covers only decks actually

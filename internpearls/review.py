@@ -436,6 +436,28 @@ def _change_note_row(note, indent):
     return row
 
 
+def _card_source_row(label, indent):
+    """The deck source's short label for where a card came from, as a quiet line in
+    the row's own text column.
+
+    Sits above any change note, and reads differently from one on purpose: a change
+    note is a sentence about why this card is being offered, while this is a tag,
+    true whether or not anything changed. So no accent bar and no quotes, just `dim`
+    at the change note's size, which is what a reference number should look like.
+
+    The string is the deck source's, rendered as plain text: it is never parsed here,
+    and it is escaped rather than trusted, since it arrives from a fetched manifest.
+    """
+    row = QWidget()
+    lay = QHBoxLayout(row)
+    lay.setContentsMargins(indent, 0, 0, 0)
+    lay.setSpacing(0)
+    text = muted_label(html.escape(label))
+    text.setStyleSheet(f"color: {colors()['dim']}; font-size: 11px;")
+    lay.addWidget(text)
+    return row
+
+
 def _collection_image(name):
     """One of the learner's own media files as an <img>, or None when it is not there.
 
@@ -468,7 +490,13 @@ def _separator():
 
 
 _NEW_OPTIONS = [("import", "Import"), ("skip", "Skip"), ("never", "Never")]
-_CHANGED_OPTIONS = [("apply", "Apply"), ("keep", "Keep yours")]
+# The changed row's three options mirror the new row's, and "frozen" is Never's
+# counterpart here. It is a state of its own rather than "never" reused, because the two
+# mean different things once the card is in her collection and the Declined cards screen
+# has to be able to say which is which: Never imported, against a card she keeps whose
+# updates she has turned off. The button says Never on both kinds; what it turns down is
+# whatever that row is offering, and the caption on the click spells that out.
+_CHANGED_OPTIONS = [("apply", "Apply"), ("keep", "Keep yours"), ("frozen", "Never")]
 _DEFAULT_DECISION = {"new": "import", "changed": "apply"}
 
 # Where a declined card actually comes back from, spelled the same way in both captions.
@@ -481,6 +509,11 @@ _BACK_FROM_DECLINE = ("offered again the next time this deck changes, or any tim
 _DECLINE_CAPTION = {
     "skip": f"Set aside. It's {_BACK_FROM_DECLINE}.",
     "keep": f"Your card stays as it is. The change is {_BACK_FROM_DECLINE}.",
+    # No "offered again" clause on purpose: unlike the two above, this one is not a
+    # not-this-time. Manage decks → Declined cards is the only way back, and saying so
+    # is what keeps it from reading as the same soft decision with a different label.
+    "frozen": ("Your card stays as it is, and changes to it won't be offered again. "
+               "Undo from Manage decks → Declined cards."),
 }
 
 # Nothing is transmitted from here: a note is folded into the digest at the end of the
@@ -491,7 +524,14 @@ _FEEDBACK_PLACEHOLDER = ("Anything to pass on about this card? You'll get a copy
                          "end to paste and send.")
 
 
-_DECLINE_CHIP = {"skip": "skipped", "keep": "kept"}
+# Every decision that turns a card down, which is every decision worth offering the
+# note box for on the spot. Wider than _DECLINE_CAPTION, which is only the two that
+# earn a caption saying where the card comes back from; Never is a decision about the
+# card rather than about this offer, so it has nothing to come back from and still has
+# the most to explain.
+_TURNED_DOWN = frozenset({"skip", "keep", "never", "frozen"})
+
+_DECLINE_CHIP = {"skip": "skipped", "keep": "kept", "frozen": "kept"}
 
 
 def _row_chip(detail):
@@ -534,9 +574,10 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     what opening a row pays for, so a long list stays cheap to scroll and a review nobody
     opens costs nothing at all.
 
-    A `change_notes` entry, when the deck source attached one, renders directly under
-    the header (see `_change_note_row`): the deck source's own account of why this card
-    changed, visible whether the row is collapsed or open.
+    A `card_source` label and any `change_notes` entries render directly under the
+    header, visible whether the row is collapsed or open: where the card came from (see
+    `_card_source_row`) and the deck source's own account of why it changed (see
+    `_change_note_row`).
     """
     guid = detail["guid"]
     kind = detail.get("kind")
@@ -559,7 +600,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     # same first-expand schedule as everything else even on a row `resolve` is None for.
     was_rerender = []
     revealed = []
-    # The rows _change_note_row builds for this card, kept local so
+    # The rows _card_source_row and _change_note_row build for this card, kept local so
     # _apply_decision_visuals can hide them under Never and restore them if the
     # decision moves off Never again; they don't exist yet the first time that
     # function runs, but a predeclined "never" never reaches this row at all
@@ -692,22 +733,31 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         # the row opened already carrying: declining here and now is a moment worth
         # offering the box for, while a decline made in an earlier run is not.
         has_note = bool(flags.get(guid)) or bool(box.toPlainText().strip())
-        show_box = has_note or (declined and clicked)
+        show_box = has_note or (state in _TURNED_DOWN and clicked)
         box.setVisible(show_box)
         # Offered whenever the box is closed, whatever the row decided: a re-offered
         # decline is not a default row, and gating this on the default left exactly
         # those rows with no way to write a note at all.
-        add_note.setVisible(state != "never" and not show_box)
+        add_note.setVisible(not show_box)
+        # Struck through only for Never, which is a card she will not have. A frozen
+        # row keeps a card she does have, so striking it would say the opposite of
+        # what happened.
+        gone = state == "never"
         font = primary.font()
-        font.setStrikeOut(state == "never")
+        font.setStrikeOut(gone)
         primary.setFont(font)
-        never_note.setVisible(state == "never")
+        never_note.setVisible(state in ("never", "frozen"))
         for note_row in note_rows:
-            note_row.setVisible(state != "never")
-        if state == "never":
+            note_row.setVisible(not gone)
+        if gone:
             body.setVisible(False)
             caret.setText(_CARET_CLOSED)
             _name_caret(False)
+        # The box lives outside the body, so a Never row keeps it on screen while
+        # collapsing everything else. That is the whole reason Never can be offered a
+        # note at all: the row folds away and the one thing left is the question of
+        # why. It used to hide the box and the link both, which made the loudest
+        # decision in the dialog the only silent one.
 
     if kind in _DEFAULT_DECISION:
         options = _NEW_OPTIONS if kind == "new" else _CHANGED_OPTIONS
@@ -731,6 +781,11 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         _apply_decision_visuals(initial)
 
     outer.addWidget(header)
+
+    if detail.get("card_source"):
+        source_row = _card_source_row(detail["card_source"], indent)
+        note_rows.append(source_row)
+        outer.addWidget(source_row)
 
     for note in detail.get("change_notes") or []:
         note_row = _change_note_row(note, indent)

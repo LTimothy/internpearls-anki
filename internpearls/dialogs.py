@@ -743,8 +743,8 @@ def manage_decks(pending=None):
 # whose state matches none of these still renders, under "Other", appended last in
 # _rebuild(): sync.py keeps a GUID declined by its presence in the registry alone,
 # regardless of what its state says, so every entry needs a way back to being offered.
-_DECLINE_GROUPS = (("never", "Never imported"), ("skip", "Skipped for now"),
-                   ("keep", "Kept yours"))
+_DECLINE_GROUPS = (("never", "Never imported"), ("frozen", "Kept yours, no more updates"),
+                   ("skip", "Skipped for now"), ("keep", "Kept yours"))
 
 # The cap review._scrolled stops the list growing the dialog past, once it holds more
 # rows than fit. Unlike _SCOPE_DIALOG_H above, this sets no floor: a short list stays

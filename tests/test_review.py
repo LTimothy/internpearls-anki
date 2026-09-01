@@ -1012,3 +1012,90 @@ def test_the_mock_qt_provides_the_qimage_review_reads_widths_from():
     assert QImage("/definitely/not/a/file.jpg").isNull() is True
     assert QImage(__file__).isNull() is False
     assert QImage(__file__).width() > 0
+
+
+# ------------------------------------------------------------- card source
+def test_a_card_source_renders_in_the_row_and_absence_renders_nothing():
+    """A detail carrying `card_source` puts that label in the row. It is the deck
+    source's own string and is rendered as text, never parsed."""
+    detail = dict(_basic_note_detail(), guid="g1", kind="new", card_source="[T10Q2]")
+    assert any("[T10Q2]" in t for t in _text_nodes(detail))
+
+    without = dict(_basic_note_detail(), guid="g2", kind="new")
+    assert not any("[T10Q2]" in t for t in _text_nodes(without))
+
+
+def test_a_card_source_shows_on_a_changed_row_too():
+    """Unlike a change note it is an identifier rather than a reason, so it is not
+    reserved for one kind of row."""
+    detail = dict(_basic_note_detail(), guid="g3", kind="changed", card_source="[T4Q11]")
+    assert any("[T4Q11]" in t for t in _text_nodes(detail))
+
+
+def test_a_card_source_is_escaped_rather_than_trusted():
+    detail = dict(_basic_note_detail(), guid="g4", kind="new",
+                  card_source="<b>T10Q2</b>")
+    assert any("&lt;b&gt;" in t for t in _text_nodes(detail))
+
+
+# ------------------------------------------------- a note on a turned-down card
+def _box_of(row):
+    """The row's feedback box. It lives outside the expandable body on purpose, so a
+    collapsed row can still carry one."""
+    from aqt.qt import QPlainTextEdit
+    return next((w for w in _walk_widgets(row) if isinstance(w, QPlainTextEdit)), None)
+
+
+def _cell_of(row):
+    return next(w for w in _walk_widgets(row) if hasattr(w, "buttons"))
+
+
+def test_every_way_of_turning_a_card_down_opens_the_note_box():
+    """Skip, Keep yours and Never all open the box on the click. Never used to be the
+    exception, which made the loudest decision in the dialog the only silent one: a
+    round arrived with twelve Nevers and no reason attached to any of them."""
+    for kind, decision in (("new", "skip"), ("new", "never"), ("changed", "keep")):
+        detail = dict(_basic_note_detail(), guid=f"g-{decision}", kind=kind)
+        row = review._card_row(detail, {}, {}, {}, lambda *a, **k: None)
+        box = _box_of(row)
+        assert box is not None and not box.isVisible()
+        _cell_of(row).buttons[decision].click()
+        assert box.isVisible(), f"{decision} left no way to say why"
+
+
+def test_accepting_a_card_leaves_the_box_shut():
+    """The box opens on a decision worth explaining, not on every click. Import and
+    Apply keep the quiet Add note link instead."""
+    for kind, decision in (("new", "import"), ("changed", "apply")):
+        detail = dict(_basic_note_detail(), guid=f"g-{decision}", kind=kind)
+        row = review._card_row(detail, {}, {}, {}, lambda *a, **k: None)
+        _cell_of(row).buttons[decision].click()
+        assert not _box_of(row).isVisible()
+
+
+def test_a_note_already_written_survives_a_move_to_never():
+    detail = dict(_basic_note_detail(), guid="g1", kind="new")
+    row = review._card_row(detail, {"g1": "this one is a duplicate"}, {}, {},
+                           lambda *a, **k: None)
+    box = _box_of(row)
+    _cell_of(row).buttons["never"].click()
+    assert box.isVisible() and box.toPlainText() == "this one is a duplicate"
+
+
+def test_never_on_a_changed_card_does_not_strike_it_out():
+    """On a new card Never strikes the line through, because she will not have it. On a
+    changed card she keeps the card she has, so the same styling would say the opposite
+    of what happened."""
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed")
+    row = review._card_row(detail, {}, {}, {}, lambda *a, **k: None)
+    primary = next(w for w in _walk_widgets(row)
+                   if getattr(w, "text", None) and "anterior thigh" in (w.text() or ""))
+    _cell_of(row).buttons["frozen"].click()
+    assert not primary.font().strikeOut()
+
+    new_detail = dict(_basic_note_detail(), guid="g2", kind="new")
+    new_row = review._card_row(new_detail, {}, {}, {}, lambda *a, **k: None)
+    new_primary = next(w for w in _walk_widgets(new_row)
+                       if getattr(w, "text", None) and "anterior thigh" in (w.text() or ""))
+    _cell_of(new_row).buttons["never"].click()
+    assert new_primary.font().strikeOut()

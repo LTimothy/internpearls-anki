@@ -3,6 +3,24 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.49.0
+
+A deck source can now also ship a short label saying where a card came from, such
+as a question number in the bank it was written from. It shows above any note on
+the card's row, on newly added and changed cards alike, since it says where the
+card came from rather than why it changed.
+
+Turning a card down with Never now opens the same note box that Skip and Keep yours
+do. It was the one decision the dialog would not take a reason for, which left the
+strongest thing you can say about a card as the only silent one.
+
+A changed card now offers Never alongside Apply and Keep yours, the same three-way
+choice a new card has always had. Keep yours sets one change aside and the card comes
+back the next time the deck changes; Never keeps your version and stops offering
+changes to that card at all. Both leave your card exactly as it is, and Never here is
+undone from Manage decks → Declined cards, where those cards get their own group
+rather than being filed as never imported.
+
 ## v0.48.0
 
 A deck source can now attach a short note to a changed or newly added card

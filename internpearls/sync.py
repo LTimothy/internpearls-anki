@@ -35,6 +35,7 @@ from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, load_declined, save_declined)
 from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes_for,
+                    source_label_for,
                     declined_drop, declined_guids,
                     decks_to_update, feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
@@ -1278,7 +1279,7 @@ def _preview_content_changes(fetch, todo, her, aliases, her_fields=None):
 
 
 def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
-                          change_notes=None, installed=None):
+                          change_notes=None, installed=None, note_sources=None):
     """Every card this update would touch, grouped under the deck it belongs to and
     ready for the inline card list on the confirmation.
 
@@ -1306,8 +1307,14 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
     two things the old Review button's dialog used to tag before this screen replaced
     it. A detail can also carry "change_notes", the deck source's own account of why the
     card changed, attached for changed cards always and for new cards only in a deck
-    already installed (a first sync would caption every card with history). `failed`
-    names decks whose pending cards could not be read; the update itself is unaffected,
+    already installed (a first sync would caption every card with history).
+
+    A detail carries "card_source" when the deck source ships a short label for where
+    that card came from (see logic.source_label_for). It is an identifier rather than a
+    reason, so unlike a change note it is shown on every row that has one and is gated
+    on nothing: it is built from the same package as the content beside it.
+
+    `failed` names decks whose pending cards could not be read; the update is unaffected,
     those decks just are not shown here. `sources` is {deck_name: .apkg path}, for the
     row pictures' resolvers.
     """
@@ -1351,7 +1358,7 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
                 detail["was"] = pc[3].get(detail["rid"], {})
                 entry = (registry or {}).get(detail["guid"])
                 state = entry.get("state") if isinstance(entry, dict) else None
-                if state == "never":
+                if state in ("never", "frozen"):
                     hidden += 1
                     continue
                 if state:
@@ -1359,6 +1366,9 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
                     incoming = [v for _, v in detail["fields"]]
                     if entry.get("hash") and entry["hash"] != note_fields_hash(incoming):
                         detail["changed_since_decline"] = True
+                label = source_label_for(note_sources, detail["guid"])
+                if label:
+                    detail["card_source"] = label
                 if change_notes and (detail["kind"] == "changed"
                                      or d["name"] in (installed or {})):
                     incoming = [v for _, v in detail["fields"]]
@@ -1613,7 +1623,7 @@ def update_decks():
     # A fixed word order, not decisions.values()'s own insertion order (click order),
     # so the tally reads the same regardless of which row she touched first.
     _TALLY_WORDS = (("skip", "skipped for now"), ("keep", "kept yours for now"),
-                    ("never", "never"))
+                    ("never", "never"), ("frozen", "no more updates"))
 
     def _decision_tally():
         counts = {}
@@ -1695,7 +1705,8 @@ def update_decks():
 
     items, unreadable, sources, hidden = _gather_pending_items(
         todo, preview, downloaded, _retired_moved_items(fresh, moves, her),
-        registry=reg, change_notes=manifest.get("change_notes"), installed=installed)
+        registry=reg, change_notes=manifest.get("change_notes"), installed=installed,
+        note_sources=manifest.get("note_sources"))
     if todo:
         summary = [("header", f"{plural(len(todo), 'deck')} "
                               f"{'has' if len(todo) == 1 else 'have'} updates:")]
@@ -1786,7 +1797,8 @@ def update_decks():
     # again, carrying its prior hash/decided/front forward untouched, which is what
     # keeps a pending "changed since decline" cue from being silently cleared by an
     # unrelated accepted update.
-    run_decisions = {g: {"skip": "skipped", "keep": "kept yours", "never": "never"}[s]
+    run_decisions = {g: {"skip": "skipped", "keep": "kept yours", "never": "never",
+                         "frozen": "kept yours, no more updates"}[s]
                      for g, s in decisions.items() if _prior_entry(g).get("state") != s}
     for guid in run_decisions:
         reg[guid] = _registry_entry(guid, decisions[guid])
