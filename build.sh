@@ -7,6 +7,9 @@ rm -rf __pycache__ notes_snapshot.json installed.json
 # deleted from the source tree would silently live on inside the package.
 rm -f ../internpearls.ankiaddon
 zip -j ../internpearls.ankiaddon ./*.py manifest.json config.json config.md >/dev/null
+# -j junks paths, so the bundled skill (which must keep its directory
+# structure) is added separately, without -j.
+zip -r ../internpearls.ankiaddon skills >/dev/null
 echo "built internpearls.ankiaddon"
 
 # Mirror the add-on source (plus the shared mock-Anki harness) into docs/addon/

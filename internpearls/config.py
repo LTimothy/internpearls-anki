@@ -190,3 +190,17 @@ def load_ai_usage():
 
 def save_ai_usage(reg):
     _save_json(AI_USAGE, reg)
+
+
+# The consented deck-source skill: {text, version, hash, consented_on,
+# enabled}. Content is only ever written here after explicit consent.
+DECK_SKILL = os.path.join(_USER_FILES, "deck_skill.json")
+
+
+def load_deck_skill():
+    d = _load_json(DECK_SKILL, None)
+    return d if isinstance(d, dict) else None
+
+
+def save_deck_skill(d):
+    _save_json(DECK_SKILL, d)

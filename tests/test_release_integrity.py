@@ -29,12 +29,20 @@ CHANGELOG = os.path.join(ROOT, "CHANGELOG.md")
 
 
 def _packaged_names():
-    """What build.sh puts in the zip: every top-level module, plus the three metadata
-    files Anki reads. Derived from the source tree rather than hardcoded, so a new
-    module can't be left out of the package and out of this test at the same time.
+    """What build.sh puts in the zip: every top-level module, the three metadata files
+    Anki reads, and every file under skills/ (with its directory structure kept, unlike
+    the flattened top-level modules). Derived from the source tree rather than
+    hardcoded, so a new module or skill file can't be left out of the package and out
+    of this test at the same time.
     """
     names = [f for f in os.listdir(ADDON) if f.endswith(".py")]
-    return sorted(names + ["manifest.json", "config.json", "config.md"])
+    names += ["manifest.json", "config.json", "config.md"]
+    skills_dir = os.path.join(ADDON, "skills")
+    for dirpath, _, files in os.walk(skills_dir):
+        for f in files:
+            rel = os.path.relpath(os.path.join(dirpath, f), ADDON)
+            names.append(rel.replace(os.sep, "/"))
+    return sorted(names)
 
 
 def _read(path):
@@ -45,7 +53,7 @@ def _read(path):
 def test_packaged_addon_matches_source():
     assert os.path.exists(PACKAGE), "internpearls.ankiaddon is missing: run ./build.sh"
     with zipfile.ZipFile(PACKAGE) as z:
-        shipped = {n: z.read(n) for n in z.namelist()}
+        shipped = {n: z.read(n) for n in z.namelist() if not n.endswith("/")}
 
     expected = _packaged_names()
     stale = []

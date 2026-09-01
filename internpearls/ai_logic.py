@@ -312,3 +312,19 @@ def rate_limit_line(evt):
     return (f"5h window {int(100 - evt['primary_pct'])}% left, "
             f"week {int(100 - evt['secondary_pct'])}% left"
             + (f", resets {evt['resets']}" if evt.get("resets") else ""))
+
+
+_SKILL_PATH = os.path.join(os.path.dirname(__file__), "skills",
+                           "internpearls_authoring", "SKILL.md")
+
+
+def load_bundled_skill():
+    with open(_SKILL_PATH, encoding="utf8") as fh:
+        return fh.read()
+
+
+def active_skills(deck_skill):
+    skills = [load_bundled_skill()]
+    if deck_skill and deck_skill.get("enabled") and deck_skill.get("text"):
+        skills.append(deck_skill["text"])
+    return skills
