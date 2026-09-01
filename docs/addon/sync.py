@@ -19,6 +19,7 @@ import tempfile
 from aqt import mw
 from aqt.utils import getFile
 
+from .ai_logic import is_generated_guid
 from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
                          _ensure_notetypes, change_note_types,
                          missing_notetype_targets, notetype_changes,
@@ -749,11 +750,17 @@ def _reconcile_pending(manifest, cfg):
     # `from` with its new deck re-offered forever, and a retired card is never found
     # to archive, so it duplicates its replacements in every review indefinitely.
     her_front = _her_front_to_guid(cfg["scope_tag"])
-    found = find_retired_in_collection(manifest.get("retired", {}), set(her), her_front)
+    # Any of these ledger lookups can resolve her_front to a locally generated card
+    # (its front happening to match a retired/moved/reworded identity), which must
+    # never be archived or relocated: filter it out at each point her guid is known,
+    # same as remap_cards.
+    found = [r for r in find_retired_in_collection(manifest.get("retired", {}), set(her),
+                                                    her_front)
+             if not is_generated_guid(r["guid"])]
     her_deck = _her_guid_to_deck(cfg["scope_tag"])
     moves = [m for m in find_deck_moves_needed(manifest.get("deck_moves", {}), her_deck,
                                                her_front)
-             if m["guid"] in her]
+             if m["guid"] in her and not is_generated_guid(m["guid"])]
 
     tag = f'{cfg["scope_tag"]}::{RETIRED_TAG_LEAF}'
     retired_deck = f'{cfg["export_deck"]}::{RETIRED_DECK_LEAF}'
@@ -767,6 +774,8 @@ def _reconcile_pending(manifest, cfg):
     stranded = [p for p in find_stranded_pairs(manifest.get("superseded_fronts", {}),
                                                her_front)
                 if p["guid"] in her and p["successor_guid"] in her
+                and not is_generated_guid(p["guid"])
+                and not is_generated_guid(p["successor_guid"])
                 and tag not in mw.col.get_note(her[p["guid"]]).tags]
 
     def _opted_out(guid):
