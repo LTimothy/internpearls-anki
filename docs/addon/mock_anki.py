@@ -207,6 +207,9 @@ class MockNote:
     def __setitem__(self, name, value):
         self.fields[self._names.index(name)] = value
 
+    def keys(self):
+        return list(self._names)
+
 
 class FsrsMemoryState:
     """Stands in for Anki's protobuf memory state: stability and difficulty, with the
@@ -373,29 +376,140 @@ def _read_apkg(path):
     return rows, models, deck_by_nid
 
 
+class MockMedia:
+    """Stands in for Anki's col.media: writes image bytes into the media folder.
+
+    Mirrors write_data()'s real contract -- a name collision with DIFFERENT bytes
+    gets renamed (Anki dedupes by content hash), so a caller must use the returned
+    filename, never the one it asked for. Files land in an in-memory dict rather
+    than on disk; nothing here reads the filesystem.
+    """
+    def __init__(self):
+        self._files = {}   # written filename -> bytes
+
+    def write_data(self, desired_fname, data):
+        fname = desired_fname
+        if fname in self._files and self._files[fname] != data:
+            base, ext = os.path.splitext(desired_fname)
+            i = 1
+            while f"{base}-{i}{ext}" in self._files:
+                i += 1
+            fname = f"{base}-{i}{ext}"
+        self._files[fname] = data
+        return fname
+
+    def add_file(self, path):
+        with open(path, "rb") as fh:
+            return self.write_data(os.path.basename(path), fh.read())
+
+
 class MockCollection:
     def __init__(self):
         self._notes = {}
         self._cards = {}    # cid -> SimpleNamespace(nid, did, queue); one card per note
         self._next_id = 1
         self._next_cid = 1
+        self._next_guid = 1
         self.scm = 0        # schema modification counter; only real schema changes bump it
         self.models = _Models([make_model()])
         self.models._col = self
         self.decks = _Decks()
         self.db = _Db(self)
+        self.media = MockMedia()
         self.imports = []   # paths passed to import_anki_package, for assertions
         self.exports = []   # (path, options, limit) passed to export_anki_package
         self.updated_cards = []   # nids passed to update_card, for assertions
         self.notetype_changes = []   # note-id batches converted, for assertions
+        # Undo entries the AI-import path relies on: each is {name, notes, cards}.
+        # Every note-adding op below pushes its OWN entry (real Anki does this per
+        # backend op too) unless _undo_merge_open points at one still being collected
+        # -- add_custom_undo_entry opens it, merge_undo_entries closes it -- in which
+        # case the op folds into that one instead. That's what lets a caller squash a
+        # whole run of adds into a single undo() later. Scoped to notes/cards only;
+        # nothing else here needs undo modeling.
+        self._undo_entries = []
+        self._undo_merge_open = None
         # Anki exposes suspend via col.sched and tag edits via col.tags; the add-on's
         # archive path (Reconcile) uses set_deck + these two. All are incremental (no
         # schema bump), which is exactly what the reconcile feature relies on.
         self.sched = types.SimpleNamespace(suspend_cards=self._suspend_cards)
         self.tags = types.SimpleNamespace(bulk_add=self._tags_bulk_add)
 
+    # -- undo: add_custom_undo_entry / merge_undo_entries / undo -------------
+    def add_custom_undo_entry(self, name):
+        self._undo_entries.append({"name": name, "notes": [], "cards": []})
+        target = len(self._undo_entries) - 1
+        self._undo_merge_open = target
+        return target
+
+    def merge_undo_entries(self, target):
+        entry = self._undo_entries[target]
+        for e in self._undo_entries[target + 1:]:
+            entry["notes"].extend(e["notes"])
+            entry["cards"].extend(e["cards"])
+        del self._undo_entries[target + 1:]
+        self._undo_merge_open = None
+
+    def undo(self):
+        if not self._undo_entries:
+            raise Exception("nothing to undo")
+        entry = self._undo_entries.pop()
+        for nid in entry["notes"]:
+            note = self._notes.pop(nid, None)
+            if note:
+                for cid in note._card_ids:
+                    self._cards.pop(cid, None)
+        return types.SimpleNamespace(operation=entry["name"])
+
+    # -- new_note / add_note: real Anki's two-call add path -------------------
+    def new_note(self, model):
+        """Anki's col.new_note(): an unsaved note for `model`, with a placeholder
+        guid a caller may overwrite before add_note() (real Anki assigns a random
+        backend guid here; the AI-import path always replaces it with
+        ai_logic.generated_guid())."""
+        self._next_guid += 1
+        return MockNote(0, f"mockguid-{self._next_guid}", model,
+                        [""] * len(model["flds"]), [])
+
+    def add_note(self, note_or_guid, values_or_did, tags=None, model=None, deck=None):
+        """Dispatches on the first argument's type. Real Anki's add_note(note,
+        deck_id) and this suite's long-standing test helper
+        add_note(guid, values, tags, model=None, deck=None) share this name; a
+        MockNote first argument means the real signature is the one being called.
+        """
+        if isinstance(note_or_guid, MockNote):
+            return self._add_prepared_note(note_or_guid, values_or_did)
+        return self._add_legacy_note(note_or_guid, values_or_did, tags, model, deck)
+
+    def _add_prepared_note(self, note, did):
+        """Real add_note(note, deck_id): assigns note.id, files one card into `did`,
+        and -- like a fresh cloze note in real Anki -- adds one card per further
+        cloze deletion the note's own text carries. Records into the open undo
+        entry (if any) so a merged import can be undone in one step."""
+        note.id = self._next_id
+        self._next_id += 1
+        note.deck = self.decks.name(did)
+        self._notes[note.id] = note
+        cid = self._next_cid
+        self._next_cid += 1
+        self._cards[cid] = types.SimpleNamespace(
+            id=cid, nid=note.id, did=did, queue=0, reps=0, ord=0,
+            type=0, due=0, ivl=0, factor=0, lapses=0,
+            memory_state=None, desired_retention=None, decay=None,
+            last_review_time=None)
+        note._card_ids.append(cid)
+        self._generate_cloze_cards(note)
+        if self._undo_merge_open is not None:
+            entry = self._undo_entries[self._undo_merge_open]
+            entry["notes"].append(note.id)
+            entry["cards"].extend(note._card_ids)
+        else:
+            self._undo_entries.append(
+                {"name": "Add Note", "notes": [note.id], "cards": list(note._card_ids)})
+        return types.SimpleNamespace(note_id=note.id)
+
     # -- helpers for tests and the demo --------------------------------------
-    def add_note(self, guid, values, tags, model=None, deck=None):
+    def _add_legacy_note(self, guid, values, tags, model=None, deck=None):
         model = model or self.models.all()[0]
         note = MockNote(self._next_id, guid, model, values, tags, deck)
         self._notes[self._next_id] = note
