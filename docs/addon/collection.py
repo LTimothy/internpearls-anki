@@ -14,6 +14,7 @@ import tempfile
 from aqt import mw
 from aqt.utils import getFile, getSaveFile
 
+from . import ai_logic
 from .config import (DECK_BACKUPS_KEEP, INSTALLED, TARGET_FIELDS, _USER_FILES, _cfg,
                      _load_json, _save_json)
 from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
@@ -1260,3 +1261,90 @@ def remove_empty_cards():
                    "it failed and you chose to continue.)")
     _info(f"Removed <b>{plural(len(cids), 'empty card')}</b> from "
           f"<b>{plural(len(notes), 'note')}</b>. Nothing else changed." + backup_line)
+
+
+# --------------------------------------------------------------- AI card import
+
+# Note types a generated card may name: the ones this add-on manages (TARGET_FIELDS)
+# plus Anki's own core Basic/Cloze. Nothing else is trusted, even if it happens to
+# exist in this collection -- a learner's own note type is not this feature's to write.
+_GENERATED_ALLOWED_TYPES = frozenset(TARGET_FIELDS) | {"Basic", "Cloze"}
+
+
+def add_generated_notes(cards, media, deck_name, scope_tag):
+    """Write accepted AI-generated cards into `deck_name` as one undoable operation.
+
+    Media contract (the other half lives in the review dialog that calls this): by the
+    time a card reaches here, every attached:/url:/svg: image it references has already
+    been resolved to bytes by that dialog, and the filenames it chose for THAT card are
+    listed in card["_media_files"], in render order. `media` is {filename: bytes} for
+    every such file across the whole accepted batch. This function only writes those
+    bytes into the collection's media folder and turns each card's _media_files into
+    `<img src="...">` tags appended to its Image field (or its primary field, for a
+    note type with none) -- it never resolves or fetches an image itself.
+
+    Every note gets a fresh iplocal- GUID (ai_logic.generated_guid()), so it can never
+    match -- and a later deck sync's remap_cards/_reconcile_pending can never touch --
+    a real synced card. Nothing here reads or modifies an existing note; this only adds.
+
+    Raises RuntimeError, before writing anything (media or notes), if a card names a
+    note type outside _GENERATED_ALLOWED_TYPES or one absent from this collection --
+    never a partial import. Returns the number of notes added; 0 for an empty `cards`.
+    """
+    cards = list(cards or [])
+    if not cards:
+        return 0
+    col = mw.col
+    _ensure_notetypes()   # a one-time, separate step; not part of this import's undo
+
+    models, unknown = {}, set()
+    for card in cards:
+        ntype = card["note_type"]
+        if ntype in models or ntype in unknown:
+            continue
+        model = col.models.by_name(ntype) if ntype in _GENERATED_ALLOWED_TYPES else None
+        if model:
+            models[ntype] = model
+        else:
+            unknown.add(ntype)
+    if unknown:
+        raise RuntimeError(
+            "Can't import generated cards: unknown or missing note type(s) "
+            + ", ".join(sorted(unknown)))
+
+    undo_target = col.add_custom_undo_entry(f"Import {plural(len(cards), 'generated card')}")
+    did = col.decks.id(deck_name)
+
+    written = {}
+    for fname, data in (media or {}).items():
+        try:
+            written[fname] = col.media.write_data(fname, data)
+        except AttributeError:
+            # add_file() takes its desired name from the path's own basename, so the
+            # temp file must be named `fname` exactly -- a random tempfile name would
+            # get written into the collection instead of the name the fields reference.
+            with tempfile.TemporaryDirectory() as tmpdir:
+                path = os.path.join(tmpdir, fname)
+                with open(path, "wb") as fh:
+                    fh.write(data)
+                written[fname] = col.media.add_file(path)
+
+    tag = f"{scope_tag}::{ai_logic.GENERATED_TAG_LEAF}"
+    count = 0
+    for card in cards:
+        note = col.new_note(models[card["note_type"]])
+        for name, value in card["fields"].items():
+            if name in note:
+                note[name] = value
+        imgs = "".join(f'<img src="{written.get(f, f)}">'
+                       for f in card.get("_media_files", []))
+        if imgs:
+            target = "Image" if "Image" in note else note.keys()[0]
+            note[target] = (note[target] + imgs) if note[target] else imgs
+        note.guid = ai_logic.generated_guid()
+        note.tags = list(card.get("tags", [])) + [tag]
+        col.add_note(note, did)
+        count += 1
+
+    col.merge_undo_entries(undo_target)
+    return count
