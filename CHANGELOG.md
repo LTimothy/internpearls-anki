@@ -3,6 +3,21 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.51.0
+
+Two refinements to the What changed group, from its first day in real use:
+
+- A rewritten explanation no longer renders as a word diff. On a paragraph
+  where most of the words moved, striking the old ones and highlighting the new
+  ones made a wall of markup harder to read than either version alone, so a
+  change below difflib's own similarity floor now shows the old value plainly
+  instead. Small edits keep the diff, which is where it earns its keep.
+- A card's question-ID label ([T11Q4]) moved out of the card's own text, where
+  it read as a weirdly placed line, into the chip column: it stacks as a small
+  tag under the row's NEW or UPDATED chip, one tag per reference. It is
+  metadata about the card, so it lives in the row's metadata gutter and the
+  text column stays purely the card.
+
 ## v0.50.0
 
 An opened changed card now says what changed instead of making you find it.
