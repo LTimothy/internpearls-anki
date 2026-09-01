@@ -228,3 +228,20 @@ def test_rate_limit_line():
                                   "secondary_pct": 40.0,
                                   "resets": "2026-08-26T20:00:00Z"})
     assert "87" in s and "60" in s   # percent LEFT, not used
+
+
+def test_parse_malformed_nested_shapes_never_raises():
+    # Syntactically valid JSON objects with wrong-typed nested fields: each
+    # must degrade to None, never raise, since this parses raw subprocess
+    # output from three different vendors' CLIs.
+    cases = [
+        ("claude", _json.dumps({"type": "assistant",
+                                "message": {"content": ["not a dict"]}})),
+        ("claude", _json.dumps({"type": "result", "usage": [1, 2, 3]})),
+        ("codex", _json.dumps({"type": "token_count",
+                               "rate_limits": [1, 2]})),
+        ("codex", _json.dumps({"type": "token_count",
+                               "rate_limits": {"primary": "notadict"}})),
+    ]
+    for kind, line in cases:
+        assert ai_logic.parse_stream_event(kind, line) is None
