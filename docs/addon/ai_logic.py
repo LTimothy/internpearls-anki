@@ -62,12 +62,15 @@ def parse_cards_json(text, allowed_types, field_map):
         known = set(field_map[ntype])
         extra = set(fields) - known
         if extra:
-            errors.append(f"card {i}: unknown field(s) {sorted(extra)} "
-                          f"(field 'Sideways' style) for {ntype}")
+            errors.append(f"card {i}: unknown field(s) {sorted(extra)} for {ntype}")
             continue
         primary = PRIMARY_FIELD.get(ntype, field_map[ntype][0])
         if not str(fields.get(primary, "")).strip():
             errors.append(f"card {i}: empty primary field {primary}")
+            continue
+        tags_val = raw.get("tags")
+        if tags_val is not None and not isinstance(tags_val, list):
+            errors.append(f"card {i}: tags must be a list")
             continue
         images = raw.get("images") or []
         bad_img = [im for im in images
