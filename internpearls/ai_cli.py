@@ -19,11 +19,14 @@ from .ai_logic import parse_stream_event
 
 BACKENDS = {
     "claude": {"label": "Claude Code", "exe": "claude",
-               "subscription": "Claude Pro or Max"},
+               "subscription": "Claude Pro or Max",
+               "safety": "Tools fully restricted (strongest)"},
     "codex": {"label": "Codex CLI", "exe": "codex",
-              "subscription": "ChatGPT Plus or Pro"},
+              "subscription": "ChatGPT Plus or Pro",
+              "safety": "Sandboxed read-only; no writes or network"},
     "agy": {"label": "Antigravity CLI", "exe": "agy",
-            "subscription": "Google account (free tier, throttled)"},
+            "subscription": "Google account (free tier, throttled)",
+            "safety": "Relies on the assistant's own approval defaults"},
 }
 _COMMON_DIRS = ("/opt/homebrew/bin", "/usr/local/bin",
                 os.path.expanduser("~/.local/bin"),
@@ -60,6 +63,29 @@ def find_cli(kind, override=""):
         if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
     return None
+
+
+_flag_support_cache = {}
+
+
+def supports_flag(path, flag):
+    """True iff `path --help` mentions flag. agy has no documented tool-
+    restriction switch (an upstream read-only request is open), so we probe
+    rather than assume: passing an unsupported flag would hard-fail every
+    run, which is worse than the safety gap it would close. Never raise --
+    a missing/broken binary just means "flag not detected", the safe
+    default. Do not replace this with an unconditional --sandbox append."""
+    key = (path, flag)
+    if key in _flag_support_cache:
+        return _flag_support_cache[key]
+    try:
+        r = subprocess.run([path, "--help"], capture_output=True,
+                           text=True, timeout=10)
+        result = flag in ((r.stdout or "") + (r.stderr or ""))
+    except Exception:
+        result = False
+    _flag_support_cache[key] = result
+    return result
 
 
 def probe(kind, path):
@@ -102,6 +128,8 @@ def build_argv(kind, path, mode, scratch, image_paths):
         return argv, True
     if kind == "agy":
         argv = [path, "-p", "--output-format", "stream-json"]
+        if supports_flag(path, "--sandbox"):
+            argv += ["--sandbox"]
         return argv, True
     raise ValueError(kind)
 
