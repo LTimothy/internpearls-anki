@@ -148,8 +148,12 @@ def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT):
     return _http_get(url, accept="application/vnd.github.raw", timeout=timeout)
 
 
+# Raster only: SVG is an active format, and one downloaded from an arbitrary URL is
+# unreviewable, while the model can already draw its own (checked) SVG via
+# ai_logic.svg_to_media. Excluding image/svg+xml here closes that bypass rather than
+# trying to validate hostile SVG from an untrusted host.
 _IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
-                "image/webp": "webp", "image/svg+xml": "svg"}
+                "image/webp": "webp"}
 
 
 def fetch_card_image(url, max_bytes=5 * 1024 * 1024):

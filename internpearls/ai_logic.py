@@ -19,6 +19,13 @@ _IMAGE_SOURCE_RE = re.compile(r"^(attached:[\w .\-]+|url:https://\S+|svg:<svg.*)
 _TAG_RE = re.compile(r"<[^>]+>")
 _CLOZE_OK_RE = re.compile(r"\{\{c\d+::[^{}]+?\}\}")
 _CLOZE_OPEN_RE = re.compile(r"\{\{c\d+")
+# svg_to_media's reject list: a <script> element, an on*= event-handler attribute
+# (whitespace before "=" and any case), or a javascript: URI. \bon\w+ requires "on" to
+# start a word, so it doesn't false-positive on ordinary attribute/value text like
+# "none" or "font-size".
+_SVG_SCRIPT_RE = re.compile(r"<script", re.I)
+_SVG_EVENT_ATTR_RE = re.compile(r"\bon\w+\s*=", re.I)
+_SVG_JS_URI_RE = re.compile(r"javascript\s*:", re.I)
 PRIMARY_FIELD = {"Study Deck - Basic": "Front", "Study Deck - Cloze": "Text",
                  "Study Deck - Image ID": "Image", "Basic": "Front"}
 LONG_ANSWER_WORDS = 60
@@ -404,13 +411,17 @@ def extract_attachment(path, dest_dir):
 
 def svg_to_media(markup, index):
     """Model-drawn SVG as a media file: (filename, bytes), or ValueError for anything
-    that isn't SVG or carries a literal <script> tag. SVG renders inside Anki's own
-    webview, so a script tag is executable content on a card, not decoration; rejected
-    rather than sanitized. `index` is coerced to int so it can never carry a path
-    separator into the filename."""
+    that isn't SVG or carries a script vector. SVG renders inside Anki's own webview, so
+    a <script> element, an on*= event-handler attribute, or a javascript: URI is
+    executable content on a card, not decoration; rejected rather than sanitized. `index`
+    is coerced to int so it can never carry a path separator into the filename."""
     m = (markup or "").strip()
     if not m.startswith("<svg"):
         raise ValueError("not svg markup")
-    if "<script" in m.lower():
-        raise ValueError("svg with script rejected")
+    if _SVG_SCRIPT_RE.search(m):
+        raise ValueError("svg with a <script> element rejected")
+    if _SVG_EVENT_ATTR_RE.search(m):
+        raise ValueError("svg with an event-handler attribute rejected")
+    if _SVG_JS_URI_RE.search(m):
+        raise ValueError("svg with a javascript: URI rejected")
     return f"generated-{int(index)}.svg", m.encode("utf8")
