@@ -295,13 +295,49 @@ def test_extract_pdf_text(tmp_path):
 
 
 def test_extract_image_copies_file(tmp_path):
+    # the returned name is no longer guaranteed to equal the original basename
+    # (see the collision-safety tests below) - just the sanitized stem plus a
+    # content-hash suffix and the original extension.
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"0" * 20
     png = tmp_path / "slide3.png"
-    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 20)
+    png.write_bytes(png_bytes)
     dest = tmp_path / "scratch"
     dest.mkdir()
     out = ai_logic.extract_attachment(str(png), str(dest))
-    assert out["text"] == "" and out["images"] == ["slide3.png"]
-    assert (dest / "slide3.png").exists()
+    assert out["text"] == ""
+    assert len(out["images"]) == 1
+    name = out["images"][0]
+    assert name.startswith("slide3-") and name.endswith(".png")
+    assert (dest / name).read_bytes() == png_bytes
+
+
+def test_extract_image_same_basename_different_content_both_survive(tmp_path):
+    # two attachments sharing a filename (two slide exports both named
+    # "figure1.png") must not silently overwrite each other in dest_dir.
+    src_a = tmp_path / "a"
+    src_b = tmp_path / "b"
+    src_a.mkdir()
+    src_b.mkdir()
+    (src_a / "figure1.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"A" * 20)
+    (src_b / "figure1.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"B" * 20)
+    dest = tmp_path / "scratch"
+    dest.mkdir()
+    out_a = ai_logic.extract_attachment(str(src_a / "figure1.png"), str(dest))
+    out_b = ai_logic.extract_attachment(str(src_b / "figure1.png"), str(dest))
+    name_a, name_b = out_a["images"][0], out_b["images"][0]
+    assert name_a != name_b
+    assert (dest / name_a).exists() and (dest / name_b).exists()
+    assert (dest / name_a).read_bytes() != (dest / name_b).read_bytes()
+
+
+def test_extract_image_stem_sanitized_against_path_traversal(tmp_path):
+    hostile = tmp_path / "..-evil.png"
+    hostile.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 20)
+    dest = tmp_path / "scratch"
+    dest.mkdir()
+    out = ai_logic.extract_attachment(str(hostile), str(dest))
+    name = out["images"][0]
+    assert os.sep not in name and ".." not in name
 
 
 def test_extract_unknown_extension_raises(tmp_path):
@@ -377,3 +413,27 @@ def test_extract_pdf_bad_page_does_not_lose_other_pages_text(tmp_path, monkeypat
     out = ai_logic.extract_attachment(os.path.join(FIXTURES, "two_page.pdf"), str(tmp_path))
     assert "Second page text" in out["text"]
     assert "First page text" not in out["text"]
+
+
+def test_extract_corrupt_pdf_raises_valueerror_naming_file(tmp_path):
+    import pytest
+    bad = tmp_path / "corrupt.pdf"
+    bad.write_bytes(b"this is not a pdf at all, just some bytes")
+    with pytest.raises(ValueError) as exc:
+        ai_logic.extract_attachment(str(bad), str(tmp_path))
+    assert "corrupt.pdf" in str(exc.value)
+
+
+def test_extract_pdf_broken_pypdf_import_raises_valueerror(tmp_path, monkeypatch):
+    # a missing/broken vendor dir must surface as this function's own ValueError
+    # contract, never a raw ModuleNotFoundError from _pypdf().
+    import pytest
+
+    def broken_pypdf():
+        raise ModuleNotFoundError("No module named 'pypdf'")
+
+    monkeypatch.setattr(ai_logic, "_pypdf", broken_pypdf)
+    with pytest.raises(ValueError) as exc:
+        ai_logic.extract_attachment(os.path.join(FIXTURES, "sample.pdf"), str(tmp_path))
+    assert "sample.pdf" in str(exc.value)
+    assert "pypdf" in str(exc.value)
