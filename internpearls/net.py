@@ -59,13 +59,19 @@ class DownloadCancelled(RuntimeError):
     """
 
 
-def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=None):
+def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=None,
+              on_response=None):
     """GET `url`, raising a RuntimeError with an actionable message on failure, or a
     TransportError (a RuntimeError too) when the host was never reached at all.
 
     Every network call in this add-on goes through here, so this is the one place that
     needs to turn urllib's exceptions into something a non-technical error dialog can
     show as-is, rather than a Python traceback repr.
+
+    `on_response(r)` is called once the connection is open, before any body is read, with
+    the response object itself (so a caller can check `.headers` or `.geturl()`, e.g. the
+    final URL after a redirect). Raising from inside it propagates unchanged, since
+    whatever it raises isn't one of the exception types handled below.
 
     `on_chunk(bytes_so_far)` opts into a chunked read: it is called after each chunk and
     returns falsy to abort, raising DownloadCancelled. It exists because a deck download
@@ -83,6 +89,8 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
+            if on_response is not None:
+                on_response(r)
             if on_chunk is None:
                 return r.read()
             buf = bytearray()
@@ -138,3 +146,49 @@ def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT):
     """
     url = f"https://api.github.com/repos/{ANKI_REPO}/contents/{path}?ref={ref}"
     return _http_get(url, accept="application/vnd.github.raw", timeout=timeout)
+
+
+_IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+                "image/webp": "webp", "image/svg+xml": "svg"}
+
+
+def fetch_card_image(url, max_bytes=5 * 1024 * 1024):
+    """Download a model-suggested card image, the only thing that ever touches the
+    network for it (the model supplies just the URL, never the request). Goes through
+    _http_get so a failure reads like every other network error in this add-on.
+
+    Refuses anything that isn't plainly an image: https only (checked on the request URL
+    and, since urllib follows redirects by default, again on the final URL after any
+    redirect), a known image content-type (ignoring parameters like `; charset=`), and a
+    hard `max_bytes` cap enforced against the bytes actually read as they arrive, not
+    just a Content-Length header the server can lie about or omit.
+    """
+    if not url.startswith("https://"):
+        raise RuntimeError("image URLs must be https")
+    ext = {}
+
+    def on_response(r):
+        final_url = r.geturl() or url
+        if not final_url.startswith("https://"):
+            raise RuntimeError("image must be served over https")
+        ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype not in _IMAGE_TYPES:
+            raise RuntimeError(f"not an image ({ctype or 'no content type'})")
+        ext["value"] = _IMAGE_TYPES[ctype]
+        clen = r.headers.get("Content-Length")
+        if clen:
+            try:
+                declared = int(clen)
+            except ValueError:
+                declared = None
+            if declared is not None and declared > max_bytes:
+                raise RuntimeError("image is too large")
+
+    def on_chunk(so_far):
+        if so_far > max_bytes:
+            raise RuntimeError("image is too large")
+        return True
+
+    data = _http_get(url, timeout=_DOWNLOAD_TIMEOUT, on_response=on_response,
+                     on_chunk=on_chunk)
+    return data, ext["value"]
