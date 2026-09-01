@@ -364,6 +364,27 @@ def test_a_rows_trailing_column_stops_short_of_the_list_frame(shot):
         "trailing text runs up against its row's right edge: " + ", ".join(cramped))
 
 
+def test_the_card_source_tag_sits_under_its_rows_chip(shot):
+    """The where-this-came-from label lives in the chip column, stacked under the
+    row's NEW/UPDATED chip, not as a line in the text column where it read as part
+    of the card. One tag per reference, so a two-question card renders two small
+    lines instead of one string overflowing the fixed-width gutter."""
+    _, q = harness.bootstrap()
+    from internpearls import widgets
+    s = shot("confirm")
+    labels = _visible_labels(s.dialog, q)
+    assert not any("[T10Q2] [T4Q11]" in l.text() for l in labels), \
+        "a multi-reference source should split into one tag per reference"
+    tag = next(l for l in labels if l.text() == "[T4Q11]")
+    tag_rect = widget_rect(s.dialog, tag)
+    chips = [l for l in labels if l.text() in set(widgets.CHIPS.values())]
+    over = [c for c in chips
+            if widget_rect(s.dialog, c).left() <= tag_rect.center().x()
+            <= widget_rect(s.dialog, c).right()
+            and widget_rect(s.dialog, c).bottom() <= tag_rect.top()]
+    assert over, "the [T4Q11] tag is not sitting under any chip in the chip column"
+
+
 def test_the_what_changed_group_states_the_delta_not_two_paragraphs(shot):
     """An expanded changed card carries one What changed group: a prose change reads
     as a single word-diff line (struck removals), and a blanks-only cloze change
@@ -378,6 +399,41 @@ def test_the_what_changed_group_states_the_delta_not_two_paragraphs(shot):
     cloze_row = next(t for t in texts if "<b>Text</b>" in t)
     assert "no longer blanked" in cloze_row
     assert "{{c" not in cloze_row, "raw cloze braces must never reach the screen"
+
+
+def test_a_rewrite_is_a_receipt_line_until_show_yours_is_clicked(shot):
+    """A rewritten field renders as its one-line summary with the old text absent
+    from the screen entirely; clicking Show yours reveals the old text verbatim and
+    unmarked. Both rejected treatments stay dead: no diff markup on a rewrite, no
+    always-on paragraph of old text."""
+    _, q = harness.bootstrap()
+    s = shot("confirm", expand=(0, 1, 2, 3, 4))
+    texts = [l.text() for l in _visible_labels(s.dialog, q)]
+    receipt = next(t for t in texts if "<b>Why</b>" in t and "rewritten" in t)
+    assert "<s>" not in receipt
+    assert not any("An earlier explanation of the wrap point" in t for t in texts), \
+        "the old text should not paint before Show yours is clicked"
+    links = [b for b in s.dialog.findChildren(q.QPushButton)
+             if b.text() == "Show yours"]
+    assert links, "expected a Show yours link on the rewrite row"
+    # The receipt line stays text-height: an unstyled flat button keeps the
+    # platform's native button metrics (32px on macOS), which stretched every
+    # receipt row to double its text and read as a band of dead space, and a
+    # word-wrapped summary folded its short phrase onto three lines beside the
+    # link. Both against the field-name label's own height.
+    receipt = next(l for l in _visible_labels(s.dialog, q)
+                   if "<b>Why</b>" in l.text() and "rewritten" in l.text())
+    assert not receipt.wordWrap(), "the receipt summary is a one-liner by design"
+    for link in links:
+        assert link.height() <= receipt.height() + 4, (
+            f"a Show yours link is {link.height()}px tall beside a "
+            f"{receipt.height()}px receipt line; it should sit at text height")
+
+    clicked = shot("confirm", expand=(0, 1, 2, 3, 4), click_labels=("Show yours",))
+    revealed = [l for l in _visible_labels(clicked.dialog, q)
+                if "An earlier explanation of the wrap point" in l.text()]
+    assert revealed, "Show yours should reveal the old text"
+    assert "<s>" not in revealed[0].text(), "the revealed old text is unmarked prose"
 
 
 def test_decision_cells_stop_short_of_the_list_viewport_edge(shot):

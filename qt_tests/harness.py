@@ -180,10 +180,11 @@ def synthetic_details():
     UPDATED row too, and both rows carry a `card_source`, which sits above it and is
     the one line that shows on a NEW row as well.
 
-    Row 1's `was` is plain prose sharing words with its current value, so a render
-    paints the What changed group's word-diff line (struck removals, highlighted
-    additions); row 3's cloze `was` differs only in its deletions, so a render paints
-    the named-blank line instead.
+    Row 1's Back `was` is plain prose sharing words with its current value, so a
+    render paints the What changed group's word-diff line (struck removals,
+    highlighted additions), while its Why `was` shares almost nothing and paints the
+    rewrite receipt line with its Show yours link; row 3's cloze `was` differs only
+    in its deletions, so a render paints the named-blank line instead.
     """
     return [
         {"guid": "g1", "notetype": "Study Deck - Basic", "kind": "new",
@@ -194,7 +195,9 @@ def synthetic_details():
                     ("Image", ""), ("Tag", "Widgets"), ("Dosing", ""),
                     ("Notes", "")]},
         {"guid": "g2", "notetype": "Study Deck - Basic", "kind": "changed",
-         "was": {"Back": "A wrapping basic note, before its Back field was rewritten."},
+         "was": {"Back": "A wrapping basic note carrying extra dosing.",
+                 "Why": "An earlier explanation of the wrap point, replaced "
+                        "wholesale in this update round."},
          "card_source": "[T10Q2] [T4Q11]",
          "change_notes": [{"kind": "feedback", "note": "an example reviewer request",
                            "hash": "0" * 16}],
