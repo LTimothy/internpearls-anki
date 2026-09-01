@@ -3,6 +3,53 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.52.1
+
+The receipt lines sit tight now. The Show yours link, though flat, still
+carried the platform's native button height, which stretched every receipt row
+to double its text and read as a band of dead space between the lines; it sits
+at text height now, like the row's expand caret. The summary phrase also no
+longer folds itself onto three short lines beside the link: it is a one-liner
+by design and renders as one.
+
+## v0.52.0
+
+A rewritten field now reads as a receipt, not a wall. Two treatments had been
+tried and both fell short: marking a rewrite up word by word buried the change
+in strikethrough and highlights, and showing the old text plainly parked a
+second full paragraph under every rewritten card. Two independent design
+reviews converged on the same answer, and this is it:
+
+- The default is one line: "Why  rewritten, shortened (104 → 66 words)", with
+  the word counts appearing only when the length really moved. The new version
+  is already the card shown above, so at a glance that line is everything an
+  Apply decision needs.
+- A "Show yours" link (the same quiet link style as Add note, named in the
+  Keep yours button's own vocabulary) reveals the old version in place: clean,
+  unmarked, behind a grey rule that mirrors the green rule on the card's own
+  explanation, so the two read as the same kind of block from two moments. It
+  is built only when clicked, so long lists stay as fast as before.
+- The word-diff line for small edits keeps its place, with its bar raised: a
+  change now takes the diff treatment only while the marked words stay well
+  under half the line, so a mostly-marked line can no longer ship.
+- In the blanks-moved line, the named blank is bold now rather than blue,
+  keeping blue for things that actually respond to a click.
+
+## v0.51.0
+
+Two refinements to the What changed group, from its first day in real use:
+
+- A rewritten explanation no longer renders as a word diff. On a paragraph
+  where most of the words moved, striking the old ones and highlighting the new
+  ones made a wall of markup harder to read than either version alone, so a
+  change below difflib's own similarity floor now shows the old value plainly
+  instead. Small edits keep the diff, which is where it earns its keep.
+- A card's question-ID label ([T11Q4]) moved out of the card's own text, where
+  it read as a weirdly placed line, into the chip column: it stacks as a small
+  tag under the row's NEW or UPDATED chip, one tag per reference. It is
+  metadata about the card, so it lives in the row's metadata gutter and the
+  text column stays purely the card.
+
 ## v0.50.0
 
 An opened changed card now says what changed instead of making you find it.

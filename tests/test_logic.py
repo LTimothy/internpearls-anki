@@ -2098,3 +2098,18 @@ def test_cloze_answer_changes_ignores_the_hint_half_of_a_deletion():
     old = "Best at {{c1::25 gauge::a size}}."
     new = "Best at {{c1::25 gauge}}."
     assert logic.cloze_answer_changes(old, new) == ([], [])
+
+
+# ------------------------------------------------------------------ word_diff_ratio
+def test_word_diff_ratio_is_high_for_a_small_edit_and_low_for_a_rewrite():
+    small = logic.merged_word_diff("Give 1 mg/kg over 10 minutes.",
+                                   "Give 1.5 mg/kg over 10 minutes.")
+    assert logic.word_diff_ratio(small) > 0.8
+    rewrite = logic.merged_word_diff(
+        "The pattern is about where the drug has to reach in the body.",
+        "Nondepolarizing blockers work at the junction so fat adds nothing.")
+    assert logic.word_diff_ratio(rewrite) < 0.2
+
+
+def test_word_diff_ratio_reads_empty_as_fully_similar():
+    assert logic.word_diff_ratio([]) == 1.0
