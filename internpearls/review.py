@@ -511,8 +511,19 @@ def _rewrite_row(detail, name, old, new, card_label):
     summary = _rich_label(f"<b>{html.escape(name)}</b>&nbsp;&nbsp;"
                           f"{_rewrite_summary(old, new)}")
     summary.setStyleSheet(f"color: {colors()['dim']};")
+    # A one-line receipt by design, so it must not wrap: a word-wrapped QLabel asks
+    # the layout for a "reasonable" width rather than its full text, and with the
+    # link beside it the phrase folded onto three short lines in an all-but-empty row.
+    summary.setWordWrap(False)
     hlay.addWidget(summary, 0)
     link = link_button("Show yours")
+    # Collapsed to its text height, the same styling that keeps the caret compact:
+    # without border and padding rules a flat button still carries the platform's
+    # native button metrics (32px on macOS), which stretched every receipt line to
+    # double its text and read as a band of dead space between the rows.
+    link.setStyleSheet(f"color: {colors()['accent']}; font-size: 12px;"
+                       " border: none; padding: 0;")
+    link.setCursor(Qt.CursorShape.PointingHandCursor)
     hlay.addWidget(link, 0)
     hlay.addStretch()
     lay.addWidget(line)

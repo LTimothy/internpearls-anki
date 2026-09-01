@@ -416,6 +416,18 @@ def test_a_rewrite_is_a_receipt_line_until_show_yours_is_clicked(shot):
     links = [b for b in s.dialog.findChildren(q.QPushButton)
              if b.text() == "Show yours"]
     assert links, "expected a Show yours link on the rewrite row"
+    # The receipt line stays text-height: an unstyled flat button keeps the
+    # platform's native button metrics (32px on macOS), which stretched every
+    # receipt row to double its text and read as a band of dead space, and a
+    # word-wrapped summary folded its short phrase onto three lines beside the
+    # link. Both against the field-name label's own height.
+    receipt = next(l for l in _visible_labels(s.dialog, q)
+                   if "<b>Why</b>" in l.text() and "rewritten" in l.text())
+    assert not receipt.wordWrap(), "the receipt summary is a one-liner by design"
+    for link in links:
+        assert link.height() <= receipt.height() + 4, (
+            f"a Show yours link is {link.height()}px tall beside a "
+            f"{receipt.height()}px receipt line; it should sit at text height")
 
     clicked = shot("confirm", expand=(0, 1, 2, 3, 4), click_labels=("Show yours",))
     revealed = [l for l in _visible_labels(clicked.dialog, q)
