@@ -2,6 +2,7 @@
 import os
 import sys
 import threading
+import time
 import pytest
 
 from internpearls import ai_cli
@@ -11,6 +12,10 @@ FAKE = [sys.executable, os.path.join(os.path.dirname(__file__), "fake_cli.py")]
 
 def _run(mode="ok", **kw):
     return ai_cli._run_argv(FAKE + [mode], "claude", "PROMPT", **kw)
+
+
+class _CallbackBoom(Exception):
+    pass
 
 
 def test_run_happy_path_parses_result_and_phase():
@@ -43,6 +48,45 @@ def test_run_cancel_kills_process():
     flag.set()
     with pytest.raises(ai_cli.GenerationCancelled):
         _run("slow", cancel=flag.is_set, timeout=30)
+
+
+def test_run_other_exception_kills_process_and_is_not_masked(monkeypatch):
+    """A callback exception (or any non-cancel/timeout failure) mid-run must
+    still kill the child and propagate the real exception, not a
+    subprocess.TimeoutExpired from an un-killed process.wait()."""
+    procs = []
+    real_popen = ai_cli.subprocess.Popen
+
+    def spying_popen(*a, **kw):
+        p = real_popen(*a, **kw)
+        procs.append(p)
+        return p
+
+    monkeypatch.setattr(ai_cli.subprocess, "Popen", spying_popen)
+
+    def bad_event(evt):
+        raise _CallbackBoom("callback exploded")
+
+    start = time.monotonic()
+    with pytest.raises(_CallbackBoom):
+        _run("event_then_slow", on_event=bad_event, timeout=30)
+    elapsed = time.monotonic() - start
+
+    # The fake CLI sleeps 30s after its one event; a correct kill path exits
+    # in well under a second. Bounding this proves proc.wait() didn't block
+    # for its full 5s timeout (which is what masks the exception).
+    assert elapsed < 5
+
+    assert len(procs) == 1
+    proc = procs[0]
+    for _ in range(30):
+        if proc.poll() is not None:
+            break
+        time.sleep(0.1)
+    assert proc.poll() is not None, "child process is still running"
+    # poll() only reflects our own wait(); confirm the pid itself is gone.
+    with pytest.raises(ProcessLookupError):
+        os.kill(proc.pid, 0)
 
 
 def test_find_cli_prefers_override(tmp_path):
