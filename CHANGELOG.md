@@ -3,6 +3,18 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.55.1
+
+Two small fixes to the "Generate cards with AI" wizard. The Model field, for a
+backend with known aliases (currently Claude Code), is now a closed list of
+those aliases plus a Custom entry, rather than a free-text box; picking Custom
+reveals a line edit for typing any other model name. This also fixes a visible
+misalignment on macOS, where the old free-text Model field rendered at a
+different height and left inset than the Effort field beside it, so the two
+rows never lined up. Also, every stray double-hyphen dash in the add-on's own
+text (dialog copy, the bundled skill, this changelog, and more) has been
+rewritten as ordinary punctuation.
+
 ## v0.55.0
 
 The "Generate cards with AI" wizard's backend row can now pick a model and, for
