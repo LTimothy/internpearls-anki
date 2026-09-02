@@ -686,3 +686,21 @@ def test_the_look_change_checkbox_is_not_read_as_answering_the_format_change(sho
         return w.mapTo(s.dialog, q.QPoint(0, 0)).y()
 
     assert top(intro[0]) < top(boxes[0])
+
+
+def test_ai_review_with_a_full_draft_still_reaches_import(shot):
+    """The card list owns the review page's surplus height (a QScrollArea with
+    stretch factor 1), so the Import button stays outside it and reachable no
+    matter how many cards the count spinner's own ceiling (50) drafted --
+    before this, every row was a Preferred QLabel with nothing to own the
+    dialog's leftover height, and 50 of them ran the Import button off the
+    bottom of any laptop screen."""
+    _, q = harness.bootstrap()
+    s = shot("ai-review", size=(640, 680), count=50)
+    dlg = s.dialog
+    import_btn = next(b for b in dlg.findChildren(q.QPushButton)
+                      if b.text().startswith("Import"))
+    assert import_btn.isVisible()
+    top_left = import_btn.mapTo(dlg, q.QPoint(0, 0))
+    assert 0 <= top_left.y() <= dlg.height()
+    assert top_left.y() + import_btn.height() <= dlg.height() + 1
