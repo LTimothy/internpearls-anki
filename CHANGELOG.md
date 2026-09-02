@@ -3,6 +3,28 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.56.1
+
+The AI Backends rows no longer cut off their own last line. Each row's muted line
+("Works with a Claude Pro or Max. Tools fully restricted") wraps to two lines at the
+width the window opens at, and a wrapped label reports a minimum height of one line
+whatever it wraps to, so the window could open shorter than its own text and every row
+was squeezed until that line was clipped mid-glyph. Each wrapped line now holds the
+height it really needs.
+
+AI Backends has left the Experimental menu and opens from the "Generate cards with AI"
+wizard alone, which is the only thing it is ever about: a "Set up an assistant" button
+on the first-run page, and a Setup link beside the backend summary on the input page.
+The window itself is unchanged.
+
+The Night Mode Dimming preview holds still. The hint under the scope radios is one
+line for bright images only and three for everything on cards and deck screens, so the
+Dim by row and the preview below it slid down as soon as the second scope was picked;
+the hint now stands as tall as the longer of the two either way.
+
+Both Test connection buttons, the one in AI Backends and the one on the wizard's input
+page, now run through the same off-thread runner rather than two copies of it.
+
 ## v0.56.0
 
 A new Experimental item, AI Backends, is now where the three assistants are set up.
