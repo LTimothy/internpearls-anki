@@ -493,6 +493,17 @@ def _her_front_to_guid(scope_tag):
     return out
 
 
+def existing_front_map(scope_tag):
+    """{normalized front: original front} for every note under scope_tag, for
+    mechanical_checks' duplicate detection. Never blocks generation: any
+    failure (e.g. a fresh profile with no notes yet) yields {}."""
+    try:
+        return {ai_logic._norm_front(front): front
+                for front in _her_front_to_guid(scope_tag)}
+    except Exception:
+        return {}
+
+
 def _her_guid_to_fields(scope_tag):
     """{note guid: {field name: value}} for every note under the scope tag.
 

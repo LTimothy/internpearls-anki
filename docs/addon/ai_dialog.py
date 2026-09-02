@@ -6,16 +6,18 @@ pages here are placeholders, filled in by later work.
 """
 import os
 import tempfile
+import threading
 import time
+from collections import deque
 
 from aqt import mw
 from aqt.qt import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel,
                     QPlainTextEdit, QPushButton, QRadioButton, QSpinBox,
-                    QStackedWidget, QVBoxLayout, QWidget)
+                    QStackedWidget, QTimer, QVBoxLayout, QWidget)
 
-from . import ai_cli, ai_logic
+from . import ai_cli, ai_logic, collection
 from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
-                     load_deck_skill, save_deck_skill)
+                     save_ai_usage, load_deck_skill, save_deck_skill)
 from .ui import _ask_scrollable, _info, _warn, hint_label, link_button, title_label
 
 # Note types a generated card may name. Keep in sync with
@@ -198,7 +200,7 @@ class _GenerateDialog(QDialog):
         cancel.clicked.connect(self.reject)
         self.generate_btn = QPushButton("Generate")
         self.generate_btn.setEnabled(False)
-        # Wired up once the worker thread lands; a click does nothing yet.
+        self.generate_btn.clicked.connect(self._start_generation)
         btn_row.addStretch(1)
         btn_row.addWidget(cancel)
         btn_row.addWidget(self.generate_btn)
@@ -254,11 +256,144 @@ class _GenerateDialog(QDialog):
         elif not deck:
             _info("\n".join(parts))
 
-    # -- placeholders, built out fully later ----------------------------------
+    # -- progress --------------------------------------------------------------
     def _build_progress(self):
         page = QWidget()
-        QVBoxLayout(page).addWidget(QLabel("Generating cards"))
+        lay = QVBoxLayout(page)
+        lay.addWidget(title_label("Generating cards"))
+        self.progress_label = QLabel("Starting")
+        self.phase_label = hint_label("")
+        self.elapsed_label = hint_label("")
+        lay.addWidget(self.progress_label)
+        lay.addWidget(self.phase_label)
+        lay.addWidget(self.elapsed_label)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self._cancel_generation)
+        lay.addWidget(cancel)
         return page
+
+    def _start_generation(self, revision=False):
+        s = self.session
+        s.mode = "thorough" if self.thorough_radio.isChecked() else "quick"
+        s.source = self.source_box.toPlainText()
+        s.instructions = self.instructions_box.toPlainText()
+        s.count = self.count_spin.value()
+        s.note_types = [n for n, b in self.type_boxes.items() if b.isChecked()]
+        s.deck_name = self.deck_combo.currentText().strip() or s.deck_name
+        if s.scratch is None:
+            s.scratch = tempfile.mkdtemp(prefix="ip-aigen-")
+        extra_text = "\n\n".join(a[1]["text"] for a in s.attachments if a[1]["text"])
+        image_names = [name for _, meta in s.attachments for name in meta["images"]]
+        prompt = ai_logic.build_prompt(
+            skills=ai_logic.active_skills(load_deck_skill()),
+            source=(s.source + ("\n\n## Attached document text\n" + extra_text
+                                if extra_text else "")),
+            note_types=s.note_types, field_map=FIELD_MAP, count=s.count,
+            instructions=s.instructions,
+            attachments=image_names if ai_cli.image_capable(s.backend) else [],
+            cards=s.cards if revision else None,
+            feedback=self.feedback_box.toPlainText() if revision else "",
+            notes=s.notes if revision else None,
+            checks=s.checks if revision else None)
+        # A deque, not a plain list: the worker (producer) appends and the
+        # poller (consumer) pops from the other end, so each event's removal
+        # is one atomic op with no gap between "read" and "clear" where a
+        # concurrently appended event could be silently dropped.
+        self._events = deque()
+        self._worker_error, self._worker_result = None, None
+        self._gen_done = False
+        self._cancel_flag = threading.Event()
+        self._t0 = time.monotonic()
+        image_paths = ([os.path.join(s.scratch, n) for n in image_names]
+                       if ai_cli.image_capable(s.backend) else [])
+
+        def work():
+            try:
+                self._worker_result = ai_cli.run_generation(
+                    s.backend, s.cli_path, prompt, s.mode, s.scratch,
+                    image_paths=image_paths, on_event=self._events.append,
+                    cancel=self._cancel_flag.is_set)
+            except Exception as e:
+                self._worker_error = e
+
+        self._worker = threading.Thread(target=work, daemon=True)
+        self._worker.start()
+        self.progress_label.setText(
+            "Drafting cards with " + ai_cli.BACKENDS[s.backend]["label"])
+        self.phase_label.setText("")
+        self.stack.setCurrentWidget(self.progress_page)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._poll_worker)
+        self._timer.start(200)
+
+    def _poll_worker(self):
+        # A stopped QTimer can still be fired once more by a queued signal, or
+        # (in the test mock, which has no real event loop) by unrelated code
+        # holding a reference to it; this generation cycle only ever runs
+        # _finish_generation once.
+        if self._gen_done:
+            return
+        while self._events:
+            evt = self._events.popleft()
+            if evt["type"] == "phase":
+                self.phase_label.setText(evt["phase"])
+            elif evt["type"] == "rate_limits":
+                self.session.rate_limits = evt
+        self.elapsed_label.setText(
+            f"Elapsed {int(time.monotonic() - self._t0)}s")
+        if self._worker.is_alive():
+            return
+        self._timer.stop()
+        self._gen_done = True
+        self._finish_generation()
+
+    def _wait_for_worker(self, timeout=15):
+        """Test helper: run the poll loop synchronously, without a live QTimer."""
+        end = time.time() + timeout
+        while self._worker.is_alive() and time.time() < end:
+            time.sleep(0.05)
+        self._timer.stop()
+        self._gen_done = True
+        self._finish_generation()
+
+    def _cancel_generation(self):
+        self._cancel_flag.set()
+
+    def _finish_generation(self):
+        s = self.session
+        err, res = self._worker_error, self._worker_result
+        if isinstance(err, ai_cli.GenerationCancelled):
+            self.stack.setCurrentWidget(self.input_page)
+            return
+        if err or not res:
+            _warn(f"Generation failed: {err}")
+            self.stack.setCurrentWidget(self.input_page)
+            return
+        cards, errors = ai_logic.parse_cards_json(res["text"], s.note_types, FIELD_MAP)
+        if errors:
+            _warn("The assistant's reply could not be used:\n" + "\n".join(errors[:5]))
+            self.stack.setCurrentWidget(self.input_page)
+            return
+        s.tokens_last_run = res["tokens"]
+        reg = ai_logic.record_usage(load_ai_usage(), s.backend, res["tokens"],
+                                    now=time.time())
+        save_ai_usage(reg)
+        prev = {i: c for i, c in enumerate(s.cards)}
+        s.updated = ({i for i, c in enumerate(cards)
+                     if prev.get(i) and prev[i] != c} if prev else set())
+        s.cards = cards
+        s.checks = ai_logic.mechanical_checks(
+            cards, collection.existing_front_map(_cfg()["scope_tag"]))
+        s.included = [not any(c["level"] == "block" for c in per)
+                     for per in s.checks]
+        s.notes = {}
+        self._rebuild_review()
+        self.stack.setCurrentWidget(self.review_page)
+
+    # -- review ------------------------------------------------------------
+    def _rebuild_review(self):
+        """Populate the review page from session state. Built out in full by
+        the next stage; this stage only needs the seam _finish_generation calls."""
 
     def _build_review(self):
         page = QWidget()
