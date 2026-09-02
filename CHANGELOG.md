@@ -3,6 +3,28 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.55.0
+
+The "Generate cards with AI" wizard's backend row can now pick a model and, for
+Claude Code, a reasoning-effort level, instead of every backend running whatever
+it defaults to on its own. Claude Code now runs with `--model sonnet --effort
+medium` unless overridden, rather than silently inheriting the signed-in
+account's own default model, the top model for a Max subscriber, which used to
+burn through a subscription's credits fast across Thorough mode's up-to-15-turn
+loop. Codex CLI's Model field passes `-m` only when a model is set and the
+installed binary is detected to support it, so an older Codex isn't hard-broken.
+Antigravity CLI's Model field is read-only text, since headless mode has no
+verified way to honor a model choice at all (its default is already the cheap
+tier). Two new config keys, `ai_model` and `ai_effort`, hold whatever's picked.
+
+The Experimental menu's "Generate cards (AI)" is now "Generate Cards (AI)",
+title case to match "Night Mode Dimming".
+
+The bundled internpearls-authoring skill (used by the AI wizard's prompts) is
+replaced with a distilled version of the house card-authoring rules covering
+card scope, atomicity, the "why" field, table/list/cloze shape, and image
+sourcing.
+
 ## v0.54.2
 
 The "Generate cards with AI" wizard's review rows are rebuilt on the same shape the
