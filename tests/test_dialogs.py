@@ -1090,6 +1090,24 @@ def test_night_mode_dimming_confirmation_describes_saved_scope(anki):
     drive(anki, dialogs.open_night_mode_dimming, respond_images)
 
 
+def test_night_mode_dimming_confirmation_when_off(anki):
+    """Saving with the toggle left off must say so in the dialog's own name,
+    not the old per-images wording ("Night Mode image dimming is off.") that
+    predates the content scope."""
+    from internpearls import dialogs
+
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": save["id"], "click": True}]}
+        assert "Night Mode Dimming is off." in p["text"]
+        return {}
+
+    drive(anki, dialogs.open_night_mode_dimming, respond)
+
+
 def test_the_interval_spinbox_follows_the_auto_sync_checkbox(anki):
     """Nothing checks on an interval while auto-sync is off, so the control that sets one
     must not sit there editable and inert. Driven across several rounds of the same

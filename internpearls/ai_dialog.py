@@ -673,6 +673,7 @@ class _GenerateDialog(QDialog):
             "Edit my rules", on_click=lambda: self._guard(self._edit_user_skill))
         skills_row.addWidget(self.skills_link)
         skills_row.addWidget(self.rules_link)
+        skills_row.addStretch()
         lay.addLayout(skills_row)
         self.usage_row = hint_label("")
         lay.addWidget(self.usage_row)

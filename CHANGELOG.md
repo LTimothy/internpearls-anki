@@ -15,6 +15,8 @@ button that opens this window. Defaults for Claude Code stay at sonnet with medi
 effort, chosen so a Thorough run does not spend a subscription's credits on the top
 model by default. The honesty rules are unchanged: Codex is only handed a model flag
 when its own help documents one, and Antigravity's model cannot be set from here at all.
+`ai_cli_path` in config.json is now per backend rather than one flat string; a path
+already saved under the old shape carries over automatically to the preferred backend.
 
 Night Mode Dimming can now dim more than images. A scope choice under the checkbox
 picks between bright images only, the previous behaviour, and everything Anki draws as

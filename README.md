@@ -98,11 +98,11 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 | `excluded_decks` | Deck names opted out of syncing. Also editable from Manage decks. |
 | `export_deck` | The deck that Backup/Restore/Export intern pearls deck and the automatic pre-sync backup operate on (default: `Intern Pearls::Intern Custom`). |
 | `auto_sync_decks`, `auto_sync_interval_minutes`, `notify_addon_updates`, `auto_update_addon` | Sync and update automation, see Settings below and `config.md` for details on each. |
-| `dim_images_night_mode`, `dim_images_night_mode_percent` | Dim bright pictures while Anki itself is in Night Mode, and by how much (a percentage, 0-90). Applies to every deck in your collection, not just this add-on's. Also editable from Experimental > Night mode dimming, see below. |
+| `dim_images_night_mode`, `dim_images_night_mode_percent` | Dim bright pictures while Anki itself is in Night Mode, and by how much (a percentage, 0-90). Applies to every deck in your collection, not just this add-on's. Also editable from Experimental > Night Mode Dimming, see below. |
 
 ### Experimental submenu
 
-Features that are new or still settling, tucked away from the top level and from Advanced's own established groups: **Generate Cards (AI)**, **AI Backends**, and **Night mode dimming**.
+Features that are new or still settling, tucked away from the top level and from Advanced's own established groups: **Generate Cards (AI)**, **AI Backends**, and **Night Mode Dimming**.
 
 #### Generate Cards (AI)
 
@@ -140,18 +140,21 @@ What's stored between sessions is deliberately small: which backend and CLI path
 
 A View skills link shows exactly what's sent to the assistant on top of your material: the bundled InternPearls authoring skill (card-craft rules that ship with the add-on), plus a deck-specific skill if your configured deck source offers one and you've consented to it. Nothing from a deck skill is ever sent without that explicit consent, and the same link lets you enable or disable one you've already consented to.
 
-#### My rules
+##### My rules
 
-An Edit my rules link, beside View skills, opens a plain-text box for your own standing instructions, sent after the bundled and deck skills on every run. It's yours alone: nothing here is fetched from a deck source or shared with anyone. It costs tokens every turn, so it's meant for something short and specific, what to emphasise, what to avoid, how you like a card phrased, capped at 20,000 characters. Saving an empty box clears it; View skills always shows whether you have one set and how many lines it is.
+Beside View skills on the wizard's input page, an Edit my rules link opens a plain-text box for your own standing instructions, sent after the bundled and deck skills on every run. It's yours alone: nothing here is fetched from a deck source or shared with anyone. It costs tokens every turn, so it's meant for something short and specific, what to emphasise, what to avoid, how you like a card phrased, capped at 20,000 characters. Saving an empty box clears it; View skills always shows whether you have one set and how many lines it is.
 
-#### Night mode dimming
+#### Night Mode Dimming
 
-Softens the glare of a white-background image while Anki itself is in Night Mode; it never applies in Day mode. Applies to every deck in your collection, not just the ones this add-on manages, since the rule is appended to every card Anki renders rather than to a note type. Two controls:
+Softens the glare of a white-background page while Anki itself is in Night Mode; it never applies in Day mode. Applies to every deck in your collection, not just the ones this add-on manages, since the rule is appended to every card Anki renders rather than to a note type. Never applies to the menu bar or to dialogs like this one, since those are native windows Anki draws itself, not the web content the rule reaches.
 
-- **Dim bright images in Night Mode**, off by default.
-- **Dim by N%**, default 30, range 0-90 (higher dims more; 0 leaves images unchanged). Only takes effect while the toggle above is on.
+- **Dim in Night Mode**, off by default.
+- **Dim by N%**, default 30, range 0-90 (higher dims more; 0 leaves it unchanged). Shown live as a side-by-side Normal/Dimmed preview at the exact per-pixel transform Night Mode itself renders, so the preview can never promise a different dim than what actually shows. Only takes effect while the toggle above is on.
+- Which of two scopes the percentage dims, once the toggle is on:
+  - **Bright images only**, the default: just the bright pictures on a card.
+  - **Everything on cards and deck screens**: every card, plus the deck list, the overview, and the editor, dimmed as a whole page rather than just their images.
 
-The config is read each time a card is shown, so changing either control takes effect on the very next card, no restart needed.
+The config is read each time a screen is drawn, but what counts as "the next one" differs by scope: the images scope takes effect from the very next card, since only a card's own image markup carries the rule. The content scope takes effect from the next screen that loads, since it dims the page as a whole rather than one card's markup, so a screen already on-screen when you save doesn't repaint itself immediately.
 
 ### Advanced submenu
 
