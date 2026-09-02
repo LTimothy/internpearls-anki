@@ -1012,6 +1012,13 @@ class QPushButton(QWidget):
     def setFlat(self, v):
         pass
 
+    def setDefault(self, v):
+        # Real QPushButton's "activated by a bare Return": nothing here reads it
+        # back, since the mock has no keyboard-event loop to honour it, but a
+        # button (e.g. a QDialogButtonBox's accept button) must be able to call
+        # it without raising.
+        self._default = bool(v)
+
     def setText(self, t):
         self._label = t
 
