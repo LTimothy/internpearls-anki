@@ -50,3 +50,58 @@ def test_wizard_renders_all_pages(monkeypatch):
         dlg.stack.currentWidget().repaint()
 
     assert dlg.windowTitle() == "Intern Pearls: Generate cards with AI"
+
+
+def test_mode_radios_render_the_backends_own_text(monkeypatch):
+    """C1, confirmed by rendering: the mode radios must show the found
+    backend's own truthful text, not one label shared by all three."""
+    harness.bootstrap()
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    modes = ai_cli.BACKENDS["claude"]["modes"]
+    assert dlg.thorough_radio.text() == modes["thorough"]
+    assert dlg.quick_radio.text() == modes["quick"]
+
+
+def test_view_skills_extra_button_toggles_and_leaves_dialog_open(monkeypatch):
+    """I5, against a real QDialogButtonBox: clicking the extra (ActionRole)
+    button runs on_extra without the dialog answering accept/reject, and
+    dismissing (simulated here as reject(), the same outcome Escape or the
+    close box produce) never touches on_extra at all.
+    """
+    _, q = harness.bootstrap()
+    a = harness.app()
+    from internpearls.ui import _ask_scrollable
+
+    calls = []
+
+    def on_extra(dlg):
+        calls.append(1)
+        return "updated body"
+
+    original = q.QDialog.exec
+
+    def fake_exec(self):
+        self.show()
+        a.processEvents()
+        btn = next(b for b in self.findChildren(q.QPushButton)
+                  if b.text() == "Toggle")
+        btn.click()
+        a.processEvents()
+        # A real ActionRole button never calls accept()/reject() on its own --
+        # only the click handler ran, the dialog is still up and undecided.
+        assert self.isVisible()
+        self.reject()
+        return self.result()
+
+    q.QDialog.exec = fake_exec
+    try:
+        _ask_scrollable("body text", yes_label="Close", no_label=None,
+                        extra_label="Toggle", on_extra=on_extra)
+    finally:
+        q.QDialog.exec = original
+    assert calls == [1]   # the explicit click, and only the explicit click, ran it

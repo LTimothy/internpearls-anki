@@ -1089,6 +1089,12 @@ class QRadioButton(QWidget):
     def isChecked(self):
         return self._checked
 
+    def setText(self, t):
+        self._label = t
+
+    def text(self):
+        return self._label
+
     def node(self):
         return {"t": "radio", "id": self.wid, "label": self._label,
                 "checked": self._checked}
