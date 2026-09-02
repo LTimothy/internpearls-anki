@@ -496,6 +496,15 @@ def test_active_skills_ordering_and_disable():
     assert len(ai_logic.active_skills(None)) == 1
 
 
+def test_active_skills_appends_user_rules_last():
+    deck = {"enabled": True, "text": "deck text"}
+    out = ai_logic.active_skills(deck, "  my rules  ")
+    assert out[0] == ai_logic.load_bundled_skill()
+    assert out[1:] == ["deck text", "my rules"]
+    assert ai_logic.active_skills(None, "") == [ai_logic.load_bundled_skill()]
+    assert ai_logic.USER_SKILL_MAX_CHARS == 20000
+
+
 # A hand-written minimal PDF byte string (no real xref table) was tried first
 # and rejected by pypdf's parser ("startxref not found"). tests/fixtures/sample.pdf
 # was generated once with the vendored pypdf's own PdfWriter (see git history)

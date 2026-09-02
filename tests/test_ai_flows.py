@@ -123,6 +123,16 @@ def test_input_page_shows_a_change_link_and_no_model_combo(anki, monkeypatch):
     assert not hasattr(dlg, "model_combo")
 
 
+def test_input_page_has_an_edit_my_rules_link(anki, monkeypatch):
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    assert dlg.rules_link.text() == "Edit my rules"
+
+
 # === I7: Test connection (input page's own single-backend button) =========
 
 def _drain_conn_test(dlg, timeout=15):
@@ -988,3 +998,12 @@ def test_import_buttons_own_click_signal_surfaces_a_bug_as_a_dialog(anki, monkey
     assert any("Nonexistent Type" in w for w in anki.gui.warnings)
     assert not anki.col._notes                     # nothing written
     assert dlg._result is None                      # the dialog is still open
+
+
+def test_user_skill_roundtrip_and_removal(anki):
+    assert config.load_user_skill() == ""
+    config.save_user_skill("keep every card atomic\n")
+    assert config.load_user_skill() == "keep every card atomic\n"
+    config.save_user_skill("   ")
+    assert config.load_user_skill() == ""
+    assert not os.path.exists(config.USER_SKILL)

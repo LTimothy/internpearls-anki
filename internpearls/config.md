@@ -173,3 +173,10 @@ behaviour. `"content"` dims everything Anki draws in a web view: cards, the deck
 list, the overview, and the editor. Takes effect the next time a screen loads; never
 the menu bar or dialogs. Defaults to `"images"`; an unrecognized value falls back to
 it. Editable in Intern Pearls → Experimental → Night mode dimming.
+
+## Not a config.json key: user_files/user_skill.md
+
+Your own standing instructions for the AI wizard ("My rules"), plain text, live in
+`user_files/user_skill.md`, not in this config file, so they survive an add-on update.
+Editable from the wizard's input page (Edit my rules link). An empty save removes the
+file entirely rather than leaving an empty one behind.

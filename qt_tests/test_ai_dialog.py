@@ -506,3 +506,31 @@ def test_view_skills_toggle_button_relabels_after_each_click(monkeypatch):
     finally:
         q.QDialog.exec = original
     assert seen == ["Disable deck skill", "Enable deck skill", "Disable deck skill"]
+
+
+def test_view_skills_lists_my_rules(shot):
+    _, q = harness.bootstrap()
+    s = shot("ai-view-skills", user_rules="never use mnemonics")
+    dlg = s.dialog
+    body = next(l for l in dlg.findChildren(q.QLabel) if "My rules" in l.text())
+    assert "My rules (1 line)" in body.text()
+    assert "never use mnemonics" in body.text()
+
+
+def test_view_skills_says_none_when_empty(shot):
+    _, q = harness.bootstrap()
+    s = shot("ai-view-skills")
+    dlg = s.dialog
+    body = next(l for l in dlg.findChildren(q.QLabel) if "My rules" in l.text())
+    assert "My rules: none" in body.text()
+
+
+def test_my_rules_editor_saves_and_counts(monkeypatch, tmp_path):
+    mock, q = harness.bootstrap()
+    from internpearls import ai_dialog, config
+    monkeypatch.setattr(config, "USER_SKILL", str(tmp_path / "user_skill.md"))
+    dlg = ai_dialog._UserSkillDialog(mock.mw)
+    dlg.editor.setPlainText("one rule")
+    assert dlg.count.text().startswith("8 of 20,000")
+    dlg.accept()
+    assert config.load_user_skill() == "one rule"
