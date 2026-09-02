@@ -15,6 +15,10 @@ def test_open_ai_backends_builds_one_group_per_backend(anki, monkeypatch):
     dlg = ai_setup._AIBackendsDialog(anki.mw)
     assert set(dlg.groups) == set(ai_cli.BACKENDS)
     assert dlg.groups["claude"].model.isVisible() is not None   # widget exists
+    for kind, meta in ai_cli.BACKENDS.items():
+        group = dlg.groups[kind]
+        assert meta["safety"] in group.status.text()
+        assert meta["label"] in group.title() or meta["label"] in group.status.text()
 
 
 def test_toggling_enabled_writes_config(anki, monkeypatch):
@@ -42,6 +46,23 @@ def test_cli_path_flat_string_migrates_to_preferred_backend(anki):
     assert c["ai_cli_path"] == {"claude": "/opt/claude", "codex": "", "agy": ""}
     anki.mw._config = {"ai_cli_path": "/opt/claude"}     # no preference: dropped
     assert _cfg()["ai_cli_path"] == {"claude": "", "codex": "", "agy": ""}
+
+
+def test_cli_path_flat_string_survives_first_per_backend_save(anki, monkeypatch):
+    """The migrated path for one backend must not be dropped by the first
+    _write_map save for another backend: _write_map used to seed from {}
+    whenever the raw config value wasn't already a dict, discarding whatever
+    _cfg() had just migrated the legacy string into."""
+    from internpearls import ai_setup, ai_cli
+    monkeypatch.setattr(ai_cli, "detect_backends", lambda cfg: {
+        "backends": {k: {"path": None, "ok": False, "detail": "not found", "enabled": True}
+                     for k in ai_cli.BACKENDS}, "chosen": None})
+    anki.mw._config = {"ai_backend": "claude", "ai_cli_path": "/opt/claude"}
+    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg.groups["codex"].path.setText("/opt/codex")
+    dlg.groups["codex"]._commit_path()
+    assert anki.mw._config["ai_cli_path"] == {
+        "claude": "/opt/claude", "codex": "/opt/codex", "agy": ""}
 
 
 def test_backend_enabled_defaults_true(anki):

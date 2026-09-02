@@ -24,7 +24,7 @@ from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
                     QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
-from .config import (ADDON_PACKAGE, APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
+from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
                      save_ai_usage, load_deck_skill, save_deck_skill,
                      load_user_skill, save_user_skill)
 from .logic import cloze_filled_html, field_preview_html, plural
@@ -377,12 +377,11 @@ class _GenerateDialog(QDialog):
         self.resize(max(open_w, 480), open_h)
         self.session = s = _Session()
         self._retried_json = False   # the single-retry budget on malformed model output
-        # Backend kinds with a "Test connection" run currently in flight (from
-        # either the setup page's per-backend button or the input page's single
-        # backend button: both call _run_connection_test for the same kind).
-        # Guards against Re-check re-enabling a button mid-test and a second
-        # click starting a concurrent test that races the first to write the
-        # same status label.
+        # Backend kinds with a "Test connection" run currently in flight, from
+        # the input page's single Test connection button (the setup page's own
+        # per-backend buttons and Re-check now live in the separate AI Backends
+        # window, ai_setup.py). Guards against a second click starting a
+        # concurrent test that races the first to write the same status label.
         self._testing_kinds = set()
         cfg = _cfg()
         s.deck_name = cfg["export_deck"] + "::" + ai_logic.GENERATED_DECK_LEAF

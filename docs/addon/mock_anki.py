@@ -920,9 +920,6 @@ class QWidget:
     def hide(self):
         self.setVisible(False)
 
-    def show(self):
-        self.setVisible(True)
-
     def isVisible(self):
         return self._visible
 
@@ -1999,11 +1996,6 @@ def install():
             monkeypatches this directly rather than scripting a real file picker."""
             text, ok = gui.prompt(caption, default=directory)
             return (text, filter) if ok else ("", "")
-
-        @staticmethod
-        def getOpenFileNames(parent=None, caption="", directory="", filter="", *a, **k):
-            text, ok = gui.prompt(caption, default=directory)
-            return ([text] if ok and text else [], filter)
 
     class _QFontDatabase:
         class SystemFont:
