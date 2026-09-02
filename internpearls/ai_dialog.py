@@ -25,11 +25,13 @@ from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
 from . import ai_cli, ai_logic, collection
 from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
                      save_ai_usage, load_deck_skill, save_deck_skill)
-from .logic import plural
+from .logic import cloze_filled_html, field_preview_html, plural
 from .net import fetch_card_image
-from .review import _image_tag
+from .palette import colors
+from .review import _CARET_CLOSED, _CARET_OPEN, _image_tag, _rich_label, _separator
 from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
                  link_button, muted_label, title_label, tooltip)
+from .widgets import CARET_GAP, CARET_W, chip_cell, chip_column_width
 
 # Note types a generated card may name. Keep in sync with
 # collection._GENERATED_ALLOWED_TYPES: the types this add-on manages, plus
@@ -158,6 +160,117 @@ def _image_row_html(session, i, card):
         tag = _image_tag(res["path"]) if res.get("path") else None
         lines.append((tag or "[image]") + host_txt)
     return "<br>".join(lines)
+
+
+# The chip kinds the review row can actually show, in the priority order a card's
+# checks are read for: any blocking check outranks a warning, which outranks a
+# revision marker, which outranks a clean row. Passed to every chip_cell/
+# chip_column_width call on this page so the gutter is measured against exactly
+# these four words and none of the update screen's (see widgets.py:67-74).
+_REVIEW_CHIP_KINDS = ("blocked", "warn", "ok", "revised")
+
+# The include checkbox's own column width, measured the same way chip_column_width
+# measures a pill: an unpolished QCheckBox's sizeHint reports the wrong font, and a
+# fixed width is what keeps every row's checkbox (and everything after it) lined up
+# in one column rather than each row's box floating at its own natural width.
+_CHECK_W = {}
+
+
+def _checkbox_column_width():
+    if "w" not in _CHECK_W:
+        probe = QCheckBox()
+        probe.ensurePolished()
+        _CHECK_W["w"] = probe.sizeHint().width()
+    return _CHECK_W["w"]
+
+
+def _review_row_indent():
+    """Where the review row's primary text sits, and what its expanded body and its
+    reason lines indent by: past the caret, the checkbox, and the chip, each with
+    its own gap. Mirrors widgets.row_text_indent's arithmetic, but can't reuse it
+    directly -- that helper assumes every leading column is chip-width, and the
+    checkbox here is not one."""
+    return (CARET_W + CARET_GAP + _checkbox_column_width() + CARET_GAP
+           + chip_column_width(_REVIEW_CHIP_KINDS) + CARET_GAP)
+
+
+def _review_row_kind(entries, updated):
+    """The one chip a review row wears: the worst thing true about the card, or
+    (once nothing is wrong with it) whether the last revision touched it at all."""
+    levels = {e.get("level") for e in entries}
+    if "block" in levels:
+        return "blocked"
+    if "warn" in levels:
+        return "warn"
+    if updated:
+        return "revised"
+    return "ok"
+
+
+def _accent_row(html_text, role, indent):
+    """One dim line under a card's header, with a left accent bar in the given
+    palette role -- the same idiom review._change_note_row uses for a deck source's
+    change note, reused here for a check's reason and for a queued revision note,
+    so both read as the same kind of annotation on the row they belong to."""
+    row = QWidget()
+    lay = QHBoxLayout(row)
+    lay.setContentsMargins(indent, 0, 0, 0)
+    lay.setSpacing(0)
+    label = muted_label(html_text)
+    label.setTextFormat(Qt.TextFormat.RichText)
+    c = colors()
+    # The border-none reset is load-bearing: Qt drops a lone border-left on a QLabel
+    # unless the border shorthand is cleared first.
+    label.setStyleSheet(f"border: none; border-left: 3px solid {c[role + '_bg']};"
+                        f" padding-left: 8px; color: {c['muted']};")
+    lay.addWidget(label)
+    return row
+
+
+def _check_reason_row(entry, indent):
+    """A check's own account of why it flagged the card: its message, and for a
+    duplicate, the existing card it matched -- both already computed by
+    ai_logic.mechanical_checks and, before this, never shown anywhere (a
+    [duplicate] chip said something was wrong and nothing said what)."""
+    msg = html.escape(entry.get("message", ""))
+    existing = entry.get("existing")
+    if existing:
+        msg += f" &middot; existing card: &ldquo;{html.escape(existing)}&rdquo;"
+    role = "decline" if entry.get("level") == "block" else "updated"
+    return _accent_row(f"<i>{msg}</i>", role, indent)
+
+
+def _queued_note_row(note, indent):
+    """The revision note queued for this card (see _note_card), shown on the row
+    it belongs to instead of only living inside a modal prompt's memory."""
+    text = f"<i>&ldquo;{html.escape(note)}&rdquo;</i>&nbsp;&nbsp;" \
+          f"<span style='color:{colors()['dim']}; font-size:11px'>" \
+          "&middot; sent on the next Revise all</span>"
+    return _accent_row(text, "updated", indent)
+
+
+def _card_primary_html(card):
+    """The row's bold collapsed line: the front, or a cloze note's text with its
+    deletions filled in -- the fact under review lives in the deletions, so it is
+    shown rather than blanked (mirrors review._primary_html)."""
+    ntype = card["note_type"]
+    primary_field = ai_logic.PRIMARY_FIELD.get(ntype, "Front")
+    text = field_preview_html(card["fields"].get(primary_field, ""))
+    if primary_field == "Text":
+        text = cloze_filled_html(text, escape=False)
+    return f"<b>{text}</b>"
+
+
+def _card_body_fields(card):
+    """The card's remaining fields, in the note type's own order, once the primary
+    field and the never-shown Notes/Tag are out of the way -- what a review row's
+    expanded body actually has to show: the back, the why, and whatever else the
+    note type carries (e.g. dosing)."""
+    ntype = card["note_type"]
+    primary_field = ai_logic.PRIMARY_FIELD.get(ntype, "Front")
+    skip = {primary_field, "Notes", "Tag"}
+    order = FIELD_MAP.get(ntype) or list(card["fields"])
+    return [(n, card["fields"].get(n, "")) for n in order if n not in skip]
 
 
 class _Session:
@@ -1088,51 +1201,140 @@ class _GenerateDialog(QDialog):
         return page
 
     def _rebuild_review(self):
-        """(Re)populate the review page's card list from session state."""
+        """(Re)populate the review page's card list from session state, on the same
+        row skeleton the update screen's own review._card_row draws: a caret column,
+        a fixed chip column, a bold primary line, and a body the caret reveals
+        holding the back, why, dosing and images. Hairlined between rows rather than
+        around, the same convention build_list_body's append_rows uses."""
         s = self.session
         while self.cards_lay.count():
             item = self.cards_lay.takeAt(0)
-            if item and item.widget():
-                item.widget().deleteLater()
+            w = item.widget() if item else None
+            if w is not None:
+                # A row taken out of the layout still paints (and still answers
+                # isVisible()) until Qt gets around to deleteLater's deferred
+                # removal; hiding it here is what keeps a stale row from flashing
+                # on screen for one frame while the new rows are being built.
+                w.setVisible(False)
+                w.deleteLater()
         self.include_boxes = []
         for i, card in enumerate(s.cards):
-            row = QWidget()
-            rowlay = QHBoxLayout(row)
-            box = QCheckBox()
-            box.setChecked(s.included[i])
-            box.toggled.connect(lambda v, i=i: self._guard(self._on_include_toggled, i, v))
-            self.include_boxes.append(box)
-            primary = ai_logic.PRIMARY_FIELD.get(card["note_type"], "Front")
-            badges = " ".join(f"[{html.escape(c['code'])}]" for c in s.checks[i]
-                              if c["level"] != "ok")
-            upd = " [updated]" if i in s.updated else ""
-            note_txt = (f"  (note: {html.escape(s.notes[i])})"
-                       if i in s.notes else "")
-            # Escaped, not the raw field/note text: the bundled skill (and any
-            # deck skill) explicitly instructs the model to use <table>/<ul>
-            # markup in a card's own text, which this row must show as the
-            # literal characters they are, not render as live HTML.
-            front_txt = html.escape(card["fields"].get(primary, "")[:90])
-            type_txt = html.escape(card["note_type"])
-            text = f"{front_txt} ({type_txt}) {badges}{upd}{note_txt}"
-            img_html = _image_row_html(s, i, card)
-            if img_html:
-                text += "<br>" + img_html
-            label = QLabel()
-            label.setTextFormat(Qt.TextFormat.RichText)
-            label.setText(text)
-            label.setWordWrap(True)
-            edit_btn = QPushButton("Edit")
-            edit_btn.clicked.connect(lambda _, i=i: self._guard(self._edit_card, i))
-            note_btn = QPushButton("Note")
-            note_btn.clicked.connect(lambda _, i=i: self._guard(self._note_card, i))
-            rowlay.addWidget(box)
-            rowlay.addWidget(label, 1)
-            rowlay.addWidget(edit_btn)
-            rowlay.addWidget(note_btn)
-            self.cards_lay.addWidget(row)
+            if i:
+                self.cards_lay.addWidget(_separator())
+            self.cards_lay.addWidget(self._build_review_row(i, card))
         self.cards_lay.addStretch()   # keeps a short list pinned to the top, not floating
         self._update_review_summary()
+
+    def _build_review_row(self, i, card):
+        """One drafted card as a row: caret, chip, include checkbox, bold front.
+        The check(s) flagging it and any queued revision note sit under the header,
+        visible whether the row is open or not (the same treatment
+        review._change_note_row gives a deck source's own change note); the back,
+        why, dosing and images sit in the body the caret reveals. Edit and Note are
+        link_buttons at the end of that body -- review.py's own "Add note"
+        placement -- rather than native push buttons crowding every row.
+        """
+        s = self.session
+        entries = s.checks[i]
+        kind = _review_row_kind(entries, i in s.updated)
+        indent = _review_row_indent()
+
+        row = QWidget()
+        outer = QVBoxLayout(row)
+        outer.setContentsMargins(0, 5, 0, 6)
+        outer.setSpacing(4)
+
+        body = QWidget()
+        caret = QPushButton(_CARET_CLOSED)
+
+        def _toggle():
+            expanded = not body.isVisible()
+            body.setVisible(expanded)
+            caret.setText(_CARET_OPEN if expanded else _CARET_CLOSED)
+
+        header = QWidget()
+        hlay = QHBoxLayout(header)
+        hlay.setContentsMargins(0, 0, 0, 0)
+        hlay.setSpacing(CARET_GAP)
+
+        caret.setFlat(True)
+        caret.setFixedWidth(CARET_W)
+        caret.setStyleSheet(f"border: none; padding: 0; font-weight: 600;"
+                            f" color: {colors()['caret']};")
+        caret.setCursor(Qt.CursorShape.PointingHandCursor)
+        caret.clicked.connect(_toggle)
+        hlay.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
+
+        hlay.addWidget(chip_cell(kind, _REVIEW_CHIP_KINDS), 0, Qt.AlignmentFlag.AlignTop)
+
+        box = QCheckBox()
+        box.setChecked(s.included[i])
+        box.setAccessibleName("Include this card")
+        box.toggled.connect(lambda v, idx=i: self._guard(self._on_include_toggled, idx, v))
+        self.include_boxes.append(box)
+        hlay.addWidget(box, 0, Qt.AlignmentFlag.AlignTop)
+
+        primary = _rich_label(_card_primary_html(card))
+        primary.setWordWrap(True)
+        hlay.addWidget(primary, 1)
+
+        # The note type -- no longer a parenthetical crowding the front, but a
+        # quiet trailing label off to the row's right, the same treatment
+        # widgets.simple_row gives a trailing count or destination: metadata about
+        # the row, read after the card itself rather than inline with it.
+        type_label = hint_label(html.escape(card["note_type"]))
+        type_label.setWordWrap(False)
+        hlay.addWidget(type_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        outer.addWidget(header)
+
+        for entry in entries:
+            if entry.get("level") != "ok":
+                outer.addWidget(_check_reason_row(entry, indent))
+        if i in s.notes:
+            outer.addWidget(_queued_note_row(s.notes[i], indent))
+
+        body.setVisible(False)
+        blay = QVBoxLayout(body)
+        blay.setContentsMargins(indent, 2, 0, 2)
+        blay.setSpacing(4)
+
+        for name, value in _card_body_fields(card):
+            html_value = field_preview_html(value)
+            if not html_value:
+                continue
+            if name == "Why":
+                label = _rich_label(html_value)
+                why_colour = colors()["why"]
+                label.setStyleSheet(
+                    f"border: none; border-left: 3px solid {why_colour};"
+                    f" padding-left: 8px; color: {why_colour};")
+            elif name == "Dosing":
+                c = colors()
+                label = _rich_label(f"<b>Dosing</b> &nbsp;{html_value}")
+                label.setStyleSheet(f"background: {c['dosing_bg']}; color: {c['dosing_fg']};"
+                                    f" padding: 6px; border-radius: 4px;")
+            else:
+                label = _rich_label(html_value)
+            blay.addWidget(label)
+
+        img_html = _image_row_html(s, i, card)
+        if img_html:
+            blay.addWidget(_rich_label(img_html))
+
+        edit_btn = link_button("Edit", on_click=lambda: self._guard(self._edit_card, i))
+        note_btn = link_button("Note", on_click=lambda: self._guard(self._note_card, i))
+        links = QWidget()
+        llay = QHBoxLayout(links)
+        llay.setContentsMargins(0, 0, 0, 0)
+        llay.setSpacing(CARET_GAP)
+        llay.addWidget(edit_btn)
+        llay.addWidget(note_btn)
+        llay.addStretch()
+        blay.addWidget(links)
+
+        outer.addWidget(body)
+        return row
 
     def _on_include_toggled(self, i, value):
         """A card's checkbox flipped: write the new state and refresh what depends

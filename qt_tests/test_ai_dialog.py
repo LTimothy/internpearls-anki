@@ -41,11 +41,14 @@ def test_wizard_renders_all_pages(monkeypatch):
 
     assert dlg.stack.currentWidget() is dlg.review_page
     assert dlg.session.cards   # generation actually produced a card
-    # +1: the trailing addStretch() that keeps a short list pinned to the top
-    # rather than floating (see _rebuild_review), not a card row itself.
-    row_widgets = sum(1 for i in range(dlg.cards_lay.count())
-                      if dlg.cards_lay.itemAt(i).widget() is not None)
-    assert row_widgets == len(dlg.session.cards)   # review rows built
+    # Rows are hairlined BETWEEN each other (a QFrame separator, not around), so
+    # the widget count is one row per card plus one separator per gap; the
+    # trailing addStretch() is a spacer item, not a widget, so it contributes
+    # nothing here.
+    from aqt.qt import QFrame
+    row_widgets = [dlg.cards_lay.itemAt(i).widget() for i in range(dlg.cards_lay.count())]
+    row_widgets = [w for w in row_widgets if w is not None and not isinstance(w, QFrame)]
+    assert len(row_widgets) == len(dlg.session.cards)   # review rows built
 
     for page in (dlg.setup_page, dlg.input_page, dlg.progress_page,
                 dlg.review_page):
@@ -166,9 +169,8 @@ def test_review_row_renders_a_real_image_thumbnail(monkeypatch, tmp_path):
     assert dlg.stack.currentWidget() is dlg.review_page
     assert dlg.session.included == [False]   # I2: starts excluded until seen
     row = dlg.cards_lay.itemAt(0).widget()
-    label = row.layout().itemAt(1).widget()
-    label.repaint()
-    text = label.text()
+    from aqt.qt import QLabel
+    text = " ".join(l.text() for l in row.findChildren(QLabel))
     assert "<img" in text
     assert "example.com" in text
 
