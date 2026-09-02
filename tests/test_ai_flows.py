@@ -381,6 +381,85 @@ def test_import_writes_notes_and_closes(anki, monkeypatch):
     assert dlg._result == 1   # the dialog closed (accepted)
 
 
+def test_undo_shortcut_asks_qt_for_the_native_undo_key_sequence(anki):
+    """Finding 2, isolated from the dialog flow: _undo_shortcut() must ask Qt
+    for StandardKey.Undo rendered as NativeText, not a bare/default-format
+    toString() -- the mock's QKeySequence only renders the platform glyph for
+    NativeText specifically (see mock_anki._QKeySequence), so this catches
+    either a hardcoded string or a call that drops the format argument."""
+    expected = "⌘Z" if sys.platform == "darwin" else "Ctrl+Z"
+    assert ai_dialog._undo_shortcut() == expected
+
+
+# -- a successful import notifies the UI: undo becomes reachable, the deck list
+# refreshes -- see ai_dialog._do_import and mock_anki.MockMW.update_undo_actions.
+
+def test_import_enables_undo_and_refreshes_the_deck_list(anki, monkeypatch):
+    """The bug this guards: add_generated_notes wrote a real, mergeable undo
+    entry, but nothing told mw about it, so Edit > Undo stayed greyed out and
+    the deck browser never refreshed. Before the import there is nothing to
+    undo yet (a fresh collection); after it, mw's undo action is enabled and
+    mw.reset() (which also refreshes the deck list, the same call every other
+    collection-writing action in this add-on already makes) has fired."""
+    assert not anki.mw.form.actionUndo.isEnabled()
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    resets_before = anki.mw.reset_count
+    n = dlg._do_import()
+    assert n == 1
+    assert anki.mw.reset_count > resets_before
+    assert anki.mw.form.actionUndo.isEnabled()
+
+
+def test_import_success_message_uses_the_platform_undo_shortcut(anki, monkeypatch):
+    """Finding 2: the message used to hardcode "Ctrl+Z" on every platform. It
+    should instead name whatever ai_dialog._undo_shortcut() (Qt's own native
+    rendering of the standard Undo key sequence) actually returns."""
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg._do_import()
+    message = anki.gui.infos[-1]
+    assert f"{ai_dialog._undo_shortcut()} reverts it" in message
+
+
+# -- Finding 3: singular counts must not read "1 cards" / "1 notes" ----------
+
+def test_import_button_label_pluralizes_a_single_card(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    assert len(dlg.session.cards) == 1
+    assert dlg.import_btn.text() == "Import 1 card"
+
+
+def test_review_header_pluralizes_a_single_draft_card(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    assert "1 draft card " in dlg.review_header.text()
+    assert "1 draft cards" not in dlg.review_header.text()
+
+
+def test_revise_all_label_pluralizes_a_single_queued_note(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.session.notes[0] = "make it a cloze"
+    dlg._update_review_summary()
+    assert dlg.revise_btn.text() == "Revise all (1 note)"
+
+
+def test_import_success_message_pluralizes_a_single_card(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg._do_import()
+    assert "1 card added" in anki.gui.infos[-1]
+    assert "1 cards added" not in anki.gui.infos[-1]
+
+
 def test_core_cloze_card_review_row_renders_non_empty(anki, monkeypatch):
     """I6: PRIMARY_FIELD had no "Cloze" entry, so the review row fell back to
     "Front", which a Cloze note lacks, and rendered empty -- approving a card
