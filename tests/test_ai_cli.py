@@ -5,7 +5,7 @@ import threading
 import time
 import pytest
 
-from internpearls import ai_cli
+from internpearls import ai_cli, ai_logic
 
 FAKE = [sys.executable, os.path.join(os.path.dirname(__file__), "fake_cli.py")]
 
@@ -35,6 +35,33 @@ def test_run_failure_raises_generation_error_with_stderr():
 def test_run_garbage_output_raises():
     with pytest.raises(ai_cli.GenerationError):
         _run("garbage")
+
+
+def test_run_error_result_raises_with_the_clis_own_message_not_exit_code():
+    # Real shape from a v2.1.251 claude with an expired login: subtype
+    # "success", is_error true, empty stderr, exit 1. The raised message must
+    # be the CLI's own explanation, not the generic "assistant exited 1".
+    with pytest.raises(ai_cli.GenerationError) as e:
+        _run("error_result")
+    msg = str(e.value)
+    assert "OAuth session expired" in msg
+    assert "exited" not in msg
+
+
+def test_run_error_result_text_never_reaches_parse_cards_json():
+    # The is_error message must never be treated as the model's reply -- it
+    # has to raise, not come back as a successful result carrying that text.
+    events = []
+    try:
+        _run("error_result", on_event=events.append)
+        pytest.fail("expected GenerationError")
+    except ai_cli.GenerationError:
+        pass
+    assert not any(e["type"] == "result" for e in events)
+    cards, errors = ai_logic.parse_cards_json(
+        "Failed to authenticate: OAuth session expired and could not be refreshed",
+        {"Study Deck - Basic"}, {"Study Deck - Basic": ["Front", "Back"]})
+    assert cards == [] and errors   # confirms this text was never valid card JSON
 
 
 def test_run_timeout_kills_process():
@@ -302,6 +329,16 @@ def test_connection_not_signed_in_gives_a_readable_message_not_raw_stderr(monkey
     assert res["state"] == "not_working"
     assert "sign in" in res["detail"].lower()
     assert "Run `claude login`" not in res["detail"]   # not the raw stderr
+
+
+def test_connection_expired_login_reports_the_clis_own_message(monkeypatch):
+    # The real defect this guards: an expired login used to come back as
+    # "assistant exited 1", defeating the whole point of Test connection.
+    _stub_build_argv(monkeypatch, "error_result")
+    res = ai_cli.test_connection("claude", "/usr/bin/claude")
+    assert res["state"] == "not_working"
+    assert "OAuth session expired" in res["detail"]
+    assert "exited" not in res["detail"]
 
 
 def test_connection_other_failure_falls_back_to_first_stderr_line(monkeypatch):
