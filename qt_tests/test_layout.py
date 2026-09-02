@@ -210,14 +210,15 @@ def test_the_source_options_stack_rather_than_share_a_row(shot):
         "choice")
 
 
-SETTINGS_SECTIONS = ("Deck sync", "Add-on updates", "Night mode")
+SETTINGS_SECTIONS = ("Deck sync", "Add-on updates")
 
 
 def test_each_settings_section_is_ruled_off_from_the_next(shot):
-    """Settings is three unrelated decisions in one window, and used to read as one
-    column of small grey prose with checkboxes in it: a bold heading was the only thing
-    marking where one section ended and the next began, and a heading is easy to lose
-    between two paragraphs set at the same weight.
+    """Settings is two unrelated decisions in one window (Night mode dimming moved out
+    to its own Experimental dialog), and used to read as one column of small grey prose
+    with checkboxes in it: a bold heading was the only thing marking where one section
+    ended and the next began, and a heading is easy to lose between two paragraphs set
+    at the same weight.
 
     One hairline sits in each gap now. Measured by position rather than by count alone,
     since two rules bunched anywhere in the dialog would satisfy a count and separate

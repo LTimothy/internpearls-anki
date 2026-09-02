@@ -3,6 +3,19 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.54.0
+
+New "Experimental" menu, a sibling of Advanced for features that are new or still
+settling: "Generate cards (AI)" (moved off the top level, same feature, renamed to fit
+the menu's sentence-case/no-ellipses style) and a new "Night mode dimming" dialog.
+
+Night mode image dimming used to be a single on/off toggle in Settings. It's now its
+own dialog under Experimental, with a percentage control for how much dimmer bright
+images get while Anki itself is in Night Mode (it never applies in Day mode, and never
+applies to anything but images). The existing on/off setting keeps working exactly as
+before: an install that already had it on keeps today's exact look, since the new
+percentage defaults to 30, the fixed amount every prior build applied.
+
 ## v0.53.5
 
 Fixed a crash risk in the "Generate cards with AI" wizard's undo-shortcut helper.

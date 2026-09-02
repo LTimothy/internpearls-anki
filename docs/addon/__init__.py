@@ -24,7 +24,7 @@ This file is only the menu and startup wiring. The work lives in focused modules
 - sync.py        the sync flows (Sync decks, Import single deck, source resolution)
 - updates.py     add-on self-update (version fetch, download, manual check)
 - background.py  QueryOp dispatch, the startup update check, the auto-sync poll
-- dialogs.py     Manage decks, Settings, About, and source configuration
+- dialogs.py     Manage decks, Settings, Night mode dimming, About, source configuration
 """
 from aqt import gui_hooks, mw
 from aqt.qt import QAction, QMenu
@@ -34,7 +34,7 @@ from .background import _schedule_background_checks
 from .collection import (backup_collection_now, backup_deck_now, export_deck,
                          import_deck, remove_empty_cards, restore_from_backup,
                          update_notetypes)
-from .dialogs import about, manage_decks, open_settings
+from .dialogs import about, manage_decks, open_night_mode_dimming, open_settings
 from .nightmode import dim_images_in_night_mode
 from .sync import (clean_up_duplicates, import_single, reconcile_decks,
                    register_reconcile_action, sync_decks, update_decks)
@@ -56,16 +56,16 @@ def _menu():
 
     # Two primary actions up top, everything occasional tucked under Advanced (including
     # the manual add-on-update check, which most people never need since the background
-    # notice already covers it), and a small Settings/About pair at the bottom. Deck
-    # source configuration lives inside Manage decks itself now, not as its own item,
-    # since it only matters in the context of what decks are available to manage.
+    # notice already covers it), everything new or still settling tucked under
+    # Experimental, and a small Settings/About pair at the bottom. Deck source
+    # configuration lives inside Manage decks itself now, not as its own item, since it
+    # only matters in the context of what decks are available to manage.
     #
     # "Update my decks" is the recommended front door (sync + reconcile in one consented
     # flow, see sync.update_decks); Sync decks and Reconcile my decks stay under Advanced
     # as escape hatches for anyone who wants just one half on its own.
     add(menu, "Update my decks", update_decks)
     add(menu, "Manage decks", manage_decks)
-    add(menu, "Generate cards with AI", generate_cards)
     menu.addSeparator()
     adv = menu.addMenu("Advanced")
     # Four groups below, though the backup/restore group is itself two
@@ -95,6 +95,12 @@ def _menu():
     # (e.g. "Check for add-on updates (v0.24.0 available)") so that news survives past
     # the startup tooltip's 8 seconds, instead of only living in a notice you can miss.
     register_update_action(add(adv, "Check for add-on updates", check_updates))
+    # Experimental, a sibling of Advanced: features that are new or still settling, not
+    # yet trusted enough to sit at the top level or inside Advanced's own established
+    # groups.
+    exp = menu.addMenu("Experimental")
+    add(exp, "Generate cards (AI)", generate_cards)
+    add(exp, "Night mode dimming", open_night_mode_dimming)
     menu.addSeparator()
     add(menu, "Settings", open_settings)
     add(menu, "About", about)
