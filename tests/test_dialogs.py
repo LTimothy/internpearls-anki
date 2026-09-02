@@ -746,6 +746,26 @@ def _write_installed(anki, data):
     _save_json(INSTALLED, data)
 
 
+def test_save_json_creates_a_missing_directory(tmp_path):
+    """D: _save_json mkstemps a temp file into its target's own directory before
+    the atomic os.replace, and mkstemp raises FileNotFoundError outright if that
+    directory doesn't exist. config.py only creates user_files/ once, at import
+    time, so this is reachable only if something removes it afterward -- but the
+    fix is one line and the failure mode was every state write in the add-on
+    (installed.json, the feedback log, ai_usage.json, declined.json, the deck
+    skill) crashing instead of just this one. Doesn't touch the target file
+    itself beyond confirming a normal round trip still works."""
+    from internpearls.config import _load_json, _save_json
+
+    target = tmp_path / "missing" / "nested" / "state.json"
+    assert not target.parent.exists()
+
+    _save_json(str(target), {"a": 1})
+
+    assert target.exists()
+    assert _load_json(str(target), None) == {"a": 1}
+
+
 def _all_text(tree):
     """Every "text" (QLabel) and "label" (QPushButton) string anywhere in the tree,
     joined into one blob so a caller can check substrings ("Declined" is part of a
