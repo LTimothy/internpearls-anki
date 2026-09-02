@@ -220,7 +220,7 @@ def _drain_conn_test(dlg, timeout=15):
     """Mirrors ai_dialog's own test helper: joins the background thread a
     Test connection click started, then fires its poll timer (the mock has
     no live event loop) to run the completion callback."""
-    t, timer = dlg._refs[-1]
+    t, timer = dlg._conn_test_refs[-1]
     t.join(timeout=timeout)
     timer.fire()
 
@@ -272,7 +272,7 @@ def test_recheck_mid_test_connection_does_not_reenable_or_double_run(anki, monke
     dlg._test("claude")
     assert not panel.test_btn.isEnabled()
     status_mid_test = panel.test_status.text()
-    n_refs = len(dlg._refs)
+    n_refs = len(dlg._conn_test_refs)
 
     dlg.recheck()   # simulates a Re-check click mid-test
     assert dlg.panel is panel                       # panel not rebuilt under it
@@ -280,7 +280,7 @@ def test_recheck_mid_test_connection_does_not_reenable_or_double_run(anki, monke
     assert panel.test_status.text() == status_mid_test  # not wiped
 
     dlg._test("claude")   # a second click while still running
-    assert len(dlg._refs) == n_refs   # no second test was started
+    assert len(dlg._conn_test_refs) == n_refs   # no second test was started
 
     _drain_conn_test(dlg)
     assert "working" in panel.test_status.text().lower()
@@ -322,7 +322,7 @@ def test_switching_preference_mid_test_does_not_write_to_the_old_panel(anki, mon
     new_status = dlg.panel.test_status.text()
 
     release.set()
-    t, timer = dlg._refs[-1]
+    t, timer = dlg._conn_test_refs[-1]
     t.join(timeout=15)
     timer.fire()      # must not raise, and must not touch the new (codex) panel
 

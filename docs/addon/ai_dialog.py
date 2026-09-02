@@ -24,6 +24,7 @@ from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
                     QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
+from .ai_setup import run_connection_test_async
 from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
                      save_ai_usage, load_deck_skill, save_deck_skill,
                      load_user_skill, save_user_skill)
@@ -510,48 +511,6 @@ class _GenerateDialog(QDialog):
         open_ai_backends(self)
         self._detect(_cfg())
 
-    def _run_connection_test(self, kind, path, on_status, on_done=None):
-        """Run ai_cli.test_connection off the UI thread, polling the same way
-        every other background call in this dialog does (a daemon thread plus
-        a QTimer, never a blocking call on the UI thread). `on_status(text)`
-        is called once with the final readable result; never the CLI's raw
-        stderr, since ai_cli.test_connection already turned that into one
-        short sentence. Referenced test threads/timers are kept alive on
-        `self` for the duration of the test only (nothing this dialog owns
-        long-term), since a local variable would be GC'd out from under a
-        live QTimer.
-        """
-        on_status("Testing connection…")
-        box = {}
-
-        def worker():
-            try:
-                box["r"] = ai_cli.test_connection(kind, path)
-            except Exception as e:
-                box["e"] = e
-
-        t = threading.Thread(target=worker, daemon=True)
-        timer = QTimer(self)
-        self._conn_test_refs = getattr(self, "_conn_test_refs", [])
-        self._conn_test_refs.append((t, timer))
-
-        def poll():
-            if t.is_alive():
-                return
-            timer.stop()
-            if "e" in box:
-                on_status(f"Test failed: {box['e']}")
-            else:
-                r = box["r"]
-                prefix = "Working: " if r["state"] == "working" else "Not working: "
-                on_status(prefix + r["detail"])
-            if on_done:
-                on_done()
-
-        timer.timeout.connect(poll)
-        t.start()
-        timer.start(_IMG_POLL_MS)
-
     # === input ==================================================================
     def _build_input(self):
         page = QWidget()
@@ -730,8 +689,11 @@ class _GenerateDialog(QDialog):
         def _done():
             self._testing_kinds.discard(s.backend)
             self.backend_test_btn.setEnabled(True)
-        self._run_connection_test(
-            s.backend, s.cli_path, self.backend_test_status.setText, on_done=_done)
+        self.backend_test_status.setText("Testing connection…")
+        # Same off-thread runner the AI Backends window uses; the wizard has one
+        # backend in play at a time, so it needs no liveness predicate.
+        run_connection_test_async(self, s.backend, s.cli_path,
+                                  self.backend_test_status.setText, on_done=_done)
 
     def _attach(self):
         from aqt.qt import QFileDialog

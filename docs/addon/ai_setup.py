@@ -378,12 +378,63 @@ class _SettingsPanel(QWidget):
         _write_map("ai_effort", self.kind, effort)
 
 
+def run_connection_test_async(owner, kind, path, on_status, on_done=None,
+                             is_live=None, guard=None):
+    """Run ai_cli.test_connection off the UI thread and report the one readable
+    line it comes back with.
+
+    Shared by this window and the wizard, which ran the same daemon-thread-plus-
+    QTimer twice: a blocking call on the UI thread freezes Anki, and a thread or
+    timer held only in a local would be collected out from under the live poll, so
+    both are parked on `owner` for the run.
+
+    `on_status(text)` is called once, from the poll and only from the poll, with the
+    final line: never the CLI's own stderr, which ai_cli.test_connection has already
+    turned into one short sentence. `on_done()` runs first and always, so a caller's
+    own bookkeeping is cleaned up even when the result has nowhere left to go.
+    `is_live()` is that case: the AI Backends window rebuilds its settings panel when
+    the preferred backend changes, so a result arriving after the rebuild is consumed
+    and dropped rather than written into a panel about a different assistant.
+    `guard` wraps the poll the way a dialog wraps its own callbacks.
+    """
+    box = {}
+
+    def worker():
+        try:
+            box["r"] = ai_cli.test_connection(kind, path)
+        except Exception as e:
+            box["e"] = e
+    t = threading.Thread(target=worker, daemon=True)
+    timer = QTimer(owner)
+    refs = getattr(owner, "_conn_test_refs", None)
+    if refs is None:
+        refs = owner._conn_test_refs = []
+    refs.append((t, timer))
+
+    def poll():
+        if t.is_alive():
+            return
+        timer.stop()
+        if on_done:
+            on_done()
+        if is_live is not None and not is_live():
+            return
+        if "e" in box:
+            on_status(f"Test failed: {box['e']}")
+        else:
+            r = box["r"]
+            on_status(("Working: " if r["state"] == "working" else "Not working: ")
+                      + r["detail"])
+    timer.timeout.connect((lambda: guard(poll)) if guard else poll)
+    t.start()
+    timer.start(_POLL_MS)
+
+
 class _AIBackendsDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: AI Backends")
         self._testing = set()
-        self._refs = []
         self.rows = {}
         self.panel = None
         self.preferred = None
@@ -511,50 +562,31 @@ class _AIBackendsDialog(QDialog):
 
     # --- test connection ---------------------------------------------------
     def _test(self, kind):
-        panel = self.panel
         path = ai_cli.detect_backends(_cfg())["backends"][kind]["path"]
         if not path or kind in self._testing:
             return
         self._testing.add(kind)
-        panel.test_btn.setEnabled(False)
-        panel.test_status.setText("Testing connection")
-        box = {}
+        self.panel.test_btn.setEnabled(False)
+        self.panel.test_status.setText("Testing connection")
 
-        def worker():
-            try:
-                box["r"] = ai_cli.test_connection(kind, path)
-            except Exception as e:
-                box["e"] = e
-        t = threading.Thread(target=worker, daemon=True)
-        timer = QTimer(self)
-        self._refs.append((t, timer))
-
-        def poll():
-            if t.is_alive():
-                return
-            timer.stop()
-            self._testing.discard(kind)
+        def live():
             # A preference switch mid-test rebuilds the panel (use_backend ->
-            # recheck), and this closure still holds the old one: look the
-            # current panel up by kind rather than trust the captured
-            # reference, and consume the thread result without touching the
-            # UI at all when it no longer belongs to this test. The result
-            # itself is still consumed and _testing above still cleaned up
-            # either way, so a later Test connection on this backend is not
-            # left thinking one is already running.
-            live = self.panel
-            if live is None or live.kind != kind:
-                return
-            live.test_btn.setEnabled(True)
-            if "e" in box:
-                live.test_status.setText(f"Test failed: {box['e']}")
-            else:
-                r = box["r"]
-                live.test_status.setText(("Working: " if r["state"] == "working"
-                                          else "Not working: ") + r["detail"])
-        timer.timeout.connect(lambda: self._guard(poll))
-        t.start()
-        timer.start(_POLL_MS)
+            # recheck), so the panel this run started against may no longer be
+            # the one on screen, and may be about a different assistant. Looked
+            # up by kind rather than captured, so a stale result is dropped
+            # instead of written into a panel it is not about.
+            return self.panel is not None and self.panel.kind == kind
+
+        def done():
+            # Runs whichever panel is live, so a later Test connection on this
+            # backend is never left thinking one is still running.
+            self._testing.discard(kind)
+
+        def status(text):
+            self.panel.test_btn.setEnabled(True)
+            self.panel.test_status.setText(text)
+        run_connection_test_async(self, kind, path, status, on_done=done,
+                                  is_live=live, guard=self._guard)
 
 
 @_safe
