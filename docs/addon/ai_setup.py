@@ -416,12 +416,27 @@ class _AIBackendsDialog(QDialog):
 
     def _preferred_kind(self, cfg, res):
         """Which backend the settings panel belongs to: the one the reader chose,
-        else whichever detection would actually use, else the first one, so the
-        panel is never empty and never points somewhere the wizard would not go."""
+        as long as it is still enabled, else whichever detection would actually
+        use, else the first enabled backend, so the panel is never empty and
+        never points somewhere the wizard would not go.
+
+        Ignoring the currently preferred backend does not touch ai_backend in
+        config (ignoring is not choosing a new preference), so a stored
+        preference that is now disabled must not still be shown as preferred
+        here: that would leave the panel and the PREFERRED chip on a backend
+        the wizard will not actually use. A stored preference that is merely
+        not found (but still enabled) is unaffected by this and stays
+        preferred, since that is exactly the backend a reader would set a
+        path for."""
         chosen = cfg.get("ai_backend", "")
-        if chosen in ai_cli.BACKENDS:
+        if chosen in ai_cli.BACKENDS and res["backends"][chosen]["enabled"]:
             return chosen
-        return res["chosen"] or next(iter(ai_cli.BACKENDS))
+        if res["chosen"]:
+            return res["chosen"]
+        for kind in ai_cli.BACKENDS:
+            if res["backends"][kind]["enabled"]:
+                return kind
+        return next(iter(ai_cli.BACKENDS))
 
     def _set_overall(self, res):
         ch = res["chosen"]
@@ -486,14 +501,25 @@ class _AIBackendsDialog(QDialog):
                 return
             timer.stop()
             self._testing.discard(kind)
-            panel.test_btn.setEnabled(True)
+            # A preference switch mid-test rebuilds the panel (use_backend ->
+            # recheck), and this closure still holds the old one: look the
+            # current panel up by kind rather than trust the captured
+            # reference, and consume the thread result without touching the
+            # UI at all when it no longer belongs to this test. The result
+            # itself is still consumed and _testing above still cleaned up
+            # either way, so a later Test connection on this backend is not
+            # left thinking one is already running.
+            live = self.panel
+            if live is None or live.kind != kind:
+                return
+            live.test_btn.setEnabled(True)
             if "e" in box:
-                panel.test_status.setText(f"Test failed: {box['e']}")
+                live.test_status.setText(f"Test failed: {box['e']}")
             else:
                 r = box["r"]
-                panel.test_status.setText(("Working: " if r["state"] == "working"
-                                           else "Not working: ") + r["detail"])
-        timer.timeout.connect(poll)
+                live.test_status.setText(("Working: " if r["state"] == "working"
+                                          else "Not working: ") + r["detail"])
+        timer.timeout.connect(lambda: self._guard(poll))
         t.start()
         timer.start(_POLL_MS)
 
