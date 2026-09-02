@@ -491,6 +491,28 @@ def test_a_blanks_only_cloze_change_names_the_moved_blank():
     assert "{{c1" not in row
 
 
+def test_a_hint_only_cloze_change_names_the_hint_instead_of_claiming_a_regroup():
+    """Adding or rewording a hint leaves every blank exactly where it was, so the row
+    says the hint changed rather than falling through to the regrouped line, which
+    would describe a change that did not happen."""
+    detail = {"guid": "g1", "kind": "changed", "notetype": "Study Deck - Cloze",
+              "was": {"Text": "Best at {{c1::25 gauge}}."},
+              "fields": [("Text", "Best at {{c1::25 gauge::a size}}."),
+                         ("Why", ""), ("Image", ""), ("Dosing", ""), ("Notes", "")]}
+    row = next(t for t in _text_nodes(detail) if "<b>Text</b>" in t)
+    assert "hint added" in row and "a size" in row
+    assert "regrouped" not in row and "{{c1" not in row
+
+
+def test_a_cloze_row_shows_a_deletion_hint_beside_its_filled_answer():
+    """The hint is the half of the deletion the learner actually reads while the
+    answer is blanked, so the review line has to carry it."""
+    detail = _cloze_note_detail("Best at {{c1::25 gauge::a size}}.")
+    assert review._primary_html(detail) == (
+        'Best at <span class="cloze">25 gauge</span> '
+        '<span class="ch">[a size]</span>.')
+
+
 def _show_yours(row):
     """Click the row's Show yours link, the way a reader would."""
     button = next(n for n in _walk(row.node())
