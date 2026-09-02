@@ -3,6 +3,47 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.57.0
+
+Antigravity CLI runs now actually reach the model. Its print mode takes the prompt as
+the value of its own `-p` flag and never reads standard input, so the argv the add-on
+built (`agy -p --output-format stream-json`, prompt on stdin) made `agy` treat
+`--output-format` as the whole prompt and fail. The prompt is now passed as that flag's
+value and goes last, where nothing after it can be mistaken for it, with the scratch
+folder handed over as `--add-dir` and slash-command expansion turned off so a `/word`
+in your own source material stays text. A prompt over 200,000 characters is refused
+with a readable sentence rather than an operating-system argument-size error.
+
+Antigravity's streamed progress is read correctly too. Its lines are keyed by `event`
+rather than `type`, and its final reply, token count, and error message all sit inside
+a nested `result` object, so the phase line during a run and the token count after one
+were both blank, and a failed run could report nothing useful. A refused file write and
+an empty prompt each get one short sentence now instead of the CLI's own long line.
+
+Antigravity CLI gains real Model and Effort controls. `agy` documents `--model` and
+`--effort` in its own help and lists the ids it accepts under `agy models`, so both are
+yours to set, and each is sent only when you set one and only when the installed binary
+documents that flag. Left blank, Antigravity runs its own default, already a cheap
+Flash tier. The wizard's one-line backend summary reads the configured model, or
+"default model", for every backend.
+
+Attached images work with all three assistants. Antigravity reads the scratch copy of
+exactly the files you attach, the same as Claude Code and Codex CLI, so its row now
+carries the "image attach: supported" badge. No backend is ever given a file-writing
+tool.
+
+Leftover scratch folders get cleaned up. Each run copies your attachments into a folder
+in the system temp directory and removes it when the wizard closes; a crash used to
+leave it behind for good. Shortly after Anki starts, the add-on now removes its own
+leftovers older than a day, and trims the oldest if what remains still exceeds 200 MB.
+Nothing outside its own named folders is touched.
+
+The account each assistant needs is stated more precisely. Codex CLI works with a free
+ChatGPT account, at roughly 50 agentic coding messages a day, with more on Go, Plus, or
+Pro; Claude Code has no free tier; Antigravity CLI stays a free, throttled Google
+account tier, and its row notes that it replaces Gemini CLI, which stopped serving
+personal Google AI Pro and Ultra accounts on 2026-06-18.
+
 ## v0.56.1
 
 The AI Backends rows no longer cut off their own last line. Each row's muted line

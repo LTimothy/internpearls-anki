@@ -663,14 +663,9 @@ class _GenerateDialog(QDialog):
         cfg = _cfg()
         model = cfg["ai_model"][s.backend] or meta["default_model"]
         effort = cfg["ai_effort"][s.backend] or meta["default_effort"]
-        bits = [meta["label"]]
-        if s.backend == "agy":
-            bits.append("auto model")
-        else:
-            if model:
-                bits.append(model)
-            if effort and meta.get("effort_levels"):
-                bits.append(f"{effort} effort")
+        bits = [meta["label"], model or "default model"]
+        if effort and meta.get("effort_levels"):
+            bits.append(f"{effort} effort")
         self.backend_row.setText("Backend: " + ", ".join(bits))
         self.thorough_hint.setText(meta["modes"]["thorough"])
         self.quick_hint.setText(meta["modes"]["quick"])

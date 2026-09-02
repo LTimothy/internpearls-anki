@@ -19,7 +19,8 @@
 #                   (the shape parse_stream_event's codex branch was actually
 #                   reading before I9; kept alongside codex_top since neither
 #                   shape is confirmed against a live codex binary)
-#   agy_ok          antigravity-style "result" event
+#   agy_ok          antigravity-style "event"-keyed step_update then a
+#                   SUCCESS result, the shape agy 1.1.24 actually emits
 #   with_image      one card carrying a url: image (I2 review-gate tests)
 import json
 import sys
@@ -94,7 +95,12 @@ if mode == "with_image":
                       "result": json.dumps(cards), "usage": USAGE}))
     sys.exit(0)
 if mode == "agy_ok":
-    print(json.dumps({"type": "result", "result": CARDS_JSON, "usage": USAGE}))
+    print(json.dumps({"event": "step_update", "step_update": {
+        "step_type": "agent_response", "state": "DONE", "text_delta": "..."}}),
+        flush=True)
+    print(json.dumps({"event": "result", "result": {
+        "status": "SUCCESS", "response": CARDS_JSON, "num_turns": 1,
+        "usage": dict(USAGE, total_tokens=15)}}))
     sys.exit(0)
 print(json.dumps({"type": "assistant", "message": {"content": [
     {"type": "tool_use", "name": "WebSearch", "input": {}}]}}), flush=True)

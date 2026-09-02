@@ -29,7 +29,6 @@ def test_backend_row_shows_model_and_effort_for_claude(monkeypatch):
     assert dlg.panel.kind == "claude"
     model = dlg.panel.model
     assert model.combo.isVisible() is True
-    assert model.readonly.isVisible() is False
     assert model.combo.isEditable() is False
     assert model.combo.currentText() == "sonnet"
     assert model.custom.isVisible() is False
@@ -37,18 +36,21 @@ def test_backend_row_shows_model_and_effort_for_claude(monkeypatch):
     assert model.effort.currentData() == ""   # "Default (medium)", not an override
 
 
-def test_backend_row_shows_read_only_model_for_agy_and_hides_effort(monkeypatch):
-    """agy has no verified way to honor a model or effort choice in headless
-    mode, so it must not offer a control that lies about being respected: no
-    Effort row is laid out for it at all, rather than an inert one."""
+def test_backend_row_shows_free_text_model_and_effort_for_agy(monkeypatch):
+    """agy documents --model and --effort in its own help and lists ids under
+    `agy models`, so Model is free text (no short alias list to close over)
+    and Effort is a real combo whose blank entry sends no flag at all."""
     dlg = _dialog(monkeypatch, found=("agy",))
     assert dlg.panel.kind == "agy"
     model = dlg.panel.model
     assert model.combo.isVisible() is False
-    assert model.readonly.isVisible() is True
-    assert "Flash" in model.readonly.text()
-    assert model.effort.isVisible() is False
-    assert [label for label, _field in model.rows()] == ["Model"]
+    assert model.custom.isVisible() is True
+    assert "gemini" in model.custom.placeholderText()
+    assert model.effort.isVisible() is True
+    assert model.effort.currentData() == ""
+    assert model.effort.itemText(0) == "Default"
+    assert [label for label, _field in model.rows()] == ["Model", "Effort"]
+    assert model.values() == ("", "")
 
 
 def test_changing_model_and_effort_persists_to_config(monkeypatch):

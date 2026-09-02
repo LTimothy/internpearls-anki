@@ -181,7 +181,7 @@ def _ready_dialog(anki, monkeypatch, cli_mode="ok"):
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs, model="", effort="":
+        lambda kind, path, mode, scratch, imgs, **kw:
             ([sys.executable, FAKE, cli_mode], True))
     dlg = ai_dialog._GenerateDialog()
     dlg.source_box.setPlainText("LAST toxicity source text")
@@ -873,7 +873,7 @@ def test_revision_with_different_card_count_does_not_claim_per_card_updates(anki
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     calls = []
 
-    def build_argv(kind, path, mode, scratch, imgs, model="", effort=""):
+    def build_argv(kind, path, mode, scratch, imgs, **kw):
         # First call (the initial draft) returns one card; the "revision"
         # comes back with two: the shape mismatch nothing here can prevent.
         calls.append(1)
@@ -913,7 +913,7 @@ def _revisable_dialog(anki, monkeypatch, cli_mode_box):
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs, model="", effort="":
+        lambda kind, path, mode, scratch, imgs, **kw:
             ([sys.executable, FAKE, cli_mode_box[0]], True))
     dlg = ai_dialog._GenerateDialog()
     dlg.source_box.setPlainText("LAST toxicity source text")

@@ -9,6 +9,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import time
 
 GUID_PREFIX = "iplocal-"
 GENERATED_TAG_LEAF = "Generated"
@@ -235,7 +237,7 @@ def build_prompt(skills, source, note_types, field_map, count, instructions="",
 
 
 _WEB_TOOLS = {"WebSearch", "WebFetch", "web_search", "web_fetch",
-              "google_web_search"}
+              "google_web_search", "search_web", "read_url_content"}
 _WINDOW_S = 7 * 86400
 
 
@@ -327,16 +329,34 @@ def parse_stream_event(kind, line):
                         "tokens": _usage_tokens(d.get("usage"))}
         return None
     if kind == "agy":
-        if t == "result":
-            text = d.get("result") or d.get("text")
-            if not isinstance(text, str) or not text:
-                nested = _as_dict(d.get("item")).get("text")
-                text = nested if isinstance(nested, str) else ""
-            return {"type": "result", "text": text or "",
-                    "tokens": _usage_tokens(d.get("usage"))}
-        if t == "step_update":
-            return {"type": "phase", "phase": str(d.get("step_type") or
-                                                  "Working")}
+        # agy keys its stream-json lines by "event", not "type", and nests the
+        # payload under a key of the same name: {"event":"result","result":{...}}.
+        # Verified against agy 1.1.24.
+        event = d.get("event")
+        if event == "result":
+            r = d.get("result")
+            if not isinstance(r, dict):
+                return None
+            if r.get("status") == "SUCCESS":
+                text = r.get("response")
+                return {"type": "result",
+                        "text": text if isinstance(text, str) else "",
+                        "tokens": _usage_tokens(r.get("usage"))}
+            # Any non-success status is fatal and its message never reaches
+            # `result`, so it cannot be mistaken for the model's reply.
+            msg = r.get("error") or r.get("response") or ""
+            if not isinstance(msg, str) or not msg:
+                msg = "Antigravity reported an error"
+            return {"type": "error", "text": msg}
+        if event == "step_update":
+            u = d.get("step_update")
+            if not isinstance(u, dict):
+                return None
+            if u.get("step_type") == "tool":
+                name = u.get("tool_name")
+                if isinstance(name, str) and name in _WEB_TOOLS:
+                    return {"type": "phase", "phase": "Verify online"}
+            return {"type": "phase", "phase": "Working"}
         return None
     return None
 
@@ -590,3 +610,77 @@ def svg_to_media(markup, index):
     if _SVG_JS_URI_RE.search(m):
         raise ValueError("svg with a javascript: URI rejected")
     return f"generated-{int(index)}.svg", m.encode("utf8")
+
+
+SCRATCH_PREFIX = "ip-aigen-"
+
+
+def _dir_bytes(path):
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+
+def sweep_stale_scratch(tmp_dir, prefix=SCRATCH_PREFIX, max_age_s=86400,
+                        max_total_bytes=200 * 1024 * 1024, now=None):
+    """Remove leftover AI-wizard scratch directories from `tmp_dir` and return
+    the paths removed, oldest first.
+
+    Each wizard session makes its own mkdtemp(prefix=...) directory and deletes
+    it when the window closes; a crash (or a killed Anki) leaves one behind
+    holding attachment copies, so nothing else ever cleans it up. Anything
+    older than `max_age_s` goes, and if what survives still exceeds
+    `max_total_bytes`, the oldest go until it doesn't.
+
+    Only directories whose name starts with `prefix` are ever considered, so
+    the rest of the temp dir is untouchable here. Never raises: this runs from
+    startup wiring, where a permission error on one stray directory must not
+    become an add-on load failure."""
+    now = time.time() if now is None else now
+    removed = []
+    entries = []
+    try:
+        names = os.listdir(tmp_dir)
+    except OSError:
+        return removed
+    for name in sorted(names):
+        if not name.startswith(prefix):
+            continue
+        path = os.path.join(tmp_dir, name)
+        try:
+            if not os.path.isdir(path) or os.path.islink(path):
+                continue
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        entries.append((mtime, path))
+    entries.sort()
+
+    def _drop(path):
+        try:
+            shutil.rmtree(path)
+        except Exception:
+            return False
+        removed.append(path)
+        return True
+
+    survivors = []
+    for mtime, path in entries:
+        if now - mtime > max_age_s:
+            if not _drop(path):
+                continue
+        else:
+            survivors.append(path)
+    total = sum(_dir_bytes(p) for p in survivors)
+    for path in survivors:
+        if total <= max_total_bytes:
+            break
+        size = _dir_bytes(path)
+        if _drop(path):
+            total -= size
+    return removed
