@@ -94,27 +94,43 @@ a specific backend. Defaults to `""`.
 
 ## ai_model
 
-The model to request from whichever backend the wizard is currently using, e.g.
-`sonnet` or `opus` for Claude Code, or a full model name for Codex CLI. Empty means
+The model to request from each backend, e.g. `sonnet` or `opus` for Claude Code, or a
+full model name for Codex CLI. Stored per backend kind, as an object with `claude`,
+`codex`, and `agy` keys (`{"claude": "", "codex": "", "agy": ""}`), so a value set while
+one backend is active never pre-fills, or gets sent for, another: switching backends
+shows and uses only that backend's own entry. Empty (the default for every key) means
 "use the backend's own default": for Claude Code that default is `sonnet` (set inside
 the add-on, not this file, so an empty value here still sends an explicit, cheaper
 model rather than whatever the account's own default happens to be); for Codex CLI an
-empty value passes no `-m` flag at all, deferring entirely to Codex's own default.
-Antigravity CLI has no way to honor this (see the wizard's Model field for that
-backend), so it's ignored there regardless of what's set. Stored flat, not per backend:
-switching backends doesn't clear it, but a value that doesn't apply to the backend now
-in use is simply ignored, not carried into a request it wasn't meant for. Defaults to
-`""`. Editable from the "Generate cards with AI" wizard's backend row.
+empty value passes no `--model` flag at all, deferring entirely to Codex's own default,
+and a non-empty value is only passed when the installed Codex CLI's own help documents
+the flag (see "Codex CLI's model flag" below). Antigravity CLI has no way to honor
+this (see the wizard's Model field for that backend), so its entry is ignored
+regardless of what's set. Defaults to `{"claude": "", "codex": "", "agy": ""}`.
+Editable from the "Generate cards with AI" wizard's backend row.
 
 ## ai_effort
 
 The reasoning-effort level to request, one of `low`, `medium`, `high`, `xhigh`, `max`.
 Only Claude Code has a verified `--effort` flag, so this only ever affects that backend;
 it's hidden from the wizard and ignored entirely for Codex CLI and Antigravity CLI.
-Empty means "use the backend's own default", which for Claude Code is `medium`, chosen
-to stay smart enough for card drafting without burning a Max subscription's credits the
-way the account's own top-model default would across Thorough mode's up-to-15-turn
-loop. Defaults to `""`. Editable from the "Generate cards with AI" wizard's backend row.
+Stored the same per-backend shape as `ai_model` above, for the same reason. Empty (or
+any value that isn't one of the five levels, e.g. a hand-edited typo) means "use the
+backend's own default", which for Claude Code is `medium`, chosen to stay smart enough
+for card drafting without burning a Max subscription's credits the way the account's
+own top-model default would across Thorough mode's up-to-15-turn loop; the wizard's
+Effort combo always shows this same effective value, never a typo it can't find in its
+own list. Defaults to `{"claude": "", "codex": "", "agy": ""}`. Editable from the
+"Generate cards with AI" wizard's backend row.
+
+### Codex CLI's model flag
+
+Codex CLI documents `-m, --model` under its `exec` subcommand's own help
+(`codex exec --help`), not under `codex --help`. The wizard probes for the long form,
+matched as a whole flag token (not a substring another flag might contain, like
+`--model-provider`), against both `codex --help` and `codex exec --help`; it's passed
+only when the installed CLI's own help documents it, so an older Codex CLI without the
+flag isn't hard-broken by receiving it anyway.
 
 ## dim_images_night_mode
 

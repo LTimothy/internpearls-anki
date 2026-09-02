@@ -212,29 +212,44 @@ def test_build_argv_claude_honours_config_overrides():
 
 
 def test_build_argv_codex_omits_model_flag_when_unset(monkeypatch):
-    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
     argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [])
-    assert "-m" not in argv
+    assert "--model" not in argv
 
 
 def test_build_argv_codex_emits_model_flag_when_set_and_supported(monkeypatch):
-    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
     argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [],
                                 model="o3")
-    assert "-m" in argv and argv[argv.index("-m") + 1] == "o3"
+    assert "--model" in argv and argv[argv.index("--model") + 1] == "o3"
 
 
 def test_build_argv_codex_omits_model_flag_when_unsupported(monkeypatch):
-    # An older codex without a documented -m flag must not be hard-broken by
-    # passing it anyway -- same guard mechanism as agy's --sandbox.
-    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: False)
+    # An older codex without a documented --model flag must not be hard-broken
+    # by passing it anyway -- same guard mechanism as agy's --sandbox.
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
     argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [],
                                 model="o3")
-    assert "-m" not in argv
+    assert "--model" not in argv
+
+
+def test_build_argv_codex_probes_the_exec_subcommand_for_model_support(monkeypatch):
+    # The original probe never named a subcommand, so it only ever read the
+    # top-level `codex --help`, not `codex exec --help` where exec's own flags
+    # (including -m/--model) are actually documented.
+    seen = []
+
+    def fake_supports_flag(path, flag, subcommand=None):
+        seen.append((flag, subcommand))
+        return True
+    monkeypatch.setattr(ai_cli, "supports_flag", fake_supports_flag)
+    ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [],
+                      model="o3")
+    assert ("--model", "exec") in seen
 
 
 def test_build_argv_codex_never_gets_an_effort_flag(monkeypatch):
-    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
     argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [],
                                 model="o3", effort="high")
     assert "--effort" not in argv
@@ -244,7 +259,7 @@ def test_build_argv_agy_never_gets_a_model_or_effort_flag(monkeypatch):
     # Model choice in agy's headless mode is an open upstream request; the
     # default is already the cheap tier, so build_argv must never send either
     # flag, even if a stale config value from another backend is passed in.
-    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
     argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [],
                                 model="whatever", effort="high")
     joined = " ".join(argv)
@@ -296,6 +311,72 @@ def test_supports_flag_caches_per_path_and_flag(monkeypatch):
     ai_cli.supports_flag("/no/such/binary-xyz", "--sandbox")
     ai_cli.supports_flag("/no/such/binary-xyz", "--sandbox")
     assert len(calls) == 1
+
+
+FAKE_HELP = os.path.join(os.path.dirname(__file__), "fake_help_cli.py")
+
+
+def test_supports_flag_rejects_substring_match(monkeypatch):
+    # The original bug: a literal "-m" substring check is satisfied by
+    # "--max-turns", so it was effectively always True and never protected
+    # anything. Help text that documents an unrelated flag containing this
+    # one as a substring must not count as support.
+    monkeypatch.setenv("FAKE_HELP_TOP", "--max-turns <N>  cap the turn count")
+    ai_cli._flag_support_cache.clear()
+    assert ai_cli.supports_flag(FAKE_HELP, "-m") is False
+
+
+def test_supports_flag_rejects_longer_flag_that_contains_this_one(monkeypatch):
+    # "--model-provider" documented, but not "--model" itself.
+    monkeypatch.setenv("FAKE_HELP_TOP", "--model-provider <name>  set the provider")
+    ai_cli._flag_support_cache.clear()
+    assert ai_cli.supports_flag(FAKE_HELP, "--model") is False
+
+
+def test_supports_flag_accepts_word_boundary_match(monkeypatch):
+    monkeypatch.setenv("FAKE_HELP_TOP", "-m, --model <MODEL>  the model to use")
+    ai_cli._flag_support_cache.clear()
+    assert ai_cli.supports_flag(FAKE_HELP, "--model") is True
+
+
+def test_supports_flag_probes_named_subcommands_help(monkeypatch):
+    # The top-level help documents nothing; only `exec --help` does, which is
+    # where a subcommand's own options actually live for a real codex-style CLI.
+    monkeypatch.setenv("FAKE_HELP_TOP", "a generic top-level help screen")
+    monkeypatch.setenv("FAKE_HELP_SUBCOMMAND", "exec")
+    monkeypatch.setenv("FAKE_HELP_SUB", "-m, --model <MODEL>  the model to use")
+    ai_cli._flag_support_cache.clear()
+    assert ai_cli.supports_flag(FAKE_HELP, "--model") is False
+    assert ai_cli.supports_flag(FAKE_HELP, "--model", subcommand="exec") is True
+
+
+def test_supports_flag_still_detects_agy_sandbox_with_tightened_matching(monkeypatch):
+    monkeypatch.setenv("FAKE_HELP_TOP", "--sandbox  run in a restricted sandbox")
+    ai_cli._flag_support_cache.clear()
+    assert ai_cli.supports_flag(FAKE_HELP, "--sandbox") is True
+
+
+def test_resolve_claude_effort_passes_through_known_level():
+    assert ai_cli.resolve_claude_effort("high") == "high"
+
+
+def test_resolve_claude_effort_falls_back_on_typo():
+    # A hand-edited config typo must resolve to something valid, not reach
+    # `claude --effort <typo>` and die with an opaque CLI error.
+    assert (ai_cli.resolve_claude_effort("hihg")
+            == ai_cli.BACKENDS["claude"]["default_effort"])
+
+
+def test_resolve_claude_effort_falls_back_on_empty():
+    assert (ai_cli.resolve_claude_effort("")
+            == ai_cli.BACKENDS["claude"]["default_effort"])
+
+
+def test_build_argv_claude_falls_back_to_default_effort_on_typo():
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick", "/tmp/s", [],
+                                effort="hihg")
+    assert (argv[argv.index("--effort") + 1]
+            == ai_cli.BACKENDS["claude"]["default_effort"])
 
 
 def test_backends_all_have_safety_posture():

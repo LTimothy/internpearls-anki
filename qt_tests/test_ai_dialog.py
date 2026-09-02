@@ -404,10 +404,58 @@ def test_changing_model_and_effort_persists_to_config(monkeypatch):
     idx = dlg.effort_combo.findData("high")
     dlg.effort_combo.setCurrentIndex(idx)
     conf = mw.addonManager.getConfig("internpearls")
-    assert conf["ai_model"] == "opus"
-    assert conf["ai_effort"] == "high"
-    assert dlg.session.ai_model == "opus"
-    assert dlg.session.ai_effort == "high"
+    assert conf["ai_model"]["claude"] == "opus"
+    assert conf["ai_effort"]["claude"] == "high"
+    assert dlg.session.ai_model["claude"] == "opus"
+    assert dlg.session.ai_effort["claude"] == "high"
+
+
+def test_model_set_under_claude_does_not_leak_into_codex(monkeypatch):
+    """Item 1: ai_model/ai_effort are stored per backend kind. Setting a model
+    while claude is active must not pre-fill or get sent for codex when it's
+    the backend detected on a later open -- the leak this test reproduces
+    would otherwise silently send `-m opus` (or now `--model opus`) to a
+    backend the user never chose that model for."""
+    from aqt import mw
+    harness.bootstrap()
+
+    # First open: only claude detected, set its model to "opus".
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg1 = ai_dialog._GenerateDialog()
+    dlg1.model_combo.setEditText("opus")
+    conf = mw.addonManager.getConfig("internpearls")
+    assert conf["ai_model"]["claude"] == "opus"
+    assert conf["ai_model"].get("codex", "") == ""
+
+    # Second open: only codex detected this time -- the stale claude-scoped
+    # value must not pre-fill its Model field.
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "codex" else None)
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    captured = {}
+
+    def fake_run_generation(kind, path, prompt, mode, scratch, image_paths=(),
+                            on_event=None, cancel=None, timeout=None,
+                            model="", effort=""):
+        captured["model"] = model
+        return {"text": "[]", "tokens": 0, "duration_s": 0.1}
+    monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)
+
+    dlg2 = ai_dialog._GenerateDialog()
+    dlg2.show()
+    harness.app().processEvents()
+    assert dlg2.session.backend == "codex"
+    assert dlg2.model_combo.currentText() == ""   # not pre-filled with "opus"
+
+    dlg2.source_box.setPlainText("Some source material")
+    dlg2._start_generation()
+    dlg2._wait_for_worker(timeout=15)
+    assert captured["model"] == ""   # argv-bound model is clean too
 
 
 def test_input_page_gates_note_types_against_real_checkboxes(monkeypatch):
