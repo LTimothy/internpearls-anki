@@ -180,7 +180,7 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
         proc.stdin.close()
     except OSError:
         pass
-    result, tokens, rate_limits = None, 0, None
+    result, tokens, rate_limits, error_msg = None, 0, None, None
 
     lines = []
     done = threading.Event()
@@ -204,6 +204,10 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                 if evt["type"] == "result":
                     result = evt["text"]
                     tokens = max(tokens, evt.get("tokens", 0))
+                elif evt["type"] == "error":
+                    # An is_error result -- never assigned to `result`, so it
+                    # can't flow onward as if it were the model's reply.
+                    error_msg = evt["text"] or error_msg
                 elif evt["type"] == "usage":
                     tokens = max(tokens, evt["tokens"])
                 elif evt["type"] == "rate_limits":
@@ -248,6 +252,10 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                 stream.close()
             except Exception:
                 pass
+    if error_msg:
+        # The CLI's own explanation beats stderr and beats the bare exit code,
+        # regardless of returncode -- an is_error result is always fatal.
+        raise GenerationError(error_msg)
     if proc.returncode != 0:
         raise GenerationError(err_text or f"assistant exited {proc.returncode}")
     if not result:
