@@ -9,7 +9,9 @@ import tempfile
 
 from aqt import mw
 
-ADDON_VERSION = "0.53.5"   # MAJOR.MINOR.PATCH, see README "Versioning"
+from .logic import clamp_night_mode_dim_percent
+
+ADDON_VERSION = "0.54.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # own notes); when it does, an add-on release that understands the new shape must bump
@@ -74,6 +76,16 @@ AUTO_SYNC_INTERVAL_DEFAULT_MIN = 15  # used when the setting is missing or unrea
 # magnitude inside the limit.
 AUTO_SYNC_INTERVAL_CEILING_MIN = 7 * 24 * 60
 
+# Night mode image dimming, as a percentage the Experimental > Night mode dimming
+# dialog exposes. Floor/ceiling mirror clamp_night_mode_dim_percent's own defaults;
+# kept here too since AUTO_SYNC's floor/default/ceiling above follow the same pattern.
+# 30 is not an arbitrary starting point: it's the fixed dim level this replaced (a
+# flat brightness(0.7) in every build before this became configurable), so a user who
+# already had the boolean on keeps today's exact appearance until they touch the slider.
+NIGHT_MODE_DIM_PERCENT_FLOOR = 0
+NIGHT_MODE_DIM_PERCENT_DEFAULT = 30
+NIGHT_MODE_DIM_PERCENT_CEILING = 90
+
 # One-time migration: earlier versions wrote this next to __init__.py, so an add-on
 # update would have already wiped it. Move it over if it's still there from a
 # same-version reinstall.
@@ -114,6 +126,10 @@ def _cfg():
         "auto_sync_interval_minutes": c.get("auto_sync_interval_minutes",
                                             AUTO_SYNC_INTERVAL_DEFAULT_MIN),
         "dim_images_night_mode": c.get("dim_images_night_mode", False),
+        "dim_images_night_mode_percent": clamp_night_mode_dim_percent(
+            c.get("dim_images_night_mode_percent", NIGHT_MODE_DIM_PERCENT_DEFAULT),
+            NIGHT_MODE_DIM_PERCENT_FLOOR, NIGHT_MODE_DIM_PERCENT_DEFAULT,
+            NIGHT_MODE_DIM_PERCENT_CEILING),
         "ai_backend":            c.get("ai_backend", ""),
         "ai_cli_path":           c.get("ai_cli_path", ""),
     }

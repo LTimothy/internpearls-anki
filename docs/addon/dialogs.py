@@ -1,4 +1,5 @@
-"""The add-on's dialogs: source configuration, Manage decks, Settings, and About.
+"""The add-on's dialogs: source configuration, Manage decks, Settings, Night mode
+dimming, and About.
 
 Everything here is presentation plus config writes; the flows that touch the
 collection or the network live in sync.py / collection.py and are called from here.
@@ -12,8 +13,9 @@ from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
 from .collection import installed_matching_collection, invalidate_installed
 from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, EXAMPLE_DECK_NAME, EXAMPLE_REPO,
-                     EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED, STATE, _cfg, _load_json,
-                     load_declined, save_declined)
+                     EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED,
+                     NIGHT_MODE_DIM_PERCENT_CEILING, NIGHT_MODE_DIM_PERCENT_FLOOR,
+                     STATE, _cfg, _load_json, load_declined, save_declined)
 from .logic import (deck_status, manifest_scope_suggestion, parse_fields,
                     plural, version_at_least)
 from .palette import colors
@@ -882,14 +884,14 @@ class _SettingsDialog(QDialog):
     """How the add-on behaves on its own, kept apart from Manage decks.
 
     Manage decks answers "which decks, which fields" (what gets synced). This dialog
-    answers "how automatic, how often" (whether it happens on its own), and alongside
-    that the one display choice that belongs to no particular deck: dimming bright
-    pictures in Night Mode. Keeping the two dialogs separate is what stops either one
-    from turning into a catch-all as more toggles get added.
+    answers "how automatic, how often" (whether it happens on its own). Night mode
+    image dimming used to live here too; it moved to Experimental (its own dialog)
+    since it's a display tweak, not a sync-automation one, and is still settling as a
+    feature. Keeping this dialog scoped to automation is what stops it turning into a
+    catch-all as more toggles get added.
     """
 
-    def __init__(self, parent, auto_sync, interval_minutes, notify_updates, auto_update,
-                dim_images_night_mode):
+    def __init__(self, parent, auto_sync, interval_minutes, notify_updates, auto_update):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Settings")
         self.setMinimumWidth(440)
@@ -941,16 +943,6 @@ class _SettingsDialog(QDialog):
         outer.addWidget(hint_label(
             "Anki needs a restart to load a new version, however it arrives."))
 
-        outer.addWidget(section_rule())
-        outer.addWidget(section_label("Night mode"))
-
-        self._dim_images_cb = QCheckBox("Dim bright images in Night Mode")
-        self._dim_images_cb.setChecked(dim_images_night_mode)
-        outer.addWidget(self._dim_images_cb)
-
-        outer.addWidget(hint_label(
-            "Applies to every deck in your collection, not just Intern Pearls ones."))
-
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
         bb.addButton(QDialogButtonBox.StandardButton.Cancel)
@@ -964,17 +956,15 @@ class _SettingsDialog(QDialog):
             "auto_sync_interval_minutes": self._interval_spin.value(),
             "notify_addon_updates": self._notify_cb.isChecked(),
             "auto_update_addon": self._auto_update_cb.isChecked(),
-            "dim_images_night_mode": self._dim_images_cb.isChecked(),
         }
 
 
 @_safe
 def open_settings():
-    """Open Settings: what the add-on does on its own, and how a card is shown."""
+    """Open Settings: what the add-on does on its own."""
     cfg = _cfg()
     dlg = _SettingsDialog(mw, cfg["auto_sync_decks"], cfg["auto_sync_interval_minutes"],
-                          cfg["notify_addon_updates"], cfg["auto_update_addon"],
-                          cfg["dim_images_night_mode"])
+                          cfg["notify_addon_updates"], cfg["auto_update_addon"])
     saved = bool(dlg.exec())
     values = dlg.values()
     dlg.deleteLater()   # its controls are read above; see ui._ask_scrollable
@@ -1003,14 +993,90 @@ def open_settings():
         update_line = "You'll get a notice when a new add-on version is out."
     else:
         update_line = "Add-on update checks are off."
-    dim_line = ("Bright images will be dimmed in Night Mode."
-               if values["dim_images_night_mode"] else
-               "Night Mode image dimming is off.")
     # One line per setting this dialog actually holds. It used to close on a fixed
     # sentence about the update screen's decline controls, which Settings has not
-    # configured since its toggle was removed, so it read as a fifth setting with no
+    # configured since its toggle was removed, so it read as a third setting with no
     # control to find (and named declining as the way to flag a card, which Add note is).
-    _info(f"Settings saved.<br><br>{sync_line}<br>{update_line}<br>{dim_line}")
+    _info(f"Settings saved.<br><br>{sync_line}<br>{update_line}")
+
+
+class _NightModeDimmingDialog(QDialog):
+    """How much bright images are dimmed while Anki's own Night Mode is on.
+
+    Split out of Settings and into Experimental: it's a display tweak rather than a
+    sync-automation one, and the percentage control is new and still settling. Anki's
+    Night Mode adds a "nightMode" class to the card body (see logic.night_mode_image_css),
+    which is the only thing the dimming CSS ever matches -- so this never applies in
+    Day mode, and never anything but images.
+    """
+
+    def __init__(self, parent, enabled, percent):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME}: Night mode dimming")
+        self.setMinimumWidth(420)
+
+        outer = QVBoxLayout(self)
+        outer.setSpacing(10)
+        outer.addWidget(title_label("Night mode dimming"))
+
+        self._enabled_cb = QCheckBox("Dim bright images in Night Mode")
+        self._enabled_cb.setChecked(enabled)
+        outer.addWidget(self._enabled_cb)
+
+        percent_row = QHBoxLayout()
+        percent_row.addWidget(QLabel("Dim by"))
+        self._percent_spin = QSpinBox()
+        self._percent_spin.setRange(NIGHT_MODE_DIM_PERCENT_FLOOR,
+                                    NIGHT_MODE_DIM_PERCENT_CEILING)
+        self._percent_spin.setValue(percent)
+        self._percent_spin.setSuffix("%")
+        # Nothing to dim by while the toggle above is off, so the control that sets
+        # how much follows it, same as Settings' own interval spinbox does.
+        self._percent_spin.setEnabled(enabled)
+        self._enabled_cb.toggled.connect(self._percent_spin.setEnabled)
+        percent_row.addWidget(self._percent_spin)
+        percent_row.addStretch()
+        outer.addLayout(percent_row)
+
+        outer.addWidget(hint_label(
+            "Higher dims images more; 0 leaves them unchanged. Applies to every deck "
+            "in your collection, not just Intern Pearls ones, and only while Anki "
+            "itself is in Night Mode -- never in Day mode."))
+
+        bb = QDialogButtonBox()
+        save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
+        bb.addButton(QDialogButtonBox.StandardButton.Cancel)
+        save.clicked.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        outer.addWidget(bb)
+
+    def values(self):
+        return {
+            "dim_images_night_mode": self._enabled_cb.isChecked(),
+            "dim_images_night_mode_percent": self._percent_spin.value(),
+        }
+
+
+@_safe
+def open_night_mode_dimming():
+    """Open Night mode dimming: on/off, and how much."""
+    cfg = _cfg()
+    dlg = _NightModeDimmingDialog(mw, cfg["dim_images_night_mode"],
+                                  cfg["dim_images_night_mode_percent"])
+    saved = bool(dlg.exec())
+    values = dlg.values()
+    dlg.deleteLater()   # its controls are read above; see ui._ask_scrollable
+    if not saved:
+        return
+
+    conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
+    conf.update(values)
+    mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
+
+    dim_line = (f"Bright images are dimmed {values['dim_images_night_mode_percent']}% "
+               "in Night Mode." if values["dim_images_night_mode"] else
+               "Night Mode image dimming is off.")
+    _info(f"Night mode dimming saved.<br><br>{dim_line}")
 
 
 @_safe

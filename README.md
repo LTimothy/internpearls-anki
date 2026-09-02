@@ -24,7 +24,7 @@ See `CHANGELOG.md` for what changed in each version.
 1. Download `internpearls.ankiaddon` from the [latest release](https://github.com/LTimothy/internpearls-anki/releases/latest).
 2. In Anki, go to Tools > Add-ons > Install from file, pick the file, and restart Anki.
 
-After restarting, an "Intern Pearls" menu appears in the menu bar between Tools and Help. Two primary actions sit at the top (Update my decks, Manage decks); occasional tools live under Advanced (including Sync decks and Reconcile my decks on their own, for anyone who wants just one half); Settings and About sit at the bottom.
+After restarting, an "Intern Pearls" menu appears in the menu bar between Tools and Help. Two primary actions sit at the top (Update my decks, Manage decks); occasional tools live under Advanced (including Sync decks and Reconcile my decks on their own, for anyone who wants just one half); features that are new or still settling live under Experimental; Settings and About sit at the bottom.
 
 No deck source yet? Open Manage decks → Configure source and pick "Try the example deck" — it points the add-on at a small public demo repo so you can watch a sync work end to end, then swap in your own source later.
 
@@ -98,9 +98,13 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 | `excluded_decks` | Deck names opted out of syncing. Also editable from Manage decks. |
 | `export_deck` | The deck that Backup/Restore/Export intern pearls deck and the automatic pre-sync backup operate on (default: `Intern Pearls::Intern Custom`). |
 | `auto_sync_decks`, `auto_sync_interval_minutes`, `notify_addon_updates`, `auto_update_addon` | Sync and update automation, see Settings below and `config.md` for details on each. |
-| `dim_images_night_mode` | Dim bright pictures while Anki is in Night Mode. Applies to every deck in your collection, not just this add-on's. Also editable from Settings. |
+| `dim_images_night_mode`, `dim_images_night_mode_percent` | Dim bright pictures while Anki itself is in Night Mode, and by how much (a percentage, 0-90). Applies to every deck in your collection, not just this add-on's. Also editable from Experimental > Night mode dimming, see below. |
 
-### Generate cards with AI
+### Experimental submenu
+
+Features that are new or still settling, tucked away from the top level and from Advanced's own established groups: **Generate cards (AI)** and **Night mode dimming**.
+
+#### Generate cards (AI)
 
 Drafts new cards from source material you paste in or attach, through an AI coding-assistant CLI you already have installed and signed into on your own machine. There is no API key field anywhere in the add-on, and no credential of any kind is ever read, sent, or stored by it: the add-on only shells out to a CLI you set up yourself, the same way you'd run it from a terminal.
 
@@ -133,6 +137,15 @@ Cards land in a `Generated` subdeck under your configured deck (`export_deck::Ge
 What's stored between sessions is deliberately small: which backend and CLI path you last used, the deck-skill consent record described below (only ever written after you say yes), a rolling per-backend usage log of when a run happened and roughly how many tokens it used (kept for 7 days to show "Today via this add-on: N runs, ~Xk tokens"), and the last 10 run durations per backend and mode (used only for the learned time estimate on the progress screen above). Everything else, including the source material you pasted or attached, drafts, your revision notes and feedback, and the prompts and replies exchanged with the CLI, lives only in memory for that one dialog session and is discarded (including the temp folder holding extracted attachment images and every image downloaded for review) the moment it closes, whether by Import, Cancel, or closing the window. Closing mid-review with drafted cards on screen asks you to confirm first, since that's the only point anything unsaved would be lost.
 
 A View skills link shows exactly what's sent to the assistant on top of your material: the bundled InternPearls authoring skill (card-craft rules that ship with the add-on), plus a deck-specific skill if your configured deck source offers one and you've consented to it. Nothing from a deck skill is ever sent without that explicit consent, and the same link lets you enable or disable one you've already consented to.
+
+#### Night mode dimming
+
+Softens the glare of a white-background image while Anki itself is in Night Mode; it never applies in Day mode. Applies to every deck in your collection, not just the ones this add-on manages, since the rule is appended to every card Anki renders rather than to a note type. Two controls:
+
+- **Dim bright images in Night Mode**, off by default.
+- **Dim by N%**, default 30, range 0-90 (higher dims more; 0 leaves images unchanged). Only takes effect while the toggle above is on.
+
+The config is read each time a card is shown, so changing either control takes effect on the very next card, no restart needed.
 
 ### Advanced submenu
 
@@ -177,7 +190,8 @@ Sync automation and add-on update behavior, kept separate from Manage decks sinc
 - **Check every N minutes**, default 15, minimum 1, maximum a week (a value edited into `config.json` by hand is clamped to that range, since one big enough to overflow Anki's own timer used to fail on every launch). The check runs off the main thread when Anki supports it (essentially all current versions do), so it doesn't freeze Anki even at a short interval; if it can't reach the source, it fails within a few seconds and just tries again next time.
 - **Notify me when a new add-on version is out**, on by default. A tooltip once per new release, no installation. The check runs once per launch rather than on a repeating timer, since a new add-on release isn't as time-sensitive as a new deck.
 - **Install add-on updates automatically**, off by default. Downloads and installs a newer version as part of the same once-per-launch check, no confirmation. A restart is still needed to load it, same as installing by hand.
-- **Dim bright images in Night Mode**, off by default. Softens the glare of a white-background diagram while Anki is in night mode. It applies to every deck in your collection, not just the ones this add-on manages, since the rule is appended to every card Anki renders rather than to a note type. The config is read each time a card is shown, so flipping this takes effect on the very next card, no restart needed.
+
+Night mode image dimming used to live here too; it now has its own dialog under Experimental (see above), since it's a display tweak rather than a sync-automation one.
 
 ### About
 
@@ -285,7 +299,7 @@ Everything that does touch Anki is split by concern:
   the manual check.
 - `internpearls/background.py` — `_run_in_background` (QueryOp dispatch), the startup
   update check, the auto-sync poll and its timer.
-- `internpearls/dialogs.py` — Manage decks, Settings, About, and source configuration.
+- `internpearls/dialogs.py` — Manage decks, Settings, Night mode dimming, About, and source configuration.
 - `internpearls/review.py`: card row rendering shared by the update screen and the
   end-of-run summary, and the feedback digest they produce. Kept out of `dialogs.py`
   because that module imports `sync.py`, and this is built from `sync.py`'s update

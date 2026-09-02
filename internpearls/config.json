@@ -12,6 +12,7 @@
   "auto_sync_decks": false,
   "auto_sync_interval_minutes": 15,
   "dim_images_night_mode": false,
+  "dim_images_night_mode_percent": 30,
   "ai_backend": "",
   "ai_cli_path": ""
 }

@@ -64,20 +64,21 @@ def test_real_menu_structure():
     menu = mock_anki.load_addon_init()
     tree = menu.tree()
     labels = [n.get("label") for n in tree if n["t"] == "item"]
-    assert labels == ["Update my decks", "Manage decks", "Generate cards with AI",
-                      "Settings", "About"]
-    sub = next(n for n in tree if n["t"] == "menu")
-    assert sub["label"] == "Advanced"
-    sub_labels = [n["label"] for n in sub["items"] if n["t"] == "item"]
-    assert sub_labels == [
+    assert labels == ["Update my decks", "Manage decks", "Settings", "About"]
+    submenus = {n["label"]: n for n in tree if n["t"] == "menu"}
+    assert list(submenus) == ["Advanced", "Experimental"]
+    adv_labels = [n["label"] for n in submenus["Advanced"]["items"] if n["t"] == "item"]
+    assert adv_labels == [
         "Sync decks", "Reconcile my decks", "Import single deck (manual)",
         "Clean up duplicate cards", "Remove empty cards", "Fix note types",
         "Backup intern pearls deck",
         "Restore intern pearls deck", "Export intern pearls deck",
         "Backup full collection", "Restore full collection",
         "Check for add-on updates"]
+    exp_labels = [n["label"] for n in submenus["Experimental"]["items"] if n["t"] == "item"]
+    assert exp_labels == ["Generate cards (AI)", "Night mode dimming"]
     # primary items above the first separator, Settings/About below the last
-    assert tree[3]["t"] == "sep" and tree[-3]["t"] == "sep"
+    assert tree[2]["t"] == "sep" and tree[-3]["t"] == "sep"
 
 
 def test_advanced_groups_source_actions_then_repair_actions(anki):
@@ -933,7 +934,26 @@ def test_settings_saves_all_four_values(anki):
     assert cfg["auto_sync_interval_minutes"] == 30
 
 
-def test_settings_saves_dim_images_toggle(anki):
+def test_settings_no_longer_offers_night_mode_dimming(anki):
+    """Night mode dimming moved to its own Experimental dialog; Settings must not
+    show its controls any more."""
+    from internpearls import dialogs
+
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            assert find(p["tree"], t="check",
+                       label="Dim bright images in Night Mode") is None
+            cancel = find(p["tree"], t="button", label="Cancel")
+            return {"events": [{"id": cancel["id"], "click": True}]}
+        return {}
+
+    drive(anki, dialogs.open_settings, respond)
+
+
+# ------------------------------------------------------- night mode dimming
+def test_night_mode_dimming_saves_toggle_and_percent(anki):
     from internpearls import dialogs
 
     anki.gui.interactive = True
@@ -942,14 +962,61 @@ def test_settings_saves_dim_images_toggle(anki):
         if p["kind"] == "dialog":
             dim = find(p["tree"], t="check", label="Dim bright images in Night Mode")
             assert dim is not None
+            spin = find(p["tree"], t="spin")
+            # 30 is the fixed dim level every build applied before this became
+            # configurable, so a fresh install's default must show exactly that.
+            assert spin["value"] == 30 and spin["suffix"] == "%"
             save = find(p["tree"], t="button", label="Save")
             return {"events": [{"id": dim["id"], "value": True},
+                               {"id": spin["id"], "value": 50},
                                {"id": save["id"], "click": True}]}
+        assert "50%" in p["text"]
         return {}
 
-    drive(anki, dialogs.open_settings, respond)
+    drive(anki, dialogs.open_night_mode_dimming, respond)
     cfg = anki.mw._config
     assert cfg["dim_images_night_mode"] is True
+    assert cfg["dim_images_night_mode_percent"] == 50
+
+
+def test_night_mode_dimming_percent_spinbox_follows_the_toggle(anki):
+    """Nothing to dim by while the toggle is off, so the percent spinbox must not sit
+    there editable and inert -- same property Settings' own interval spinbox has."""
+    from internpearls import dialogs
+    anki.gui.interactive = True
+    enabled = []
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        dim = find(p["tree"], t="check", label="Dim bright images in Night Mode")
+        spin = find(p["tree"], t="spin")
+        enabled.append(spin["enabled"])
+        if len(enabled) < 3:
+            return {"events": [{"id": dim["id"], "value": len(enabled) == 1}]}
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.open_night_mode_dimming, respond)
+    assert enabled == [False, True, False], (
+        "the percent spinbox does not track the dim-images checkbox")
+
+
+def test_night_mode_dimming_percent_range_matches_the_clamp(anki):
+    """The spinbox's own range must not let a user pick a value the config layer would
+    silently clamp right back down -- see logic.clamp_night_mode_dim_percent."""
+    from internpearls import config, dialogs
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        spin = find(p["tree"], t="spin")
+        assert spin["min"] == config.NIGHT_MODE_DIM_PERCENT_FLOOR
+        assert spin["max"] == config.NIGHT_MODE_DIM_PERCENT_CEILING
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.open_night_mode_dimming, respond)
 
 
 def test_the_interval_spinbox_follows_the_auto_sync_checkbox(anki):
@@ -1021,9 +1088,11 @@ def test_saving_manual_deck_sync_steers_to_update_my_decks(anki):
 
 def test_the_settings_save_summary_reports_only_settings(anki):
     """It used to close on a fixed sentence about the update screen's decline controls:
-    a static line about something Settings has not configured since v0.47.0, sitting in
-    a list of four settings and reading as a fifth with no control to find. It also
-    called declining the way to flag a problem card, which Add note is."""
+    a static line about something Settings has not configured since v0.47.0, which read
+    as an extra setting with no control to find. It also called declining the way to
+    flag a problem card, which Add note is. Night mode dimming's own line left with it
+    when that toggle moved to its own Experimental dialog, so this dialog's summary is
+    down to two setting-groups now: sync, and add-on updates."""
     from internpearls import dialogs
     anki.gui.interactive = True
     seen = []
@@ -1038,8 +1107,10 @@ def test_the_settings_save_summary_reports_only_settings(anki):
     drive(anki, dialogs.open_settings, respond)
     assert seen and "Settings saved." in seen[0]
     assert "Decline" not in seen[0] and "flagging" not in seen[0]
-    assert seen[0].count("<br>") == 4, (
-        "the summary should carry one line per setting this dialog holds")
+    assert "Night Mode" not in seen[0] and "dimmed" not in seen[0]
+    assert seen[0].count("<br>") == 3, (
+        "the summary should carry one line per setting-group this dialog holds (sync, "
+        "add-on updates), plus the leading blank line")
 
 
 def test_the_auto_sync_hint_reads_as_two_held_back_kinds_not_three(anki):
