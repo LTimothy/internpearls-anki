@@ -263,6 +263,22 @@ def test_agy_argv_is_mode_invariant_so_quick_must_not_claim_no_web_access():
     assert "no tool" not in quick_text
 
 
+def test_claude_quick_mode_text_matches_build_argv_with_attachments():
+    # Finding 2: build_argv grants Read (scoped to the scratch dir) whenever
+    # images are attached, in EVERY mode -- so quick's text must not claim
+    # "no tools at all" once an image is in play, only that it still has no
+    # web access. Pinned against the WITH-attachments call specifically,
+    # since the no-attachment case above can't catch this drift.
+    quick_argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick",
+                                      "/tmp/s", ["/tmp/s/photo.png"])
+    tools = quick_argv[quick_argv.index("--tools") + 1]
+    assert "Read" in tools
+    assert "WebFetch" not in tools and "WebSearch" not in tools
+    quick_text = ai_cli.BACKENDS["claude"]["modes"]["quick"].lower()
+    assert "no tools at all" not in quick_text
+    assert "no web access" in quick_text
+
+
 # -- I7: Test connection ------------------------------------------------------
 
 def _stub_build_argv(monkeypatch, mode_arg):
