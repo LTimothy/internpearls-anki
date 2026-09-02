@@ -105,11 +105,12 @@ class _UserSkillDialog(QDialog):
         self.count.setStyleSheet(
             f"color: {colors()['warning' if over else 'muted']}; font-size: 11px;")
 
+    def text(self):
+        return self.editor.toPlainText()
+
     def accept(self):
-        text = self.editor.toPlainText()
-        if len(text) > ai_logic.USER_SKILL_MAX_CHARS:
+        if len(self.editor.toPlainText()) > ai_logic.USER_SKILL_MAX_CHARS:
             return
-        save_user_skill(text)
         super().accept()
 
 
@@ -761,7 +762,9 @@ class _GenerateDialog(QDialog):
                   "its figures on a card, attach them separately as image files.")
 
     def _edit_user_skill(self):
-        _UserSkillDialog(self).exec()
+        dlg = _UserSkillDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            save_user_skill(dlg.text())
 
     def _view_skills(self):
         """Show what's actually sent to the model. Dismissing this dialog (Close,
