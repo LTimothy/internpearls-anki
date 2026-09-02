@@ -102,9 +102,9 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 
 ### Experimental submenu
 
-Features that are new or still settling, tucked away from the top level and from Advanced's own established groups: **Generate cards (AI)** and **Night mode dimming**.
+Features that are new or still settling, tucked away from the top level and from Advanced's own established groups: **Generate Cards (AI)** and **Night mode dimming**.
 
-#### Generate cards (AI)
+#### Generate Cards (AI)
 
 Drafts new cards from source material you paste in or attach, through an AI coding-assistant CLI you already have installed and signed into on your own machine. There is no API key field anywhere in the add-on, and no credential of any kind is ever read, sent, or stored by it: the add-on only shells out to a CLI you set up yourself, the same way you'd run it from a terminal.
 
