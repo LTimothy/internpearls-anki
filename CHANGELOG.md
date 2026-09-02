@@ -11,14 +11,23 @@ it defaults to on its own. Claude Code now runs with `--model sonnet --effort
 medium` unless overridden, rather than silently inheriting the signed-in
 account's own default model, the top model for a Max subscriber, which used to
 burn through a subscription's credits fast across Thorough mode's up-to-15-turn
-loop. Codex CLI's Model field passes `-m` only when a model is set and the
-installed binary is detected to support it, so an older Codex isn't hard-broken.
-Antigravity CLI's Model field is read-only text, since headless mode has no
-verified way to honor a model choice at all (its default is already the cheap
-tier). Two new config keys, `ai_model` and `ai_effort`, hold whatever's picked.
+loop. A hand-edited effort value the CLI wouldn't recognize now falls back to
+`medium` instead of reaching `claude --effort <typo>` and dying with an opaque
+CLI error, and the Effort combo always shows that same effective value. Codex
+CLI's Model field passes `--model` only when a model is set and the installed
+CLI's own help documents that flag (probed against both `codex --help` and
+`codex exec --help`, since a subcommand's own options often live only under its
+own help), so an older Codex isn't hard-broken. Antigravity CLI's Model field is
+read-only text, since headless mode has no verified way to honor a model choice
+at all (its default is already the cheap tier). Two new config keys, `ai_model`
+and `ai_effort`, hold whatever's picked, stored per backend so a value set while
+one backend is active is never pre-filled or sent for another.
 
-The Experimental menu's "Generate cards (AI)" is now "Generate Cards (AI)",
-title case to match "Night Mode Dimming".
+The Experimental menu's dimming item is renamed to "Night Mode Dimming", title
+case, and its dialog now shows a live side-by-side Normal/Dimmed preview so a
+chosen dim percent can be judged before it's applied, rather than only after
+closing the dialog and opening a real card. "Generate cards (AI)" is now
+"Generate Cards (AI)", title case to match.
 
 The bundled internpearls-authoring skill (used by the AI wizard's prompts) is
 replaced with a distilled version of the house card-authoring rules covering
