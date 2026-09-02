@@ -1454,6 +1454,26 @@ class QFormLayout(_Layout):
         self._children.append(field)
 
 
+class QGridLayout(_Layout):
+    """The AI Backends window's settings panel: a real grid, so every label sits in
+    one fixed-width column and every field starts at the same x after it. The mock
+    models no columns (see QFormLayout above), just the flat child list; the real
+    alignment is qt_tests/'s to measure."""
+    kind = "grid"
+
+    def setHorizontalSpacing(self, v):
+        pass
+
+    def setVerticalSpacing(self, v):
+        pass
+
+    def setColumnMinimumWidth(self, col, width):
+        pass
+
+    def setColumnStretch(self, col, stretch):
+        pass
+
+
 class QFrame(QWidget):
     class Shape:
         NoFrame, HLine, StyledPanel = 0, 4, 6   # Qt's own values
@@ -1476,27 +1496,6 @@ class QFrame(QWidget):
         # tell a separator apart from a container box.
         kind = "hline" if self._shape == QFrame.Shape.HLine else "frame"
         return {"t": kind, "id": self.wid, "style": self._style,
-                "children": [self._layout.node()] if self._layout else []}
-
-
-class QGroupBox(QWidget):
-    """One backend's own titled box on the AI Backends window: just enough to
-    hold a title and a child layout, the same shape QFrame already gives a
-    plain container above."""
-
-    def __init__(self, title="", *a, **k):
-        super().__init__()
-        self._title = title
-
-    def setTitle(self, t):
-        self._title = t
-
-    def title(self):
-        return self._title
-
-    def node(self):
-        return {"t": "group", "id": self.wid, "title": self._title,
-                "style": self._style,
                 "children": [self._layout.node()] if self._layout else []}
 
 
@@ -1967,6 +1966,8 @@ def install():
 
         class AlignmentFlag:
             AlignTop = 0x20           # Qt's own values
+            AlignLeft = 0x01
+            AlignVCenter = 0x80
             AlignCenter = 0x84
 
         class TextFormat:
@@ -1996,6 +1997,29 @@ def install():
             monkeypatches this directly rather than scripting a real file picker."""
             text, ok = gui.prompt(caption, default=directory)
             return (text, filter) if ok else ("", "")
+
+    class _QUrl:
+        """The address a link carries. Qt wraps a string in one of these before
+        handing it to the desktop; nothing here needs more than the string back."""
+
+        def __init__(self, url=""):
+            self._url = url
+
+        def toString(self):
+            return self._url
+
+    class _QDesktopServices:
+        """Hands a URL to the platform browser. Nothing opens here, so the calls are
+        recorded instead: that is what lets a test assert an install-guide link sends
+        the reader to the right documentation without launching anything."""
+
+        opened = []
+
+        @staticmethod
+        def openUrl(url):
+            _QDesktopServices.opened.append(
+                url.toString() if hasattr(url, "toString") else str(url))
+            return True
 
     class _QFontDatabase:
         class SystemFont:
@@ -2179,12 +2203,14 @@ def install():
                       ("QPushButton", QPushButton), ("QAction", QAction),
                       ("QMenu", QMenu), ("QCheckBox", QCheckBox),
                       ("QComboBox", QComboBox), ("QRadioButton", QRadioButton),
-                      ("QButtonGroup", QButtonGroup), ("QGroupBox", QGroupBox),
+                      ("QButtonGroup", QButtonGroup),
                       ("pyqtSignal", pyqtSignal),
                       ("QStackedWidget", QStackedWidget),
                       ("QDialog", QDialog), ("QDialogButtonBox", QDialogButtonBox),
                       ("QFrame", QFrame), ("QHBoxLayout", QHBoxLayout),
                       ("QFormLayout", QFormLayout),
+                      ("QGridLayout", QGridLayout),
+                      ("QDesktopServices", _QDesktopServices), ("QUrl", _QUrl),
                       ("QImage", QImage),
                       ("QLineEdit", QLineEdit), ("QMessageBox", QMessageBox),
                       ("QPlainTextEdit", QPlainTextEdit),

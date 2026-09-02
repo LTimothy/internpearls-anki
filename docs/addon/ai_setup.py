@@ -1,19 +1,35 @@
-"""Intern Pearls: AI Backends. Where the three assistants are enabled, chosen,
+"""Intern Pearls: AI Backends. One compact row per assistant, then one settings
+panel for the preferred one: where the three assistants are chosen, ignored,
 pointed at, tested, and given their default model and effort. The wizard only
-shows a one-line summary and a Change link that opens this."""
+shows a one-line summary and an AI Backends link that opens this."""
 import threading
 
 from aqt import mw
-from aqt.qt import (QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
-                    QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
-                    QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton,
-                    QScrollArea, QTimer, QVBoxLayout, QWidget, pyqtSignal)
+from aqt.qt import (QApplication, QComboBox, QDesktopServices, QDialog,
+                    QDialogButtonBox, QFileDialog, QGridLayout, QHBoxLayout,
+                    QLabel, QLineEdit, QPushButton, Qt, QTimer, QUrl,
+                    QVBoxLayout, QWidget, pyqtSignal)
 
 from . import ai_cli
 from .config import ADDON_PACKAGE, APP_NAME, _cfg
-from .ui import _safe, hint_label, link_button, title_label
+from .palette import colors
+from .ui import (_safe, hint_label, link_button, section_label, section_rule,
+                 title_label)
+from .widgets import CARET_GAP, chip_cell
 
 _POLL_MS = 200
+
+# The chips a backend row can wear, and the one the preferred row wears instead
+# of a Use link. Two sets rather than one because they are two columns: the
+# leading state chip is measured against the four words it can actually say, and
+# widening that gutter to fit PREFERRED (which never appears in it) would indent
+# every row's text for nothing. See widgets.chip_column_width.
+_STATE_CHIPS = ("found", "notfound", "notresponding", "ignored")
+_PREFERRED_CHIPS = ("preferred",)
+
+# A second name a reader may know a backend by, shown muted beside its executable.
+# Not in ai_cli.BACKENDS: nothing outside this window has any use for it.
+_ALSO_KNOWN = {"agy": "formerly Gemini CLI"}
 
 
 def _write(key, value):
@@ -36,32 +52,60 @@ def _write_map(key, kind, value):
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
 
+def _clear(layout):
+    """Empty a layout, the way dialogs._DeclinedDialog._rebuild does: takeAt only
+    detaches a widget from the layout, not from the dialog's widget tree, and
+    deleteLater's removal is deferred past this call, so a taken-out row still
+    paints until it is hidden explicitly."""
+    while layout.count():
+        item = layout.takeAt(0)
+        w = item.widget()
+        if w is not None:
+            w.setVisible(False)
+            w.deleteLater()
+
+
+def _capability_pill(text, role):
+    """A capability stated on a backend's own row: what it can do with an
+    attachment, and what its account costs. A small pill rather than more muted
+    prose, so the one line that differs between two assistants is the line that
+    stands out. Same shape as widgets.chip_cell's pill, but sized to its own
+    words instead of a shared column: these sit inline in a sentence, where a
+    fixed-width gutter would only pad them apart."""
+    c = colors()
+    pill = QLabel(text)
+    pill.setStyleSheet(f"background-color: {c[role + '_bg']}; color: {c[role + '_fg']};"
+                       " border-radius: 3px; padding: 1px 6px; font-size: 11px;"
+                       " font-weight: 600;")
+    return pill
+
+
 class ModelEffortControls(QWidget):
     """Model and Effort for one backend, with the honesty rules from
     ai_cli.BACKENDS: a closed alias list plus Custom where aliases exist,
     free text where the CLI takes any name, read-only text where nothing can
-    be honoured (agy), and Effort only where a flag is verified."""
+    be honoured (agy), and Effort only where a flag is verified.
+
+    Builds the controls and owns their state; it does not lay them out. `rows()`
+    hands the settings panel a (label, field) pair per row so both rows go into
+    that panel's own grid and Model's field starts at the same x as Effort's.
+    This widget is therefore never shown itself: it is the controls' owner, not
+    their container.
+    """
     changed = pyqtSignal()
 
     def __init__(self, kind, model, effort, parent=None):
         super().__init__(parent)
         self.kind = kind
         meta = ai_cli.BACKENDS[kind]
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        # Model and Effort share one QFormLayout so their field column lines up:
-        # an editable QComboBox (free text) and a non-editable one (a closed
-        # list) render at different heights and insets on macOS, and a plain
-        # QHBoxLayout per row leaves each field starting wherever its own
-        # ("Model" vs "Effort") label happens to end.
         self.combo = QComboBox()
         self.readonly = hint_label(meta["model_hint"])
         self.custom = QLineEdit()
         self.custom.setPlaceholderText(meta["model_hint"])
         aliases = [a for a in ([meta["default_model"]] + list(meta.get("model_aliases", []))) if a]
         self._aliases = list(dict.fromkeys(aliases))
-        model_field = QWidget()
-        model_field_lay = QVBoxLayout(model_field)
+        self.model_field = QWidget()
+        model_field_lay = QVBoxLayout(self.model_field)
         model_field_lay.setContentsMargins(0, 0, 0, 0)
         model_field_lay.setSpacing(2)
         model_field_lay.addWidget(self.combo)
@@ -83,8 +127,11 @@ class ModelEffortControls(QWidget):
             self.custom.setText(model)
         self.effort = QComboBox()
         levels = meta.get("effort_levels") or []
-        has_effort = bool(levels)
-        if has_effort:
+        # Read from the metadata rather than from the combo's own visibility:
+        # the effort combo lives in the panel's grid, not inside this widget, so
+        # "is it visible to me" is no longer a question this widget can answer.
+        self.has_effort = bool(levels)
+        if self.has_effort:
             self.effort.addItem(f"Default ({meta['default_effort']})", "")
             for lv in levels:
                 self.effort.addItem(lv, lv)
@@ -92,14 +139,18 @@ class ModelEffortControls(QWidget):
             self.effort.setCurrentIndex(max(idx, 0))
         else:
             self.effort.hide()
-        form = QFormLayout()
-        form.addRow(QLabel("Model"), model_field)
-        if has_effort:
-            form.addRow(QLabel("Effort"), self.effort)
-        lay.addLayout(form)
         self.combo.currentTextChanged.connect(self._on_combo)
         self.custom.textEdited.connect(lambda _t: self.changed.emit())
         self.effort.currentIndexChanged.connect(lambda _i: self.changed.emit())
+
+    def rows(self):
+        """The (label, field) rows the settings panel lays into its grid, in order.
+        Effort is absent entirely where no effort flag is verified, rather than
+        present and disabled: an inert control still claims the choice exists."""
+        rows = [("Model", self.model_field)]
+        if self.has_effort:
+            rows.append(("Effort", self.effort))
+        return rows
 
     def _on_combo(self, text):
         if self._aliases and self.kind != "agy":
@@ -114,71 +165,169 @@ class ModelEffortControls(QWidget):
                 else self.combo.currentText()
         else:
             model = self.custom.text().strip()
-        effort = self.effort.currentData() if self.effort.isVisibleTo(self) else ""
+        effort = self.effort.currentData() if self.has_effort else ""
         return model, effort or ""
 
 
-class _BackendGroup(QGroupBox):
-    def __init__(self, kind, info, cfg, preferred_group, parent):
+class _BackendRow(QWidget):
+    """One assistant, on one row: what detection found, what it is called and
+    what it can do, what account it needs, and the two decisions this window
+    offers about it (use it, or set it aside)."""
+
+    def __init__(self, kind, info, preferred, dlg):
+        super().__init__()
         meta = ai_cli.BACKENDS[kind]
-        super().__init__(meta["label"], parent)
         self.kind = kind
-        self.dlg = parent
-        lay = QVBoxLayout(self)
-        self.status = hint_label("")
-        self.status.setWordWrap(True)
-        lay.addWidget(self.status)
-        toprow = QHBoxLayout()
-        self.enabled = QCheckBox("Use this assistant")
-        self.enabled.setChecked(cfg["ai_backend_enabled"][kind])
-        self.preferred = QRadioButton("Preferred")
-        preferred_group.addButton(self.preferred)
-        self.preferred.setChecked(cfg["ai_backend"] == kind)
-        toprow.addWidget(self.enabled); toprow.addWidget(self.preferred); toprow.addStretch()
-        lay.addLayout(toprow)
-        prow = QHBoxLayout()
-        prow.addWidget(QLabel("Executable path"))
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 6, CARET_GAP, 6)
+        lay.setSpacing(CARET_GAP)
+        lay.addWidget(chip_cell(_state_chip(info), _STATE_CHIPS), 0,
+                      Qt.AlignmentFlag.AlignTop)
+
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(2)
+        exe = meta["exe"]
+        also = _ALSO_KNOWN.get(kind)
+        exe_text = f"{exe}, {also}" if also else exe
+        self.title = QLabel(f"<b>{meta['label']}</b> "
+                            f"<span style='color:{colors()['muted']}'>({exe_text})</span>")
+        self.title.setTextFormat(Qt.TextFormat.RichText)
+        body_lay.addWidget(self.title)
+
+        caps = QWidget()
+        caps_lay = QHBoxLayout(caps)
+        caps_lay.setContentsMargins(0, 0, 0, 0)
+        caps_lay.setSpacing(CARET_GAP)
+        if ai_cli.image_capable(kind):
+            caps_lay.addWidget(_capability_pill("image attach: supported", "accept"))
+        else:
+            caps_lay.addWidget(_capability_pill("text only in headless mode", "updated"))
+        if "free tier" in meta["subscription"]:
+            caps_lay.addWidget(_capability_pill("free tier, throttled", "new"))
+        caps_lay.addStretch()
+        body_lay.addWidget(caps)
+
+        self.detail = hint_label(f"Works with a {meta['subscription']}. {meta['safety']}.")
+        body_lay.addWidget(self.detail)
+        lay.addWidget(body, 1)
+
+        trailing = QWidget()
+        trail_lay = QHBoxLayout(trailing)
+        trail_lay.setContentsMargins(0, 0, 0, 0)
+        trail_lay.setSpacing(CARET_GAP)
+        self.guide_link = link_button(
+            "install guide",
+            on_click=lambda: dlg._guard(_open_url, meta["install_url"]))
+        trail_lay.addWidget(self.guide_link)
+        self.use_link = None
+        if preferred == kind:
+            trail_lay.addWidget(chip_cell("preferred", _PREFERRED_CHIPS))
+        elif info["enabled"]:
+            self.use_link = link_button(
+                f"Use {meta['label']}",
+                on_click=lambda: dlg._guard(dlg.use_backend, kind))
+            trail_lay.addWidget(self.use_link)
+        self.ignore_link = link_button(
+            "use again" if not info["enabled"] else "ignore",
+            on_click=lambda: dlg._guard(dlg.toggle_ignored, kind))
+        trail_lay.addWidget(self.ignore_link)
+        lay.addWidget(trailing, 0, Qt.AlignmentFlag.AlignTop)
+
+    def text(self):
+        """Everything this row says, as one string: what a test reads instead of
+        walking three labels that are one sentence between them."""
+        return " ".join([self.title.text(), self.detail.text()])
+
+
+def _state_chip(info):
+    """Which of the four states detection put this backend in. The same three
+    the README names, plus the one the reader chose: a backend set aside is not
+    a detection result and must not read as one."""
+    if not info["enabled"]:
+        return "ignored"
+    if info["ok"]:
+        return "found"
+    if info["path"]:
+        return "notresponding"
+    return "notfound"
+
+
+def _open_url(url):
+    QDesktopServices.openUrl(QUrl(url))
+
+
+class _SettingsPanel(QWidget):
+    """Executable path, Model, Effort and Test connection for one backend.
+
+    A QGridLayout with a fixed-width label column, never a QFormLayout: on macOS
+    a form centres its rows, which floated Model and Effort in the middle of the
+    window and clipped the Model combo. Every label starts at the panel's left
+    edge and every field at the same x after it.
+    """
+    LABEL_W = 108
+
+    def __init__(self, kind, cfg, dlg):
+        super().__init__()
+        self.kind = kind
+        self.dlg = dlg
+        meta = ai_cli.BACKENDS[kind]
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+        outer.addWidget(section_label(f"{meta['label']} settings"))
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(CARET_GAP)
+        grid.setVerticalSpacing(6)
+        grid.setColumnMinimumWidth(0, self.LABEL_W)
+        grid.setColumnStretch(1, 1)
+
         self.path = QLineEdit(cfg["ai_cli_path"][kind])
         self.path.setPlaceholderText("leave blank to auto-detect")
         browse = QPushButton("Browse")
-        prow.addWidget(self.path, 1); prow.addWidget(browse)
-        lay.addLayout(prow)
-        self.model = ModelEffortControls(kind, cfg["ai_model"][kind], cfg["ai_effort"][kind], self)
-        lay.addWidget(self.model)
-        trow = QHBoxLayout()
+        path_box = QWidget()
+        path_lay = QHBoxLayout(path_box)
+        path_lay.setContentsMargins(0, 0, 0, 0)
+        path_lay.setSpacing(CARET_GAP)
+        path_lay.addWidget(self.path, 1)
+        path_lay.addWidget(browse)
+        grid.addWidget(self._label("Executable path"), 0, 0)
+        grid.addWidget(path_box, 0, 1)
+
+        self.model = ModelEffortControls(kind, cfg["ai_model"][kind],
+                                         cfg["ai_effort"][kind], self)
+        row = 1
+        for text, field in self.model.rows():
+            grid.addWidget(self._label(text), row, 0)
+            grid.addWidget(field, row, 1)
+            row += 1
+
         self.test_btn = QPushButton("Test connection")
         self.test_status = hint_label("Not tested yet")
-        trow.addWidget(self.test_btn); trow.addWidget(self.test_status, 1)
-        lay.addLayout(trow)
-        self.enabled.toggled.connect(lambda on: self.dlg._guard(self._on_enabled, on))
-        self.preferred.toggled.connect(lambda on: on and self.dlg._guard(_write, "ai_backend", kind))
-        self.path.editingFinished.connect(lambda: self.dlg._guard(self._commit_path))
-        browse.clicked.connect(lambda: self.dlg._guard(self._browse))
-        self.model.changed.connect(lambda: self.dlg._guard(self._commit_model))
-        self.test_btn.clicked.connect(lambda: self.dlg._guard(self.dlg._test, kind))
-        self.apply(info)
+        test_box = QWidget()
+        test_lay = QHBoxLayout(test_box)
+        test_lay.setContentsMargins(0, 0, 0, 0)
+        test_lay.setSpacing(CARET_GAP)
+        test_lay.addWidget(self.test_btn)
+        test_lay.addWidget(self.test_status, 1)
+        grid.addWidget(test_box, row, 1)
+        outer.addLayout(grid)
+
+        self.path.editingFinished.connect(lambda: dlg._guard(self._commit_path))
+        browse.clicked.connect(lambda: dlg._guard(self._browse))
+        self.model.changed.connect(lambda: dlg._guard(self._commit_model))
+        self.test_btn.clicked.connect(lambda: dlg._guard(dlg._test, kind))
+
+    def _label(self, text):
+        lbl = QLabel(text)
+        lbl.setFixedWidth(self.LABEL_W)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        return lbl
 
     def apply(self, info):
-        meta = ai_cli.BACKENDS[self.kind]
-        if not info["enabled"]:
-            status = "disabled"
-        elif info["ok"]:
-            status = f"installed and working ({info['detail']})"
-        elif info["path"]:
-            status = "found, but not responding"
-        else:
-            status = "not found"
-        imgs = ("can view attached images" if ai_cli.image_capable(self.kind)
-                else "reads attached PDFs as text only, no images")
-        self.status.setText(f"{meta['subscription']}: {status}. {meta['safety']}. {imgs}.")
-        on = info["enabled"]
-        for w in (self.preferred, self.path, self.model):
-            w.setEnabled(on)
-        self.test_btn.setEnabled(on and bool(info["path"]))
-
-    def _on_enabled(self, on):
-        _write_map("ai_backend_enabled", self.kind, bool(on))
-        self.dlg.recheck()
+        self.test_btn.setEnabled(bool(info["path"]))
 
     def _commit_path(self):
         _write_map("ai_cli_path", self.kind, self.path.text().strip())
@@ -202,40 +351,37 @@ class _AIBackendsDialog(QDialog):
         self.setWindowTitle(f"{APP_NAME}: AI Backends")
         self._testing = set()
         self._refs = []
+        self.rows = {}
+        self.panel = None
+        self.preferred = None
         lay = QVBoxLayout(self)
         lay.addWidget(title_label("AI Backends"))
         lay.addWidget(hint_label(
             "Card generation runs through an assistant you sign into yourself. This "
             "add-on never sees or stores your credentials: there is no API key field "
-            "here, or anywhere else in the add-on. Install one, run it once in a "
-            "terminal, sign in there, then Re-check."))
-        cfg = _cfg()
-        res = ai_cli.detect_backends(cfg)
-        self._pref_group = QButtonGroup(self)
-        self.groups = {}
-        # The three backend groups plus Re-check are what grow this dialog past a
-        # laptop screen (measured sizeHint ~856px unscrolled): put just that part in
-        # a QScrollArea, same idiom as the wizard's own review page (ai_dialog.py's
-        # cards_scroll), and keep the title, the intro hint above, the Test
-        # connection hint below, and the button box out here so Close is always
-        # reachable regardless of how tall the groups get.
-        groups_container = QWidget()
-        groups_lay = QVBoxLayout(groups_container)
-        groups_lay.setContentsMargins(0, 0, 0, 0)
-        for kind in ai_cli.BACKENDS:
-            g = _BackendGroup(kind, res["backends"][kind], cfg, self._pref_group, self)
-            self.groups[kind] = g
-            groups_lay.addWidget(g)
+            "here, or anywhere else in the add-on."))
+
+        rows_container = QWidget()
+        self._rows_lay = QVBoxLayout(rows_container)
+        self._rows_lay.setContentsMargins(0, 0, 0, 0)
+        self._rows_lay.setSpacing(0)
+        lay.addWidget(rows_container)
+        lay.addWidget(hint_label(
+            "After installing, run the tool once in a terminal and sign in there, "
+            "then Re-check."))
+        lay.addWidget(section_rule())
+
+        panel_container = QWidget()
+        self._panel_lay = QVBoxLayout(panel_container)
+        self._panel_lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(panel_container)
+
         brow = QHBoxLayout()
         self.recheck_btn = link_button("Re-check", on_click=lambda: self._guard(self.recheck))
         self.overall = hint_label("")
-        brow.addWidget(self.recheck_btn); brow.addWidget(self.overall, 1)
-        groups_lay.addLayout(brow)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(groups_container)
-        lay.addWidget(scroll, 1)
+        brow.addWidget(self.recheck_btn)
+        brow.addWidget(self.overall, 1)
+        lay.addLayout(brow)
         lay.addWidget(hint_label(
             "Test connection runs a real, trivial prompt through a detected CLI to "
             "confirm it can generate, not just that the binary runs. It costs one "
@@ -244,13 +390,15 @@ class _AIBackendsDialog(QDialog):
         bb.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
-        self._set_overall(res)
 
-        # Opened at a size that gives the scroll area real room without outgrowing
+        self.recheck()
+
+        # Opened at a size that gives the rows their full width without outgrowing
         # the screen it lands on, clamped the same way _GenerateDialog's own
         # open_size does (ai_dialog.py): a fixed target, shrunk to fit whatever
-        # screen is actually available.
-        open_w, open_h = 480, 760
+        # screen is actually available. No scroll area: the rows are one line of
+        # decisions each, so the whole window fits a laptop screen unfolded.
+        open_w, open_h = 720, 620
         try:
             geo = QApplication.primaryScreen().availableGeometry()
             open_w = min(open_w, geo.width() - 60)
@@ -259,32 +407,69 @@ class _AIBackendsDialog(QDialog):
             pass
         self.resize(max(open_w, 420), max(open_h, 300))
 
+    # --- state -----------------------------------------------------------
     def _guard(self, fn, *args):
         try:
             fn(*args)
         except Exception as e:      # never let a callback take Anki down
             self.overall.setText(f"Error: {e}")
 
+    def _preferred_kind(self, cfg, res):
+        """Which backend the settings panel belongs to: the one the reader chose,
+        else whichever detection would actually use, else the first one, so the
+        panel is never empty and never points somewhere the wizard would not go."""
+        chosen = cfg.get("ai_backend", "")
+        if chosen in ai_cli.BACKENDS:
+            return chosen
+        return res["chosen"] or next(iter(ai_cli.BACKENDS))
+
     def _set_overall(self, res):
         ch = res["chosen"]
         self.overall.setText(f"Ready: {ai_cli.BACKENDS[ch]['label']} will be used." if ch
-                             else "No enabled assistant detected yet.")
+                             else "No usable assistant detected yet.")
 
     def recheck(self):
-        res = ai_cli.detect_backends(_cfg())
-        for kind, g in self.groups.items():
-            if kind not in self._testing:
-                g.apply(res["backends"][kind])
+        cfg = _cfg()
+        res = ai_cli.detect_backends(cfg)
+        preferred = self._preferred_kind(cfg, res)
+        _clear(self._rows_lay)
+        self.rows = {}
+        for i, kind in enumerate(ai_cli.BACKENDS):
+            if i:
+                self._rows_lay.addWidget(section_rule())
+            row = _BackendRow(kind, res["backends"][kind], preferred, self)
+            self.rows[kind] = row
+            self._rows_lay.addWidget(row)
+        if preferred != self.preferred:
+            # Rebuilt only when the panel would be about a different backend: a
+            # Re-check (or a path commit) while a Test connection run is in flight
+            # must not replace the very widgets that run is writing its result to.
+            self.preferred = preferred
+            _clear(self._panel_lay)
+            self.panel = _SettingsPanel(preferred, cfg, self)
+            self._panel_lay.addWidget(self.panel)
+        if self.preferred not in self._testing:
+            self.panel.apply(res["backends"][self.preferred])
         self._set_overall(res)
 
+    def use_backend(self, kind):
+        _write("ai_backend", kind)
+        self.recheck()
+
+    def toggle_ignored(self, kind):
+        enabled = _cfg()["ai_backend_enabled"][kind]
+        _write_map("ai_backend_enabled", kind, not enabled)
+        self.recheck()
+
+    # --- test connection ---------------------------------------------------
     def _test(self, kind):
-        g = self.groups[kind]
+        panel = self.panel
         path = ai_cli.detect_backends(_cfg())["backends"][kind]["path"]
         if not path or kind in self._testing:
             return
         self._testing.add(kind)
-        g.test_btn.setEnabled(False)
-        g.test_status.setText("Testing connection")
+        panel.test_btn.setEnabled(False)
+        panel.test_status.setText("Testing connection")
         box = {}
 
         def worker():
@@ -301,13 +486,13 @@ class _AIBackendsDialog(QDialog):
                 return
             timer.stop()
             self._testing.discard(kind)
-            g.test_btn.setEnabled(True)
+            panel.test_btn.setEnabled(True)
             if "e" in box:
-                g.test_status.setText(f"Test failed: {box['e']}")
+                panel.test_status.setText(f"Test failed: {box['e']}")
             else:
                 r = box["r"]
-                g.test_status.setText(("Working: " if r["state"] == "working"
-                                       else "Not working: ") + r["detail"])
+                panel.test_status.setText(("Working: " if r["state"] == "working"
+                                           else "Not working: ") + r["detail"])
         timer.timeout.connect(poll)
         t.start()
         timer.start(_POLL_MS)
