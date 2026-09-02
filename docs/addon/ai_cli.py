@@ -187,6 +187,34 @@ def probe(kind, path):
             "detail": out[0] if out else f"exit {r.returncode}"}
 
 
+def detect_backends(cfg):
+    """Everything both dialogs need to know about the three CLIs in one pass:
+    per backend, whether it is enabled, where it was found (honouring that
+    backend's own path override), and whether --version runs. "chosen" is the
+    preferred backend when it is enabled and working, else the first enabled
+    working one in BACKENDS order, else None. A cheap, free check: never a
+    model call (that is test_connection, on demand only)."""
+    enabled = cfg.get("ai_backend_enabled") or {}
+    overrides = cfg.get("ai_cli_path") or {}
+    preferred = cfg.get("ai_backend", "")
+    out, chosen = {}, None
+    for kind in BACKENDS:
+        on = bool(enabled.get(kind, True))
+        if not on:
+            out[kind] = {"path": None, "ok": False, "detail": "disabled", "enabled": False}
+            continue
+        override = overrides.get(kind, "") if isinstance(overrides, dict) else ""
+        path = find_cli(kind, override)
+        if path:
+            res = probe(kind, path)
+            out[kind] = {"path": path, "ok": res["ok"], "detail": res["detail"], "enabled": True}
+        else:
+            out[kind] = {"path": None, "ok": False, "detail": "not found", "enabled": True}
+        if out[kind]["ok"] and (chosen is None or preferred == kind):
+            chosen = kind
+    return {"backends": out, "chosen": chosen}
+
+
 def resolve_claude_effort(effort):
     """Falls back to claude's own default_effort when `effort` isn't one of its
     recognized effort_levels: a hand-edited config typo (or empty string, "no
