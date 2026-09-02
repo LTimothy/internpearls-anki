@@ -8,6 +8,7 @@ dialog mid-review discards it after a confirm (see _GenerateDialog.reject).
 import html
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -16,9 +17,10 @@ import urllib.parse
 from collections import deque
 
 from aqt import mw
-from aqt.qt import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QKeySequence,
-                    QLabel, QPlainTextEdit, QPushButton, QRadioButton, QSpinBox,
-                    QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
+from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog, QHBoxLayout,
+                    QKeySequence, QLabel, QPlainTextEdit, QPushButton,
+                    QRadioButton, QSpinBox, QStackedWidget, Qt, QTimer,
+                    QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
 from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
@@ -60,11 +62,24 @@ def _skills_html(parts):
     return html.escape("\n".join(parts)).replace("\n", "<br>")
 
 
+_FALLBACK_UNDO_SHORTCUT = "Cmd+Z" if sys.platform == "darwin" else "Ctrl+Z"
+
+
 def _undo_shortcut():
     """The platform's own Undo accelerator, e.g. "Cmd+Z" on macOS, "Ctrl+Z"
     elsewhere -- rendered by Qt itself from the standard Undo key sequence rather
     than hardcoded, so the import success message always names the key Edit >
-    Undo actually shows, on whatever platform this happens to be running."""
+    Undo actually shows, on whatever platform this happens to be running.
+
+    Building a QKeySequence from a StandardKey asks Qt's platform theme for the
+    binding, and with no live QApplication that lookup dereferences a null
+    pointer and hard-crashes the whole process (SIGSEGV, not a catchable
+    exception). Inside Anki a QApplication always exists, but a plain script
+    or test importing this module does not get one for free -- so check first
+    and fall back to a plain literal rather than ever touching StandardKey with
+    nothing to consult."""
+    if QApplication.instance() is None:
+        return _FALLBACK_UNDO_SHORTCUT
     return QKeySequence(QKeySequence.StandardKey.Undo).toString(
         QKeySequence.SequenceFormat.NativeText)
 
