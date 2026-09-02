@@ -96,6 +96,27 @@ def test_add_generated_notes_is_one_undo_step(anki):
     assert remaining.guid == "her-guid"
 
 
+def test_partial_failure_still_lands_as_one_undo_step(anki):
+    """A backend failure part-way through a multi-card import (a media write raising,
+    add_note itself raising) is not rolled back -- but whatever DID land must still be
+    exactly one undo step, per add_generated_notes' docstring. The original exception
+    must propagate untouched."""
+    anki.col.add_note("her-guid", ["Existing front", "b", "", "", "", "", ""],
+                      ["InternPearls::Pharm"], deck="Intern Pearls::Intern Custom")
+    anki.col.fail_add_note_after(3)   # the 3rd generated note fails
+    cards = [_card("Q1"), _card("Q2"), _card("Q3"), _card("Q4")]
+    with pytest.raises(RuntimeError, match="mock add_note failure"):
+        collection.add_generated_notes(cards, media={}, deck_name=DECK, scope_tag=SCOPE)
+
+    generated_fronts = {n["Front"] for n in anki.col._notes.values() if n.guid != "her-guid"}
+    assert generated_fronts == {"Q1", "Q2"}   # Q3/Q4 never landed
+    assert len(anki.col._notes) == 3          # her existing note + Q1 + Q2
+
+    anki.col.undo()
+    assert len(anki.col._notes) == 1          # one undo cleared the whole partial import
+    assert next(iter(anki.col._notes.values())).guid == "her-guid"
+
+
 def test_image_appended_to_primary_field_when_no_image_field(anki):
     """A core "Basic" note (Front/Back, no Image field) still needs somewhere to put
     a resolved image -- falls back to the note's first field."""
