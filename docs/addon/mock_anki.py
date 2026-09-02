@@ -1113,25 +1113,62 @@ class QRadioButton(QWidget):
 class QComboBox(QWidget):
     def __init__(self, *a, **k):
         super().__init__()
-        self._items = []
+        self._items = []       # display text per row
+        self._data = []        # itemData per row, parallel to _items
         self._editable = False
         self._text = ""
+        self._index = -1
+        # Real QComboBox emits both on any change to the current selection or
+        # (when editable) typed text; the AI wizard's model/effort controls
+        # wire both, so the mock needs to actually fire them.
+        self.currentTextChanged = Signal()
+        self.currentIndexChanged = Signal()
 
     def setEditable(self, v):
         self._editable = bool(v)
 
-    def addItem(self, text):
+    def addItem(self, text, data=None):
         self._items.append(text)
+        self._data.append(data)
         if len(self._items) == 1:
-            self._text = text
+            self._text, self._index = text, 0
+
+    def addItems(self, texts):
+        for t in texts:
+            self.addItem(t)
+
+    def clear(self):
+        self._items, self._data = [], []
+        self._text, self._index = "", -1
 
     def currentText(self):
         return self._text
+
+    def currentData(self):
+        return self._data[self._index] if 0 <= self._index < len(self._data) else None
+
+    def currentIndex(self):
+        return self._index
+
+    def findData(self, data):
+        return self._data.index(data) if data in self._data else -1
+
+    def setCurrentIndex(self, i):
+        if 0 <= i < len(self._items):
+            self._index, self._text = i, self._items[i]
+            self.currentIndexChanged.emit(i)
+            self.currentTextChanged.emit(self._text)
 
     def setCurrentText(self, t):
         self._text = t
         if t not in self._items:
             self._items.append(t)
+            self._data.append(None)
+        self._index = self._items.index(t)
+        self.currentTextChanged.emit(t)
+
+    def setEditText(self, t):
+        self.setCurrentText(t)
 
     def node(self):
         return {"t": "combo", "id": self.wid, "items": list(self._items),
