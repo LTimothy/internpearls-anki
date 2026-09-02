@@ -1348,6 +1348,9 @@ def test_carry_over_only_touches_fields_with_saved_content():
 
 # ------------------------------------------------------- night mode image css
 def test_night_mode_image_css_enabled_returns_dimming_rule():
+    """No percent passed: the default (30) must render the exact fixed dim level
+    every build applied before the percentage became configurable, so an existing
+    dim_images_night_mode=True install keeps today's look untouched."""
     css = logic.night_mode_image_css(True)
     assert ".nightMode img" in css
     assert "brightness(0.7)" in css
@@ -1356,7 +1359,68 @@ def test_night_mode_image_css_enabled_returns_dimming_rule():
 
 
 def test_night_mode_image_css_disabled_returns_empty_string():
+    # percent is irrelevant while disabled -- must still short-circuit to "".
     assert logic.night_mode_image_css(False) == ""
+    assert logic.night_mode_image_css(False, percent=90) == ""
+
+
+def test_night_mode_image_css_honors_a_custom_percent():
+    assert "brightness(0.5)" in logic.night_mode_image_css(True, percent=50)
+    assert "brightness(0.9)" in logic.night_mode_image_css(True, percent=10)
+    # contrast is not part of the user-facing knob, only brightness is
+    assert "contrast(0.92)" in logic.night_mode_image_css(True, percent=50)
+
+
+def test_night_mode_image_css_clamps_an_out_of_range_percent():
+    # 0 leaves the image unchanged; anything above the ceiling (90) is capped there
+    # rather than reading as blacked out.
+    assert "brightness(1)" in logic.night_mode_image_css(True, percent=0)
+    assert "brightness(0.1)" in logic.night_mode_image_css(True, percent=100)
+    assert "brightness(1)" in logic.night_mode_image_css(True, percent=-10)
+
+
+# ------------------------------------------------- clamp_night_mode_dim_percent
+def test_clamp_night_mode_dim_percent_keeps_a_valid_value():
+    assert logic.clamp_night_mode_dim_percent(45) == 45
+
+
+def test_clamp_night_mode_dim_percent_floors_a_negative_value():
+    assert logic.clamp_night_mode_dim_percent(-5, floor_percent=0) == 0
+
+
+def test_clamp_night_mode_dim_percent_caps_an_absurd_value():
+    assert logic.clamp_night_mode_dim_percent(500) == 90
+    assert logic.clamp_night_mode_dim_percent(500, ceiling_percent=80) == 80
+
+
+def test_clamp_night_mode_dim_percent_falls_back_to_default_on_garbage():
+    assert logic.clamp_night_mode_dim_percent(None, default_percent=30) == 30
+    assert logic.clamp_night_mode_dim_percent("", default_percent=30) == 30
+    assert logic.clamp_night_mode_dim_percent("not a number", default_percent=30) == 30
+
+
+def test_clamp_night_mode_dim_percent_falls_back_on_a_non_finite_float():
+    """A hand-edited config.json can carry a bare `Infinity`/`NaN` token -- Python's
+    own json module parses those by default even though neither is valid JSON. int()
+    raises OverflowError (not ValueError) on an infinite float, which is a distinct
+    exception from the garbage-input case above and must be caught too, or a stray
+    Infinity in config.json would raise straight out of every call to _cfg()."""
+    assert logic.clamp_night_mode_dim_percent(float("inf"), default_percent=30) == 30
+    assert logic.clamp_night_mode_dim_percent(float("-inf"), default_percent=30) == 30
+    assert logic.clamp_night_mode_dim_percent(float("nan"), default_percent=30) == 30
+
+
+def test_clamp_night_mode_dim_percent_accepts_numeric_strings():
+    assert logic.clamp_night_mode_dim_percent("60") == 60
+
+
+def test_clamp_night_mode_dim_percent_default_matches_the_pre_existing_fixed_dim_level():
+    """The property the owner asked for explicitly: leaving the percentage untouched
+    on an install that already had dim_images_night_mode on must not change how dimmed
+    a card looks. That fixed level was brightness(0.7) -- i.e. dimmed by 30%."""
+    default = logic.clamp_night_mode_dim_percent(None)
+    assert default == 30
+    assert round(1 - default / 100, 2) == 0.7
 
 
 # ------------------------------------------------------- duplicate grouping

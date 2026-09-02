@@ -94,8 +94,18 @@ a specific backend. Defaults to `""`.
 
 ## dim_images_night_mode
 
-When on, bright pictures are dimmed while Anki is in Night Mode, so a white-background
-diagram doesn't glare out of a dark card. Applies to every deck in your collection, not
-just this add-on's, since it works by styling images themselves rather than one note
-type. Takes effect immediately, with no Anki restart. Defaults to `false`. Editable in
-Intern Pearls → Settings.
+When on, bright pictures are dimmed while Anki itself is in Night Mode, so a
+white-background diagram doesn't glare out of a dark card. Never applies in Day mode.
+Applies to every deck in your collection, not just this add-on's, since it works by
+styling images themselves rather than one note type. Takes effect immediately, with no
+Anki restart. Defaults to `false`. Editable in Intern Pearls → Experimental → Night
+mode dimming.
+
+## dim_images_night_mode_percent
+
+How much dimmer, as a percentage, `dim_images_night_mode` makes those images: higher
+dims more. Clamped to 0-90 (past that an image reads as blacked out rather than
+dimmed). Defaults to `30`, the fixed dim level applied before this became
+configurable, so an existing `dim_images_night_mode` setting keeps its exact look
+until the percentage is changed. Editable in Intern Pearls → Experimental → Night mode
+dimming.

@@ -37,17 +37,46 @@ def plural(count, noun):
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def night_mode_image_css(enabled):
+def clamp_night_mode_dim_percent(percent, floor_percent=0, default_percent=30,
+                                 ceiling_percent=90):
+    """Sanitize a configured/typed night-mode image-dim percentage: a missing or
+    non-numeric value falls back to `default_percent`; anything below `floor_percent`
+    (a negative brightening, or 0) is raised to the floor, and anything above
+    `ceiling_percent` is lowered to the ceiling -- past that point an image reads as
+    blacked out rather than dimmed, which defeats the point of dimming it at all.
+    Mirrors clamp_interval_minutes's shape above.
+
+    `int()` raises OverflowError rather than ValueError on a non-finite float
+    (`float("inf")`, which Python's own `json` module happily parses from a
+    hand-edited config despite that not being valid JSON), so that has to be caught
+    right alongside the more obvious bad-input cases or a stray Infinity in
+    config.json would raise out of every call to _cfg()."""
+    try:
+        p = int(percent)
+    except (TypeError, ValueError, OverflowError):
+        p = default_percent
+    return min(ceiling_percent, max(floor_percent, p))
+
+
+def night_mode_image_css(enabled, percent=30):
     """CSS that dims bright white-background images while Anki's Night Mode is on.
 
     Anki's own Night Mode already adds a "nightMode" class to the card body, so this
     only needs to define the rule; the browser applies it only when that class is
     present. Dims rather than inverts, since a full color invert looks wrong on a
     real photo mixed into an otherwise diagram-heavy deck.
+
+    `percent` is how much dimmer, 0-90 (see clamp_night_mode_dim_percent -- this also
+    re-clamps, so a caller can pass a raw config value straight through). The default,
+    30, is the fixed dim level this replaced (a flat brightness(0.7)), so leaving the
+    percentage untouched keeps today's exact appearance.
     """
     if not enabled:
         return ""
-    return "<style>.nightMode img { filter: brightness(0.7) contrast(0.92); }</style>"
+    percent = clamp_night_mode_dim_percent(percent)
+    brightness = round(1 - percent / 100, 2)
+    return ("<style>.nightMode img {{ filter: brightness({b:g}) contrast(0.92); "
+           "}}</style>").format(b=brightness)
 
 
 def version_tuple(v):
