@@ -122,7 +122,7 @@ def mechanical_checks(cards, existing_fronts, image_errors=None):
     _her_front_to_guid keys; {} skips duplicate detection (throttled/offline
     reads must never block generation). image_errors is {card index: [message,
     ...]}, one entry per image that failed to resolve (download, decode, or
-    read) -- computed by the caller (ai_dialog, which owns the network/disk
+    read): computed by the caller (ai_dialog, which owns the network/disk
     access this module deliberately has none of) and passed in as plain data,
     so this stays a pure function. Returns one list of check-result dicts
     (code, level, message, optional "existing") per card.
@@ -495,7 +495,7 @@ def extract_attachment(path, dest_dir):
     all (encrypted, corrupt, or not really a PDF).
 
     The returned dict's "images_undecoded" is True when the PDF has embedded
-    images this environment could not decode -- in practice, pypdf needs
+    images this environment could not decode: in practice, pypdf needs
     Pillow to do it and Anki's bundled Python doesn't carry it, so a real
     user's PDF images silently produce "images": [] otherwise, which reads
     exactly like a PDF that never had any. Listing a page's image *ids* needs
@@ -546,7 +546,7 @@ def extract_attachment(path, dest_dir):
                 img = page_images[inum]
             except ImportError:
                 # pypdf needs Pillow only to decode an image, not to list its
-                # id -- this is the "present but undecodable" case, not "no images"
+                # id: this is the "present but undecodable" case, not "no images"
                 images_undecoded = True
                 break
             except Exception:

@@ -691,7 +691,7 @@ def test_the_look_change_checkbox_is_not_read_as_answering_the_format_change(sho
 def test_ai_review_with_a_full_draft_still_reaches_import(shot):
     """The card list owns the review page's surplus height (a QScrollArea with
     stretch factor 1), so the Import button stays outside it and reachable no
-    matter how many cards the count spinner's own ceiling (50) drafted --
+    matter how many cards the count spinner's own ceiling (50) drafted:
     before this, every row was a Preferred QLabel with nothing to own the
     dialog's leftover height, and 50 of them ran the Import button off the
     bottom of any laptop screen."""
@@ -710,7 +710,7 @@ def test_view_skills_close_button_stays_on_screen(shot):
     """The no-deck-skill branch used to route through a bare QMessageBox with no
     scroll area (ui._info), so the real bundled skill's 48 lines of prose made
     the box taller than an 891px screen and left its own Close button off the
-    bottom -- unreachable, not just ugly. Now routed through _ask_scrollable,
+    bottom: unreachable, not just ugly. Now routed through _ask_scrollable,
     whose fixed-height scroll viewport keeps the button pinned outside it
     regardless of how long the skill text is."""
     _, q = harness.bootstrap()
@@ -727,7 +727,7 @@ def test_view_skills_close_button_stays_on_screen(shot):
 def test_ai_input_quality_labels_dont_clip_and_hints_wrap(shot):
     """Item 8's honesty constraint: the per-backend mode sentence
     (ai_cli.BACKENDS' "modes") is 150-200 characters and has to be shown in
-    full, truthfully, per backend -- it just can't be the thing that sets the
+    full, truthfully, per backend: it just can't be the thing that sets the
     radio's own sizeHint any more (see _refresh_backend_row and the input
     page's own comment). The radio now carries only the short, stable name
     ("Thorough" / "Quick draft"), which must never be the thing that's

@@ -39,8 +39,8 @@ BACKENDS = {
                "modes": {
                    "thorough": "Thorough: drafts, may search the web to verify "
                                "facts, then self-reviews (up to 15 turns, 1 to 3 min)",
-                   "quick": "Quick draft: exactly one turn, still no web access -- "
-                           "but if you attach files, it can read the scratch copy "
+                   "quick": "Quick draft: exactly one turn, still no web access. "
+                           "But if you attach files, it can read the scratch copy "
                            "of exactly those files, to view them (15 to 30 s)"}},
     "codex": {"label": "Codex CLI", "exe": "codex",
               "subscription": "ChatGPT Plus or Pro",
@@ -69,7 +69,7 @@ BACKENDS = {
             # Model choice in headless -p mode is an open upstream request
             # (google-antigravity/antigravity-cli issue 83); its default is
             # already the cheap tier (Gemini Flash, auto-selected), so build_argv
-            # never sends a model or effort flag here -- there is nothing verified
+            # never sends a model or effort flag here: there is nothing verified
             # to send, and offering a control we cannot honor would be dishonest.
             "default_model": "",
             "default_effort": "",
@@ -80,7 +80,7 @@ BACKENDS = {
             # stated workflow differs by mode.
             "modes": {
                 "thorough": "Thorough: asked to draft, verify, then self-review, "
-                            "but nothing here restricts its tools or turns -- it "
+                            "but nothing here restricts its tools or turns; it "
                             "runs under Antigravity's own approval defaults, which "
                             "may include web access (1 to 3 min)",
                 "quick": "Quick draft: asked for a single pass with no "
@@ -152,7 +152,7 @@ def supports_flag(path, flag, subcommand=None):
     no documented tool-restriction switch (an upstream read-only request is
     open), so we probe rather than assume: passing an unsupported flag would
     hard-fail every run, which is worse than the safety gap it would close.
-    Never raise -- a missing/broken binary just means "flag not detected", the
+    Never raise: a missing/broken binary just means "flag not detected", the
     safe default. Do not replace this with an unconditional flag append."""
     key = (path, flag, subcommand)
     if key in _flag_support_cache:
@@ -189,7 +189,7 @@ def probe(kind, path):
 
 def resolve_claude_effort(effort):
     """Falls back to claude's own default_effort when `effort` isn't one of its
-    recognized effort_levels -- a hand-edited config typo (or empty string, "no
+    recognized effort_levels: a hand-edited config typo (or empty string, "no
     override set") must not reach `claude --effort <typo>` and die with an
     opaque CLI error. Model stays free text and is not validated here: the CLI
     itself validates model aliases, and the wizard's Model row already says so."""
@@ -289,7 +289,7 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                     result = evt["text"]
                     tokens = max(tokens, evt.get("tokens", 0))
                 elif evt["type"] == "error":
-                    # An is_error result -- never assigned to `result`, so it
+                    # An is_error result: never assigned to `result`, so it
                     # can't flow onward as if it were the model's reply.
                     error_msg = evt["text"] or error_msg
                 elif evt["type"] == "usage":
@@ -338,7 +338,7 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                 pass
     if error_msg:
         # The CLI's own explanation beats stderr and beats the bare exit code,
-        # regardless of returncode -- an is_error result is always fatal.
+        # regardless of returncode: an is_error result is always fatal.
         raise GenerationError(error_msg)
     if proc.returncode != 0:
         raise GenerationError(err_text or f"assistant exited {proc.returncode}")
@@ -380,7 +380,7 @@ def _readable_cli_error(raw):
     text = (raw or "").strip()
     low = text.lower()
     if any(h in low for h in _AUTH_HINTS):
-        return "not signed in -- run it once in a terminal and sign in there"
+        return "not signed in: run it once in a terminal and sign in there"
     first_line = text.splitlines()[0] if text else "no output from the assistant"
     return first_line[:200]
 
@@ -389,7 +389,7 @@ def test_connection(kind, path, timeout=45):
     """Run a trivial prompt through the real backend and report whether it
     actually works, not just whether the binary executes (that's probe()'s
     job, and --version succeeding is not proof of a working, signed-in
-    backend -- a CLI that has never been signed into still answers
+    backend: a CLI that has never been signed into still answers
     --version). Costs one real, billed model turn, so callers must only run
     this on demand, never automatically.
 

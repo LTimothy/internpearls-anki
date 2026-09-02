@@ -76,7 +76,7 @@ def test_add_generated_notes_unknown_note_type_raises_nothing_written(anki):
 
 def test_add_generated_notes_core_type_missing_from_collection_raises(anki):
     """"Basic" is an allowed core type in principle, but this mock collection's models
-    list only has "Study Deck - Basic" -- it was never actually synced in."""
+    list only has "Study Deck - Basic": it was never actually synced in."""
     with pytest.raises(RuntimeError):
         collection.add_generated_notes(
             [_card("Q1", note_type="Basic")], media={}, deck_name=DECK, scope_tag=SCOPE)
@@ -98,7 +98,7 @@ def test_add_generated_notes_is_one_undo_step(anki):
 
 def test_partial_failure_still_lands_as_one_undo_step(anki):
     """A backend failure part-way through a multi-card import (a media write raising,
-    add_note itself raising) is not rolled back -- but whatever DID land must still be
+    add_note itself raising) is not rolled back: but whatever DID land must still be
     exactly one undo step, per add_generated_notes' docstring. The original exception
     must propagate untouched."""
     anki.col.add_note("her-guid", ["Existing front", "b", "", "", "", "", ""],
@@ -119,7 +119,7 @@ def test_partial_failure_still_lands_as_one_undo_step(anki):
 
 def test_image_appended_to_primary_field_when_no_image_field(anki):
     """A core "Basic" note (Front/Back, no Image field) still needs somewhere to put
-    a resolved image -- falls back to the note's first field."""
+    a resolved image: falls back to the note's first field."""
     anki.col.models._models.append(make_model(name="Basic", fields=["Front", "Back"]))
     card = _card("Q1", note_type="Basic", media_files=["generated-1.svg"])
     collection.add_generated_notes(
@@ -130,7 +130,7 @@ def test_image_appended_to_primary_field_when_no_image_field(anki):
 
 
 def test_two_separate_imports_get_independent_undo_steps(anki):
-    """A second, later import must not fold into the first import's undo entry --
+    """A second, later import must not fold into the first import's undo entry:
     undoing the second should leave the first's cards in place."""
     collection.add_generated_notes([_card("Q1")], media={}, deck_name=DECK, scope_tag=SCOPE)
     collection.add_generated_notes([_card("Q2")], media={}, deck_name=DECK, scope_tag=SCOPE)

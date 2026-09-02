@@ -13,7 +13,7 @@ silently re-runs the light one and the whole column reports green.
 test_light_and_dark_render_differently used to check exactly one hardcoded scene
 ("confirm") rather than harness.SCENES itself, so nothing here ever asserted the AI
 wizard (or any of the other fifteen scenes) actually looked different under the two
-themes -- a scene could paint pixel-identical light and dark renders forever and this
+themes: a scene could paint pixel-identical light and dark renders forever and this
 suite would stay green. Enumerated the same way test_contrast.py and test_layout.py
 already do, so a new scene is covered the moment it's registered.
 """

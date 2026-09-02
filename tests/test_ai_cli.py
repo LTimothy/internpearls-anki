@@ -49,7 +49,7 @@ def test_run_error_result_raises_with_the_clis_own_message_not_exit_code():
 
 
 def test_run_error_result_text_never_reaches_parse_cards_json():
-    # The is_error message must never be treated as the model's reply -- it
+    # The is_error message must never be treated as the model's reply: it
     # has to raise, not come back as a successful result carrying that text.
     events = []
     try:
@@ -116,9 +116,9 @@ def test_run_other_exception_kills_process_and_is_not_masked(monkeypatch):
         os.kill(proc.pid, 0)
 
 
-# -- I9: end-to-end evidence for all three backends' result parsing, not just
+# === I9: end-to-end evidence for all three backends' result parsing, not just
 # claude. Neither codex nor agy is installed on this machine, so these drive
-# the fake CLI through run_generation()'s real path (build_argv included) --
+# the fake CLI through run_generation()'s real path (build_argv included):
 # they prove the parsing/plumbing works for a given event shape, not that the
 # shape matches a real vendor binary, which remains unverified.
 def test_run_generation_parses_codex_top_level_text_shape(monkeypatch, tmp_path):
@@ -226,7 +226,7 @@ def test_build_argv_codex_emits_model_flag_when_set_and_supported(monkeypatch):
 
 def test_build_argv_codex_omits_model_flag_when_unsupported(monkeypatch):
     # An older codex without a documented --model flag must not be hard-broken
-    # by passing it anyway -- same guard mechanism as agy's --sandbox.
+    # by passing it anyway: same guard mechanism as agy's --sandbox.
     monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
     argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [],
                                 model="o3")
@@ -384,7 +384,7 @@ def test_backends_all_have_safety_posture():
         assert info.get("safety"), f"{kind} is missing a safety posture string"
 
 
-# -- C1: per-backend mode text must be truthful, not one claim copy-pasted for
+# === C1: per-backend mode text must be truthful, not one claim copy-pasted for
 # all three backends regardless of what build_argv actually enforces for them.
 def test_backends_all_have_mode_text_for_both_modes():
     for kind, info in ai_cli.BACKENDS.items():
@@ -427,8 +427,8 @@ def test_codex_argv_is_mode_invariant_so_its_text_must_not_claim_mode_enforcemen
 
 def test_agy_argv_is_mode_invariant_so_quick_must_not_claim_no_web_access():
     # agy's build_argv never branches on mode either (no --tools/--max-turns
-    # equivalent at all), so "Quick draft: ... no web access" -- the label
-    # every mode used to share -- would be false here.
+    # equivalent at all), so "Quick draft: ... no web access" (the label
+    # every mode used to share) would be false here.
     thorough_argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "thorough",
                                          "/tmp/s", [])
     quick_argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
@@ -440,7 +440,7 @@ def test_agy_argv_is_mode_invariant_so_quick_must_not_claim_no_web_access():
 
 def test_claude_quick_mode_text_matches_build_argv_with_attachments():
     # Finding 2: build_argv grants Read (scoped to the scratch dir) whenever
-    # images are attached, in EVERY mode -- so quick's text must not claim
+    # images are attached, in EVERY mode: so quick's text must not claim
     # "no tools at all" once an image is in play, only that it still has no
     # web access. Pinned against the WITH-attachments call specifically,
     # since the no-attachment case above can't catch this drift.
@@ -454,7 +454,7 @@ def test_claude_quick_mode_text_matches_build_argv_with_attachments():
     assert "no web access" in quick_text
 
 
-# -- I7: Test connection ------------------------------------------------------
+# === I7: Test connection ===================================================
 
 def _stub_build_argv(monkeypatch, mode_arg):
     monkeypatch.setattr(
@@ -463,7 +463,7 @@ def _stub_build_argv(monkeypatch, mode_arg):
 
 
 def test_connection_working_for_a_real_reply(monkeypatch):
-    # "badjson" is just a fake CLI that exits 0 with a non-empty result text --
+    # "badjson" is just a fake CLI that exits 0 with a non-empty result text:
     # test_connection only needs proof the backend answered, not that the reply
     # happens to be card JSON (the trivial test prompt never asks for that).
     _stub_build_argv(monkeypatch, "badjson")

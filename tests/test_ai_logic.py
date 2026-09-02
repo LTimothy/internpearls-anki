@@ -127,7 +127,7 @@ def test_primary_field_has_a_cloze_entry():
 
 def test_check_cloze_syntax_applies_to_core_cloze_note_type_too():
     # Keyed on the primary field being "Text", not on the exact type name
-    # "Study Deck - Cloze" -- a core "Cloze" note must get the same validation.
+    # "Study Deck - Cloze": a core "Cloze" note must get the same validation.
     no_deletion = _card("Cloze", Text="no deletions at all")
     valid = _card("Cloze", Text="{{c1::one}} deletion")
     checks = ai_logic.mechanical_checks([no_deletion, valid], {})
@@ -157,7 +157,7 @@ def test_clean_card_gets_ok():
     assert checks[0] == [{"code": "ok", "level": "ok", "message": "checks pass"}]
 
 
-# -- I2: a failed image resolution becomes a mechanical check, not a modal ---
+# === I2: a failed image resolution becomes a mechanical check, not a modal ===
 
 def test_image_error_becomes_a_block_level_check():
     cards = [_card(Front="q", Back="a")]
@@ -213,7 +213,7 @@ def test_prompt_lists_attachments_and_fields():
     assert "slide3.png" in p and '"Front"' in p
 
 
-# -- C1: the prompt itself must name the mode, since backends whose CLI gives
+# === C1: the prompt itself must name the mode, since backends whose CLI gives
 # us no flags (codex, agy) have no other way to enforce a workflow difference.
 _PROMPT_KW = dict(skills=["S"], source="SRC", note_types=["Basic"],
                   field_map=FIELD_MAP, count=3)
@@ -225,7 +225,7 @@ def test_prompt_differs_between_modes_and_names_expected_workflow():
     assert thorough != quick
     assert "verify" in thorough.lower() and "self-review" in thorough.lower()
     assert "single pass" in quick.lower()
-    # Quick explicitly tells the model not to verify -- the one enforcement
+    # Quick explicitly tells the model not to verify: the one enforcement
     # mechanism available on a backend whose CLI gives us no tool-gating flag.
     assert "do not" in quick.lower() and "verifying facts online" in quick.lower()
 
@@ -300,8 +300,8 @@ def test_parse_codex_result_top_level_text():
 
 
 def test_parse_codex_result_text_nested_under_item():
-    # The shape the codex branch was actually reading before I9 -- text
-    # nested under "item" rather than top-level -- must also be picked up,
+    # The shape the codex branch was actually reading before I9 (text
+    # nested under "item" rather than top-level) must also be picked up,
     # since which one a real codex binary emits is unverified here.
     line = _json.dumps({"type": "turn.completed",
                         "item": {"type": "agent_message", "text": "[{\"x\": 1}]"},
@@ -348,7 +348,7 @@ def test_usage_line_free_tier_counts_runs():
 def test_usage_state_corrupt_file_degrades_to_no_history():
     # A hand-edited ai_usage.json, mirroring test_duration_state_corrupt_
     # file_degrades_to_no_history: a bad "claude" value, and rows missing or
-    # mistyping "ts"/"tokens", must not raise -- usage_line runs from dialog
+    # mistyping "ts"/"tokens", must not raise: usage_line runs from dialog
     # construction, so a crash here would stop the wizard from opening at all.
     assert "0 runs" in ai_logic.usage_line({"claude": "not a list"}, "claude", now=1000)
     assert "0 runs" in ai_logic.usage_line(
@@ -507,7 +507,7 @@ def test_extract_pdf_text(tmp_path):
     out = ai_logic.extract_attachment(os.path.join(FIXTURES, "sample.pdf"), str(tmp_path))
     assert "Hello LAST" in out["text"]
     assert out["images"] == []
-    assert out["images_undecoded"] is False   # sample.pdf really has no images -- not a decode failure
+    assert out["images_undecoded"] is False   # sample.pdf really has no images: not a decode failure
 
 
 def test_extract_image_copies_file(tmp_path):
@@ -566,7 +566,7 @@ def test_extract_unknown_extension_raises(tmp_path):
 
 # These three exercise the filename sanitizing/collision-proofing logic in
 # extract_attachment, which is pure string handling over an image's (id, name)
-# and doesn't need a real decoded image behind it -- so, like
+# and doesn't need a real decoded image behind it: so, like
 # test_extract_pdf_image_extension_sanitized_against_hostile_name below, they
 # fake out page.images with a stand-in ImageFile rather than decoding
 # tests/fixtures/with_image.pdf's real embedded image. That keeps them honest
@@ -628,7 +628,7 @@ def test_extract_pdf_stem_sanitized_against_path_traversal(tmp_path, monkeypatch
 def test_extract_pdf_real_image_decodes_when_pillow_is_available(tmp_path):
     # The full end-to-end path, actually decoded, when Pillow happens to be
     # importable in this interpreter (a developer's system python typically
-    # has it; Anki's bundled python typically doesn't -- this is exactly the
+    # has it; Anki's bundled python typically doesn't: this is exactly the
     # gap that let PDF image extraction ship silently broken for every real
     # user, per the vendored-pypdf docstring pypdf raises against). Skipped
     # rather than failed where Pillow is genuinely absent, since that's the
