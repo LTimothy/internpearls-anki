@@ -3,6 +3,22 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.54.1
+
+Layout and control fixes for the "Generate cards with AI" wizard, no behavior change.
+Every page now hands its own leftover height to something that owns it instead of
+leaving it to spread across every widget, so a page never floats a dead band above its
+buttons and the Import button on the review page stays reachable no matter how many
+cards were drafted. Every loose row of push buttons is a proper button box now (a
+visible default action, Cancel on the platform's usual side), and Re-check on the setup
+page reads as a link next to a plain status line rather than a full-width button. View
+skills routes through the same scrollable, button-outside-the-body dialog on both of
+its branches, so the bundled skill's own length can never push its Close button off the
+screen. The review page's status line is split: what you're deciding (how many cards,
+how many are included) stays under the title, and run facts (token spend, rate limits,
+what a revision changed) move to a line under the list. A successful import shows a
+brief tooltip instead of a dialog to click through, the same way Anki's own Add does.
+
 ## v0.54.0
 
 New "Experimental" menu, a sibling of Advanced for features that are new or still
