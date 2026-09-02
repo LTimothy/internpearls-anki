@@ -243,6 +243,57 @@ def test_cancel_generation_preserves_inputs(anki, monkeypatch):
     assert not dlg.session.cards   # nothing touched the collection
 
 
+def test_completion_exception_reaches_dialog_and_recovers_to_input(anki, monkeypatch):
+    """B/C: the QTimer poll -> _finish_generation path had no guard at all, so an
+    exception raised while processing an already-finished generation reached
+    Anki's raw crash box instead of this add-on's own dialog. Worse, by the time
+    the poll calls _finish_generation it has already set _gen_done and stopped its
+    own timer (so the cycle can't run twice) -- so if _finish_generation itself
+    then raised, nothing was left running for Cancel to act on and nothing ever
+    moved the stack off the progress page: the wizard was stuck, permanently,
+    with a Cancel button wired to a no-op.
+
+    Fires the real timer callback (dlg._timer.fire(), the mock's stand-in for a
+    real Qt timeout signal) rather than calling _finish_generation directly, so
+    this exercises the actual wiring the bug lived in -- a raise inside a
+    directly-invoked method call would never have caught this class of bug,
+    exactly like test_import_button_click_shows_dialog_instead_of_raising above
+    for the button-click guard.
+    """
+    from internpearls import ai_logic
+    dlg = _ready_dialog(anki, monkeypatch)
+
+    real_parse = ai_logic.parse_cards_json
+
+    def boom(*a, **k):
+        raise RuntimeError("boom in completion path")
+    monkeypatch.setattr(ai_logic, "parse_cards_json", boom)
+
+    warnings = []
+    monkeypatch.setattr(ai_dialog, "_warn", lambda text, **kw: warnings.append(text))
+
+    dlg._start_generation()
+    dlg._worker.join(timeout=15)
+    assert not dlg._worker.is_alive()
+
+    dlg._timer.fire()   # the real wiring: timeout -> _guard_completion(_poll_worker)
+
+    assert warnings, "the failure must reach the add-on's own dialog, not vanish"
+    assert "boom in completion path" in warnings[0]
+    assert dlg._gen_done is True
+    assert dlg.stack.currentWidget() is dlg.input_page   # landed somewhere usable
+    assert dlg.source_box.toPlainText()                  # inputs weren't thrown away
+
+    dlg._cancel_generation()   # Cancel is still callable -- a no-op now, but never raises
+
+    # The wizard itself isn't broken: a later generation completes normally.
+    monkeypatch.setattr(ai_logic, "parse_cards_json", real_parse)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert dlg.session.cards
+
+
 def _counting_run_generation(monkeypatch):
     """Wrap ai_cli.run_generation to count real invocations, so a test can pin
     "exactly one model call" rather than just "it eventually finished"."""

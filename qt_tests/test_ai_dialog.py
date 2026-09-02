@@ -199,6 +199,63 @@ def test_import_button_click_shows_dialog_instead_of_raising(monkeypatch):
     assert dlg.isVisible()   # still open -- an unhandled exception here would tear it down
 
 
+def test_completion_timer_exception_shows_dialog_and_recovers_to_input(monkeypatch):
+    """B/C, against a real QTimer: _poll_worker (and _poll_image_worker) fire off
+    Qt's own timeout signal the same way a button's clicked signal fires, so an
+    unguarded exception there reached Anki's raw crash box too -- and it was worse
+    than an unguarded button click, not just as bad. By its last firing, the poll
+    has already latched _gen_done and stopped its own timer, so if the completion
+    code itself then raised, nothing was left running for Cancel to cancel and
+    nothing ever moved the dialog off the progress page: stuck forever, with a
+    Cancel button wired to a no-op.
+
+    Emits the real QTimer's own `timeout` signal (dlg._timer.timeout.emit()) --
+    an actual Qt signal dispatch, not a direct call into _finish_generation --
+    so this exercises the exact path the bug lived in.
+    """
+    harness.bootstrap()
+    app = harness.app()
+    from internpearls import ai_logic
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
+              cancel=None, timeout=None: {"text": "[]", "tokens": 1, "duration_s": 0.1})
+
+    def boom(*a, **k):
+        raise RuntimeError("boom in completion path")
+    monkeypatch.setattr(ai_logic, "parse_cards_json", boom)
+
+    warnings = []
+    monkeypatch.setattr(ai_dialog, "_warn", lambda text, **kw: warnings.append(text))
+
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    dlg.source_box.setPlainText("Regional block landmarks and needle depths")
+    dlg._start_generation()
+    app.processEvents()
+    dlg._worker.join(timeout=15)
+    assert not dlg._worker.is_alive()
+
+    dlg._timer.timeout.emit()   # a real Qt signal, not _finish_generation() called directly
+    app.processEvents()
+
+    assert warnings, "the failure must reach the add-on's own dialog, not vanish"
+    assert "boom in completion path" in warnings[0]
+    assert dlg._gen_done is True
+    assert dlg.stack.currentWidget() is dlg.input_page   # landed somewhere usable
+    assert dlg.isVisible()   # still open -- an unhandled exception would have torn it down
+
+    # Cancel is still wired and callable, not a permanent no-op stuck against a
+    # progress page that no longer shows.
+    dlg._cancel_generation()
+
+
 def test_mode_radios_render_the_backends_own_text(monkeypatch):
     """C1, confirmed by rendering: the mode radios must show the found
     backend's own truthful text, not one label shared by all three."""
@@ -212,6 +269,48 @@ def test_mode_radios_render_the_backends_own_text(monkeypatch):
     modes = ai_cli.BACKENDS["claude"]["modes"]
     assert dlg.thorough_radio.text() == modes["thorough"]
     assert dlg.quick_radio.text() == modes["quick"]
+
+
+def test_input_page_gates_note_types_against_real_checkboxes(monkeypatch):
+    """A, against real QCheckBox widgets rather than the fake-Qt suite's own
+    checkbox stand-in: a collection carrying neither managed type ("Study Deck -
+    Basic"/"Study Deck - Cloze" only ever arrive with a deck sync) must render
+    both of them genuinely unselectable, with a reason -- not merely "checked()
+    would read False if you asked it right", but isEnabled() actually False and
+    isChecked() actually False on the real widget a user would click. Basic and
+    Cloze are Anki's own stock types and always exist, so they render enabled and
+    checked, exactly as tests/test_ai_flows.py's mock-collection version already
+    covers structurally; this is the same claim proven against a real Qt
+    QCheckBox's own isEnabled()/isChecked(), the layer a hand-driven pass
+    actually looks at.
+    """
+    harness.bootstrap()
+    import mock_anki
+    from aqt import mw
+
+    mw.col.models = mock_anki._Models([
+        mock_anki.make_model("Basic", fields=["Front", "Back"]),
+        mock_anki.make_model("Cloze", fields=["Text", "Back Extra"])])
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+
+    for missing in ("Study Deck - Basic", "Study Deck - Cloze"):
+        box = dlg.type_boxes[missing]
+        assert box.isEnabled() is False, f"{missing} isn't in the collection yet"
+        assert box.isChecked() is False
+        assert "sync your decks first" in box.text()
+
+    for present in ("Basic", "Cloze"):
+        box = dlg.type_boxes[present]
+        assert box.isEnabled() is True
+        assert box.isChecked() is True
 
 
 def test_attach_warns_once_when_a_pdfs_images_cant_be_decoded(monkeypatch, tmp_path):

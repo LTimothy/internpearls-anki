@@ -228,6 +228,50 @@ class _GenerateDialog(QDialog):
             print(traceback.format_exc())
             _warn(f"Something went wrong: {e}")
 
+    def _guard_completion(self, fn, *args, **kwargs):
+        """Like _guard, but for the two QTimer callbacks that drive generation to
+        completion (_poll_worker -> _finish_generation, and _poll_image_worker ->
+        _apply_review_state) rather than a button click.
+
+        _guard alone doesn't reach this path: a QTimer's timeout is dispatched by
+        Qt's event loop exactly the same way a button's clicked signal is, so an
+        unguarded exception here reached Anki's raw crash box too. But an exception
+        here is also worse than an unguarded button click, not just as bad: by the
+        time either poll fires its *last* time, it has already set _gen_done (or
+        _img_done) and stopped its own timer -- correct, so the cycle can't complete
+        twice -- which means if the completion code itself then raises, there is no
+        longer any live worker or timer left for Cancel to act on. The dialog stayed
+        on the progress page showing "Generating cards" forever, with Cancel wired to
+        cancel a run that had already finished; closing the window was the only way
+        out.
+
+        So on top of _guard's own dialog, this makes the latched state consistent
+        (both flags true, both timers stopped -- redundant on the already-correct
+        path, cheap insurance on the exception one) and always lands the user back on
+        a page they can act on: the same place a cancelled or failed generation
+        already lands (_return_to_input_or_review), with a hard fallback to the input
+        page if even that raises.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            print(traceback.format_exc())
+            _warn(f"Something went wrong: {e}")
+            self._gen_done, self._img_done = True, True
+            if hasattr(self, "_cancel_flag"):
+                self._cancel_flag.set()
+            if hasattr(self, "_img_cancel_flag"):
+                self._img_cancel_flag.set()
+            if hasattr(self, "_timer"):
+                self._timer.stop()
+            if hasattr(self, "_img_timer"):
+                self._img_timer.stop()
+            try:
+                self._return_to_input_or_review()
+            except Exception:
+                print(traceback.format_exc())
+                self.stack.setCurrentWidget(self.input_page)
+
     # -- setup ---------------------------------------------------------------
     def _build_setup(self):
         page = QWidget()
@@ -668,7 +712,7 @@ class _GenerateDialog(QDialog):
         self.phase_label.setText("")
         self.stack.setCurrentWidget(self.progress_page)
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._poll_worker)
+        self._timer.timeout.connect(lambda: self._guard_completion(self._poll_worker))
         self._timer.start(200)
 
     def _poll_worker(self):
@@ -884,7 +928,8 @@ class _GenerateDialog(QDialog):
         self.phase_label.setText("")
         self.stack.setCurrentWidget(self.progress_page)
         self._img_timer = QTimer(self)
-        self._img_timer.timeout.connect(self._poll_image_worker)
+        self._img_timer.timeout.connect(
+            lambda: self._guard_completion(self._poll_image_worker))
         self._img_timer.start(_IMG_POLL_MS)
 
     def _poll_image_worker(self):
