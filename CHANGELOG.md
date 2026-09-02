@@ -3,6 +3,30 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.53.3
+
+Two more defects in "Generate cards with AI", again found only by running the add-on
+for real, not by the automated test suites.
+
+The crash guard added in v0.53.2 covered every wizard button, but missed the one path
+that matters most: generation completes off a timer, not a click, so an exception
+there still showed Anki's own raw crash box. Worse, it left the wizard stuck: the
+progress page kept showing "Generating cards" with a Cancel button wired to a run that
+had already finished, so clicking it did nothing, repeatedly, and closing the window
+was the only way out. Completion now goes through the same guard as every button, and
+a failure there tears the run down properly and returns you to the input page -- or
+your existing draft, if you were mid-revision -- instead of leaving you stranded.
+
+Separately, a single missing folder used to crash every write of the add-on's own
+saved state (usage stats, deck skill consent, and more): the shared atomic-write
+helper behind all of them now creates its target folder if it isn't there.
+
+Also re-verified: the note-type availability check from v0.53.2 already behaves
+correctly against a real collection with neither managed note type present. It now
+has a real-Qt-widget test alongside the existing one, so a genuine rendering
+regression there can't go unnoticed the way this round's re-check first seemed to
+suggest.
+
 ## v0.53.2
 
 Fixed two defects in "Generate cards with AI" found by hand, neither reachable by the
