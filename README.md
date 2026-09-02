@@ -100,6 +100,35 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 | `auto_sync_decks`, `auto_sync_interval_minutes`, `notify_addon_updates`, `auto_update_addon` | Sync and update automation, see Settings below and `config.md` for details on each. |
 | `dim_images_night_mode` | Dim bright pictures while Anki is in Night Mode. Applies to every deck in your collection, not just this add-on's. Also editable from Settings. |
 
+### Generate cards with AI
+
+Drafts new cards from source material you paste in or attach, through an AI coding-assistant CLI you already have installed and signed into on your own machine. There is no API key field anywhere in the add-on, and no credential of any kind is ever read, sent, or stored by it: the add-on only shells out to a CLI you set up yourself, the same way you'd run it from a terminal.
+
+Setup checks for three backends and shows the state of each (installed and working, found but not responding, or not found), with a Re-check button for after you install or sign into one:
+
+- **Claude Code** (Claude Pro or Max): tools fully restricted. The strongest of the three.
+- **Codex CLI** (ChatGPT Plus or Pro): sandboxed read-only, no writes or network. Still worth knowing plainly: read-only means it can open files on your machine and fold what it reads into the cards it drafts, which is not the same guarantee as "can't touch your data."
+- **Antigravity CLI** (a free, throttled Google account tier): no dedicated sandbox flag of its own yet, so this one relies on the assistant's own approval defaults rather than anything the add-on enforces.
+
+These three are not equally sandboxed, and the setup screen says so in those words rather than averaging them into one reassurance. Pick the one whose restrictions you're comfortable running source material through. Each backend's row also says whether it can see attached images directly or only read an attached PDF as text.
+
+Paste or type source material (lecture notes, an article excerpt, a topic outline), optionally attach images or PDFs, add free-text instructions, and choose:
+
+- **Thorough**: drafts, verifies the facts against sources it can reach online, then self-reviews before handing cards back. Takes roughly 1 to 3 minutes.
+- **Quick draft**: one pass, no web access at all. Roughly 15 to 30 seconds, meant for a fast first cut you'll revise.
+
+Pick which note types are in play (Study Deck - Basic, Study Deck - Cloze, Study Deck - Image ID off by default since it needs a real matching image nothing here can reliably supply) and a target card count, then Generate. A progress screen shows the current phase and elapsed time, with a Cancel that actually stops the run.
+
+Drafted cards come back into a review list: each one flags with a mechanical check (a likely duplicate against your existing collection, invalid cloze syntax, an overlong answer) before you decide anything, checked or unchecked by default accordingly. Edit any field by hand, leave a note on a card, and Revise all sends the whole set back for one more pass carrying your notes and any free-text feedback: cards you didn't note come back untouched ("keep verbatim"), and the list shows what actually changed. Import writes only the boxes you left checked.
+
+**No card here ever carries an AI-generated raster image.** An image on a drafted card can only come from three places: a real web source the assistant found and cites, an image extracted from a PDF or file you attached, or SVG markup the model draws itself (checked for script content before it's used). Nothing here calls an image-generation model or fabricates a picture of anything.
+
+Cards land in a `Generated` subdeck under your configured deck (`export_deck::Generated`) and carry a `Generated` tag under your scope tag. Every one gets a fresh local GUID that never resembles a synced card's GUID, so a deck source's own sync and reconcile machinery can never match, retire, or overwrite one: a shared-deck update can add or retire the maintainer's cards, but it will never touch what you generated yourself. Importing is one undoable step (Ctrl+Z reverts it), same as any other add to the collection.
+
+What's stored between sessions is deliberately small: which backend and CLI path you last used, the deck-skill consent record described below (only ever written after you say yes), and a rolling per-backend usage log of when a run happened and roughly how many tokens it used, kept for 7 days to show "Today via this add-on: N runs, ~Xk tokens." Everything else, including the source material you pasted or attached, drafts, your revision notes and feedback, and the prompts and replies exchanged with the CLI, lives only in memory for that one dialog session and is discarded (including the temp folder holding extracted attachment images) the moment it closes, whether by Import, Cancel, or closing the window. Closing mid-review with drafted cards on screen asks you to confirm first, since that's the only point anything unsaved would be lost.
+
+A View skills link shows exactly what's sent to the assistant on top of your material: the bundled InternPearls authoring skill (card-craft rules that ship with the add-on), plus a deck-specific skill if your configured deck source offers one and you've consented to it. Nothing from a deck skill is ever sent without that explicit consent, and the same link lets you enable or disable one you've already consented to.
+
 ### Advanced submenu
 
 Occasional tools, tucked away from the two primary actions at the top, in four groups: acting on the deck source (including the two halves Update my decks normally runs together, for anyone who wants just one of them on its own), repairing the collection itself, the two backup/restore pairs (deck-scoped, then whole-collection), and the add-on's own update check.
@@ -182,6 +211,8 @@ The automatic deck-scoped backups also live in that `user_files/` subfolder insi
 The add-on's own record of which deck versions you've already synced lives in a `user_files/` subfolder, which Anki preserves across add-on updates (everything else in the add-on's folder gets replaced fresh). Earlier versions kept this file elsewhere, so updating the add-on itself would reset it and make the next Sync treat every deck as new; that's fixed as of v0.7.0.
 
 As of v0.32.0, restoring a backup clears the relevant part of that record too, so a rollback is re-offered on your next check instead of the add-on reporting you're up to date over stale cards. Restore full collection clears it entirely, since every deck could have rolled back. Restore intern pearls deck only clears the decks actually in the file you're importing (falling back to clearing all of them if the file can't be read), so restoring one deck's backup doesn't force a recheck of every other deck too. Either way, the next Update my decks re-offers whatever came back, and the re-import still matches by GUID, so review history carries over as always.
+
+A card you generated yourself (Generate cards with AI) sits outside all of this on purpose. It gets a fresh local GUID that a deck source's own GUIDs never use, so the matching ladder above can never pair it with anything a sync ships: it is never overwritten by an update, never archived by Reconcile my decks, and never counted as a duplicate of a maintainer's card. A deck source can add, retire, or reorganize its own cards freely and a card you generated stays exactly where you put it.
 
 ## Using this for your own decks
 
