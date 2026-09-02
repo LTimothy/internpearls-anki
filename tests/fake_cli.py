@@ -9,12 +9,26 @@
 #   badjson         emit a result line whose "result" text is not valid card JSON
 #   two_cards       emit two fixed cards, identically on every invocation (for
 #                   revision tests that need the "same shape" case with >1 card)
+#   codex_top       codex-style item.completed with text at the top level
+#   codex_nested    codex-style item.completed with text nested under "item"
+#                   (the shape parse_stream_event's codex branch was actually
+#                   reading before I9; kept alongside codex_top since neither
+#                   shape is confirmed against a live codex binary)
+#   agy_ok          antigravity-style "result" event
 import json
 import sys
 import time
 
 mode = sys.argv[1] if len(sys.argv) > 1 else "ok"
 prompt = sys.stdin.read()
+# "Study Deck - Basic" (not the bare "Basic" note type) so a flow test can carry
+# this card all the way through import against the mock collection's default model.
+CARDS = [{"note_type": "Study Deck - Basic",
+         "fields": {"Front": "q", "Back": "a"},
+         "tags": [], "images": [], "rationale": "r"}]
+CARDS_JSON = json.dumps(CARDS)
+USAGE = {"input_tokens": 10, "output_tokens": 5}
+
 if mode == "fail":
     print("boom", file=sys.stderr)
     sys.exit(2)
@@ -30,7 +44,7 @@ if mode == "garbage":
 if mode == "badjson":
     print(json.dumps({"type": "result", "subtype": "success",
                       "result": "sorry, here is some prose instead of JSON",
-                      "usage": {"input_tokens": 10, "output_tokens": 5}}))
+                      "usage": USAGE}))
     sys.exit(0)
 if mode == "two_cards":
     print(json.dumps({"type": "assistant", "message": {"content": [
@@ -42,16 +56,21 @@ if mode == "two_cards":
               "fields": {"Front": "Duplicate front", "Back": "a"},
               "tags": [], "images": [], "rationale": "r"}]
     print(json.dumps({"type": "result", "subtype": "success",
-                      "result": json.dumps(cards),
-                      "usage": {"input_tokens": 10, "output_tokens": 5}}))
+                      "result": json.dumps(cards), "usage": USAGE}))
+    sys.exit(0)
+if mode == "codex_top":
+    print(json.dumps({"type": "item.completed", "text": CARDS_JSON,
+                      "usage": USAGE}))
+    sys.exit(0)
+if mode == "codex_nested":
+    print(json.dumps({"type": "item.completed",
+                      "item": {"type": "agent_message", "text": CARDS_JSON},
+                      "usage": USAGE}))
+    sys.exit(0)
+if mode == "agy_ok":
+    print(json.dumps({"type": "result", "result": CARDS_JSON, "usage": USAGE}))
     sys.exit(0)
 print(json.dumps({"type": "assistant", "message": {"content": [
     {"type": "tool_use", "name": "WebSearch", "input": {}}]}}), flush=True)
-# "Study Deck - Basic" (not the bare "Basic" note type) so a flow test can carry
-# this card all the way through import against the mock collection's default model.
-cards = [{"note_type": "Study Deck - Basic",
-          "fields": {"Front": "q", "Back": "a"},
-          "tags": [], "images": [], "rationale": "r"}]
 print(json.dumps({"type": "result", "subtype": "success",
-                  "result": json.dumps(cards),
-                  "usage": {"input_tokens": 10, "output_tokens": 5}}))
+                  "result": CARDS_JSON, "usage": USAGE}))
