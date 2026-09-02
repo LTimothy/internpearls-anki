@@ -258,6 +258,28 @@ def test_parse_claude_tool_use_maps_to_phase():
     assert evt == {"type": "phase", "phase": "Verify online"}
 
 
+def test_parse_claude_error_result_event():
+    # Real shape from a v2.1.251 claude with an expired login: subtype stays
+    # "success" even though is_error is true, and the human message rides in
+    # the same "result" field a successful run puts card text in.
+    line = _json.dumps({"type": "result", "subtype": "success", "is_error": True,
+                        "num_turns": 1,
+                        "result": "Failed to authenticate: OAuth session "
+                                  "expired and could not be refreshed",
+                        "terminal_reason": "api_error"})
+    evt = ai_logic.parse_stream_event("claude", line)
+    assert evt == {"type": "error",
+                   "text": "Failed to authenticate: OAuth session expired "
+                           "and could not be refreshed"}
+
+
+def test_parse_claude_error_result_never_looks_like_a_result_event():
+    line = _json.dumps({"type": "result", "subtype": "success", "is_error": True,
+                        "result": "some failure"})
+    evt = ai_logic.parse_stream_event("claude", line)
+    assert evt["type"] != "result"
+
+
 def test_parse_codex_token_count_with_rate_limits():
     line = _json.dumps({"type": "token_count",
                         "info": {"total_tokens": 5000},
@@ -431,6 +453,15 @@ def test_parse_malformed_nested_shapes_never_raises():
     ]
     for kind, line in cases:
         assert ai_logic.parse_stream_event(kind, line) is None
+
+
+def test_parse_claude_result_non_bool_is_error_never_raises():
+    # "is_error" mistyped by a vendor CLI (a string, not a bool) must not
+    # raise; it's treated as not-an-error rather than silently dropping what
+    # might be real card text.
+    line = _json.dumps({"type": "result", "is_error": "yes", "result": "x"})
+    evt = ai_logic.parse_stream_event("claude", line)
+    assert evt["type"] == "result" and evt["text"] == "x"
 
 
 def test_parse_tool_use_with_non_string_name_never_raises():
