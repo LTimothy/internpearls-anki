@@ -3,6 +3,21 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.54.2
+
+The "Generate cards with AI" wizard's review rows are rebuilt on the same shape the
+Update my decks screen already uses, visual only, no behavior change. Each row is now
+a caret, a fixed chip column, and a bold front line, with the back, why, dosing and any
+image tucked into a body the caret reveals, and Edit/Note as quiet links at the end of
+that body instead of two native push buttons on every row. A card a check flagged now
+shows its own reason underneath, and a duplicate names the existing card it matched --
+both used to be invisible, with only a bracketed word saying something was wrong. A
+queued revision note shows on its row instead of only living inside a prompt's memory.
+The two quality radios on the input page now carry just their short name (Thorough,
+Quick draft); the full per-backend disclosure sentence moved to a wrapped line
+underneath, since it used to force the whole dialog to roughly 1000px wide trying to
+fit unwrapped on one radio button.
+
 ## v0.54.1
 
 Layout and control fixes for the "Generate cards with AI" wizard, no behavior change.
