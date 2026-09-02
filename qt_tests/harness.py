@@ -825,13 +825,23 @@ def _scene_ai_setup(mock, opts):
 
 
 def _scene_ai_backends(mock, opts):
-    """The AI Backends window on its own, reached directly rather than
-    through the wizard's Configure AI Backends button."""
+    """The AI Backends window on its own, reached directly rather than through
+    the wizard's Open AI Backends button: one row per assistant, then the
+    settings panel for the preferred one.
+
+    `found=1` detects every backend, which is the taller of the two states the
+    height budget is measured against (every row wears a FOUND chip and the
+    panel is about a working CLI); the default detects none, which is the state
+    a reader with nothing installed opens onto."""
     from internpearls import ai_cli, ai_setup
 
-    def _find_none(kind, override=""):
-        return None
-    ai_cli.find_cli = _find_none
+    if opts.get("found"):
+        ai_cli.find_cli = lambda kind, override="": "/usr/bin/true"
+        ai_cli.probe = lambda kind, path: {"ok": True, "detail": "1.0.0"}
+    else:
+        def _find_none(kind, override=""):
+            return None
+        ai_cli.find_cli = _find_none
 
     return lambda: ai_setup.open_ai_backends(None)
 
@@ -979,7 +989,8 @@ SCENES = {
     "ai-setup": (_scene_ai_setup,
                 "the AI wizard's setup page (no backend detected)"),
     "ai-backends": (_scene_ai_backends,
-                    "the AI Backends window (enable/prefer/path/model/effort/test)"),
+                    "the AI Backends window (one row per backend, found=1 detects "
+                    "all three)"),
     "ai-input": (_scene_ai_input, "the AI wizard's input page"),
     "ai-progress": (_scene_ai_progress, "the AI wizard's progress page, mid-run"),
     "ai-review": (_scene_ai_review,
