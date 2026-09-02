@@ -847,6 +847,30 @@ class Signal:
             fn(*a)
 
 
+class pyqtSignal:
+    """Enough of PyQt's class-level `foo = pyqtSignal()` declaration to support a
+    widget that declares its own signal (ai_setup.ModelEffortControls' `changed`):
+    a descriptor that hands each instance its own lazily-created Signal, mirroring
+    real PyQt's per-instance bound-signal semantics rather than one Signal shared
+    across every instance of the class."""
+
+    def __init__(self, *a, **k):
+        self._name = None
+
+    def __set_name__(self, owner, name):
+        self._name = name
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        key = f"_signal_{self._name}"
+        sig = obj.__dict__.get(key)
+        if sig is None:
+            sig = Signal()
+            obj.__dict__[key] = sig
+        return sig
+
+
 class QWidget:
     def __init__(self, *a, **k):
         self.wid = _new_wid(self)
@@ -893,7 +917,19 @@ class QWidget:
     def setVisible(self, v):
         self._visible = v
 
+    def hide(self):
+        self.setVisible(False)
+
+    def show(self):
+        self.setVisible(True)
+
     def isVisible(self):
+        return self._visible
+
+    def isVisibleTo(self, ancestor):
+        # No parent chain to walk here (see node()): this widget's own visibility
+        # is the only thing the mock has an opinion about, same simplification the
+        # rest of this class already makes for geometry.
         return self._visible
 
     def setWordWrap(self, v):
@@ -1239,6 +1275,10 @@ class QLineEdit(QWidget):
         # Real QLineEdit emits this on Enter or on losing focus, not per keystroke;
         # the mock has no focus model, so tests trigger it directly.
         self.editingFinished = Signal()
+        # Real QLineEdit emits this only for a user's own keystrokes, never for a
+        # programmatic setText; the mock has no keyboard model either, so a test
+        # triggers it directly, same as editingFinished above.
+        self.textEdited = Signal()
 
     def setText(self, t):
         self._text = t
@@ -1439,6 +1479,27 @@ class QFrame(QWidget):
         # tell a separator apart from a container box.
         kind = "hline" if self._shape == QFrame.Shape.HLine else "frame"
         return {"t": kind, "id": self.wid, "style": self._style,
+                "children": [self._layout.node()] if self._layout else []}
+
+
+class QGroupBox(QWidget):
+    """One backend's own titled box on the AI Backends window: just enough to
+    hold a title and a child layout, the same shape QFrame already gives a
+    plain container above."""
+
+    def __init__(self, title="", *a, **k):
+        super().__init__()
+        self._title = title
+
+    def setTitle(self, t):
+        self._title = t
+
+    def title(self):
+        return self._title
+
+    def node(self):
+        return {"t": "group", "id": self.wid, "title": self._title,
+                "style": self._style,
                 "children": [self._layout.node()] if self._layout else []}
 
 
@@ -1931,6 +1992,19 @@ def install():
             text, ok = gui.prompt(caption, default=directory)
             return text if ok else ""
 
+        @staticmethod
+        def getOpenFileName(parent=None, caption="", directory="", filter="", *a, **k):
+            """The AI Backends window's Browse button. Same prompt-based stand-in
+            as getExistingDirectory above: a test that wants a chosen path
+            monkeypatches this directly rather than scripting a real file picker."""
+            text, ok = gui.prompt(caption, default=directory)
+            return (text, filter) if ok else ("", "")
+
+        @staticmethod
+        def getOpenFileNames(parent=None, caption="", directory="", filter="", *a, **k):
+            text, ok = gui.prompt(caption, default=directory)
+            return ([text] if ok and text else [], filter)
+
     class _QFontDatabase:
         class SystemFont:
             FixedFont = 0
@@ -2113,7 +2187,8 @@ def install():
                       ("QPushButton", QPushButton), ("QAction", QAction),
                       ("QMenu", QMenu), ("QCheckBox", QCheckBox),
                       ("QComboBox", QComboBox), ("QRadioButton", QRadioButton),
-                      ("QButtonGroup", QButtonGroup),
+                      ("QButtonGroup", QButtonGroup), ("QGroupBox", QGroupBox),
+                      ("pyqtSignal", pyqtSignal),
                       ("QStackedWidget", QStackedWidget),
                       ("QDialog", QDialog), ("QDialogButtonBox", QDialogButtonBox),
                       ("QFrame", QFrame), ("QHBoxLayout", QHBoxLayout),

@@ -88,9 +88,25 @@ found and working first. Defaults to `""`.
 
 ## ai_cli_path
 
-An explicit path to the CLI binary for the backend named in `ai_backend`, used instead
-of searching `PATH` and the usual install locations. Ignored unless `ai_backend` names
-a specific backend. Defaults to `""`.
+An explicit path to each backend's own CLI binary, used instead of searching `PATH` and
+the usual install locations. Stored per backend kind, as an object with `claude`,
+`codex`, and `agy` keys (`{"claude": "", "codex": "", "agy": ""}`); an empty entry
+searches normally for that backend. Editable from the AI Backends window's Executable
+path field, per backend. Defaults to `{"claude": "", "codex": "", "agy": ""}`.
+
+A config written before this became per-backend stored `ai_cli_path` as a single
+string, meaning "the path for the backend named in `ai_backend`"; that shape is read
+once and folded into the map above (into whichever backend `ai_backend` named, or
+dropped if it named none), so nobody loses a configured path on upgrade.
+
+## ai_backend_enabled
+
+Whether each backend is offered at all, as an object with `claude`, `codex`, and `agy`
+keys (`{"claude": true, "codex": true, "agy": true}`). A backend set to `false` is
+skipped entirely: not detected, not chosen, not shown as a candidate anywhere the
+wizard or the AI Backends window looks. Editable from the AI Backends window's "Use
+this assistant" checkbox, per backend. Defaults to `{"claude": true, "codex": true,
+"agy": true}`.
 
 ## ai_model
 
@@ -105,23 +121,23 @@ model rather than whatever the account's own default happens to be); for Codex C
 empty value passes no `--model` flag at all, deferring entirely to Codex's own default,
 and a non-empty value is only passed when the installed Codex CLI's own help documents
 the flag (see "Codex CLI's model flag" below). Antigravity CLI has no way to honor
-this (see the wizard's Model field for that backend), so its entry is ignored
+this (see the AI Backends window's Model field for that backend), so its entry is ignored
 regardless of what's set. Defaults to `{"claude": "", "codex": "", "agy": ""}`.
-Editable from the "Generate cards with AI" wizard's backend row.
+Editable from the AI Backends window, per backend.
 
 ## ai_effort
 
 The reasoning-effort level to request, one of `low`, `medium`, `high`, `xhigh`, `max`.
 Only Claude Code has a verified `--effort` flag, so this only ever affects that backend;
-it's hidden from the wizard and ignored entirely for Codex CLI and Antigravity CLI.
+it's hidden from the AI Backends window and ignored entirely for Codex CLI and Antigravity CLI.
 Stored the same per-backend shape as `ai_model` above, for the same reason. Empty (or
 any value that isn't one of the five levels, e.g. a hand-edited typo) means "use the
 backend's own default", which for Claude Code is `medium`, chosen to stay smart enough
 for card drafting without burning a Max subscription's credits the way the account's
-own top-model default would across Thorough mode's up-to-15-turn loop; the wizard's
-Effort combo always shows this same effective value, never a typo it can't find in its
-own list. Defaults to `{"claude": "", "codex": "", "agy": ""}`. Editable from the
-"Generate cards with AI" wizard's backend row.
+own top-model default would across Thorough mode's up-to-15-turn loop; the AI Backends
+window's Effort combo always shows this same effective value, never a typo it can't
+find in its own list. Defaults to `{"claude": "", "codex": "", "agy": ""}`. Editable
+from the AI Backends window, per backend.
 
 ### Codex CLI's model flag
 
