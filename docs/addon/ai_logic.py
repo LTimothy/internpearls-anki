@@ -295,14 +295,27 @@ def parse_stream_event(kind, line):
             info = d.get("info")
             return ({"type": "usage", "tokens": _usage_tokens(info)}
                     if isinstance(info, dict) else None)
-        if t in ("item.completed", "turn.completed") and d.get("text"):
-            return {"type": "result", "text": d["text"],
-                    "tokens": _usage_tokens(d.get("usage"))}
+        if t in ("item.completed", "turn.completed"):
+            # Shape unconfirmed against a live CLI (neither codex nor
+            # Antigravity is installed here): accept text either top-level or
+            # nested under "item", so whichever one the vendor actually
+            # emits still gets picked up rather than silently discarded.
+            text = d.get("text")
+            if not isinstance(text, str) or not text:
+                nested = _as_dict(d.get("item")).get("text")
+                text = nested if isinstance(nested, str) and nested else None
+            if text:
+                return {"type": "result", "text": text,
+                        "tokens": _usage_tokens(d.get("usage"))}
         return None
     if kind == "agy":
         if t == "result":
-            return {"type": "result", "text": d.get("result") or d.get("text")
-                    or "", "tokens": _usage_tokens(d.get("usage"))}
+            text = d.get("result") or d.get("text")
+            if not isinstance(text, str) or not text:
+                nested = _as_dict(d.get("item")).get("text")
+                text = nested if isinstance(nested, str) else ""
+            return {"type": "result", "text": text or "",
+                    "tokens": _usage_tokens(d.get("usage"))}
         if t == "step_update":
             return {"type": "phase", "phase": str(d.get("step_type") or
                                                   "Working")}

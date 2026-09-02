@@ -413,15 +413,44 @@ class _GenerateDialog(QDialog):
     def _cancel_generation(self):
         self._cancel_flag.set()
 
+    def _generation_in_progress(self):
+        return hasattr(self, "_worker") and not getattr(self, "_gen_done", True)
+
+    def _cancel_running_generation(self):
+        """Closing the dialog mid-generation must not orphan the run: this
+        signals cancellation and stops the poll timer immediately (so a
+        hidden dialog can never receive a queued _poll_worker -> _finish_
+        generation call and pop a modal or navigate after the user is gone),
+        but does NOT block the close on however long the child takes to die.
+        _gen_done latches right here, before the worker thread has actually
+        exited, which is what makes that guarantee unconditional.
+
+        The scratch dir is the live child's cwd and --add-dir target, so it
+        can only be removed once the worker thread (which owns _run_argv's
+        proc.wait()) has actually returned -- a background reaper thread
+        waits for that and cleans up after, rather than racing it."""
+        self._gen_done = True
+        self._cancel_flag.set()
+        self._timer.stop()
+        worker, session = self._worker, self.session
+
+        def _reap():
+            worker.join(timeout=30)
+            if session.scratch:
+                shutil.rmtree(session.scratch, ignore_errors=True)
+                session.scratch = None
+
+        threading.Thread(target=_reap, daemon=True).start()
+
     def _finish_generation(self):
         s = self.session
         err, res = self._worker_error, self._worker_result
         if isinstance(err, ai_cli.GenerationCancelled):
-            self.stack.setCurrentWidget(self.input_page)
+            self._return_to_input_or_review()
             return
         if err or not res:
             _warn(f"Generation failed: {err}")
-            self.stack.setCurrentWidget(self.input_page)
+            self._return_to_input_or_review()
             return
         cards, errors = ai_logic.parse_cards_json(res["text"], s.note_types, FIELD_MAP)
         if errors:
@@ -432,7 +461,7 @@ class _GenerateDialog(QDialog):
                 return
             _warn("The assistant's reply still could not be used after a "
                   "retry:\n" + "\n".join(errors[:5]))
-            self.stack.setCurrentWidget(self.input_page)
+            self._return_to_input_or_review()
             return
         s.tokens_last_run = res["tokens"]
         reg = ai_logic.record_usage(load_ai_usage(), s.backend, res["tokens"],
@@ -480,6 +509,20 @@ class _GenerateDialog(QDialog):
         s.notes = {}
         self._rebuild_review()
         self.stack.setCurrentWidget(self.review_page)
+
+    def _return_to_input_or_review(self):
+        """Where a cancelled or failed request lands. A revision (Revise all)
+        starts from an existing draft that _finish_generation never touches
+        until a new draft actually parses, so on cancel/failure s.cards is
+        still the pre-revision draft -- send the user back to it (with its
+        hand edits, include choices, and queued notes intact) rather than the
+        input page, which is otherwise a dead end no Back button reaches. A
+        first generation has no draft yet, so it still falls back to input."""
+        if self._last_revision and self.session.cards:
+            self._rebuild_review()
+            self.stack.setCurrentWidget(self.review_page)
+        else:
+            self.stack.setCurrentWidget(self.input_page)
 
     # -- review ------------------------------------------------------------
     def _build_review(self):
@@ -670,7 +713,16 @@ class _GenerateDialog(QDialog):
     def reject(self):
         """Closing mid-review discards everything unsaved -- nothing about a
         draft, a note, or a prompt is ever written to disk (see the module
-        docstring), so this confirmation is the only chance to back out."""
+        docstring), so this confirmation is the only chance to back out.
+
+        Qt routes Escape and the window's close box through this same method
+        (QDialog's own closeEvent calls reject()), so this is the one place
+        that has to handle closing mid-generation too: a run in flight is
+        real, billed work, not something to silently throw away on a stray
+        Escape, so it gets the same kind of confirm as discarding a draft --
+        but once confirmed, the actual cancel is handed off (see
+        _cancel_running_generation) rather than blocking this call on
+        however long the subprocess takes to die."""
         if (self.stack.currentWidget() is self.review_page
                 and self.session.cards
                 and not _ask(
@@ -678,7 +730,15 @@ class _GenerateDialog(QDialog):
                     "is saved between sessions.",
                     yes_label="Discard", no_label="Keep editing")):
             return
-        self._cleanup_scratch()
+        if self._generation_in_progress():
+            if not _ask(
+                    "A generation is still running. Closing now cancels it "
+                    "and discards this run.",
+                    yes_label="Cancel and close", no_label="Keep waiting"):
+                return
+            self._cancel_running_generation()
+        else:
+            self._cleanup_scratch()
         super().reject()
 
 
