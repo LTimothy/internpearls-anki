@@ -22,6 +22,27 @@ def test_setup_page_shown_when_no_backend(anki, monkeypatch):
         assert meta["safety"] in text
 
 
+def test_setup_page_has_a_close_button(anki, monkeypatch):
+    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
+    dlg = ai_dialog._GenerateDialog()
+    assert dlg.stack.currentWidget() is dlg.setup_page
+    anki.gui.answers = []
+    dlg.close_btn.clicked.emit()   # a no-backend user's only other way out is window chrome
+    assert dlg._result == 0
+
+
+def test_image_id_note_type_is_not_offered(anki, monkeypatch):
+    # Minor: its primary field IS the image, which a generated card has no
+    # way to fill (images travel separately) -- one such card used to poison
+    # the whole reply. Decision: don't offer it for generation at all.
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    assert "Study Deck - Image ID" not in dlg.type_boxes
+
+
 def test_input_page_shown_when_backend_found(anki, monkeypatch):
     monkeypatch.setattr(
         ai_cli, "find_cli",
@@ -33,6 +54,75 @@ def test_input_page_shown_when_backend_found(anki, monkeypatch):
     assert not dlg.generate_btn.isEnabled()   # empty source
     dlg.source_box.setPlainText("some source")
     assert dlg.generate_btn.isEnabled()
+
+
+# -- I7: Test connection -----------------------------------------------------
+
+def _drain_conn_test(dlg, timeout=15):
+    """Test helper mirroring _wait_for_worker: joins the background thread a
+    Test connection click started, then fires its poll timer (the mock has no
+    live event loop) to run the completion callback."""
+    t, timer = dlg._conn_test_refs[-1]
+    t.join(timeout=timeout)
+    timer.fire()
+
+
+def test_setup_test_connection_button_disabled_until_a_cli_is_found(anki, monkeypatch):
+    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
+    dlg = ai_dialog._GenerateDialog()
+    assert not dlg.test_buttons["claude"].isEnabled()
+
+
+def test_setup_test_connection_reports_working(anki, monkeypatch):
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": sys.executable if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs: ([sys.executable, FAKE, "badjson"], True))
+    dlg = ai_dialog._GenerateDialog()
+    assert dlg.test_buttons["claude"].isEnabled()
+    dlg._test_setup_connection("claude")
+    assert not dlg.test_buttons["claude"].isEnabled()   # disabled while the test runs
+    _drain_conn_test(dlg)
+    assert "working" in dlg.test_status["claude"].text().lower()
+    assert dlg.test_buttons["claude"].isEnabled()        # re-enabled once it's done
+
+
+def test_setup_test_connection_not_signed_in_shows_readable_message(anki, monkeypatch):
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": sys.executable if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs:
+            ([sys.executable, FAKE, "not_signed_in"], True))
+    dlg = ai_dialog._GenerateDialog()
+    dlg._test_setup_connection("claude")
+    _drain_conn_test(dlg)
+    text = dlg.test_status["claude"].text().lower()
+    assert "not working" in text and "sign in" in text
+    assert "traceback" not in text and "run `claude login`" not in text  # not raw stderr
+
+
+def test_input_page_test_connection_button_works(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="badjson")
+    dlg._test_backend_connection()
+    _drain_conn_test(dlg)
+    assert "working" in dlg.backend_test_status.text().lower()
+
+
+def test_detect_status_reads_as_one_of_the_readmes_three_states(anki, monkeypatch):
+    # I7: the row text must say something semantically matching the README's
+    # three states, not render --version's raw output as if it were one.
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": sys.executable if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "9.9.9"})
+    dlg = ai_dialog._GenerateDialog()
+    assert "installed and working" in dlg.setup_rows["claude"].text()
 
 
 def test_mode_radio_labels_are_the_backends_own_truthful_text(anki, monkeypatch):
@@ -120,6 +210,24 @@ def test_review_note_queue_and_revise_all(anki, monkeypatch):
     assert len(calls) == 2
     assert dlg.stack.currentWidget() is dlg.review_page
     assert dlg.session.notes == {}          # consumed by the revision
+
+
+# -- Minor: a fresh Generate after an existing draft is not a revision ------
+
+def test_fresh_generate_after_back_does_not_report_a_bogus_diff(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    assert dlg.stack.currentWidget() is dlg.review_page
+    dlg.stack.setCurrentWidget(dlg.input_page)   # Back, with an unrelated draft in session
+
+    dlg.source_box.setPlainText("a completely different topic")
+    dlg._start_generation()          # revision=False: a genuinely fresh request
+    dlg._wait_for_worker()
+    assert dlg.session.updated == set()             # nothing "updated" against the old draft
+    assert not dlg.session.revision_shape_mismatch
+    assert "kept" not in dlg.review_header.text()
+    assert "verbatim" not in dlg.review_header.text()
 
 
 def test_edit_card_updates_fields_via_prompt(anki, monkeypatch):
@@ -217,6 +325,9 @@ def _basic_card(front, source):
 
 
 def test_two_svg_images_get_distinct_media_filenames(anki, monkeypatch):
+    # _do_import only ever reuses what review already resolved (see I2) -- it
+    # never calls svg_to_media itself -- so the test seeds session.image_data
+    # the way _run_image_resolution would have, rather than the raw source.
     dlg = _ready_dialog(anki, monkeypatch)
     s = dlg.session
     svg = "<svg xmlns='http://www.w3.org/2000/svg'><rect/></svg>"
@@ -224,6 +335,9 @@ def test_two_svg_images_get_distinct_media_filenames(anki, monkeypatch):
     s.included = [True, True]
     ok_check = [{"code": "ok", "level": "ok", "message": "checks pass"}]
     s.checks = [ok_check, ok_check]
+    resolved = {"state": "ok", "kind": "svg", "bytes": svg.encode("utf8"),
+               "name": "generated-0.svg"}
+    s.image_data = {0: [dict(resolved)], 1: [dict(resolved)]}
     n = dlg._do_import()
     assert n == 2
     names = [f for c in s.cards for f in c["_media_files"]]
@@ -239,16 +353,106 @@ def test_one_failed_image_does_not_abort_import(anki, monkeypatch):
     s.cards = [_basic_card("Q1", "url:https://example.com/x.png")]
     s.included = [True]
     s.checks = [[{"code": "ok", "level": "ok", "message": "checks pass"}]]
-
-    def boom(url):
-        raise RuntimeError("network is down")
-
-    monkeypatch.setattr(ai_dialog, "fetch_card_image", boom)
+    # A card the user included anyway despite a failed resolution (the normal
+    # path excludes it by default, per I2's mechanical-check gate) -- import
+    # must still skip just the image, not the whole card.
+    s.image_data = {0: [{"state": "error", "kind": "url", "error": "network is down",
+                         "host": "example.com"}]}
     n = dlg._do_import()
     assert n == 1   # the card still imports; only its image is skipped
     note = next(iter(anki.col._notes.values()))
     assert note["Image"] == ""
     assert any("Skipping an image" in w for w in anki.gui.warnings)
+
+
+# -- I2: images are resolved and gated at review time, not import time -----
+
+def _stub_fetch_image(monkeypatch, data=b"PNGDATA", ext="png", error=None):
+    def fake(url):
+        if error:
+            raise RuntimeError(error)
+        return data, ext
+
+    monkeypatch.setattr(ai_dialog, "fetch_card_image", fake)
+
+
+def test_image_card_resolves_off_thread_and_reaches_review(anki, monkeypatch):
+    _stub_fetch_image(monkeypatch)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    assert dlg.stack.currentWidget() is dlg.progress_page   # not frozen: still polling
+    dlg._wait_for_worker(timeout=15)   # drains generation, then image resolution
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert dlg.session.image_data[0][0]["state"] == "ok"
+
+
+def test_image_card_starts_excluded_by_default(anki, monkeypatch):
+    # I2: "excluded by default until the user has seen the rendered
+    # thumbnail" -- true even when resolution succeeds and no mechanical
+    # check would otherwise block it.
+    _stub_fetch_image(monkeypatch)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.session.included == [False]
+    assert all(c["level"] != "block" for c in dlg.session.checks[0])   # not blocked, just gated
+
+
+def test_review_row_shows_thumbnail_and_host_for_a_web_image(anki, monkeypatch):
+    _stub_fetch_image(monkeypatch)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    row = dlg.cards_lay.itemAt(0).widget()
+    label = row.layout().itemAt(1).widget()
+    text = label.text()
+    assert "example.com" in text                      # the URL's host, per I2
+    assert "<img" in text or "[image" in text          # a real indication of the image
+
+
+def test_failed_image_download_becomes_a_mechanical_check_not_a_modal(anki, monkeypatch):
+    _stub_fetch_image(monkeypatch, error="network is down")
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.stack.currentWidget() is dlg.review_page   # no modal interrupted the flow
+    assert not anki.gui.warnings and not anki.gui.infos
+    assert any(c["code"] == "image" and c["level"] == "block"
+              for c in dlg.session.checks[0])
+    assert dlg.session.included == [False]
+    row = dlg.cards_lay.itemAt(0).widget()
+    label = row.layout().itemAt(1).widget()
+    assert "network is down" in label.text()
+
+
+def test_import_reuses_review_resolved_bytes_without_a_second_fetch(anki, monkeypatch):
+    calls = []
+
+    def fake(url):
+        calls.append(url)
+        return b"PNGDATA", "png"
+
+    monkeypatch.setattr(ai_dialog, "fetch_card_image", fake)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert len(calls) == 1                 # resolved once, at review time
+    dlg.session.included[0] = True         # the user explicitly opted in after seeing it
+    n = dlg._do_import()
+    assert n == 1
+    assert len(calls) == 1                 # import did not fetch it again
+    note = next(iter(anki.col._notes.values()))
+    assert '<img src="generated-0-0.png">' in note["Image"]
+
+
+def test_cards_with_no_images_are_unaffected_by_the_gate(anki, monkeypatch):
+    # The common case (no images anywhere) must stay exactly as fast/simple as
+    # before: no resolution phase, no forced exclusion.
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.session.included == [True]
+    assert not hasattr(dlg, "_img_worker")
 
 
 def test_close_at_review_confirms_discard(anki, monkeypatch):

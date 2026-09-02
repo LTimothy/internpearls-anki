@@ -157,6 +157,30 @@ def test_clean_card_gets_ok():
     assert checks[0] == [{"code": "ok", "level": "ok", "message": "checks pass"}]
 
 
+# -- I2: a failed image resolution becomes a mechanical check, not a modal ---
+
+def test_image_error_becomes_a_block_level_check():
+    cards = [_card(Front="q", Back="a")]
+    checks = ai_logic.mechanical_checks(cards, {}, {0: ["network is down"]})
+    assert any(c["code"] == "image" and c["level"] == "block"
+              and "network is down" in c["message"] for c in checks[0])
+
+
+def test_image_error_only_applies_to_the_named_card():
+    cards = [_card(Front="q1", Back="a"), _card(Front="q2", Back="a")]
+    checks = ai_logic.mechanical_checks(cards, {}, {1: ["boom"]})
+    assert all(c["code"] != "image" for c in checks[0])
+    assert any(c["code"] == "image" for c in checks[1])
+
+
+def test_no_image_errors_is_the_same_as_omitting_the_argument():
+    cards = [_card(Front="q", Back="a", Why="w")]
+    assert (ai_logic.mechanical_checks(cards, {})
+           == ai_logic.mechanical_checks(cards, {}, {}))
+    assert (ai_logic.mechanical_checks(cards, {})
+           == ai_logic.mechanical_checks(cards, {}, None))
+
+
 def test_prompt_stable_prefix_across_revision():
     kw = dict(skills=["SKILL A"], source="SRC", note_types=["Basic"],
               field_map=FIELD_MAP, count=5)
@@ -297,6 +321,21 @@ def test_usage_line_free_tier_counts_runs():
     reg = ai_logic.record_usage({}, "agy", 3000, now=500)
     assert "runs today" in ai_logic.usage_line(reg, "agy", now=600,
                                                free_tier=True)
+
+
+def test_usage_state_corrupt_file_degrades_to_no_history():
+    # A hand-edited ai_usage.json, mirroring test_duration_state_corrupt_
+    # file_degrades_to_no_history: a bad "claude" value, and rows missing or
+    # mistyping "ts"/"tokens", must not raise -- usage_line runs from dialog
+    # construction, so a crash here would stop the wizard from opening at all.
+    assert "0 runs" in ai_logic.usage_line({"claude": "not a list"}, "claude", now=1000)
+    assert "0 runs" in ai_logic.usage_line(
+        {"claude": [None, "bad", {}, {"tokens": 5}, {"ts": "nope", "tokens": 5}]},
+        "claude", now=1000)
+    # recording on top of a corrupt block never raises, and yields a clean
+    # single-entry history rather than propagating the garbage
+    reg = ai_logic.record_usage({"claude": "not a list"}, "claude", 10, now=1000)
+    assert reg["claude"] == [{"ts": 1000, "tokens": 10}]
 
 
 def test_record_duration_per_backend_and_mode():

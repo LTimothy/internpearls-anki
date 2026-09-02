@@ -11,26 +11,37 @@ import shutil
 import tempfile
 import threading
 import time
+import urllib.parse
 from collections import deque
 
 from aqt import mw
 from aqt.qt import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel,
                     QPlainTextEdit, QPushButton, QRadioButton, QSpinBox,
-                    QStackedWidget, QTimer, QVBoxLayout, QWidget)
+                    QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
 from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
                      save_ai_usage, load_deck_skill, save_deck_skill)
 from .net import fetch_card_image
+from .review import _image_tag
 from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
                  link_button, title_label)
 
 # Note types a generated card may name. Keep in sync with
 # collection._GENERATED_ALLOWED_TYPES: the types this add-on manages, plus
-# Anki's own core Basic and Cloze.
+# Anki's own core Basic and Cloze. "Study Deck - Image ID" is deliberately
+# excluded from what's OFFERED for generation (see _build_input): its primary
+# field IS the image, which the model has no way to supply -- images travel in
+# a card's separate "images" list, never in a field value -- so every such
+# card fails parse_cards_json's empty-primary check and takes the whole reply
+# down with it. The mapping stays here since import (collection.py) and
+# mechanical_checks still need it for any such card already on disk.
 FIELD_MAP = dict(TARGET_FIELDS, Basic=["Front", "Back"],
                  Cloze=["Text", "Back Extra"])
 SOFT_SOURCE_LIMIT = 25000
+# Image resolution (download/read/render) runs off the UI thread and polls on
+# this cadence, the same as the generation worker's own poll below.
+_IMG_POLL_MS = 200
 
 
 def _skills_html(parts):
@@ -45,6 +56,82 @@ def _skills_html(parts):
     collapses to a space in HTML and would otherwise run every line together.
     """
     return html.escape("\n".join(parts)).replace("\n", "<br>")
+
+
+def _url_host(url):
+    """The host a web image came from, for the review row -- shown so the
+    user can see where the model's suggested picture actually points before
+    ever downloading it for real."""
+    try:
+        return urllib.parse.urlparse(url).hostname or url
+    except Exception:
+        return url
+
+
+def _resolve_one_image(im, scratch):
+    """Resolve one card image reference to bytes, off the UI thread. Never
+    raises: every failure (a bad URL, a network error, a missing attachment)
+    comes back as {"state": "error", ...} instead, so one bad image becomes
+    one mechanical-check entry rather than an exception the caller has to
+    guard every iteration against. Mirrors what _do_import used to do at
+    import time (see ai_dialog module docstring) -- the only difference now is
+    *when* this runs and that the result is kept for reuse instead of thrown
+    away.
+    """
+    src = im.get("source", "")
+    kind = ("url" if src.startswith("url:") else
+           "svg" if src.startswith("svg:") else
+           "attached" if src.startswith("attached:") else "other")
+    try:
+        if kind == "svg":
+            name, data = ai_logic.svg_to_media(src[4:], 0)
+            return {"state": "ok", "kind": "svg", "bytes": data, "name": name}
+        if kind == "url":
+            url = src[4:]
+            data, ext = fetch_card_image(url)
+            return {"state": "ok", "kind": "url", "bytes": data, "ext": ext,
+                    "host": _url_host(url)}
+        if kind == "attached":
+            name = src.split(":", 1)[1]
+            path = os.path.join(scratch, name)
+            with open(path, "rb") as fh:
+                data = fh.read()
+            return {"state": "ok", "kind": "attached", "bytes": data,
+                    "name": name, "path": path}
+        return {"state": "error", "kind": kind,
+                "error": f"unrecognized image source: {src!r}"}
+    except Exception as e:
+        err = {"state": "error", "kind": kind, "error": str(e)}
+        if kind == "url":
+            err["host"] = _url_host(src[4:])
+        return err
+
+
+def _image_row_html(session, i, card):
+    """The review row's image line(s): a rendered thumbnail when one resolved
+    to a local file Qt can decode, a plain failure message when it didn't, and
+    for a web image the URL's host either way -- this is I2's "the user sees
+    what they're accepting" gate, so a card with an image never reviews as if
+    it had none. Returns "" for a card with no images at all.
+    """
+    imgs = card.get("images") or []
+    if not imgs:
+        return ""
+    results = session.image_data.get(i) or []
+    lines = []
+    for j, im in enumerate(imgs):
+        res = results[j] if j < len(results) else None
+        if res is None:
+            lines.append("[image] resolving…")
+            continue
+        host = res.get("host")
+        host_txt = f" (from {html.escape(host)})" if host else ""
+        if res["state"] != "ok":
+            lines.append(f"[image failed{host_txt}]: {html.escape(res.get('error', ''))}")
+            continue
+        tag = _image_tag(res["path"]) if res.get("path") else None
+        lines.append((tag or "[image]") + host_txt)
+    return "<br>".join(lines)
 
 
 class _Session:
@@ -66,6 +153,10 @@ class _Session:
         self.notes = {}              # {index: revision note}
         self.checks = []             # mechanical_checks output
         self.updated = set()         # indexes changed by last revision
+        # {card index: [resolved-image dict, ...]}, parallel to that card's
+        # "images" list -- see _resolve_one_image. Populated at review time
+        # (before the review page ever shows), reused unchanged by import.
+        self.image_data = {}
         # True when the last revision came back with a different card count than
         # it was sent -- the one shape the prompt promises but nothing verifies.
         # See _finish_generation: this disables the per-index diff entirely.
@@ -108,17 +199,39 @@ class _GenerateDialog(QDialog):
             "This add-on never sees or stores your credentials: there is no API "
             "key field here, or anywhere else in the add-on."))
         self.setup_rows = {}
+        self.test_buttons = {}
+        self.test_status = {}
+        self._detected_paths = {}
         for kind, meta in ai_cli.BACKENDS.items():
             row = QLabel()
             row.setWordWrap(True)
             self.setup_rows[kind] = row
             lay.addWidget(row)
+            test_row = QHBoxLayout()
+            btn = QPushButton("Test connection")
+            btn.setEnabled(False)
+            btn.clicked.connect(lambda _, k=kind: self._test_setup_connection(k))
+            status = hint_label("")
+            self.test_buttons[kind] = btn
+            self.test_status[kind] = status
+            test_row.addWidget(btn)
+            test_row.addWidget(status, 1)
+            lay.addLayout(test_row)
         self.recheck_btn = QPushButton("Re-check")
         self.recheck_btn.clicked.connect(lambda: self._detect(_cfg()))
         lay.addWidget(self.recheck_btn)
         lay.addWidget(hint_label(
             "Install one of these, run it once in a terminal, and sign in "
-            "there yourself. Then come back and re-check."))
+            "there yourself. Then come back and re-check. \"Test connection\" "
+            "runs a real, trivial prompt through a detected CLI to confirm it "
+            "can actually generate, not just that the binary runs -- unlike "
+            "the status above, which is a cheap, free check."))
+        close_row = QHBoxLayout()
+        close_row.addStretch(1)
+        self.close_btn = QPushButton("Close")
+        self.close_btn.clicked.connect(self.reject)
+        close_row.addWidget(self.close_btn)
+        lay.addLayout(close_row)
         return page
 
     def _detect(self, cfg):
@@ -128,10 +241,20 @@ class _GenerateDialog(QDialog):
         for kind, meta in ai_cli.BACKENDS.items():
             override = cfg.get("ai_cli_path", "") if preferred == kind else ""
             path = ai_cli.find_cli(kind, override)
+            self._detected_paths[kind] = path
+            self.test_buttons[kind].setEnabled(bool(path))
+            self.test_status[kind].setText("")
             if path:
                 res = ai_cli.probe(kind, path)
                 ok = res["ok"]
-                status = res["detail"] if ok else "found, but not working"
+                # The three states the README promises: "installed and
+                # working" here means only "the binary runs and exits 0" --
+                # NOT that it's actually signed in and can generate. That
+                # deeper check is Test connection, deliberately on-demand
+                # since it costs a real model call; this stays a cheap,
+                # free --version probe.
+                status = (f"installed and working ({res['detail']})" if ok
+                          else "found, but not responding")
             else:
                 ok, status = False, "not found"
             imgs = ("can view attached images" if ai_cli.image_capable(kind)
@@ -148,6 +271,57 @@ class _GenerateDialog(QDialog):
             self.input_page if s.backend else self.setup_page)
         if s.backend:
             self._refresh_backend_row()
+
+    def _test_setup_connection(self, kind):
+        path = self._detected_paths.get(kind)
+        if not path:
+            return
+        btn, status = self.test_buttons[kind], self.test_status[kind]
+        btn.setEnabled(False)
+        self._run_connection_test(kind, path, status.setText,
+                                  on_done=lambda: btn.setEnabled(True))
+
+    def _run_connection_test(self, kind, path, on_status, on_done=None):
+        """Run ai_cli.test_connection off the UI thread, polling the same way
+        every other background call in this dialog does (a daemon thread plus
+        a QTimer, never a blocking call on the UI thread). `on_status(text)`
+        is called once with the final readable result; never the CLI's raw
+        stderr, since ai_cli.test_connection already turned that into one
+        short sentence. Referenced test threads/timers are kept alive on
+        `self` for the duration of the test only (nothing this dialog owns
+        long-term), since a local variable would be GC'd out from under a
+        live QTimer.
+        """
+        on_status("Testing connection…")
+        box = {}
+
+        def worker():
+            try:
+                box["r"] = ai_cli.test_connection(kind, path)
+            except Exception as e:
+                box["e"] = e
+
+        t = threading.Thread(target=worker, daemon=True)
+        timer = QTimer(self)
+        self._conn_test_refs = getattr(self, "_conn_test_refs", [])
+        self._conn_test_refs.append((t, timer))
+
+        def poll():
+            if t.is_alive():
+                return
+            timer.stop()
+            if "e" in box:
+                on_status(f"Test failed: {box['e']}")
+            else:
+                r = box["r"]
+                prefix = "Working: " if r["state"] == "working" else "Not working: "
+                on_status(prefix + r["detail"])
+            if on_done:
+                on_done()
+
+        timer.timeout.connect(poll)
+        t.start()
+        timer.start(_IMG_POLL_MS)
 
     # -- input -----------------------------------------------------------------
     def _build_input(self):
@@ -200,10 +374,15 @@ class _GenerateDialog(QDialog):
         self.type_boxes = {}
         lay.addWidget(QLabel("Note types"))
         for name in FIELD_MAP:
+            # Study Deck - Image ID isn't offered here at all: its primary
+            # field IS the image, and a card's images travel separately from
+            # its fields (see FIELD_MAP's comment), so the model has no way
+            # to fill it. One such card fails parse_cards_json's empty-primary
+            # check and takes the whole reply down with it.
+            if name == "Study Deck - Image ID":
+                continue
             box = QCheckBox(name)
-            # Image ID cards need a real matching image, which generation
-            # can't reliably supply, so it starts unchecked rather than off.
-            box.setChecked(name != "Study Deck - Image ID")
+            box.setChecked(True)
             self.type_boxes[name] = box
             lay.addWidget(box)
 
@@ -215,6 +394,13 @@ class _GenerateDialog(QDialog):
 
         self.backend_row = hint_label("")
         lay.addWidget(self.backend_row)
+        backend_test_row = QHBoxLayout()
+        self.backend_test_btn = link_button(
+            "Test connection", on_click=self._test_backend_connection)
+        self.backend_test_status = hint_label("")
+        backend_test_row.addWidget(self.backend_test_btn)
+        backend_test_row.addWidget(self.backend_test_status, 1)
+        lay.addLayout(backend_test_row)
         self.skills_link = link_button("View skills", on_click=self._view_skills)
         lay.addWidget(self.skills_link)
         self.usage_row = hint_label("")
@@ -248,6 +434,16 @@ class _GenerateDialog(QDialog):
         reg = load_ai_usage()
         self.usage_row.setText(ai_logic.usage_line(
             reg, s.backend, now=time.time(), free_tier=(s.backend == "agy")))
+        self.backend_test_status.setText("")
+
+    def _test_backend_connection(self):
+        s = self.session
+        if not s.backend or not s.cli_path:
+            return
+        self.backend_test_btn.setEnabled(False)
+        self._run_connection_test(
+            s.backend, s.cli_path, self.backend_test_status.setText,
+            on_done=lambda: self.backend_test_btn.setEnabled(True))
 
     def _attach(self):
         from aqt.qt import QFileDialog
@@ -321,6 +517,16 @@ class _GenerateDialog(QDialog):
         # one-retry budget resets here rather than in the caller.
         if extra_error is None:
             self._retried_json = False
+            if not revision:
+                # A genuinely fresh (non-revision) request: Back-then-Generate
+                # can reach here with an unrelated earlier draft still sitting
+                # in s.cards, and _finish_generation's revision detection goes
+                # only by "is s.cards non-empty" -- left uncleared, a brand
+                # new draft would read as a revision of that stale one and
+                # report a bogus "updated N, kept M verbatim" diff against it.
+                s.cards, s.included, s.notes = [], [], {}
+                s.updated, s.image_data = set(), {}
+                s.revision_shape_mismatch = False
         s.mode = "thorough" if self.thorough_radio.isChecked() else "quick"
         self._duration_estimate = ai_logic.duration_estimate_line(
             load_ai_usage(), s.backend, s.mode)
@@ -402,19 +608,39 @@ class _GenerateDialog(QDialog):
         self._finish_generation()
 
     def _wait_for_worker(self, timeout=15):
-        """Test helper: run the poll loop synchronously, without a live QTimer."""
+        """Test helper: run the poll loop synchronously, without a live QTimer.
+
+        A draft with images kicks off a second background phase once the CLI
+        call itself finishes (see _start_image_phase), still on its own
+        worker/timer pair rather than this one -- drain that too, so a caller
+        gets exactly the same end state a live QTimer eventually reaches,
+        without needing to know a second phase happened at all.
+        """
         end = time.time() + timeout
         while self._worker.is_alive() and time.time() < end:
             time.sleep(0.05)
         self._timer.stop()
         self._gen_done = True
         self._finish_generation()
+        while (hasattr(self, "_img_worker") and not self._img_done
+              and time.time() < end):
+            while self._img_worker.is_alive() and time.time() < end:
+                time.sleep(0.05)
+            self._img_timer.stop()
+            self._img_done = True
+            self.session.image_data = self._img_results
+            self._apply_review_state()
 
     def _cancel_generation(self):
-        self._cancel_flag.set()
+        if hasattr(self, "_cancel_flag"):
+            self._cancel_flag.set()
+        if hasattr(self, "_img_cancel_flag"):
+            self._img_cancel_flag.set()
 
     def _generation_in_progress(self):
-        return hasattr(self, "_worker") and not getattr(self, "_gen_done", True)
+        gen = hasattr(self, "_worker") and not getattr(self, "_gen_done", True)
+        img = hasattr(self, "_img_worker") and not getattr(self, "_img_done", True)
+        return gen or img
 
     def _cancel_running_generation(self):
         """Closing the dialog mid-generation must not orphan the run: this
@@ -422,20 +648,33 @@ class _GenerateDialog(QDialog):
         hidden dialog can never receive a queued _poll_worker -> _finish_
         generation call and pop a modal or navigate after the user is gone),
         but does NOT block the close on however long the child takes to die.
-        _gen_done latches right here, before the worker thread has actually
-        exited, which is what makes that guarantee unconditional.
+        _gen_done/_img_done latch right here, before either worker thread has
+        actually exited, which is what makes that guarantee unconditional.
+        Covers both the CLI generation phase and the (optional) image-
+        resolution phase that can follow it -- whichever is actually running.
 
-        The scratch dir is the live child's cwd and --add-dir target, so it
-        can only be removed once the worker thread (which owns _run_argv's
-        proc.wait()) has actually returned -- a background reaper thread
-        waits for that and cleans up after, rather than racing it."""
+        The scratch dir is the live workers' cwd (the CLI's --add-dir target,
+        and where image resolution reads/writes), so it can only be removed
+        once every worker that touches it has actually returned -- a
+        background reaper thread waits for that and cleans up after, rather
+        than racing it."""
         self._gen_done = True
-        self._cancel_flag.set()
-        self._timer.stop()
-        worker, session = self._worker, self.session
+        self._img_done = True
+        if hasattr(self, "_cancel_flag"):
+            self._cancel_flag.set()
+        if hasattr(self, "_img_cancel_flag"):
+            self._img_cancel_flag.set()
+        if hasattr(self, "_timer"):
+            self._timer.stop()
+        if hasattr(self, "_img_timer"):
+            self._img_timer.stop()
+        workers = [w for w in (getattr(self, "_worker", None),
+                               getattr(self, "_img_worker", None)) if w]
+        session = self.session
 
         def _reap():
-            worker.join(timeout=30)
+            for w in workers:
+                w.join(timeout=30)
             if session.scratch:
                 shutil.rmtree(session.scratch, ignore_errors=True)
                 session.scratch = None
@@ -494,19 +733,111 @@ class _GenerateDialog(QDialog):
             s.updated = set()
 
         s.cards = cards
+        s.notes = {}
+        # Carried through to _apply_review_state once images (if any) have
+        # resolved: None means "not a revision", so every card falls back to
+        # the mechanical-check default; otherwise it's the pre-revision
+        # include list, consulted only for cards _rebuild_review's diff
+        # didn't mark as updated.
+        self._pending_prev_included = prev_included if same_shape else None
+        self._start_image_phase()
+
+    def _start_image_phase(self):
+        """Resolve every image on the current draft before review ever shows
+        one -- I2's gate. No images anywhere is the common case (most cards
+        carry none) and stays exactly as cheap as before: straight to
+        _apply_review_state with nothing to wait on. Any image at all moves
+        the resolution work (network downloads included) onto its own
+        background thread, polled the same way the CLI generation phase
+        itself is polled just above, so this can never freeze the dialog."""
+        s = self.session
+        if not any(card["images"] for card in s.cards):
+            s.image_data = {}
+            self._apply_review_state()
+            return
+        self._run_image_resolution(list(s.cards))
+
+    def _run_image_resolution(self, cards):
+        s = self.session
+        self._img_error = None
+        self._img_results = {}
+        self._img_cancel_flag = threading.Event()
+        self._img_done = False
+
+        def work():
+            results = {}
+            for i, card in enumerate(cards):
+                per = []
+                for im in card["images"]:
+                    if self._img_cancel_flag.is_set():
+                        per.append({"state": "error", "kind": "cancelled",
+                                   "error": "cancelled"})
+                        continue
+                    res = _resolve_one_image(im, s.scratch)
+                    if res["state"] == "ok" and res["kind"] != "attached":
+                        # attached: images already live in scratch under
+                        # their own name (res["path"] is set for that kind
+                        # above); url:/svg: bytes only ever existed in
+                        # memory, so a thumbnail needs its own file to hand
+                        # Qt's QImage a path to load.
+                        ext = res["ext"] if res["kind"] == "url" else "svg"
+                        thumb = os.path.join(s.scratch, f"_thumb-{i}-{len(per)}.{ext}")
+                        try:
+                            with open(thumb, "wb") as fh:
+                                fh.write(res["bytes"])
+                            res["path"] = thumb
+                        except OSError:
+                            pass
+                    per.append(res)
+                results[i] = per
+            self._img_results = results
+
+        self._img_worker = threading.Thread(target=work, daemon=True)
+        self._img_worker.start()
+        self.progress_label.setText("Resolving images")
+        self.phase_label.setText("")
+        self.stack.setCurrentWidget(self.progress_page)
+        self._img_timer = QTimer(self)
+        self._img_timer.timeout.connect(self._poll_image_worker)
+        self._img_timer.start(_IMG_POLL_MS)
+
+    def _poll_image_worker(self):
+        if self._img_done:
+            return
+        if self._img_worker.is_alive():
+            return
+        self._img_timer.stop()
+        self._img_done = True
+        self.session.image_data = self._img_results
+        self._apply_review_state()
+
+    def _apply_review_state(self):
+        """Compute mechanical checks (including any image-resolution
+        failures) and default include state, then show the review page.
+        Called directly by _start_image_phase when a draft has no images, or
+        once the background image-resolution phase above has finished."""
+        s = self.session
+        image_errors = {i: [r["error"] for r in results if r.get("state") == "error"]
+                        for i, results in s.image_data.items()}
+        image_errors = {i: msgs for i, msgs in image_errors.items() if msgs}
         s.checks = ai_logic.mechanical_checks(
-            cards, collection.existing_front_map(_cfg()["scope_tag"]))
-        default_included = [not any(c["level"] == "block" for c in per)
-                            for per in s.checks]
-        if same_shape:
+            s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
+            image_errors)
+        default_included = [
+            not any(c["level"] == "block" for c in per) and not s.cards[i]["images"]
+            for i, per in enumerate(s.checks)]
+        prev_included = self._pending_prev_included
+        if prev_included is not None:
             # A card the revision left verbatim keeps whatever the user set for
             # it (an override she made on purpose survives); only a genuinely
-            # new or changed card falls back to the mechanical-check default.
+            # new or changed card falls back to the mechanical-check default
+            # (which, per I2, excludes any card carrying an image she hasn't
+            # had a chance to look at yet in ITS current form).
             s.included = [prev_included[i] if i not in s.updated
-                         else default_included[i] for i in range(len(cards))]
+                         else default_included[i] for i in range(len(s.cards))]
         else:
             s.included = default_included
-        s.notes = {}
+        self._pending_prev_included = None
         self._rebuild_review()
         self.stack.setCurrentWidget(self.review_page)
 
@@ -569,12 +900,24 @@ class _GenerateDialog(QDialog):
             box.toggled.connect(lambda v, i=i: s.included.__setitem__(i, v))
             self.include_boxes.append(box)
             primary = ai_logic.PRIMARY_FIELD.get(card["note_type"], "Front")
-            badges = " ".join(f"[{c['code']}]" for c in s.checks[i]
+            badges = " ".join(f"[{html.escape(c['code'])}]" for c in s.checks[i]
                               if c["level"] != "ok")
             upd = " [updated]" if i in s.updated else ""
-            note_txt = f"  (note: {s.notes[i]})" if i in s.notes else ""
-            label = QLabel(f"{card['fields'].get(primary, '')[:90]} "
-                          f"({card['note_type']}) {badges}{upd}{note_txt}")
+            note_txt = (f"  (note: {html.escape(s.notes[i])})"
+                       if i in s.notes else "")
+            # Escaped, not the raw field/note text: the bundled skill (and any
+            # deck skill) explicitly instructs the model to use <table>/<ul>
+            # markup in a card's own text, which this row must show as the
+            # literal characters they are, not render as live HTML.
+            front_txt = html.escape(card["fields"].get(primary, "")[:90])
+            type_txt = html.escape(card["note_type"])
+            text = f"{front_txt} ({type_txt}) {badges}{upd}{note_txt}"
+            img_html = _image_row_html(s, i, card)
+            if img_html:
+                text += "<br>" + img_html
+            label = QLabel()
+            label.setTextFormat(Qt.TextFormat.RichText)
+            label.setText(text)
             label.setWordWrap(True)
             edit_btn = QPushButton("Edit")
             edit_btn.clicked.connect(lambda _, i=i: self._edit_card(i))
@@ -637,61 +980,60 @@ class _GenerateDialog(QDialog):
         self._start_generation(revision=True)
 
     def _do_import(self):
-        """Write the included cards to the collection. Resolves each image
-        source to bytes here -- nothing before this point ever touched the
-        network or the collection -- and hands add_generated_notes the bytes
-        plus the filenames it chose, per its documented media contract.
+        """Write the included cards to the collection. Every image was already
+        resolved to bytes back at review time (see _start_image_phase /
+        session.image_data), so this only reuses that -- it never re-touches
+        the network, never re-reads an attachment, and can't block. Hands
+        add_generated_notes the bytes plus the filenames it chose, per its
+        documented media contract.
 
         Nothing selected is not an import: it neither writes anything nor
         closes the wizard (there is no undo step to claim), so the draft
         stays on the review page instead of being silently discarded.
 
         svg_index is a running counter across the WHOLE batch, not per card:
-        svg_to_media names a file solely from the index passed in, so two
-        cards each drawing their own SVG would collide on the same filename
-        (and one image silently overwrite the other) if each card started
-        counting from 0 again. A url:/attached: image can't collide with an
-        svg: one either, since fetch_card_image only ever returns a raster
-        extension and an attached name is scoped to its own scratch dir.
+        the filename is chosen here from the index alone, so two cards each
+        drawing their own SVG would collide on the same filename (and one
+        image silently overwrite the other) if each card started counting
+        from 0 again. A url:/attached: image can't collide with an svg: one
+        either, since a url: filename always carries a raster extension and
+        an attached name is scoped to its own scratch dir.
         """
         s = self.session
-        cards = [c for c, inc in zip(s.cards, s.included) if inc]
-        if not cards:
+        pairs = [(i, c) for i, (c, inc) in enumerate(zip(s.cards, s.included)) if inc]
+        if not pairs:
             _info("Nothing is selected to import. Check at least one card, "
                   "or Cancel to discard the draft.")
             return 0
         media = {}
         svg_index = 0
-        for idx, card in enumerate(cards):
+        for pos, (orig_i, card) in enumerate(pairs):
             files = []
-            for im in card["images"]:
-                src = im["source"]
-                try:
-                    if src.startswith("svg:"):
-                        name, data = ai_logic.svg_to_media(src[4:], svg_index)
-                        svg_index += 1
-                    elif src.startswith("url:"):
-                        data, ext = fetch_card_image(src[4:])
-                        name = f"generated-{idx}-{len(files)}.{ext}"
-                    elif src.startswith("attached:"):
-                        name = src.split(":", 1)[1]
-                        with open(os.path.join(s.scratch, name), "rb") as fh:
-                            data = fh.read()
-                    else:
-                        raise ValueError(f"unrecognized image source: {src!r}")
-                    media[name] = data
-                    files.append(name)
-                except Exception as e:
+            resolved = s.image_data.get(orig_i) or []
+            for j in range(len(card["images"])):
+                res = resolved[j] if j < len(resolved) else None
+                if not res or res.get("state") != "ok":
                     # One bad image is not worth losing the whole card over --
-                    # warn and move on, same as a mechanical check would flag it.
-                    _warn(f"Skipping an image on card {idx + 1}: {e}")
+                    # warn and move on, same as a mechanical check would flag
+                    # it (and, per I2, already did -- this is the fallback for
+                    # a card the user included anyway).
+                    _warn(f"Skipping an image on card {pos + 1}: "
+                          f"{(res or {}).get('error', 'not resolved')}")
+                    continue
+                if res["kind"] == "svg":
+                    name = f"generated-{svg_index}.svg"
+                    svg_index += 1
+                elif res["kind"] == "url":
+                    name = f"generated-{pos}-{len(files)}.{res['ext']}"
+                else:  # attached
+                    name = res["name"]
+                media[name] = res["bytes"]
+                files.append(name)
             card["_media_files"] = files
+        cards = [c for _, c in pairs]
         # add_generated_notes can raise (e.g. Basic/Cloze missing or renamed on a
-        # non-English profile). Every attached:/PDF-embedded image this import
-        # will ever read has already been read into `media` above, but cleanup
-        # waits until AFTER a successful import: if this raises, the scratch dir
-        # -- and every attached: image path a retry would need to resolve --
-        # must still be there.
+        # non-English profile). Cleanup waits until AFTER a successful import:
+        # if this raises, the scratch dir must still be there for a retry.
         n = collection.add_generated_notes(cards, media, s.deck_name,
                                            _cfg()["scope_tag"])
         self._cleanup_scratch()
