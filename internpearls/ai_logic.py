@@ -279,7 +279,15 @@ def parse_stream_event(kind, line):
         if t == "result":
             if "result" not in d:
                 return None  # not a real result line, nothing to report
-            return {"type": "result", "text": d.get("result") or "",
+            text = d.get("result") or ""
+            # subtype stays "success" even when is_error is true; the CLI's
+            # human-readable failure explanation (e.g. an expired login) rides
+            # in the same "result" field a successful run uses for card text,
+            # so this must be split out here rather than left for a caller to
+            # mistake for the model's reply.
+            if d.get("is_error") is True:
+                return {"type": "error", "text": text}
+            return {"type": "result", "text": text,
                     "tokens": _usage_tokens(d.get("usage"))}
         if t == "assistant":
             content = _as_dict(d.get("message")).get("content")

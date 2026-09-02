@@ -7,6 +7,10 @@
 #   garbage         emit non-JSON noise then exit 0
 #   fail            exit 2 with stderr
 #   not_signed_in   exit 1 with an auth-failure stderr message (test_connection)
+#   error_result    claude-style result line with subtype "success" but
+#                   is_error true and a human message in "result", empty
+#                   stderr, then exit 1 -- the real shape a v2.1.251 claude
+#                   with an expired login actually emits
 #   badjson         emit a result line whose "result" text is not valid card JSON
 #   two_cards       emit two fixed cards, identically on every invocation (for
 #                   revision tests that need the "same shape" case with >1 card)
@@ -37,6 +41,13 @@ if mode == "fail":
 if mode == "not_signed_in":
     print("Error: You are not authenticated. Run `claude login` first.",
          file=sys.stderr)
+    sys.exit(1)
+if mode == "error_result":
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": True,
+                      "num_turns": 1,
+                      "result": "Failed to authenticate: OAuth session expired "
+                                "and could not be refreshed",
+                      "terminal_reason": "api_error"}))
     sys.exit(1)
 if mode == "event_then_slow":
     print(json.dumps({"type": "assistant", "message": {"content": [
