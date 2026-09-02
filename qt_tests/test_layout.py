@@ -722,3 +722,38 @@ def test_view_skills_close_button_stays_on_screen(shot):
     top_left = close_btn.mapTo(dlg, q.QPoint(0, 0))
     assert 0 <= top_left.y() <= dlg.height()
     assert top_left.y() + close_btn.height() <= dlg.height() + 1
+
+
+def test_ai_input_quality_labels_dont_clip_and_hints_wrap(shot):
+    """Item 8's honesty constraint: the per-backend mode sentence
+    (ai_cli.BACKENDS' "modes") is 150-200 characters and has to be shown in
+    full, truthfully, per backend -- it just can't be the thing that sets the
+    radio's own sizeHint any more (see _refresh_backend_row and the input
+    page's own comment). The radio now carries only the short, stable name
+    ("Thorough" / "Quick draft"), which must never be the thing that's
+    elided, and the long sentence moves to a word-wrapped hint_label
+    underneath, which must actually wrap rather than force the dialog wide."""
+    _, q = harness.bootstrap()
+    s = shot("ai-input")
+    dlg = s.dialog
+
+    for radio, label in ((dlg.thorough_radio, "Thorough"),
+                         (dlg.quick_radio, "Quick draft")):
+        assert radio.text() == label
+        # A QRadioButton never elides its own text; the guard against a label
+        # silently truncating is that the space it actually needs (its
+        # sizeHint) fits inside the space it was given.
+        assert radio.sizeHint().width() <= radio.width() + 1, (
+            f"{label!r} radio needs {radio.sizeHint().width()}px, "
+            f"has {radio.width()}px")
+
+    for hint in (dlg.thorough_hint, dlg.quick_hint):
+        assert hint.text().strip()   # the per-backend sentence actually landed
+        assert hint.wordWrap()
+        needed = hint.heightForWidth(hint.width())
+        assert needed <= hint.height() + 1, (
+            f"hint {hint.text()[:40]!r} needs {needed}px, has {hint.height()}px")
+
+    # The wrap fix's whole point: this dialog no longer has to be roughly
+    # 1000px wide to fit one backend's mode sentence unwrapped.
+    assert dlg.width() < 800
