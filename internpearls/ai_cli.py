@@ -19,9 +19,13 @@ import warnings
 
 from .ai_logic import parse_stream_event
 
+# "install_url" is where the AI Backends window's install-guide link sends a
+# reader who does not have this CLI yet: the tool's own documentation, never a
+# download the add-on fetches or runs itself.
 BACKENDS = {
     "claude": {"label": "Claude Code", "exe": "claude",
                "subscription": "Claude Pro or Max",
+               "install_url": "https://docs.anthropic.com/en/docs/claude-code",
                "safety": "Tools fully restricted (strongest)",
                # Cheaper-but-smart default: without a model flag, claude runs the
                # account default, the top model for a Max subscriber, which burns
@@ -44,6 +48,7 @@ BACKENDS = {
                            "of exactly those files, to view them (15 to 30 s)"}},
     "codex": {"label": "Codex CLI", "exe": "codex",
               "subscription": "ChatGPT Plus or Pro",
+              "install_url": "https://github.com/openai/codex",
               "safety": "Sandboxed read-only; no writes or network",
               # No forced default here: --model is only passed when the user sets
               # one (see build_argv), and only when supports_flag confirms this
@@ -65,6 +70,7 @@ BACKENDS = {
                           "network either way (15 to 30 s)"}},
     "agy": {"label": "Antigravity CLI", "exe": "agy",
             "subscription": "Google account (free tier, throttled)",
+            "install_url": "https://github.com/google-antigravity/antigravity-cli",
             "safety": "Relies on the assistant's own approval defaults",
             # Model choice in headless -p mode is an open upstream request
             # (google-antigravity/antigravity-cli issue 83); its default is

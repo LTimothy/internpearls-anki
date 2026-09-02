@@ -6,17 +6,22 @@ this repo's `README.md` ("Versioning").
 ## v0.56.0
 
 A new Experimental item, AI Backends, is now where the three assistants are set up.
-Each one has its own group: whether it is used at all, which one is preferred, an
-executable path override, the default model and effort, and a Test connection button
-that runs one real, trivial prompt. The model and effort controls moved here from the
-"Generate cards with AI" wizard, whose input page now shows a one-line summary of the
-backend in use with a Change link beside it, and whose first-run page is a single
-button that opens this window. Defaults for Claude Code stay at sonnet with medium
-effort, chosen so a Thorough run does not spend a subscription's credits on the top
-model by default. The honesty rules are unchanged: Codex is only handed a model flag
-when its own help documents one, and Antigravity's model cannot be set from here at all.
-`ai_cli_path` in config.json is now per backend rather than one flat string; a path
-already saved under the old shape carries over automatically to the preferred backend.
+Each one is a single row: a chip for what the check found, its name and command, small
+badges for image support and a free account tier, the subscription it needs and how
+restricted it is, and a link to its own install guide. The preferred backend is marked
+as such and the others offer a Use link; an ignore link sets one aside and reads use
+again afterwards. One settings panel below the rows covers the preferred backend only,
+since that is the one a run will use: its executable path override, its default model
+and effort, and a Test connection button that runs one real, trivial prompt. The model
+and effort controls moved here from the "Generate cards with AI" wizard, whose input
+page now shows a one-line summary of the backend in use with an AI Backends link beside
+it, and whose first-run page is a single Open AI Backends button. Defaults for Claude
+Code stay at sonnet with medium effort, chosen so a Thorough run does not spend a
+subscription's credits on the top model by default. The honesty rules are unchanged:
+Codex is only handed a model flag when its own help documents one, and Antigravity's
+model cannot be set from here at all. `ai_cli_path` in config.json is now per backend
+rather than one flat string; a path already saved under the old shape carries over
+automatically to the preferred backend.
 
 Night Mode Dimming can now dim more than images. A scope choice under the checkbox
 picks between bright images only, the previous behaviour, and everything Anki draws as
