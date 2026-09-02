@@ -7,6 +7,7 @@ dialog mid-review discards it after a confirm (see _GenerateDialog.reject).
 """
 import html
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -65,6 +66,10 @@ class _Session:
         self.notes = {}              # {index: revision note}
         self.checks = []             # mechanical_checks output
         self.updated = set()         # indexes changed by last revision
+        # True when the last revision came back with a different card count than
+        # it was sent -- the one shape the prompt promises but nothing verifies.
+        # See _finish_generation: this disables the per-index diff entirely.
+        self.revision_shape_mismatch = False
         self.tokens_last_run = 0
         self.rate_limits = None
 
@@ -413,14 +418,44 @@ class _GenerateDialog(QDialog):
         reg = ai_logic.record_usage(load_ai_usage(), s.backend, res["tokens"],
                                     now=time.time())
         save_ai_usage(reg)
-        prev = {i: c for i, c in enumerate(s.cards)}
-        s.updated = ({i for i, c in enumerate(cards)
-                     if prev.get(i) and prev[i] != c} if prev else set())
+
+        # Card matching across a revision, by position: the prompt sends the
+        # previous draft and instructs the model to return the SAME cards in the
+        # SAME order, marking only the ones without a note "keep verbatim" (see
+        # ai_logic.build_prompt). Nothing here can verify that promise was kept,
+        # so a card count that doesn't match what was sent is the one signal
+        # available that positional matching can no longer be trusted at all.
+        # is_revision is False only for the very first draft (nothing to diff
+        # against yet); same_shape is False either for that first draft or for
+        # a genuine reply-shape mismatch.
+        prev_cards, prev_included = s.cards, s.included
+        is_revision = bool(prev_cards)
+        same_shape = is_revision and len(cards) == len(prev_cards)
+        s.revision_shape_mismatch = is_revision and not same_shape
+
+        if same_shape:
+            s.updated = {i for i in range(len(cards))
+                        if prev_cards[i] != cards[i]}
+        elif is_revision:
+            # Can't tell which (if any) of the new cards match the old ones, so
+            # nothing is claimed "kept verbatim" -- see _rebuild_review's header.
+            s.updated = set(range(len(cards)))
+        else:
+            s.updated = set()
+
         s.cards = cards
         s.checks = ai_logic.mechanical_checks(
             cards, collection.existing_front_map(_cfg()["scope_tag"]))
-        s.included = [not any(c["level"] == "block" for c in per)
-                     for per in s.checks]
+        default_included = [not any(c["level"] == "block" for c in per)
+                            for per in s.checks]
+        if same_shape:
+            # A card the revision left verbatim keeps whatever the user set for
+            # it (an override she made on purpose survives); only a genuinely
+            # new or changed card falls back to the mechanical-check default.
+            s.included = [prev_included[i] if i not in s.updated
+                         else default_included[i] for i in range(len(cards))]
+        else:
+            s.included = default_included
         s.notes = {}
         self._rebuild_review()
         self.stack.setCurrentWidget(self.review_page)
@@ -491,7 +526,13 @@ class _GenerateDialog(QDialog):
                 if s.tokens_last_run else "")
         if s.rate_limits:
             extra += " · " + ai_logic.rate_limit_line(s.rate_limits)
-        if s.updated:
+        if s.revision_shape_mismatch:
+            # Degrade honestly: a card count that doesn't match what was sent
+            # means the per-index diff isn't trustworthy, so this says so
+            # instead of showing a confident "kept N verbatim" that could be wrong.
+            extra += (" · the assistant returned a different number of cards "
+                     "than before, so nothing here is marked kept-verbatim")
+        elif s.updated:
             kept = len(s.cards) - len(s.updated)
             extra += f" · updated {len(s.updated)}, kept {kept} verbatim"
         self.review_header.setText(
@@ -573,12 +614,26 @@ class _GenerateDialog(QDialog):
                     # warn and move on, same as a mechanical check would flag it.
                     _warn(f"Skipping an image on card {idx + 1}: {e}")
             card["_media_files"] = files
+        # Every attached:/PDF-embedded image this import will ever read has
+        # already been read into `media` above; the scratch dir's job is done
+        # regardless of whether add_generated_notes below succeeds.
+        self._cleanup_scratch()
         n = collection.add_generated_notes(cards, media, s.deck_name,
                                            _cfg()["scope_tag"])
         _info(f"{n} cards added to {s.deck_name}. This is one undo step: "
               "Ctrl+Z reverts it.")
         self.accept()
         return n
+
+    def _cleanup_scratch(self):
+        """Remove the session's scratch directory (extracted attachment images,
+        PDF-embedded images -- real source material) on every path that ends
+        this dialog. Best-effort: a failure to delete must never raise into the
+        user's face or block the dialog from closing, and nothing about a
+        session may outlive it (see the module docstring's storage policy)."""
+        if self.session.scratch:
+            shutil.rmtree(self.session.scratch, ignore_errors=True)
+            self.session.scratch = None
 
     def reject(self):
         """Closing mid-review discards everything unsaved -- nothing about a
@@ -591,6 +646,7 @@ class _GenerateDialog(QDialog):
                     "is saved between sessions.",
                     yes_label="Discard", no_label="Keep editing")):
             return
+        self._cleanup_scratch()
         super().reject()
 
 
