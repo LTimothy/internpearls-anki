@@ -2,7 +2,7 @@
 
 The plain suite (tests/test_ai_flows.py) pins the string transform itself; this
 renders that HTML through a real QTextDocument, the same rich-text engine
-_ask_scrollable's QLabel uses, and reads back what it actually produces --
+_ask_scrollable's QLabel uses, and reads back what it actually produces:
 confirming by rendering, not by assuming a plain "\\n" -> "<br>" swap is enough.
 """
 from PyQt6.QtGui import QTextDocument
@@ -23,7 +23,7 @@ def test_skill_lines_render_as_separate_lines_not_one_run_on_blob():
             "One fact per card.\nPrefer cloze for lists.\nEscape < and > in values."]
     rendered = _rendered_plain_text(ai_dialog._skills_html(parts))
     lines = [l for l in rendered.splitlines() if l.strip()]
-    # Every non-blank source line survives as its OWN rendered line -- the
+    # Every non-blank source line survives as its OWN rendered line: the
     # defect this fixes was every "\n" collapsing into one run-on line.
     assert lines == ["Bundled: InternPearls authoring (ships with the add-on)",
                      "One fact per card.", "Prefer cloze for lists.",

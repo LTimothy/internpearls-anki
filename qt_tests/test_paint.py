@@ -129,7 +129,7 @@ def test_a_row_markers_background_actually_paints(shot):
 def test_the_about_link_paints_in_the_accent_colour_light(shot):
     """internpearls/ui.py's _ask_scrollable sets setOpenExternalLinks(True) on the body
     label, so About's repository line is a real <a href> anchor. Qt paints an anchor in
-    its own built-in link colour, never in anything set on the widget -- verified
+    its own built-in link colour, never in anything set on the widget: verified
     directly: giving the label's palette a Link role has no effect at all on what its
     rich text paints, only a <style> block inside the document itself does. That is
     exactly why the anchor survived the whole colour pass untouched: every other role

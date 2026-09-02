@@ -41,7 +41,7 @@ Update my decks screen already uses, visual only, no behavior change. Each row i
 a caret, a fixed chip column, and a bold front line, with the back, why, dosing and any
 image tucked into a body the caret reveals, and Edit/Note as quiet links at the end of
 that body instead of two native push buttons on every row. A card a check flagged now
-shows its own reason underneath, and a duplicate names the existing card it matched --
+shows its own reason underneath, and a duplicate names the existing card it matched:
 both used to be invisible, with only a bracketed word saying something was wrong. A
 queued revision note shows on its row instead of only living inside a prompt's memory.
 The two quality radios on the input page now carry just their short name (Thorough,
@@ -83,7 +83,7 @@ percentage defaults to 30, the fixed amount every prior build applied.
 Fixed a crash risk in the "Generate cards with AI" wizard's undo-shortcut helper.
 Asking Qt to render the standard Undo key sequence with no live application running
 dereferences a null pointer inside Qt itself, which is not a catchable Python
-exception -- it hard-crashes the whole process. That path is unreachable in the
+exception: it hard-crashes the whole process. That path is unreachable in the
 running add-on, where Anki's own app is always live, but is now guarded either way:
 the helper checks for a live application first and falls back to a plain literal
 when there isn't one.
@@ -94,8 +94,8 @@ Four more defects in "Generate cards with AI", again found only by running the a
 for real.
 
 The most important: a successful import genuinely wrote one clean, undoable batch of
-notes -- a headless test calling `col.undo()` really did remove the whole thing in one
-step -- but nothing ever told Anki's own main window that a new undo entry existed, so
+notes (a headless test calling `col.undo()` really did remove the whole thing in one
+step), but nothing ever told Anki's own main window that a new undo entry existed, so
 Edit > Undo stayed greyed out in the running app no matter how quickly you tried it.
 The deck list had the same problem: a new deck's cards and counts only showed up after
 manually clicking "Decks". Both are fixed by the same call this add-on already makes
@@ -121,8 +121,8 @@ there still showed Anki's own raw crash box. Worse, it left the wizard stuck: th
 progress page kept showing "Generating cards" with a Cancel button wired to a run that
 had already finished, so clicking it did nothing, repeatedly, and closing the window
 was the only way out. Completion now goes through the same guard as every button, and
-a failure there tears the run down properly and returns you to the input page -- or
-your existing draft, if you were mid-revision -- instead of leaving you stranded.
+a failure there tears the run down properly and returns you to the input page (or
+your existing draft, if you were mid-revision) instead of leaving you stranded.
 
 Separately, a single missing folder used to crash every write of the add-on's own
 saved state (usage stats, deck skill consent, and more): the shared atomic-write
@@ -176,7 +176,7 @@ API key field anywhere in the add-on; it only shells out to a CLI already signed
 on your own machine, and never reads, sends, or stores a credential of any kind.
 
 The three backends are not equally sandboxed, and the setup screen says so plainly
-for each rather than folding them into one reassurance -- including what Quick draft
+for each rather than folding them into one reassurance: including what Quick draft
 and Thorough actually restrict, which differs by backend: Claude Code is the only one
 the add-on itself caps by mode (Quick gets one turn and no tools beyond reading files
 you attach; Thorough gets more turns and web-search tools), Codex CLI is sandboxed

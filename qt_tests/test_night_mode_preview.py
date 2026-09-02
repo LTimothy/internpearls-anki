@@ -27,7 +27,7 @@ def _avg_luminance(image, rect):
         for x in range(rect.left(), rect.right() + 1):
             total += luminance(image.pixelColor(x, y))
             count += 1
-    assert count, "empty preview pane rect -- the pane did not paint at its expected size"
+    assert count, "empty preview pane rect: the pane did not paint at its expected size"
     return total / count
 
 
@@ -52,4 +52,4 @@ def test_changing_the_percent_changes_the_dimmed_pane(shot):
     high_avg = _avg_luminance(high.image, high_dimmed_rect)
     assert high_avg < low_avg, (
         f"80% dim ({high_avg:.3f} avg luminance) is not darker than 10% dim "
-        f"({low_avg:.3f}) -- the preview is not tracking the percent")
+        f"({low_avg:.3f}): the preview is not tracking the percent")

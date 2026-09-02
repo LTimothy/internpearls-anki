@@ -157,7 +157,7 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     `on_extra` may return a plain string (replaces the body text; None leaves it
     alone) or a `(body_text, button_label)` pair when the click also changes what the
     button itself should say next (e.g. a toggle whose label names the action, not
-    the current state) -- either element may be None to leave that part alone.
+    the current state): either element may be None to leave that part alone.
 
     `no_label=None` drops the second button entirely, for a caller with nothing to
     decline, just long or richly formatted content to show in a scrollable, consistently
@@ -368,7 +368,7 @@ def copy_to_clipboard(text):
 
 
 def _prompt(text, **kw):
-    """A single-line text prompt. Returns the entered text, or None if cancelled --
+    """A single-line text prompt. Returns the entered text, or None if cancelled:
     unlike aqt.utils.getText's raw (text, ok) tuple, so a caller can write
     `if new is None: return` instead of unpacking at every call site."""
     kw.setdefault("title", APP_NAME)

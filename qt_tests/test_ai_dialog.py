@@ -1,7 +1,7 @@
 """Real-PyQt6 render check for the "Generate cards with AI" wizard.
 
 Drives the dialog through a real (mocked-CLI) generation so the review page
-renders its actual card rows, not just an empty stack page -- that's the one
+renders its actual card rows, not just an empty stack page: that's the one
 page whose layout depends on session state built up by the earlier pages.
 """
 import json
@@ -75,7 +75,7 @@ def test_import_enables_real_undo_action_with_the_native_shortcut(monkeypatch):
     Finding 2: the completion message hardcoded "Ctrl+Z" on every platform.
     Because this file runs against REAL PyQt6 (see harness.bootstrap), Qt's
     own QKeySequence(StandardKey.Undo).toString(NativeText) here is not a
-    mock's guess at platform behavior -- it is exactly what a real Anki
+    mock's guess at platform behavior: it is exactly what a real Anki
     Edit menu on this machine renders. Asserting the message names that,
     and never the literal "Ctrl+Z" unless this machine's own native
     rendering happens to equal it, is the strongest check available for
@@ -92,7 +92,7 @@ def test_import_enables_real_undo_action_with_the_native_shortcut(monkeypatch):
     assert ai_dialog._undo_shortcut() == native
 
     # A fresh collection/undo-action pair, independent of whatever an earlier
-    # test in this process already did -- mirrors what tests/conftest.py's
+    # test in this process already did: mirrors what tests/conftest.py's
     # `anki` fixture does per test for the fake-Qt suite.
     mock.mw.col = mock_anki.MockCollection()
     mock.mw.reset_count = 0
@@ -176,7 +176,7 @@ def test_review_row_renders_a_real_image_thumbnail(monkeypatch, tmp_path):
 
 
 def test_review_checkbox_click_updates_count_and_button_label(monkeypatch):
-    """Bug: clicking a review card's checkbox visibly did nothing -- the box
+    """Bug: clicking a review card's checkbox visibly did nothing: the box
     stayed checked, the "N included" header never moved, and the Import
     button's label never moved. The underlying wiring (toggled -> write
     session.included) actually worked; nothing ever refreshed the header or
@@ -237,12 +237,12 @@ def test_review_checkbox_click_updates_count_and_button_label(monkeypatch):
 def test_import_button_click_shows_dialog_instead_of_raising(monkeypatch):
     """Bug: _do_import ran straight off Qt's clicked signal with no guard of
     its own. @_safe on generate_cards() only catches an exception that unwinds
-    back through *its own* call stack, and a signal dispatch never does --
+    back through *its own* call stack, and a signal dispatch never does:
     real PyQt/PySide hand a slot's exception to the process's own excepthook
     instead, which is Anki's raw "encountered a problem" box, not this add-on's
     dialog. Drives the real button's click() (an actual Qt signal emission)
     rather than calling dlg._do_import() directly, so this exercises the exact
-    dispatch path the bug lived in -- a raise inside a directly-invoked method
+    dispatch path the bug lived in: a raise inside a directly-invoked method
     call would never have caught this class of bug.
     """
     harness.bootstrap()
@@ -255,7 +255,7 @@ def test_import_button_click_shows_dialog_instead_of_raising(monkeypatch):
 
     dlg = ai_dialog._GenerateDialog()
     dlg.show()
-    # A card naming a note type this collection doesn't have -- exactly what
+    # A card naming a note type this collection doesn't have: exactly what
     # add_generated_notes' own atomic check rejects (see collection.py).
     dlg.session.cards = [{"note_type": "Study Deck - Cloze",
                           "fields": {"Text": "x"}, "tags": [], "images": [],
@@ -271,21 +271,21 @@ def test_import_button_click_shows_dialog_instead_of_raising(monkeypatch):
 
     assert warnings, "the failure must reach the add-on's own dialog, not vanish"
     assert "Study Deck - Cloze" in warnings[0]
-    assert dlg.isVisible()   # still open -- an unhandled exception here would tear it down
+    assert dlg.isVisible()   # still open: an unhandled exception here would tear it down
 
 
 def test_completion_timer_exception_shows_dialog_and_recovers_to_input(monkeypatch):
     """B/C, against a real QTimer: _poll_worker (and _poll_image_worker) fire off
     Qt's own timeout signal the same way a button's clicked signal fires, so an
-    unguarded exception there reached Anki's raw crash box too -- and it was worse
+    unguarded exception there reached Anki's raw crash box too: and it was worse
     than an unguarded button click, not just as bad. By its last firing, the poll
     has already latched _gen_done and stopped its own timer, so if the completion
     code itself then raised, nothing was left running for Cancel to cancel and
     nothing ever moved the dialog off the progress page: stuck forever, with a
     Cancel button wired to a no-op.
 
-    Emits the real QTimer's own `timeout` signal (dlg._timer.timeout.emit()) --
-    an actual Qt signal dispatch, not a direct call into _finish_generation --
+    Emits the real QTimer's own `timeout` signal (dlg._timer.timeout.emit()):
+    an actual Qt signal dispatch, not a direct call into _finish_generation,
     so this exercises the exact path the bug lived in.
     """
     harness.bootstrap()
@@ -324,7 +324,7 @@ def test_completion_timer_exception_shows_dialog_and_recovers_to_input(monkeypat
     assert "boom in completion path" in warnings[0]
     assert dlg._gen_done is True
     assert dlg.stack.currentWidget() is dlg.input_page   # landed somewhere usable
-    assert dlg.isVisible()   # still open -- an unhandled exception would have torn it down
+    assert dlg.isVisible()   # still open: an unhandled exception would have torn it down
 
     # Cancel is still wired and callable, not a permanent no-op stuck against a
     # progress page that no longer shows.
@@ -413,7 +413,7 @@ def test_changing_model_and_effort_persists_to_config(monkeypatch):
 def test_model_set_under_claude_does_not_leak_into_codex(monkeypatch):
     """Item 1: ai_model/ai_effort are stored per backend kind. Setting a model
     while claude is active must not pre-fill or get sent for codex when it's
-    the backend detected on a later open -- the leak this test reproduces
+    the backend detected on a later open: the leak this test reproduces
     would otherwise silently send `-m opus` (or now `--model opus`) to a
     backend the user never chose that model for."""
     from aqt import mw
@@ -431,7 +431,7 @@ def test_model_set_under_claude_does_not_leak_into_codex(monkeypatch):
     assert conf["ai_model"]["claude"] == "opus"
     assert conf["ai_model"].get("codex", "") == ""
 
-    # Second open: only codex detected this time -- the stale claude-scoped
+    # Second open: only codex detected this time: the stale claude-scoped
     # value must not pre-fill its Model field.
     monkeypatch.setattr(ai_cli, "find_cli",
                         lambda kind, override="": "/bin/echo"
@@ -462,7 +462,7 @@ def test_input_page_gates_note_types_against_real_checkboxes(monkeypatch):
     """A, against real QCheckBox widgets rather than the fake-Qt suite's own
     checkbox stand-in: a collection carrying neither managed type ("Study Deck -
     Basic"/"Study Deck - Cloze" only ever arrive with a deck sync) must render
-    both of them genuinely unselectable, with a reason -- not merely "checked()
+    both of them genuinely unselectable, with a reason: not merely "checked()
     would read False if you asked it right", but isEnabled() actually False and
     isChecked() actually False on the real widget a user would click. Basic and
     Cloze are Anki's own stock types and always exist, so they render enabled and
@@ -562,7 +562,7 @@ def test_view_skills_extra_button_toggles_and_leaves_dialog_open(monkeypatch):
                   if b.text() == "Toggle")
         btn.click()
         a.processEvents()
-        # A real ActionRole button never calls accept()/reject() on its own --
+        # A real ActionRole button never calls accept()/reject() on its own:
         # only the click handler ran, the dialog is still up and undecided.
         assert self.isVisible()
         self.reject()

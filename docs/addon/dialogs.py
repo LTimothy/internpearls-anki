@@ -1003,7 +1003,7 @@ def open_settings():
 # --------------------------------------------------------- dimming preview
 # A live reference so the percent spinner's number isn't abstract: a small invented
 # schematic, drawn with QPainter at paint time rather than shipped as a file, shown
-# normal and dimmed side by side. This is a public repo -- no real card figure, no
+# normal and dimmed side by side. This is a public repo: no real card figure, no
 # deck content, nothing borrowed from anywhere; the shapes below are the whole of it.
 _SAMPLE_PANE_SIZE = (150, 100)
 
@@ -1011,7 +1011,7 @@ _SAMPLE_PANE_SIZE = (150, 100)
 def _sample_card_image():
     """The preview's stand-in for "a bright image on a card": two labelled shapes and
     the lines between them, on a white background. White is deliberate and not a
-    themed colour -- it's the exact background this feature exists to tone down, so
+    themed colour: it's the exact background this feature exists to tone down, so
     the reference has to start from it, the same as a real card figure would. The ink
     colours come from palette.LIGHT (not colors(), which would pick DARK's ink, made
     for a dark surface, on this always-white canvas) rather than a bare hex literal.
@@ -1059,7 +1059,7 @@ def _dimmed_sample_image(percent):
 
 
 class _NightModeSamplePane(QWidget):
-    """One half of the preview. Draws at paint time (real Qt only -- the structural
+    """One half of the preview. Draws at paint time (real Qt only: the structural
     mock suite never triggers a paint, so this never runs there and needs nothing from
     it beyond the plain QWidget it subclasses)."""
 
@@ -1089,9 +1089,9 @@ class _NightModeDimPreview(QWidget):
     """Normal vs dimmed, side by side, on a backdrop that is always dark: the feature
     only ever applies while Anki itself is in Night Mode, so a preview painted on the
     dialog's own (possibly light) window would misrepresent it. The backdrop and the
-    "Normal"/"Dimmed" captions take their colours from palette.DARK's own roles --
-    dosing_bg/dosing_fg, the pairing already tuned for a dark panel with readable text
-    on it -- never a hardcoded literal.
+    "Normal"/"Dimmed" captions take their colours from palette.DARK's own roles
+    (dosing_bg/dosing_fg, the pairing already tuned for a dark panel with readable
+    text on it), never a hardcoded literal.
     """
 
     def __init__(self, percent, parent=None):
@@ -1125,7 +1125,7 @@ class _NightModeDimmingDialog(QDialog):
     Split out of Settings and into Experimental: it's a display tweak rather than a
     sync-automation one, and the percentage control is new and still settling. Anki's
     Night Mode adds a "nightMode" class to the card body (see logic.night_mode_image_css),
-    which is the only thing the dimming CSS ever matches -- so this never applies in
+    which is the only thing the dimming CSS ever matches: so this never applies in
     Day mode, and never anything but images.
     """
 
@@ -1164,7 +1164,7 @@ class _NightModeDimmingDialog(QDialog):
         outer.addWidget(hint_label(
             "Higher dims images more; 0 leaves them unchanged. Applies to every deck "
             "in your collection, not just Intern Pearls ones, and only while Anki "
-            "itself is in Night Mode -- never in Day mode."))
+            "itself is in Night Mode: never in Day mode."))
 
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
