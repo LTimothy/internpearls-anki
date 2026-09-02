@@ -2,6 +2,7 @@
 import os
 import shutil
 import sys
+import time
 
 import pytest
 
@@ -278,6 +279,57 @@ def test_close_before_generation_does_not_ask(anki, monkeypatch):
     assert not anki.gui.asks
 
 
+# -- I1: closing mid-generation must cancel the run, not orphan it ----------
+
+def test_close_mid_generation_asks_and_declining_keeps_it_running(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="slow")
+    dlg._start_generation()
+    anki.gui.answers = [False]   # "Keep waiting"
+    dlg.reject()
+    assert dlg._result is None
+    assert dlg.stack.currentWidget() is dlg.progress_page
+    assert dlg._worker.is_alive()
+    assert not dlg._cancel_flag.is_set()
+    dlg._cancel_generation()   # clean up: actually cancel so the test doesn't leak a thread
+    dlg._wait_for_worker(timeout=15)
+
+
+def test_close_mid_generation_confirmed_kills_process_stops_timer_and_no_late_modal(
+        anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="slow")
+    dlg._start_generation()
+    scratch = dlg.session.scratch
+    assert scratch and os.path.isdir(scratch)
+
+    anki.gui.answers = [True]   # "Cancel and close"
+    dlg.reject()
+
+    assert dlg._result == 0                # the dialog closed right away
+    assert dlg._timer.started is None       # the poll timer was stopped, not left running
+    assert dlg._gen_done is True            # latched immediately, before the worker exited
+
+    # The worker (and the subprocess it owns) actually dies, promptly --
+    # this bounds how long "cancel" takes to really take effect.
+    dlg._worker.join(timeout=15)
+    assert not dlg._worker.is_alive()
+
+    # A stray _poll_worker firing after close must be a no-op: no modal, no
+    # navigation, on a dialog the user already closed.
+    dlg._poll_worker()
+    assert not anki.gui.warnings
+    assert not anki.gui.infos
+    assert dlg.stack.currentWidget() is dlg.progress_page   # never touched again
+
+    # The scratch dir -- the dead child's own cwd -- is removed once the
+    # background reaper has actually caught up with the worker's exit.
+    for _ in range(100):
+        if dlg.session.scratch is None:
+            break
+        time.sleep(0.05)
+    assert dlg.session.scratch is None
+    assert not os.path.exists(scratch)
+
+
 def test_malformed_json_retries_once_then_fails(anki, monkeypatch):
     calls = _counting_run_generation(monkeypatch)
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="badjson")
@@ -465,6 +517,79 @@ def test_revision_with_different_card_count_does_not_claim_per_card_updates(anki
     assert "different number of cards" in header
     assert "kept 2 verbatim" not in header
     assert "kept 1 verbatim" not in header
+
+
+# -- I3: cancelling or failing a revision must not strand the reviewed draft -
+
+def _revisable_dialog(anki, monkeypatch, cli_mode_box):
+    """Like _ready_dialog, but build_argv reads its mode from a mutable box so
+    a test can run one CLI mode for the initial draft and a different one for
+    the revision that follows it."""
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": sys.executable if kind == "claude" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs:
+            ([sys.executable, FAKE, cli_mode_box[0]], True))
+    dlg = ai_dialog._GenerateDialog()
+    dlg.source_box.setPlainText("LAST toxicity source text")
+    return dlg
+
+
+def test_cancel_during_revision_returns_to_review_with_draft_intact(anki, monkeypatch):
+    cli_mode = ["ok"]
+    dlg = _revisable_dialog(anki, monkeypatch, cli_mode)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    assert dlg.stack.currentWidget() is dlg.review_page
+
+    dlg.session.cards[0]["fields"]["Front"] = "hand-edited front"
+    dlg.session.included[0] = False
+    dlg.session.notes[0] = "make it a cloze"
+
+    cli_mode[0] = "slow"
+    dlg._revise_all()
+    dlg._cancel_generation()
+    dlg._wait_for_worker(timeout=15)
+
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert dlg.session.cards[0]["fields"]["Front"] == "hand-edited front"
+    assert dlg.session.included[0] is False
+    assert dlg.session.notes[0] == "make it a cloze"
+
+
+def test_failed_revision_after_retry_returns_to_review_with_draft_intact(anki, monkeypatch):
+    cli_mode = ["ok"]
+    dlg = _revisable_dialog(anki, monkeypatch, cli_mode)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    assert dlg.stack.currentWidget() is dlg.review_page
+
+    dlg.session.cards[0]["fields"]["Front"] = "hand-edited front"
+    dlg.session.notes[0] = "make it a cloze"
+
+    cli_mode[0] = "badjson"
+    dlg._revise_all()
+    dlg._wait_for_worker(timeout=15)   # first attempt: malformed, triggers a retry
+    dlg._wait_for_worker(timeout=15)   # retry: also malformed, gives up
+
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert dlg.session.cards[0]["fields"]["Front"] == "hand-edited front"
+    assert dlg.session.notes[0] == "make it a cloze"
+
+
+def test_first_generation_cancel_still_falls_back_to_input_with_no_draft(anki, monkeypatch):
+    # No prior draft exists yet on a first generation, so cancelling it has
+    # nothing to return to -- the input page fallback is still correct here.
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="slow")
+    dlg._start_generation()
+    dlg._cancel_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.stack.currentWidget() is dlg.input_page
+    assert not dlg.session.cards
 
 
 # -- I8: the entry point itself must be guarded like every other menu action --

@@ -89,6 +89,41 @@ def test_run_other_exception_kills_process_and_is_not_masked(monkeypatch):
         os.kill(proc.pid, 0)
 
 
+# -- I9: end-to-end evidence for all three backends' result parsing, not just
+# claude. Neither codex nor agy is installed on this machine, so these drive
+# the fake CLI through run_generation()'s real path (build_argv included) --
+# they prove the parsing/plumbing works for a given event shape, not that the
+# shape matches a real vendor binary, which remains unverified.
+def test_run_generation_parses_codex_top_level_text_shape(monkeypatch, tmp_path):
+    monkeypatch.setattr(ai_cli, "build_argv",
+                        lambda kind, path, mode, scratch, imgs:
+                            (FAKE + ["codex_top"], True))
+    res = ai_cli.run_generation("codex", "/usr/bin/codex", "PROMPT", "quick",
+                                str(tmp_path))
+    assert '"Front": "q"' in res["text"]
+    assert res["tokens"] == 15
+
+
+def test_run_generation_parses_codex_nested_item_text_shape(monkeypatch, tmp_path):
+    monkeypatch.setattr(ai_cli, "build_argv",
+                        lambda kind, path, mode, scratch, imgs:
+                            (FAKE + ["codex_nested"], True))
+    res = ai_cli.run_generation("codex", "/usr/bin/codex", "PROMPT", "quick",
+                                str(tmp_path))
+    assert '"Front": "q"' in res["text"]
+    assert res["tokens"] == 15
+
+
+def test_run_generation_parses_antigravity_result_shape(monkeypatch, tmp_path):
+    monkeypatch.setattr(ai_cli, "build_argv",
+                        lambda kind, path, mode, scratch, imgs:
+                            (FAKE + ["agy_ok"], True))
+    res = ai_cli.run_generation("agy", "/usr/bin/agy", "PROMPT", "quick",
+                                str(tmp_path))
+    assert '"Front": "q"' in res["text"]
+    assert res["tokens"] == 15
+
+
 def test_find_cli_prefers_override(tmp_path):
     exe = tmp_path / "claude"
     exe.write_text("#!/bin/sh\n")

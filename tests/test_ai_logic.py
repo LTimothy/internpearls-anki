@@ -246,6 +246,36 @@ def test_parse_codex_token_count_with_rate_limits():
     assert evt["primary_pct"] == 12.5 and evt["secondary_pct"] == 40.0
 
 
+def test_parse_codex_result_top_level_text():
+    line = _json.dumps({"type": "item.completed", "text": "[{\"x\": 1}]",
+                        "usage": {"input_tokens": 900, "output_tokens": 100}})
+    evt = ai_logic.parse_stream_event("codex", line)
+    assert evt == {"type": "result", "text": "[{\"x\": 1}]", "tokens": 1000}
+
+
+def test_parse_codex_result_text_nested_under_item():
+    # The shape the codex branch was actually reading before I9 -- text
+    # nested under "item" rather than top-level -- must also be picked up,
+    # since which one a real codex binary emits is unverified here.
+    line = _json.dumps({"type": "turn.completed",
+                        "item": {"type": "agent_message", "text": "[{\"x\": 1}]"},
+                        "usage": {"input_tokens": 900, "output_tokens": 100}})
+    evt = ai_logic.parse_stream_event("codex", line)
+    assert evt == {"type": "result", "text": "[{\"x\": 1}]", "tokens": 1000}
+
+
+def test_parse_codex_result_neither_shape_present_is_none():
+    line = _json.dumps({"type": "item.completed", "item": {"type": "reasoning"}})
+    assert ai_logic.parse_stream_event("codex", line) is None
+
+
+def test_parse_agy_result_top_level():
+    line = _json.dumps({"type": "result", "result": "[{\"x\": 1}]",
+                        "usage": {"input_tokens": 900, "output_tokens": 100}})
+    evt = ai_logic.parse_stream_event("agy", line)
+    assert evt == {"type": "result", "text": "[{\"x\": 1}]", "tokens": 1000}
+
+
 def test_parse_garbage_line_is_none():
     assert ai_logic.parse_stream_event("claude", "not json") is None
     assert ai_logic.parse_stream_event("agy", "{}") is None
@@ -356,6 +386,9 @@ def test_parse_malformed_nested_shapes_never_raises():
                                "rate_limits": [1, 2]})),
         ("codex", _json.dumps({"type": "token_count",
                                "rate_limits": {"primary": "notadict"}})),
+        ("codex", _json.dumps({"type": "item.completed", "item": "not a dict"})),
+        ("codex", _json.dumps({"type": "item.completed",
+                               "item": {"text": ["not", "a", "string"]}})),
     ]
     for kind, line in cases:
         assert ai_logic.parse_stream_event(kind, line) is None
