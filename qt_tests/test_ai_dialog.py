@@ -7,6 +7,7 @@ page whose layout depends on session state built up by the earlier pages.
 import json
 
 import harness
+from aqt.qt import QPoint
 from internpearls import ai_cli, ai_dialog
 
 
@@ -351,10 +352,12 @@ def test_mode_radios_render_the_backends_own_text(monkeypatch):
     assert dlg.quick_hint.text() == modes["quick"]
 
 
-def test_backend_row_shows_editable_model_and_effort_for_claude(monkeypatch):
+def test_backend_row_shows_model_and_effort_for_claude(monkeypatch):
     """Model/Effort honesty pattern (item A): claude has a verified --model and
-    --effort flag, so it gets live, editable controls, pre-filled with the
-    add-on's own default (sonnet/medium), not left blank."""
+    --effort flag, so it gets live controls, pre-filled with the add-on's own
+    default (sonnet/medium), not left blank. Model is a closed, non-editable
+    list of claude's known aliases plus Custom, not free text: that's what
+    keeps its field column the same height/inset as Effort's own combo."""
     harness.bootstrap()
     monkeypatch.setattr(ai_cli, "find_cli",
                         lambda kind, override="": "/bin/echo"
@@ -366,8 +369,9 @@ def test_backend_row_shows_editable_model_and_effort_for_claude(monkeypatch):
     harness.app().processEvents()
     assert dlg.model_combo.isVisible() is True
     assert dlg.model_readonly.isVisible() is False
-    assert dlg.model_combo.isEditable() is True
+    assert dlg.model_combo.isEditable() is False
     assert dlg.model_combo.currentText() == "sonnet"
+    assert dlg.model_custom_edit.isVisible() is False
     assert dlg.effort_combo.isVisible() is True
     assert dlg.effort_combo.currentData() == ""   # "Default (medium)", not an override
 
@@ -400,7 +404,7 @@ def test_changing_model_and_effort_persists_to_config(monkeypatch):
     monkeypatch.setattr(ai_cli, "probe",
                         lambda kind, path: {"ok": True, "detail": "v1"})
     dlg = ai_dialog._GenerateDialog()
-    dlg.model_combo.setEditText("opus")
+    dlg.model_combo.setCurrentIndex(dlg.model_combo.findText("opus"))
     idx = dlg.effort_combo.findData("high")
     dlg.effort_combo.setCurrentIndex(idx)
     conf = mw.addonManager.getConfig("internpearls")
@@ -426,7 +430,7 @@ def test_model_set_under_claude_does_not_leak_into_codex(monkeypatch):
     monkeypatch.setattr(ai_cli, "probe",
                         lambda kind, path: {"ok": True, "detail": "v1"})
     dlg1 = ai_dialog._GenerateDialog()
-    dlg1.model_combo.setEditText("opus")
+    dlg1.model_combo.setCurrentIndex(dlg1.model_combo.findText("opus"))
     conf = mw.addonManager.getConfig("internpearls")
     assert conf["ai_model"]["claude"] == "opus"
     assert conf["ai_model"].get("codex", "") == ""
@@ -613,3 +617,39 @@ def test_view_skills_toggle_button_relabels_after_each_click(monkeypatch):
     finally:
         q.QDialog.exec = original
     assert seen == ["Disable deck skill", "Enable deck skill", "Disable deck skill"]
+
+
+def test_model_and_effort_fields_align_and_custom_reveals_edit(monkeypatch):
+    """The macOS bug this fixes: Model's field widget and Effort's field
+    widget must start at the same x once mapped into the dialog's own
+    coordinate space, since an editable combo (the old Model) renders with a
+    different inset than a non-editable one (Effort, always). Also covers the
+    Custom path end to end: picking it reveals model_custom_edit at that same
+    x, and a typed name persists to config the same way a known alias does."""
+    from aqt import mw
+    harness.bootstrap()
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    harness.app().processEvents()
+
+    model_x = dlg.model_combo.mapTo(dlg, QPoint(0, 0)).x()
+    effort_x = dlg.effort_combo.mapTo(dlg, QPoint(0, 0)).x()
+    assert model_x == effort_x
+
+    dlg.model_combo.setCurrentIndex(dlg.model_combo.findText("Custom"))
+    harness.app().processEvents()
+    assert dlg.model_custom_edit.isVisible() is True
+
+    custom_x = dlg.model_custom_edit.mapTo(dlg, QPoint(0, 0)).x()
+    assert custom_x == effort_x
+
+    dlg.model_custom_edit.setText("claude-3-opus-20240229")
+    dlg.model_custom_edit.editingFinished.emit()
+    conf = mw.addonManager.getConfig("internpearls")
+    assert conf["ai_model"]["claude"] == "claude-3-opus-20240229"
+    assert dlg.session.ai_model["claude"] == "claude-3-opus-20240229"

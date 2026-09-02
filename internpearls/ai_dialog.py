@@ -18,9 +18,10 @@ from collections import deque
 
 from aqt import mw
 from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
-                    QDialogButtonBox, QFrame, QHBoxLayout, QKeySequence, QLabel,
-                    QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
-                    QSpinBox, QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
+                    QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
+                    QKeySequence, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
+                    QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
+                    QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
 from .config import (ADDON_PACKAGE, APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
@@ -48,6 +49,9 @@ SOFT_SOURCE_LIMIT = 25000
 # Image resolution (download/read/render) runs off the UI thread and polls on
 # this cadence, the same as the generation worker's own poll below.
 _IMG_POLL_MS = 200
+# The Model combo's trailing entry, on any backend whose model_aliases isn't
+# empty: picking it reveals a QLineEdit for a free-form model name instead.
+_CUSTOM_MODEL_LABEL = "Custom"
 
 
 def _skills_html(parts):
@@ -349,6 +353,12 @@ class _GenerateDialog(QDialog):
         # doesn't read back as a user edit and re-write config with what it just
         # loaded from config.
         self._updating_backend_controls = False
+        # Whether the current backend's Model combo is the alias-list-plus-Custom
+        # kind (claude, once it has model_aliases) rather than plain free text
+        # (codex, which has none). Set by _refresh_model_effort_controls, read by
+        # _model_combo_text_changed, so the literal string "Custom" only gets
+        # special handling on a backend that actually offers it as an item.
+        self._model_alias_mode = False
 
         self.stack = QStackedWidget()
         lay = QVBoxLayout(self)
@@ -689,24 +699,50 @@ class _GenerateDialog(QDialog):
         # Model/effort controls: shown per-backend honesty, not a shared UI:
         # a backend with no verified model or effort flag doesn't get a control
         # it can't actually honor. See _refresh_model_effort_controls.
+        #
+        # Model and Effort share one QFormLayout so their field column lines up:
+        # an editable QComboBox (free text) and a non-editable one (a closed
+        # list) render at different heights and insets on macOS, which is what
+        # made the two rows visibly mismatched before this. Model itself still
+        # varies by backend: claude (model_aliases non-empty) gets a closed,
+        # non-editable combo of known aliases plus a trailing "Custom" entry
+        # that reveals model_custom_edit for a free-form name; codex (no
+        # aliases) keeps the plain editable combo it always had, unchanged,
+        # since Effort is hidden for it anyway and there's nothing to misalign
+        # against; agy keeps its read-only text in place of the combo.
         self.model_label = QLabel("Model")
         self.model_combo = QComboBox()
-        self.model_combo.setEditable(True)
         self.model_readonly = hint_label("")
-        model_row = QHBoxLayout()
-        model_row.addWidget(self.model_label)
-        model_row.addWidget(self.model_combo, 1)
-        model_row.addWidget(self.model_readonly, 1)
-        lay.addLayout(model_row)
-        self.model_combo.currentTextChanged.connect(
-            lambda text: self._guard(self._model_changed, text))
+        self.model_custom_edit = QLineEdit()
+        self.model_custom_edit.setPlaceholderText("Custom model name")
+        self.model_custom_hint = hint_label(
+            "The CLI validates this name; an unrecognized one fails at "
+            "generation time, not here.")
+        model_field = QWidget()
+        model_field_lay = QVBoxLayout(model_field)
+        model_field_lay.setContentsMargins(0, 0, 0, 0)
+        model_field_lay.setSpacing(2)
+        model_field_lay.addWidget(self.model_combo)
+        model_field_lay.addWidget(self.model_readonly)
+        model_field_lay.addWidget(self.model_custom_edit)
+        model_field_lay.addWidget(self.model_custom_hint)
 
         self.effort_label = QLabel("Effort")
         self.effort_combo = QComboBox()
-        effort_row = QHBoxLayout()
-        effort_row.addWidget(self.effort_label)
-        effort_row.addWidget(self.effort_combo, 1)
-        lay.addLayout(effort_row)
+        self.model_combo.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                       QSizePolicy.Policy.Fixed)
+        self.effort_combo.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                        QSizePolicy.Policy.Fixed)
+
+        self.model_effort_form = QFormLayout()
+        self.model_effort_form.addRow(self.model_label, model_field)
+        self.model_effort_form.addRow(self.effort_label, self.effort_combo)
+        lay.addLayout(self.model_effort_form)
+
+        self.model_combo.currentTextChanged.connect(
+            lambda text: self._guard(self._model_combo_text_changed, text))
+        self.model_custom_edit.editingFinished.connect(
+            lambda: self._guard(self._model_custom_edit_changed))
         self.effort_combo.currentIndexChanged.connect(
             lambda _: self._guard(self._effort_changed))
 
@@ -772,6 +808,9 @@ class _GenerateDialog(QDialog):
                 self.model_combo.setVisible(False)
                 self.model_readonly.setVisible(True)
                 self.model_readonly.setText(meta["model_hint"])
+                self.model_custom_edit.setVisible(False)
+                self.model_custom_hint.setVisible(False)
+                self._model_alias_mode = False
             else:
                 self.model_readonly.setVisible(False)
                 self.model_combo.setVisible(True)
@@ -783,10 +822,38 @@ class _GenerateDialog(QDialog):
                 for alias in meta.get("model_aliases", []):
                     if alias not in options:
                         options.append(alias)
-                self.model_combo.addItems(options)
-                self.model_combo.setToolTip(meta["model_hint"])
                 current = s.ai_model.get(s.backend, "") or meta["default_model"]
-                self.model_combo.setEditText(current)
+                self._model_alias_mode = bool(options)
+                if self._model_alias_mode:
+                    # A closed list plus Custom: non-editable, so it renders at
+                    # the same height/inset as Effort's own non-editable combo.
+                    self.model_combo.setEditable(False)
+                    options.append(_CUSTOM_MODEL_LABEL)
+                    self.model_combo.addItems(options)
+                    self.model_combo.setToolTip(meta["model_hint"])
+                    if current in options and current != _CUSTOM_MODEL_LABEL:
+                        self.model_combo.setCurrentIndex(options.index(current))
+                        self.model_custom_edit.setVisible(False)
+                        self.model_custom_hint.setVisible(False)
+                    else:
+                        # An unrecognized stored value (hand-edited config, or a
+                        # model name not in this list) selects Custom and keeps
+                        # the actual value in the line edit rather than losing it.
+                        self.model_combo.setCurrentIndex(
+                            options.index(_CUSTOM_MODEL_LABEL))
+                        self.model_custom_edit.setText(current)
+                        self.model_custom_edit.setVisible(True)
+                        self.model_custom_hint.setVisible(True)
+                else:
+                    # No known aliases (codex): plain free-text combo, unchanged
+                    # from before. Effort is hidden for every such backend today,
+                    # so there's nothing for this row to visibly misalign with.
+                    self.model_combo.setEditable(True)
+                    self.model_combo.addItems(options)
+                    self.model_combo.setToolTip(meta["model_hint"])
+                    self.model_combo.setEditText(current)
+                    self.model_custom_edit.setVisible(False)
+                    self.model_custom_hint.setVisible(False)
             effort_levels = meta.get("effort_levels")
             has_effort = bool(effort_levels)
             self.effort_label.setVisible(has_effort)
@@ -809,10 +876,23 @@ class _GenerateDialog(QDialog):
         finally:
             self._updating_backend_controls = False
 
-    def _model_changed(self, text):
+    def _model_combo_text_changed(self, text):
         if self._updating_backend_controls:
             return
+        if self._model_alias_mode and text == _CUSTOM_MODEL_LABEL:
+            self.model_custom_edit.setVisible(True)
+            self.model_custom_hint.setVisible(True)
+            return
+        self.model_custom_edit.setVisible(False)
+        self.model_custom_hint.setVisible(False)
         self.session.ai_model[self.session.backend] = text.strip()
+        self._save_ai_model_effort()
+
+    def _model_custom_edit_changed(self):
+        if self._updating_backend_controls:
+            return
+        self.session.ai_model[self.session.backend] = (
+            self.model_custom_edit.text().strip())
         self._save_ai_model_effort()
 
     def _effort_changed(self):

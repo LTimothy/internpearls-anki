@@ -1214,6 +1214,9 @@ class QLineEdit(QWidget):
         # which is what a validation message wired to clear itself as the field is
         # edited rides on.
         self.textChanged = Signal()
+        # Real QLineEdit emits this on Enter or on losing focus, not per keystroke;
+        # the mock has no focus model, so tests trigger it directly.
+        self.editingFinished = Signal()
 
     def setText(self, t):
         self._text = t
@@ -1377,6 +1380,19 @@ class QVBoxLayout(_Layout):
 
 class QHBoxLayout(_Layout):
     kind = "row"
+
+
+class QFormLayout(_Layout):
+    kind = "form"
+
+    def addRow(self, label, field):
+        """Real QFormLayout takes a label (str or QLabel) and a field widget per
+        row, in two aligned columns. The mock doesn't model columns, just the
+        flat child list every _Layout already exposes to node()/count()/itemAt."""
+        if isinstance(label, str):
+            label = QLabel(label)
+        self._children.append(label)
+        self._children.append(field)
 
 
 class QFrame(QWidget):
@@ -2077,6 +2093,7 @@ def install():
                       ("QStackedWidget", QStackedWidget),
                       ("QDialog", QDialog), ("QDialogButtonBox", QDialogButtonBox),
                       ("QFrame", QFrame), ("QHBoxLayout", QHBoxLayout),
+                      ("QFormLayout", QFormLayout),
                       ("QImage", QImage),
                       ("QLineEdit", QLineEdit), ("QMessageBox", QMessageBox),
                       ("QPlainTextEdit", QPlainTextEdit),
