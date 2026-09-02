@@ -100,6 +100,105 @@ def test_review_row_renders_a_real_image_thumbnail(monkeypatch, tmp_path):
     assert "example.com" in text
 
 
+def test_review_checkbox_click_updates_count_and_button_label(monkeypatch):
+    """Bug: clicking a review card's checkbox visibly did nothing -- the box
+    stayed checked, the "N included" header never moved, and the Import
+    button's label never moved. The underlying wiring (toggled -> write
+    session.included) actually worked; nothing ever refreshed the header or
+    button off that write, so a toggle that DID happen left no visible sign it
+    had, which reads exactly like a broken control. Drives the real
+    QCheckBox's own click() (a genuine Qt press+release, not a direct call
+    into session state), so this fails again if the widget wiring itself ever
+    breaks, not just the summary refresh.
+    """
+    harness.bootstrap()
+    app = harness.app()
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    cards = [{"note_type": "Study Deck - Basic",
+             "fields": {"Front": "q1", "Back": "a1"},
+             "tags": [], "images": [], "rationale": "r"},
+            {"note_type": "Study Deck - Basic",
+             "fields": {"Front": "q2", "Back": "a2"},
+             "tags": [], "images": [], "rationale": "r"}]
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
+              cancel=None, timeout=None: {"text": json.dumps(cards), "tokens": 15,
+                                          "duration_s": 12.3})
+
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    dlg.source_box.setPlainText("Regional block landmarks and needle depths")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    app.processEvents()
+
+    assert dlg.session.included == [True, True]
+    assert "2 included" in dlg.review_header.text()
+    assert dlg.import_btn.text() == "Import 2 cards"
+
+    box0 = dlg.include_boxes[0]
+    box0.click()
+    app.processEvents()
+
+    assert box0.isChecked() is False                     # the widget itself flips
+    assert dlg.session.included == [False, True]          # and the model behind it
+    assert "1 included" in dlg.review_header.text()       # ...visibly, in the header
+    assert dlg.import_btn.text() == "Import 1 cards"      # ...and the button
+
+    box0.click()   # toggling back must be just as visible
+    app.processEvents()
+    assert box0.isChecked() is True
+    assert dlg.session.included == [True, True]
+    assert "2 included" in dlg.review_header.text()
+    assert dlg.import_btn.text() == "Import 2 cards"
+
+
+def test_import_button_click_shows_dialog_instead_of_raising(monkeypatch):
+    """Bug: _do_import ran straight off Qt's clicked signal with no guard of
+    its own. @_safe on generate_cards() only catches an exception that unwinds
+    back through *its own* call stack, and a signal dispatch never does --
+    real PyQt/PySide hand a slot's exception to the process's own excepthook
+    instead, which is Anki's raw "encountered a problem" box, not this add-on's
+    dialog. Drives the real button's click() (an actual Qt signal emission)
+    rather than calling dlg._do_import() directly, so this exercises the exact
+    dispatch path the bug lived in -- a raise inside a directly-invoked method
+    call would never have caught this class of bug.
+    """
+    harness.bootstrap()
+    app = harness.app()
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    # A card naming a note type this collection doesn't have -- exactly what
+    # add_generated_notes' own atomic check rejects (see collection.py).
+    dlg.session.cards = [{"note_type": "Study Deck - Cloze",
+                          "fields": {"Text": "x"}, "tags": [], "images": [],
+                          "_media_files": []}]
+    dlg.session.included = [True]
+    dlg.session.image_data = {}
+
+    warnings = []
+    monkeypatch.setattr(ai_dialog, "_warn", lambda text, **kw: warnings.append(text))
+
+    dlg.import_btn.click()   # a real Qt signal, not dlg._do_import() called directly
+    app.processEvents()
+
+    assert warnings, "the failure must reach the add-on's own dialog, not vanish"
+    assert "Study Deck - Cloze" in warnings[0]
+    assert dlg.isVisible()   # still open -- an unhandled exception here would tear it down
+
+
 def test_mode_radios_render_the_backends_own_text(monkeypatch):
     """C1, confirmed by rendering: the mode radios must show the found
     backend's own truthful text, not one label shared by all three."""

@@ -43,6 +43,37 @@ def test_image_id_note_type_is_not_offered(anki, monkeypatch):
     assert "Study Deck - Image ID" not in dlg.type_boxes
 
 
+def test_input_page_disables_a_note_type_missing_from_the_collection(anki, monkeypatch):
+    """A managed type only exists once its deck has been synced at least once
+    (_ensure_notetypes reconciles an existing type's fields, it never creates
+    one) -- offering "Study Deck - Cloze" checked by default before that first
+    sync let someone write source material, wait through a whole generation,
+    and only discover at the very last click (Import) that add_generated_notes
+    rejects the whole batch. The `anki` fixture's mock collection seeds only
+    "Study Deck - Basic" (mock_anki.MockCollection's default model), the exact
+    shape of the real run this reproduces -- see collection.py's
+    test_add_generated_notes_core_type_missing_from_collection_raises for the
+    matching import-time check, which must keep raising regardless of this."""
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+
+    present = dlg.type_boxes["Study Deck - Basic"]
+    assert present.isEnabled() and present.isChecked()
+
+    for missing in ("Study Deck - Cloze", "Basic", "Cloze"):
+        box = dlg.type_boxes[missing]
+        assert not box.isEnabled(), f"{missing} isn't in the collection yet"
+        assert not box.isChecked()
+
+    # What actually gets sent to the model: only the type that really exists.
+    dlg.source_box.setPlainText("some source text")
+    note_types = [n for n, b in dlg.type_boxes.items() if b.isChecked()]
+    assert note_types == ["Study Deck - Basic"]
+
+
 def test_input_page_shown_when_backend_found(anki, monkeypatch):
     monkeypatch.setattr(
         ai_cli, "find_cli",
@@ -835,3 +866,22 @@ def test_generate_cards_entry_point_surfaces_a_bug_as_a_dialog(anki, monkeypatch
     monkeypatch.setattr(ai_dialog, "_GenerateDialog", boom)
     ai_dialog.generate_cards()   # must not raise past the menu action
     assert any("boom" in w for w in anki.gui.warnings)
+
+
+def test_import_buttons_own_click_signal_surfaces_a_bug_as_a_dialog(anki, monkeypatch):
+    """@_safe on generate_cards() only catches an exception that unwinds back
+    through its own call stack -- a button's clicked signal doesn't go through
+    that stack at all, so _do_import used to reach Anki's raw crash box instead
+    of this add-on's dialog (see ai_dialog._GenerateDialog._guard). Fires the
+    button's actual clicked signal (like test_setup_page_has_a_close_button
+    does above), not dlg._do_import() directly, so this exercises the same
+    connected-callback path the bug lived in."""
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.session.cards[0]["note_type"] = "Nonexistent Type"   # add_generated_notes rejects this
+
+    dlg.import_btn.clicked.emit()   # must not raise past the signal connection
+    assert any("Nonexistent Type" in w for w in anki.gui.warnings)
+    assert not anki.col._notes                     # nothing written
+    assert dlg._result is None                      # the dialog is still open
