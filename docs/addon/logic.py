@@ -58,6 +58,21 @@ def clamp_night_mode_dim_percent(percent, floor_percent=0, default_percent=30,
     return min(ceiling_percent, max(floor_percent, p))
 
 
+def night_mode_dim_factor(percent):
+    """The 0..1 brightness multiplier night_mode_image_css's filter applies for a given
+    dim percent: 0 -> 1.0 (unchanged), the default 30 -> 0.7. Re-clamps percent the same
+    way night_mode_image_css does, so a caller passing a raw config value gets the same
+    factor the CSS would use for it.
+
+    Pulled out to its own function so the Experimental > Night mode dimming preview can
+    call the exact same arithmetic the real CSS rule uses, rather than reimplementing
+    it: two copies of "1 - percent/100" would be free to drift apart the next time
+    either one changes.
+    """
+    percent = clamp_night_mode_dim_percent(percent)
+    return round(1 - percent / 100, 2)
+
+
 def night_mode_image_css(enabled, percent=30):
     """CSS that dims bright white-background images while Anki's Night Mode is on.
 
@@ -73,8 +88,7 @@ def night_mode_image_css(enabled, percent=30):
     """
     if not enabled:
         return ""
-    percent = clamp_night_mode_dim_percent(percent)
-    brightness = round(1 - percent / 100, 2)
+    brightness = night_mode_dim_factor(percent)
     return ("<style>.nightMode img {{ filter: brightness({b:g}) contrast(0.92); "
            "}}</style>").format(b=brightness)
 
