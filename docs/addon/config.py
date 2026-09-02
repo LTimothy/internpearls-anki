@@ -132,6 +132,8 @@ def _cfg():
             NIGHT_MODE_DIM_PERCENT_CEILING),
         "ai_backend":            c.get("ai_backend", ""),
         "ai_cli_path":           c.get("ai_cli_path", ""),
+        "ai_model":              c.get("ai_model", ""),
+        "ai_effort":             c.get("ai_effort", ""),
     }
 
 

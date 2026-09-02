@@ -25,7 +25,7 @@ def test_wizard_renders_all_pages(monkeypatch):
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None: {"text": json.dumps(cards), "tokens": 15,
+              cancel=None, timeout=None, model=None, effort=None: {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
 
     dlg = ai_dialog._GenerateDialog()
@@ -110,7 +110,7 @@ def test_import_enables_real_undo_action_with_the_native_shortcut(monkeypatch):
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None: {"text": json.dumps(cards), "tokens": 15,
+              cancel=None, timeout=None, model=None, effort=None: {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
 
     dlg = ai_dialog._GenerateDialog()
@@ -151,7 +151,7 @@ def test_review_row_renders_a_real_image_thumbnail(monkeypatch, tmp_path):
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None: {"text": json.dumps(cards), "tokens": 15,
+              cancel=None, timeout=None, model=None, effort=None: {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
     png = str(tmp_path / "pic.png")
     image = QImage(40, 30, QImage.Format.Format_RGB32)
@@ -203,7 +203,7 @@ def test_review_checkbox_click_updates_count_and_button_label(monkeypatch):
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None: {"text": json.dumps(cards), "tokens": 15,
+              cancel=None, timeout=None, model=None, effort=None: {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
 
     dlg = ai_dialog._GenerateDialog()
@@ -300,7 +300,7 @@ def test_completion_timer_exception_shows_dialog_and_recovers_to_input(monkeypat
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None: {"text": "[]", "tokens": 1, "duration_s": 0.1})
+              cancel=None, timeout=None, model=None, effort=None: {"text": "[]", "tokens": 1, "duration_s": 0.1})
 
     def boom(*a, **k):
         raise RuntimeError("boom in completion path")
@@ -349,6 +349,65 @@ def test_mode_radios_render_the_backends_own_text(monkeypatch):
     assert dlg.quick_radio.text() == "Quick draft"
     assert dlg.thorough_hint.text() == modes["thorough"]
     assert dlg.quick_hint.text() == modes["quick"]
+
+
+def test_backend_row_shows_editable_model_and_effort_for_claude(monkeypatch):
+    """Model/Effort honesty pattern (item A): claude has a verified --model and
+    --effort flag, so it gets live, editable controls, pre-filled with the
+    add-on's own default (sonnet/medium), not left blank."""
+    harness.bootstrap()
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    harness.app().processEvents()
+    assert dlg.model_combo.isVisible() is True
+    assert dlg.model_readonly.isVisible() is False
+    assert dlg.model_combo.isEditable() is True
+    assert dlg.model_combo.currentText() == "sonnet"
+    assert dlg.effort_combo.isVisible() is True
+    assert dlg.effort_combo.currentData() == ""   # "Default (medium)", not an override
+
+
+def test_backend_row_shows_read_only_model_for_agy_and_hides_effort(monkeypatch):
+    """agy has no verified way to honor a model or effort choice in headless
+    mode, so it must not offer a control that lies about being respected."""
+    harness.bootstrap()
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "agy" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    harness.app().processEvents()
+    assert dlg.session.backend == "agy"
+    assert dlg.model_combo.isVisible() is False
+    assert dlg.model_readonly.isVisible() is True
+    assert "Flash" in dlg.model_readonly.text()
+    assert dlg.effort_combo.isVisible() is False
+
+
+def test_changing_model_and_effort_persists_to_config(monkeypatch):
+    from aqt import mw
+    harness.bootstrap()
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    dlg.model_combo.setEditText("opus")
+    idx = dlg.effort_combo.findData("high")
+    dlg.effort_combo.setCurrentIndex(idx)
+    conf = mw.addonManager.getConfig("internpearls")
+    assert conf["ai_model"] == "opus"
+    assert conf["ai_effort"] == "high"
+    assert dlg.session.ai_model == "opus"
+    assert dlg.session.ai_effort == "high"
 
 
 def test_input_page_gates_note_types_against_real_checkboxes(monkeypatch):

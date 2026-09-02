@@ -132,7 +132,7 @@ def test_setup_test_connection_reports_working(anki, monkeypatch):
     monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs: ([sys.executable, FAKE, "badjson"], True))
+        lambda kind, path, mode, scratch, imgs, model="", effort="": ([sys.executable, FAKE, "badjson"], True))
     dlg = ai_dialog._GenerateDialog()
     assert dlg.test_buttons["claude"].isEnabled()
     dlg._test_setup_connection("claude")
@@ -153,7 +153,7 @@ def test_recheck_mid_test_connection_does_not_reenable_or_double_run(anki, monke
     monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs: ([sys.executable, FAKE, "badjson"], True))
+        lambda kind, path, mode, scratch, imgs, model="", effort="": ([sys.executable, FAKE, "badjson"], True))
     dlg = ai_dialog._GenerateDialog()
     dlg._test_setup_connection("claude")
     assert not dlg.test_buttons["claude"].isEnabled()
@@ -179,7 +179,7 @@ def test_setup_test_connection_not_signed_in_shows_readable_message(anki, monkey
     monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs:
+        lambda kind, path, mode, scratch, imgs, model="", effort="":
             ([sys.executable, FAKE, "not_signed_in"], True))
     dlg = ai_dialog._GenerateDialog()
     dlg._test_setup_connection("claude")
@@ -234,7 +234,7 @@ def _ready_dialog(anki, monkeypatch, cli_mode="ok"):
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs:
+        lambda kind, path, mode, scratch, imgs, model="", effort="":
             ([sys.executable, FAKE, cli_mode], True))
     dlg = ai_dialog._GenerateDialog()
     dlg.source_box.setPlainText("LAST toxicity source text")
@@ -926,7 +926,7 @@ def test_revision_with_different_card_count_does_not_claim_per_card_updates(anki
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     calls = []
 
-    def build_argv(kind, path, mode, scratch, imgs):
+    def build_argv(kind, path, mode, scratch, imgs, model="", effort=""):
         # First call (the initial draft) returns one card; the "revision"
         # comes back with two -- the shape mismatch nothing here can prevent.
         calls.append(1)
@@ -966,7 +966,7 @@ def _revisable_dialog(anki, monkeypatch, cli_mode_box):
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs:
+        lambda kind, path, mode, scratch, imgs, model="", effort="":
             ([sys.executable, FAKE, cli_mode_box[0]], True))
     dlg = ai_dialog._GenerateDialog()
     dlg.source_box.setPlainText("LAST toxicity source text")
