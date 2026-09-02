@@ -463,10 +463,19 @@ def load_bundled_skill():
         return fh.read()
 
 
-def active_skills(deck_skill):
+USER_SKILL_MAX_CHARS = 20000
+
+
+def active_skills(deck_skill, user_skill=""):
+    """Bundled first, then a consented deck skill, then the learner's own
+    rules. The order is the cache-friendly stable prefix: the part that
+    changes least goes first."""
     skills = [load_bundled_skill()]
     if deck_skill and deck_skill.get("enabled") and deck_skill.get("text"):
         skills.append(deck_skill["text"])
+    user = (user_skill or "").strip()
+    if user:
+        skills.append(user)
     return skills
 
 
