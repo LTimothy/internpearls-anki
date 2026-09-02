@@ -522,3 +522,29 @@ def test_readable_cli_error_falls_back_to_trimmed_first_line():
 
 def test_readable_cli_error_handles_empty_input():
     assert ai_cli._readable_cli_error("") == "no output from the assistant"
+
+
+def test_detect_backends_skips_disabled_and_honours_preference(monkeypatch):
+    from internpearls import ai_cli
+    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": f"/bin/{kind}")
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "1.0"})
+    cfg = {"ai_backend": "codex",
+           "ai_backend_enabled": {"claude": True, "codex": True, "agy": False},
+           "ai_cli_path": {"claude": "", "codex": "", "agy": ""}}
+    res = ai_cli.detect_backends(cfg)
+    assert res["chosen"] == "codex"
+    assert res["backends"]["agy"]["path"] is None and res["backends"]["agy"]["enabled"] is False
+    cfg["ai_backend_enabled"]["codex"] = False
+    assert ai_cli.detect_backends(cfg)["chosen"] == "claude"
+
+
+def test_detect_backends_uses_per_backend_override(monkeypatch):
+    from internpearls import ai_cli
+    seen = {}
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": seen.setdefault(kind, override) or None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "x"})
+    cfg = {"ai_backend": "", "ai_backend_enabled": {"claude": True, "codex": True, "agy": True},
+           "ai_cli_path": {"claude": "/opt/claude", "codex": "", "agy": ""}}
+    ai_cli.detect_backends(cfg)
+    assert seen["claude"] == "/opt/claude" and seen["codex"] == ""

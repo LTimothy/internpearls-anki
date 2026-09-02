@@ -36,11 +36,11 @@ def test_setup_page_shown_when_no_backend(anki, monkeypatch):
     monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
     dlg = ai_dialog._GenerateDialog()
     assert dlg.stack.currentWidget() is dlg.setup_page
-    # every backend's row names it and states its own safety plainly
-    for kind, meta in ai_cli.BACKENDS.items():
-        text = dlg.setup_rows[kind].text()
-        assert meta["label"] in text
-        assert meta["safety"] in text
+    # No backend, no per-backend rows here anymore: just the entry point into
+    # the AI Backends window (see tests/test_ai_setup.py for those rows) and
+    # a status line saying nothing was found yet.
+    assert dlg.configure_btn.text() == "Configure AI Backends"
+    assert "No enabled assistant detected" in dlg.setup_status.text()
 
 
 def test_setup_page_has_a_close_button(anki, monkeypatch):
@@ -108,7 +108,22 @@ def test_input_page_shown_when_backend_found(anki, monkeypatch):
     assert dlg.generate_btn.isEnabled()
 
 
-# === I7: Test connection ====================================================
+def test_input_page_shows_a_change_link_and_no_model_combo(anki, monkeypatch):
+    # The wizard no longer carries the Model/Effort controls itself (see
+    # internpearls/ai_setup.py): the input page shows a one-line summary and
+    # a Change link that opens the AI Backends window instead.
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    assert dlg.change_link.text() == "Change"
+    assert dlg.backend_row.text() == "Backend: Claude Code, sonnet, medium effort"
+    assert not hasattr(dlg, "model_combo")
+
+
+# === I7: Test connection (input page's own single-backend button) =========
 
 def _drain_conn_test(dlg, timeout=15):
     """Test helper mirroring _wait_for_worker: joins the background thread a
@@ -119,92 +134,11 @@ def _drain_conn_test(dlg, timeout=15):
     timer.fire()
 
 
-def test_setup_test_connection_button_disabled_until_a_cli_is_found(anki, monkeypatch):
-    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
-    dlg = ai_dialog._GenerateDialog()
-    assert not dlg.test_buttons["claude"].isEnabled()
-
-
-def test_setup_test_connection_reports_working(anki, monkeypatch):
-    monkeypatch.setattr(
-        ai_cli, "find_cli",
-        lambda kind, override="": sys.executable if kind == "claude" else None)
-    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    monkeypatch.setattr(
-        ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs, model="", effort="": ([sys.executable, FAKE, "badjson"], True))
-    dlg = ai_dialog._GenerateDialog()
-    assert dlg.test_buttons["claude"].isEnabled()
-    dlg._test_setup_connection("claude")
-    assert not dlg.test_buttons["claude"].isEnabled()   # disabled while the test runs
-    _drain_conn_test(dlg)
-    assert "working" in dlg.test_status["claude"].text().lower()
-    assert dlg.test_buttons["claude"].isEnabled()        # re-enabled once it's done
-
-
-def test_recheck_mid_test_connection_does_not_reenable_or_double_run(anki, monkeypatch):
-    # Minor fix: Re-check used to unconditionally reset every test button/status,
-    # so pressing it while a Test connection run was in flight re-enabled that
-    # button and cleared its "Testing connection..." text: a second click could
-    # then start a concurrent test racing the first to write the same label.
-    monkeypatch.setattr(
-        ai_cli, "find_cli",
-        lambda kind, override="": sys.executable if kind == "claude" else None)
-    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    monkeypatch.setattr(
-        ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs, model="", effort="": ([sys.executable, FAKE, "badjson"], True))
-    dlg = ai_dialog._GenerateDialog()
-    dlg._test_setup_connection("claude")
-    assert not dlg.test_buttons["claude"].isEnabled()
-    status_mid_test = dlg.test_status["claude"].text()
-    n_refs = len(dlg._conn_test_refs)
-
-    dlg._detect(config._cfg())   # simulates a Re-check click mid-test
-    assert not dlg.test_buttons["claude"].isEnabled()          # still disabled
-    assert dlg.test_status["claude"].text() == status_mid_test  # not wiped
-
-    dlg._test_setup_connection("claude")   # a second click while still running
-    assert len(dlg._conn_test_refs) == n_refs   # no second test was started
-
-    _drain_conn_test(dlg)
-    assert "working" in dlg.test_status["claude"].text().lower()
-    assert dlg.test_buttons["claude"].isEnabled()
-
-
-def test_setup_test_connection_not_signed_in_shows_readable_message(anki, monkeypatch):
-    monkeypatch.setattr(
-        ai_cli, "find_cli",
-        lambda kind, override="": sys.executable if kind == "claude" else None)
-    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    monkeypatch.setattr(
-        ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs, model="", effort="":
-            ([sys.executable, FAKE, "not_signed_in"], True))
-    dlg = ai_dialog._GenerateDialog()
-    dlg._test_setup_connection("claude")
-    _drain_conn_test(dlg)
-    text = dlg.test_status["claude"].text().lower()
-    assert "not working" in text and "sign in" in text
-    assert "traceback" not in text and "run `claude login`" not in text  # not raw stderr
-
-
 def test_input_page_test_connection_button_works(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="badjson")
     dlg._test_backend_connection()
     _drain_conn_test(dlg)
     assert "working" in dlg.backend_test_status.text().lower()
-
-
-def test_detect_status_reads_as_one_of_the_readmes_three_states(anki, monkeypatch):
-    # I7: the row text must say something semantically matching the README's
-    # three states, not render --version's raw output as if it were one.
-    monkeypatch.setattr(
-        ai_cli, "find_cli",
-        lambda kind, override="": sys.executable if kind == "claude" else None)
-    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "9.9.9"})
-    dlg = ai_dialog._GenerateDialog()
-    assert "installed and working" in dlg.setup_rows["claude"].text()
 
 
 def test_mode_radio_labels_are_the_backends_own_truthful_text(anki, monkeypatch):
