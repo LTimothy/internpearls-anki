@@ -11,6 +11,7 @@ import os
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import warnings
@@ -269,3 +270,46 @@ def run_generation(kind, path, prompt, mode, scratch, image_paths=(),
     argv, _ = build_argv(kind, path, mode, scratch, list(image_paths))
     return _run_argv(argv, kind, prompt, on_event=on_event, cancel=cancel,
                      timeout=timeout or _TIMEOUTS[mode], cwd=scratch)
+
+
+_TEST_PROMPT = "Reply with exactly one word: ok"
+_AUTH_HINTS = ("not logged in", "not authenticated", "unauthoriz", "auth error",
+              "please sign in", "please log in", "log in with", "no credentials",
+              "authentication required", "run `claude login`", "run `codex login`")
+
+
+def _readable_cli_error(raw):
+    """Turn a CLI's raw stderr into one short, human sentence. Never shown
+    verbatim: a not-signed-in CLI's stderr is often a multi-line stack of its
+    own auth-library noise, which is exactly what a user waiting on "Test
+    connection" should not have to parse to learn "go sign in"."""
+    text = (raw or "").strip()
+    low = text.lower()
+    if any(h in low for h in _AUTH_HINTS):
+        return "not signed in -- run it once in a terminal and sign in there"
+    first_line = text.splitlines()[0] if text else "no output from the assistant"
+    return first_line[:200]
+
+
+def test_connection(kind, path, timeout=45):
+    """Run a trivial prompt through the real backend and report whether it
+    actually works, not just whether the binary executes (that's probe()'s
+    job, and --version succeeding is not proof of a working, signed-in
+    backend -- a CLI that has never been signed into still answers
+    --version). Costs one real, billed model turn, so callers must only run
+    this on demand, never automatically.
+
+    Returns {"state": "working"|"not_working", "detail": <short message>}.
+    Never raises: a backend that can't even start comes back as
+    "not_working" with its own readable detail, same as an auth failure.
+    """
+    scratch = tempfile.mkdtemp(prefix="ip-aigen-test-")
+    try:
+        run_generation(kind, path, _TEST_PROMPT, "quick", scratch, timeout=timeout)
+        return {"state": "working", "detail": "connected and responding"}
+    except GenerationError as e:
+        return {"state": "not_working", "detail": _readable_cli_error(str(e))}
+    except Exception as e:
+        return {"state": "not_working", "detail": _readable_cli_error(str(e))}
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
