@@ -76,7 +76,7 @@ def test_real_menu_structure():
         "Backup full collection", "Restore full collection",
         "Check for add-on updates"]
     exp_labels = [n["label"] for n in submenus["Experimental"]["items"] if n["t"] == "item"]
-    assert exp_labels == ["Generate Cards (AI)", "AI Backends", "Night Mode Dimming"]
+    assert exp_labels == ["Generate Cards (AI)", "Night Mode Dimming"]
     # primary items above the first separator, Settings/About below the last
     assert tree[2]["t"] == "sep" and tree[-3]["t"] == "sep"
 

@@ -826,7 +826,7 @@ def _scene_ai_setup(mock, opts):
 
 def _scene_ai_backends(mock, opts):
     """The AI Backends window on its own, reached directly rather than through
-    the wizard's Open AI Backends button: one row per assistant, then the
+    the wizard's own Setup link: one row per assistant, then the
     settings panel for the preferred one.
 
     `found=1` detects every backend, which is the taller of the two states the
