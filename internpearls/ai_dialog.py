@@ -654,7 +654,14 @@ class _GenerateDialog(QDialog):
             return _skills_html(parts)
 
         if not deck:
-            _info(_body(deck))
+            # The plain QMessageBox _info opens has no scroll area, so long text
+            # just makes the box taller -- with the bundled skill's own 48 lines
+            # of prose, that box outgrew an 891px screen and left its own Close
+            # button unreachable. _ask_scrollable's fixed-height viewport with the
+            # button pinned outside it is what the deck-skill branch below
+            # already uses; this is that same fix for the common (no deck skill
+            # installed) case.
+            _ask_scrollable(_body(deck), yes_label="Close", no_label=None)
             return
 
         def _label_for(d):

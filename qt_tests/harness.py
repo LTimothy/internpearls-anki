@@ -892,6 +892,24 @@ def _scene_ai_review(mock, opts):
     return _open
 
 
+def _scene_ai_view_skills(mock, opts):
+    """View skills, no deck skill installed -- every install whose source
+    hasn't shipped a deck_skill.json, which is the common case. Renders the
+    real bundled skill text (48 lines of prose), not a placeholder: that's
+    what used to outgrow an 891px screen through a bare QMessageBox with no
+    scroll area, leaving its own Close button unreachable. Never calls
+    dlg.exec() on the wizard itself, only on the nested confirmation
+    _view_skills() opens, which is the one this scene exists to measure.
+    """
+    from internpearls import ai_dialog
+    _ai_backend_available()
+
+    def _open():
+        dlg = ai_dialog._GenerateDialog()
+        dlg._view_skills()
+    return _open
+
+
 SCENES = {
     "digest": (_scene_digest, "the flagged-card feedback digest"),
     "settings": (_scene_settings, "the Settings dialog"),
@@ -922,6 +940,8 @@ SCENES = {
     "ai-progress": (_scene_ai_progress, "the AI wizard's progress page, mid-run"),
     "ai-review": (_scene_ai_review,
                  "the AI wizard's review page (count=N for a full-size draft)"),
+    "ai-view-skills": (_scene_ai_view_skills,
+                       "View skills with no deck skill installed (real bundled text)"),
 }
 
 
