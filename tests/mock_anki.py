@@ -1110,6 +1110,28 @@ class QRadioButton(QWidget):
                 "checked": self._checked}
 
 
+class QButtonGroup(QWidget):
+    """Just enough to make a set of radio buttons mutually exclusive and fire
+    buttonToggled the way real QButtonGroup does when a member's checked state
+    changes."""
+
+    def __init__(self, *a, **k):
+        super().__init__()
+        self._buttons = []
+        self.buttonToggled = Signal()
+
+    def addButton(self, button):
+        self._buttons.append(button)
+        button.toggled.connect(lambda checked, b=button: self._on_toggled(b, checked))
+
+    def _on_toggled(self, button, checked):
+        if checked:
+            for other in self._buttons:
+                if other is not button and other.isChecked():
+                    other.setChecked(False)
+        self.buttonToggled.emit(button, checked)
+
+
 class QComboBox(QWidget):
     def __init__(self, *a, **k):
         super().__init__()
@@ -1530,7 +1552,7 @@ def _apply_events(events):
         if w is None:
             continue
         if "value" in ev:
-            if isinstance(w, QCheckBox):
+            if isinstance(w, (QCheckBox, QRadioButton)):
                 w.setChecked(ev["value"])
             elif isinstance(w, QLineEdit):
                 w.setText(str(ev["value"]))
@@ -1875,7 +1897,8 @@ def install():
 
     aqt = types.ModuleType("aqt")
     aqt.mw = mw
-    aqt.gui_hooks = types.SimpleNamespace(main_window_did_init=[], card_will_show=[])
+    aqt.gui_hooks = types.SimpleNamespace(main_window_did_init=[], card_will_show=[],
+                                          webview_will_set_content=[])
 
     aqt_qt = types.ModuleType("aqt.qt")
 
@@ -2090,6 +2113,7 @@ def install():
                       ("QPushButton", QPushButton), ("QAction", QAction),
                       ("QMenu", QMenu), ("QCheckBox", QCheckBox),
                       ("QComboBox", QComboBox), ("QRadioButton", QRadioButton),
+                      ("QButtonGroup", QButtonGroup),
                       ("QStackedWidget", QStackedWidget),
                       ("QDialog", QDialog), ("QDialogButtonBox", QDialogButtonBox),
                       ("QFrame", QFrame), ("QHBoxLayout", QHBoxLayout),
