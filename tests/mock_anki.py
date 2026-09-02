@@ -1897,6 +1897,16 @@ def install():
             gui.clipboard.append(text)
 
     class _QApplication:
+        # Every test here runs "inside Anki", where a QApplication always
+        # exists -- so instance() is live by default. A test that wants to
+        # exercise the no-app fallback path (ai_dialog._undo_shortcut) can
+        # monkeypatch this to None for the duration of the call.
+        _instance = object()
+
+        @staticmethod
+        def instance():
+            return _QApplication._instance
+
         @staticmethod
         def setOverrideCursor(cursor):
             pass

@@ -391,6 +391,21 @@ def test_undo_shortcut_asks_qt_for_the_native_undo_key_sequence(anki):
     assert ai_dialog._undo_shortcut() == expected
 
 
+def test_undo_shortcut_survives_no_live_qapplication(monkeypatch):
+    """Regression guard for a real SIGSEGV: real Qt's QKeySequence(StandardKey)
+    consults the platform theme, which is a null pointer with no live
+    QApplication, and that dereference is not a catchable Python exception --
+    it kills the whole interpreter. This deliberately does NOT use the `anki`
+    fixture, so nothing before this call has an app instance either, matching
+    the plain-script/no-Qt-app case _undo_shortcut() must survive. It must
+    return a non-empty string, never touch QKeySequence.StandardKey, and
+    above all never crash the test runner."""
+    from aqt.qt import QApplication
+    monkeypatch.setattr(QApplication, "_instance", None)
+    result = ai_dialog._undo_shortcut()
+    assert isinstance(result, str) and result
+
+
 # -- a successful import notifies the UI: undo becomes reachable, the deck list
 # refreshes -- see ai_dialog._do_import and mock_anki.MockMW.update_undo_actions.
 

@@ -3,6 +3,16 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.53.5
+
+Fixed a crash risk in the "Generate cards with AI" wizard's undo-shortcut helper.
+Asking Qt to render the standard Undo key sequence with no live application running
+dereferences a null pointer inside Qt itself, which is not a catchable Python
+exception -- it hard-crashes the whole process. That path is unreachable in the
+running add-on, where Anki's own app is always live, but is now guarded either way:
+the helper checks for a live application first and falls back to a plain literal
+when there isn't one.
+
 ## v0.53.4
 
 Four more defects in "Generate cards with AI", again found only by running the add-on
