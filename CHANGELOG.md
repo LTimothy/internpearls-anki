@@ -12,7 +12,9 @@ restricted it is, and a link to its own install guide. The preferred backend is 
 as such and the others offer a Use link; an ignore link sets one aside and reads use
 again afterwards. One settings panel below the rows covers the preferred backend only,
 since that is the one a run will use: its executable path override, its default model
-and effort, and a Test connection button that runs one real, trivial prompt. The model
+and effort, and a Test connection button that runs one real, trivial prompt. So to set a
+path for an assistant that is not found yet, click its Use link first, then fill in the
+path in the panel that follows it. The model
 and effort controls moved here from the "Generate cards with AI" wizard, whose input
 page now shows a one-line summary of the backend in use with an AI Backends link beside
 it, and whose first-run page is a single Open AI Backends button. Defaults for Claude
