@@ -261,3 +261,63 @@ def test_agy_argv_is_mode_invariant_so_quick_must_not_claim_no_web_access():
     quick_text = ai_cli.BACKENDS["agy"]["modes"]["quick"].lower()
     assert "no web access" not in quick_text
     assert "no tool" not in quick_text
+
+
+# -- I7: Test connection ------------------------------------------------------
+
+def _stub_build_argv(monkeypatch, mode_arg):
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs: (FAKE + [mode_arg], True))
+
+
+def test_connection_working_for_a_real_reply(monkeypatch):
+    # "badjson" is just a fake CLI that exits 0 with a non-empty result text --
+    # test_connection only needs proof the backend answered, not that the reply
+    # happens to be card JSON (the trivial test prompt never asks for that).
+    _stub_build_argv(monkeypatch, "badjson")
+    res = ai_cli.test_connection("claude", "/usr/bin/claude")
+    assert res["state"] == "working"
+
+
+def test_connection_not_signed_in_gives_a_readable_message_not_raw_stderr(monkeypatch):
+    _stub_build_argv(monkeypatch, "not_signed_in")
+    res = ai_cli.test_connection("claude", "/usr/bin/claude")
+    assert res["state"] == "not_working"
+    assert "sign in" in res["detail"].lower()
+    assert "Run `claude login`" not in res["detail"]   # not the raw stderr
+
+
+def test_connection_other_failure_falls_back_to_first_stderr_line(monkeypatch):
+    _stub_build_argv(monkeypatch, "fail")
+    res = ai_cli.test_connection("claude", "/usr/bin/claude")
+    assert res["state"] == "not_working"
+    assert res["detail"] == "boom"
+
+
+def test_connection_cleans_up_its_scratch_dir(monkeypatch, tmp_path):
+    seen = {}
+    real_mkdtemp = ai_cli.tempfile.mkdtemp
+
+    def spy_mkdtemp(*a, **kw):
+        p = real_mkdtemp(*a, **kw)
+        seen["path"] = p
+        return p
+
+    monkeypatch.setattr(ai_cli.tempfile, "mkdtemp", spy_mkdtemp)
+    _stub_build_argv(monkeypatch, "badjson")
+    ai_cli.test_connection("claude", "/usr/bin/claude")
+    assert seen["path"] and not os.path.exists(seen["path"])
+
+
+def test_readable_cli_error_recognizes_common_auth_phrasing():
+    assert "sign in" in ai_cli._readable_cli_error(
+        "Error: not authenticated, please log in").lower()
+
+
+def test_readable_cli_error_falls_back_to_trimmed_first_line():
+    assert ai_cli._readable_cli_error("boom\nsome traceback\nmore junk") == "boom"
+
+
+def test_readable_cli_error_handles_empty_input():
+    assert ai_cli._readable_cli_error("") == "no output from the assistant"

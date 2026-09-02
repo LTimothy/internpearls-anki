@@ -115,19 +115,29 @@ def _norm_front(text):
     return " ".join(_plain(text).lower().split())
 
 
-def mechanical_checks(cards, existing_fronts):
-    """Check drafted cards for duplicates, cloze syntax, and length. existing_fronts
-    is {normalized front: original front} for her collection, built collection-side
-    with the same _norm_front over _her_front_to_guid keys; {} skips duplicate
-    detection (throttled/offline reads must never block generation). Returns one
-    list of check-result dicts (code, level, message, optional "existing") per card.
+def mechanical_checks(cards, existing_fronts, image_errors=None):
+    """Check drafted cards for duplicates, cloze syntax, length, and image
+    resolution failures. existing_fronts is {normalized front: original front}
+    for her collection, built collection-side with the same _norm_front over
+    _her_front_to_guid keys; {} skips duplicate detection (throttled/offline
+    reads must never block generation). image_errors is {card index: [message,
+    ...]}, one entry per image that failed to resolve (download, decode, or
+    read) -- computed by the caller (ai_dialog, which owns the network/disk
+    access this module deliberately has none of) and passed in as plain data,
+    so this stays a pure function. Returns one list of check-result dicts
+    (code, level, message, optional "existing") per card.
     """
+    image_errors = image_errors or {}
     out = []
-    for card in cards:
+    for i, card in enumerate(cards):
         entries = []
         ntype, fields = card["note_type"], card["fields"]
         primary = PRIMARY_FIELD.get(ntype, next(iter(fields)))
         norm = _norm_front(fields.get(primary, ""))
+
+        for msg in image_errors.get(i, []):
+            entries.append({"code": "image", "level": "block",
+                            "message": f"image could not be used: {msg}"})
 
         if norm and norm in existing_fronts:
             entries.append({"code": "duplicate", "level": "block",
@@ -323,8 +333,31 @@ def parse_stream_event(kind, line):
     return None
 
 
+def _usage_runs(reg, kind):
+    """Recorded usage rows for one backend, tolerating a hand-edited or corrupt
+    ai_usage.json the same way _duration_runs does: a row that isn't a dict, or
+    whose "ts"/"tokens" isn't a plain number, is dropped rather than raising.
+    Without this, a single bad entry raised out of usage_line, called from
+    dialog construction, so the wizard would fail to even open."""
+    runs = reg.get(kind)
+    if not isinstance(runs, list):
+        return []
+    out = []
+    for r in runs:
+        if not isinstance(r, dict):
+            continue
+        ts = r.get("ts")
+        if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+            continue
+        tokens = r.get("tokens", 0)
+        if not isinstance(tokens, (int, float)) or isinstance(tokens, bool):
+            tokens = 0
+        out.append({"ts": float(ts), "tokens": int(tokens)})
+    return out
+
+
 def record_usage(reg, kind, tokens, now):
-    runs = [r for r in reg.get(kind, []) if now - r["ts"] <= _WINDOW_S]
+    runs = [r for r in _usage_runs(reg, kind) if now - r["ts"] <= _WINDOW_S]
     runs.append({"ts": now, "tokens": int(tokens)})
     reg = dict(reg)
     reg[kind] = runs
@@ -332,7 +365,7 @@ def record_usage(reg, kind, tokens, now):
 
 
 def usage_line(reg, kind, now, free_tier=False):
-    runs = [r for r in reg.get(kind, []) if now - r["ts"] <= _WINDOW_S]
+    runs = [r for r in _usage_runs(reg, kind) if now - r["ts"] <= _WINDOW_S]
     today = [r for r in runs if now - r["ts"] <= 86400]
     tokens = sum(r["tokens"] for r in today)
     line = (f"Today via this add-on: {len(today)} runs, "

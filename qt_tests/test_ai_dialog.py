@@ -52,6 +52,54 @@ def test_wizard_renders_all_pages(monkeypatch):
     assert dlg.windowTitle() == "Intern Pearls: Generate cards with AI"
 
 
+def test_review_row_renders_a_real_image_thumbnail(monkeypatch, tmp_path):
+    """I2, against a real QImage/rich-text QLabel: a card with a web image
+    resolves off the UI thread and the review row actually paints a
+    thumbnail (not just a text placeholder) plus the source host, and the
+    card starts unchecked."""
+    harness.bootstrap()
+    app = harness.app()
+    from internpearls import ai_dialog as ad
+    from aqt.qt import QImage, QColor
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    cards = [{"note_type": "Study Deck - Basic",
+             "fields": {"Front": "q", "Back": "a"},
+             "tags": [], "images": [{"source": "url:https://example.com/pic.png",
+                                     "alt": "", "attribution": ""}],
+             "rationale": "r"}]
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
+              cancel=None, timeout=None: {"text": json.dumps(cards), "tokens": 15,
+                                          "duration_s": 12.3})
+    png = str(tmp_path / "pic.png")
+    image = QImage(40, 30, QImage.Format.Format_RGB32)
+    image.fill(QColor("#ff00ff"))
+    image.save(png, "PNG")
+    png_bytes = open(png, "rb").read()
+    monkeypatch.setattr(ad, "fetch_card_image", lambda url: (png_bytes, "png"))
+
+    dlg = ad._GenerateDialog()
+    dlg.source_box.setPlainText("Regional block landmarks and needle depths")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    app.processEvents()
+
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert dlg.session.included == [False]   # I2: starts excluded until seen
+    row = dlg.cards_lay.itemAt(0).widget()
+    label = row.layout().itemAt(1).widget()
+    label.repaint()
+    text = label.text()
+    assert "<img" in text
+    assert "example.com" in text
+
+
 def test_mode_radios_render_the_backends_own_text(monkeypatch):
     """C1, confirmed by rendering: the mode radios must show the found
     backend's own truthful text, not one label shared by all three."""
