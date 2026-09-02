@@ -99,7 +99,7 @@ def _menu():
     # yet trusted enough to sit at the top level or inside Advanced's own established
     # groups.
     exp = menu.addMenu("Experimental")
-    add(exp, "Generate cards (AI)", generate_cards)
+    add(exp, "Generate Cards (AI)", generate_cards)
     add(exp, "Night Mode Dimming", open_night_mode_dimming)
     menu.addSeparator()
     add(menu, "Settings", open_settings)
