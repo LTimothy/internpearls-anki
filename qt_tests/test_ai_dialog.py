@@ -332,8 +332,11 @@ def test_completion_timer_exception_shows_dialog_and_recovers_to_input(monkeypat
 
 
 def test_mode_radios_render_the_backends_own_text(monkeypatch):
-    """C1, confirmed by rendering: the mode radios must show the found
-    backend's own truthful text, not one label shared by all three."""
+    """C1, confirmed by rendering: the mode hints must show the found backend's
+    own truthful text, not one label shared by all three. The radios
+    themselves carry only the short, stable name (item 8's wrap fix); the
+    per-backend sentence is what varies by backend and lives in the hint
+    underneath, see _refresh_backend_row."""
     harness.bootstrap()
     monkeypatch.setattr(ai_cli, "find_cli",
                         lambda kind, override="": "/bin/echo"
@@ -342,8 +345,10 @@ def test_mode_radios_render_the_backends_own_text(monkeypatch):
                         lambda kind, path: {"ok": True, "detail": "v1"})
     dlg = ai_dialog._GenerateDialog()
     modes = ai_cli.BACKENDS["claude"]["modes"]
-    assert dlg.thorough_radio.text() == modes["thorough"]
-    assert dlg.quick_radio.text() == modes["quick"]
+    assert dlg.thorough_radio.text() == "Thorough"
+    assert dlg.quick_radio.text() == "Quick draft"
+    assert dlg.thorough_hint.text() == modes["thorough"]
+    assert dlg.quick_hint.text() == modes["quick"]
 
 
 def test_input_page_gates_note_types_against_real_checkboxes(monkeypatch):
