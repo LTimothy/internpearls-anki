@@ -338,9 +338,12 @@ class _GenerateDialog(QDialog):
             test_row.addWidget(btn)
             test_row.addWidget(status, 1)
             lay.addLayout(test_row)
-        self.recheck_btn = QPushButton("Re-check")
-        self.recheck_btn.clicked.connect(lambda: self._detect(_cfg()))
-        lay.addWidget(self.recheck_btn)
+        recheck_row = QHBoxLayout()
+        self.recheck_btn = link_button("Re-check", on_click=lambda: self._detect(_cfg()))
+        self.setup_status = hint_label("")
+        recheck_row.addWidget(self.recheck_btn)
+        recheck_row.addWidget(self.setup_status, 1)
+        lay.addLayout(recheck_row)
         lay.addWidget(hint_label(
             "Install one of these, run it once in a terminal, and sign in "
             "there yourself. Then come back and re-check. \"Test connection\" "
@@ -348,12 +351,10 @@ class _GenerateDialog(QDialog):
             "can actually generate, not just that the binary runs -- unlike "
             "the status above, which is a cheap, free check."))
         lay.addStretch()
-        close_row = QHBoxLayout()
-        close_row.addStretch(1)
-        self.close_btn = QPushButton("Close")
-        self.close_btn.clicked.connect(self.reject)
-        close_row.addWidget(self.close_btn)
-        lay.addLayout(close_row)
+        bb = QDialogButtonBox()
+        self.close_btn = bb.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
         return page
 
     def _detect(self, cfg):
@@ -394,6 +395,9 @@ class _GenerateDialog(QDialog):
                 f"{meta['safety']}. {imgs}.")
             if ok and (s.backend is None or preferred == kind):
                 s.backend, s.cli_path = kind, path
+        self.setup_status.setText(
+            f"Ready: {ai_cli.BACKENDS[s.backend]['label']} detected." if s.backend
+            else "No assistant detected yet.")
         self.stack.setCurrentWidget(
             self.input_page if s.backend else self.setup_page)
         if s.backend:
@@ -558,16 +562,15 @@ class _GenerateDialog(QDialog):
         lay.addWidget(self.usage_row)
 
         lay.addStretch()
-        btn_row = QHBoxLayout()
-        cancel = QPushButton("Cancel")
-        cancel.clicked.connect(self.reject)
-        self.generate_btn = QPushButton("Generate")
+        bb = QDialogButtonBox()
+        bb.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
+        self.generate_btn = bb.addButton(
+            "Generate", QDialogButtonBox.ButtonRole.AcceptRole)
         self.generate_btn.setEnabled(False)
-        self.generate_btn.clicked.connect(lambda: self._guard(self._start_generation))
-        btn_row.addStretch(1)
-        btn_row.addWidget(cancel)
-        btn_row.addWidget(self.generate_btn)
-        lay.addLayout(btn_row)
+        self.generate_btn.setDefault(True)
+        bb.rejected.connect(self.reject)
+        bb.accepted.connect(lambda: self._guard(self._start_generation))
+        lay.addWidget(bb)
         return page
 
     def _source_changed(self):
@@ -677,9 +680,15 @@ class _GenerateDialog(QDialog):
         lay.addWidget(self.phase_label)
         lay.addWidget(self.elapsed_label)
         lay.addStretch()
-        cancel = QPushButton("Cancel")
+        bb = QDialogButtonBox()
+        cancel = bb.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
+        # Not bb.rejected -> self.reject: that would route Cancel through the
+        # "discard the drafted cards" confirm reject() opens for the review page,
+        # which this run in flight isn't on. This only stops the run; Escape and
+        # the window's close box still go through reject()'s own generation-in-
+        # progress confirm.
         cancel.clicked.connect(self._cancel_generation)
-        lay.addWidget(cancel)
+        lay.addWidget(bb)
         return page
 
     def _start_generation(self, revision=False, extra_error=None):
@@ -1052,18 +1061,17 @@ class _GenerateDialog(QDialog):
         self.feedback_box.setPlaceholderText(
             "e.g. shorter answers, add one card on avoided drugs")
         lay.addWidget(self.feedback_box)
-        btn_row = QHBoxLayout()
-        back = QPushButton("Back")
+        bb = QDialogButtonBox()
+        back = bb.addButton("Back", QDialogButtonBox.ButtonRole.ActionRole)
         back.clicked.connect(lambda: self.stack.setCurrentWidget(self.input_page))
-        self.revise_btn = QPushButton("Revise all")
+        self.revise_btn = bb.addButton(
+            "Revise all", QDialogButtonBox.ButtonRole.ActionRole)
         self.revise_btn.clicked.connect(lambda: self._guard(self._revise_all))
-        self.import_btn = QPushButton("Import")
+        self.import_btn = bb.addButton(
+            "Import", QDialogButtonBox.ButtonRole.AcceptRole)
         self.import_btn.clicked.connect(lambda: self._guard(self._do_import))
-        btn_row.addWidget(back)
-        btn_row.addStretch(1)
-        btn_row.addWidget(self.revise_btn)
-        btn_row.addWidget(self.import_btn)
-        lay.addLayout(btn_row)
+        self.import_btn.setDefault(True)
+        lay.addWidget(bb)
         return page
 
     def _rebuild_review(self):
