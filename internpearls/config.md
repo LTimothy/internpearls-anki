@@ -92,6 +92,30 @@ An explicit path to the CLI binary for the backend named in `ai_backend`, used i
 of searching `PATH` and the usual install locations. Ignored unless `ai_backend` names
 a specific backend. Defaults to `""`.
 
+## ai_model
+
+The model to request from whichever backend the wizard is currently using, e.g.
+`sonnet` or `opus` for Claude Code, or a full model name for Codex CLI. Empty means
+"use the backend's own default": for Claude Code that default is `sonnet` (set inside
+the add-on, not this file, so an empty value here still sends an explicit, cheaper
+model rather than whatever the account's own default happens to be); for Codex CLI an
+empty value passes no `-m` flag at all, deferring entirely to Codex's own default.
+Antigravity CLI has no way to honor this (see the wizard's Model field for that
+backend), so it's ignored there regardless of what's set. Stored flat, not per backend:
+switching backends doesn't clear it, but a value that doesn't apply to the backend now
+in use is simply ignored, not carried into a request it wasn't meant for. Defaults to
+`""`. Editable from the "Generate cards with AI" wizard's backend row.
+
+## ai_effort
+
+The reasoning-effort level to request, one of `low`, `medium`, `high`, `xhigh`, `max`.
+Only Claude Code has a verified `--effort` flag, so this only ever affects that backend;
+it's hidden from the wizard and ignored entirely for Codex CLI and Antigravity CLI.
+Empty means "use the backend's own default", which for Claude Code is `medium`, chosen
+to stay smart enough for card drafting without burning a Max subscription's credits the
+way the account's own top-model default would across Thorough mode's up-to-15-turn
+loop. Defaults to `""`. Editable from the "Generate cards with AI" wizard's backend row.
+
 ## dim_images_night_mode
 
 When on, bright pictures are dimmed while Anki itself is in Night Mode, so a

@@ -123,7 +123,7 @@ def test_run_other_exception_kills_process_and_is_not_masked(monkeypatch):
 # shape matches a real vendor binary, which remains unverified.
 def test_run_generation_parses_codex_top_level_text_shape(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_cli, "build_argv",
-                        lambda kind, path, mode, scratch, imgs:
+                        lambda kind, path, mode, scratch, imgs, model="", effort="":
                             (FAKE + ["codex_top"], True))
     res = ai_cli.run_generation("codex", "/usr/bin/codex", "PROMPT", "quick",
                                 str(tmp_path))
@@ -133,7 +133,7 @@ def test_run_generation_parses_codex_top_level_text_shape(monkeypatch, tmp_path)
 
 def test_run_generation_parses_codex_nested_item_text_shape(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_cli, "build_argv",
-                        lambda kind, path, mode, scratch, imgs:
+                        lambda kind, path, mode, scratch, imgs, model="", effort="":
                             (FAKE + ["codex_nested"], True))
     res = ai_cli.run_generation("codex", "/usr/bin/codex", "PROMPT", "quick",
                                 str(tmp_path))
@@ -143,7 +143,7 @@ def test_run_generation_parses_codex_nested_item_text_shape(monkeypatch, tmp_pat
 
 def test_run_generation_parses_antigravity_result_shape(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_cli, "build_argv",
-                        lambda kind, path, mode, scratch, imgs:
+                        lambda kind, path, mode, scratch, imgs, model="", effort="":
                             (FAKE + ["agy_ok"], True))
     res = ai_cli.run_generation("agy", "/usr/bin/agy", "PROMPT", "quick",
                                 str(tmp_path))
@@ -187,6 +187,73 @@ def test_build_argv_codex_images_flag():
                                 "/tmp/s", ["/tmp/s/a.png"])
     joined = " ".join(argv)
     assert "exec" in argv and "--image" in joined and "a.png" in joined
+
+
+def test_build_argv_claude_defaults_to_sonnet_medium():
+    # The owner-chosen default: without any config override, claude must never
+    # fall through to the account's own default model (the top model for a Max
+    # subscriber), which burns credits fast across Thorough's up-to-15-turn loop.
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick", "/tmp/s", [])
+    assert "--model" in argv and argv[argv.index("--model") + 1] == "sonnet"
+    assert "--effort" in argv and argv[argv.index("--effort") + 1] == "medium"
+
+
+def test_build_argv_claude_thorough_also_defaults_to_sonnet_medium():
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "thorough", "/tmp/s", [])
+    assert argv[argv.index("--model") + 1] == "sonnet"
+    assert argv[argv.index("--effort") + 1] == "medium"
+
+
+def test_build_argv_claude_honours_config_overrides():
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick", "/tmp/s", [],
+                                model="opus", effort="high")
+    assert argv[argv.index("--model") + 1] == "opus"
+    assert argv[argv.index("--effort") + 1] == "high"
+
+
+def test_build_argv_codex_omits_model_flag_when_unset(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [])
+    assert "-m" not in argv
+
+
+def test_build_argv_codex_emits_model_flag_when_set_and_supported(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [],
+                                model="o3")
+    assert "-m" in argv and argv[argv.index("-m") + 1] == "o3"
+
+
+def test_build_argv_codex_omits_model_flag_when_unsupported(monkeypatch):
+    # An older codex without a documented -m flag must not be hard-broken by
+    # passing it anyway -- same guard mechanism as agy's --sandbox.
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: False)
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [],
+                                model="o3")
+    assert "-m" not in argv
+
+
+def test_build_argv_codex_never_gets_an_effort_flag(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [],
+                                model="o3", effort="high")
+    assert "--effort" not in argv
+
+
+def test_build_argv_agy_never_gets_a_model_or_effort_flag(monkeypatch):
+    # Model choice in agy's headless mode is an open upstream request; the
+    # default is already the cheap tier, so build_argv must never send either
+    # flag, even if a stale config value from another backend is passed in.
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [],
+                                model="whatever", effort="high")
+    joined = " ".join(argv)
+    assert "--model" not in joined and "--effort" not in joined
+
+
+def test_backends_carry_model_hint_for_the_ui():
+    for kind, info in ai_cli.BACKENDS.items():
+        assert "model_hint" in info and info["model_hint"]
 
 
 def test_image_capable_table():
@@ -311,7 +378,7 @@ def test_claude_quick_mode_text_matches_build_argv_with_attachments():
 def _stub_build_argv(monkeypatch, mode_arg):
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs: (FAKE + [mode_arg], True))
+        lambda kind, path, mode, scratch, imgs, model="", effort="": (FAKE + [mode_arg], True))
 
 
 def test_connection_working_for_a_real_reply(monkeypatch):

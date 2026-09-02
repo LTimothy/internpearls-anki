@@ -23,7 +23,7 @@ from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
                     QSpinBox, QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
-from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
+from .config import (ADDON_PACKAGE, APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
                      save_ai_usage, load_deck_skill, save_deck_skill)
 from .logic import cloze_filled_html, field_preview_html, plural
 from .net import fetch_card_image
@@ -306,6 +306,8 @@ class _Session:
         self.revision_shape_mismatch = False
         self.tokens_last_run = 0
         self.rate_limits = None
+        self.ai_model = ""    # resolved from config in __init__, see _cfg()
+        self.ai_effort = ""
 
 
 class _GenerateDialog(QDialog):
@@ -337,6 +339,13 @@ class _GenerateDialog(QDialog):
         self._testing_kinds = set()
         cfg = _cfg()
         s.deck_name = cfg["export_deck"] + "::" + ai_logic.GENERATED_DECK_LEAF
+        s.ai_model = cfg["ai_model"]
+        s.ai_effort = cfg["ai_effort"]
+        # Guards the model/effort widgets' change signals while _refresh_model_
+        # effort_controls repopulates them from session state, so that refresh
+        # doesn't read back as a user edit and re-write config with what it just
+        # loaded from config.
+        self._updating_backend_controls = False
 
         self.stack = QStackedWidget()
         lay = QVBoxLayout(self)
@@ -673,6 +682,31 @@ class _GenerateDialog(QDialog):
 
         self.backend_row = hint_label("")
         lay.addWidget(self.backend_row)
+
+        # Model/effort controls: shown per-backend honesty, not a shared UI --
+        # a backend with no verified model or effort flag doesn't get a control
+        # it can't actually honor. See _refresh_model_effort_controls.
+        self.model_label = QLabel("Model")
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_readonly = hint_label("")
+        model_row = QHBoxLayout()
+        model_row.addWidget(self.model_label)
+        model_row.addWidget(self.model_combo, 1)
+        model_row.addWidget(self.model_readonly, 1)
+        lay.addLayout(model_row)
+        self.model_combo.currentTextChanged.connect(
+            lambda text: self._guard(self._model_changed, text))
+
+        self.effort_label = QLabel("Effort")
+        self.effort_combo = QComboBox()
+        effort_row = QHBoxLayout()
+        effort_row.addWidget(self.effort_label)
+        effort_row.addWidget(self.effort_combo, 1)
+        lay.addLayout(effort_row)
+        self.effort_combo.currentIndexChanged.connect(
+            lambda _: self._guard(self._effort_changed))
+
         backend_test_row = QHBoxLayout()
         self.backend_test_btn = link_button(
             "Test connection",
@@ -715,6 +749,73 @@ class _GenerateDialog(QDialog):
         self.usage_row.setText(ai_logic.usage_line(
             reg, s.backend, now=time.time(), free_tier=(s.backend == "agy")))
         self.backend_test_status.setText("Not tested yet")
+        self._refresh_model_effort_controls()
+
+    def _refresh_model_effort_controls(self):
+        """Rebuild the Model/Effort row for the now-current backend. Honesty
+        pattern: a backend with no verified flag doesn't get a live control for
+        it -- agy's model is read-only text (there is no way to honor a choice
+        there, see ai_cli.BACKENDS["agy"]), and effort is hidden entirely for
+        any backend without a verified --effort flag (today, only claude has
+        one). Guarded by _updating_backend_controls so repopulating these
+        widgets from session/config state doesn't fire the change handlers and
+        write that same state right back as if the user had edited it."""
+        s = self.session
+        meta = ai_cli.BACKENDS[s.backend]
+        self._updating_backend_controls = True
+        try:
+            if s.backend == "agy":
+                self.model_label.setText("Model")
+                self.model_combo.setVisible(False)
+                self.model_readonly.setVisible(True)
+                self.model_readonly.setText(meta["model_hint"])
+            else:
+                self.model_readonly.setVisible(False)
+                self.model_combo.setVisible(True)
+                self.model_label.setText("Model")
+                self.model_combo.clear()
+                options = []
+                if meta["default_model"]:
+                    options.append(meta["default_model"])
+                for alias in meta.get("model_aliases", []):
+                    if alias not in options:
+                        options.append(alias)
+                self.model_combo.addItems(options)
+                self.model_combo.setToolTip(meta["model_hint"])
+                current = s.ai_model or meta["default_model"]
+                self.model_combo.setEditText(current)
+            effort_levels = meta.get("effort_levels")
+            has_effort = bool(effort_levels)
+            self.effort_label.setVisible(has_effort)
+            self.effort_combo.setVisible(has_effort)
+            if has_effort:
+                self.effort_combo.clear()
+                self.effort_combo.addItem(
+                    f"Default ({meta['default_effort']})", "")
+                for level in effort_levels:
+                    self.effort_combo.addItem(level, level)
+                idx = self.effort_combo.findData(s.ai_effort or "")
+                self.effort_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        finally:
+            self._updating_backend_controls = False
+
+    def _model_changed(self, text):
+        if self._updating_backend_controls:
+            return
+        self.session.ai_model = text.strip()
+        self._save_ai_model_effort()
+
+    def _effort_changed(self):
+        if self._updating_backend_controls:
+            return
+        self.session.ai_effort = self.effort_combo.currentData() or ""
+        self._save_ai_model_effort()
+
+    def _save_ai_model_effort(self):
+        conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
+        conf["ai_model"] = self.session.ai_model
+        conf["ai_effort"] = self.session.ai_effort
+        mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
     def _test_backend_connection(self):
         s = self.session
@@ -884,7 +985,8 @@ class _GenerateDialog(QDialog):
                 self._worker_result = ai_cli.run_generation(
                     s.backend, s.cli_path, prompt, s.mode, s.scratch,
                     image_paths=image_paths, on_event=self._events.append,
-                    cancel=self._cancel_flag.is_set)
+                    cancel=self._cancel_flag.is_set,
+                    model=s.ai_model, effort=s.ai_effort)
             except Exception as e:
                 self._worker_error = e
 
