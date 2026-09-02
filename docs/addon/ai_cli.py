@@ -24,7 +24,7 @@ from .ai_logic import parse_stream_event
 # download the add-on fetches or runs itself.
 BACKENDS = {
     "claude": {"label": "Claude Code", "exe": "claude",
-               "subscription": "Claude Pro or Max",
+               "subscription": "Claude Pro or Max subscription",
                "install_url": "https://docs.anthropic.com/en/docs/claude-code",
                "safety": "Tools fully restricted (strongest)",
                # Cheaper-but-smart default: without a model flag, claude runs the
@@ -47,7 +47,8 @@ BACKENDS = {
                            "But if you attach files, it can read the scratch copy "
                            "of exactly those files, to view them (15 to 30 s)"}},
     "codex": {"label": "Codex CLI", "exe": "codex",
-              "subscription": "ChatGPT Plus or Pro",
+              "subscription": "ChatGPT account (free tier: about 50 coding "
+                              "messages a day; more on Go, Plus, or Pro)",
               "install_url": "https://github.com/openai/codex",
               "safety": "Sandboxed read-only; no writes or network",
               # No forced default here: --model is only passed when the user sets
@@ -72,15 +73,18 @@ BACKENDS = {
             "subscription": "Google account (free tier, throttled)",
             "install_url": "https://github.com/google-antigravity/antigravity-cli",
             "safety": "Relies on the assistant's own approval defaults",
-            # Model choice in headless -p mode is an open upstream request
-            # (google-antigravity/antigravity-cli issue 83); its default is
-            # already the cheap tier (Gemini Flash, auto-selected), so build_argv
-            # never sends a model or effort flag here: there is nothing verified
-            # to send, and offering a control we cannot honor would be dishonest.
+            # agy 1.1.24 documents both --model and --effort in its own --help,
+            # and `agy models` lists the ids it accepts. There is no short alias
+            # list to close over, so Model stays free text and build_argv sends
+            # either flag only when the user set one AND supports_flag finds it
+            # in this binary's help, so an older agy is not hard-broken. Blank
+            # means agy's own default, already a cheap Flash tier.
             "default_model": "",
             "default_effort": "",
             "model_aliases": [],
-            "model_hint": "auto, Flash by default",
+            "model_hint": ('blank for agy\'s default, or an id from "agy models" '
+                           "such as gemini-3.8-flash-medium"),
+            "effort_levels": ["low", "medium", "high"],
             # agy's build_argv never restricts tools or turns by mode, so nothing
             # here enforces "no web access" even in Quick; only the prompt's
             # stated workflow differs by mode.
@@ -99,9 +103,10 @@ _COMMON_DIRS = ("/opt/homebrew/bin", "/usr/local/bin",
                 os.path.expanduser("~/.npm-global/bin"))
 _TIMEOUTS = {"quick": 120, "thorough": 360}
 _MAX_TURNS = {"quick": 1, "thorough": 15}
-# Image-input support per backend. agy's headless mode accepts text blocks
-# only (documented); flips to a live probe if Google adds media there.
-_IMAGE_CAPABLE = {"claude": True, "codex": True, "agy": False}
+# Image-input support per backend. All three read an attached image: agy does
+# it headlessly with view_file against the scratch dir build_argv passes as
+# --add-dir, verified against agy 1.1.24.
+_IMAGE_CAPABLE = {"claude": True, "codex": True, "agy": True}
 
 
 class GenerationError(RuntimeError):
@@ -231,19 +236,28 @@ def resolve_claude_effort(effort):
     return effort if effort in levels else BACKENDS["claude"]["default_effort"]
 
 
-def build_argv(kind, path, mode, scratch, image_paths, model="", effort=""):
-    """Returns (argv, prompt_via_stdin). The prompt always goes via stdin:
-    codex exec freezes reading stdin when the prompt is an argument, and one
-    consistent channel keeps the runner simple.
+# macOS caps a process's whole argument block (ARG_MAX, 1 MB in practice), and
+# agy takes the prompt as an argument rather than on stdin. A prompt anywhere
+# near this size is a pasted book, not a lecture excerpt, so refuse it with a
+# sentence rather than letting exec fail with a bare OSError.
+_MAX_ARG_PROMPT = 200000
+
+
+def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
+               prompt=""):
+    """Returns (argv, prompt_via_stdin). claude and codex read the prompt on
+    stdin: codex exec freezes reading stdin when the prompt is an argument.
+    agy never reads stdin at all, so its prompt is the value of -p and rides
+    in argv, last, where nothing after it can be mistaken for the prompt.
 
     `model`/`effort` are whatever the caller resolved from config (empty string
     means "no override set"). claude falls back to its own default_model/
     default_effort (sonnet/medium) when unset, and an unrecognized effort value
     also falls back rather than reaching the CLI (see resolve_claude_effort), so
-    it always gets an explicit, cheaper-than-account-default model; codex only
-    gets --model when a model was actually set AND supports_flag confirms this
-    binary understands it; agy never gets either flag, on any input, since
-    there is no verified way to honor one (see BACKENDS["agy"]'s comment)."""
+    it always gets an explicit, cheaper-than-account-default model; codex and
+    agy only get --model when a model was actually set AND supports_flag
+    confirms this binary understands it, and agy's --effort is gated the same
+    way, so an older build of either is never handed a flag it would die on."""
     if kind == "claude":
         argv = [path, "-p", "--output-format", "stream-json", "--verbose",
                 "--max-turns", str(_MAX_TURNS[mode]),
@@ -276,15 +290,34 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort=""):
             argv += ["--image", p]
         return argv, True
     if kind == "agy":
-        argv = [path, "-p", "--output-format", "stream-json"]
+        if len(prompt) > _MAX_ARG_PROMPT:
+            raise GenerationError(
+                "that source material is too long to send to Antigravity "
+                f"({len(prompt):,} characters, the limit is "
+                f"{_MAX_ARG_PROMPT:,}); shorten it or split it into two runs")
+        # --add-dir makes the scratch dir readable, which is how agy views an
+        # attached image (view_file); writes stay off, headlessly auto-denied.
+        argv = [path, "--output-format", "stream-json", "--add-dir", scratch]
         if supports_flag(path, "--sandbox"):
             argv += ["--sandbox"]
-        return argv, True
+        # Without this, a prompt containing a /word (a slash command's name)
+        # can be expanded by agy instead of read as text.
+        if supports_flag(path, "--disable-slash-commands"):
+            argv += ["--disable-slash-commands"]
+        if model and supports_flag(path, "--model"):
+            argv += ["--model", model]
+        if effort and supports_flag(path, "--effort"):
+            argv += ["--effort", effort]
+        # -p and its value go last, on purpose: agy takes the prompt as this
+        # flag's value, so anything appended after it would be read as argv
+        # noise rather than as an option.
+        argv += ["-p", prompt]
+        return argv, False
     raise ValueError(kind)
 
 
 def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
-              cwd=None):
+              cwd=None, prompt_via_stdin=True):
     start = time.monotonic()
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
@@ -294,7 +327,10 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
     except OSError as e:
         raise GenerationError(f"could not start the assistant: {e}") from e
     try:
-        proc.stdin.write(prompt)
+        # stdin is closed either way: a backend that takes the prompt in argv
+        # (agy) must not be left holding an open pipe it will never read.
+        if prompt_via_stdin:
+            proc.stdin.write(prompt)
         proc.stdin.close()
     except OSError:
         pass
@@ -394,10 +430,12 @@ def _kill(proc):
 
 def run_generation(kind, path, prompt, mode, scratch, image_paths=(),
                    on_event=None, cancel=None, timeout=None, model="", effort=""):
-    argv, _ = build_argv(kind, path, mode, scratch, list(image_paths),
-                         model=model or "", effort=effort or "")
+    argv, via_stdin = build_argv(kind, path, mode, scratch, list(image_paths),
+                                 model=model or "", effort=effort or "",
+                                 prompt=prompt)
     return _run_argv(argv, kind, prompt, on_event=on_event, cancel=cancel,
-                     timeout=timeout or _TIMEOUTS[mode], cwd=scratch)
+                     timeout=timeout or _TIMEOUTS[mode], cwd=scratch,
+                     prompt_via_stdin=via_stdin)
 
 
 _TEST_PROMPT = "Reply with exactly one word: ok"
@@ -415,6 +453,14 @@ def _readable_cli_error(raw):
     low = text.lower()
     if any(h in low for h in _AUTH_HINTS):
         return "not signed in: run it once in a terminal and sign in there"
+    # Antigravity's own two failure sentences, both long and both about
+    # something the reader cannot act on as written.
+    if "auto-denied" in low or "headless mode cannot prompt" in low:
+        return ("Antigravity refused a file write; the add-on never enables "
+                "writes, so this run used a tool it should not have.")
+    if "empty prompt" in low:
+        return ("Antigravity received an empty prompt, so it had nothing to "
+                "work from.")
     first_line = text.splitlines()[0] if text else "no output from the assistant"
     return first_line[:200]
 

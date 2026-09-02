@@ -29,7 +29,8 @@ _PREFERRED_CHIPS = ("preferred",)
 
 # A second name a reader may know a backend by, shown muted beside its executable.
 # Not in ai_cli.BACKENDS: nothing outside this window has any use for it.
-_ALSO_KNOWN = {"agy": "formerly Gemini CLI"}
+_ALSO_KNOWN = {"agy": "formerly Gemini CLI, which stopped serving personal "
+                      "Google AI Pro and Ultra accounts on 2026-06-18"}
 
 
 def _write(key, value):
@@ -114,9 +115,9 @@ def _wrapped_hint(text):
 
 class ModelEffortControls(QWidget):
     """Model and Effort for one backend, with the honesty rules from
-    ai_cli.BACKENDS: a closed alias list plus Custom where aliases exist,
-    free text where the CLI takes any name, read-only text where nothing can
-    be honoured (agy), and Effort only where a flag is verified.
+    ai_cli.BACKENDS: a closed alias list plus Custom where aliases exist, free
+    text where the CLI takes any name and there is no short alias list worth
+    closing over (codex, agy), and Effort only where a flag is verified.
 
     Builds the controls and owns their state; it does not lay them out. `rows()`
     hands the settings panel a (label, field) pair per row so both rows go into
@@ -131,7 +132,6 @@ class ModelEffortControls(QWidget):
         self.kind = kind
         meta = ai_cli.BACKENDS[kind]
         self.combo = QComboBox()
-        self.readonly = hint_label(meta["model_hint"])
         self.custom = QLineEdit()
         self.custom.setPlaceholderText(meta["model_hint"])
         aliases = [a for a in ([meta["default_model"]] + list(meta.get("model_aliases", []))) if a]
@@ -141,13 +141,9 @@ class ModelEffortControls(QWidget):
         model_field_lay.setContentsMargins(0, 0, 0, 0)
         model_field_lay.setSpacing(2)
         model_field_lay.addWidget(self.combo)
-        model_field_lay.addWidget(self.readonly)
         model_field_lay.addWidget(self.custom)
-        if kind == "agy":
-            self.combo.hide(); self.custom.hide()
-        elif self._aliases:
+        if self._aliases:
             self.combo.addItems(self._aliases + ["Custom"])
-            self.readonly.hide()
             if model in self._aliases or not model:
                 self.combo.setCurrentText(model or meta["default_model"])
                 self.custom.hide()
@@ -155,7 +151,7 @@ class ModelEffortControls(QWidget):
                 self.combo.setCurrentText("Custom")
                 self.custom.setText(model)
         else:
-            self.combo.hide(); self.readonly.hide()
+            self.combo.hide()
             self.custom.setText(model)
         self.effort = QComboBox()
         levels = meta.get("effort_levels") or []
@@ -164,7 +160,10 @@ class ModelEffortControls(QWidget):
         # "is it visible to me" is no longer a question this widget can answer.
         self.has_effort = bool(levels)
         if self.has_effort:
-            self.effort.addItem(f"Default ({meta['default_effort']})", "")
+            # A backend with no default_effort of its own (agy) sends no flag
+            # at all when this is left alone, so the label must not name one.
+            self.effort.addItem(f"Default ({meta['default_effort']})"
+                                if meta["default_effort"] else "Default", "")
             for lv in levels:
                 self.effort.addItem(lv, lv)
             idx = self.effort.findData(effort if effort in levels else "")
@@ -185,13 +184,11 @@ class ModelEffortControls(QWidget):
         return rows
 
     def _on_combo(self, text):
-        if self._aliases and self.kind != "agy":
+        if self._aliases:
             self.custom.setVisible(text == "Custom")
         self.changed.emit()
 
     def values(self):
-        if self.kind == "agy":
-            return "", ""
         if self._aliases:
             model = self.custom.text().strip() if self.combo.currentText() == "Custom" \
                 else self.combo.currentText()
@@ -234,8 +231,6 @@ class _BackendRow(QWidget):
         caps_lay.setSpacing(CARET_GAP)
         if ai_cli.image_capable(kind):
             caps_lay.addWidget(_capability_pill("image attach: supported", "accept"))
-        else:
-            caps_lay.addWidget(_capability_pill("text only in headless mode", "updated"))
         if "free tier" in meta["subscription"]:
             caps_lay.addWidget(_capability_pill("free tier, throttled", "new"))
         caps_lay.addStretch()
