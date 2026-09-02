@@ -22,7 +22,8 @@ from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayou
 
 from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
 from .logic import (apkg_media_index, build_feedback_digest, cloze_answer_changes,
-                    cloze_filled_html, extract_apkg_media, field_image_names,
+                    cloze_filled_html, cloze_hint_changes,
+                    extract_apkg_media, field_image_names,
                     field_preview_html, field_preview_text, merged_word_diff,
                     note_display_label, plain_text, plural, word_diff_ratio)
 from .palette import colors
@@ -83,6 +84,10 @@ def _preview_style():
         # base, "font-size: small" inside a <sup> came out an unreadable smudge, which no
         # amount of squinting at the markup would have shown. Render it before resizing it.
         " .cn { font-weight: 400; }"
+        # The hint half of a deletion is the prompt, not the fact, so it is set apart
+        # from the answer's blue rather than sharing it: same role `th` takes in a
+        # table here, a label beside the content it introduces.
+        f" .ch {{ color: {c['dim']}; }}"
         " table { border-collapse: collapse; margin: 4px 0; }"
         f" th, td {{ border: 1px solid {c['cell_rule']}; padding: 2px 7px; }}"
         f" th {{ color: {c['dim']}; font-weight: 600; }}"
@@ -386,10 +391,17 @@ def _diff_html(segments):
     return " ".join(parts)
 
 
-def _blank_changes_html(removed, added):
-    """A blanks-only cloze change said outright, naming the moved blanks in bold. The
-    filled words themselves did not change, so repeating the whole sentence would show
-    a difference nowhere in it; which words are blanked IS the change.
+def _blank_changes_html(removed, added, hints=()):
+    """A cloze change that left the sentence's words alone said outright, naming the
+    moved blanks and re-hinted deletions in bold. The filled words themselves did not
+    change, so repeating the whole sentence would show a difference nowhere in it;
+    which words are blanked, and what each one is hinted as, IS the change.
+
+    A hint edit reaches here because both versions fill to the same sentence, and it
+    has to be named for the same reason a moved blank does: the header line above
+    shows the new hint, but nothing on the row would say it is what moved. Without it
+    a hint-only edit fell through to the regrouped line below and described a change
+    that had not happened.
 
     Bold rather than the cloze blue the answers used to carry: accent is also the
     colour of every clickable link in this body (Add note, Show yours), and a blue
@@ -400,11 +412,19 @@ def _blank_changes_html(removed, added):
     def named(answers):
         return ", ".join(f"<b>{a}</b>" for a in answers)
 
+    def hint_said(answer, before, after):
+        if not before:
+            return f"hint added to <b>{answer}</b>: <b>{after}</b>"
+        if not after:
+            return f"hint dropped from <b>{answer}</b>: <b>{before}</b>"
+        return f"hint on <b>{answer}</b>: <b>{before}</b> → <b>{after}</b>"
+
     parts = []
     if removed:
         parts.append(f"no longer blanked: {named(removed)}")
     if added:
         parts.append(f"newly blanked: {named(added)}")
+    parts.extend(hint_said(*hint) for hint in hints)
     return " &middot; ".join(parts) or "the blanks were regrouped into different cards"
 
 
@@ -424,8 +444,9 @@ def _inline_change_html(detail, name, old, new):
     a rewrite that takes `_rewrite_row`'s summary-and-reveal treatment instead:
 
     - a field that used to be empty says so ("was empty");
-    - a cloze Text whose words survived but whose blanks moved names the moved blanks
-      (`cloze_answer_changes`), instead of reprinting the sentence;
+    - a cloze Text whose words survived but whose blanks or hints moved names what
+      moved (`cloze_answer_changes`, `cloze_hint_changes`), instead of reprinting the
+      sentence;
     - plain prose on both sides renders as a single word-level diff (`_diff_html`),
       while the versions stay mostly the same text (`word_diff_ratio`).
 
@@ -440,7 +461,7 @@ def _inline_change_html(detail, name, old, new):
     if _is_cloze(detail) and name == "Text":
         changes = cloze_answer_changes(old, new)
         if changes is not None:
-            return label + _blank_changes_html(*changes)
+            return label + _blank_changes_html(*changes, cloze_hint_changes(old, new))
         return None
     if _plain_prose(old) and _plain_prose(new):
         segments = merged_word_diff(old, new)

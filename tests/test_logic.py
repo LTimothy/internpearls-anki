@@ -962,9 +962,30 @@ def test_cloze_filled_html_group_labels_can_be_forced_either_way():
         "{{c1::one}} {{c2::two}}", mark_groups=False)
 
 
-def test_cloze_filled_html_drops_the_hint_and_keeps_the_answer():
+def test_cloze_filled_html_shows_the_hint_beside_the_answer():
+    # The hint is what the learner reads while the answer is still blanked, so it is
+    # part of the card rather than markup to drop.
     assert logic.cloze_filled_html("Give {{c1::4 mg::dose}} of it") == (
-        'Give <span class="cloze">4 mg</span> of it')
+        'Give <span class="cloze">4 mg</span> <span class="ch">[dose]</span> of it')
+
+
+def test_cloze_filled_html_leaves_an_empty_hint_off():
+    assert logic.cloze_filled_html("{{c1::4 mg::}}") == (
+        '<span class="cloze">4 mg</span>')
+
+
+def test_cloze_filled_html_escapes_the_hint_like_the_rest_of_the_field():
+    assert logic.cloze_filled_html("Read {{c1::low::<94%}}") == (
+        'Read <span class="cloze">low</span> <span class="ch">[&lt;94%]</span>')
+
+
+def test_cloze_filled_html_keeps_the_group_badge_on_the_answer_not_the_hint():
+    # The badge says which card the deletion belongs to, which is the answer's
+    # property; hanging it off the hint would put it on text the answer replaced.
+    assert logic.cloze_filled_html("{{c1::a::x}} {{c2::b}}") == (
+        '<span class="cloze">a<sup class="cn">c1</sup></span> '
+        '<span class="ch">[x]</span> '
+        '<span class="cloze">b<sup class="cn">c2</sup></span>')
 
 
 def test_cloze_filled_html_passes_through_a_field_with_no_deletions():
@@ -2098,6 +2119,38 @@ def test_cloze_answer_changes_ignores_the_hint_half_of_a_deletion():
     old = "Best at {{c1::25 gauge::a size}}."
     new = "Best at {{c1::25 gauge}}."
     assert logic.cloze_answer_changes(old, new) == ([], [])
+
+
+# -------------------------------------------------------------- cloze_hint_changes
+def test_cloze_hint_changes_reports_a_hint_added_to_a_blank_that_stayed():
+    assert logic.cloze_hint_changes("Best at {{c1::25 gauge}}.",
+                                    "Best at {{c1::25 gauge::a size}}.") == [
+        ("25 gauge", "", "a size")]
+
+
+def test_cloze_hint_changes_reports_a_reworded_and_a_dropped_hint():
+    assert logic.cloze_hint_changes("{{c1::a::old}} and {{c2::b::gone}}",
+                                    "{{c1::a::new}} and {{c2::b}}") == [
+        ("a", "old", "new"), ("b", "gone", "")]
+
+
+def test_cloze_hint_changes_is_empty_when_every_hint_survives():
+    assert logic.cloze_hint_changes("{{c1::a::x}} and {{c2::b}}",
+                                    "{{c1::a::x}} and {{c2::b}}") == []
+
+
+def test_cloze_hint_changes_ignores_a_blank_only_one_version_has():
+    # A deletion that appeared or disappeared is a blanks change, which
+    # cloze_answer_changes already names; the hint arriving with it is not a
+    # second, separate edit.
+    assert logic.cloze_hint_changes("The {{c1::first}} and second.",
+                                    "The first and {{c1::second::which}}.") == []
+
+
+def test_cloze_hint_changes_pairs_repeated_answers_in_order():
+    assert logic.cloze_hint_changes("{{c1::salt::one}} then {{c2::salt::two}}",
+                                    "{{c1::salt::one}} then {{c2::salt::three}}") == [
+        ("salt", "two", "three")]
 
 
 # ------------------------------------------------------------------ word_diff_ratio
