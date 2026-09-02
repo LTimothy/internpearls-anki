@@ -22,7 +22,7 @@ from . import ai_cli, ai_logic, collection
 from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
                      save_ai_usage, load_deck_skill, save_deck_skill)
 from .net import fetch_card_image
-from .ui import (_ask, _ask_scrollable, _info, _prompt, _warn, hint_label,
+from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
                  link_button, title_label)
 
 # Note types a generated card may name. Keep in sync with
@@ -178,11 +178,12 @@ class _GenerateDialog(QDialog):
         lay.addWidget(QLabel("Instructions (optional)"))
         lay.addWidget(self.instructions_box)
 
-        self.thorough_radio = QRadioButton(
-            "Thorough: drafts, verifies facts online, then self-reviews "
-            "(1 to 3 min)")
-        self.quick_radio = QRadioButton(
-            "Quick draft: one pass, no web access (15 to 30 s)")
+        # Labels are per-backend and truthful (see ai_cli.BACKENDS' "modes"), set
+        # once a backend is known -- see _refresh_backend_row. What mode
+        # enforcement actually exists differs by backend, so one label for all
+        # three would misdescribe at least one of them.
+        self.thorough_radio = QRadioButton()
+        self.quick_radio = QRadioButton()
         self.thorough_radio.setChecked(True)
         lay.addWidget(QLabel("Quality"))
         lay.addWidget(self.thorough_radio)
@@ -242,6 +243,8 @@ class _GenerateDialog(QDialog):
         s = self.session
         meta = ai_cli.BACKENDS[s.backend]
         self.backend_row.setText(f"Backend: {meta['label']} (signed in)")
+        self.thorough_radio.setText(meta["modes"]["thorough"])
+        self.quick_radio.setText(meta["modes"]["quick"])
         reg = load_ai_usage()
         self.usage_row.setText(ai_logic.usage_line(
             reg, s.backend, now=time.time(), free_tier=(s.backend == "agy")))
@@ -263,23 +266,36 @@ class _GenerateDialog(QDialog):
             ", ".join(os.path.basename(p) for p, _ in s.attachments))
 
     def _view_skills(self):
+        """Show what's actually sent to the model. Dismissing this dialog (Close,
+        Escape, the window's close box) must never itself change consent -- only
+        an explicit click on the toggle button may. Rebuilt through _ask_scrollable's
+        extra_label/on_extra: that button carries ActionRole, so clicking it runs
+        the toggle and leaves the dialog open rather than answering (and closing)
+        it, which is what made Escape and "decline" indistinguishable before."""
         deck = load_deck_skill()
-        parts = ["Bundled: InternPearls authoring (ships with the add-on)", "",
-                 ai_logic.load_bundled_skill()]
-        if deck:
-            state = "enabled" if deck.get("enabled") else "disabled"
-            parts += ["", f"Deck skill v{deck.get('version')} ({state}, "
-                          f"consented {deck.get('consented_on')})", "",
-                      deck.get("text", "")]
-        body = _skills_html(parts)
-        if deck and _ask_scrollable(
-                body, yes_label="Close",
-                no_label=("Disable deck skill" if deck.get("enabled")
-                          else "Enable deck skill")) is False:
+
+        def _body(d):
+            parts = ["Bundled: InternPearls authoring (ships with the add-on)", "",
+                     ai_logic.load_bundled_skill()]
+            if d:
+                state = "enabled" if d.get("enabled") else "disabled"
+                parts += ["", f"Deck skill v{d.get('version')} ({state}, "
+                              f"consented {d.get('consented_on')})", "",
+                          d.get("text", "")]
+            return _skills_html(parts)
+
+        if not deck:
+            _info(_body(deck))
+            return
+
+        def _toggle(dlg):
             deck["enabled"] = not deck.get("enabled")
             save_deck_skill(deck)
-        elif not deck:
-            _info(body)
+            return _body(deck)
+
+        label = "Disable deck skill" if deck.get("enabled") else "Enable deck skill"
+        _ask_scrollable(_body(deck), yes_label="Close", no_label=None,
+                        extra_label=label, on_extra=_toggle)
 
     # -- progress --------------------------------------------------------------
     def _build_progress(self):
@@ -327,7 +343,7 @@ class _GenerateDialog(QDialog):
             cards=s.cards if revision else None,
             feedback=self.feedback_box.toPlainText() if revision else "",
             notes=s.notes if revision else None,
-            checks=s.checks if revision else None)
+            checks=s.checks if revision else None, mode=s.mode)
         if extra_error:
             prompt += ("\n\n## Your previous reply failed validation\n"
                       + "\n".join(extra_error))
@@ -583,6 +599,10 @@ class _GenerateDialog(QDialog):
         network or the collection -- and hands add_generated_notes the bytes
         plus the filenames it chose, per its documented media contract.
 
+        Nothing selected is not an import: it neither writes anything nor
+        closes the wizard (there is no undo step to claim), so the draft
+        stays on the review page instead of being silently discarded.
+
         svg_index is a running counter across the WHOLE batch, not per card:
         svg_to_media names a file solely from the index passed in, so two
         cards each drawing their own SVG would collide on the same filename
@@ -593,6 +613,10 @@ class _GenerateDialog(QDialog):
         """
         s = self.session
         cards = [c for c, inc in zip(s.cards, s.included) if inc]
+        if not cards:
+            _info("Nothing is selected to import. Check at least one card, "
+                  "or Cancel to discard the draft.")
+            return 0
         media = {}
         svg_index = 0
         for idx, card in enumerate(cards):
@@ -619,12 +643,15 @@ class _GenerateDialog(QDialog):
                     # warn and move on, same as a mechanical check would flag it.
                     _warn(f"Skipping an image on card {idx + 1}: {e}")
             card["_media_files"] = files
-        # Every attached:/PDF-embedded image this import will ever read has
-        # already been read into `media` above; the scratch dir's job is done
-        # regardless of whether add_generated_notes below succeeds.
-        self._cleanup_scratch()
+        # add_generated_notes can raise (e.g. Basic/Cloze missing or renamed on a
+        # non-English profile). Every attached:/PDF-embedded image this import
+        # will ever read has already been read into `media` above, but cleanup
+        # waits until AFTER a successful import: if this raises, the scratch dir
+        # -- and every attached: image path a retry would need to resolve --
+        # must still be there.
         n = collection.add_generated_notes(cards, media, s.deck_name,
                                            _cfg()["scope_tag"])
+        self._cleanup_scratch()
         _info(f"{n} cards added to {s.deck_name}. This is one undo step: "
               "Ctrl+Z reverts it.")
         self.accept()
@@ -655,5 +682,6 @@ class _GenerateDialog(QDialog):
         super().reject()
 
 
+@_safe
 def generate_cards():
     _GenerateDialog().exec()

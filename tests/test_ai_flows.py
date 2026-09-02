@@ -3,7 +3,9 @@ import os
 import shutil
 import sys
 
-from internpearls import ai_cli, ai_dialog
+import pytest
+
+from internpearls import ai_cli, ai_dialog, config
 
 FAKE = os.path.join(os.path.dirname(__file__), "fake_cli.py")
 
@@ -30,6 +32,20 @@ def test_input_page_shown_when_backend_found(anki, monkeypatch):
     assert not dlg.generate_btn.isEnabled()   # empty source
     dlg.source_box.setPlainText("some source")
     assert dlg.generate_btn.isEnabled()
+
+
+def test_mode_radio_labels_are_the_backends_own_truthful_text(anki, monkeypatch):
+    # C1: one hardcoded claim for all three backends used to overclaim what
+    # codex/agy actually enforce; each backend's radios must show its own text.
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    modes = ai_cli.BACKENDS["claude"]["modes"]
+    assert dlg.thorough_radio.text() == modes["thorough"]
+    assert dlg.quick_radio.text() == modes["quick"]
 
 
 def _ready_dialog(anki, monkeypatch, cli_mode="ok"):
@@ -144,6 +160,26 @@ def test_import_writes_notes_and_closes(anki, monkeypatch):
     assert dlg._result == 1   # the dialog closed (accepted)
 
 
+def test_core_cloze_card_review_row_renders_non_empty(anki, monkeypatch):
+    """I6: PRIMARY_FIELD had no "Cloze" entry, so the review row fell back to
+    "Front", which a Cloze note lacks, and rendered empty -- approving a card
+    whose text the user could not see."""
+    from internpearls import ai_logic
+    dlg = _ready_dialog(anki, monkeypatch)
+    s = dlg.session
+    s.cards = [{"note_type": "Cloze",
+               "fields": {"Text": "{{c1::halothane}} sensitizes the heart",
+                         "Back Extra": ""},
+               "tags": [], "images": [], "rationale": ""}]
+    s.included = [True]
+    s.checks = ai_logic.mechanical_checks(s.cards, {})
+    dlg._rebuild_review()
+    row = dlg.cards_lay.itemAt(0).widget()
+    label = row.layout().itemAt(1).widget()
+    assert label.text().strip() != ""
+    assert "halothane" in label.text()
+
+
 def test_excluded_card_is_not_imported(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
@@ -152,6 +188,23 @@ def test_excluded_card_is_not_imported(anki, monkeypatch):
     n = dlg._do_import()
     assert n == 0
     assert not anki.col._notes
+
+
+# -- I4: importing zero cards must not close the wizard or claim an undo step -
+
+def test_importing_zero_cards_does_not_close_the_wizard(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.session.included[0] = False   # everything excluded
+    n = dlg._do_import()
+    assert n == 0
+    assert dlg._result is None        # still open, not accept()ed
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert not anki.col._notes
+    assert not any("undo" in i.lower() for i in anki.gui.infos)
+    assert any("nothing" in i.lower() and "selected" in i.lower()
+              for i in anki.gui.infos)
 
 
 def _basic_card(front, source):
@@ -247,6 +300,48 @@ def test_view_skills_escapes_raw_html_and_preserves_line_breaks(anki):
     assert body.count("<br>") >= 2          # newlines survived as real line breaks
 
 
+# -- I5: dismissing View skills must never itself flip deck-skill consent -----
+
+def _seed_deck_skill(enabled=True):
+    config.save_deck_skill({"text": "do X", "version": "1",
+                            "consented_on": "2026-01-01", "enabled": enabled})
+
+
+def test_view_skills_dismiss_never_changes_consent(anki, monkeypatch):
+    _seed_deck_skill(enabled=True)
+    dlg = ai_dialog._GenerateDialog.__new__(ai_dialog._GenerateDialog)
+    calls = {}
+
+    def fake_ask_scrollable(body, yes_label=None, no_label=None,
+                            extra_label=None, on_extra=None, **kw):
+        calls["no_label"] = no_label
+        # Dismissing (Close, Escape, or the window's close box) never reaches
+        # on_extra -- that's the whole point of the extra_label mechanism.
+        return True
+
+    monkeypatch.setattr(ai_dialog, "_ask_scrollable", fake_ask_scrollable)
+    dlg._view_skills()
+    # No reject-role button at all, so Escape/close can't be mistaken for one.
+    assert calls["no_label"] is None
+    assert config.load_deck_skill()["enabled"] is True
+
+
+def test_view_skills_extra_button_is_the_only_thing_that_toggles_consent(anki,
+                                                                         monkeypatch):
+    _seed_deck_skill(enabled=True)
+    dlg = ai_dialog._GenerateDialog.__new__(ai_dialog._GenerateDialog)
+
+    def fake_ask_scrollable(body, yes_label=None, no_label=None,
+                            extra_label=None, on_extra=None, **kw):
+        assert "disable" in extra_label.lower()
+        on_extra(None)   # simulate an explicit click on the toggle button
+        return True
+
+    monkeypatch.setattr(ai_dialog, "_ask_scrollable", fake_ask_scrollable)
+    dlg._view_skills()
+    assert config.load_deck_skill()["enabled"] is False
+
+
 # -- scratch dir cleanup --------------------------------------------------
 
 def test_scratch_dir_removed_after_import(anki, monkeypatch):
@@ -258,6 +353,25 @@ def test_scratch_dir_removed_after_import(anki, monkeypatch):
     dlg._do_import()
     assert not os.path.exists(scratch)
     assert dlg.session.scratch is None
+
+
+# -- I8: cleanup must not run ahead of the call that can raise ---------------
+
+def test_failing_import_leaves_scratch_dir_intact_for_a_retry(anki, monkeypatch):
+    """add_generated_notes raises RuntimeError for an unknown/missing note type
+    (real on a non-English profile where the stock Basic/Cloze names are
+    localized). Cleaning the scratch dir up before that call, as this used to,
+    meant a retry after the fix could no longer resolve any attached: image."""
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    scratch = dlg.session.scratch
+    assert scratch and os.path.isdir(scratch)
+    dlg.session.cards[0]["note_type"] = "Nonexistent Type"
+    with pytest.raises(RuntimeError):
+        dlg._do_import()
+    assert os.path.isdir(scratch)
+    assert dlg.session.scratch == scratch
 
 
 def test_scratch_dir_removed_on_discard(anki, monkeypatch):
@@ -351,3 +465,14 @@ def test_revision_with_different_card_count_does_not_claim_per_card_updates(anki
     assert "different number of cards" in header
     assert "kept 2 verbatim" not in header
     assert "kept 1 verbatim" not in header
+
+
+# -- I8: the entry point itself must be guarded like every other menu action --
+
+def test_generate_cards_entry_point_surfaces_a_bug_as_a_dialog(anki, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ai_dialog, "_GenerateDialog", boom)
+    ai_dialog.generate_cards()   # must not raise past the menu action
+    assert any("boom" in w for w in anki.gui.warnings)

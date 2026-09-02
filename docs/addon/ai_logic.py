@@ -27,7 +27,7 @@ _SVG_SCRIPT_RE = re.compile(r"<script", re.I)
 _SVG_EVENT_ATTR_RE = re.compile(r"\bon\w+\s*=", re.I)
 _SVG_JS_URI_RE = re.compile(r"javascript\s*:", re.I)
 PRIMARY_FIELD = {"Study Deck - Basic": "Front", "Study Deck - Cloze": "Text",
-                 "Study Deck - Image ID": "Image", "Basic": "Front"}
+                 "Study Deck - Image ID": "Image", "Basic": "Front", "Cloze": "Text"}
 LONG_ANSWER_WORDS = 60
 
 
@@ -134,7 +134,10 @@ def mechanical_checks(cards, existing_fronts):
                             "existing": existing_fronts[norm],
                             "message": "possible duplicate of an existing card"})
 
-        if ntype == "Study Deck - Cloze":
+        # Keyed on the primary field being "Text" (a cloze-style deletion field),
+        # not on the exact note type name, so a core "Cloze" note is validated
+        # the same as "Study Deck - Cloze" rather than skipping the check.
+        if primary == "Text":
             text = fields.get("Text", "")
             good = _CLOZE_OK_RE.findall(text)
             openers = _CLOZE_OPEN_RE.findall(text)
@@ -169,9 +172,20 @@ attached files, a real web source found during verification, or simple SVG you
 draw yourself for structural diagrams."""
 
 
+_MODE_INSTRUCTIONS = {
+    "thorough": ("## Mode: Thorough\nDraft the cards. Then verify the factual "
+                "claims against outside sources you can reach, correcting anything "
+                "wrong or unsupported. Finally self-review the whole set against "
+                "the rules above before returning it."),
+    "quick": ("## Mode: Quick\nProduce the cards in a single pass. Do not spend "
+             "turns verifying facts online or self-reviewing; return your first "
+             "draft."),
+}
+
+
 def build_prompt(skills, source, note_types, field_map, count, instructions="",
                  attachments=(), cards=None, feedback="", notes=None,
-                 checks=None):
+                 checks=None, mode="thorough"):
     notes = notes or {}
     parts = []
     for s in skills:
@@ -182,6 +196,7 @@ def build_prompt(skills, source, note_types, field_map, count, instructions="",
     parts.append(_CONTRACT)
     parts.append(f"## Task\nDraft about {count} flashcards from the source "
                  "material below. Quality over count.")
+    parts.append(_MODE_INSTRUCTIONS.get(mode, _MODE_INSTRUCTIONS["thorough"]))
     if instructions.strip():
         parts.append("## User instructions\n" + instructions.strip())
     if attachments:

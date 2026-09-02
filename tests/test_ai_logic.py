@@ -21,6 +21,7 @@ FIELD_MAP = {
     "Study Deck - Basic": ["Front", "Back", "Why", "Image", "Tag", "Dosing", "Notes"],
     "Study Deck - Cloze": ["Text", "Why", "Image", "Dosing", "Notes"],
     "Basic": ["Front", "Back"],
+    "Cloze": ["Text", "Back Extra"],
 }
 ALLOWED = list(FIELD_MAP)
 
@@ -118,6 +119,22 @@ def test_check_cloze_syntax_ignores_literal_braces_in_prose():
     assert all(c["code"] != "cloze" for c in checks[0])
 
 
+def test_primary_field_has_a_cloze_entry():
+    # I6: a core "Cloze" note used to fall back to "Front", which it has no
+    # such field, so its review row rendered empty.
+    assert ai_logic.PRIMARY_FIELD["Cloze"] == "Text"
+
+
+def test_check_cloze_syntax_applies_to_core_cloze_note_type_too():
+    # Keyed on the primary field being "Text", not on the exact type name
+    # "Study Deck - Cloze" -- a core "Cloze" note must get the same validation.
+    no_deletion = _card("Cloze", Text="no deletions at all")
+    valid = _card("Cloze", Text="{{c1::one}} deletion")
+    checks = ai_logic.mechanical_checks([no_deletion, valid], {})
+    assert any(c["code"] == "cloze" and c["level"] == "block" for c in checks[0])
+    assert all(c["code"] != "cloze" for c in checks[1])
+
+
 def test_check_long_answer_warns():
     long_back = " ".join(["word"] * 120)
     checks = ai_logic.mechanical_checks([_card(Front="q", Back=long_back)], {})
@@ -170,6 +187,33 @@ def test_prompt_lists_attachments_and_fields():
                               field_map=FIELD_MAP, count=2,
                               attachments=["slide3.png"])
     assert "slide3.png" in p and '"Front"' in p
+
+
+# -- C1: the prompt itself must name the mode, since backends whose CLI gives
+# us no flags (codex, agy) have no other way to enforce a workflow difference.
+_PROMPT_KW = dict(skills=["S"], source="SRC", note_types=["Basic"],
+                  field_map=FIELD_MAP, count=3)
+
+
+def test_prompt_differs_between_modes_and_names_expected_workflow():
+    thorough = ai_logic.build_prompt(**_PROMPT_KW, mode="thorough")
+    quick = ai_logic.build_prompt(**_PROMPT_KW, mode="quick")
+    assert thorough != quick
+    assert "verify" in thorough.lower() and "self-review" in thorough.lower()
+    assert "single pass" in quick.lower()
+    # Quick explicitly tells the model not to verify -- the one enforcement
+    # mechanism available on a backend whose CLI gives us no tool-gating flag.
+    assert "do not" in quick.lower() and "verifying facts online" in quick.lower()
+
+
+def test_prompt_defaults_to_thorough_mode():
+    p = ai_logic.build_prompt(**_PROMPT_KW)
+    assert "Mode: Thorough" in p
+
+
+def test_prompt_unknown_mode_falls_back_to_thorough_text():
+    p = ai_logic.build_prompt(**_PROMPT_KW, mode="bogus")
+    assert "Mode: Thorough" in p
 
 
 import json as _json

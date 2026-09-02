@@ -20,13 +20,42 @@ from .ai_logic import parse_stream_event
 BACKENDS = {
     "claude": {"label": "Claude Code", "exe": "claude",
                "subscription": "Claude Pro or Max",
-               "safety": "Tools fully restricted (strongest)"},
+               "safety": "Tools fully restricted (strongest)",
+               # Truthful per-backend: only claude's build_argv actually caps turns
+               # and gates web tools by mode (--max-turns, --tools). See build_argv.
+               "modes": {
+                   "thorough": "Thorough: drafts, may search the web to verify "
+                               "facts, then self-reviews (up to 15 turns, 1 to 3 min)",
+                   "quick": "Quick draft: exactly one turn, no tools at all "
+                           "including no web access (15 to 30 s)"}},
     "codex": {"label": "Codex CLI", "exe": "codex",
               "subscription": "ChatGPT Plus or Pro",
-              "safety": "Sandboxed read-only; no writes or network"},
+              "safety": "Sandboxed read-only; no writes or network",
+              # Codex's build_argv always sets --sandbox read-only regardless of
+              # mode, so neither mode can verify anything online, and neither sets
+              # a turn cap; only the prompt's stated workflow differs by mode.
+              "modes": {
+                  "thorough": "Thorough: asked to draft, verify, then self-review; "
+                              "always sandboxed read-only with no network, so it "
+                              "cannot actually verify anything online (1 to 3 min)",
+                  "quick": "Quick draft: asked for a single pass with no "
+                          "verification; always sandboxed read-only with no "
+                          "network either way (15 to 30 s)"}},
     "agy": {"label": "Antigravity CLI", "exe": "agy",
             "subscription": "Google account (free tier, throttled)",
-            "safety": "Relies on the assistant's own approval defaults"},
+            "safety": "Relies on the assistant's own approval defaults",
+            # agy's build_argv never restricts tools or turns by mode, so nothing
+            # here enforces "no web access" even in Quick; only the prompt's
+            # stated workflow differs by mode.
+            "modes": {
+                "thorough": "Thorough: asked to draft, verify, then self-review, "
+                            "but nothing here restricts its tools or turns -- it "
+                            "runs under Antigravity's own approval defaults, which "
+                            "may include web access (1 to 3 min)",
+                "quick": "Quick draft: asked for a single pass with no "
+                        "verification, but nothing here restricts its tools or "
+                        "turns either, so it may still use the web and may still "
+                        "take a while (15 to 30 s)"}},
 }
 _COMMON_DIRS = ("/opt/homebrew/bin", "/usr/local/bin",
                 os.path.expanduser("~/.local/bin"),
