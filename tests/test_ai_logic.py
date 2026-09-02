@@ -507,6 +507,7 @@ def test_extract_pdf_text(tmp_path):
     out = ai_logic.extract_attachment(os.path.join(FIXTURES, "sample.pdf"), str(tmp_path))
     assert "Hello LAST" in out["text"]
     assert out["images"] == []
+    assert out["images_undecoded"] is False   # sample.pdf really has no images -- not a decode failure
 
 
 def test_extract_image_copies_file(tmp_path):
@@ -563,17 +564,41 @@ def test_extract_unknown_extension_raises(tmp_path):
         ai_logic.extract_attachment(str(p), str(tmp_path))
 
 
-def test_extract_pdf_images_use_safe_collision_proof_names(tmp_path):
-    # tests/fixtures/with_image.pdf embeds one 2x2 raster image on its one page,
-    # generated once with the vendored pypdf's own writer (see git history).
+# These three exercise the filename sanitizing/collision-proofing logic in
+# extract_attachment, which is pure string handling over an image's (id, name)
+# and doesn't need a real decoded image behind it -- so, like
+# test_extract_pdf_image_extension_sanitized_against_hostile_name below, they
+# fake out page.images with a stand-in ImageFile rather than decoding
+# tests/fixtures/with_image.pdf's real embedded image. That keeps them honest
+# in both environments: pypdf needs Pillow to actually decode an image, and
+# Anki's own bundled Python doesn't carry it (see
+# test_extract_pdf_real_image_decodes_when_pillow_is_available, and
+# test_extract_pdf_images_undecoded_flag_when_pillow_unavailable for the
+# degraded path these three used to fail on silently).
+def _fake_page_image(name, data=b"stand-in-image-bytes"):
+    pypdf = ai_logic._pypdf()
+    img = pypdf._page.ImageFile()
+    img.name = name
+    img.data = data
+    return img
+
+
+def test_extract_pdf_images_use_safe_collision_proof_names(tmp_path, monkeypatch):
+    pypdf = ai_logic._pypdf()
+    monkeypatch.setattr(pypdf._page.PageObject, "images",
+                        property(lambda self: [_fake_page_image("img0.png")]))
     out = ai_logic.extract_attachment(os.path.join(FIXTURES, "with_image.pdf"), str(tmp_path))
     assert out["images"] == ["with_image-p1-img0.png"]
-    assert (tmp_path / "with_image-p1-img0.png").exists()
+    assert (tmp_path / "with_image-p1-img0.png").read_bytes() == b"stand-in-image-bytes"
+    assert out["images_undecoded"] is False
 
 
-def test_extract_pdf_image_names_dont_collide_across_pdfs(tmp_path):
+def test_extract_pdf_image_names_dont_collide_across_pdfs(tmp_path, monkeypatch):
     # Two different source PDFs extracting page 1 image 0 must not overwrite
     # each other's output: the original stem is part of every image filename.
+    pypdf = ai_logic._pypdf()
+    monkeypatch.setattr(pypdf._page.PageObject, "images",
+                        property(lambda self: [_fake_page_image("img0.png")]))
     src_bytes = open(os.path.join(FIXTURES, "with_image.pdf"), "rb").read()
     a, b = tmp_path / "with_image.pdf", tmp_path / "renamed.pdf"
     a.write_bytes(src_bytes)
@@ -586,15 +611,61 @@ def test_extract_pdf_image_names_dont_collide_across_pdfs(tmp_path):
     assert (tmp_path / "renamed-p1-img0.png").exists()
 
 
-def test_extract_pdf_stem_sanitized_against_path_traversal(tmp_path):
+def test_extract_pdf_stem_sanitized_against_path_traversal(tmp_path, monkeypatch):
     # A hostile-looking basename (already stripped of any directory component
     # by os.path.basename, but still containing traversal-shaped characters)
     # must not leak "/" or ".." into the generated image filename.
+    pypdf = ai_logic._pypdf()
+    monkeypatch.setattr(pypdf._page.PageObject, "images",
+                        property(lambda self: [_fake_page_image("img0.png")]))
     hostile = tmp_path / "..-evil-p1-img0.pdf"
     hostile.write_bytes(open(os.path.join(FIXTURES, "with_image.pdf"), "rb").read())
     out = ai_logic.extract_attachment(str(hostile), str(tmp_path))
     assert out["images"] == ["_-evil-p1-img0-p1-img0.png"]
     assert os.sep not in out["images"][0] and ".." not in out["images"][0]
+
+
+def test_extract_pdf_real_image_decodes_when_pillow_is_available(tmp_path):
+    # The full end-to-end path, actually decoded, when Pillow happens to be
+    # importable in this interpreter (a developer's system python typically
+    # has it; Anki's bundled python typically doesn't -- this is exactly the
+    # gap that let PDF image extraction ship silently broken for every real
+    # user, per the vendored-pypdf docstring pypdf raises against). Skipped
+    # rather than failed where Pillow is genuinely absent, since that's the
+    # one thing this specific test can't fake its way past.
+    import pytest
+    pytest.importorskip("PIL")
+    out = ai_logic.extract_attachment(os.path.join(FIXTURES, "with_image.pdf"), str(tmp_path))
+    assert out["images"] == ["with_image-p1-img0.png"]
+    assert (tmp_path / "with_image-p1-img0.png").exists()
+    assert out["images_undecoded"] is False
+
+
+def test_extract_pdf_images_undecoded_flag_when_pillow_unavailable(tmp_path, monkeypatch):
+    # Simulates pypdf's real "Pillow not importable" failure (an ImportError
+    # out of page.images's decode step) regardless of whether this interpreter
+    # actually has Pillow, so the degraded-but-honest path is verified here
+    # rather than only in whatever environment happens to run the suite. Text
+    # extraction needs no Pillow and must still come through; the caller must
+    # be able to tell this apart from "this PDF had no images" (images == []
+    # with images_undecoded == False, see test_extract_pdf_text).
+    class _UndecodableImages:
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            raise ImportError("pillow is required to do image extraction")
+
+    pypdf = ai_logic._pypdf()
+    monkeypatch.setattr(pypdf._page.PageObject, "images",
+                        property(lambda self: _UndecodableImages()))
+    # two_page.pdf (not with_image.pdf, which has no extractable text of its
+    # own) so the "text still comes through" half of this has something real
+    # to check against.
+    out = ai_logic.extract_attachment(os.path.join(FIXTURES, "two_page.pdf"), str(tmp_path))
+    assert out["images"] == []
+    assert out["images_undecoded"] is True
+    assert "First page text" in out["text"]   # text extraction is unaffected by the missing dependency
 
 
 def test_extract_pdf_image_extension_sanitized_against_hostile_name(tmp_path, monkeypatch):
