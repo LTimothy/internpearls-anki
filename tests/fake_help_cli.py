@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# tests/fake_help_cli.py -- pretend CLI whose --help output is controlled by env
+# tests/fake_help_cli.py: pretend CLI whose --help output is controlled by env
 # vars, for supports_flag's word-boundary and subcommand-probe tests.
 #   `<this> --help`            prints $FAKE_HELP_TOP
 #   `<this> <subcmd> --help`   prints $FAKE_HELP_SUB, only if argv[1] == $FAKE_HELP_SUBCOMMAND

@@ -37,8 +37,8 @@ from .widgets import CARET_GAP, CARET_W, chip_cell, chip_column_width
 # collection._GENERATED_ALLOWED_TYPES: the types this add-on manages, plus
 # Anki's own core Basic and Cloze. "Study Deck - Image ID" is deliberately
 # excluded from what's OFFERED for generation (see _build_input): its primary
-# field IS the image, which the model has no way to supply -- images travel in
-# a card's separate "images" list, never in a field value -- so every such
+# field IS the image, which the model has no way to supply. Images travel in
+# a card's separate "images" list, never in a field value, so every such
 # card fails parse_cards_json's empty-primary check and takes the whole reply
 # down with it. The mapping stays here since import (collection.py) and
 # mechanical_checks still need it for any such card already on disk.
@@ -51,12 +51,12 @@ _IMG_POLL_MS = 200
 
 
 def _skills_html(parts):
-    """Render View skills' parts (plain multi-line skill text -- model-authored
+    """Render View skills' parts (plain multi-line skill text: model-authored
     and possibly containing literal '<' from the card-craft rules themselves,
     e.g. "an HTML <table>") as HTML a RichText dialog body shows readably.
 
     Escaped first, so a stray "<table>" or "&lt;94%" in the skill text reads as
-    the literal characters it is, rather than being interpreted as markup --
+    the literal characters it is, rather than being interpreted as markup:
     full transparency means showing exactly what was sent, not a mangled
     rendering of it. '\\n' is then turned into '<br>', since a plain newline
     collapses to a space in HTML and would otherwise run every line together.
@@ -69,7 +69,7 @@ _FALLBACK_UNDO_SHORTCUT = "Cmd+Z" if sys.platform == "darwin" else "Ctrl+Z"
 
 def _undo_shortcut():
     """The platform's own Undo accelerator, e.g. "Cmd+Z" on macOS, "Ctrl+Z"
-    elsewhere -- rendered by Qt itself from the standard Undo key sequence rather
+    elsewhere: rendered by Qt itself from the standard Undo key sequence rather
     than hardcoded, so the import success message always names the key Edit >
     Undo actually shows, on whatever platform this happens to be running.
 
@@ -77,7 +77,7 @@ def _undo_shortcut():
     binding, and with no live QApplication that lookup dereferences a null
     pointer and hard-crashes the whole process (SIGSEGV, not a catchable
     exception). Inside Anki a QApplication always exists, but a plain script
-    or test importing this module does not get one for free -- so check first
+    or test importing this module does not get one for free: so check first
     and fall back to a plain literal rather than ever touching StandardKey with
     nothing to consult."""
     if QApplication.instance() is None:
@@ -87,7 +87,7 @@ def _undo_shortcut():
 
 
 def _url_host(url):
-    """The host a web image came from, for the review row -- shown so the
+    """The host a web image came from, for the review row: shown so the
     user can see where the model's suggested picture actually points before
     ever downloading it for real."""
     try:
@@ -102,7 +102,7 @@ def _resolve_one_image(im, scratch):
     comes back as {"state": "error", ...} instead, so one bad image becomes
     one mechanical-check entry rather than an exception the caller has to
     guard every iteration against. Mirrors what _do_import used to do at
-    import time (see ai_dialog module docstring) -- the only difference now is
+    import time (see ai_dialog module docstring): the only difference now is
     *when* this runs and that the result is kept for reuse instead of thrown
     away.
     """
@@ -138,7 +138,7 @@ def _resolve_one_image(im, scratch):
 def _image_row_html(session, i, card):
     """The review row's image line(s): a rendered thumbnail when one resolved
     to a local file Qt can decode, a plain failure message when it didn't, and
-    for a web image the URL's host either way -- this is I2's "the user sees
+    for a web image the URL's host either way: this is I2's "the user sees
     what they're accepting" gate, so a card with an image never reviews as if
     it had none. Returns "" for a card with no images at all.
     """
@@ -188,7 +188,7 @@ def _review_row_indent():
     """Where the review row's primary text sits, and what its expanded body and its
     reason lines indent by: past the caret, the checkbox, and the chip, each with
     its own gap. Mirrors widgets.row_text_indent's arithmetic, but can't reuse it
-    directly -- that helper assumes every leading column is chip-width, and the
+    directly: that helper assumes every leading column is chip-width, and the
     checkbox here is not one."""
     return (CARET_W + CARET_GAP + _checkbox_column_width() + CARET_GAP
            + chip_column_width(_REVIEW_CHIP_KINDS) + CARET_GAP)
@@ -209,7 +209,7 @@ def _review_row_kind(entries, updated):
 
 def _accent_row(html_text, role, indent):
     """One dim line under a card's header, with a left accent bar in the given
-    palette role -- the same idiom review._change_note_row uses for a deck source's
+    palette role: the same idiom review._change_note_row uses for a deck source's
     change note, reused here for a check's reason and for a queued revision note,
     so both read as the same kind of annotation on the row they belong to."""
     row = QWidget()
@@ -229,7 +229,7 @@ def _accent_row(html_text, role, indent):
 
 def _check_reason_row(entry, indent):
     """A check's own account of why it flagged the card: its message, and for a
-    duplicate, the existing card it matched -- both already computed by
+    duplicate, the existing card it matched: both already computed by
     ai_logic.mechanical_checks and, before this, never shown anywhere (a
     [duplicate] chip said something was wrong and nothing said what)."""
     msg = html.escape(entry.get("message", ""))
@@ -251,7 +251,7 @@ def _queued_note_row(note, indent):
 
 def _card_primary_html(card):
     """The row's bold collapsed line: the front, or a cloze note's text with its
-    deletions filled in -- the fact under review lives in the deletions, so it is
+    deletions filled in: the fact under review lives in the deletions, so it is
     shown rather than blanked (mirrors review._primary_html)."""
     ntype = card["note_type"]
     primary_field = ai_logic.PRIMARY_FIELD.get(ntype, "Front")
@@ -263,7 +263,7 @@ def _card_primary_html(card):
 
 def _card_body_fields(card):
     """The card's remaining fields, in the note type's own order, once the primary
-    field and the never-shown Notes/Tag are out of the way -- what a review row's
+    field and the never-shown Notes/Tag are out of the way: what a review row's
     expanded body actually has to show: the back, the why, and whatever else the
     note type carries (e.g. dosing)."""
     ntype = card["note_type"]
@@ -297,17 +297,17 @@ class _Session:
         self.checks = []             # mechanical_checks output
         self.updated = set()         # indexes changed by last revision
         # {card index: [resolved-image dict, ...]}, parallel to that card's
-        # "images" list -- see _resolve_one_image. Populated at review time
+        # "images" list: see _resolve_one_image. Populated at review time
         # (before the review page ever shows), reused unchanged by import.
         self.image_data = {}
         # True when the last revision came back with a different card count than
-        # it was sent -- the one shape the prompt promises but nothing verifies.
+        # it was sent: the one shape the prompt promises but nothing verifies.
         # See _finish_generation: this disables the per-index diff entirely.
         self.revision_shape_mismatch = False
         self.tokens_last_run = 0
         self.rate_limits = None
         # Per backend kind ({"claude": "", "codex": "", "agy": ""}), resolved from
-        # config in __init__ -- see _cfg(). A value set under one backend must never
+        # config in __init__: see _cfg(). A value set under one backend must never
         # read back as if it applied to another; index by self.backend, never bare.
         self.ai_model = {}
         self.ai_effort = {}
@@ -320,7 +320,7 @@ class _GenerateDialog(QDialog):
         self.setMinimumWidth(480)
         # Opened at a size that gives the review page's card list real room, clamped
         # to the screen the way _ask_with_widget's own open_size does (ui.py), rather
-        # than left to whatever the tallest page's natural sizeHint happens to be --
+        # than left to whatever the tallest page's natural sizeHint happens to be:
         # the input page's expanding source box used to set that for every page,
         # leaving the review and progress pages floating in space they never asked for.
         open_w, open_h = 640, 680
@@ -335,7 +335,7 @@ class _GenerateDialog(QDialog):
         self._retried_json = False   # the single-retry budget on malformed model output
         # Backend kinds with a "Test connection" run currently in flight (from
         # either the setup page's per-backend button or the input page's single
-        # backend button -- both call _run_connection_test for the same kind).
+        # backend button: both call _run_connection_test for the same kind).
         # Guards against Re-check re-enabling a button mid-test and a second
         # click starting a concurrent test that races the first to write the
         # same status label.
@@ -371,7 +371,7 @@ class _GenerateDialog(QDialog):
 
         @_safe on generate_cards() (module bottom) only covers exceptions that
         unwind back through *its own* call stack. A button's clicked signal doesn't
-        go through that stack at all -- Qt dispatches it directly from its own event
+        go through that stack at all: Qt dispatches it directly from its own event
         loop, so an exception raised inside a slot reaches Anki's excepthook
         instead, which is exactly what happened to _do_import before this existed.
         Every callback wired to a widget signal that can meaningfully raise (import,
@@ -401,15 +401,15 @@ class _GenerateDialog(QDialog):
         unguarded exception here reached Anki's raw crash box too. But an exception
         here is also worse than an unguarded button click, not just as bad: by the
         time either poll fires its *last* time, it has already set _gen_done (or
-        _img_done) and stopped its own timer -- correct, so the cycle can't complete
-        twice -- which means if the completion code itself then raises, there is no
+        _img_done) and stopped its own timer (correct, so the cycle can't complete
+        twice), which means if the completion code itself then raises, there is no
         longer any live worker or timer left for Cancel to act on. The dialog stayed
         on the progress page showing "Generating cards" forever, with Cancel wired to
         cancel a run that had already finished; closing the window was the only way
         out.
 
         So on top of _guard's own dialog, this makes the latched state consistent
-        (both flags true, both timers stopped -- redundant on the already-correct
+        (both flags true, both timers stopped: redundant on the already-correct
         path, cheap insurance on the exception one) and always lands the user back on
         a page they can act on: the same place a cancelled or failed generation
         already lands (_return_to_input_or_review), with a hard fallback to the input
@@ -435,7 +435,7 @@ class _GenerateDialog(QDialog):
                 print(traceback.format_exc())
                 self.stack.setCurrentWidget(self.input_page)
 
-    # -- setup ---------------------------------------------------------------
+    # === setup ================================================================
     def _build_setup(self):
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -473,7 +473,7 @@ class _GenerateDialog(QDialog):
             "Install one of these, run it once in a terminal, and sign in "
             "there yourself. Then come back and re-check. \"Test connection\" "
             "runs a real, trivial prompt through a detected CLI to confirm it "
-            "can actually generate, not just that the binary runs -- unlike "
+            "can actually generate, not just that the binary runs: unlike "
             "the status above, which is a cheap, free check."))
         lay.addStretch()
         bb = QDialogButtonBox()
@@ -501,7 +501,7 @@ class _GenerateDialog(QDialog):
                 res = ai_cli.probe(kind, path)
                 ok = res["ok"]
                 # The three states the README promises: "installed and
-                # working" here means only "the binary runs and exits 0" --
+                # working" here means only "the binary runs and exits 0":
                 # NOT that it's actually signed in and can generate. That
                 # deeper check is Test connection, deliberately on-demand
                 # since it costs a real model call; this stays a cheap,
@@ -583,7 +583,7 @@ class _GenerateDialog(QDialog):
         t.start()
         timer.start(_IMG_POLL_MS)
 
-    # -- input -----------------------------------------------------------------
+    # === input ==================================================================
     def _build_input(self):
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -613,14 +613,14 @@ class _GenerateDialog(QDialog):
         lay.addWidget(self.instructions_box)
 
         # The radio itself carries only the short, stable name; the per-backend
-        # truthful sentence (ai_cli.BACKENDS' "modes", set once a backend is known
-        # -- see _refresh_backend_row) moves to a hint_label underneath, word-
+        # truthful sentence (ai_cli.BACKENDS' "modes", set once a backend is known,
+        # see _refresh_backend_row) moves to a hint_label underneath, word-
         # wrapped. A radio button doesn't wrap its own text, and that sentence runs
         # 150-200 characters, which used to set the radio's sizeHint to its full
         # width and, since a stacked widget's minimum is the max of its pages,
         # forced the whole dialog to roughly 1000px wide on every page. What mode
         # enforcement actually exists differs by backend, so the sentence still has
-        # to be shown in full, honestly, per backend -- it just no longer has to be
+        # to be shown in full, honestly, per backend: it just no longer has to be
         # the thing that can't wrap.
         self.thorough_radio = QRadioButton("Thorough")
         self.quick_radio = QRadioButton("Quick draft")
@@ -654,14 +654,14 @@ class _GenerateDialog(QDialog):
             if name == "Study Deck - Image ID":
                 continue
             # A managed type (Study Deck - Basic/Cloze) only exists in THIS
-            # collection once its deck has been synced at least once --
+            # collection once its deck has been synced at least once:
             # _ensure_notetypes reconciles fields on a type that's already there,
             # it never creates one. Basic/Cloze are checked the same way rather
             # than assumed present, since a renamed or missing core type is exactly
             # as unusable here. Offering a type this collection doesn't have would
             # let someone write source material, wait through a whole generation,
             # and only discover at the very last click (Import) that
-            # add_generated_notes rejects the entire batch -- see collection.py's
+            # add_generated_notes rejects the entire batch: see collection.py's
             # _GENERATED_ALLOWED_TYPES check. Shown disabled rather than omitted,
             # so it's clear the type exists and *why* it isn't offered yet, not
             # just silently missing from the list.
@@ -686,7 +686,7 @@ class _GenerateDialog(QDialog):
         self.backend_row = hint_label("")
         lay.addWidget(self.backend_row)
 
-        # Model/effort controls: shown per-backend honesty, not a shared UI --
+        # Model/effort controls: shown per-backend honesty, not a shared UI:
         # a backend with no verified model or effort flag doesn't get a control
         # it can't actually honor. See _refresh_model_effort_controls.
         self.model_label = QLabel("Model")
@@ -757,7 +757,7 @@ class _GenerateDialog(QDialog):
     def _refresh_model_effort_controls(self):
         """Rebuild the Model/Effort row for the now-current backend. Honesty
         pattern: a backend with no verified flag doesn't get a live control for
-        it -- agy's model is read-only text (there is no way to honor a choice
+        it: agy's model is read-only text (there is no way to honor a choice
         there, see ai_cli.BACKENDS["agy"]), and effort is hidden entirely for
         any backend without a verified --effort flag (today, only claude has
         one). Guarded by _updating_backend_controls so repopulating these
@@ -798,7 +798,7 @@ class _GenerateDialog(QDialog):
                 for level in effort_levels:
                     self.effort_combo.addItem(level, level)
                 # A hand-edited config value outside effort_levels must not show as
-                # if it were a live override -- fall back to the same "Default
+                # if it were a live override: fall back to the same "Default
                 # (...)" entry build_argv's own fallback (resolve_claude_effort)
                 # would actually send, so the combo always shows the effective
                 # value, never a typo it can't find in its own list.
@@ -862,7 +862,7 @@ class _GenerateDialog(QDialog):
             ", ".join(os.path.basename(p) for p, _ in s.attachments)
             or "No files attached")
         # Anki's own bundled Python doesn't carry Pillow, which pypdf needs to
-        # decode a PDF's embedded images (its text still comes through fine) --
+        # decode a PDF's embedded images (its text still comes through fine):
         # say so once per session, right when it happens, rather than leaving
         # a PDF's figures silently missing with no explanation.
         if images_undecoded and not s.pdf_image_warning_shown:
@@ -873,7 +873,7 @@ class _GenerateDialog(QDialog):
 
     def _view_skills(self):
         """Show what's actually sent to the model. Dismissing this dialog (Close,
-        Escape, the window's close box) must never itself change consent -- only
+        Escape, the window's close box) must never itself change consent: only
         an explicit click on the toggle button may. Rebuilt through _ask_scrollable's
         extra_label/on_extra: that button carries ActionRole, so clicking it runs
         the toggle and leaves the dialog open rather than answering (and closing)
@@ -892,7 +892,7 @@ class _GenerateDialog(QDialog):
 
         if not deck:
             # The plain QMessageBox _info opens has no scroll area, so long text
-            # just makes the box taller -- with the bundled skill's own 48 lines
+            # just makes the box taller: with the bundled skill's own 48 lines
             # of prose, that box outgrew an 891px screen and left its own Close
             # button unreachable. _ask_scrollable's fixed-height viewport with the
             # button pinned outside it is what the deck-skill branch below
@@ -912,7 +912,7 @@ class _GenerateDialog(QDialog):
         _ask_scrollable(_body(deck), yes_label="Close", no_label=None,
                         extra_label=_label_for(deck), on_extra=_toggle)
 
-    # -- progress --------------------------------------------------------------
+    # === progress ===============================================================
     def _build_progress(self):
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -947,7 +947,7 @@ class _GenerateDialog(QDialog):
                 # A genuinely fresh (non-revision) request: Back-then-Generate
                 # can reach here with an unrelated earlier draft still sitting
                 # in s.cards, and _finish_generation's revision detection goes
-                # only by "is s.cards non-empty" -- left uncleared, a brand
+                # only by "is s.cards non-empty": left uncleared, a brand
                 # new draft would read as a revision of that stale one and
                 # report a bogus "updated N, kept M verbatim" diff against it.
                 s.cards, s.included, s.notes = [], [], {}
@@ -1040,7 +1040,7 @@ class _GenerateDialog(QDialog):
 
         A draft with images kicks off a second background phase once the CLI
         call itself finishes (see _start_image_phase), still on its own
-        worker/timer pair rather than this one -- drain that too, so a caller
+        worker/timer pair rather than this one: drain that too, so a caller
         gets exactly the same end state a live QTimer eventually reaches,
         without needing to know a second phase happened at all.
         """
@@ -1079,12 +1079,12 @@ class _GenerateDialog(QDialog):
         _gen_done/_img_done latch right here, before either worker thread has
         actually exited, which is what makes that guarantee unconditional.
         Covers both the CLI generation phase and the (optional) image-
-        resolution phase that can follow it -- whichever is actually running.
+        resolution phase that can follow it: whichever is actually running.
 
         The scratch dir is the live workers' cwd (the CLI's --add-dir target,
         and where image resolution reads/writes), so a background reaper
         thread waits on every worker before removing it, rather than racing
-        it -- each join is capped at 30s, after which the reaper deletes the
+        it: each join is capped at 30s, after which the reaper deletes the
         directory regardless, so a wedged worker can't leak it forever."""
         self._gen_done = True
         self._img_done = True
@@ -1155,7 +1155,7 @@ class _GenerateDialog(QDialog):
                         if prev_cards[i] != cards[i]}
         elif is_revision:
             # Can't tell which (if any) of the new cards match the old ones, so
-            # nothing is claimed "kept verbatim" -- see _rebuild_review's header.
+            # nothing is claimed "kept verbatim": see _rebuild_review's header.
             s.updated = set(range(len(cards)))
         else:
             s.updated = set()
@@ -1172,7 +1172,7 @@ class _GenerateDialog(QDialog):
 
     def _start_image_phase(self):
         """Resolve every image on the current draft before review ever shows
-        one -- I2's gate. No images anywhere is the common case (most cards
+        one: I2's gate. No images anywhere is the common case (most cards
         carry none) and stays exactly as cheap as before: straight to
         _apply_review_state with nothing to wait on. Any image at all moves
         the resolution work (network downloads included) onto its own
@@ -1273,7 +1273,7 @@ class _GenerateDialog(QDialog):
         """Where a cancelled or failed request lands. A revision (Revise all)
         starts from an existing draft that _finish_generation never touches
         until a new draft actually parses, so on cancel/failure s.cards is
-        still the pre-revision draft -- send the user back to it (with its
+        still the pre-revision draft: send the user back to it (with its
         hand edits, include choices, and queued notes intact) rather than the
         input page, which is otherwise a dead end no Back button reaches. A
         first generation has no draft yet, so it still falls back to input."""
@@ -1283,7 +1283,7 @@ class _GenerateDialog(QDialog):
         else:
             self.stack.setCurrentWidget(self.input_page)
 
-    # -- review ------------------------------------------------------------
+    # === review =================================================================
     def _build_review(self):
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -1292,8 +1292,8 @@ class _GenerateDialog(QDialog):
         lay.addWidget(self.review_header)
         # The card list owns the dialog's surplus height instead of leaving it to
         # spread across every row (see widgets.StreamingList / review.py:1289): a
-        # scroll area sized by stretch factor 1, with the button row -- Import
-        # included -- outside it and always reachable, however many cards are drafted.
+        # scroll area sized by stretch factor 1, with the button row (Import
+        # included) outside it and always reachable, however many cards are drafted.
         cards_container = QWidget()
         self.cards_lay = QVBoxLayout(cards_container)
         cards_scroll = QScrollArea()
@@ -1302,7 +1302,7 @@ class _GenerateDialog(QDialog):
         cards_scroll.setWidget(cards_container)
         lay.addWidget(cards_scroll, 1)
         # Run-level facts (token spend, the rate-limit window, the revision diff
-        # summary) rather than what she's deciding between -- see
+        # summary) rather than what she's deciding between: see
         # _update_review_summary. Hidden entirely when there's nothing to say
         # (the very first draft of a session, before any run has billed anything).
         self.review_footer = hint_label("")
@@ -1357,8 +1357,8 @@ class _GenerateDialog(QDialog):
         visible whether the row is open or not (the same treatment
         review._change_note_row gives a deck source's own change note); the back,
         why, dosing and images sit in the body the caret reveals. Edit and Note are
-        link_buttons at the end of that body -- review.py's own "Add note"
-        placement -- rather than native push buttons crowding every row.
+        link_buttons at the end of that body (review.py's own "Add note"
+        placement) rather than native push buttons crowding every row.
         """
         s = self.session
         entries = s.checks[i]
@@ -1404,7 +1404,7 @@ class _GenerateDialog(QDialog):
         primary.setWordWrap(True)
         hlay.addWidget(primary, 1)
 
-        # The note type -- no longer a parenthetical crowding the front, but a
+        # The note type: no longer a parenthetical crowding the front, but a
         # quiet trailing label off to the row's right, the same treatment
         # widgets.simple_row gives a trailing count or destination: metadata about
         # the row, read after the card itself rather than inline with it.
@@ -1466,7 +1466,7 @@ class _GenerateDialog(QDialog):
         """A card's checkbox flipped: write the new state and refresh what depends
         on it. Split from _rebuild_review's own toggled.connect (which used to
         write s.included and stop there) because that left the toggle with no
-        visible effect at all -- the box itself flips (Qt paints that on its own),
+        visible effect at all: the box itself flips (Qt paints that on its own),
         but nothing ever recomputed the "N included" header or the "Import N
         cards" button label, so a click that genuinely worked read as doing
         nothing. Updates only those two labels rather than calling the full
@@ -1530,7 +1530,7 @@ class _GenerateDialog(QDialog):
 
     def _note_card(self, i):
         """Queue (or clear) a per-card revision note. This never calls the
-        model by itself -- it only marks the card for the next Revise all,
+        model by itself: it only marks the card for the next Revise all,
         which is what sends every queued note in one turn (see _revise_all)."""
         note = _prompt("Revision note for this card:",
                        default=self.session.notes.get(i, ""))
@@ -1550,7 +1550,7 @@ class _GenerateDialog(QDialog):
     def _do_import(self):
         """Write the included cards to the collection. Every image was already
         resolved to bytes back at review time (see _start_image_phase /
-        session.image_data), so this only reuses that -- it never re-touches
+        session.image_data), so this only reuses that: it never re-touches
         the network, never re-reads an attachment, and can't block. Hands
         add_generated_notes the bytes plus the filenames it chose, per its
         documented media contract.
@@ -1581,9 +1581,9 @@ class _GenerateDialog(QDialog):
             for j in range(len(card["images"])):
                 res = resolved[j] if j < len(resolved) else None
                 if not res or res.get("state") != "ok":
-                    # One bad image is not worth losing the whole card over --
+                    # One bad image is not worth losing the whole card over:
                     # warn and move on, same as a mechanical check would flag
-                    # it (and, per I2, already did -- this is the fallback for
+                    # it (and, per I2, already did: this is the fallback for
                     # a card the user included anyway).
                     _warn(f"Skipping an image on card {pos + 1}: "
                           f"{(res or {}).get('error', 'not resolved')}")
@@ -1624,7 +1624,7 @@ class _GenerateDialog(QDialog):
 
     def _cleanup_scratch(self):
         """Remove the session's scratch directory (extracted attachment images,
-        PDF-embedded images -- real source material). Called directly on every
+        PDF-embedded images, real source material). Called directly on every
         path that ends this dialog EXCEPT closing mid-generation, which hands
         the same cleanup to a background reaper instead (see
         _cancel_running_generation) so closing never blocks on a live worker.
@@ -1636,7 +1636,7 @@ class _GenerateDialog(QDialog):
             self.session.scratch = None
 
     def reject(self):
-        """Closing mid-review discards everything unsaved -- nothing about a
+        """Closing mid-review discards everything unsaved: nothing about a
         draft, a note, or a prompt is ever written to disk (see the module
         docstring), so this confirmation is the only chance to back out.
 
@@ -1644,7 +1644,7 @@ class _GenerateDialog(QDialog):
         (QDialog's own closeEvent calls reject()), so this is the one place
         that has to handle closing mid-generation too: a run in flight is
         real, billed work, not something to silently throw away on a stray
-        Escape, so it gets the same kind of confirm as discarding a draft --
+        Escape, so it gets the same kind of confirm as discarding a draft:
         but once confirmed, the actual cancel is handed off (see
         _cancel_running_generation) rather than blocking this call on
         however long the subprocess takes to die."""

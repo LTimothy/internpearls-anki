@@ -271,7 +271,7 @@ class _Models:
     def new_field(self, name):
         return {"name": name}
 
-    # -- change-notetype surface (see collection.change_note_types) --------------
+    # === change-notetype surface (see collection.change_note_types) ===
     def change_notetype_info(self, *, old_notetype_id, new_notetype_id):
         req = ChangeNotetypeRequest()
         req.old_notetype_id, req.new_notetype_id = old_notetype_id, new_notetype_id
@@ -379,7 +379,7 @@ def _read_apkg(path):
 class MockMedia:
     """Stands in for Anki's col.media: writes image bytes into the media folder.
 
-    Mirrors write_data()'s real contract -- a name collision with DIFFERENT bytes
+    Mirrors write_data()'s real contract: a name collision with DIFFERENT bytes
     gets renamed (Anki dedupes by content hash), so a caller must use the returned
     filename, never the one it asked for. Files land in an in-memory dict rather
     than on disk; nothing here reads the filesystem.
@@ -391,7 +391,7 @@ class MockMedia:
     def fail_after(self, n, exc=None):
         """Test hook: make the Nth call (1-indexed) to write_data() raise `exc`
         (RuntimeError by default) instead of writing, to exercise a caller's
-        exception-safety around a real backend/disk failure. Never armed by default --
+        exception-safety around a real backend/disk failure. Never armed by default:
         production and every other test are unaffected unless this is called."""
         self._fail_after = [n, exc or RuntimeError("mock media write failure")]
 
@@ -435,7 +435,7 @@ class MockCollection:
         # Undo entries the AI-import path relies on: each is {name, notes, cards}.
         # Every note-adding op below pushes its OWN entry (real Anki does this per
         # backend op too) unless _undo_merge_open points at one still being collected
-        # -- add_custom_undo_entry opens it, merge_undo_entries closes it -- in which
+        # (add_custom_undo_entry opens it, merge_undo_entries closes it), in which
         # case the op folds into that one instead. That's what lets a caller squash a
         # whole run of adds into a single undo() later. Scoped to notes/cards only;
         # nothing else here needs undo modeling.
@@ -448,7 +448,7 @@ class MockCollection:
         self.sched = types.SimpleNamespace(suspend_cards=self._suspend_cards)
         self.tags = types.SimpleNamespace(bulk_add=self._tags_bulk_add)
 
-    # -- undo: add_custom_undo_entry / merge_undo_entries / undo -------------
+    # === undo: add_custom_undo_entry / merge_undo_entries / undo ===
     def add_custom_undo_entry(self, name):
         self._undo_entries.append({"name": name, "notes": [], "cards": []})
         target = len(self._undo_entries) - 1
@@ -474,7 +474,7 @@ class MockCollection:
                     self._cards.pop(cid, None)
         return types.SimpleNamespace(operation=entry["name"])
 
-    # -- new_note / add_note: real Anki's two-call add path -------------------
+    # === new_note / add_note: real Anki's two-call add path ===
     def new_note(self, model):
         """Anki's col.new_note(): an unsaved note for `model`, with a placeholder
         guid a caller may overwrite before add_note() (real Anki assigns a random
@@ -498,13 +498,13 @@ class MockCollection:
         """Test hook: make the Nth call (1-indexed) to the real add_note(note, did)
         path raise `exc` (RuntimeError by default) instead of adding, so a test can
         exercise a caller's exception-safety around a multi-note write the way a real
-        Anki backend failure would. Never armed by default -- production and every
+        Anki backend failure would. Never armed by default: production and every
         other test are unaffected unless this is called."""
         self._add_note_fail_after = [n, exc or RuntimeError("mock add_note failure")]
 
     def _add_prepared_note(self, note, did):
         """Real add_note(note, deck_id): assigns note.id, files one card into `did`,
-        and -- like a fresh cloze note in real Anki -- adds one card per further
+        and, like a fresh cloze note in real Anki, adds one card per further
         cloze deletion the note's own text carries. Records into the open undo
         entry of its own, exactly as real Anki does."""
         if self._add_note_fail_after:
@@ -531,7 +531,7 @@ class MockCollection:
             {"name": "Add Note", "notes": [note.id], "cards": list(note._card_ids)})
         return types.SimpleNamespace(note_id=note.id)
 
-    # -- helpers for tests and the demo --------------------------------------
+    # === helpers for tests and the demo ===
     def _add_legacy_note(self, guid, values, tags, model=None, deck=None):
         model = model or self.models.all()[0]
         note = MockNote(self._next_id, guid, model, values, tags, deck)
@@ -553,7 +553,7 @@ class MockCollection:
     def note_by_guid(self, guid):
         return next(n for n in self._notes.values() if n.guid == guid)
 
-    # -- card-level surfaces the archive path uses ----------------------------
+    # === card-level surfaces the archive path uses ===
     def set_deck(self, cids, did):
         for cid in cids:
             self._cards[cid].did = did
@@ -569,7 +569,7 @@ class MockCollection:
                 if t not in note.tags:
                     note.tags.append(t)
 
-    # -- surface the add-on calls ---------------------------------------------
+    # === surface the add-on calls ===
     def find_notes(self, search):
         # The add-on searches '"tag:X" OR "tag:X::*"', optionally with a trailing
         # ' -"tag:Y"' exclusion (see collection._her_notes_summary). Parse both.
@@ -1735,7 +1735,7 @@ class MockMW:
     def update_undo_actions(self):
         """Mirrors real Anki's mw.update_undo_actions(): Edit > Undo is enabled
         exactly when the collection has something to undo. col._undo_entries is
-        the mock's stand-in for real Anki's col.undo_status().can_undo -- good
+        the mock's stand-in for real Anki's col.undo_status().can_undo: good
         enough to catch a caller that writes the collection but never tells the
         UI a new undo entry exists, which is the bug this exists to catch."""
         self.form.actionUndo.setEnabled(bool(self.col._undo_entries))
@@ -1910,7 +1910,7 @@ def install():
     class _QKeySequence:
         """Stands in for real Qt's QKeySequence just enough to test that
         ai_dialog asks Qt for the platform's native Undo accelerator rather
-        than hardcoding one -- real Qt renders StandardKey.Undo as "Ctrl+Z" on
+        than hardcoding one: real Qt renders StandardKey.Undo as "Ctrl+Z" on
         Windows/Linux and "⌘Z" on macOS; this mirrors that one distinction
         rather than Qt's full native-text rendering, which qt_tests/ (real
         PyQt6) exercises directly.
@@ -1923,7 +1923,7 @@ def install():
             # macOS); PortableText is the plain ASCII form ("Ctrl+Z") used to
             # serialize a shortcut, the same on every platform. toString()'s
             # default format is PortableText, so this mock only renders the
-            # platform-specific glyph when NativeText is asked for explicitly --
+            # platform-specific glyph when NativeText is asked for explicitly:
             # a caller that dropped the format argument (or passed the wrong
             # one) gets the same "Ctrl+Z" on every platform, exactly the bug
             # this exists to catch.
@@ -1947,7 +1947,7 @@ def install():
 
     class _QApplication:
         # Every test here runs "inside Anki", where a QApplication always
-        # exists -- so instance() is live by default. A test that wants to
+        # exists: so instance() is live by default. A test that wants to
         # exercise the no-app fallback path (ai_dialog._undo_shortcut) can
         # monkeypatch this to None for the duration of the call.
         _instance = object()

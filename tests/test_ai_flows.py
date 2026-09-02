@@ -13,7 +13,7 @@ FAKE = os.path.join(os.path.dirname(__file__), "fake_cli.py")
 
 def _row_text(row):
     """Every bit of text a review row (or any widget) carries, anywhere in its
-    layout tree -- flattened, since the row skeleton splits what used to be one
+    layout tree: flattened, since the row skeleton splits what used to be one
     QLabel across a header line, reason lines, and a collapsible body. Walks the
     mock's own .node() rather than reaching for a real Qt findChildren the mock
     doesn't have."""
@@ -54,7 +54,7 @@ def test_setup_page_has_a_close_button(anki, monkeypatch):
 
 def test_image_id_note_type_is_not_offered(anki, monkeypatch):
     # Minor: its primary field IS the image, which a generated card has no
-    # way to fill (images travel separately) -- one such card used to poison
+    # way to fill (images travel separately): one such card used to poison
     # the whole reply. Decision: don't offer it for generation at all.
     monkeypatch.setattr(
         ai_cli, "find_cli",
@@ -67,12 +67,12 @@ def test_image_id_note_type_is_not_offered(anki, monkeypatch):
 def test_input_page_disables_a_note_type_missing_from_the_collection(anki, monkeypatch):
     """A managed type only exists once its deck has been synced at least once
     (_ensure_notetypes reconciles an existing type's fields, it never creates
-    one) -- offering "Study Deck - Cloze" checked by default before that first
+    one): offering "Study Deck - Cloze" checked by default before that first
     sync let someone write source material, wait through a whole generation,
     and only discover at the very last click (Import) that add_generated_notes
     rejects the whole batch. The `anki` fixture's mock collection seeds only
     "Study Deck - Basic" (mock_anki.MockCollection's default model), the exact
-    shape of the real run this reproduces -- see collection.py's
+    shape of the real run this reproduces: see collection.py's
     test_add_generated_notes_core_type_missing_from_collection_raises for the
     matching import-time check, which must keep raising regardless of this."""
     monkeypatch.setattr(
@@ -108,7 +108,7 @@ def test_input_page_shown_when_backend_found(anki, monkeypatch):
     assert dlg.generate_btn.isEnabled()
 
 
-# -- I7: Test connection -----------------------------------------------------
+# === I7: Test connection ====================================================
 
 def _drain_conn_test(dlg, timeout=15):
     """Test helper mirroring _wait_for_worker: joins the background thread a
@@ -145,7 +145,7 @@ def test_setup_test_connection_reports_working(anki, monkeypatch):
 def test_recheck_mid_test_connection_does_not_reenable_or_double_run(anki, monkeypatch):
     # Minor fix: Re-check used to unconditionally reset every test button/status,
     # so pressing it while a Test connection run was in flight re-enabled that
-    # button and cleared its "Testing connection..." text -- a second click could
+    # button and cleared its "Testing connection..." text: a second click could
     # then start a concurrent test racing the first to write the same label.
     monkeypatch.setattr(
         ai_cli, "find_cli",
@@ -274,14 +274,14 @@ def test_completion_exception_reaches_dialog_and_recovers_to_input(anki, monkeyp
     exception raised while processing an already-finished generation reached
     Anki's raw crash box instead of this add-on's own dialog. Worse, by the time
     the poll calls _finish_generation it has already set _gen_done and stopped its
-    own timer (so the cycle can't run twice) -- so if _finish_generation itself
+    own timer (so the cycle can't run twice): so if _finish_generation itself
     then raised, nothing was left running for Cancel to act on and nothing ever
     moved the stack off the progress page: the wizard was stuck, permanently,
     with a Cancel button wired to a no-op.
 
     Fires the real timer callback (dlg._timer.fire(), the mock's stand-in for a
     real Qt timeout signal) rather than calling _finish_generation directly, so
-    this exercises the actual wiring the bug lived in -- a raise inside a
+    this exercises the actual wiring the bug lived in: a raise inside a
     directly-invoked method call would never have caught this class of bug,
     exactly like test_import_button_click_shows_dialog_instead_of_raising above
     for the button-click guard.
@@ -310,7 +310,7 @@ def test_completion_exception_reaches_dialog_and_recovers_to_input(anki, monkeyp
     assert dlg.stack.currentWidget() is dlg.input_page   # landed somewhere usable
     assert dlg.source_box.toPlainText()                  # inputs weren't thrown away
 
-    dlg._cancel_generation()   # Cancel is still callable -- a no-op now, but never raises
+    dlg._cancel_generation()   # Cancel is still callable: a no-op now, but never raises
 
     # The wizard itself isn't broken: a later generation completes normally.
     monkeypatch.setattr(ai_logic, "parse_cards_json", real_parse)
@@ -350,7 +350,7 @@ def test_review_note_queue_and_revise_all(anki, monkeypatch):
     assert dlg.session.notes == {}          # consumed by the revision
 
 
-# -- Minor: a fresh Generate after an existing draft is not a revision ------
+# === Minor: a fresh Generate after an existing draft is not a revision =====
 
 def test_fresh_generate_after_back_does_not_report_a_bogus_diff(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
@@ -410,7 +410,7 @@ def test_import_writes_notes_and_closes(anki, monkeypatch):
 def test_undo_shortcut_asks_qt_for_the_native_undo_key_sequence(anki):
     """Finding 2, isolated from the dialog flow: _undo_shortcut() must ask Qt
     for StandardKey.Undo rendered as NativeText, not a bare/default-format
-    toString() -- the mock's QKeySequence only renders the platform glyph for
+    toString(): the mock's QKeySequence only renders the platform glyph for
     NativeText specifically (see mock_anki._QKeySequence), so this catches
     either a hardcoded string or a call that drops the format argument."""
     expected = "⌘Z" if sys.platform == "darwin" else "Ctrl+Z"
@@ -420,7 +420,7 @@ def test_undo_shortcut_asks_qt_for_the_native_undo_key_sequence(anki):
 def test_undo_shortcut_survives_no_live_qapplication(monkeypatch):
     """Regression guard for a real SIGSEGV: real Qt's QKeySequence(StandardKey)
     consults the platform theme, which is a null pointer with no live
-    QApplication, and that dereference is not a catchable Python exception --
+    QApplication, and that dereference is not a catchable Python exception:
     it kills the whole interpreter. This deliberately does NOT use the `anki`
     fixture, so nothing before this call has an app instance either, matching
     the plain-script/no-Qt-app case _undo_shortcut() must survive. It must
@@ -432,8 +432,8 @@ def test_undo_shortcut_survives_no_live_qapplication(monkeypatch):
     assert isinstance(result, str) and result
 
 
-# -- a successful import notifies the UI: undo becomes reachable, the deck list
-# refreshes -- see ai_dialog._do_import and mock_anki.MockMW.update_undo_actions.
+# A successful import notifies the UI: undo becomes reachable, the deck list
+# refreshes. See ai_dialog._do_import and mock_anki.MockMW.update_undo_actions.
 
 def test_import_enables_undo_and_refreshes_the_deck_list(anki, monkeypatch):
     """The bug this guards: add_generated_notes wrote a real, mergeable undo
@@ -465,7 +465,7 @@ def test_import_success_message_uses_the_platform_undo_shortcut(anki, monkeypatc
     assert f"{ai_dialog._undo_shortcut()} reverts it" in message
 
 
-# -- Finding 3: singular counts must not read "1 cards" / "1 notes" ----------
+# === Finding 3: singular counts must not read "1 cards" / "1 notes" =========
 
 def test_import_button_label_pluralizes_a_single_card(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
@@ -503,7 +503,7 @@ def test_import_success_message_pluralizes_a_single_card(anki, monkeypatch):
 
 def test_core_cloze_card_review_row_renders_non_empty(anki, monkeypatch):
     """I6: PRIMARY_FIELD had no "Cloze" entry, so the review row fell back to
-    "Front", which a Cloze note lacks, and rendered empty -- approving a card
+    "Front", which a Cloze note lacks, and rendered empty: approving a card
     whose text the user could not see."""
     from internpearls import ai_logic
     dlg = _ready_dialog(anki, monkeypatch)
@@ -531,7 +531,7 @@ def test_excluded_card_is_not_imported(anki, monkeypatch):
     assert not anki.col._notes
 
 
-# -- I4: importing zero cards must not close the wizard or claim an undo step -
+# === I4: importing zero cards must not close the wizard or claim an undo step ===
 
 def test_importing_zero_cards_does_not_close_the_wizard(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
@@ -557,8 +557,8 @@ def _basic_card(front, source):
 
 
 def test_two_svg_images_get_distinct_media_filenames(anki, monkeypatch):
-    # _do_import only ever reuses what review already resolved (see I2) -- it
-    # never calls svg_to_media itself -- so the test seeds session.image_data
+    # _do_import only ever reuses what review already resolved (see I2): it
+    # never calls svg_to_media itself, so the test seeds session.image_data
     # the way _run_image_resolution would have, rather than the raw source.
     dlg = _ready_dialog(anki, monkeypatch)
     s = dlg.session
@@ -586,7 +586,7 @@ def test_one_failed_image_does_not_abort_import(anki, monkeypatch):
     s.included = [True]
     s.checks = [[{"code": "ok", "level": "ok", "message": "checks pass"}]]
     # A card the user included anyway despite a failed resolution (the normal
-    # path excludes it by default, per I2's mechanical-check gate) -- import
+    # path excludes it by default, per I2's mechanical-check gate): import
     # must still skip just the image, not the whole card.
     s.image_data = {0: [{"state": "error", "kind": "url", "error": "network is down",
                          "host": "example.com"}]}
@@ -597,7 +597,7 @@ def test_one_failed_image_does_not_abort_import(anki, monkeypatch):
     assert any("Skipping an image" in w for w in anki.gui.warnings)
 
 
-# -- I2: images are resolved and gated at review time, not import time -----
+# === I2: images are resolved and gated at review time, not import time ====
 
 def _stub_fetch_image(monkeypatch, data=b"PNGDATA", ext="png", error=None):
     def fake(url):
@@ -620,7 +620,7 @@ def test_image_card_resolves_off_thread_and_reaches_review(anki, monkeypatch):
 
 def test_image_card_starts_excluded_by_default(anki, monkeypatch):
     # I2: "excluded by default until the user has seen the rendered
-    # thumbnail" -- true even when resolution succeeds and no mechanical
+    # thumbnail": true even when resolution succeeds and no mechanical
     # check would otherwise block it.
     _stub_fetch_image(monkeypatch)
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
@@ -713,7 +713,7 @@ def test_close_before_generation_does_not_ask(anki, monkeypatch):
     assert not anki.gui.asks
 
 
-# -- I1: closing mid-generation must cancel the run, not orphan it ----------
+# === I1: closing mid-generation must cancel the run, not orphan it =========
 
 def test_close_mid_generation_asks_and_declining_keeps_it_running(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="slow")
@@ -742,7 +742,7 @@ def test_close_mid_generation_confirmed_kills_process_stops_timer_and_no_late_mo
     assert dlg._timer.started is None       # the poll timer was stopped, not left running
     assert dlg._gen_done is True            # latched immediately, before the worker exited
 
-    # The worker (and the subprocess it owns) actually dies, promptly --
+    # The worker (and the subprocess it owns) actually dies, promptly:
     # this bounds how long "cancel" takes to really take effect.
     dlg._worker.join(timeout=15)
     assert not dlg._worker.is_alive()
@@ -754,7 +754,7 @@ def test_close_mid_generation_confirmed_kills_process_stops_timer_and_no_late_mo
     assert not anki.gui.infos
     assert dlg.stack.currentWidget() is dlg.progress_page   # never touched again
 
-    # The scratch dir -- the dead child's own cwd -- is removed once the
+    # The scratch dir (the dead child's own cwd) is removed once the
     # background reaper has actually caught up with the worker's exit.
     for _ in range(100):
         if dlg.session.scratch is None:
@@ -786,7 +786,7 @@ def test_view_skills_escapes_raw_html_and_preserves_line_breaks(anki):
     assert body.count("<br>") >= 2          # newlines survived as real line breaks
 
 
-# -- I5: dismissing View skills must never itself flip deck-skill consent -----
+# === I5: dismissing View skills must never itself flip deck-skill consent ====
 
 def _seed_deck_skill(enabled=True):
     config.save_deck_skill({"text": "do X", "version": "1",
@@ -802,7 +802,7 @@ def test_view_skills_dismiss_never_changes_consent(anki, monkeypatch):
                             extra_label=None, on_extra=None, **kw):
         calls["no_label"] = no_label
         # Dismissing (Close, Escape, or the window's close box) never reaches
-        # on_extra -- that's the whole point of the extra_label mechanism.
+        # on_extra: that's the whole point of the extra_label mechanism.
         return True
 
     monkeypatch.setattr(ai_dialog, "_ask_scrollable", fake_ask_scrollable)
@@ -828,7 +828,7 @@ def test_view_skills_extra_button_is_the_only_thing_that_toggles_consent(anki,
     assert config.load_deck_skill()["enabled"] is False
 
 
-# -- scratch dir cleanup --------------------------------------------------
+# === scratch dir cleanup =================================================
 
 def test_scratch_dir_removed_after_import(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
@@ -841,7 +841,7 @@ def test_scratch_dir_removed_after_import(anki, monkeypatch):
     assert dlg.session.scratch is None
 
 
-# -- I8: cleanup must not run ahead of the call that can raise ---------------
+# === I8: cleanup must not run ahead of the call that can raise ==============
 
 def test_failing_import_leaves_scratch_dir_intact_for_a_retry(anki, monkeypatch):
     """add_generated_notes raises RuntimeError for an unknown/missing note type
@@ -873,7 +873,7 @@ def test_scratch_dir_removed_on_discard(anki, monkeypatch):
 
 
 def test_scratch_dir_kept_when_discard_is_declined(anki, monkeypatch):
-    """Cleanup only runs once the dialog actually agrees to close -- declining
+    """Cleanup only runs once the dialog actually agrees to close: declining
     the discard confirmation must not blow away work still being reviewed."""
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
@@ -894,7 +894,7 @@ def test_scratch_cleanup_is_defensive_about_an_already_missing_directory(anki, m
     assert dlg.session.scratch is None
 
 
-# -- revision: preserving manual choices, and shape-mismatch honesty ------
+# === revision: preserving manual choices, and shape-mismatch honesty =====
 
 def test_revision_preserves_manual_include_choices_for_unchanged_cards(anki, monkeypatch):
     # Seed an existing note so the second card's front collides with it,
@@ -913,7 +913,7 @@ def test_revision_preserves_manual_include_choices_for_unchanged_cards(anki, mon
     dlg._revise_all()
     dlg._wait_for_worker()
     # fake_cli's two_cards mode returns the identical two cards every time, so
-    # the revision changed neither -- both manual choices must survive it.
+    # the revision changed neither: both manual choices must survive it.
     assert dlg.session.updated == set()
     assert dlg.session.included == [False, True]
 
@@ -928,7 +928,7 @@ def test_revision_with_different_card_count_does_not_claim_per_card_updates(anki
 
     def build_argv(kind, path, mode, scratch, imgs, model="", effort=""):
         # First call (the initial draft) returns one card; the "revision"
-        # comes back with two -- the shape mismatch nothing here can prevent.
+        # comes back with two: the shape mismatch nothing here can prevent.
         calls.append(1)
         cli_mode = "ok" if len(calls) == 1 else "two_cards"
         return [sys.executable, FAKE, cli_mode], True
@@ -944,7 +944,7 @@ def test_revision_with_different_card_count_does_not_claim_per_card_updates(anki
     assert len(dlg.session.cards) == 2
     assert dlg.session.revision_shape_mismatch is True
     # No card is presented as confidently kept-verbatim when the count itself
-    # moved -- every index is treated as changed, not silently mismatched.
+    # moved: every index is treated as changed, not silently mismatched.
     assert dlg.session.updated == {0, 1}
     assert dlg.session.included == [True, True]   # falls back to the mechanical-check default
     footer = dlg.review_footer.text()
@@ -953,7 +953,7 @@ def test_revision_with_different_card_count_does_not_claim_per_card_updates(anki
     assert "kept 1 verbatim" not in footer
 
 
-# -- I3: cancelling or failing a revision must not strand the reviewed draft -
+# === I3: cancelling or failing a revision must not strand the reviewed draft ===
 
 def _revisable_dialog(anki, monkeypatch, cli_mode_box):
     """Like _ready_dialog, but build_argv reads its mode from a mutable box so
@@ -1017,7 +1017,7 @@ def test_failed_revision_after_retry_returns_to_review_with_draft_intact(anki, m
 
 def test_first_generation_cancel_still_falls_back_to_input_with_no_draft(anki, monkeypatch):
     # No prior draft exists yet on a first generation, so cancelling it has
-    # nothing to return to -- the input page fallback is still correct here.
+    # nothing to return to: the input page fallback is still correct here.
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="slow")
     dlg._start_generation()
     dlg._cancel_generation()
@@ -1026,7 +1026,7 @@ def test_first_generation_cancel_still_falls_back_to_input_with_no_draft(anki, m
     assert not dlg.session.cards
 
 
-# -- I8: the entry point itself must be guarded like every other menu action --
+# === I8: the entry point itself must be guarded like every other menu action =
 
 def test_generate_cards_entry_point_surfaces_a_bug_as_a_dialog(anki, monkeypatch):
     def boom(*a, **k):
@@ -1039,7 +1039,7 @@ def test_generate_cards_entry_point_surfaces_a_bug_as_a_dialog(anki, monkeypatch
 
 def test_import_buttons_own_click_signal_surfaces_a_bug_as_a_dialog(anki, monkeypatch):
     """@_safe on generate_cards() only catches an exception that unwinds back
-    through its own call stack -- a button's clicked signal doesn't go through
+    through its own call stack: a button's clicked signal doesn't go through
     that stack at all, so _do_import used to reach Anki's raw crash box instead
     of this add-on's dialog (see ai_dialog._GenerateDialog._guard). Fires the
     button's actual clicked signal (like test_setup_page_has_a_close_button

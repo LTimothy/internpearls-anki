@@ -896,7 +896,7 @@ def _scene_ai_review(mock, opts):
 
 
 def _scene_ai_view_skills(mock, opts):
-    """View skills, no deck skill installed -- every install whose source
+    """View skills, no deck skill installed: every install whose source
     hasn't shipped a deck_skill.json, which is the common case. Renders the
     real bundled skill text (48 lines of prose), not a placeholder: that's
     what used to outgrow an 891px screen through a bare QMessageBox with no

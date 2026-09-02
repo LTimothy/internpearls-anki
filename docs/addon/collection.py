@@ -1278,7 +1278,7 @@ def remove_empty_cards():
 
 # Note types a generated card may name: the ones this add-on manages (TARGET_FIELDS)
 # plus Anki's own core Basic/Cloze. Nothing else is trusted, even if it happens to
-# exist in this collection -- a learner's own note type is not this feature's to write.
+# exist in this collection: a learner's own note type is not this feature's to write.
 _GENERATED_ALLOWED_TYPES = frozenset(TARGET_FIELDS) | {"Basic", "Cloze"}
 
 
@@ -1292,20 +1292,20 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
     every such file across the whole accepted batch. This function only writes those
     bytes into the collection's media folder and turns each card's _media_files into
     `<img src="...">` tags appended to its Image field (or its primary field, for a
-    note type with none) -- it never resolves or fetches an image itself.
+    note type with none): it never resolves or fetches an image itself.
 
     Every note gets a fresh iplocal- GUID (ai_logic.generated_guid()), so it can never
-    match -- and a later deck sync's remap_cards/_reconcile_pending can never touch --
+    match (and a later deck sync's remap_cards/_reconcile_pending can never touch)
     a real synced card. Nothing here reads or modifies an existing note; this only adds.
 
     Raises RuntimeError, before writing anything (media or notes), if a card names a
-    note type outside _GENERATED_ALLOWED_TYPES or one absent from this collection --
+    note type outside _GENERATED_ALLOWED_TYPES or one absent from this collection:
     an atomic check, so that failure mode never leaves anything behind. Returns the
     number of notes added; 0 for an empty `cards`.
 
     A failure part-way through the actual writes (a media write erroring, a backend
-    add_note call failing) is NOT rolled back -- Anki gives no cheap way to undo mid
-    write -- so a partial import is possible here. What's guaranteed instead: whatever
+    add_note call failing) is NOT rolled back (Anki gives no cheap way to undo mid
+    write), so a partial import is possible here. What's guaranteed instead: whatever
     already landed, media and notes alike, is still exactly one undo step, so the
     caller (or the user, with Ctrl+Z) can always get back to a clean collection in one
     move. The original exception always propagates; this function never swallows one.

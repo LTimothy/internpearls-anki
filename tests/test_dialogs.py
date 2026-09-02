@@ -751,7 +751,7 @@ def test_save_json_creates_a_missing_directory(tmp_path):
     """D: _save_json mkstemps a temp file into its target's own directory before
     the atomic os.replace, and mkstemp raises FileNotFoundError outright if that
     directory doesn't exist. config.py only creates user_files/ once, at import
-    time, so this is reachable only if something removes it afterward -- but the
+    time, so this is reachable only if something removes it afterward: but the
     fix is one line and the failure mode was every state write in the add-on
     (installed.json, the feedback log, ai_usage.json, declined.json, the deck
     skill) crashing instead of just this one. Doesn't touch the target file
@@ -981,7 +981,7 @@ def test_night_mode_dimming_saves_toggle_and_percent(anki):
 
 def test_night_mode_dimming_percent_spinbox_follows_the_toggle(anki):
     """Nothing to dim by while the toggle is off, so the percent spinbox must not sit
-    there editable and inert -- same property Settings' own interval spinbox has."""
+    there editable and inert: same property Settings' own interval spinbox has."""
     from internpearls import dialogs
     anki.gui.interactive = True
     enabled = []
@@ -1004,7 +1004,7 @@ def test_night_mode_dimming_percent_spinbox_follows_the_toggle(anki):
 
 def test_night_mode_dimming_percent_range_matches_the_clamp(anki):
     """The spinbox's own range must not let a user pick a value the config layer would
-    silently clamp right back down -- see logic.clamp_night_mode_dim_percent."""
+    silently clamp right back down: see logic.clamp_night_mode_dim_percent."""
     from internpearls import config, dialogs
     anki.gui.interactive = True
 

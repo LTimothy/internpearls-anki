@@ -42,7 +42,7 @@ def clamp_night_mode_dim_percent(percent, floor_percent=0, default_percent=30,
     """Sanitize a configured/typed night-mode image-dim percentage: a missing or
     non-numeric value falls back to `default_percent`; anything below `floor_percent`
     (a negative brightening, or 0) is raised to the floor, and anything above
-    `ceiling_percent` is lowered to the ceiling -- past that point an image reads as
+    `ceiling_percent` is lowered to the ceiling: past that point an image reads as
     blacked out rather than dimmed, which defeats the point of dimming it at all.
     Mirrors clamp_interval_minutes's shape above.
 
@@ -81,7 +81,7 @@ def night_mode_image_css(enabled, percent=30):
     present. Dims rather than inverts, since a full color invert looks wrong on a
     real photo mixed into an otherwise diagram-heavy deck.
 
-    `percent` is how much dimmer, 0-90 (see clamp_night_mode_dim_percent -- this also
+    `percent` is how much dimmer, 0-90 (see clamp_night_mode_dim_percent: this also
     re-clamps, so a caller can pass a raw config value straight through). The default,
     30, is the fixed dim level this replaced (a flat brightness(0.7)), so leaving the
     percentage untouched keeps today's exact appearance.

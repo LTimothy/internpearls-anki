@@ -37,7 +37,7 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
 # reuses the existing "updated_bg"/"updated_fg" pair rather than a "changed_bg" this
 # repo has never had, since the wording and the role were named independently back
 # when only review.py's two markers existed. The wizard's four kinds are the same
-# reuse: "blocked" on decline, "warn" and "revised" on updated, "ok" on accept --
+# reuse: "blocked" on decline, "warn" and "revised" on updated, "ok" on accept:
 # see the AI wizard review section of the UX review for why no new palette entry
 # is needed for any of them.
 _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "moved",
