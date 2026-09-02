@@ -1235,7 +1235,7 @@ def open_night_mode_dimming():
             dim_line = (f"Bright images are dimmed {values['dim_images_night_mode_percent']}% "
                        "in Night Mode.")
     else:
-        dim_line = "Night Mode image dimming is off."
+        dim_line = "Night Mode Dimming is off."
     _info(f"Night mode dimming saved.<br><br>{dim_line}")
 
 
