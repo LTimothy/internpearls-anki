@@ -111,7 +111,14 @@ def test_model_set_under_claude_does_not_leak_into_codex(monkeypatch):
     dlg2.show()
     harness.app().processEvents()
     assert dlg2.session.backend == "codex"
-    assert conf["ai_model"].get("codex", "") == ""   # not pre-filled with "opus"
+
+    # Check the UI itself, not just config: a fresh AI Backends window opened
+    # now must not show codex's free-text model field pre-filled with the
+    # "opus" set under claude above.
+    dlg3 = ai_setup._AIBackendsDialog(None)
+    dlg3.show()
+    harness.app().processEvents()
+    assert dlg3.groups["codex"].model.custom.text() == ""
 
     dlg2.source_box.setPlainText("Some source material")
     dlg2._start_generation()
