@@ -306,8 +306,11 @@ class _Session:
         self.revision_shape_mismatch = False
         self.tokens_last_run = 0
         self.rate_limits = None
-        self.ai_model = ""    # resolved from config in __init__, see _cfg()
-        self.ai_effort = ""
+        # Per backend kind ({"claude": "", "codex": "", "agy": ""}), resolved from
+        # config in __init__ -- see _cfg(). A value set under one backend must never
+        # read back as if it applied to another; index by self.backend, never bare.
+        self.ai_model = {}
+        self.ai_effort = {}
 
 
 class _GenerateDialog(QDialog):
@@ -782,7 +785,7 @@ class _GenerateDialog(QDialog):
                         options.append(alias)
                 self.model_combo.addItems(options)
                 self.model_combo.setToolTip(meta["model_hint"])
-                current = s.ai_model or meta["default_model"]
+                current = s.ai_model.get(s.backend, "") or meta["default_model"]
                 self.model_combo.setEditText(current)
             effort_levels = meta.get("effort_levels")
             has_effort = bool(effort_levels)
@@ -794,7 +797,14 @@ class _GenerateDialog(QDialog):
                     f"Default ({meta['default_effort']})", "")
                 for level in effort_levels:
                     self.effort_combo.addItem(level, level)
-                idx = self.effort_combo.findData(s.ai_effort or "")
+                # A hand-edited config value outside effort_levels must not show as
+                # if it were a live override -- fall back to the same "Default
+                # (...)" entry build_argv's own fallback (resolve_claude_effort)
+                # would actually send, so the combo always shows the effective
+                # value, never a typo it can't find in its own list.
+                raw_effort = s.ai_effort.get(s.backend, "")
+                effective_effort = raw_effort if raw_effort in effort_levels else ""
+                idx = self.effort_combo.findData(effective_effort)
                 self.effort_combo.setCurrentIndex(idx if idx >= 0 else 0)
         finally:
             self._updating_backend_controls = False
@@ -802,13 +812,14 @@ class _GenerateDialog(QDialog):
     def _model_changed(self, text):
         if self._updating_backend_controls:
             return
-        self.session.ai_model = text.strip()
+        self.session.ai_model[self.session.backend] = text.strip()
         self._save_ai_model_effort()
 
     def _effort_changed(self):
         if self._updating_backend_controls:
             return
-        self.session.ai_effort = self.effort_combo.currentData() or ""
+        self.session.ai_effort[self.session.backend] = (
+            self.effort_combo.currentData() or "")
         self._save_ai_model_effort()
 
     def _save_ai_model_effort(self):
@@ -986,7 +997,8 @@ class _GenerateDialog(QDialog):
                     s.backend, s.cli_path, prompt, s.mode, s.scratch,
                     image_paths=image_paths, on_event=self._events.append,
                     cancel=self._cancel_flag.is_set,
-                    model=s.ai_model, effort=s.ai_effort)
+                    model=s.ai_model.get(s.backend, ""),
+                    effort=s.ai_effort.get(s.backend, ""))
             except Exception as e:
                 self._worker_error = e
 

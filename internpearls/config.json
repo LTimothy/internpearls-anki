@@ -15,6 +15,6 @@
   "dim_images_night_mode_percent": 30,
   "ai_backend": "",
   "ai_cli_path": "",
-  "ai_model": "",
-  "ai_effort": ""
+  "ai_model": {"claude": "", "codex": "", "agy": ""},
+  "ai_effort": {"claude": "", "codex": "", "agy": ""}
 }

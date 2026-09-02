@@ -8,6 +8,7 @@ only; claude additionally gets Read scoped to the scratch dir when images
 are attached (that is how it views them).
 """
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -44,10 +45,12 @@ BACKENDS = {
     "codex": {"label": "Codex CLI", "exe": "codex",
               "subscription": "ChatGPT Plus or Pro",
               "safety": "Sandboxed read-only; no writes or network",
-              # No forced default here: -m is only passed when the user sets one
-              # (see build_argv), and only when supports_flag confirms this codex
-              # actually understands it, so an older codex without the flag isn't
-              # hard-broken. No verified effort flag, so no effort control at all.
+              # No forced default here: --model is only passed when the user sets
+              # one (see build_argv), and only when supports_flag confirms this
+              # codex actually documents it (probed as `codex exec --help`, where
+              # the exec subcommand's own options live), so an older codex
+              # without the flag isn't hard-broken. No verified effort flag, so
+              # no effort control at all.
               "default_model": "",
               "default_effort": "",
               "model_aliases": [],
@@ -123,24 +126,52 @@ def find_cli(kind, override=""):
 
 
 _flag_support_cache = {}
+# Word-boundary safe: a bare substring check would count "--max-turns" as proof
+# of "-m", and would count "--model-provider" as proof of "--model". `-`/`_`/
+# alnum on either side of the match keeps it from firing on a longer flag that
+# merely contains this one as a prefix.
+_FLAG_RE_CACHE = {}
 
 
-def supports_flag(path, flag):
-    """True iff `path --help` mentions flag. agy has no documented tool-
-    restriction switch (an upstream read-only request is open), so we probe
-    rather than assume: passing an unsupported flag would hard-fail every
-    run, which is worse than the safety gap it would close. Never raise --
-    a missing/broken binary just means "flag not detected", the safe
-    default. Do not replace this with an unconditional --sandbox append."""
-    key = (path, flag)
+def _flag_regex(flag):
+    r = _FLAG_RE_CACHE.get(flag)
+    if r is None:
+        r = re.compile(r"(?<![\w-])" + re.escape(flag) + r"(?![\w-])")
+        _FLAG_RE_CACHE[flag] = r
+    return r
+
+
+def supports_flag(path, flag, subcommand=None):
+    """True iff `path --help` (and, when given, `path <subcommand> --help`)
+    documents `flag`, matched as a whole flag token, not merely a substring
+    (see _flag_regex). A subcommand's own options are often documented only
+    under `<cli> <subcommand> --help`, not the top-level help (this is why the
+    original codex probe, which never passed one, could never actually detect
+    -m/--model there); passing one probes that output too, on top of the
+    top-level help, and either mentioning the flag counts as support. agy has
+    no documented tool-restriction switch (an upstream read-only request is
+    open), so we probe rather than assume: passing an unsupported flag would
+    hard-fail every run, which is worse than the safety gap it would close.
+    Never raise -- a missing/broken binary just means "flag not detected", the
+    safe default. Do not replace this with an unconditional flag append."""
+    key = (path, flag, subcommand)
     if key in _flag_support_cache:
         return _flag_support_cache[key]
+    text = ""
     try:
         r = subprocess.run([path, "--help"], capture_output=True,
                            text=True, timeout=10)
-        result = flag in ((r.stdout or "") + (r.stderr or ""))
+        text += (r.stdout or "") + (r.stderr or "")
     except Exception:
-        result = False
+        pass
+    if subcommand:
+        try:
+            r = subprocess.run([path, subcommand, "--help"], capture_output=True,
+                               text=True, timeout=10)
+            text += (r.stdout or "") + (r.stderr or "")
+        except Exception:
+            pass
+    result = bool(_flag_regex(flag).search(text))
     _flag_support_cache[key] = result
     return result
 
@@ -156,6 +187,16 @@ def probe(kind, path):
             "detail": out[0] if out else f"exit {r.returncode}"}
 
 
+def resolve_claude_effort(effort):
+    """Falls back to claude's own default_effort when `effort` isn't one of its
+    recognized effort_levels -- a hand-edited config typo (or empty string, "no
+    override set") must not reach `claude --effort <typo>` and die with an
+    opaque CLI error. Model stays free text and is not validated here: the CLI
+    itself validates model aliases, and the wizard's Model row already says so."""
+    levels = BACKENDS["claude"]["effort_levels"]
+    return effort if effort in levels else BACKENDS["claude"]["default_effort"]
+
+
 def build_argv(kind, path, mode, scratch, image_paths, model="", effort=""):
     """Returns (argv, prompt_via_stdin). The prompt always goes via stdin:
     codex exec freezes reading stdin when the prompt is an argument, and one
@@ -163,17 +204,18 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort=""):
 
     `model`/`effort` are whatever the caller resolved from config (empty string
     means "no override set"). claude falls back to its own default_model/
-    default_effort (sonnet/medium) when unset, so it always gets an explicit,
-    cheaper-than-account-default model; codex only gets -m when a model was
-    actually set AND supports_flag confirms this binary understands it; agy
-    never gets either flag, on any input, since there is no verified way to
-    honor one (see BACKENDS["agy"]'s comment)."""
+    default_effort (sonnet/medium) when unset, and an unrecognized effort value
+    also falls back rather than reaching the CLI (see resolve_claude_effort), so
+    it always gets an explicit, cheaper-than-account-default model; codex only
+    gets --model when a model was actually set AND supports_flag confirms this
+    binary understands it; agy never gets either flag, on any input, since
+    there is no verified way to honor one (see BACKENDS["agy"]'s comment)."""
     if kind == "claude":
         argv = [path, "-p", "--output-format", "stream-json", "--verbose",
                 "--max-turns", str(_MAX_TURNS[mode]),
                 "--setting-sources", ""]
         eff_model = model or BACKENDS["claude"]["default_model"]
-        eff_effort = effort or BACKENDS["claude"]["default_effort"]
+        eff_effort = resolve_claude_effort(effort)
         if eff_model:
             argv += ["--model", eff_model]
         if eff_effort:
@@ -194,8 +236,8 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort=""):
     if kind == "codex":
         argv = [path, "exec", "--json", "--sandbox", "read-only",
                 "--skip-git-repo-check", "-C", scratch]
-        if model and supports_flag(path, "-m"):
-            argv += ["-m", model]
+        if model and supports_flag(path, "--model", subcommand="exec"):
+            argv += ["--model", model]
         for p in image_paths:
             argv += ["--image", p]
         return argv, True
