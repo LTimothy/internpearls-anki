@@ -787,6 +787,111 @@ def _scene_declined(mock, opts):
     return dialogs.open_declined_cards
 
 
+def _ai_backend_available(kind_available="claude"):
+    """Patch ai_cli detection so the wizard's __init__ (which runs _detect
+    synchronously) lands on the requested page without a real CLI on disk.
+    Set directly on the module rather than through pytest's monkeypatch,
+    which isn't available here (this is a render tool, not a test); every
+    scene that needs a particular state sets these explicitly, so no scene
+    depends on what an earlier one left behind.
+    """
+    from internpearls import ai_cli
+
+    def find_cli(kind, override=""):
+        return "/usr/bin/true" if kind == kind_available else None
+    ai_cli.find_cli = find_cli
+    ai_cli.probe = lambda kind, path: {"ok": True, "detail": "1.0.0"}
+
+
+def _scene_ai_setup(mock, opts):
+    """The wizard's setup page: no backend detected, so every row reads "not
+    found" and the page never advances past itself."""
+    from internpearls import ai_cli, ai_dialog
+
+    def _find_none(kind, override=""):
+        return None
+    ai_cli.find_cli = _find_none
+
+    def _open():
+        dlg = ai_dialog._GenerateDialog()
+        dlg.exec()
+    return _open
+
+
+def _scene_ai_input(mock, opts):
+    """The wizard's input page, reached the normal way (a backend was
+    detected, so __init__'s own _detect() lands here directly)."""
+    from internpearls import ai_dialog
+    _ai_backend_available()
+
+    def _open():
+        dlg = ai_dialog._GenerateDialog()
+        dlg.exec()
+    return _open
+
+
+def _scene_ai_progress(mock, opts):
+    """The wizard's progress page, mid-run: a phase name and an elapsed/
+    estimate line, the shape a live generation leaves them in without
+    actually running a background worker (there is nothing here to poll)."""
+    from internpearls import ai_dialog
+    _ai_backend_available()
+
+    def _open():
+        dlg = ai_dialog._GenerateDialog()
+        dlg.progress_label.setText("Drafting cards with Claude Code")
+        dlg.phase_label.setText("Verifying doses against sources")
+        dlg.elapsed_label.setText(
+            "Elapsed 48s · your recent Thorough runs averaged 1m 40s")
+        dlg.stack.setCurrentWidget(dlg.progress_page)
+        dlg.exec()
+    return _open
+
+
+def _ai_synthetic_cards(n):
+    return [{
+        "note_type": "Study Deck - Basic",
+        "fields": {"Front": f"What is fact {i + 1} about local anesthetic "
+                            "systemic toxicity?",
+                  "Back": "A structured answer explaining the mechanism.",
+                  "Why": "Because the mechanism drives how it's managed.",
+                  "Dosing": "", "Notes": ""},
+        "tags": [], "images": [], "rationale": "",
+    } for i in range(n)]
+
+
+def _scene_ai_review(mock, opts):
+    """The wizard's review page, with a drafted set that exercises both a
+    block-level check (a duplicate) and a warn-level one (a long answer), so
+    chips and reasons have something to render. `count` (default 4) lets a
+    caller ask for a full 50-card draft to prove the list stays reachable."""
+    from internpearls import ai_dialog, ai_logic
+    _ai_backend_available()
+    n = opts.get("count", 4)
+
+    def _open():
+        dlg = ai_dialog._GenerateDialog()
+        s = dlg.session
+        cards = _ai_synthetic_cards(n)
+        s.cards = cards
+        s.included = [True] * n
+        s.notes = {1: "make this shorter"} if n > 1 else {}
+        s.updated = {2} if n > 2 else set()
+        s.checks = ai_logic.mechanical_checks(cards, {}, {})
+        s.checks[0] = [{"code": "duplicate", "level": "block",
+                        "existing": cards[0]["fields"]["Front"],
+                        "message": "possible duplicate of an existing card"}]
+        if n > 1:
+            s.checks[1] = [{"code": "long-answer", "level": "warn",
+                            "message": "answer is long; consider trimming"}]
+        s.image_data = {}
+        s.tokens_last_run = 12345
+        dlg._rebuild_review()
+        dlg.stack.setCurrentWidget(dlg.review_page)
+        dlg.exec()
+    return _open
+
+
 SCENES = {
     "digest": (_scene_digest, "the flagged-card feedback digest"),
     "settings": (_scene_settings, "the Settings dialog"),
@@ -811,6 +916,12 @@ SCENES = {
     "result-only": (_scene_result_only, "the end-of-run summary with nothing flagged"),
     "declined": (_scene_declined,
                 "the Declined cards dialog (one entry per group, Offer again)"),
+    "ai-setup": (_scene_ai_setup,
+                "the AI wizard's setup page (no backend detected)"),
+    "ai-input": (_scene_ai_input, "the AI wizard's input page"),
+    "ai-progress": (_scene_ai_progress, "the AI wizard's progress page, mid-run"),
+    "ai-review": (_scene_ai_review,
+                 "the AI wizard's review page (count=N for a full-size draft)"),
 }
 
 
