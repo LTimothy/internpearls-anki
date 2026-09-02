@@ -3,6 +3,28 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.53.0
+
+A new "Generate cards with AI" menu item drafts cards from source material you paste
+in or attach, through a coding-assistant CLI you install and sign into yourself:
+Claude Code, Codex CLI, or Antigravity CLI, whichever you have running. There is no
+API key field anywhere in the add-on; it only shells out to a CLI already signed in
+on your own machine, and never reads, sends, or stores a credential of any kind.
+
+The three backends are not equally sandboxed, and the setup screen says so plainly
+for each rather than folding them into one reassurance. Quick draft is one fast pass
+with no web access; Thorough drafts, checks its facts against sources it can reach
+online, then reviews its own draft before handing cards back. No card here ever
+carries an AI-generated picture: an image can only come from a real web source, one
+extracted from something you attached, or SVG the model draws itself.
+
+Cards you generate land in their own `Generated` subdeck and tag with a fresh local
+GUID, so a shared deck source's own sync and reconcile machinery can never match,
+retire, or overwrite one. Nothing about a session (the source text, drafts, your
+feedback, the exchange with the CLI) is saved once the dialog closes; only your
+backend choice, a deck skill you've explicitly consented to, and a rolling count of
+recent runs persist between sessions.
+
 ## v0.52.1
 
 The receipt lines sit tight now. The Show yours link, though flat, still
