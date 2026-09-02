@@ -7,6 +7,8 @@
 #   garbage         emit non-JSON noise then exit 0
 #   fail            exit 2 with stderr
 #   badjson         emit a result line whose "result" text is not valid card JSON
+#   two_cards       emit two fixed cards, identically on every invocation (for
+#                   revision tests that need the "same shape" case with >1 card)
 import json
 import sys
 import time
@@ -28,6 +30,19 @@ if mode == "garbage":
 if mode == "badjson":
     print(json.dumps({"type": "result", "subtype": "success",
                       "result": "sorry, here is some prose instead of JSON",
+                      "usage": {"input_tokens": 10, "output_tokens": 5}}))
+    sys.exit(0)
+if mode == "two_cards":
+    print(json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "WebSearch", "input": {}}]}}), flush=True)
+    cards = [{"note_type": "Study Deck - Basic",
+              "fields": {"Front": "Clean front", "Back": "a"},
+              "tags": [], "images": [], "rationale": "r"},
+             {"note_type": "Study Deck - Basic",
+              "fields": {"Front": "Duplicate front", "Back": "a"},
+              "tags": [], "images": [], "rationale": "r"}]
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": json.dumps(cards),
                       "usage": {"input_tokens": 10, "output_tokens": 5}}))
     sys.exit(0)
 print(json.dumps({"type": "assistant", "message": {"content": [
