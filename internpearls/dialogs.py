@@ -1119,6 +1119,46 @@ class _NightModeDimPreview(QWidget):
         self._dimmed_pane.setPercent(percent)
 
 
+# What each scope actually does, one hint per radio. Kept out of the dialog so the
+# label can reserve room for the taller of the two before either is chosen.
+_SCOPE_HINTS = {
+    "images": "Dims bright images on cards only, from the next card.",
+    "content": ("Dims cards and deck screens alike: the deck list, the overview, "
+                "and the editor, plus every card. Not the menu bar or dialogs. "
+                "Takes effect the next time a screen loads."),
+}
+
+
+class _ReservedHint(QLabel):
+    """A hint label that stands as tall as the longest thing it can say.
+
+    The scope hint below the radios is one line for images and three for content,
+    so sizing it to whichever is showing moved the Dim by row and the whole preview
+    down the moment the reader picked the second radio. It reserves the taller
+    answer at its own width instead, measured on the real label rather than
+    guessed from a line count, so nothing under it moves when the text changes.
+    """
+
+    def __init__(self, texts, parent=None):
+        super().__init__("", parent)
+        self.setWordWrap(True)
+        self.setStyleSheet(hint_label("").styleSheet())
+        self._texts = list(texts)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.width() <= 0:
+            return
+        showing = self.text()
+        need = 0
+        for text in self._texts:
+            super().setText(text)
+            need = max(need, self.heightForWidth(self.width()))
+        super().setText(showing)
+        if need > 0 and self.minimumHeight() != need:
+            self.setMinimumHeight(need)
+
+
 class _NightModeDimmingDialog(QDialog):
     """How much is dimmed, and how much of the screen, while Anki's own Night Mode is
     on.
@@ -1151,7 +1191,7 @@ class _NightModeDimmingDialog(QDialog):
         (self._scope_content if scope == "content" else self._scope_images).setChecked(True)
         outer.addWidget(self._scope_images)
         outer.addWidget(self._scope_content)
-        self._scope_hint = hint_label("")
+        self._scope_hint = _ReservedHint([_SCOPE_HINTS["images"], _SCOPE_HINTS["content"]])
         outer.addWidget(self._scope_hint)
         group.buttonToggled.connect(lambda *_: self._refresh_scope_hint())
         self._refresh_scope_hint()
@@ -1193,13 +1233,8 @@ class _NightModeDimmingDialog(QDialog):
         outer.addWidget(bb)
 
     def _refresh_scope_hint(self):
-        if self._scope_content.isChecked():
-            self._scope_hint.setText(
-                "Dims cards and deck screens alike: the deck list, the overview, "
-                "and the editor, plus every card. Not the menu bar or dialogs. "
-                "Takes effect the next time a screen loads.")
-        else:
-            self._scope_hint.setText("Dims bright images on cards only, from the next card.")
+        self._scope_hint.setText(
+            _SCOPE_HINTS["content" if self._scope_content.isChecked() else "images"])
 
     def values(self):
         return {
