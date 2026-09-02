@@ -25,7 +25,8 @@ def test_wizard_renders_all_pages(monkeypatch):
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None: {"text": json.dumps(cards), "tokens": 15})
+              cancel=None, timeout=None: {"text": json.dumps(cards), "tokens": 15,
+                                          "duration_s": 12.3})
 
     dlg = ai_dialog._GenerateDialog()
     dlg.show()
