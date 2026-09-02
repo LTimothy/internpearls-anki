@@ -3,6 +3,28 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.53.4
+
+Four more defects in "Generate cards with AI", again found only by running the add-on
+for real.
+
+The most important: a successful import genuinely wrote one clean, undoable batch of
+notes -- a headless test calling `col.undo()` really did remove the whole thing in one
+step -- but nothing ever told Anki's own main window that a new undo entry existed, so
+Edit > Undo stayed greyed out in the running app no matter how quickly you tried it.
+The deck list had the same problem: a new deck's cards and counts only showed up after
+manually clicking "Decks". Both are fixed by the same call this add-on already makes
+after every other collection-writing action, right after the import succeeds.
+
+The completion message also hardcoded "Ctrl+Z" on every platform, which is simply
+wrong on macOS. It now asks Qt for the platform's own rendering of the standard Undo
+key sequence, so it reads "Cmd+Z" (or whatever glyph the OS actually uses) there
+instead.
+
+And the review page's import button, its header counts, and the completion message
+could all read a grammatically bare "1 cards" when exactly one card was involved; all
+three now use the same singular/plural helper the rest of the add-on already relies on.
+
 ## v0.53.3
 
 Two more defects in "Generate cards with AI", again found only by running the add-on

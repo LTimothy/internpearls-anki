@@ -1596,6 +1596,7 @@ class QAction:
     def __init__(self, label="", parent=None):
         self.wid = _new_persistent_wid(self)
         self._label = label
+        self._enabled = True
         self.triggered = Signal()
 
     def setMenuRole(self, r):
@@ -1606,6 +1607,12 @@ class QAction:
 
     def text(self):
         return self._label
+
+    def setEnabled(self, v):
+        self._enabled = bool(v)
+
+    def isEnabled(self):
+        return self._enabled
 
 
 class QMenu:
@@ -1668,10 +1675,21 @@ class MockMW:
         self.form = types.SimpleNamespace(
             menubar=menubar,
             menuHelp=types.SimpleNamespace(menuAction=lambda: None),
-            menuTools=types.SimpleNamespace(addMenu=self._menus.append))
+            menuTools=types.SimpleNamespace(addMenu=self._menus.append),
+            actionUndo=QAction())
+        self.update_undo_actions()
 
     def reset(self):
         self.reset_count += 1
+        self.update_undo_actions()
+
+    def update_undo_actions(self):
+        """Mirrors real Anki's mw.update_undo_actions(): Edit > Undo is enabled
+        exactly when the collection has something to undo. col._undo_entries is
+        the mock's stand-in for real Anki's col.undo_status().can_undo -- good
+        enough to catch a caller that writes the collection but never tells the
+        UI a new undo entry exists, which is the bug this exists to catch."""
+        self.form.actionUndo.setEnabled(bool(self.col._undo_entries))
 
     def onOpenBackup(self):
         self._gui.tooltips.append("(Anki's own backup picker would open here)")
@@ -1840,6 +1858,39 @@ def install():
         def __init__(self, *a, **k):
             pass
 
+    class _QKeySequence:
+        """Stands in for real Qt's QKeySequence just enough to test that
+        ai_dialog asks Qt for the platform's native Undo accelerator rather
+        than hardcoding one -- real Qt renders StandardKey.Undo as "Ctrl+Z" on
+        Windows/Linux and "⌘Z" on macOS; this mirrors that one distinction
+        rather than Qt's full native-text rendering, which qt_tests/ (real
+        PyQt6) exercises directly.
+        """
+        class StandardKey:
+            Undo = "undo"
+
+        class SequenceFormat:
+            # Real Qt: NativeText renders the OS's own glyphs (e.g. "⌘Z" on
+            # macOS); PortableText is the plain ASCII form ("Ctrl+Z") used to
+            # serialize a shortcut, the same on every platform. toString()'s
+            # default format is PortableText, so this mock only renders the
+            # platform-specific glyph when NativeText is asked for explicitly --
+            # a caller that dropped the format argument (or passed the wrong
+            # one) gets the same "Ctrl+Z" on every platform, exactly the bug
+            # this exists to catch.
+            NativeText = "native"
+            PortableText = "portable"
+
+        def __init__(self, key):
+            self._key = key
+
+        def toString(self, fmt=None):
+            if self._key != _QKeySequence.StandardKey.Undo:
+                return ""
+            if fmt == _QKeySequence.SequenceFormat.NativeText and sys.platform == "darwin":
+                return "⌘Z"
+            return "Ctrl+Z"
+
     class _Clipboard:
         @staticmethod
         def setText(text):
@@ -1959,7 +2010,7 @@ def install():
 
     for name, obj in (("Qt", _Qt), ("QApplication", _QApplication),
                       ("QTimer", _QTimer), ("QProgressDialog", _QProgressDialog),
-                      ("QFileDialog", _QFileDialog),
+                      ("QFileDialog", _QFileDialog), ("QKeySequence", _QKeySequence),
                       ("QFontDatabase", _QFontDatabase), ("QLabel", QLabel),
                       ("QPushButton", QPushButton), ("QAction", QAction),
                       ("QMenu", QMenu), ("QCheckBox", QCheckBox),

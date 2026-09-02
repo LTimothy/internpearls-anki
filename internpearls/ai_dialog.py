@@ -16,13 +16,14 @@ import urllib.parse
 from collections import deque
 
 from aqt import mw
-from aqt.qt import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel,
-                    QPlainTextEdit, QPushButton, QRadioButton, QSpinBox,
+from aqt.qt import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QKeySequence,
+                    QLabel, QPlainTextEdit, QPushButton, QRadioButton, QSpinBox,
                     QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
 from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
                      save_ai_usage, load_deck_skill, save_deck_skill)
+from .logic import plural
 from .net import fetch_card_image
 from .review import _image_tag
 from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
@@ -57,6 +58,15 @@ def _skills_html(parts):
     collapses to a space in HTML and would otherwise run every line together.
     """
     return html.escape("\n".join(parts)).replace("\n", "<br>")
+
+
+def _undo_shortcut():
+    """The platform's own Undo accelerator, e.g. "Cmd+Z" on macOS, "Ctrl+Z"
+    elsewhere -- rendered by Qt itself from the standard Undo key sequence rather
+    than hardcoded, so the import success message always names the key Edit >
+    Undo actually shows, on whatever platform this happens to be running."""
+    return QKeySequence(QKeySequence.StandardKey.Undo).toString(
+        QKeySequence.SequenceFormat.NativeText)
 
 
 def _url_host(url):
@@ -1097,10 +1107,10 @@ class _GenerateDialog(QDialog):
             kept = len(s.cards) - len(s.updated)
             extra += f" · updated {len(s.updated)}, kept {kept} verbatim"
         self.review_header.setText(
-            f"Review {len(s.cards)} draft cards · {n_inc} included{extra}")
-        self.import_btn.setText(f"Import {n_inc} cards")
+            f"Review {plural(len(s.cards), 'draft card')} · {n_inc} included{extra}")
+        self.import_btn.setText(f"Import {plural(n_inc, 'card')}")
         self.revise_btn.setText(
-            "Revise all" + (f" ({len(s.notes)} notes)" if s.notes else ""))
+            "Revise all" + (f" ({plural(len(s.notes), 'note')})" if s.notes else ""))
 
     def _edit_card(self, i):
         """Hand-edit one card's fields, right in the review list. Nothing here
@@ -1190,9 +1200,18 @@ class _GenerateDialog(QDialog):
         # if this raises, the scratch dir must still be there for a retry.
         n = collection.add_generated_notes(cards, media, s.deck_name,
                                            _cfg()["scope_tag"])
+        # add_generated_notes only writes the collection; nothing about that tells
+        # Anki's main window a new undo entry exists or that the deck list changed
+        # underneath it. mw.reset() is the same notification every other
+        # collection-writing action here already gives (see collection.py), and it
+        # does both jobs at once: it calls mw.update_undo_actions() (enabling Edit >
+        # Undo for the entry add_generated_notes just merged) and fires the reset
+        # hooks the deck browser listens for (refreshing the deck list and its
+        # counts) without needing a second, narrower call for either.
+        mw.reset()
         self._cleanup_scratch()
-        _info(f"{n} cards added to {s.deck_name}. This is one undo step: "
-              "Ctrl+Z reverts it.")
+        _info(f"{plural(n, 'card')} added to {s.deck_name}. This is one undo step: "
+              f"{_undo_shortcut()} reverts it.")
         self.accept()
         return n
 
