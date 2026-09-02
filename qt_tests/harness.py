@@ -823,6 +823,18 @@ def _scene_ai_setup(mock, opts):
     return _open
 
 
+def _scene_ai_backends(mock, opts):
+    """The AI Backends window on its own, reached directly rather than
+    through the wizard's Configure AI Backends button."""
+    from internpearls import ai_cli, ai_setup
+
+    def _find_none(kind, override=""):
+        return None
+    ai_cli.find_cli = _find_none
+
+    return lambda: ai_setup.open_ai_backends(None)
+
+
 def _scene_ai_input(mock, opts):
     """The wizard's input page, reached the normal way (a backend was
     detected, so __init__'s own _detect() lands here directly)."""
@@ -941,6 +953,8 @@ SCENES = {
                 "the Declined cards dialog (one entry per group, Offer again)"),
     "ai-setup": (_scene_ai_setup,
                 "the AI wizard's setup page (no backend detected)"),
+    "ai-backends": (_scene_ai_backends,
+                    "the AI Backends window (enable/prefer/path/model/effort/test)"),
     "ai-input": (_scene_ai_input, "the AI wizard's input page"),
     "ai-progress": (_scene_ai_progress, "the AI wizard's progress page, mid-run"),
     "ai-review": (_scene_ai_review,

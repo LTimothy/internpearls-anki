@@ -7,7 +7,6 @@ page whose layout depends on session state built up by the earlier pages.
 import json
 
 import harness
-from aqt.qt import QPoint
 from internpearls import ai_cli, ai_dialog
 
 
@@ -352,116 +351,6 @@ def test_mode_radios_render_the_backends_own_text(monkeypatch):
     assert dlg.quick_hint.text() == modes["quick"]
 
 
-def test_backend_row_shows_model_and_effort_for_claude(monkeypatch):
-    """Model/Effort honesty pattern (item A): claude has a verified --model and
-    --effort flag, so it gets live controls, pre-filled with the add-on's own
-    default (sonnet/medium), not left blank. Model is a closed, non-editable
-    list of claude's known aliases plus Custom, not free text: that's what
-    keeps its field column the same height/inset as Effort's own combo."""
-    harness.bootstrap()
-    monkeypatch.setattr(ai_cli, "find_cli",
-                        lambda kind, override="": "/bin/echo"
-                        if kind == "claude" else None)
-    monkeypatch.setattr(ai_cli, "probe",
-                        lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
-    dlg.show()
-    harness.app().processEvents()
-    assert dlg.model_combo.isVisible() is True
-    assert dlg.model_readonly.isVisible() is False
-    assert dlg.model_combo.isEditable() is False
-    assert dlg.model_combo.currentText() == "sonnet"
-    assert dlg.model_custom_edit.isVisible() is False
-    assert dlg.effort_combo.isVisible() is True
-    assert dlg.effort_combo.currentData() == ""   # "Default (medium)", not an override
-
-
-def test_backend_row_shows_read_only_model_for_agy_and_hides_effort(monkeypatch):
-    """agy has no verified way to honor a model or effort choice in headless
-    mode, so it must not offer a control that lies about being respected."""
-    harness.bootstrap()
-    monkeypatch.setattr(ai_cli, "find_cli",
-                        lambda kind, override="": "/bin/echo"
-                        if kind == "agy" else None)
-    monkeypatch.setattr(ai_cli, "probe",
-                        lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
-    dlg.show()
-    harness.app().processEvents()
-    assert dlg.session.backend == "agy"
-    assert dlg.model_combo.isVisible() is False
-    assert dlg.model_readonly.isVisible() is True
-    assert "Flash" in dlg.model_readonly.text()
-    assert dlg.effort_combo.isVisible() is False
-
-
-def test_changing_model_and_effort_persists_to_config(monkeypatch):
-    from aqt import mw
-    harness.bootstrap()
-    monkeypatch.setattr(ai_cli, "find_cli",
-                        lambda kind, override="": "/bin/echo"
-                        if kind == "claude" else None)
-    monkeypatch.setattr(ai_cli, "probe",
-                        lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
-    dlg.model_combo.setCurrentIndex(dlg.model_combo.findText("opus"))
-    idx = dlg.effort_combo.findData("high")
-    dlg.effort_combo.setCurrentIndex(idx)
-    conf = mw.addonManager.getConfig("internpearls")
-    assert conf["ai_model"]["claude"] == "opus"
-    assert conf["ai_effort"]["claude"] == "high"
-    assert dlg.session.ai_model["claude"] == "opus"
-    assert dlg.session.ai_effort["claude"] == "high"
-
-
-def test_model_set_under_claude_does_not_leak_into_codex(monkeypatch):
-    """Item 1: ai_model/ai_effort are stored per backend kind. Setting a model
-    while claude is active must not pre-fill or get sent for codex when it's
-    the backend detected on a later open: the leak this test reproduces
-    would otherwise silently send `-m opus` (or now `--model opus`) to a
-    backend the user never chose that model for."""
-    from aqt import mw
-    harness.bootstrap()
-
-    # First open: only claude detected, set its model to "opus".
-    monkeypatch.setattr(ai_cli, "find_cli",
-                        lambda kind, override="": "/bin/echo"
-                        if kind == "claude" else None)
-    monkeypatch.setattr(ai_cli, "probe",
-                        lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg1 = ai_dialog._GenerateDialog()
-    dlg1.model_combo.setCurrentIndex(dlg1.model_combo.findText("opus"))
-    conf = mw.addonManager.getConfig("internpearls")
-    assert conf["ai_model"]["claude"] == "opus"
-    assert conf["ai_model"].get("codex", "") == ""
-
-    # Second open: only codex detected this time: the stale claude-scoped
-    # value must not pre-fill its Model field.
-    monkeypatch.setattr(ai_cli, "find_cli",
-                        lambda kind, override="": "/bin/echo"
-                        if kind == "codex" else None)
-    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
-    captured = {}
-
-    def fake_run_generation(kind, path, prompt, mode, scratch, image_paths=(),
-                            on_event=None, cancel=None, timeout=None,
-                            model="", effort=""):
-        captured["model"] = model
-        return {"text": "[]", "tokens": 0, "duration_s": 0.1}
-    monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)
-
-    dlg2 = ai_dialog._GenerateDialog()
-    dlg2.show()
-    harness.app().processEvents()
-    assert dlg2.session.backend == "codex"
-    assert dlg2.model_combo.currentText() == ""   # not pre-filled with "opus"
-
-    dlg2.source_box.setPlainText("Some source material")
-    dlg2._start_generation()
-    dlg2._wait_for_worker(timeout=15)
-    assert captured["model"] == ""   # argv-bound model is clean too
-
-
 def test_input_page_gates_note_types_against_real_checkboxes(monkeypatch):
     """A, against real QCheckBox widgets rather than the fake-Qt suite's own
     checkbox stand-in: a collection carrying neither managed type ("Study Deck -
@@ -617,39 +506,3 @@ def test_view_skills_toggle_button_relabels_after_each_click(monkeypatch):
     finally:
         q.QDialog.exec = original
     assert seen == ["Disable deck skill", "Enable deck skill", "Disable deck skill"]
-
-
-def test_model_and_effort_fields_align_and_custom_reveals_edit(monkeypatch):
-    """The macOS bug this fixes: Model's field widget and Effort's field
-    widget must start at the same x once mapped into the dialog's own
-    coordinate space, since an editable combo (the old Model) renders with a
-    different inset than a non-editable one (Effort, always). Also covers the
-    Custom path end to end: picking it reveals model_custom_edit at that same
-    x, and a typed name persists to config the same way a known alias does."""
-    from aqt import mw
-    harness.bootstrap()
-    monkeypatch.setattr(ai_cli, "find_cli",
-                        lambda kind, override="": "/bin/echo"
-                        if kind == "claude" else None)
-    monkeypatch.setattr(ai_cli, "probe",
-                        lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
-    dlg.show()
-    harness.app().processEvents()
-
-    model_x = dlg.model_combo.mapTo(dlg, QPoint(0, 0)).x()
-    effort_x = dlg.effort_combo.mapTo(dlg, QPoint(0, 0)).x()
-    assert model_x == effort_x
-
-    dlg.model_combo.setCurrentIndex(dlg.model_combo.findText("Custom"))
-    harness.app().processEvents()
-    assert dlg.model_custom_edit.isVisible() is True
-
-    custom_x = dlg.model_custom_edit.mapTo(dlg, QPoint(0, 0)).x()
-    assert custom_x == effort_x
-
-    dlg.model_custom_edit.setText("claude-3-opus-20240229")
-    dlg.model_custom_edit.editingFinished.emit()
-    conf = mw.addonManager.getConfig("internpearls")
-    assert conf["ai_model"]["claude"] == "claude-3-opus-20240229"
-    assert dlg.session.ai_model["claude"] == "claude-3-opus-20240229"

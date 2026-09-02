@@ -131,6 +131,24 @@ def _ai_map(value):
             for kind in _AI_BACKEND_KINDS}
 
 
+def _ai_bool_map(value, default=True):
+    if not isinstance(value, dict):
+        value = {}
+    return {kind: bool(value.get(kind, default)) for kind in _AI_BACKEND_KINDS}
+
+
+def _cli_path_map(value, preferred):
+    """ai_cli_path was a single string through v0.55.1, meaning "the path for
+    the preferred backend". Fold that shape into the per-backend map once, on
+    read, so nobody loses a configured path on upgrade."""
+    if isinstance(value, str):
+        m = {kind: "" for kind in _AI_BACKEND_KINDS}
+        if value and preferred in m:
+            m[preferred] = value
+        return m
+    return _ai_map(value)
+
+
 def _cfg():
     c = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
     return {
@@ -156,7 +174,8 @@ def _cfg():
                                  if c.get("dim_night_mode_scope") in ("images", "content")
                                  else NIGHT_MODE_SCOPE_DEFAULT),
         "ai_backend":            c.get("ai_backend", ""),
-        "ai_cli_path":           c.get("ai_cli_path", ""),
+        "ai_cli_path":           _cli_path_map(c.get("ai_cli_path"), c.get("ai_backend", "")),
+        "ai_backend_enabled":    _ai_bool_map(c.get("ai_backend_enabled")),
         "ai_model":              _ai_map(c.get("ai_model")),
         "ai_effort":             _ai_map(c.get("ai_effort")),
     }

@@ -30,6 +30,7 @@ from aqt import gui_hooks, mw
 from aqt.qt import QAction, QMenu
 
 from .ai_dialog import generate_cards
+from .ai_setup import open_ai_backends
 from .background import _schedule_background_checks
 from .collection import (backup_collection_now, backup_deck_now, export_deck,
                          import_deck, remove_empty_cards, restore_from_backup,
@@ -100,6 +101,7 @@ def _menu():
     # groups.
     exp = menu.addMenu("Experimental")
     add(exp, "Generate Cards (AI)", generate_cards)
+    add(exp, "AI Backends", open_ai_backends)
     add(exp, "Night Mode Dimming", open_night_mode_dimming)
     menu.addSeparator()
     add(menu, "Settings", open_settings)

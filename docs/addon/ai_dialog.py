@@ -18,9 +18,9 @@ from collections import deque
 
 from aqt import mw
 from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
-                    QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
-                    QKeySequence, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-                    QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
+                    QDialogButtonBox, QFrame, QHBoxLayout,
+                    QKeySequence, QLabel, QPlainTextEdit, QPushButton,
+                    QRadioButton, QScrollArea, QSpinBox,
                     QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
@@ -49,9 +49,6 @@ SOFT_SOURCE_LIMIT = 25000
 # Image resolution (download/read/render) runs off the UI thread and polls on
 # this cadence, the same as the generation worker's own poll below.
 _IMG_POLL_MS = 200
-# The Model combo's trailing entry, on any backend whose model_aliases isn't
-# empty: picking it reveals a QLineEdit for a free-form model name instead.
-_CUSTOM_MODEL_LABEL = "Custom"
 
 
 def _skills_html(parts):
@@ -310,11 +307,6 @@ class _Session:
         self.revision_shape_mismatch = False
         self.tokens_last_run = 0
         self.rate_limits = None
-        # Per backend kind ({"claude": "", "codex": "", "agy": ""}), resolved from
-        # config in __init__: see _cfg(). A value set under one backend must never
-        # read back as if it applied to another; index by self.backend, never bare.
-        self.ai_model = {}
-        self.ai_effort = {}
 
 
 class _GenerateDialog(QDialog):
@@ -346,19 +338,6 @@ class _GenerateDialog(QDialog):
         self._testing_kinds = set()
         cfg = _cfg()
         s.deck_name = cfg["export_deck"] + "::" + ai_logic.GENERATED_DECK_LEAF
-        s.ai_model = cfg["ai_model"]
-        s.ai_effort = cfg["ai_effort"]
-        # Guards the model/effort widgets' change signals while _refresh_model_
-        # effort_controls repopulates them from session state, so that refresh
-        # doesn't read back as a user edit and re-write config with what it just
-        # loaded from config.
-        self._updating_backend_controls = False
-        # Whether the current backend's Model combo is the alias-list-plus-Custom
-        # kind (claude, once it has model_aliases) rather than plain free text
-        # (codex, which has none). Set by _refresh_model_effort_controls, read by
-        # _model_combo_text_changed, so the literal string "Custom" only gets
-        # special handling on a backend that actually offers it as an item.
-        self._model_alias_mode = False
 
         self.stack = QStackedWidget()
         lay = QVBoxLayout(self)
@@ -454,37 +433,11 @@ class _GenerateDialog(QDialog):
             "Card generation runs through an assistant you sign into yourself. "
             "This add-on never sees or stores your credentials: there is no API "
             "key field here, or anywhere else in the add-on."))
-        self.setup_rows = {}
-        self.test_buttons = {}
-        self.test_status = {}
-        self._detected_paths = {}
-        for kind, meta in ai_cli.BACKENDS.items():
-            row = QLabel()
-            row.setWordWrap(True)
-            self.setup_rows[kind] = row
-            lay.addWidget(row)
-            test_row = QHBoxLayout()
-            btn = QPushButton("Test connection")
-            btn.setEnabled(False)
-            btn.clicked.connect(lambda _, k=kind: self._guard(self._test_setup_connection, k))
-            status = hint_label("Not tested yet")
-            self.test_buttons[kind] = btn
-            self.test_status[kind] = status
-            test_row.addWidget(btn)
-            test_row.addWidget(status, 1)
-            lay.addLayout(test_row)
-        recheck_row = QHBoxLayout()
-        self.recheck_btn = link_button("Re-check", on_click=lambda: self._detect(_cfg()))
+        self.configure_btn = QPushButton("Configure AI Backends")
+        self.configure_btn.clicked.connect(lambda: self._guard(self._open_backends))
+        lay.addWidget(self.configure_btn)
         self.setup_status = hint_label("")
-        recheck_row.addWidget(self.recheck_btn)
-        recheck_row.addWidget(self.setup_status, 1)
-        lay.addLayout(recheck_row)
-        lay.addWidget(hint_label(
-            "Install one of these, run it once in a terminal, and sign in "
-            "there yourself. Then come back and re-check. \"Test connection\" "
-            "runs a real, trivial prompt through a detected CLI to confirm it "
-            "can actually generate, not just that the binary runs: unlike "
-            "the status above, which is a cheap, free check."))
+        lay.addWidget(self.setup_status)
         lay.addStretch()
         bb = QDialogButtonBox()
         self.close_btn = bb.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
@@ -494,62 +447,20 @@ class _GenerateDialog(QDialog):
 
     def _detect(self, cfg):
         s = self.session
-        s.backend, s.cli_path = None, None
-        preferred = cfg.get("ai_backend", "")
-        for kind, meta in ai_cli.BACKENDS.items():
-            override = cfg.get("ai_cli_path", "") if preferred == kind else ""
-            path = ai_cli.find_cli(kind, override)
-            self._detected_paths[kind] = path
-            if kind not in self._testing_kinds:
-                # A live test's own on_done re-enables its button and its poll
-                # callback owns its status text; re-checking must not touch
-                # either mid-test, or a second click here could start a
-                # concurrent test racing the first to the same label.
-                self.test_buttons[kind].setEnabled(bool(path))
-                self.test_status[kind].setText("Not tested yet")
-            if path:
-                res = ai_cli.probe(kind, path)
-                ok = res["ok"]
-                # The three states the README promises: "installed and
-                # working" here means only "the binary runs and exits 0":
-                # NOT that it's actually signed in and can generate. That
-                # deeper check is Test connection, deliberately on-demand
-                # since it costs a real model call; this stays a cheap,
-                # free --version probe.
-                status = (f"installed and working ({res['detail']})" if ok
-                          else "found, but not responding")
-            else:
-                ok, status = False, "not found"
-            imgs = ("can view attached images" if ai_cli.image_capable(kind)
-                    else "reads attached PDFs as text only, no images")
-            # The safety string is shown verbatim, per-backend: the three
-            # backends are not equally safe and this is not the place to
-            # soften or average that out.
-            self.setup_rows[kind].setText(
-                f"{meta['label']} ({meta['subscription']}): {status}\n"
-                f"{meta['safety']}. {imgs}.")
-            if ok and (s.backend is None or preferred == kind):
-                s.backend, s.cli_path = kind, path
+        res = ai_cli.detect_backends(cfg)
+        s.backend = res["chosen"]
+        s.cli_path = res["backends"][s.backend]["path"] if s.backend else None
         self.setup_status.setText(
             f"Ready: {ai_cli.BACKENDS[s.backend]['label']} detected." if s.backend
-            else "No assistant detected yet.")
-        self.stack.setCurrentWidget(
-            self.input_page if s.backend else self.setup_page)
+            else "No enabled assistant detected yet. Configure one, then come back.")
+        self.stack.setCurrentWidget(self.input_page if s.backend else self.setup_page)
         if s.backend:
             self._refresh_backend_row()
 
-    def _test_setup_connection(self, kind):
-        path = self._detected_paths.get(kind)
-        if not path or kind in self._testing_kinds:
-            return
-        self._testing_kinds.add(kind)
-        btn, status = self.test_buttons[kind], self.test_status[kind]
-        btn.setEnabled(False)
-
-        def _done():
-            self._testing_kinds.discard(kind)
-            btn.setEnabled(True)
-        self._run_connection_test(kind, path, status.setText, on_done=_done)
+    def _open_backends(self):
+        from .ai_setup import open_ai_backends
+        open_ai_backends(self)
+        self._detect(_cfg())
 
     def _run_connection_test(self, kind, path, on_status, on_done=None):
         """Run ai_cli.test_connection off the UI thread, polling the same way
@@ -693,58 +604,12 @@ class _GenerateDialog(QDialog):
         lay.addWidget(QLabel("Destination deck"))
         lay.addWidget(self.deck_combo)
 
+        backend_row_lay = QHBoxLayout()
         self.backend_row = hint_label("")
-        lay.addWidget(self.backend_row)
-
-        # Model/effort controls: shown per-backend honesty, not a shared UI:
-        # a backend with no verified model or effort flag doesn't get a control
-        # it can't actually honor. See _refresh_model_effort_controls.
-        #
-        # Model and Effort share one QFormLayout so their field column lines up:
-        # an editable QComboBox (free text) and a non-editable one (a closed
-        # list) render at different heights and insets on macOS, which is what
-        # made the two rows visibly mismatched before this. Model itself still
-        # varies by backend: claude (model_aliases non-empty) gets a closed,
-        # non-editable combo of known aliases plus a trailing "Custom" entry
-        # that reveals model_custom_edit for a free-form name; codex (no
-        # aliases) keeps the plain editable combo it always had, unchanged,
-        # since Effort is hidden for it anyway and there's nothing to misalign
-        # against; agy keeps its read-only text in place of the combo.
-        self.model_label = QLabel("Model")
-        self.model_combo = QComboBox()
-        self.model_readonly = hint_label("")
-        self.model_custom_edit = QLineEdit()
-        self.model_custom_edit.setPlaceholderText("Custom model name")
-        self.model_custom_hint = hint_label(
-            "The CLI validates this name; an unrecognized one fails at "
-            "generation time, not here.")
-        model_field = QWidget()
-        model_field_lay = QVBoxLayout(model_field)
-        model_field_lay.setContentsMargins(0, 0, 0, 0)
-        model_field_lay.setSpacing(2)
-        model_field_lay.addWidget(self.model_combo)
-        model_field_lay.addWidget(self.model_readonly)
-        model_field_lay.addWidget(self.model_custom_edit)
-        model_field_lay.addWidget(self.model_custom_hint)
-
-        self.effort_label = QLabel("Effort")
-        self.effort_combo = QComboBox()
-        self.model_combo.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                       QSizePolicy.Policy.Fixed)
-        self.effort_combo.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                        QSizePolicy.Policy.Fixed)
-
-        self.model_effort_form = QFormLayout()
-        self.model_effort_form.addRow(self.model_label, model_field)
-        self.model_effort_form.addRow(self.effort_label, self.effort_combo)
-        lay.addLayout(self.model_effort_form)
-
-        self.model_combo.currentTextChanged.connect(
-            lambda text: self._guard(self._model_combo_text_changed, text))
-        self.model_custom_edit.editingFinished.connect(
-            lambda: self._guard(self._model_custom_edit_changed))
-        self.effort_combo.currentIndexChanged.connect(
-            lambda _: self._guard(self._effort_changed))
+        self.change_link = link_button("Change", on_click=lambda: self._guard(self._open_backends))
+        backend_row_lay.addWidget(self.backend_row, 1)
+        backend_row_lay.addWidget(self.change_link)
+        lay.addLayout(backend_row_lay)
 
         backend_test_row = QHBoxLayout()
         self.backend_test_btn = link_button(
@@ -781,132 +646,24 @@ class _GenerateDialog(QDialog):
     def _refresh_backend_row(self):
         s = self.session
         meta = ai_cli.BACKENDS[s.backend]
-        self.backend_row.setText(f"Backend: {meta['label']} (signed in)")
+        cfg = _cfg()
+        model = cfg["ai_model"][s.backend] or meta["default_model"]
+        effort = cfg["ai_effort"][s.backend] or meta["default_effort"]
+        bits = [meta["label"]]
+        if s.backend == "agy":
+            bits.append("auto model")
+        else:
+            if model:
+                bits.append(model)
+            if effort and meta.get("effort_levels"):
+                bits.append(f"{effort} effort")
+        self.backend_row.setText("Backend: " + ", ".join(bits))
         self.thorough_hint.setText(meta["modes"]["thorough"])
         self.quick_hint.setText(meta["modes"]["quick"])
         reg = load_ai_usage()
         self.usage_row.setText(ai_logic.usage_line(
             reg, s.backend, now=time.time(), free_tier=(s.backend == "agy")))
         self.backend_test_status.setText("Not tested yet")
-        self._refresh_model_effort_controls()
-
-    def _refresh_model_effort_controls(self):
-        """Rebuild the Model/Effort row for the now-current backend. Honesty
-        pattern: a backend with no verified flag doesn't get a live control for
-        it: agy's model is read-only text (there is no way to honor a choice
-        there, see ai_cli.BACKENDS["agy"]), and effort is hidden entirely for
-        any backend without a verified --effort flag (today, only claude has
-        one). Guarded by _updating_backend_controls so repopulating these
-        widgets from session/config state doesn't fire the change handlers and
-        write that same state right back as if the user had edited it."""
-        s = self.session
-        meta = ai_cli.BACKENDS[s.backend]
-        self._updating_backend_controls = True
-        try:
-            if s.backend == "agy":
-                self.model_label.setText("Model")
-                self.model_combo.setVisible(False)
-                self.model_readonly.setVisible(True)
-                self.model_readonly.setText(meta["model_hint"])
-                self.model_custom_edit.setVisible(False)
-                self.model_custom_hint.setVisible(False)
-                self._model_alias_mode = False
-            else:
-                self.model_readonly.setVisible(False)
-                self.model_combo.setVisible(True)
-                self.model_label.setText("Model")
-                self.model_combo.clear()
-                options = []
-                if meta["default_model"]:
-                    options.append(meta["default_model"])
-                for alias in meta.get("model_aliases", []):
-                    if alias not in options:
-                        options.append(alias)
-                current = s.ai_model.get(s.backend, "") or meta["default_model"]
-                self._model_alias_mode = bool(options)
-                if self._model_alias_mode:
-                    # A closed list plus Custom: non-editable, so it renders at
-                    # the same height/inset as Effort's own non-editable combo.
-                    self.model_combo.setEditable(False)
-                    options.append(_CUSTOM_MODEL_LABEL)
-                    self.model_combo.addItems(options)
-                    self.model_combo.setToolTip(meta["model_hint"])
-                    if current in options and current != _CUSTOM_MODEL_LABEL:
-                        self.model_combo.setCurrentIndex(options.index(current))
-                        self.model_custom_edit.setVisible(False)
-                        self.model_custom_hint.setVisible(False)
-                    else:
-                        # An unrecognized stored value (hand-edited config, or a
-                        # model name not in this list) selects Custom and keeps
-                        # the actual value in the line edit rather than losing it.
-                        self.model_combo.setCurrentIndex(
-                            options.index(_CUSTOM_MODEL_LABEL))
-                        self.model_custom_edit.setText(current)
-                        self.model_custom_edit.setVisible(True)
-                        self.model_custom_hint.setVisible(True)
-                else:
-                    # No known aliases (codex): plain free-text combo, unchanged
-                    # from before. Effort is hidden for every such backend today,
-                    # so there's nothing for this row to visibly misalign with.
-                    self.model_combo.setEditable(True)
-                    self.model_combo.addItems(options)
-                    self.model_combo.setToolTip(meta["model_hint"])
-                    self.model_combo.setEditText(current)
-                    self.model_custom_edit.setVisible(False)
-                    self.model_custom_hint.setVisible(False)
-            effort_levels = meta.get("effort_levels")
-            has_effort = bool(effort_levels)
-            self.effort_label.setVisible(has_effort)
-            self.effort_combo.setVisible(has_effort)
-            if has_effort:
-                self.effort_combo.clear()
-                self.effort_combo.addItem(
-                    f"Default ({meta['default_effort']})", "")
-                for level in effort_levels:
-                    self.effort_combo.addItem(level, level)
-                # A hand-edited config value outside effort_levels must not show as
-                # if it were a live override: fall back to the same "Default
-                # (...)" entry build_argv's own fallback (resolve_claude_effort)
-                # would actually send, so the combo always shows the effective
-                # value, never a typo it can't find in its own list.
-                raw_effort = s.ai_effort.get(s.backend, "")
-                effective_effort = raw_effort if raw_effort in effort_levels else ""
-                idx = self.effort_combo.findData(effective_effort)
-                self.effort_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        finally:
-            self._updating_backend_controls = False
-
-    def _model_combo_text_changed(self, text):
-        if self._updating_backend_controls:
-            return
-        if self._model_alias_mode and text == _CUSTOM_MODEL_LABEL:
-            self.model_custom_edit.setVisible(True)
-            self.model_custom_hint.setVisible(True)
-            return
-        self.model_custom_edit.setVisible(False)
-        self.model_custom_hint.setVisible(False)
-        self.session.ai_model[self.session.backend] = text.strip()
-        self._save_ai_model_effort()
-
-    def _model_custom_edit_changed(self):
-        if self._updating_backend_controls:
-            return
-        self.session.ai_model[self.session.backend] = (
-            self.model_custom_edit.text().strip())
-        self._save_ai_model_effort()
-
-    def _effort_changed(self):
-        if self._updating_backend_controls:
-            return
-        self.session.ai_effort[self.session.backend] = (
-            self.effort_combo.currentData() or "")
-        self._save_ai_model_effort()
-
-    def _save_ai_model_effort(self):
-        conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
-        conf["ai_model"] = self.session.ai_model
-        conf["ai_effort"] = self.session.ai_effort
-        mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
     def _test_backend_connection(self):
         s = self.session
@@ -1070,6 +827,7 @@ class _GenerateDialog(QDialog):
         self._t0 = time.monotonic()
         image_paths = ([os.path.join(s.scratch, n) for n in image_names]
                        if ai_cli.image_capable(s.backend) else [])
+        gen_cfg = _cfg()
 
         def work():
             try:
@@ -1077,8 +835,8 @@ class _GenerateDialog(QDialog):
                     s.backend, s.cli_path, prompt, s.mode, s.scratch,
                     image_paths=image_paths, on_event=self._events.append,
                     cancel=self._cancel_flag.is_set,
-                    model=s.ai_model.get(s.backend, ""),
-                    effort=s.ai_effort.get(s.backend, ""))
+                    model=gen_cfg["ai_model"][s.backend],
+                    effort=gen_cfg["ai_effort"][s.backend])
             except Exception as e:
                 self._worker_error = e
 
