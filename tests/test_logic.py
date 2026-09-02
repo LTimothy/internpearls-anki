@@ -1346,6 +1346,15 @@ def test_carry_over_only_touches_fields_with_saved_content():
         "Notes": "text"}
 
 
+# ------------------------------------------------------ night mode dim factor
+def test_night_mode_dim_factor_at_zero_is_no_dimming():
+    assert logic.night_mode_dim_factor(0) == 1.0
+
+
+def test_night_mode_dim_factor_at_default_matches_the_pre_existing_fixed_dim_level():
+    assert logic.night_mode_dim_factor(30) == 0.7
+
+
 # ------------------------------------------------------- night mode image css
 def test_night_mode_image_css_enabled_returns_dimming_rule():
     """No percent passed: the default (30) must render the exact fixed dim level
