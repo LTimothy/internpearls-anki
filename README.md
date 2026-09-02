@@ -148,7 +148,7 @@ Beside View skills on the wizard's input page, an Edit my rules link opens a pla
 
 #### Night Mode Dimming
 
-Softens the glare of a white-background page while Anki itself is in Night Mode; it never applies in Day mode. Applies to every deck in your collection, not just the ones this add-on manages, since the rule is appended to every card Anki renders rather than to a note type. Never applies to the menu bar or to dialogs like this one, since those are native windows Anki draws itself, not the web content the rule reaches.
+Softens the glare of a white-background page while Anki itself is in Night Mode; it never applies in Day mode. Applies to every deck in your collection, not just the ones this add-on manages, whichever scope you pick: the images rule rides along with the markup of every card Anki renders rather than sitting on one note type, and the content rule goes into the head of each web view as it loads. Neither reaches the menu bar or a dialog such as Settings, since those are native windows Anki draws itself rather than the web content the rules apply to.
 
 - **Dim in Night Mode**, off by default.
 - **Dim by N%**, default 30, range 0-90 (higher dims more; 0 leaves it unchanged). Shown live as a side-by-side Normal/Dimmed preview at the exact per-pixel transform Night Mode itself renders, so the preview can never promise a different dim than what actually shows. Only takes effect while the toggle above is on.
