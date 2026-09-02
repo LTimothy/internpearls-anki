@@ -25,7 +25,8 @@ from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
 
 from . import ai_cli, ai_logic, collection
 from .config import (ADDON_PACKAGE, APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
-                     save_ai_usage, load_deck_skill, save_deck_skill)
+                     save_ai_usage, load_deck_skill, save_deck_skill,
+                     load_user_skill, save_user_skill)
 from .logic import cloze_filled_html, field_preview_html, plural
 from .net import fetch_card_image
 from .palette import colors
@@ -63,6 +64,53 @@ def _skills_html(parts):
     collapses to a space in HTML and would otherwise run every line together.
     """
     return html.escape("\n".join(parts)).replace("\n", "<br>")
+
+
+class _UserSkillDialog(QDialog):
+    """Intern Pearls: My rules. Plain text the learner wants sent on every run,
+    after the bundled and deck skills. Saved on OK; an empty box removes it."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME}: My rules")
+        lay = QVBoxLayout(self)
+        lay.addWidget(title_label("My rules"))
+        lay.addWidget(hint_label(
+            "Sent to the assistant after the bundled and deck skills, on every run. "
+            "Plain text. It costs tokens each turn, so keep it short and specific: "
+            "what to emphasise, what to avoid, how you like a card phrased."))
+        self.editor = QPlainTextEdit()
+        self.editor.setPlainText(load_user_skill())
+        lay.addWidget(self.editor, 1)
+        row = QHBoxLayout()
+        self.count = hint_label("")
+        clear = link_button("Clear", on_click=self.editor.clear)
+        row.addWidget(self.count, 1)
+        row.addWidget(clear)
+        lay.addLayout(row)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
+                              | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.editor.textChanged.connect(self._refresh_count)
+        self._refresh_count()
+        self.resize(560, 420)
+
+    def _refresh_count(self):
+        n = len(self.editor.toPlainText())
+        over = n > ai_logic.USER_SKILL_MAX_CHARS
+        self.count.setText(f"{n:,} of {ai_logic.USER_SKILL_MAX_CHARS:,} characters"
+                           + (". Too long: trim it before saving." if over else ""))
+        self.count.setStyleSheet(
+            f"color: {colors()['warning' if over else 'muted']}; font-size: 11px;")
+
+    def accept(self):
+        text = self.editor.toPlainText()
+        if len(text) > ai_logic.USER_SKILL_MAX_CHARS:
+            return
+        save_user_skill(text)
+        super().accept()
 
 
 _FALLBACK_UNDO_SHORTCUT = "Cmd+Z" if sys.platform == "darwin" else "Ctrl+Z"
@@ -619,8 +667,13 @@ class _GenerateDialog(QDialog):
         backend_test_row.addWidget(self.backend_test_btn)
         backend_test_row.addWidget(self.backend_test_status, 1)
         lay.addLayout(backend_test_row)
+        skills_row = QHBoxLayout()
         self.skills_link = link_button("View skills", on_click=self._view_skills)
-        lay.addWidget(self.skills_link)
+        self.rules_link = link_button(
+            "Edit my rules", on_click=lambda: self._guard(self._edit_user_skill))
+        skills_row.addWidget(self.skills_link)
+        skills_row.addWidget(self.rules_link)
+        lay.addLayout(skills_row)
         self.usage_row = hint_label("")
         lay.addWidget(self.usage_row)
 
@@ -708,6 +761,9 @@ class _GenerateDialog(QDialog):
                   "couldn't be read in Anki's own Python. If you want any of "
                   "its figures on a card, attach them separately as image files.")
 
+    def _edit_user_skill(self):
+        _UserSkillDialog(self).exec()
+
     def _view_skills(self):
         """Show what's actually sent to the model. Dismissing this dialog (Close,
         Escape, the window's close box) must never itself change consent: only
@@ -725,6 +781,12 @@ class _GenerateDialog(QDialog):
                 parts += ["", f"Deck skill v{d.get('version')} ({state}, "
                               f"consented {d.get('consented_on')})", "",
                           d.get("text", "")]
+            user = load_user_skill().strip()
+            if user:
+                n = user.count("\n") + 1
+                parts += ["", f"My rules ({n} line{'s' if n != 1 else ''})", "", user]
+            else:
+                parts += ["", "My rules: none"]
             return _skills_html(parts)
 
         if not deck:
@@ -803,7 +865,7 @@ class _GenerateDialog(QDialog):
         extra_text = "\n\n".join(a[1]["text"] for a in s.attachments if a[1]["text"])
         image_names = [name for _, meta in s.attachments for name in meta["images"]]
         prompt = ai_logic.build_prompt(
-            skills=ai_logic.active_skills(load_deck_skill()),
+            skills=ai_logic.active_skills(load_deck_skill(), load_user_skill()),
             source=(s.source + ("\n\n## Attached document text\n" + extra_text
                                 if extra_text else "")),
             note_types=s.note_types, field_map=FIELD_MAP, count=s.count,
