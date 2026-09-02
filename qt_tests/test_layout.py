@@ -704,3 +704,21 @@ def test_ai_review_with_a_full_draft_still_reaches_import(shot):
     top_left = import_btn.mapTo(dlg, q.QPoint(0, 0))
     assert 0 <= top_left.y() <= dlg.height()
     assert top_left.y() + import_btn.height() <= dlg.height() + 1
+
+
+def test_view_skills_close_button_stays_on_screen(shot):
+    """The no-deck-skill branch used to route through a bare QMessageBox with no
+    scroll area (ui._info), so the real bundled skill's 48 lines of prose made
+    the box taller than an 891px screen and left its own Close button off the
+    bottom -- unreachable, not just ugly. Now routed through _ask_scrollable,
+    whose fixed-height scroll viewport keeps the button pinned outside it
+    regardless of how long the skill text is."""
+    _, q = harness.bootstrap()
+    s = shot("ai-view-skills")
+    dlg = s.dialog
+    close_btn = next(b for b in dlg.findChildren(q.QPushButton)
+                     if b.text() == "Close")
+    assert close_btn.isVisible()
+    top_left = close_btn.mapTo(dlg, q.QPoint(0, 0))
+    assert 0 <= top_left.y() <= dlg.height()
+    assert top_left.y() + close_btn.height() <= dlg.height() + 1
