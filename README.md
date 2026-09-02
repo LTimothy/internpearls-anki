@@ -140,6 +140,10 @@ What's stored between sessions is deliberately small: which backend and CLI path
 
 A View skills link shows exactly what's sent to the assistant on top of your material: the bundled InternPearls authoring skill (card-craft rules that ship with the add-on), plus a deck-specific skill if your configured deck source offers one and you've consented to it. Nothing from a deck skill is ever sent without that explicit consent, and the same link lets you enable or disable one you've already consented to.
 
+#### My rules
+
+An Edit my rules link, beside View skills, opens a plain-text box for your own standing instructions, sent after the bundled and deck skills on every run. It's yours alone: nothing here is fetched from a deck source or shared with anyone. It costs tokens every turn, so it's meant for something short and specific, what to emphasise, what to avoid, how you like a card phrased, capped at 20,000 characters. Saving an empty box clears it; View skills always shows whether you have one set and how many lines it is.
+
 #### Night mode dimming
 
 Softens the glare of a white-background image while Anki itself is in Night Mode; it never applies in Day mode. Applies to every deck in your collection, not just the ones this add-on manages, since the rule is appended to every card Anki renders rather than to a note type. Two controls:

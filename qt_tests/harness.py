@@ -34,6 +34,7 @@ Shot = namedtuple("Shot", "image dialog theme scene")
 
 _BOOT = None
 _APP = None
+_ORIG_LOAD_USER_SKILL = None
 
 
 def bootstrap():
@@ -917,13 +918,37 @@ def _scene_ai_view_skills(mock, opts):
     scroll area, leaving its own Close button unreachable. Never calls
     dlg.exec() on the wizard itself, only on the nested confirmation
     _view_skills() opens, which is the one this scene exists to measure.
+
+    `user_rules`, when passed, stands in for the learner's saved My rules
+    text (ai_dialog's own bound load_user_skill swapped to return it) so the
+    My rules section of the body can be exercised without touching disk. Set
+    unconditionally on every render (never left dangling from a prior scene's
+    opts) so an omitted `user_rules` always renders the true empty state.
     """
     from internpearls import ai_dialog
     _ai_backend_available()
 
+    global _ORIG_LOAD_USER_SKILL
+    if _ORIG_LOAD_USER_SKILL is None:
+        _ORIG_LOAD_USER_SKILL = ai_dialog.load_user_skill
+    text = opts.get("user_rules", "")
+    ai_dialog.load_user_skill = (lambda: text) if text else _ORIG_LOAD_USER_SKILL
+
     def _open():
         dlg = ai_dialog._GenerateDialog()
         dlg._view_skills()
+    return _open
+
+
+def _scene_ai_my_rules(mock, opts):
+    """The My rules editor on its own, reached directly rather than through
+    the wizard's Edit my rules link."""
+    from internpearls import ai_dialog
+    _ai_backend_available()
+
+    def _open():
+        dlg = ai_dialog._UserSkillDialog(mock.mw)
+        dlg.exec()
     return _open
 
 
@@ -961,6 +986,7 @@ SCENES = {
                  "the AI wizard's review page (count=N for a full-size draft)"),
     "ai-view-skills": (_scene_ai_view_skills,
                        "View skills with no deck skill installed (real bundled text)"),
+    "ai-my-rules": (_scene_ai_my_rules, "the My rules editor"),
 }
 
 

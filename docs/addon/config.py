@@ -276,3 +276,29 @@ def load_deck_skill():
 
 def save_deck_skill(d):
     _save_json(DECK_SKILL, d)
+
+
+# The learner's own standing instructions, plain text, sent after the bundled and deck
+# skills on every run. Lives in user_files so it survives add-on updates.
+USER_SKILL = os.path.join(_USER_FILES, "user_skill.md")
+
+
+def load_user_skill():
+    try:
+        with open(USER_SKILL, encoding="utf8") as fh:
+            return fh.read()
+    except FileNotFoundError:
+        return ""
+    except Exception:
+        return ""
+
+
+def save_user_skill(text):
+    if not (text or "").strip():
+        try:
+            os.remove(USER_SKILL)
+        except FileNotFoundError:
+            pass
+        return
+    with open(USER_SKILL, "w", encoding="utf8") as fh:
+        fh.write(text)
