@@ -386,8 +386,20 @@ class MockMedia:
     """
     def __init__(self):
         self._files = {}   # written filename -> bytes
+        self._fail_after = None   # [n, exc], armed by fail_after(); None = never fails
+
+    def fail_after(self, n, exc=None):
+        """Test hook: make the Nth call (1-indexed) to write_data() raise `exc`
+        (RuntimeError by default) instead of writing, to exercise a caller's
+        exception-safety around a real backend/disk failure. Never armed by default --
+        production and every other test are unaffected unless this is called."""
+        self._fail_after = [n, exc or RuntimeError("mock media write failure")]
 
     def write_data(self, desired_fname, data):
+        if self._fail_after:
+            self._fail_after[0] -= 1
+            if self._fail_after[0] == 0:
+                raise self._fail_after[1]
         fname = desired_fname
         if fname in self._files and self._files[fname] != data:
             base, ext = os.path.splitext(desired_fname)
@@ -429,6 +441,7 @@ class MockCollection:
         # nothing else here needs undo modeling.
         self._undo_entries = []
         self._undo_merge_open = None
+        self._add_note_fail_after = None   # [n, exc], armed by fail_add_note_after()
         # Anki exposes suspend via col.sched and tag edits via col.tags; the add-on's
         # archive path (Reconcile) uses set_deck + these two. All are incremental (no
         # schema bump), which is exactly what the reconcile feature relies on.
@@ -481,11 +494,23 @@ class MockCollection:
             return self._add_prepared_note(note_or_guid, values_or_did)
         return self._add_legacy_note(note_or_guid, values_or_did, tags, model, deck)
 
+    def fail_add_note_after(self, n, exc=None):
+        """Test hook: make the Nth call (1-indexed) to the real add_note(note, did)
+        path raise `exc` (RuntimeError by default) instead of adding, so a test can
+        exercise a caller's exception-safety around a multi-note write the way a real
+        Anki backend failure would. Never armed by default -- production and every
+        other test are unaffected unless this is called."""
+        self._add_note_fail_after = [n, exc or RuntimeError("mock add_note failure")]
+
     def _add_prepared_note(self, note, did):
         """Real add_note(note, deck_id): assigns note.id, files one card into `did`,
         and -- like a fresh cloze note in real Anki -- adds one card per further
         cloze deletion the note's own text carries. Records into the open undo
-        entry (if any) so a merged import can be undone in one step."""
+        entry of its own, exactly as real Anki does."""
+        if self._add_note_fail_after:
+            self._add_note_fail_after[0] -= 1
+            if self._add_note_fail_after[0] == 0:
+                raise self._add_note_fail_after[1]
         note.id = self._next_id
         self._next_id += 1
         note.deck = self.decks.name(did)
@@ -499,13 +524,11 @@ class MockCollection:
             last_review_time=None)
         note._card_ids.append(cid)
         self._generate_cloze_cards(note)
-        if self._undo_merge_open is not None:
-            entry = self._undo_entries[self._undo_merge_open]
-            entry["notes"].append(note.id)
-            entry["cards"].extend(note._card_ids)
-        else:
-            self._undo_entries.append(
-                {"name": "Add Note", "notes": [note.id], "cards": list(note._card_ids)})
+        # Real Anki gives every add its own undo entry; merge_undo_entries is what
+        # collapses a run of them into one. Modelling that faithfully is what makes a
+        # missing merge observable in a test rather than silently equivalent.
+        self._undo_entries.append(
+            {"name": "Add Note", "notes": [note.id], "cards": list(note._card_ids)})
         return types.SimpleNamespace(note_id=note.id)
 
     # -- helpers for tests and the demo --------------------------------------

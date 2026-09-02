@@ -1289,7 +1289,15 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
 
     Raises RuntimeError, before writing anything (media or notes), if a card names a
     note type outside _GENERATED_ALLOWED_TYPES or one absent from this collection --
-    never a partial import. Returns the number of notes added; 0 for an empty `cards`.
+    an atomic check, so that failure mode never leaves anything behind. Returns the
+    number of notes added; 0 for an empty `cards`.
+
+    A failure part-way through the actual writes (a media write erroring, a backend
+    add_note call failing) is NOT rolled back -- Anki gives no cheap way to undo mid
+    write -- so a partial import is possible here. What's guaranteed instead: whatever
+    already landed, media and notes alike, is still exactly one undo step, so the
+    caller (or the user, with Ctrl+Z) can always get back to a clean collection in one
+    move. The original exception always propagates; this function never swallows one.
     """
     cards = list(cards or [])
     if not cards:
@@ -1313,38 +1321,41 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
             + ", ".join(sorted(unknown)))
 
     undo_target = col.add_custom_undo_entry(f"Import {plural(len(cards), 'generated card')}")
-    did = col.decks.id(deck_name)
-
-    written = {}
-    for fname, data in (media or {}).items():
-        try:
-            written[fname] = col.media.write_data(fname, data)
-        except AttributeError:
-            # add_file() takes its desired name from the path's own basename, so the
-            # temp file must be named `fname` exactly -- a random tempfile name would
-            # get written into the collection instead of the name the fields reference.
-            with tempfile.TemporaryDirectory() as tmpdir:
-                path = os.path.join(tmpdir, fname)
-                with open(path, "wb") as fh:
-                    fh.write(data)
-                written[fname] = col.media.add_file(path)
-
-    tag = f"{scope_tag}::{ai_logic.GENERATED_TAG_LEAF}"
     count = 0
-    for card in cards:
-        note = col.new_note(models[card["note_type"]])
-        for name, value in card["fields"].items():
-            if name in note:
-                note[name] = value
-        imgs = "".join(f'<img src="{written.get(f, f)}">'
-                       for f in card.get("_media_files", []))
-        if imgs:
-            target = "Image" if "Image" in note else note.keys()[0]
-            note[target] = (note[target] + imgs) if note[target] else imgs
-        note.guid = ai_logic.generated_guid()
-        note.tags = list(card.get("tags", [])) + [tag]
-        col.add_note(note, did)
-        count += 1
+    try:
+        did = col.decks.id(deck_name)
 
-    col.merge_undo_entries(undo_target)
+        written = {}
+        for fname, data in (media or {}).items():
+            try:
+                written[fname] = col.media.write_data(fname, data)
+            except AttributeError:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    path = os.path.join(tmpdir, fname)
+                    with open(path, "wb") as fh:
+                        fh.write(data)
+                    written[fname] = col.media.add_file(path)
+
+        tag = f"{scope_tag}::{ai_logic.GENERATED_TAG_LEAF}"
+        for card in cards:
+            note = col.new_note(models[card["note_type"]])
+            for name, value in card["fields"].items():
+                if name in note:
+                    note[name] = value
+            imgs = "".join(f'<img src="{written.get(f, f)}">'
+                           for f in card.get("_media_files", []))
+            if imgs:
+                if "Image" in note:
+                    target = "Image"
+                else:
+                    target = ai_logic.PRIMARY_FIELD.get(
+                        card["note_type"], next(iter(card["fields"])))
+                note[target] = (note[target] + imgs) if note[target] else imgs
+            note.guid = ai_logic.generated_guid()
+            note.tags = list(card.get("tags", [])) + [tag]
+            col.add_note(note, did)
+            count += 1
+    finally:
+        # Whatever landed before a mid-loop failure is still exactly one undo step.
+        col.merge_undo_entries(undo_target)
     return count
