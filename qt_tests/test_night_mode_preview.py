@@ -55,6 +55,48 @@ def test_changing_the_percent_changes_the_dimmed_pane(shot):
         f"({low_avg:.3f}): the preview is not tracking the percent")
 
 
+def _pane_tops(shot):
+    normal, dimmed = _pane_rects(shot)
+    return normal.top(), dimmed.top()
+
+
+def test_the_preview_holds_still_when_the_scope_changes():
+    """The scope hint under the radios is one line for Bright images only and three
+    for Everything on cards and deck screens, so sizing it to whichever is showing
+    pushed the Dim by row and the whole preview down the moment the reader picked
+    the second radio.
+
+    Measured at the width the dialog actually opens narrow to (its own 420px
+    minimum, where the longer hint really does need three lines) and at the height
+    its content asks for, since a window with room to spare hands the slack to the
+    hint and hides the jump. Asserted both ways round, because either alone can pass
+    for the wrong reason: the two scopes rendered as their own dialogs must place the
+    panes identically, and so must switching the scope inside one open dialog, which
+    is the jump the reader actually sees. Rendered directly rather than through the
+    cached shot fixture, since this clicks a radio and the dialog it clicks must be
+    its own.
+    """
+    harness.bootstrap()
+    rendered = {}
+    for scope in ("images", "content"):
+        s = harness.render("night-mode-dimming", percent=50, scope=scope, size=(420, 300))
+        s.dialog.resize(420, s.dialog.sizeHint().height())
+        harness.app().processEvents()
+        rendered[scope] = s
+    assert _pane_tops(rendered["images"]) == _pane_tops(rendered["content"]), (
+        f"the preview sits at {_pane_tops(rendered['images'])} under Bright images "
+        f"only and {_pane_tops(rendered['content'])} under Everything on cards and "
+        "deck screens")
+
+    live = rendered["images"]
+    before = _pane_tops(live)
+    live.dialog._scope_content.setChecked(True)
+    harness.app().processEvents()
+    after = _pane_tops(live)
+    assert before == after, (
+        f"the preview moved from {before} to {after} when the scope changed")
+
+
 def test_content_scope_hint_names_deck_screens(shot):
     harness.bootstrap()
     s = shot("night-mode-dimming", scope="content")
