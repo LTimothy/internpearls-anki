@@ -11,6 +11,7 @@ import shutil
 import tempfile
 import threading
 import time
+import traceback
 import urllib.parse
 from collections import deque
 
@@ -200,6 +201,33 @@ class _GenerateDialog(QDialog):
 
         self._detect(cfg)
 
+    def _guard(self, fn, *args, **kwargs):
+        """Run a widget-signal callback the way @_safe protects a menu action, so a
+        bug in it shows a plain, titled Intern Pearls dialog instead of Anki's raw
+        crash box.
+
+        @_safe on generate_cards() (module bottom) only covers exceptions that
+        unwind back through *its own* call stack. A button's clicked signal doesn't
+        go through that stack at all -- Qt dispatches it directly from its own event
+        loop, so an exception raised inside a slot reaches Anki's excepthook
+        instead, which is exactly what happened to _do_import before this existed.
+        Every callback wired to a widget signal that can meaningfully raise (import,
+        revise, edit, note, test connection, attach, generate) goes through this.
+
+        Always called from an explicit lambda with its own fixed argument list
+        (e.g. `lambda: self._guard(self._attach)`), never connected to a signal
+        directly: connecting a *args-style callable loses Qt's ability to
+        introspect how many arguments the real slot wants, which is the same
+        reason __init__.py's own menu wiring discards `checked` in a lambda rather
+        than passing it through a decorator (see that file's comment). The lambda's
+        own signature is what Qt reads, so this stays invisible to that mechanism.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            print(traceback.format_exc())
+            _warn(f"Something went wrong: {e}")
+
     # -- setup ---------------------------------------------------------------
     def _build_setup(self):
         page = QWidget()
@@ -221,7 +249,7 @@ class _GenerateDialog(QDialog):
             test_row = QHBoxLayout()
             btn = QPushButton("Test connection")
             btn.setEnabled(False)
-            btn.clicked.connect(lambda _, k=kind: self._test_setup_connection(k))
+            btn.clicked.connect(lambda _, k=kind: self._guard(self._test_setup_connection, k))
             status = hint_label("")
             self.test_buttons[kind] = btn
             self.test_status[kind] = status
@@ -358,7 +386,7 @@ class _GenerateDialog(QDialog):
         lay.addWidget(self.char_label)
 
         self.attach_btn = QPushButton("Attach images or PDFs")
-        self.attach_btn.clicked.connect(self._attach)
+        self.attach_btn.clicked.connect(lambda: self._guard(self._attach))
         self.attach_label = hint_label("")
         attach_row = QHBoxLayout()
         attach_row.addWidget(self.attach_btn)
@@ -401,8 +429,27 @@ class _GenerateDialog(QDialog):
             # check and takes the whole reply down with it.
             if name == "Study Deck - Image ID":
                 continue
-            box = QCheckBox(name)
-            box.setChecked(True)
+            # A managed type (Study Deck - Basic/Cloze) only exists in THIS
+            # collection once its deck has been synced at least once --
+            # _ensure_notetypes reconciles fields on a type that's already there,
+            # it never creates one. Basic/Cloze are checked the same way rather
+            # than assumed present, since a renamed or missing core type is exactly
+            # as unusable here. Offering a type this collection doesn't have would
+            # let someone write source material, wait through a whole generation,
+            # and only discover at the very last click (Import) that
+            # add_generated_notes rejects the entire batch -- see collection.py's
+            # _GENERATED_ALLOWED_TYPES check. Shown disabled rather than omitted,
+            # so it's clear the type exists and *why* it isn't offered yet, not
+            # just silently missing from the list.
+            available = bool(mw.col.models.by_name(name))
+            box = QCheckBox(name if available else f"{name} (sync your decks first)")
+            box.setChecked(available)
+            box.setEnabled(available)
+            if not available:
+                box.setToolTip(
+                    f'"{name}" isn\'t in this collection yet. Sync your Intern '
+                    "Pearls decks at least once to add it, or generate onto "
+                    "Basic/Cloze instead.")
             self.type_boxes[name] = box
             lay.addWidget(box)
 
@@ -416,7 +463,8 @@ class _GenerateDialog(QDialog):
         lay.addWidget(self.backend_row)
         backend_test_row = QHBoxLayout()
         self.backend_test_btn = link_button(
-            "Test connection", on_click=self._test_backend_connection)
+            "Test connection",
+            on_click=lambda: self._guard(self._test_backend_connection))
         self.backend_test_status = hint_label("")
         backend_test_row.addWidget(self.backend_test_btn)
         backend_test_row.addWidget(self.backend_test_status, 1)
@@ -431,7 +479,7 @@ class _GenerateDialog(QDialog):
         cancel.clicked.connect(self.reject)
         self.generate_btn = QPushButton("Generate")
         self.generate_btn.setEnabled(False)
-        self.generate_btn.clicked.connect(self._start_generation)
+        self.generate_btn.clicked.connect(lambda: self._guard(self._start_generation))
         btn_row.addStretch(1)
         btn_row.addWidget(cancel)
         btn_row.addWidget(self.generate_btn)
@@ -912,9 +960,9 @@ class _GenerateDialog(QDialog):
         back = QPushButton("Back")
         back.clicked.connect(lambda: self.stack.setCurrentWidget(self.input_page))
         self.revise_btn = QPushButton("Revise all")
-        self.revise_btn.clicked.connect(self._revise_all)
+        self.revise_btn.clicked.connect(lambda: self._guard(self._revise_all))
         self.import_btn = QPushButton("Import")
-        self.import_btn.clicked.connect(self._do_import)
+        self.import_btn.clicked.connect(lambda: self._guard(self._do_import))
         btn_row.addWidget(back)
         btn_row.addStretch(1)
         btn_row.addWidget(self.revise_btn)
@@ -935,7 +983,7 @@ class _GenerateDialog(QDialog):
             rowlay = QHBoxLayout(row)
             box = QCheckBox()
             box.setChecked(s.included[i])
-            box.toggled.connect(lambda v, i=i: s.included.__setitem__(i, v))
+            box.toggled.connect(lambda v, i=i: self._guard(self._on_include_toggled, i, v))
             self.include_boxes.append(box)
             primary = ai_logic.PRIMARY_FIELD.get(card["note_type"], "Front")
             badges = " ".join(f"[{html.escape(c['code'])}]" for c in s.checks[i]
@@ -958,14 +1006,37 @@ class _GenerateDialog(QDialog):
             label.setText(text)
             label.setWordWrap(True)
             edit_btn = QPushButton("Edit")
-            edit_btn.clicked.connect(lambda _, i=i: self._edit_card(i))
+            edit_btn.clicked.connect(lambda _, i=i: self._guard(self._edit_card, i))
             note_btn = QPushButton("Note")
-            note_btn.clicked.connect(lambda _, i=i: self._note_card(i))
+            note_btn.clicked.connect(lambda _, i=i: self._guard(self._note_card, i))
             rowlay.addWidget(box)
             rowlay.addWidget(label, 1)
             rowlay.addWidget(edit_btn)
             rowlay.addWidget(note_btn)
             self.cards_lay.addWidget(row)
+        self._update_review_summary()
+
+    def _on_include_toggled(self, i, value):
+        """A card's checkbox flipped: write the new state and refresh what depends
+        on it. Split from _rebuild_review's own toggled.connect (which used to
+        write s.included and stop there) because that left the toggle with no
+        visible effect at all -- the box itself flips (Qt paints that on its own),
+        but nothing ever recomputed the "N included" header or the "Import N
+        cards" button label, so a click that genuinely worked read as doing
+        nothing. Updates only those two labels rather than calling the full
+        _rebuild_review: a checkbox toggle doesn't change any card's text, badges,
+        or note, so nothing else on the page needs to move, and rebuilding every
+        row (including the very one mid-click) is unnecessary churn.
+        """
+        self.session.included[i] = value
+        self._update_review_summary()
+
+    def _update_review_summary(self):
+        """Recompute the review header and the two button labels from current
+        session state. Called after a full _rebuild_review, and on its own by
+        _on_include_toggled, which needs exactly this and nothing more.
+        """
+        s = self.session
         n_inc = sum(s.included)
         extra = (f" · last run ~{round(s.tokens_last_run / 1000)}k tokens"
                 if s.tokens_last_run else "")
