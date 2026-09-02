@@ -532,5 +532,56 @@ def test_my_rules_editor_saves_and_counts(monkeypatch, tmp_path):
     dlg = ai_dialog._UserSkillDialog(mock.mw)
     dlg.editor.setPlainText("one rule")
     assert dlg.count.text().startswith("8 of 20,000")
+    # accept() only validates the cap and closes the dialog; it must not write
+    # anything itself, so the file stays absent until the caller persists it.
     dlg.accept()
+    assert dlg.result() == q.QDialog.DialogCode.Accepted
+    assert config.load_user_skill() == ""
+    assert dlg.text() == "one rule"
+    config.save_user_skill(dlg.text())
     assert config.load_user_skill() == "one rule"
+
+
+def test_edit_user_skill_persists_after_dialog_closes(monkeypatch, tmp_path):
+    """The full path through _edit_user_skill: accept() alone must not persist,
+    the caller must save only after exec() returns Accepted, and Cancel must
+    leave whatever was already saved untouched (matches _SettingsDialog and
+    _NightModeDimmingDialog, which also save after their nested dialogs close)."""
+    _, q = harness.bootstrap()
+    app = harness.app()
+    harness._ai_backend_available()
+    from internpearls import ai_dialog, config
+    monkeypatch.setattr(config, "USER_SKILL", str(tmp_path / "user_skill.md"))
+    config.save_user_skill("old rule")
+
+    dlg = ai_dialog._GenerateDialog()
+
+    original = q.QDialog.exec
+
+    def fake_exec_accept(self):
+        self.show()
+        app.processEvents()
+        self.editor.setPlainText("new rule")
+        self.accept()
+        return self.result()
+
+    q.QDialog.exec = fake_exec_accept
+    try:
+        dlg._edit_user_skill()
+    finally:
+        q.QDialog.exec = original
+    assert config.load_user_skill() == "new rule"
+
+    def fake_exec_cancel(self):
+        self.show()
+        app.processEvents()
+        self.editor.setPlainText("discarded rule")
+        self.reject()
+        return self.result()
+
+    q.QDialog.exec = fake_exec_cancel
+    try:
+        dlg._edit_user_skill()
+    finally:
+        q.QDialog.exec = original
+    assert config.load_user_skill() == "new rule"

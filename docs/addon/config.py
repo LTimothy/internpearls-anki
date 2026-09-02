@@ -300,5 +300,16 @@ def save_user_skill(text):
         except FileNotFoundError:
             pass
         return
-    with open(USER_SKILL, "w", encoding="utf8") as fh:
-        fh.write(text)
+    dirname = os.path.dirname(USER_SKILL) or "."
+    os.makedirs(dirname, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf8") as fh:
+            fh.write(text)
+        os.replace(tmp, USER_SKILL)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
