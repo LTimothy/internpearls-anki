@@ -293,6 +293,11 @@ def _scene_settings(mock, opts):
     return dialogs.open_settings
 
 
+def _scene_night_mode_dimming(mock, opts):
+    from internpearls import dialogs
+    return dialogs.open_night_mode_dimming
+
+
 _MANAGE_DECKS_FIXTURE = None
 
 
@@ -785,6 +790,8 @@ def _scene_declined(mock, opts):
 SCENES = {
     "digest": (_scene_digest, "the flagged-card feedback digest"),
     "settings": (_scene_settings, "the Settings dialog"),
+    "night-mode-dimming": (_scene_night_mode_dimming,
+                           "the Experimental > Night mode dimming dialog"),
     "manage-decks": (_scene_manage_decks,
                      "the deck manager (decks_dir for a source, empty for no decks)"),
     "about": (_scene_about, "the About dialog"),
