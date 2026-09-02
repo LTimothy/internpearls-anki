@@ -319,7 +319,7 @@ class _GenerateDialog(QDialog):
             btn = QPushButton("Test connection")
             btn.setEnabled(False)
             btn.clicked.connect(lambda _, k=kind: self._guard(self._test_setup_connection, k))
-            status = hint_label("")
+            status = hint_label("Not tested yet")
             self.test_buttons[kind] = btn
             self.test_status[kind] = status
             test_row.addWidget(btn)
@@ -356,7 +356,7 @@ class _GenerateDialog(QDialog):
                 # either mid-test, or a second click here could start a
                 # concurrent test racing the first to the same label.
                 self.test_buttons[kind].setEnabled(bool(path))
-                self.test_status[kind].setText("")
+                self.test_status[kind].setText("Not tested yet")
             if path:
                 res = ai_cli.probe(kind, path)
                 ok = res["ok"]
@@ -456,7 +456,7 @@ class _GenerateDialog(QDialog):
 
         self.attach_btn = QPushButton("Attach images or PDFs")
         self.attach_btn.clicked.connect(lambda: self._guard(self._attach))
-        self.attach_label = hint_label("")
+        self.attach_label = hint_label("No files attached")
         attach_row = QHBoxLayout()
         attach_row.addWidget(self.attach_btn)
         attach_row.addWidget(self.attach_label)
@@ -534,7 +534,7 @@ class _GenerateDialog(QDialog):
         self.backend_test_btn = link_button(
             "Test connection",
             on_click=lambda: self._guard(self._test_backend_connection))
-        self.backend_test_status = hint_label("")
+        self.backend_test_status = hint_label("Not tested yet")
         backend_test_row.addWidget(self.backend_test_btn)
         backend_test_row.addWidget(self.backend_test_status, 1)
         lay.addLayout(backend_test_row)
@@ -571,7 +571,7 @@ class _GenerateDialog(QDialog):
         reg = load_ai_usage()
         self.usage_row.setText(ai_logic.usage_line(
             reg, s.backend, now=time.time(), free_tier=(s.backend == "agy")))
-        self.backend_test_status.setText("")
+        self.backend_test_status.setText("Not tested yet")
 
     def _test_backend_connection(self):
         s = self.session
@@ -604,7 +604,8 @@ class _GenerateDialog(QDialog):
             s.attachments.append((p, meta))
             images_undecoded = images_undecoded or meta["images_undecoded"]
         self.attach_label.setText(
-            ", ".join(os.path.basename(p) for p, _ in s.attachments))
+            ", ".join(os.path.basename(p) for p, _ in s.attachments)
+            or "No files attached")
         # Anki's own bundled Python doesn't carry Pillow, which pypdf needs to
         # decode a PDF's embedded images (its text still comes through fine) --
         # say so once per session, right when it happens, rather than leaving
