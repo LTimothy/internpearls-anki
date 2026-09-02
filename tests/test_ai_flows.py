@@ -217,8 +217,13 @@ def test_mode_radio_labels_are_the_backends_own_truthful_text(anki, monkeypatch)
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     dlg = ai_dialog._GenerateDialog()
     modes = ai_cli.BACKENDS["claude"]["modes"]
-    assert dlg.thorough_radio.text() == modes["thorough"]
-    assert dlg.quick_radio.text() == modes["quick"]
+    # The radio itself carries only the short, stable name (see item 8's wrap
+    # fix in _refresh_backend_row); the backend's own truthful sentence moves
+    # to the hint_label underneath it.
+    assert dlg.thorough_radio.text() == "Thorough"
+    assert dlg.quick_radio.text() == "Quick draft"
+    assert dlg.thorough_hint.text() == modes["thorough"]
+    assert dlg.quick_hint.text() == modes["quick"]
 
 
 def _ready_dialog(anki, monkeypatch, cli_mode="ok"):
