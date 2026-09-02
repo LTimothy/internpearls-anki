@@ -197,6 +197,40 @@ def test_ai_backends_dialog_fits_a_laptop_screen_unscrolled(monkeypatch):
         assert top_left.y() + close_btn.height() <= dlg.height() + 1
 
 
+def test_backend_rows_never_clip_their_wrapped_detail_line():
+    """The muted third line of every row ("Works with a ... . <safety>.") wraps to
+    two lines at the width this window actually opens at, and used to be cut off
+    mid-glyph at the row's bottom edge on a real screen.
+
+    A word-wrapped QLabel reports a one-line minimum height, and a QVBoxLayout
+    builds the window's minimum height out of those minimums, so the window's own
+    minimum was shorter than its text: at that height every row was squeezed to one
+    line. Measured at the smallest height the window will take, which is the state
+    that clipped, across the widths a real screen puts it at (below its minimum
+    width Qt clamps, which is itself worth pinning: that is the width the reader
+    reported this at).
+
+    Rendered through harness.render rather than the module-level _dialog helper so
+    what is asserted here is the scene the render tool shows.
+    """
+    dlg = harness.render("ai-backends", found=1).dialog
+    for width in (560, 640, 700, 773, 900):
+        dlg.resize(width, dlg.minimumSizeHint().height())
+        harness.app().processEvents()
+        for kind, row in dlg.rows.items():
+            label = row.detail
+            needed = label.heightForWidth(label.width())
+            assert label.height() >= needed, (
+                f"{kind}'s detail line is {label.height()}px tall at "
+                f"{label.width()}px wide, where its text needs {needed}px "
+                f"(window {dlg.width()}x{dlg.height()})")
+            bottom = label.mapTo(row, label.rect().bottomLeft()).y()
+            assert bottom < row.height(), (
+                f"{kind}'s detail line ends {bottom}px down a {row.height()}px "
+                f"row, so its last line is clipped (window {dlg.width()}x"
+                f"{dlg.height()})")
+
+
 def test_ai_backends_scene_reads_its_detection_state(shot):
     """The harness scene, in both states it can be rendered in: with nothing
     installed every row wears NOT FOUND, and with `found=1` every row wears

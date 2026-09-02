@@ -80,6 +80,38 @@ def _capability_pill(text, role):
     return pill
 
 
+class _WrappedHint(QLabel):
+    """A hint label that will not let a layout squeeze its wrapped text.
+
+    A word-wrapped QLabel reports a minimum height of one line, whatever it
+    actually wraps to, and a QVBoxLayout builds a window's minimum height out of
+    exactly those minimums: height-for-width never reaches it. So this window,
+    which clamps its own open height to the screen it lands on, could open
+    shorter than its text needs, and every wrapped paragraph and backend row was
+    then squeezed below its own minimum until "Works with a ... ." was cut off
+    mid-glyph at the row's bottom edge.
+
+    Fixed at the only place that knows the answer: once the label has a width, it
+    claims the height that width really requires as its own minimum, which every
+    layout above it does honour. Guarded so an unchanged answer never restarts the
+    layout.
+    """
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        need = self.heightForWidth(self.width()) if self.width() > 0 else 0
+        if need > 0 and self.minimumHeight() != need:
+            self.setMinimumHeight(need)
+
+
+def _wrapped_hint(text):
+    """hint_label, built so its wrapped height is a minimum rather than a wish.
+    Every multi-line hint in this window goes through here: one paragraph left on
+    a plain hint_label puts the window's minimum height back below what it needs
+    and the squeeze comes back for everything under it."""
+    return hint_label(text, cls=_WrappedHint)
+
+
 class ModelEffortControls(QWidget):
     """Model and Effort for one backend, with the honesty rules from
     ai_cli.BACKENDS: a closed alias list plus Custom where aliases exist,
@@ -209,7 +241,8 @@ class _BackendRow(QWidget):
         caps_lay.addStretch()
         body_lay.addWidget(caps)
 
-        self.detail = hint_label(f"Works with a {meta['subscription']}. {meta['safety']}.")
+        self.detail = _wrapped_hint(
+            f"Works with a {meta['subscription']}. {meta['safety']}.")
         body_lay.addWidget(self.detail)
         lay.addWidget(body, 1)
 
@@ -305,7 +338,7 @@ class _SettingsPanel(QWidget):
             row += 1
 
         self.test_btn = QPushButton("Test connection")
-        self.test_status = hint_label("Not tested yet")
+        self.test_status = _wrapped_hint("Not tested yet")
         test_box = QWidget()
         test_lay = QHBoxLayout(test_box)
         test_lay.setContentsMargins(0, 0, 0, 0)
@@ -356,7 +389,7 @@ class _AIBackendsDialog(QDialog):
         self.preferred = None
         lay = QVBoxLayout(self)
         lay.addWidget(title_label("AI Backends"))
-        lay.addWidget(hint_label(
+        lay.addWidget(_wrapped_hint(
             "Card generation runs through an assistant you sign into yourself. This "
             "add-on never sees or stores your credentials: there is no API key field "
             "here, or anywhere else in the add-on."))
@@ -366,7 +399,7 @@ class _AIBackendsDialog(QDialog):
         self._rows_lay.setContentsMargins(0, 0, 0, 0)
         self._rows_lay.setSpacing(0)
         lay.addWidget(rows_container)
-        lay.addWidget(hint_label(
+        lay.addWidget(_wrapped_hint(
             "After installing, run the tool once in a terminal and sign in there, "
             "then Re-check."))
         lay.addWidget(section_rule())
@@ -378,11 +411,11 @@ class _AIBackendsDialog(QDialog):
 
         brow = QHBoxLayout()
         self.recheck_btn = link_button("Re-check", on_click=lambda: self._guard(self.recheck))
-        self.overall = hint_label("")
+        self.overall = _wrapped_hint("")
         brow.addWidget(self.recheck_btn)
         brow.addWidget(self.overall, 1)
         lay.addLayout(brow)
-        lay.addWidget(hint_label(
+        lay.addWidget(_wrapped_hint(
             "Test connection runs a real, trivial prompt through a detected CLI to "
             "confirm it can generate, not just that the binary runs. It costs one "
             "model turn, so it only runs when you click it."))
