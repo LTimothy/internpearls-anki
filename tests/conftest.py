@@ -79,6 +79,7 @@ def anki(tmp_path, monkeypatch):
     monkeypatch.setattr(sync, "SHIPPED", str(user_files / "shipped_fields.json"))
     monkeypatch.setattr(config, "DECLINED", str(user_files / "declined.json"))
     monkeypatch.setattr(config, "DECK_SKILL", str(user_files / "deck_skill.json"))
+    monkeypatch.setattr(config, "AI_USAGE", str(user_files / "ai_usage.json"))
     background._tpl_deferred_notified.clear()
     background._deferred_decks.clear()   # session-scoped skip list, same reason
     background._backup_failure_notified = False
