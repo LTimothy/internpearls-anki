@@ -3,6 +3,15 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.53.1
+
+Fixed a shipped defect: extracting a PDF's embedded images relies on Pillow, which
+Anki's own bundled Python doesn't carry, so those images silently extracted nothing
+for every real user, indistinguishable from a PDF that never had any. PDF text
+extraction was never affected. Attaching a PDF now says plainly, once per session,
+when its images couldn't be decoded here, so figures you want on a card can be
+attached separately as image files instead.
+
 ## v0.53.0
 
 A new "Generate cards with AI" menu item drafts cards from source material you paste
@@ -21,8 +30,10 @@ restricted by mode at all, so it may still reach the web even under Quick. Separ
 and in every mode: if a drafted card proposes a picture it found online, the add-on
 itself (not the assistant) fetches that image during review so you can see it, and
 shows the host it came from. No card here ever carries an AI-generated picture: an
-image can only come from a real web source, one extracted from something you
-attached, or SVG the model draws itself.
+image can only come from a real web source, an image file you attached, or SVG the
+model draws itself. An attached PDF's text is always pulled in; its embedded images
+generally are not, since Anki's own bundled Python lacks the library needed to
+decode them.
 
 Cards you generate land in their own `Generated` subdeck and tag with a fresh local
 GUID, so a shared deck source's own sync and reconcile machinery can never match,

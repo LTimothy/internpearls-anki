@@ -115,6 +115,43 @@ def test_mode_radios_render_the_backends_own_text(monkeypatch):
     assert dlg.quick_radio.text() == modes["quick"]
 
 
+def test_attach_warns_once_when_a_pdfs_images_cant_be_decoded(monkeypatch, tmp_path):
+    """Anki's own bundled Python lacks Pillow, so a real user's PDF images
+    silently extract nothing; ai_logic.extract_attachment now flags that as
+    images_undecoded rather than looking identical to "no images". The
+    wizard must tell the user, once per session, not stay quiet about it."""
+    harness.bootstrap()
+    from aqt.qt import QFileDialog
+    from internpearls import ai_logic
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+
+    pdf_a = str(tmp_path / "a.pdf")
+    pdf_b = str(tmp_path / "b.pdf")
+    open(pdf_a, "wb").close()
+    open(pdf_b, "wb").close()
+    calls = iter([([pdf_a], ""), ([pdf_b], "")])
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames",
+                        lambda *a, **k: next(calls))
+    monkeypatch.setattr(
+        ai_logic, "extract_attachment",
+        lambda p, dest: {"text": "some text", "images": [], "images_undecoded": True})
+    warnings = []
+    monkeypatch.setattr(ai_dialog, "_warn", lambda text, **kw: warnings.append(text))
+
+    dlg = ai_dialog._GenerateDialog()
+    dlg._attach()
+    assert len(warnings) == 1
+    assert "images" in warnings[0] and "Anki" in warnings[0]
+
+    dlg._attach()   # a second attached PDF hitting the same limitation stays quiet
+    assert len(warnings) == 1
+
+
 def test_view_skills_extra_button_toggles_and_leaves_dialog_open(monkeypatch):
     """I5, against a real QDialogButtonBox: clicking the extra (ActionRole)
     button runs on_extra without the dialog answering accept/reject, and
