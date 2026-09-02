@@ -149,3 +149,11 @@ dimmed). Defaults to `30`, the fixed dim level applied before this became
 configurable, so an existing `dim_images_night_mode` setting keeps its exact look
 until the percentage is changed. Editable in Intern Pearls → Experimental → Night mode
 dimming.
+
+## dim_night_mode_scope
+
+What `dim_images_night_mode` dims. `"images"` dims bright images only, the original
+behaviour. `"content"` dims everything Anki draws in a web view: cards, the deck
+list, the overview, and the editor. Takes effect the next time a screen loads; never
+the menu bar or dialogs. Defaults to `"images"`; an unrecognized value falls back to
+it. Editable in Intern Pearls → Experimental → Night mode dimming.

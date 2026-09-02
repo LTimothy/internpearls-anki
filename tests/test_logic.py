@@ -1388,6 +1388,27 @@ def test_night_mode_image_css_clamps_an_out_of_range_percent():
     assert "brightness(1)" in logic.night_mode_image_css(True, percent=-10)
 
 
+# ------------------------------------------------------- night mode css scopes
+def test_night_mode_css_images_scope_matches_legacy():
+    assert logic.night_mode_css(True, 30, "images") == logic.night_mode_image_css(True, 30)
+
+
+def test_night_mode_css_content_scope_filters_whole_body():
+    css = logic.night_mode_css(True, 40, "content")
+    assert "body.nightMode" in css
+    assert "brightness(0.60)" in css
+    assert "img" not in css
+
+
+def test_night_mode_css_disabled_or_unknown_scope_is_empty():
+    assert logic.night_mode_css(False, 40, "content") == ""
+    assert logic.night_mode_css(True, 40, "everything") == ""
+
+
+def test_night_mode_scopes_constant():
+    assert logic.NIGHT_MODE_SCOPES == ("images", "content")
+
+
 # ------------------------------------------------- clamp_night_mode_dim_percent
 def test_clamp_night_mode_dim_percent_keeps_a_valid_value():
     assert logic.clamp_night_mode_dim_percent(45) == 45

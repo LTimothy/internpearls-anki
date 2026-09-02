@@ -53,3 +53,9 @@ def test_changing_the_percent_changes_the_dimmed_pane(shot):
     assert high_avg < low_avg, (
         f"80% dim ({high_avg:.3f} avg luminance) is not darker than 10% dim "
         f"({low_avg:.3f}): the preview is not tracking the percent")
+
+
+def test_content_scope_hint_names_deck_screens(shot):
+    harness.bootstrap()
+    s = shot("night-mode-dimming", scope="content")
+    assert "deck screens" in s.dialog._scope_hint.text()

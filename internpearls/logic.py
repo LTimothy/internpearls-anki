@@ -73,6 +73,31 @@ def night_mode_dim_factor(percent):
     return round(1 - percent / 100, 2)
 
 
+def _night_mode_image_rule(factor):
+    """The bright-image dimming rule itself, given an already-computed brightness
+    factor. Dims rather than inverts, since a full color invert looks wrong on a real
+    photo mixed into an otherwise diagram-heavy deck."""
+    return ("<style>.nightMode img {{ filter: brightness({b:g}) contrast(0.92); "
+           "}}</style>").format(b=factor)
+
+
+NIGHT_MODE_SCOPES = ("images", "content")
+
+
+def night_mode_css(enabled, percent, scope="images"):
+    """The one CSS source for Night Mode Dimming. "images" dims bright images
+    only (the original behaviour); "content" dims the whole web view body,
+    which is every card, the deck list, the overview, and the editor. Anki adds
+    the nightMode class to body only in Night Mode, so neither rule ever
+    applies in Day mode. Unknown scope, or disabled, is no CSS at all."""
+    if not enabled or scope not in NIGHT_MODE_SCOPES:
+        return ""
+    factor = night_mode_dim_factor(percent)
+    if scope == "content":
+        return f"body.nightMode {{ filter: brightness({factor:.2f}); }}"
+    return _night_mode_image_rule(factor)
+
+
 def night_mode_image_css(enabled, percent=30):
     """CSS that dims bright white-background images while Anki's Night Mode is on.
 
@@ -86,11 +111,7 @@ def night_mode_image_css(enabled, percent=30):
     30, is the fixed dim level this replaced (a flat brightness(0.7)), so leaving the
     percentage untouched keeps today's exact appearance.
     """
-    if not enabled:
-        return ""
-    brightness = night_mode_dim_factor(percent)
-    return ("<style>.nightMode img {{ filter: brightness({b:g}) contrast(0.92); "
-           "}}</style>").format(b=brightness)
+    return night_mode_css(enabled, percent, "images")
 
 
 def version_tuple(v):
