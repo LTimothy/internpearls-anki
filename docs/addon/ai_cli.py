@@ -22,6 +22,17 @@ BACKENDS = {
     "claude": {"label": "Claude Code", "exe": "claude",
                "subscription": "Claude Pro or Max",
                "safety": "Tools fully restricted (strongest)",
+               # Cheaper-but-smart default: without a model flag, claude runs the
+               # account default, the top model for a Max subscriber, which burns
+               # credits fast across Thorough's up-to-15-turn loop. sonnet/medium
+               # is the owner-chosen default for both quality modes; an explicit
+               # config value (ai_model/ai_effort) always overrides it. See
+               # build_argv.
+               "default_model": "sonnet",
+               "default_effort": "medium",
+               "model_aliases": ["sonnet", "opus", "haiku"],
+               "model_hint": "e.g. sonnet, opus, haiku, or a full model name",
+               "effort_levels": ["low", "medium", "high", "xhigh", "max"],
                # Truthful per-backend: only claude's build_argv actually caps turns
                # and gates web tools by mode (--max-turns, --tools). See build_argv.
                "modes": {
@@ -33,9 +44,15 @@ BACKENDS = {
     "codex": {"label": "Codex CLI", "exe": "codex",
               "subscription": "ChatGPT Plus or Pro",
               "safety": "Sandboxed read-only; no writes or network",
-              # Codex's build_argv always sets --sandbox read-only regardless of
-              # mode, so neither mode can verify anything online, and neither sets
-              # a turn cap; only the prompt's stated workflow differs by mode.
+              # No forced default here: -m is only passed when the user sets one
+              # (see build_argv), and only when supports_flag confirms this codex
+              # actually understands it, so an older codex without the flag isn't
+              # hard-broken. No verified effort flag, so no effort control at all.
+              "default_model": "",
+              "default_effort": "",
+              "model_aliases": [],
+              "model_hint": "e.g. gpt-5.1-codex, o3, or a full model name; leave "
+                            "blank to use codex's own default",
               "modes": {
                   "thorough": "Thorough: asked to draft, verify, then self-review; "
                               "always sandboxed read-only with no network, so it "
@@ -46,6 +63,15 @@ BACKENDS = {
     "agy": {"label": "Antigravity CLI", "exe": "agy",
             "subscription": "Google account (free tier, throttled)",
             "safety": "Relies on the assistant's own approval defaults",
+            # Model choice in headless -p mode is an open upstream request
+            # (google-antigravity/antigravity-cli issue 83); its default is
+            # already the cheap tier (Gemini Flash, auto-selected), so build_argv
+            # never sends a model or effort flag here -- there is nothing verified
+            # to send, and offering a control we cannot honor would be dishonest.
+            "default_model": "",
+            "default_effort": "",
+            "model_aliases": [],
+            "model_hint": "auto, Flash by default",
             # agy's build_argv never restricts tools or turns by mode, so nothing
             # here enforces "no web access" even in Quick; only the prompt's
             # stated workflow differs by mode.
@@ -130,14 +156,28 @@ def probe(kind, path):
             "detail": out[0] if out else f"exit {r.returncode}"}
 
 
-def build_argv(kind, path, mode, scratch, image_paths):
+def build_argv(kind, path, mode, scratch, image_paths, model="", effort=""):
     """Returns (argv, prompt_via_stdin). The prompt always goes via stdin:
     codex exec freezes reading stdin when the prompt is an argument, and one
-    consistent channel keeps the runner simple."""
+    consistent channel keeps the runner simple.
+
+    `model`/`effort` are whatever the caller resolved from config (empty string
+    means "no override set"). claude falls back to its own default_model/
+    default_effort (sonnet/medium) when unset, so it always gets an explicit,
+    cheaper-than-account-default model; codex only gets -m when a model was
+    actually set AND supports_flag confirms this binary understands it; agy
+    never gets either flag, on any input, since there is no verified way to
+    honor one (see BACKENDS["agy"]'s comment)."""
     if kind == "claude":
         argv = [path, "-p", "--output-format", "stream-json", "--verbose",
                 "--max-turns", str(_MAX_TURNS[mode]),
                 "--setting-sources", ""]
+        eff_model = model or BACKENDS["claude"]["default_model"]
+        eff_effort = effort or BACKENDS["claude"]["default_effort"]
+        if eff_model:
+            argv += ["--model", eff_model]
+        if eff_effort:
+            argv += ["--effort", eff_effort]
         tools = []
         if mode == "thorough":
             tools += ["WebSearch", "WebFetch"]
@@ -154,6 +194,8 @@ def build_argv(kind, path, mode, scratch, image_paths):
     if kind == "codex":
         argv = [path, "exec", "--json", "--sandbox", "read-only",
                 "--skip-git-repo-check", "-C", scratch]
+        if model and supports_flag(path, "-m"):
+            argv += ["-m", model]
         for p in image_paths:
             argv += ["--image", p]
         return argv, True
@@ -275,8 +317,9 @@ def _kill(proc):
 
 
 def run_generation(kind, path, prompt, mode, scratch, image_paths=(),
-                   on_event=None, cancel=None, timeout=None):
-    argv, _ = build_argv(kind, path, mode, scratch, list(image_paths))
+                   on_event=None, cancel=None, timeout=None, model="", effort=""):
+    argv, _ = build_argv(kind, path, mode, scratch, list(image_paths),
+                         model=model or "", effort=effort or "")
     return _run_argv(argv, kind, prompt, on_event=on_event, cancel=cancel,
                      timeout=timeout or _TIMEOUTS[mode], cwd=scratch)
 
