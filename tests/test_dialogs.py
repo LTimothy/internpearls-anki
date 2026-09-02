@@ -1047,6 +1047,49 @@ def test_night_mode_dimming_saves_scope(anki):
     assert anki.mw._config["dim_night_mode_scope"] == "content"
 
 
+def test_night_mode_dimming_confirmation_describes_saved_scope(anki):
+    """The confirmation message after saving must describe the scope that was actually
+    saved: 'Cards and deck screens...' for scope content, 'Bright images...' for images."""
+    from internpearls import dialogs
+
+    # Test saving with content scope
+    anki.gui.interactive = True
+
+    def respond_content(p):
+        if p["kind"] == "dialog":
+            dim = find(p["tree"], t="check", label="Dim in Night Mode")
+            spin = find(p["tree"], t="spin")
+            content = find(p["tree"], t="radio",
+                          label="Everything on cards and deck screens")
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": dim["id"], "value": True},
+                               {"id": spin["id"], "value": 45},
+                               {"id": content["id"], "value": True},
+                               {"id": save["id"], "click": True}]}
+        assert "Cards and deck screens" in p["text"]
+        return {}
+
+    drive(anki, dialogs.open_night_mode_dimming, respond_content)
+
+    # Test saving with images scope
+    anki.gui.interactive = True
+
+    def respond_images(p):
+        if p["kind"] == "dialog":
+            dim = find(p["tree"], t="check", label="Dim in Night Mode")
+            spin = find(p["tree"], t="spin")
+            images = find(p["tree"], t="radio", label="Bright images only")
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": dim["id"], "value": True},
+                               {"id": spin["id"], "value": 55},
+                               {"id": images["id"], "value": True},
+                               {"id": save["id"], "click": True}]}
+        assert "Bright images" in p["text"]
+        return {}
+
+    drive(anki, dialogs.open_night_mode_dimming, respond_images)
+
+
 def test_the_interval_spinbox_follows_the_auto_sync_checkbox(anki):
     """Nothing checks on an interval while auto-sync is off, so the control that sets one
     must not sit there editable and inert. Driven across several rounds of the same

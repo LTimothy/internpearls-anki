@@ -1227,9 +1227,15 @@ def open_night_mode_dimming():
     conf.update(values)
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
-    dim_line = (f"Bright images are dimmed {values['dim_images_night_mode_percent']}% "
-               "in Night Mode." if values["dim_images_night_mode"] else
-               "Night Mode image dimming is off.")
+    if values["dim_images_night_mode"]:
+        if values["dim_night_mode_scope"] == "content":
+            dim_line = (f"Cards and deck screens are dimmed {values['dim_images_night_mode_percent']}% "
+                       "in Night Mode, from the next screen that loads.")
+        else:
+            dim_line = (f"Bright images are dimmed {values['dim_images_night_mode_percent']}% "
+                       "in Night Mode.")
+    else:
+        dim_line = "Night Mode image dimming is off."
     _info(f"Night mode dimming saved.<br><br>{dim_line}")
 
 
