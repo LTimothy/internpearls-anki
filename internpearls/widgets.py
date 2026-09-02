@@ -25,14 +25,24 @@ from .ui import section_label
 # though a skipped or kept card is re-offered on the deck's next version while a
 # retired one never returns.
 CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOVED",
-         "skipped": "SKIPPED", "kept": "KEPT YOURS"}
+         "skipped": "SKIPPED", "kept": "KEPT YOURS",
+         # The AI wizard's review row kinds (ai_dialog.py). Wording only, mapped
+         # onto the existing role pairs below rather than a colour of their own: a
+         # blocked check reads DECLINE, a warning reads UPDATED (attention, not yet
+         # a stop), a clean card reads ACCEPT, and a card a revision changed reads
+         # UPDATED's own word for that idea.
+         "blocked": "BLOCKED", "warn": "WARNING", "ok": "OK", "revised": "REVISED"}
 
 # A chip's palette role prefix, keyed by its kind. Not a 1:1 string match: "changed"
 # reuses the existing "updated_bg"/"updated_fg" pair rather than a "changed_bg" this
 # repo has never had, since the wording and the role were named independently back
-# when only review.py's two markers existed.
+# when only review.py's two markers existed. The wizard's four kinds are the same
+# reuse: "blocked" on decline, "warn" and "revised" on updated, "ok" on accept --
+# see the AI wizard review section of the UX review for why no new palette entry
+# is needed for any of them.
 _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "moved",
-          "skipped": "retired", "kept": "retired"}
+          "skipped": "retired", "kept": "retired",
+          "blocked": "decline", "warn": "updated", "ok": "accept", "revised": "updated"}
 
 # Everything about a pill except its two colours: the shape and the type size, shared
 # between the real pill and the probe that measures it, so the measurement can never
