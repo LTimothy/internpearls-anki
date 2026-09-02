@@ -80,6 +80,18 @@ loop. GitHub's request volume at that floor is still trivial: one small `manifes
 fetch a minute, well under even the unauthenticated 60-per-hour limit. Defaults to `15`.
 Editable in Intern Pearls → Settings.
 
+## ai_backend
+
+Which AI backend the "Generate cards with AI" wizard should prefer when more than one
+is detected and working (`claude`, `codex`, or `agy`). Empty uses whichever one is
+found and working first. Defaults to `""`.
+
+## ai_cli_path
+
+An explicit path to the CLI binary for the backend named in `ai_backend`, used instead
+of searching `PATH` and the usual install locations. Ignored unless `ai_backend` names
+a specific backend. Defaults to `""`.
+
 ## dim_images_night_mode
 
 When on, bright pictures are dimmed while Anki is in Night Mode, so a white-background

@@ -114,6 +114,8 @@ def _cfg():
         "auto_sync_interval_minutes": c.get("auto_sync_interval_minutes",
                                             AUTO_SYNC_INTERVAL_DEFAULT_MIN),
         "dim_images_night_mode": c.get("dim_images_night_mode", False),
+        "ai_backend":            c.get("ai_backend", ""),
+        "ai_cli_path":           c.get("ai_cli_path", ""),
     }
 
 

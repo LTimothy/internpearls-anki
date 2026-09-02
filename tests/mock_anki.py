@@ -887,6 +887,9 @@ class QWidget:
     def setEnabled(self, v):
         self._enabled = v
 
+    def isEnabled(self):
+        return self._enabled
+
     def setVisible(self, v):
         self._visible = v
 
@@ -1065,6 +1068,84 @@ class QCheckBox(QWidget):
         return {"t": "check", "id": self.wid, "label": self._label,
                 "checked": self._checked, "style": self._style,
                 "tooltip": self._tooltip}
+
+
+class QRadioButton(QWidget):
+    """No auto-exclusive grouping: nothing here drives one, and no test yet needs
+    clicking one radio to uncheck its sibling."""
+
+    def __init__(self, label="", *a, **k):
+        super().__init__()
+        self._label = label
+        self._checked = False
+        self.toggled = Signal()
+
+    def setChecked(self, v):
+        v = bool(v)
+        if v != self._checked:
+            self._checked = v
+            self.toggled.emit(v)
+
+    def isChecked(self):
+        return self._checked
+
+    def node(self):
+        return {"t": "radio", "id": self.wid, "label": self._label,
+                "checked": self._checked}
+
+
+class QComboBox(QWidget):
+    def __init__(self, *a, **k):
+        super().__init__()
+        self._items = []
+        self._editable = False
+        self._text = ""
+
+    def setEditable(self, v):
+        self._editable = bool(v)
+
+    def addItem(self, text):
+        self._items.append(text)
+        if len(self._items) == 1:
+            self._text = text
+
+    def currentText(self):
+        return self._text
+
+    def setCurrentText(self, t):
+        self._text = t
+        if t not in self._items:
+            self._items.append(t)
+
+    def node(self):
+        return {"t": "combo", "id": self.wid, "items": list(self._items),
+                "value": self._text, "editable": self._editable}
+
+
+class QStackedWidget(QWidget):
+    def __init__(self, *a, **k):
+        super().__init__()
+        self._pages = []
+        self._current = None
+
+    def addWidget(self, w):
+        self._pages.append(w)
+        if self._current is None:
+            self._current = w
+        return len(self._pages) - 1
+
+    def setCurrentWidget(self, w):
+        self._current = w
+
+    def currentWidget(self):
+        return self._current
+
+    def count(self):
+        return len(self._pages)
+
+    def node(self):
+        return {"t": "stack", "id": self.wid,
+                "children": [self._current.node()] if self._current else []}
 
 
 class QLineEdit(QWidget):
@@ -1876,6 +1957,8 @@ def install():
                       ("QFontDatabase", _QFontDatabase), ("QLabel", QLabel),
                       ("QPushButton", QPushButton), ("QAction", QAction),
                       ("QMenu", QMenu), ("QCheckBox", QCheckBox),
+                      ("QComboBox", QComboBox), ("QRadioButton", QRadioButton),
+                      ("QStackedWidget", QStackedWidget),
                       ("QDialog", QDialog), ("QDialogButtonBox", QDialogButtonBox),
                       ("QFrame", QFrame), ("QHBoxLayout", QHBoxLayout),
                       ("QImage", QImage),
