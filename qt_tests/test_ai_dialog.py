@@ -52,6 +52,75 @@ def test_wizard_renders_all_pages(monkeypatch):
     assert dlg.windowTitle() == "Intern Pearls: Generate cards with AI"
 
 
+def test_import_enables_real_undo_action_with_the_native_shortcut(monkeypatch):
+    """Findings 1 and 2, against the real Qt objects this bug was actually
+    found with.
+
+    Finding 1: a successful import used to write a real, mergeable undo entry
+    that nothing ever told Anki's main window about, so Edit > Undo stayed
+    greyed out in the running app even though col.undo() genuinely worked
+    headless. This drives the real "Generate cards with AI" flow through
+    _do_import() and checks the one thing that actually matters: the mock
+    main window's own undo QAction (mirroring mw.form.actionUndo, which real
+    Anki's own update_undo_actions() enables from col.undo_status()) flips
+    from disabled to enabled.
+
+    Finding 2: the completion message hardcoded "Ctrl+Z" on every platform.
+    Because this file runs against REAL PyQt6 (see harness.bootstrap), Qt's
+    own QKeySequence(StandardKey.Undo).toString(NativeText) here is not a
+    mock's guess at platform behavior -- it is exactly what a real Anki
+    Edit menu on this machine renders. Asserting the message names that,
+    and never the literal "Ctrl+Z" unless this machine's own native
+    rendering happens to equal it, is the strongest check available for
+    "the shortcut shown is the one this platform's Edit menu actually
+    uses."
+    """
+    mock, q = harness.bootstrap()
+    app = harness.app()
+    import mock_anki
+    from aqt.qt import QKeySequence
+
+    native = QKeySequence(QKeySequence.StandardKey.Undo).toString(
+        QKeySequence.SequenceFormat.NativeText)
+    assert ai_dialog._undo_shortcut() == native
+
+    # A fresh collection/undo-action pair, independent of whatever an earlier
+    # test in this process already did -- mirrors what tests/conftest.py's
+    # `anki` fixture does per test for the fake-Qt suite.
+    mock.mw.col = mock_anki.MockCollection()
+    mock.mw.reset_count = 0
+    mock.mw.update_undo_actions()
+    assert mock.mw.form.actionUndo.isEnabled() is False   # nothing to undo yet
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    cards = [{"note_type": "Study Deck - Basic",
+             "fields": {"Front": "q", "Back": "a"},
+             "tags": [], "images": [], "rationale": "r"}]
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
+              cancel=None, timeout=None: {"text": json.dumps(cards), "tokens": 15,
+                                          "duration_s": 12.3})
+
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    dlg.source_box.setPlainText("Regional block landmarks and needle depths")
+    dlg._start_generation()
+    app.processEvents()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.stack.currentWidget() is dlg.review_page
+
+    n = dlg._do_import()
+    assert n == 1
+    assert mock.mw.reset_count > 0                       # the UI was notified at all
+    assert mock.mw.form.actionUndo.isEnabled() is True    # ...and undo is reachable
+    assert f"{native} reverts it" in mock.gui.infos[-1]
+
+
 def test_review_row_renders_a_real_image_thumbnail(monkeypatch, tmp_path):
     """I2, against a real QImage/rich-text QLabel: a card with a web image
     resolves off the UI thread and the review row actually paints a
@@ -149,7 +218,7 @@ def test_review_checkbox_click_updates_count_and_button_label(monkeypatch):
     assert box0.isChecked() is False                     # the widget itself flips
     assert dlg.session.included == [False, True]          # and the model behind it
     assert "1 included" in dlg.review_header.text()       # ...visibly, in the header
-    assert dlg.import_btn.text() == "Import 1 cards"      # ...and the button
+    assert dlg.import_btn.text() == "Import 1 card"       # ...and the button
 
     box0.click()   # toggling back must be just as visible
     app.processEvents()
