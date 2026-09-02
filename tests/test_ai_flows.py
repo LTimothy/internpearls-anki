@@ -38,8 +38,10 @@ def test_setup_page_shown_when_no_backend(anki, monkeypatch):
     assert dlg.stack.currentWidget() is dlg.setup_page
     # No backend, no per-backend rows here anymore: just the entry point into
     # the AI Backends window (see tests/test_ai_setup.py for those rows) and
-    # a status line saying nothing was found yet.
-    assert dlg.configure_btn.text() == "Open AI Backends"
+    # a status line saying nothing was found yet. The button is named for what
+    # it gets the reader, not for the window it happens to open: this page is
+    # the only way into that window now.
+    assert dlg.configure_btn.text() == "Set up an assistant"
     assert "No enabled assistant detected" in dlg.setup_status.text()
 
 
@@ -111,15 +113,15 @@ def test_input_page_shown_when_backend_found(anki, monkeypatch):
 def test_input_page_shows_a_backends_link_and_no_model_combo(anki, monkeypatch):
     # The wizard no longer carries the Model/Effort controls itself (see
     # internpearls/ai_setup.py): the input page shows a one-line summary and
-    # a link that opens the AI Backends window instead, named for the window
-    # it opens rather than the vaguer "Change" it used to say.
+    # a Setup link that opens the AI Backends window instead. That link is the
+    # only route to it, since the window has no menu item of its own.
     monkeypatch.setattr(
         ai_cli, "find_cli",
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     dlg = ai_dialog._GenerateDialog()
-    assert dlg.change_link.text() == "AI Backends"
+    assert dlg.change_link.text() == "Setup"
     assert dlg.backend_row.text() == "Backend: Claude Code, sonnet, medium effort"
     assert not hasattr(dlg, "model_combo")
 
