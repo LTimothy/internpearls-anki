@@ -4,13 +4,13 @@ shows a one-line summary and a Change link that opens this."""
 import threading
 
 from aqt import mw
-from aqt.qt import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-                    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                    QRadioButton, QTimer, QVBoxLayout, QWidget, pyqtSignal)
+from aqt.qt import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+                    QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+                    QPushButton, QRadioButton, QTimer, QVBoxLayout, QWidget, pyqtSignal)
 
 from . import ai_cli
 from .config import ADDON_PACKAGE, APP_NAME, _cfg
-from .ui import hint_label, link_button, title_label
+from .ui import _safe, hint_label, link_button, title_label
 
 _POLL_MS = 200
 
@@ -25,7 +25,11 @@ def _write_map(key, kind, value):
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
     m = conf.get(key)
     if not isinstance(m, dict):
-        m = {}
+        # A legacy flat-string config value (e.g. an un-migrated ai_cli_path)
+        # reads back through _cfg() already migrated into the preferred
+        # backend's entry. Seed from that migrated map instead of {} so the
+        # first per-backend save doesn't silently drop it.
+        m = dict(_cfg()[key])
     m[kind] = value
     conf[key] = m
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
@@ -206,7 +210,6 @@ class _AIBackendsDialog(QDialog):
             "terminal, sign in there, then Re-check."))
         cfg = _cfg()
         res = ai_cli.detect_backends(cfg)
-        from aqt.qt import QButtonGroup
         self._pref_group = QButtonGroup(self)
         self.groups = {}
         for kind in ai_cli.BACKENDS:
@@ -282,6 +285,7 @@ class _AIBackendsDialog(QDialog):
         timer.start(_POLL_MS)
 
 
+@_safe
 def open_ai_backends(parent=None):
     dlg = _AIBackendsDialog(parent or mw)
     dlg.exec()
