@@ -225,6 +225,74 @@ def test_usage_line_free_tier_counts_runs():
                                                free_tier=True)
 
 
+def test_record_duration_per_backend_and_mode():
+    reg = {}
+    reg = ai_logic.record_duration(reg, "claude", "thorough", 100)
+    reg = ai_logic.record_duration(reg, "claude", "quick", 20)
+    reg = ai_logic.record_duration(reg, "codex", "thorough", 300)
+    assert reg["durations"]["claude-thorough"] == [100]
+    assert reg["durations"]["claude-quick"] == [20]
+    assert reg["durations"]["codex-thorough"] == [300]
+
+
+def test_record_duration_prunes_to_last_ten():
+    reg = {}
+    for s in range(1, 13):   # 12 runs recorded, only last 10 kept
+        reg = ai_logic.record_duration(reg, "claude", "thorough", s)
+    assert reg["durations"]["claude-thorough"] == list(range(3, 13))
+
+
+def test_median_duration_is_median_not_mean():
+    reg = {}
+    for s in (10, 10, 10, 10, 100):   # mean=28, median=10
+        reg = ai_logic.record_duration(reg, "claude", "thorough", s)
+    assert ai_logic.median_duration(reg, "claude", "thorough") == 10
+
+
+def test_duration_estimate_line_no_history_returns_none():
+    assert ai_logic.duration_estimate_line({}, "claude", "thorough") is None
+    reg = ai_logic.record_duration({}, "claude", "quick", 20)
+    # history exists for a different mode, not the one being asked about
+    assert ai_logic.duration_estimate_line(reg, "claude", "thorough") is None
+
+
+def test_duration_estimate_line_with_history():
+    reg = {}
+    for s in (95, 100, 105):   # median 100s -> "1m 40s"
+        reg = ai_logic.record_duration(reg, "claude", "thorough", s)
+    line = ai_logic.duration_estimate_line(reg, "claude", "thorough")
+    assert line == "your recent Thorough runs averaged 1m 40s"
+
+
+def test_duration_estimate_line_quick_mode_label():
+    reg = ai_logic.record_duration({}, "claude", "quick", 22)
+    line = ai_logic.duration_estimate_line(reg, "claude", "quick")
+    assert line == "your recent Quick runs averaged 22s"
+
+
+def test_format_duration_sub_minute_and_multi_minute():
+    assert ai_logic.format_duration(48) == "48s"
+    assert ai_logic.format_duration(100) == "1m 40s"
+    assert ai_logic.format_duration(120) == "2m"
+
+
+def test_duration_state_corrupt_file_degrades_to_no_history():
+    # a hand-edited durations block: wrong type, wrong element types
+    assert ai_logic.duration_estimate_line(
+        {"durations": "not a dict"}, "claude", "thorough") is None
+    assert ai_logic.duration_estimate_line(
+        {"durations": {"claude-thorough": "not a list"}},
+        "claude", "thorough") is None
+    assert ai_logic.duration_estimate_line(
+        {"durations": {"claude-thorough": [None, "bad", {}]}},
+        "claude", "thorough") is None
+    # recording on top of a corrupt block never raises, and yields a clean
+    # single-entry history rather than propagating the garbage
+    reg = ai_logic.record_duration(
+        {"durations": "not a dict"}, "claude", "thorough", 50)
+    assert reg["durations"]["claude-thorough"] == [50]
+
+
 def test_rate_limit_line():
     s = ai_logic.rate_limit_line({"type": "rate_limits", "primary_pct": 12.5,
                                   "secondary_pct": 40.0,
