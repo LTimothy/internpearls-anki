@@ -9,6 +9,7 @@ importing, once something actually needs to change) still runs on the main threa
 inside the completion callback, same as it does for a manual Sync decks click; that
 part is unaffected by this and isn't the part that could hang.
 """
+import tempfile
 import traceback
 
 from aqt import mw
@@ -27,6 +28,7 @@ try:
 except Exception:
     QueryOp = None
 
+from .ai_logic import sweep_stale_scratch
 from .collection import _pre_sync_backup_or_skip_silently, installed_matching_collection
 from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_CEILING_MIN,
                      AUTO_SYNC_INTERVAL_DEFAULT_MIN,
@@ -395,16 +397,28 @@ def _restart_auto_sync_timer(minutes):
 
 
 @_bg_safe
+@_bg_safe
+def _sweep_ai_scratch_background():
+    """Clear scratch directories a crashed AI-generation session left in the
+    system temp dir. The wizard removes its own on close, so this only ever
+    finds the leftovers of a run that never got to close. File I/O only, no
+    collection access, so it goes off the main thread like the update check."""
+    _run_in_background(lambda: sweep_stale_scratch(tempfile.gettempdir()),
+                       lambda _result, _error: None)
+
+
 def _schedule_background_checks():
     """Run once, a couple seconds after Anki finishes starting up: the add-on-update
-    check, and, only if auto-sync is on in Settings, an immediate deck check plus the
-    repeating poll that keeps checking while Anki stays open.
+    check, a sweep of any leftover AI scratch directories, and, only if auto-sync is on
+    in Settings, an immediate deck check plus the repeating poll that keeps checking
+    while Anki stays open.
 
     Wrapped like the two checks it schedules: this runs from startup wiring with no
     dialog around it, so anything it raises reaches Anki's own add-on error dialog on
     every launch. A misconfigured setting is worth a quiet failure, not that.
     """
     QTimer.singleShot(2000, _check_addon_updates_background)
+    QTimer.singleShot(3000, _sweep_ai_scratch_background)
     cfg = _cfg()
     if cfg["auto_sync_decks"]:
         QTimer.singleShot(4000, _auto_sync_check)

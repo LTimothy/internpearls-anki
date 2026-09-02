@@ -240,7 +240,7 @@ def test_connection_reports_working(anki, monkeypatch):
     monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs, model="", effort="":
+        lambda kind, path, mode, scratch, imgs, **kw:
             ([sys.executable, FAKE, "badjson"], True))
     dlg = ai_setup._AIBackendsDialog(anki.mw)
     assert dlg.panel.kind == "claude"
@@ -265,7 +265,7 @@ def test_recheck_mid_test_connection_does_not_reenable_or_double_run(anki, monke
     monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs, model="", effort="":
+        lambda kind, path, mode, scratch, imgs, **kw:
             ([sys.executable, FAKE, "badjson"], True))
     dlg = ai_setup._AIBackendsDialog(anki.mw)
     panel = dlg.panel
@@ -339,7 +339,7 @@ def test_connection_not_signed_in_shows_readable_message(anki, monkeypatch):
     monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs, model="", effort="":
+        lambda kind, path, mode, scratch, imgs, **kw:
             ([sys.executable, FAKE, "not_signed_in"], True))
     dlg = ai_setup._AIBackendsDialog(anki.mw)
     dlg._test("claude")

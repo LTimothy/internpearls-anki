@@ -121,19 +121,23 @@ the add-on, not this file, so an empty value here still sends an explicit, cheap
 model rather than whatever the account's own default happens to be); for Codex CLI an
 empty value passes no `--model` flag at all, deferring entirely to Codex's own default,
 and a non-empty value is only passed when the installed Codex CLI's own help documents
-the flag (see "Codex CLI's model flag" below). Antigravity CLI has no way to honor
-this (see the AI Backends window's Model field for that backend), so its entry is ignored
-regardless of what's set. Defaults to `{"claude": "", "codex": "", "agy": ""}`.
+the flag (see "Codex CLI's model flag" below). Antigravity CLI behaves the same way as
+Codex CLI: an empty value sends no `--model` at all and lets `agy` pick its own default
+(already a cheap Flash tier), and a non-empty value is passed only when `agy --help`
+documents the flag. Run `agy models` to see the ids it accepts, such as
+`gemini-3.8-flash-medium`. Defaults to `{"claude": "", "codex": "", "agy": ""}`.
 Editable from the AI Backends window, per backend.
 
 ## ai_effort
 
-The reasoning-effort level to request, one of `low`, `medium`, `high`, `xhigh`, `max`.
-Only Claude Code has a verified `--effort` flag, so this only ever affects that backend;
-it's hidden from the AI Backends window and ignored entirely for Codex CLI and Antigravity CLI.
-Stored the same per-backend shape as `ai_model` above, for the same reason. Empty (or
-any value that isn't one of the five levels, e.g. a hand-edited typo) means "use the
-backend's own default", which for Claude Code is `medium`, chosen to stay smart enough
+The reasoning-effort level to request. Claude Code accepts `low`, `medium`, `high`,
+`xhigh`, `max`; Antigravity CLI accepts `low`, `medium`, `high`. Codex CLI has no
+verified effort flag, so the control is absent from its box in the AI Backends window
+and its entry here is ignored. Stored the same per-backend shape as `ai_model` above,
+for the same reason. Empty means "use the backend's own default": for Antigravity CLI
+that sends no `--effort` flag at all, and a non-empty value is passed only when
+`agy --help` documents the flag. For Claude Code, empty (or any value that isn't one of
+its five levels, e.g. a hand-edited typo) means `medium`, chosen to stay smart enough
 for card drafting without burning a Max subscription's credits the way the account's
 own top-model default would across Thorough mode's up-to-15-turn loop; the AI Backends
 window's Effort combo always shows this same effective value, never a typo it can't
