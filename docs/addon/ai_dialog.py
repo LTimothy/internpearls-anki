@@ -29,7 +29,7 @@ from .logic import plural
 from .net import fetch_card_image
 from .review import _image_tag
 from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
-                 link_button, title_label)
+                 link_button, muted_label, title_label, tooltip)
 
 # Note types a generated card may name. Keep in sync with
 # collection._GENERATED_ALLOWED_TYPES: the types this add-on manages, plus
@@ -1049,7 +1049,7 @@ class _GenerateDialog(QDialog):
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.addWidget(title_label("Review drafted cards"))
-        self.review_header = hint_label("")
+        self.review_header = muted_label("")
         lay.addWidget(self.review_header)
         # The card list owns the dialog's surplus height instead of leaving it to
         # spread across every row (see widgets.StreamingList / review.py:1289): a
@@ -1062,6 +1062,12 @@ class _GenerateDialog(QDialog):
         cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
         cards_scroll.setWidget(cards_container)
         lay.addWidget(cards_scroll, 1)
+        # Run-level facts (token spend, the rate-limit window, the revision diff
+        # summary) rather than what she's deciding between -- see
+        # _update_review_summary. Hidden entirely when there's nothing to say
+        # (the very first draft of a session, before any run has billed anything).
+        self.review_footer = hint_label("")
+        lay.addWidget(self.review_footer)
         lay.addWidget(QLabel("Feedback on the whole set (optional)"))
         self.feedback_box = QPlainTextEdit()
         self.feedback_box.setMaximumHeight(60)
@@ -1144,27 +1150,40 @@ class _GenerateDialog(QDialog):
         self._update_review_summary()
 
     def _update_review_summary(self):
-        """Recompute the review header and the two button labels from current
-        session state. Called after a full _rebuild_review, and on its own by
-        _on_include_toggled, which needs exactly this and nothing more.
+        """Recompute the review header, the run-level footer, and the two button
+        labels from current session state. Called after a full _rebuild_review,
+        and on its own by _on_include_toggled, which needs exactly this and
+        nothing more.
+
+        Split in two, the way the update screen separates what the reader is
+        deciding from run-level facts (review.py:1238-1246): the header under
+        the title stays what she's actually choosing between (how many cards,
+        how many she's kept included), and everything about the run itself
+        (token spend, the rate-limit window, the revision diff) moves to a
+        small-print footer under the list, rather than one line carrying both.
         """
         s = self.session
         n_inc = sum(s.included)
-        extra = (f" · last run ~{round(s.tokens_last_run / 1000)}k tokens"
-                if s.tokens_last_run else "")
+        self.review_header.setText(
+            f"Review {plural(len(s.cards), 'draft card')} · {n_inc} included")
+
+        footer = (f"Last run ~{round(s.tokens_last_run / 1000)}k tokens"
+                 if s.tokens_last_run else "")
         if s.rate_limits:
-            extra += " · " + ai_logic.rate_limit_line(s.rate_limits)
+            footer += (" · " if footer else "") + ai_logic.rate_limit_line(s.rate_limits)
         if s.revision_shape_mismatch:
             # Degrade honestly: a card count that doesn't match what was sent
             # means the per-index diff isn't trustworthy, so this says so
             # instead of showing a confident "kept N verbatim" that could be wrong.
-            extra += (" · the assistant returned a different number of cards "
-                     "than before, so nothing here is marked kept-verbatim")
+            footer += (" · " if footer else "") + (
+                "the assistant returned a different number of cards than "
+                "before, so nothing here is marked kept-verbatim")
         elif s.updated:
             kept = len(s.cards) - len(s.updated)
-            extra += f" · updated {len(s.updated)}, kept {kept} verbatim"
-        self.review_header.setText(
-            f"Review {plural(len(s.cards), 'draft card')} · {n_inc} included{extra}")
+            footer += (" · " if footer else "") + f"updated {len(s.updated)}, kept {kept} verbatim"
+        self.review_footer.setText(footer)
+        self.review_footer.setVisible(bool(footer))
+
         self.import_btn.setText(f"Import {plural(n_inc, 'card')}")
         self.revise_btn.setText(
             "Revise all" + (f" ({plural(len(s.notes), 'note')})" if s.notes else ""))
@@ -1267,8 +1286,11 @@ class _GenerateDialog(QDialog):
         # counts) without needing a second, narrower call for either.
         mw.reset()
         self._cleanup_scratch()
-        _info(f"{plural(n, 'card')} added to {s.deck_name}. This is one undo step: "
-              f"{_undo_shortcut()} reverts it.")
+        # A transient toast, not a modal: this is what Anki's own Add shows after
+        # adding notes, and a click-through confirmation here is one extra click
+        # for news that doesn't need an answer.
+        tooltip(f"{plural(n, 'card')} added to {s.deck_name}. This is one undo "
+               f"step: {_undo_shortcut()} reverts it.", period=6000, parent=mw)
         self.accept()
         return n
 
