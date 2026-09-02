@@ -481,7 +481,7 @@ class _GenerateDialog(QDialog):
             "Card generation runs through an assistant you sign into yourself. "
             "This add-on never sees or stores your credentials: there is no API "
             "key field here, or anywhere else in the add-on."))
-        self.configure_btn = QPushButton("Open AI Backends")
+        self.configure_btn = QPushButton("Set up an assistant")
         self.configure_btn.clicked.connect(lambda: self._guard(self._open_backends))
         lay.addWidget(self.configure_btn)
         self.setup_status = hint_label("")
@@ -655,7 +655,7 @@ class _GenerateDialog(QDialog):
         backend_row_lay = QHBoxLayout()
         self.backend_row = hint_label("")
         self.change_link = link_button(
-            "AI Backends", on_click=lambda: self._guard(self._open_backends))
+            "Setup", on_click=lambda: self._guard(self._open_backends))
         backend_row_lay.addWidget(self.backend_row, 1)
         backend_row_lay.addWidget(self.change_link)
         lay.addLayout(backend_row_lay)
