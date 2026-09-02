@@ -2044,9 +2044,14 @@ def update_decks():
         # filters its own, so a pair this recompute finds in an opted-out deck isn't
         # merged by the one path that doesn't go through it.
         her_deck = _her_guid_to_deck(cfg["scope_tag"])
+        # Same generated-card guard as _reconcile_pending, on both sides: a card she
+        # generated herself can coincidentally share a front with either half of a
+        # superseded_fronts pair, and this recompute must never merge or archive it.
         stranded = [p for p in find_stranded_pairs(
             manifest.get("superseded_fronts", {}), _her_front_to_guid(cfg["scope_tag"]))
             if p["guid"] in her and p["successor_guid"] in her
+            and not is_generated_guid(p["guid"])
+            and not is_generated_guid(p["successor_guid"])
             and tag not in mw.col.get_note(her[p["guid"]]).tags
             and not _deck_opted_out(her_deck.get(p["guid"]), cfg["excluded"])
             and not _deck_opted_out(her_deck.get(p["successor_guid"]), cfg["excluded"])]
