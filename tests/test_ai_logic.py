@@ -315,11 +315,70 @@ def test_parse_codex_result_neither_shape_present_is_none():
     assert ai_logic.parse_stream_event("codex", line) is None
 
 
-def test_parse_agy_result_top_level():
-    line = _json.dumps({"type": "result", "result": "[{\"x\": 1}]",
-                        "usage": {"input_tokens": 900, "output_tokens": 100}})
-    evt = ai_logic.parse_stream_event("agy", line)
-    assert evt == {"type": "result", "text": "[{\"x\": 1}]", "tokens": 1000}
+# The agy cases below are driven by tests/agy_stream_samples.ndjson: lines
+# captured verbatim from a real agy 1.1.24 run (a trivial prompt, and the
+# empty-prompt failure), so these pin the parser to the shape the binary
+# actually emits rather than to an assumption about it.
+_AGY_SAMPLES = os.path.join(os.path.dirname(__file__), "agy_stream_samples.ndjson")
+
+
+def _agy_lines():
+    with open(_AGY_SAMPLES, encoding="utf8") as fh:
+        return [ln for ln in fh.read().splitlines() if ln.strip()]
+
+
+def _agy_line(event, index=0):
+    hits = [ln for ln in _agy_lines() if _json.loads(ln).get("event") == event]
+    return hits[index]
+
+
+def test_parse_agy_success_result_from_captured_sample():
+    evt = ai_logic.parse_stream_event("agy", _agy_line("result", 0))
+    assert evt == {"type": "result", "text": "ok\n", "tokens": 13815}
+
+
+def test_parse_agy_error_result_from_captured_sample():
+    # status ERROR carries its message in "error", never in "response", and
+    # must never come back as a result the caller could treat as card text.
+    evt = ai_logic.parse_stream_event("agy", _agy_line("result", 1))
+    assert evt["type"] == "error"
+    assert "empty prompt" in evt["text"]
+
+
+def test_parse_agy_error_result_without_a_message_still_reads():
+    line = _json.dumps({"event": "result", "result": {"status": "ERROR"}})
+    assert ai_logic.parse_stream_event("agy", line) == {
+        "type": "error", "text": "Antigravity reported an error"}
+
+
+def test_parse_agy_init_and_step_updates_from_captured_samples():
+    assert ai_logic.parse_stream_event("agy", _agy_line("init")) is None
+    steps = [ai_logic.parse_stream_event("agy", ln) for ln in _agy_lines()
+             if _json.loads(ln).get("event") == "step_update"]
+    assert steps == [{"type": "phase", "phase": "Working"},
+                     {"type": "phase", "phase": "Working"}]
+
+
+def test_parse_agy_tool_step_names_a_web_phase():
+    # Built from the documented step_update keys (the captured run used no
+    # tool), with agy's own web tool names as listed in the init line above.
+    web = _json.dumps({"event": "step_update", "step_update": {
+        "step_type": "tool", "state": "ACTIVE", "tool_name": "search_web"}})
+    other = _json.dumps({"event": "step_update", "step_update": {
+        "step_type": "tool", "state": "ACTIVE", "tool_name": "view_file"}})
+    assert ai_logic.parse_stream_event("agy", web) == {
+        "type": "phase", "phase": "Verify online"}
+    assert ai_logic.parse_stream_event("agy", other) == {
+        "type": "phase", "phase": "Working"}
+
+
+def test_parse_agy_malformed_shapes_return_none_rather_than_raising():
+    for line in ('{"event": "result"}',
+                 '{"event": "result", "result": "a string"}',
+                 '{"event": "step_update", "step_update": 7}',
+                 '{"event": "something_new"}',
+                 '{"type": "result", "result": "old shape"}'):
+        assert ai_logic.parse_stream_event("agy", line) is None
 
 
 def test_parse_garbage_line_is_none():
@@ -803,3 +862,58 @@ def test_svg_to_media_accepts_a_real_diagram():
     name, data = ai_logic.svg_to_media(markup, 1)
     assert name == "generated-1.svg"
     assert data == markup.encode("utf8")
+
+
+# === Stale scratch sweep. The wizard removes its own mkdtemp dir when it
+# closes, so everything here is about what a crash leaves behind.
+def _scratch(tmp_path, name, age_s, size=0, now=1_000_000.0):
+    d = tmp_path / name
+    d.mkdir()
+    if size:
+        (d / "blob.bin").write_bytes(b"x" * size)
+    os.utime(d, (now - age_s, now - age_s))
+    return d
+
+
+def test_sweep_removes_only_old_prefixed_dirs(tmp_path):
+    now = 1_000_000.0
+    old = _scratch(tmp_path, "ip-aigen-old", 90000, now=now)
+    fresh = _scratch(tmp_path, "ip-aigen-fresh", 10, now=now)
+    other = _scratch(tmp_path, "someone-elses-old", 90000, now=now)
+    loose = tmp_path / "ip-aigen-not-a-dir.txt"
+    loose.write_text("x")
+    removed = ai_logic.sweep_stale_scratch(str(tmp_path), now=now)
+    assert removed == [str(old)]
+    assert not old.exists()
+    assert fresh.exists() and other.exists() and loose.exists()
+
+
+def test_sweep_trims_oldest_first_when_survivors_exceed_the_byte_cap(tmp_path):
+    now = 1_000_000.0
+    oldest = _scratch(tmp_path, "ip-aigen-a", 300, size=6000, now=now)
+    middle = _scratch(tmp_path, "ip-aigen-b", 200, size=6000, now=now)
+    newest = _scratch(tmp_path, "ip-aigen-c", 100, size=6000, now=now)
+    removed = ai_logic.sweep_stale_scratch(
+        str(tmp_path), max_total_bytes=13000, now=now)
+    assert removed == [str(oldest)]
+    assert middle.exists() and newest.exists()
+
+
+def test_sweep_under_the_cap_removes_nothing(tmp_path):
+    now = 1_000_000.0
+    keep = _scratch(tmp_path, "ip-aigen-a", 100, size=500, now=now)
+    assert ai_logic.sweep_stale_scratch(str(tmp_path), now=now) == []
+    assert keep.exists()
+
+
+def test_sweep_never_raises_on_a_missing_dir_or_an_unremovable_entry(tmp_path,
+                                                                     monkeypatch):
+    assert ai_logic.sweep_stale_scratch(str(tmp_path / "nope")) == []
+    now = 1_000_000.0
+    _scratch(tmp_path, "ip-aigen-old", 90000, now=now)
+
+    def _boom(path):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(ai_logic.shutil, "rmtree", _boom)
+    assert ai_logic.sweep_stale_scratch(str(tmp_path), now=now) == []

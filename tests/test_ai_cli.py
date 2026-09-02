@@ -123,7 +123,7 @@ def test_run_other_exception_kills_process_and_is_not_masked(monkeypatch):
 # shape matches a real vendor binary, which remains unverified.
 def test_run_generation_parses_codex_top_level_text_shape(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_cli, "build_argv",
-                        lambda kind, path, mode, scratch, imgs, model="", effort="":
+                        lambda kind, path, mode, scratch, imgs, **kw:
                             (FAKE + ["codex_top"], True))
     res = ai_cli.run_generation("codex", "/usr/bin/codex", "PROMPT", "quick",
                                 str(tmp_path))
@@ -133,7 +133,7 @@ def test_run_generation_parses_codex_top_level_text_shape(monkeypatch, tmp_path)
 
 def test_run_generation_parses_codex_nested_item_text_shape(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_cli, "build_argv",
-                        lambda kind, path, mode, scratch, imgs, model="", effort="":
+                        lambda kind, path, mode, scratch, imgs, **kw:
                             (FAKE + ["codex_nested"], True))
     res = ai_cli.run_generation("codex", "/usr/bin/codex", "PROMPT", "quick",
                                 str(tmp_path))
@@ -143,7 +143,7 @@ def test_run_generation_parses_codex_nested_item_text_shape(monkeypatch, tmp_pat
 
 def test_run_generation_parses_antigravity_result_shape(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_cli, "build_argv",
-                        lambda kind, path, mode, scratch, imgs, model="", effort="":
+                        lambda kind, path, mode, scratch, imgs, **kw:
                             (FAKE + ["agy_ok"], True))
     res = ai_cli.run_generation("agy", "/usr/bin/agy", "PROMPT", "quick",
                                 str(tmp_path))
@@ -255,15 +255,52 @@ def test_build_argv_codex_never_gets_an_effort_flag(monkeypatch):
     assert "--effort" not in argv
 
 
-def test_build_argv_agy_never_gets_a_model_or_effort_flag(monkeypatch):
-    # Model choice in agy's headless mode is an open upstream request; the
-    # default is already the cheap tier, so build_argv must never send either
-    # flag, even if a stale config value from another backend is passed in.
+def test_build_argv_agy_sends_model_and_effort_only_when_set_and_supported(
+        monkeypatch):
     monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
     argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [],
-                                model="whatever", effort="high")
-    joined = " ".join(argv)
-    assert "--model" not in joined and "--effort" not in joined
+                                model="gemini-3.8-flash-medium", effort="high")
+    assert argv[argv.index("--model") + 1] == "gemini-3.8-flash-medium"
+    assert argv[argv.index("--effort") + 1] == "high"
+    # Nothing set: agy's own default, no flag at all.
+    bare, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
+    assert "--model" not in bare and "--effort" not in bare
+    # Set, but this binary does not document them: passing either would hard
+    # fail every run, so neither is sent.
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    unsupported, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s",
+                                       [], model="gemini-3.8-flash-medium",
+                                       effort="high")
+    assert "--model" not in unsupported and "--effort" not in unsupported
+
+
+def test_build_argv_agy_puts_the_prompt_in_argv_after_dash_p_and_not_on_stdin(
+        monkeypatch):
+    # agy never reads stdin: --print takes the prompt as its VALUE. Anything
+    # after it would be read as the prompt instead, so -p goes last.
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, via_stdin = ai_cli.build_argv("agy", "/usr/bin/agy", "quick",
+                                        "/tmp/s", [], prompt="DRAFT CARDS")
+    assert via_stdin is False
+    assert argv[-2:] == ["-p", "DRAFT CARDS"]
+    assert argv[argv.index("--output-format") + 1] == "stream-json"
+    assert argv[argv.index("--add-dir") + 1] == "/tmp/s"
+    assert "--disable-slash-commands" in argv
+
+
+def test_build_argv_agy_omits_disable_slash_commands_when_unsupported(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag",
+                        lambda path, flag, **kw: flag != "--disable-slash-commands")
+    argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
+    assert "--disable-slash-commands" not in argv
+
+
+def test_build_argv_agy_refuses_an_oversized_prompt(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    with pytest.raises(ai_cli.GenerationError) as e:
+        ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [],
+                          prompt="x" * (ai_cli._MAX_ARG_PROMPT + 1))
+    assert "too long" in str(e.value)
 
 
 def test_backends_carry_model_hint_for_the_ui():
@@ -272,24 +309,26 @@ def test_backends_carry_model_hint_for_the_ui():
 
 
 def test_image_capable_table():
-    assert ai_cli.image_capable("claude") and ai_cli.image_capable("codex")
-    assert not ai_cli.image_capable("agy")
+    # All three read an attached image: agy does it with view_file against the
+    # scratch dir build_argv hands it as --add-dir.
+    for kind in ("claude", "codex", "agy"):
+        assert ai_cli.image_capable(kind)
 
 
 def test_build_argv_agy_adds_sandbox_when_supported(monkeypatch):
-    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
     argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
     assert "--sandbox" in argv
 
 
 def test_build_argv_agy_omits_sandbox_when_unsupported(monkeypatch):
-    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: False)
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
     argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
     assert "--sandbox" not in argv
 
 
 def test_build_argv_agy_never_skips_permissions(monkeypatch):
-    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag: True)
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
     argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
     assert "--dangerously-skip-permissions" not in argv
 
@@ -459,7 +498,7 @@ def test_claude_quick_mode_text_matches_build_argv_with_attachments():
 def _stub_build_argv(monkeypatch, mode_arg):
     monkeypatch.setattr(
         ai_cli, "build_argv",
-        lambda kind, path, mode, scratch, imgs, model="", effort="": (FAKE + [mode_arg], True))
+        lambda kind, path, mode, scratch, imgs, **kw: (FAKE + [mode_arg], True))
 
 
 def test_connection_working_for_a_real_reply(monkeypatch):
@@ -518,6 +557,21 @@ def test_readable_cli_error_recognizes_common_auth_phrasing():
 
 def test_readable_cli_error_falls_back_to_trimmed_first_line():
     assert ai_cli._readable_cli_error("boom\nsome traceback\nmore junk") == "boom"
+
+
+def test_readable_cli_error_explains_an_antigravity_auto_denied_tool():
+    raw = ('jetski: no output produced ... a tool required the "write_file" '
+           "permission that headless mode cannot prompt for, so it was "
+           "auto-denied ...")
+    assert ai_cli._readable_cli_error(raw) == (
+        "Antigravity refused a file write; the add-on never enables writes, "
+        "so this run used a tool it should not have.")
+
+
+def test_readable_cli_error_explains_an_antigravity_empty_prompt():
+    raw = 'Error: empty prompt. Usage: agy --print "your prompt here"'
+    assert ai_cli._readable_cli_error(raw) == (
+        "Antigravity received an empty prompt, so it had nothing to work from.")
 
 
 def test_readable_cli_error_handles_empty_input():
