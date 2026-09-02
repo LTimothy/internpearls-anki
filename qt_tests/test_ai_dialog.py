@@ -41,7 +41,11 @@ def test_wizard_renders_all_pages(monkeypatch):
 
     assert dlg.stack.currentWidget() is dlg.review_page
     assert dlg.session.cards   # generation actually produced a card
-    assert dlg.cards_lay.count() == len(dlg.session.cards)   # review rows built
+    # +1: the trailing addStretch() that keeps a short list pinned to the top
+    # rather than floating (see _rebuild_review), not a card row itself.
+    row_widgets = sum(1 for i in range(dlg.cards_lay.count())
+                      if dlg.cards_lay.itemAt(i).widget() is not None)
+    assert row_widgets == len(dlg.session.cards)   # review rows built
 
     for page in (dlg.setup_page, dlg.input_page, dlg.progress_page,
                 dlg.review_page):

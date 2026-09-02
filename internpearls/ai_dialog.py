@@ -17,10 +17,10 @@ import urllib.parse
 from collections import deque
 
 from aqt import mw
-from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog, QHBoxLayout,
-                    QKeySequence, QLabel, QPlainTextEdit, QPushButton,
-                    QRadioButton, QSpinBox, QStackedWidget, Qt, QTimer,
-                    QVBoxLayout, QWidget)
+from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
+                    QDialogButtonBox, QFrame, QHBoxLayout, QKeySequence, QLabel,
+                    QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
+                    QSpinBox, QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
 from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
@@ -200,6 +200,19 @@ class _GenerateDialog(QDialog):
         super().__init__(mw)
         self.setWindowTitle(f"{APP_NAME}: Generate cards with AI")
         self.setMinimumWidth(480)
+        # Opened at a size that gives the review page's card list real room, clamped
+        # to the screen the way _ask_with_widget's own open_size does (ui.py), rather
+        # than left to whatever the tallest page's natural sizeHint happens to be --
+        # the input page's expanding source box used to set that for every page,
+        # leaving the review and progress pages floating in space they never asked for.
+        open_w, open_h = 640, 680
+        try:
+            geo = QApplication.primaryScreen().availableGeometry()
+            open_w = min(open_w, geo.width() - 60)
+            open_h = min(open_h, geo.height() - 80)
+        except Exception:
+            pass
+        self.resize(max(open_w, 480), open_h)
         self.session = s = _Session()
         self._retried_json = False   # the single-retry budget on malformed model output
         # Backend kinds with a "Test connection" run currently in flight (from
@@ -334,6 +347,7 @@ class _GenerateDialog(QDialog):
             "runs a real, trivial prompt through a detected CLI to confirm it "
             "can actually generate, not just that the binary runs -- unlike "
             "the status above, which is a cheap, free check."))
+        lay.addStretch()
         close_row = QHBoxLayout()
         close_row.addStretch(1)
         self.close_btn = QPushButton("Close")
@@ -543,6 +557,7 @@ class _GenerateDialog(QDialog):
         self.usage_row = hint_label("")
         lay.addWidget(self.usage_row)
 
+        lay.addStretch()
         btn_row = QHBoxLayout()
         cancel = QPushButton("Cancel")
         cancel.clicked.connect(self.reject)
@@ -661,6 +676,7 @@ class _GenerateDialog(QDialog):
         lay.addWidget(self.progress_label)
         lay.addWidget(self.phase_label)
         lay.addWidget(self.elapsed_label)
+        lay.addStretch()
         cancel = QPushButton("Cancel")
         cancel.clicked.connect(self._cancel_generation)
         lay.addWidget(cancel)
@@ -1019,8 +1035,17 @@ class _GenerateDialog(QDialog):
         lay.addWidget(title_label("Review drafted cards"))
         self.review_header = hint_label("")
         lay.addWidget(self.review_header)
-        self.cards_lay = QVBoxLayout()
-        lay.addLayout(self.cards_lay)
+        # The card list owns the dialog's surplus height instead of leaving it to
+        # spread across every row (see widgets.StreamingList / review.py:1289): a
+        # scroll area sized by stretch factor 1, with the button row -- Import
+        # included -- outside it and always reachable, however many cards are drafted.
+        cards_container = QWidget()
+        self.cards_lay = QVBoxLayout(cards_container)
+        cards_scroll = QScrollArea()
+        cards_scroll.setWidgetResizable(True)
+        cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        cards_scroll.setWidget(cards_container)
+        lay.addWidget(cards_scroll, 1)
         lay.addWidget(QLabel("Feedback on the whole set (optional)"))
         self.feedback_box = QPlainTextEdit()
         self.feedback_box.setMaximumHeight(60)
@@ -1085,6 +1110,7 @@ class _GenerateDialog(QDialog):
             rowlay.addWidget(edit_btn)
             rowlay.addWidget(note_btn)
             self.cards_lay.addWidget(row)
+        self.cards_lay.addStretch()   # keeps a short list pinned to the top, not floating
         self._update_review_summary()
 
     def _on_include_toggled(self, i, value):
