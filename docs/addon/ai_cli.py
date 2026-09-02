@@ -27,8 +27,9 @@ BACKENDS = {
                "modes": {
                    "thorough": "Thorough: drafts, may search the web to verify "
                                "facts, then self-reviews (up to 15 turns, 1 to 3 min)",
-                   "quick": "Quick draft: exactly one turn, no tools at all "
-                           "including no web access (15 to 30 s)"}},
+                   "quick": "Quick draft: exactly one turn, still no web access -- "
+                           "but if you attach files, it can read the scratch copy "
+                           "of exactly those files, to view them (15 to 30 s)"}},
     "codex": {"label": "Codex CLI", "exe": "codex",
               "subscription": "ChatGPT Plus or Pro",
               "safety": "Sandboxed read-only; no writes or network",

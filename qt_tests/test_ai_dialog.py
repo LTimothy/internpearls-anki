@@ -153,3 +153,41 @@ def test_view_skills_extra_button_toggles_and_leaves_dialog_open(monkeypatch):
     finally:
         q.QDialog.exec = original
     assert calls == [1]   # the explicit click, and only the explicit click, ran it
+
+
+def test_view_skills_toggle_button_relabels_after_each_click(monkeypatch):
+    """Minor fix: the extra button used to keep reading "Disable deck skill"
+    even after a click actually disabled it. It must now name the action
+    that's still available, not the one already taken."""
+    _, q = harness.bootstrap()
+    app = harness.app()
+    from internpearls import config
+
+    config.save_deck_skill({"text": "do X", "version": "1",
+                            "consented_on": "2026-01-01", "enabled": True})
+    dlg = ai_dialog._GenerateDialog.__new__(ai_dialog._GenerateDialog)
+
+    original = q.QDialog.exec
+    seen = []
+
+    def fake_exec(self):
+        self.show()
+        app.processEvents()
+        btn = next(b for b in self.findChildren(q.QPushButton)
+                  if "deck skill" in b.text().lower())
+        seen.append(btn.text())
+        btn.click()
+        app.processEvents()
+        seen.append(btn.text())
+        btn.click()
+        app.processEvents()
+        seen.append(btn.text())
+        self.reject()
+        return self.result()
+
+    q.QDialog.exec = fake_exec
+    try:
+        dlg._view_skills()
+    finally:
+        q.QDialog.exec = original
+    assert seen == ["Disable deck skill", "Enable deck skill", "Disable deck skill"]
