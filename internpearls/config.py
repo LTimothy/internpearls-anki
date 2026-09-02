@@ -108,6 +108,23 @@ TARGET_FIELDS = {
 # the same config.json.
 ADDON_PACKAGE = __name__.split(".")[0]
 
+# Keep in sync with ai_cli.BACKENDS' keys. Not imported from there to avoid coupling
+# this module (constants/config only) to ai_cli's subprocess machinery.
+_AI_BACKEND_KINDS = ("claude", "codex", "agy")
+
+
+def _ai_map(value):
+    """ai_model/ai_effort are stored per backend kind, not as one flat value -- a
+    value set while one backend is active must never leak into another backend's
+    argv (see ai_dialog.py's session init and ai_cli.build_argv). No shipped
+    release ever wrote the old flat-string shape, so there's no migration to do,
+    but tolerate one anyway by treating it as empty rather than leaking it into
+    the first backend that happens to be active."""
+    if not isinstance(value, dict):
+        value = {}
+    return {kind: value.get(kind, "") if isinstance(value.get(kind), str) else ""
+            for kind in _AI_BACKEND_KINDS}
+
 
 def _cfg():
     c = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
@@ -132,8 +149,8 @@ def _cfg():
             NIGHT_MODE_DIM_PERCENT_CEILING),
         "ai_backend":            c.get("ai_backend", ""),
         "ai_cli_path":           c.get("ai_cli_path", ""),
-        "ai_model":              c.get("ai_model", ""),
-        "ai_effort":             c.get("ai_effort", ""),
+        "ai_model":              _ai_map(c.get("ai_model")),
+        "ai_effort":             _ai_map(c.get("ai_effort")),
     }
 
 
