@@ -9,7 +9,7 @@ import tempfile
 
 from aqt import mw
 
-ADDON_VERSION = "0.53.2"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.53.3"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # own notes); when it does, an add-on release that understands the new shape must bump
@@ -148,8 +148,14 @@ def _save_json(path, data):
     empty file where installed.json or the feedback log used to be. os.replace is
     atomic on every platform Anki runs on, so a reader only ever sees the old file or
     the complete new one.
+
+    The target's directory is created first: mkstemp raises FileNotFoundError outright
+    if it's missing, which would turn a single absent directory into a crash on every
+    state write this add-on makes.
     """
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
+    dirname = os.path.dirname(path) or "."
+    os.makedirs(dirname, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf8") as fh:
             json.dump(data, fh, indent=2)
