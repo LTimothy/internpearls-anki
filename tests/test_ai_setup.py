@@ -92,6 +92,56 @@ def test_ignore_link_disables_the_backend_and_flips_its_own_wording(anki, monkey
     assert dlg.rows["agy"].ignore_link.text() == "ignore"
 
 
+def _detect_honouring_enabled(cfg):
+    """A detect_backends stand-in that reproduces the real function's own
+    chosen-backend rule: skip disabled backends, prefer ai_backend among what
+    is left, else the first enabled+found one in BACKENDS order."""
+    from internpearls import ai_cli
+    enabled = cfg.get("ai_backend_enabled") or {}
+    preferred = cfg.get("ai_backend", "")
+    out, chosen = {}, None
+    for kind in ai_cli.BACKENDS:
+        on = enabled.get(kind, True)
+        out[kind] = {"path": "/bin/x" if on else None, "ok": on,
+                     "detail": "1" if on else "disabled", "enabled": on}
+        if on and (chosen is None or preferred == kind):
+            chosen = kind
+    return {"backends": out, "chosen": chosen}
+
+
+def test_ignoring_the_preferred_backend_moves_the_panel_and_chip(anki, monkeypatch):
+    """I-critical: ignoring the currently preferred backend must not leave the
+    panel, or the PREFERRED marker, pointed at a backend that is now ignored
+    and will not actually be used. ai_backend itself must stay untouched
+    (ignoring is not a preference change), so `use again` puts everything
+    right back without having to re-choose claude."""
+    from internpearls import ai_cli, ai_setup
+    monkeypatch.setattr(ai_cli, "detect_backends", _detect_honouring_enabled)
+    anki.mw._config = {"ai_backend": "claude"}
+    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    assert dlg.preferred == "claude"
+    assert dlg.panel.kind == "claude"
+    assert dlg.rows["claude"].use_link is None   # preferred: wears the chip, not a Use link
+
+    dlg.rows["claude"].ignore_link.clicked.emit()   # toggle_ignored("claude")
+
+    assert anki.mw._config["ai_backend"] == "claude"   # untouched: ignoring != choosing
+    assert anki.mw._config["ai_backend_enabled"]["claude"] is False
+    fallback = next(k for k in ai_cli.BACKENDS if k != "claude")
+    assert dlg.preferred == fallback
+    assert dlg.panel.kind == fallback
+    assert dlg.rows["claude"].use_link is None      # ignored backends never offer Use
+    assert dlg.rows[fallback].use_link is None      # now preferred: wears the chip instead
+
+    dlg.rows["claude"].ignore_link.clicked.emit()   # "use again"
+
+    assert anki.mw._config["ai_backend_enabled"]["claude"] is True
+    assert dlg.preferred == "claude"
+    assert dlg.panel.kind == "claude"
+    assert dlg.rows["claude"].use_link is None
+    assert dlg.rows[fallback].use_link.text() == f"Use {ai_cli.BACKENDS[fallback]['label']}"
+
+
 def test_install_guide_link_opens_that_backends_documentation(anki, monkeypatch):
     from aqt.qt import QDesktopServices
     from internpearls import ai_cli, ai_setup
@@ -235,6 +285,50 @@ def test_recheck_mid_test_connection_does_not_reenable_or_double_run(anki, monke
     _drain_conn_test(dlg)
     assert "working" in panel.test_status.text().lower()
     assert panel.test_btn.isEnabled()
+
+
+def test_switching_preference_mid_test_does_not_write_to_the_old_panel(anki, monkeypatch):
+    """I-important: use_backend rebuilds the panel (via recheck()) while a Test
+    connection run for the previously preferred backend is still in flight.
+    poll() must look the live panel up by the test's own kind rather than
+    trust the captured reference, and must skip writing to test_status/
+    test_btn once that reference no longer matches, without raising and
+    without leaving _testing thinking a run is still going."""
+    import threading
+
+    from internpearls import ai_cli, ai_setup
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": sys.executable if kind in ("claude", "codex") else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    release = threading.Event()
+
+    def blocking_test_connection(kind, path):
+        release.wait(timeout=15)
+        return {"state": "working", "detail": "ok"}
+    monkeypatch.setattr(ai_cli, "test_connection", blocking_test_connection)
+
+    anki.mw._config = {"ai_backend": "claude"}
+    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    assert dlg.panel.kind == "claude"
+    old_panel = dlg.panel
+
+    dlg._test("claude")
+    assert "claude" in dlg._testing
+
+    dlg.use_backend("codex")   # rebuilds the panel while claude's test is in flight
+    assert dlg.panel.kind == "codex"
+    assert dlg.panel is not old_panel
+    new_status = dlg.panel.test_status.text()
+
+    release.set()
+    t, timer = dlg._refs[-1]
+    t.join(timeout=15)
+    timer.fire()      # must not raise, and must not touch the new (codex) panel
+
+    assert "claude" not in dlg._testing            # thread result still consumed
+    assert dlg.panel.test_status.text() == new_status   # new panel left untouched
+    assert old_panel.test_status.text() == "Testing connection"   # old panel untouched too
 
 
 def test_connection_not_signed_in_shows_readable_message(anki, monkeypatch):
