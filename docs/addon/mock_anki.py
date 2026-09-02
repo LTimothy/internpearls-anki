@@ -946,6 +946,9 @@ class QWidget:
     def ensurePolished(self):
         pass   # no style engine here, so nothing a stylesheet could resolve into
 
+    def update(self):
+        pass   # Qt's repaint request; no paint engine here to schedule one on
+
     def sizeHint(self):
         # Same reasoning as height(): no font and no layout, so nothing to measure.
         # widgets.chip_column_width() therefore reads 0 under the mock, which is
@@ -1240,12 +1243,14 @@ class QSpinBox(QWidget):
     def __init__(self, *a, **k):
         super().__init__()
         self._value, self._min, self._max, self._suffix = 0, 0, 99, ""
+        self.valueChanged = Signal()
 
     def setRange(self, lo, hi):
         self._min, self._max = lo, hi
 
     def setValue(self, v):
         self._value = int(v)
+        self.valueChanged.emit(self._value)
 
     def value(self):
         return self._value
