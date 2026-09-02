@@ -531,9 +531,13 @@ def muted_label(text):
     return lbl
 
 
-def hint_label(text, top_margin=0):
-    """Small-print fine detail under a control."""
-    lbl = QLabel(text)
+def hint_label(text, top_margin=0, cls=QLabel):
+    """Small-print fine detail under a control.
+
+    `cls` builds the label out of a QLabel subclass instead of a plain one, so a
+    caller that needs the wrapped text to defend its own height can supply one
+    without restating this styling (see ai_setup._WrappedHint)."""
+    lbl = cls(text)
     lbl.setWordWrap(True)
     margin = f" margin-top: {top_margin}px;" if top_margin else ""
     lbl.setStyleSheet(f"color: {colors()['muted']}; font-size: 11px;{margin}")
