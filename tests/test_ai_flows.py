@@ -1,5 +1,6 @@
 """End-to-end wizard flows against the mock Anki and the fake CLI."""
 import os
+import shutil
 import sys
 
 from internpearls import ai_cli, ai_dialog
@@ -244,3 +245,109 @@ def test_view_skills_escapes_raw_html_and_preserves_line_breaks(anki):
     assert "<table>" not in body            # not real markup...
     assert "&lt;table&gt;" in body          # ...shown literally instead
     assert body.count("<br>") >= 2          # newlines survived as real line breaks
+
+
+# -- scratch dir cleanup --------------------------------------------------
+
+def test_scratch_dir_removed_after_import(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    scratch = dlg.session.scratch
+    assert scratch and os.path.isdir(scratch)
+    dlg._do_import()
+    assert not os.path.exists(scratch)
+    assert dlg.session.scratch is None
+
+
+def test_scratch_dir_removed_on_discard(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    scratch = dlg.session.scratch
+    assert scratch and os.path.isdir(scratch)
+    anki.gui.answers = [True]   # confirm discard
+    dlg.reject()
+    assert not os.path.exists(scratch)
+    assert dlg.session.scratch is None
+
+
+def test_scratch_dir_kept_when_discard_is_declined(anki, monkeypatch):
+    """Cleanup only runs once the dialog actually agrees to close -- declining
+    the discard confirmation must not blow away work still being reviewed."""
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    scratch = dlg.session.scratch
+    anki.gui.answers = [False]   # "Keep editing"
+    dlg.reject()
+    assert os.path.isdir(scratch)
+    assert dlg.session.scratch == scratch
+
+
+def test_scratch_cleanup_is_defensive_about_an_already_missing_directory(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    shutil.rmtree(dlg.session.scratch)   # e.g. removed out from under us somehow
+    dlg._cleanup_scratch()               # must not raise
+    assert dlg.session.scratch is None
+
+
+# -- revision: preserving manual choices, and shape-mismatch honesty ------
+
+def test_revision_preserves_manual_include_choices_for_unchanged_cards(anki, monkeypatch):
+    # Seed an existing note so the second card's front collides with it,
+    # giving that card a block-level "duplicate" check and, by default, excluded.
+    anki.col.add_note("her-guid", ["Duplicate front", "b", "", "", "", "", ""],
+                      ["InternPearls"], deck="Intern Pearls::Intern Custom")
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="two_cards")
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    assert len(dlg.session.cards) == 2
+    # Defaults: the clean card in, the flagged duplicate out.
+    assert dlg.session.included == [True, False]
+    # The user overrides both defaults by hand.
+    dlg.session.included[0] = False   # excludes the clean card on purpose
+    dlg.session.included[1] = True    # includes the blocked one on purpose
+    dlg._revise_all()
+    dlg._wait_for_worker()
+    # fake_cli's two_cards mode returns the identical two cards every time, so
+    # the revision changed neither -- both manual choices must survive it.
+    assert dlg.session.updated == set()
+    assert dlg.session.included == [False, True]
+
+
+def test_revision_with_different_card_count_does_not_claim_per_card_updates(anki, monkeypatch):
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": sys.executable if kind == "claude" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    calls = []
+
+    def build_argv(kind, path, mode, scratch, imgs):
+        # First call (the initial draft) returns one card; the "revision"
+        # comes back with two -- the shape mismatch nothing here can prevent.
+        calls.append(1)
+        cli_mode = "ok" if len(calls) == 1 else "two_cards"
+        return [sys.executable, FAKE, cli_mode], True
+
+    monkeypatch.setattr(ai_cli, "build_argv", build_argv)
+    dlg = ai_dialog._GenerateDialog()
+    dlg.source_box.setPlainText("LAST toxicity source text")
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    assert len(dlg.session.cards) == 1
+    dlg._revise_all()
+    dlg._wait_for_worker()
+    assert len(dlg.session.cards) == 2
+    assert dlg.session.revision_shape_mismatch is True
+    # No card is presented as confidently kept-verbatim when the count itself
+    # moved -- every index is treated as changed, not silently mismatched.
+    assert dlg.session.updated == {0, 1}
+    assert dlg.session.included == [True, True]   # falls back to the mechanical-check default
+    header = dlg.review_header.text()
+    assert "different number of cards" in header
+    assert "kept 2 verbatim" not in header
+    assert "kept 1 verbatim" not in header
