@@ -172,3 +172,57 @@ def test_supports_flag_caches_per_path_and_flag(monkeypatch):
 def test_backends_all_have_safety_posture():
     for kind, info in ai_cli.BACKENDS.items():
         assert info.get("safety"), f"{kind} is missing a safety posture string"
+
+
+# -- C1: per-backend mode text must be truthful, not one claim copy-pasted for
+# all three backends regardless of what build_argv actually enforces for them.
+def test_backends_all_have_mode_text_for_both_modes():
+    for kind, info in ai_cli.BACKENDS.items():
+        modes = info.get("modes")
+        assert modes and modes.get("thorough") and modes.get("quick"), (
+            f"{kind} is missing per-mode text")
+
+
+def test_claude_mode_text_matches_what_build_argv_actually_restricts():
+    thorough_argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "thorough",
+                                         "/tmp/s", [])
+    quick_argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick",
+                                      "/tmp/s", [])
+    modes = ai_cli.BACKENDS["claude"]["modes"]
+    # Thorough really does get web tools here, so claiming it may verify online
+    # is true; quick really does get none, so claiming no web access is true.
+    assert "WebSearch" in " ".join(thorough_argv)
+    assert "web" in modes["thorough"].lower()
+    assert "WebSearch" not in " ".join(quick_argv)
+    assert "no web access" in modes["quick"].lower()
+
+
+def test_codex_argv_is_mode_invariant_so_its_text_must_not_claim_mode_enforcement():
+    # codex's build_argv never branches on mode (always --sandbox read-only, no
+    # turn cap set), so neither mode's text may claim online verification
+    # actually happens, or that a turn limit is enforced.
+    thorough_argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "thorough",
+                                         "/tmp/s", [])
+    quick_argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick",
+                                      "/tmp/s", [])
+    assert thorough_argv == quick_argv
+    assert "read-only" in thorough_argv
+    modes = ai_cli.BACKENDS["codex"]["modes"]
+    for text in modes.values():
+        assert "verifies facts online" not in text.lower()
+    # Thorough is the only one that even mentions verification, so it's the
+    # one that must disclaim actually doing it online.
+    assert "cannot" in modes["thorough"].lower() and "online" in modes["thorough"].lower()
+
+
+def test_agy_argv_is_mode_invariant_so_quick_must_not_claim_no_web_access():
+    # agy's build_argv never branches on mode either (no --tools/--max-turns
+    # equivalent at all), so "Quick draft: ... no web access" -- the label
+    # every mode used to share -- would be false here.
+    thorough_argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "thorough",
+                                         "/tmp/s", [])
+    quick_argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
+    assert thorough_argv == quick_argv
+    quick_text = ai_cli.BACKENDS["agy"]["modes"]["quick"].lower()
+    assert "no web access" not in quick_text
+    assert "no tool" not in quick_text
