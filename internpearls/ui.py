@@ -362,8 +362,12 @@ def copy_to_clipboard(text):
 
 
 def _prompt(text, **kw):
+    """A single-line text prompt. Returns the entered text, or None if cancelled --
+    unlike aqt.utils.getText's raw (text, ok) tuple, so a caller can write
+    `if new is None: return` instead of unpacking at every call site."""
     kw.setdefault("title", APP_NAME)
-    return getText(text, **kw)
+    value, ok = getText(text, **kw)
+    return value if ok else None
 
 
 def _safe(fn):

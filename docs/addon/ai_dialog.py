@@ -1,9 +1,11 @@
 """The "Generate cards with AI" wizard.
 
 A single QDialog holds a QStackedWidget of four pages: setup, input, progress,
-review. This file builds the setup and input pages; the progress and review
-pages here are placeholders, filled in by later work.
+review. Nothing here touches the collection until Import (_do_import); review,
+editing, notes, and revisions are all in-memory session state, and closing the
+dialog mid-review discards it after a confirm (see _GenerateDialog.reject).
 """
+import html
 import os
 import tempfile
 import threading
@@ -18,7 +20,9 @@ from aqt.qt import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel,
 from . import ai_cli, ai_logic, collection
 from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
                      save_ai_usage, load_deck_skill, save_deck_skill)
-from .ui import _ask_scrollable, _info, _warn, hint_label, link_button, title_label
+from .net import fetch_card_image
+from .ui import (_ask, _ask_scrollable, _info, _prompt, _warn, hint_label,
+                 link_button, title_label)
 
 # Note types a generated card may name. Keep in sync with
 # collection._GENERATED_ALLOWED_TYPES: the types this add-on manages, plus
@@ -26,6 +30,20 @@ from .ui import _ask_scrollable, _info, _warn, hint_label, link_button, title_la
 FIELD_MAP = dict(TARGET_FIELDS, Basic=["Front", "Back"],
                  Cloze=["Text", "Back Extra"])
 SOFT_SOURCE_LIMIT = 25000
+
+
+def _skills_html(parts):
+    """Render View skills' parts (plain multi-line skill text -- model-authored
+    and possibly containing literal '<' from the card-craft rules themselves,
+    e.g. "an HTML <table>") as HTML a RichText dialog body shows readably.
+
+    Escaped first, so a stray "<table>" or "&lt;94%" in the skill text reads as
+    the literal characters it is, rather than being interpreted as markup --
+    full transparency means showing exactly what was sent, not a mangled
+    rendering of it. '\\n' is then turned into '<br>', since a plain newline
+    collapses to a space in HTML and would otherwise run every line together.
+    """
+    return html.escape("\n".join(parts)).replace("\n", "<br>")
 
 
 class _Session:
@@ -57,6 +75,7 @@ class _GenerateDialog(QDialog):
         self.setWindowTitle(f"{APP_NAME}: Generate cards with AI")
         self.setMinimumWidth(480)
         self.session = s = _Session()
+        self._retried_json = False   # the single-retry budget on malformed model output
         cfg = _cfg()
         s.deck_name = cfg["export_deck"] + "::" + ai_logic.GENERATED_DECK_LEAF
 
@@ -247,14 +266,15 @@ class _GenerateDialog(QDialog):
             parts += ["", f"Deck skill v{deck.get('version')} ({state}, "
                           f"consented {deck.get('consented_on')})", "",
                       deck.get("text", "")]
+        body = _skills_html(parts)
         if deck and _ask_scrollable(
-                "\n".join(parts), yes_label="Close",
+                body, yes_label="Close",
                 no_label=("Disable deck skill" if deck.get("enabled")
                           else "Enable deck skill")) is False:
             deck["enabled"] = not deck.get("enabled")
             save_deck_skill(deck)
         elif not deck:
-            _info("\n".join(parts))
+            _info(body)
 
     # -- progress --------------------------------------------------------------
     def _build_progress(self):
@@ -272,8 +292,14 @@ class _GenerateDialog(QDialog):
         lay.addWidget(cancel)
         return page
 
-    def _start_generation(self, revision=False):
+    def _start_generation(self, revision=False, extra_error=None):
         s = self.session
+        self._last_revision = revision
+        # extra_error is only set on our own re-entry after a malformed reply
+        # (see _finish_generation); any other call is a fresh request, so the
+        # one-retry budget resets here rather than in the caller.
+        if extra_error is None:
+            self._retried_json = False
         s.mode = "thorough" if self.thorough_radio.isChecked() else "quick"
         s.source = self.source_box.toPlainText()
         s.instructions = self.instructions_box.toPlainText()
@@ -295,6 +321,9 @@ class _GenerateDialog(QDialog):
             feedback=self.feedback_box.toPlainText() if revision else "",
             notes=s.notes if revision else None,
             checks=s.checks if revision else None)
+        if extra_error:
+            prompt += ("\n\n## Your previous reply failed validation\n"
+                      + "\n".join(extra_error))
         # A deque, not a plain list: the worker (producer) appends and the
         # poller (consumer) pops from the other end, so each event's removal
         # is one atomic op with no gap between "read" and "clear" where a
@@ -371,7 +400,13 @@ class _GenerateDialog(QDialog):
             return
         cards, errors = ai_logic.parse_cards_json(res["text"], s.note_types, FIELD_MAP)
         if errors:
-            _warn("The assistant's reply could not be used:\n" + "\n".join(errors[:5]))
+            if not self._retried_json:
+                self._retried_json = True
+                self._start_generation(revision=self._last_revision,
+                                       extra_error=errors)
+                return
+            _warn("The assistant's reply still could not be used after a "
+                  "retry:\n" + "\n".join(errors[:5]))
             self.stack.setCurrentWidget(self.input_page)
             return
         s.tokens_last_run = res["tokens"]
@@ -391,11 +426,173 @@ class _GenerateDialog(QDialog):
         self.stack.setCurrentWidget(self.review_page)
 
     # -- review ------------------------------------------------------------
-    def _rebuild_review(self):
-        """Populate the review page from session state. Built out in full by
-        the next stage; this stage only needs the seam _finish_generation calls."""
-
     def _build_review(self):
         page = QWidget()
-        QVBoxLayout(page).addWidget(QLabel("Review drafted cards"))
+        lay = QVBoxLayout(page)
+        lay.addWidget(title_label("Review drafted cards"))
+        self.review_header = hint_label("")
+        lay.addWidget(self.review_header)
+        self.cards_lay = QVBoxLayout()
+        lay.addLayout(self.cards_lay)
+        lay.addWidget(QLabel("Feedback on the whole set (optional)"))
+        self.feedback_box = QPlainTextEdit()
+        self.feedback_box.setMaximumHeight(60)
+        self.feedback_box.setPlaceholderText(
+            "e.g. shorter answers, add one card on avoided drugs")
+        lay.addWidget(self.feedback_box)
+        btn_row = QHBoxLayout()
+        back = QPushButton("Back")
+        back.clicked.connect(lambda: self.stack.setCurrentWidget(self.input_page))
+        self.revise_btn = QPushButton("Revise all")
+        self.revise_btn.clicked.connect(self._revise_all)
+        self.import_btn = QPushButton("Import")
+        self.import_btn.clicked.connect(self._do_import)
+        btn_row.addWidget(back)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.revise_btn)
+        btn_row.addWidget(self.import_btn)
+        lay.addLayout(btn_row)
         return page
+
+    def _rebuild_review(self):
+        """(Re)populate the review page's card list from session state."""
+        s = self.session
+        while self.cards_lay.count():
+            item = self.cards_lay.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+        self.include_boxes = []
+        for i, card in enumerate(s.cards):
+            row = QWidget()
+            rowlay = QHBoxLayout(row)
+            box = QCheckBox()
+            box.setChecked(s.included[i])
+            box.toggled.connect(lambda v, i=i: s.included.__setitem__(i, v))
+            self.include_boxes.append(box)
+            primary = ai_logic.PRIMARY_FIELD.get(card["note_type"], "Front")
+            badges = " ".join(f"[{c['code']}]" for c in s.checks[i]
+                              if c["level"] != "ok")
+            upd = " [updated]" if i in s.updated else ""
+            note_txt = f"  (note: {s.notes[i]})" if i in s.notes else ""
+            label = QLabel(f"{card['fields'].get(primary, '')[:90]} "
+                          f"({card['note_type']}) {badges}{upd}{note_txt}")
+            label.setWordWrap(True)
+            edit_btn = QPushButton("Edit")
+            edit_btn.clicked.connect(lambda _, i=i: self._edit_card(i))
+            note_btn = QPushButton("Note")
+            note_btn.clicked.connect(lambda _, i=i: self._note_card(i))
+            rowlay.addWidget(box)
+            rowlay.addWidget(label, 1)
+            rowlay.addWidget(edit_btn)
+            rowlay.addWidget(note_btn)
+            self.cards_lay.addWidget(row)
+        n_inc = sum(s.included)
+        extra = (f" · last run ~{round(s.tokens_last_run / 1000)}k tokens"
+                if s.tokens_last_run else "")
+        if s.rate_limits:
+            extra += " · " + ai_logic.rate_limit_line(s.rate_limits)
+        if s.updated:
+            kept = len(s.cards) - len(s.updated)
+            extra += f" · updated {len(s.updated)}, kept {kept} verbatim"
+        self.review_header.setText(
+            f"Review {len(s.cards)} draft cards · {n_inc} included{extra}")
+        self.import_btn.setText(f"Import {n_inc} cards")
+        self.revise_btn.setText(
+            "Revise all" + (f" ({len(s.notes)} notes)" if s.notes else ""))
+
+    def _edit_card(self, i):
+        """Hand-edit one card's fields, right in the review list. Nothing here
+        touches the model: this is a plain in-memory edit, prompted field by
+        field, cancellable at any field without losing the ones already typed."""
+        card = self.session.cards[i]
+        for name in FIELD_MAP[card["note_type"]]:
+            new = _prompt(f"{name}:", default=card["fields"].get(name, ""))
+            if new is None:
+                return
+            card["fields"][name] = new
+        self._rebuild_review()
+
+    def _note_card(self, i):
+        """Queue (or clear) a per-card revision note. This never calls the
+        model by itself -- it only marks the card for the next Revise all,
+        which is what sends every queued note in one turn (see _revise_all)."""
+        note = _prompt("Revision note for this card:",
+                       default=self.session.notes.get(i, ""))
+        if note is not None:
+            if note.strip():
+                self.session.notes[i] = note.strip()
+            else:
+                self.session.notes.pop(i, None)
+            self._rebuild_review()
+
+    def _revise_all(self):
+        """The only path that sends card-level feedback to the model: one CLI
+        turn carrying the set-level feedback plus every queued note, with
+        every un-noted card marked keep-verbatim (see ai_logic.build_prompt)."""
+        self._start_generation(revision=True)
+
+    def _do_import(self):
+        """Write the included cards to the collection. Resolves each image
+        source to bytes here -- nothing before this point ever touched the
+        network or the collection -- and hands add_generated_notes the bytes
+        plus the filenames it chose, per its documented media contract.
+
+        svg_index is a running counter across the WHOLE batch, not per card:
+        svg_to_media names a file solely from the index passed in, so two
+        cards each drawing their own SVG would collide on the same filename
+        (and one image silently overwrite the other) if each card started
+        counting from 0 again. A url:/attached: image can't collide with an
+        svg: one either, since fetch_card_image only ever returns a raster
+        extension and an attached name is scoped to its own scratch dir.
+        """
+        s = self.session
+        cards = [c for c, inc in zip(s.cards, s.included) if inc]
+        media = {}
+        svg_index = 0
+        for idx, card in enumerate(cards):
+            files = []
+            for im in card["images"]:
+                src = im["source"]
+                try:
+                    if src.startswith("svg:"):
+                        name, data = ai_logic.svg_to_media(src[4:], svg_index)
+                        svg_index += 1
+                    elif src.startswith("url:"):
+                        data, ext = fetch_card_image(src[4:])
+                        name = f"generated-{idx}-{len(files)}.{ext}"
+                    elif src.startswith("attached:"):
+                        name = src.split(":", 1)[1]
+                        with open(os.path.join(s.scratch, name), "rb") as fh:
+                            data = fh.read()
+                    else:
+                        raise ValueError(f"unrecognized image source: {src!r}")
+                    media[name] = data
+                    files.append(name)
+                except Exception as e:
+                    # One bad image is not worth losing the whole card over --
+                    # warn and move on, same as a mechanical check would flag it.
+                    _warn(f"Skipping an image on card {idx + 1}: {e}")
+            card["_media_files"] = files
+        n = collection.add_generated_notes(cards, media, s.deck_name,
+                                           _cfg()["scope_tag"])
+        _info(f"{n} cards added to {s.deck_name}. This is one undo step: "
+              "Ctrl+Z reverts it.")
+        self.accept()
+        return n
+
+    def reject(self):
+        """Closing mid-review discards everything unsaved -- nothing about a
+        draft, a note, or a prompt is ever written to disk (see the module
+        docstring), so this confirmation is the only chance to back out."""
+        if (self.stack.currentWidget() is self.review_page
+                and self.session.cards
+                and not _ask(
+                    "Discard the drafted cards? Nothing from this session "
+                    "is saved between sessions.",
+                    yes_label="Discard", no_label="Keep editing")):
+            return
+        super().reject()
+
+
+def generate_cards():
+    _GenerateDialog().exec()

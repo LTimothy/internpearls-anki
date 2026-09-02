@@ -6,6 +6,7 @@
 #                   the caller's on_event fires while this process is still alive)
 #   garbage         emit non-JSON noise then exit 0
 #   fail            exit 2 with stderr
+#   badjson         emit a result line whose "result" text is not valid card JSON
 import json
 import sys
 import time
@@ -24,9 +25,17 @@ if mode == "slow":
 if mode == "garbage":
     print("not json")
     sys.exit(0)
+if mode == "badjson":
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": "sorry, here is some prose instead of JSON",
+                      "usage": {"input_tokens": 10, "output_tokens": 5}}))
+    sys.exit(0)
 print(json.dumps({"type": "assistant", "message": {"content": [
     {"type": "tool_use", "name": "WebSearch", "input": {}}]}}), flush=True)
-cards = [{"note_type": "Basic", "fields": {"Front": "q", "Back": "a"},
+# "Study Deck - Basic" (not the bare "Basic" note type) so a flow test can carry
+# this card all the way through import against the mock collection's default model.
+cards = [{"note_type": "Study Deck - Basic",
+          "fields": {"Front": "q", "Back": "a"},
           "tags": [], "images": [], "rationale": "r"}]
 print(json.dumps({"type": "result", "subtype": "success",
                   "result": json.dumps(cards),
