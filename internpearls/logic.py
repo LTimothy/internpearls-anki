@@ -1007,7 +1007,7 @@ def note_display_label(fields, max_len=90):
     return "(card)"
 
 
-_CLOZE_RE = re.compile(r"\{\{c(\d+)::([^{}]*?)(?:::[^{}]*?)?\}\}", re.S)
+_CLOZE_RE = re.compile(r"\{\{c(\d+)::([^{}]*?)(?:::([^{}]*?))?\}\}", re.S)
 
 
 def cloze_filled_html(text, escape=True, mark_groups=None):
@@ -1015,8 +1015,15 @@ def cloze_filled_html(text, escape=True, mark_groups=None):
 
     Review is for confirming the fact is right, and for a cloze the fact lives in the
     deletions, so they are filled rather than blanked. The hint half of
-    {{c1::answer::hint}} is dropped. The field is escaped first and the spans injected
-    after: the other order escapes the spans themselves into visible markup. The
+    {{c1::answer::hint}} follows its answer in brackets, the way Anki itself shows a
+    hint while the answer is still blanked: it is the wording the learner reads on the
+    question side, so a card whose hint is wrong is a card that reads wrong, and a
+    review that dropped it showed nothing to check. It is styled apart from the answer
+    (`.ch`, not `.cloze`) because it is the prompt rather than the fact. An empty hint
+    ({{c1::answer::}}) is left off rather than rendered as empty brackets.
+
+    The field is escaped first and the spans injected after: the other order escapes
+    the spans themselves into visible markup. The
     deletion regex excludes braces from the answer, so a well-formed deletion whose
     answer contains a literal brace renders raw instead of filling; that degrades to
     visible markup rather than silently corrupting the card, which is the acceptable
@@ -1039,7 +1046,8 @@ def cloze_filled_html(text, escape=True, mark_groups=None):
 
     def fill(m):
         badge = f'<sup class="cn">c{int(m.group(1))}</sup>' if mark_groups else ""
-        return f'<span class="cloze">{m.group(2)}{badge}</span>'
+        hint = f' <span class="ch">[{m.group(3)}]</span>' if m.group(3) else ""
+        return f'<span class="cloze">{m.group(2)}{badge}</span>{hint}'
 
     return _CLOZE_RE.sub(fill, text)
 
@@ -1124,6 +1132,35 @@ def cloze_answer_changes(old, new):
         else:
             added.append(answer)
     return removed, added
+
+
+def cloze_hint_changes(old, new):
+    """Which deletions' hints moved between two versions of a cloze Text field:
+    [(answer, before, after)] for every deletion whose hint was added, reworded or
+    dropped, with "" on whichever side has none.
+
+    The hint is what the learner reads while the answer is still blanked, so editing
+    one changes the card even though both versions fill to word-for-word the same
+    sentence. Without this, `cloze_answer_changes` sees an identical set of answers and
+    the row reports a regrouping that never happened.
+
+    Deletions pair by answer text in order of appearance, since by the time this is
+    asked the filled words already match on both sides. An answer only one version has
+    was blanked or unblanked rather than re-hinted, which is `cloze_answer_changes`'s
+    to report, so it is skipped here rather than counted twice.
+    """
+    def hints(text):
+        out = {}
+        for m in _CLOZE_RE.finditer(text or ""):
+            out.setdefault(m.group(2), []).append(m.group(3) or "")
+        return out
+
+    old_hints, new_hints = hints(old), hints(new)
+    changes = []
+    for answer, before in old_hints.items():
+        after = new_hints.get(answer, [])
+        changes.extend((answer, b, a) for b, a in zip(before, after) if b != a)
+    return changes
 
 
 def field_preview_text(value):
