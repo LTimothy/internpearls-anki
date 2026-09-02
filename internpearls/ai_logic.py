@@ -314,6 +314,69 @@ def usage_line(reg, kind, now, free_tier=False):
     return line
 
 
+DURATION_WINDOW = 10   # last N runs kept per backend+mode
+MODE_LABELS = {"thorough": "Thorough", "quick": "Quick"}
+
+
+def _duration_runs(reg, key):
+    """Recorded durations for one backend+mode key, or [] for anything a
+    hand-edited state file could hold that isn't a clean list of numbers."""
+    durations = reg.get("durations")
+    if not isinstance(durations, dict):
+        return []
+    runs = durations.get(key)
+    if not isinstance(runs, list):
+        return []
+    out = []
+    for v in runs:
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out.append(float(v))
+    return out
+
+
+def record_duration(reg, kind, mode, seconds):
+    """Record one completed run's duration for kind+mode, keeping only the
+    most recent DURATION_WINDOW. A corrupt existing "durations" block (wrong
+    type, garbage entries) is dropped rather than propagated."""
+    key = f"{kind}-{mode}"
+    runs = _duration_runs(reg, key) + [float(seconds)]
+    reg = dict(reg)
+    durations = dict(reg.get("durations")) if isinstance(reg.get("durations"), dict) else {}
+    durations[key] = runs[-DURATION_WINDOW:]
+    reg["durations"] = durations
+    return reg
+
+
+def median_duration(reg, kind, mode):
+    """Median duration (seconds) of the recorded runs for kind+mode, or None
+    with no history."""
+    runs = sorted(_duration_runs(reg, f"{kind}-{mode}"))
+    if not runs:
+        return None
+    n, mid = len(runs), len(runs) // 2
+    return runs[mid] if n % 2 else (runs[mid - 1] + runs[mid]) / 2
+
+
+def format_duration(seconds):
+    """Human duration: "48s", "1m 40s", "2m"."""
+    total = int(round(seconds))
+    if total < 60:
+        return f"{total}s"
+    m, s = divmod(total, 60)
+    return f"{m}m {s}s" if s else f"{m}m"
+
+
+def duration_estimate_line(reg, kind, mode):
+    """"your recent Thorough runs averaged 1m 40s", or None with no history
+    for this backend+mode. Never invented: the caller shows elapsed time
+    alone when this is None."""
+    median = median_duration(reg, kind, mode)
+    if median is None:
+        return None
+    label = MODE_LABELS.get(mode, mode.capitalize())
+    return f"your recent {label} runs averaged {format_duration(median)}"
+
+
 def rate_limit_line(evt):
     # int() truncation, not :.0f: Python's format rounds .5 to even (87.5 -> "88"),
     # which overstates percent left; truncating to 87 is the conservative direction.

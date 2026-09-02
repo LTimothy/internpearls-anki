@@ -306,6 +306,8 @@ class _GenerateDialog(QDialog):
         if extra_error is None:
             self._retried_json = False
         s.mode = "thorough" if self.thorough_radio.isChecked() else "quick"
+        self._duration_estimate = ai_logic.duration_estimate_line(
+            load_ai_usage(), s.backend, s.mode)
         s.source = self.source_box.toPlainText()
         s.instructions = self.instructions_box.toPlainText()
         s.count = self.count_spin.value()
@@ -373,8 +375,10 @@ class _GenerateDialog(QDialog):
                 self.phase_label.setText(evt["phase"])
             elif evt["type"] == "rate_limits":
                 self.session.rate_limits = evt
-        self.elapsed_label.setText(
-            f"Elapsed {int(time.monotonic() - self._t0)}s")
+        text = f"Elapsed {int(time.monotonic() - self._t0)}s"
+        if self._duration_estimate:
+            text += " · " + self._duration_estimate
+        self.elapsed_label.setText(text)
         if self._worker.is_alive():
             return
         self._timer.stop()
@@ -417,6 +421,7 @@ class _GenerateDialog(QDialog):
         s.tokens_last_run = res["tokens"]
         reg = ai_logic.record_usage(load_ai_usage(), s.backend, res["tokens"],
                                     now=time.time())
+        reg = ai_logic.record_duration(reg, s.backend, s.mode, res["duration_s"])
         save_ai_usage(reg)
 
         # Card matching across a revision, by position: the prompt sends the

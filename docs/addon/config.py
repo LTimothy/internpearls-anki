@@ -181,7 +181,9 @@ def save_declined(reg):
 
 
 # Rolling per-backend usage counters for AI generation: {kind: [{ts, tokens}]},
-# pruned to 7 days.
+# pruned to 7 days. Also holds a "durations" key, {"<kind>-<mode>": [seconds]},
+# the last 10 run durations per backend+mode (see ai_logic.record_duration),
+# used to show a learned time estimate on the generation progress page.
 AI_USAGE = os.path.join(_USER_FILES, "ai_usage.json")
 
 
