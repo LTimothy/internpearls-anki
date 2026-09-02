@@ -90,6 +90,36 @@ def test_setup_test_connection_reports_working(anki, monkeypatch):
     assert dlg.test_buttons["claude"].isEnabled()        # re-enabled once it's done
 
 
+def test_recheck_mid_test_connection_does_not_reenable_or_double_run(anki, monkeypatch):
+    # Minor fix: Re-check used to unconditionally reset every test button/status,
+    # so pressing it while a Test connection run was in flight re-enabled that
+    # button and cleared its "Testing connection..." text -- a second click could
+    # then start a concurrent test racing the first to write the same label.
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": sys.executable if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs: ([sys.executable, FAKE, "badjson"], True))
+    dlg = ai_dialog._GenerateDialog()
+    dlg._test_setup_connection("claude")
+    assert not dlg.test_buttons["claude"].isEnabled()
+    status_mid_test = dlg.test_status["claude"].text()
+    n_refs = len(dlg._conn_test_refs)
+
+    dlg._detect(config._cfg())   # simulates a Re-check click mid-test
+    assert not dlg.test_buttons["claude"].isEnabled()          # still disabled
+    assert dlg.test_status["claude"].text() == status_mid_test  # not wiped
+
+    dlg._test_setup_connection("claude")   # a second click while still running
+    assert len(dlg._conn_test_refs) == n_refs   # no second test was started
+
+    _drain_conn_test(dlg)
+    assert "working" in dlg.test_status["claude"].text().lower()
+    assert dlg.test_buttons["claude"].isEnabled()
+
+
 def test_setup_test_connection_not_signed_in_shows_readable_message(anki, monkeypatch):
     monkeypatch.setattr(
         ai_cli, "find_cli",
