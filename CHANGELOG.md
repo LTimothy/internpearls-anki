@@ -3,6 +3,31 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.56.0
+
+A new Experimental item, AI Backends, is now where the three assistants are set up.
+Each one has its own group: whether it is used at all, which one is preferred, an
+executable path override, the default model and effort, and a Test connection button
+that runs one real, trivial prompt. The model and effort controls moved here from the
+"Generate cards with AI" wizard, whose input page now shows a one-line summary of the
+backend in use with a Change link beside it, and whose first-run page is a single
+button that opens this window. Defaults for Claude Code stay at sonnet with medium
+effort, chosen so a Thorough run does not spend a subscription's credits on the top
+model by default. The honesty rules are unchanged: Codex is only handed a model flag
+when its own help documents one, and Antigravity's model cannot be set from here at all.
+
+Night Mode Dimming can now dim more than images. A scope choice under the checkbox
+picks between bright images only, the previous behaviour, and everything Anki draws as
+a web page: cards, the deck list, the overview, and the editor. The menu bar and
+dialogs are native windows and stay as they are. A changed scope or percentage shows
+on the next screen that loads, and the confirmation after Save now says which scope
+was saved.
+
+My rules is a third skill, written by you. Plain text, edited from an "Edit my rules"
+link beside "View skills" on the wizard, stored in the add-on's user files so it
+survives updates, and sent to the assistant on every run after the bundled skill and
+any deck skill. It is capped at 20,000 characters and View skills shows it in full.
+
 ## v0.55.1
 
 Two small fixes to the "Generate cards with AI" wizard. The Model field, for a
