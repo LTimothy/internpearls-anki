@@ -122,7 +122,7 @@ def test_import_enables_real_undo_action_with_the_native_shortcut(monkeypatch):
     assert n == 1
     assert mock.mw.reset_count > 0                       # the UI was notified at all
     assert mock.mw.form.actionUndo.isEnabled() is True    # ...and undo is reachable
-    assert f"{native} reverts it" in mock.gui.infos[-1]
+    assert f"{native} reverts it" in mock.gui.tooltips[-1]
 
 
 def test_review_row_renders_a_real_image_thumbnail(monkeypatch, tmp_path):

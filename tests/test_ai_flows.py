@@ -338,8 +338,8 @@ def test_fresh_generate_after_back_does_not_report_a_bogus_diff(anki, monkeypatc
     dlg._wait_for_worker()
     assert dlg.session.updated == set()             # nothing "updated" against the old draft
     assert not dlg.session.revision_shape_mismatch
-    assert "kept" not in dlg.review_header.text()
-    assert "verbatim" not in dlg.review_header.text()
+    assert "kept" not in dlg.review_footer.text()
+    assert "verbatim" not in dlg.review_footer.text()
 
 
 def test_edit_card_updates_fields_via_prompt(anki, monkeypatch):
@@ -435,7 +435,7 @@ def test_import_success_message_uses_the_platform_undo_shortcut(anki, monkeypatc
     dlg._start_generation()
     dlg._wait_for_worker()
     dlg._do_import()
-    message = anki.gui.infos[-1]
+    message = anki.gui.tooltips[-1]
     assert f"{ai_dialog._undo_shortcut()} reverts it" in message
 
 
@@ -471,8 +471,8 @@ def test_import_success_message_pluralizes_a_single_card(anki, monkeypatch):
     dlg._start_generation()
     dlg._wait_for_worker()
     dlg._do_import()
-    assert "1 card added" in anki.gui.infos[-1]
-    assert "1 cards added" not in anki.gui.infos[-1]
+    assert "1 card added" in anki.gui.tooltips[-1]
+    assert "1 cards added" not in anki.gui.tooltips[-1]
 
 
 def test_core_cloze_card_review_row_renders_non_empty(anki, monkeypatch):
@@ -923,10 +923,10 @@ def test_revision_with_different_card_count_does_not_claim_per_card_updates(anki
     # moved -- every index is treated as changed, not silently mismatched.
     assert dlg.session.updated == {0, 1}
     assert dlg.session.included == [True, True]   # falls back to the mechanical-check default
-    header = dlg.review_header.text()
-    assert "different number of cards" in header
-    assert "kept 2 verbatim" not in header
-    assert "kept 1 verbatim" not in header
+    footer = dlg.review_footer.text()
+    assert "different number of cards" in footer
+    assert "kept 2 verbatim" not in footer
+    assert "kept 1 verbatim" not in footer
 
 
 # -- I3: cancelling or failing a revision must not strand the reviewed draft -
