@@ -295,6 +295,9 @@ def _scene_settings(mock, opts):
 
 def _scene_night_mode_dimming(mock, opts):
     from internpearls import dialogs
+    if "percent" in opts:
+        mock.mw._config = {"dim_images_night_mode": True,
+                           "dim_images_night_mode_percent": opts["percent"]}
     return dialogs.open_night_mode_dimming
 
 

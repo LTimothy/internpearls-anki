@@ -16,9 +16,9 @@ from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED,
                      NIGHT_MODE_DIM_PERCENT_CEILING, NIGHT_MODE_DIM_PERCENT_FLOOR,
                      STATE, _cfg, _load_json, load_declined, save_declined)
-from .logic import (deck_status, manifest_scope_suggestion, parse_fields,
-                    plural, version_at_least)
-from .palette import colors
+from .logic import (deck_status, manifest_scope_suggestion, night_mode_dim_factor,
+                    parse_fields, plural, version_at_least)
+from .palette import DARK, LIGHT, colors
 from .review import _scrolled, append_rows, build_list_body
 from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _safe, _warn,
@@ -1000,6 +1000,125 @@ def open_settings():
     _info(f"Settings saved.<br><br>{sync_line}<br>{update_line}")
 
 
+# --------------------------------------------------------- dimming preview
+# A live reference so the percent spinner's number isn't abstract: a small invented
+# schematic, drawn with QPainter at paint time rather than shipped as a file, shown
+# normal and dimmed side by side. This is a public repo -- no real card figure, no
+# deck content, nothing borrowed from anywhere; the shapes below are the whole of it.
+_SAMPLE_PANE_SIZE = (150, 100)
+
+
+def _sample_card_image():
+    """The preview's stand-in for "a bright image on a card": two labelled shapes and
+    the lines between them, on a white background. White is deliberate and not a
+    themed colour -- it's the exact background this feature exists to tone down, so
+    the reference has to start from it, the same as a real card figure would. The ink
+    colours come from palette.LIGHT (not colors(), which would pick DARK's ink, made
+    for a dark surface, on this always-white canvas) rather than a bare hex literal.
+    """
+    from aqt.qt import QColor, QImage, QPainter, QPen
+    w, h = _SAMPLE_PANE_SIZE
+    image = QImage(w, h, QImage.Format.Format_RGB32)
+    image.fill(QColor("#ffffff"))
+    painter = QPainter(image)
+    try:
+        ink = QColor(LIGHT["caret"])
+        accent = QColor(LIGHT["accent"])
+        painter.setPen(QPen(ink, 2))
+        painter.drawRect(18, 18, 42, 32)
+        painter.drawText(32, 39, "A")
+        painter.setPen(QPen(accent, 2))
+        painter.drawEllipse(90, 18, 42, 32)
+        painter.drawText(106, 39, "B")
+        painter.setPen(QPen(ink, 2))
+        painter.drawLine(39, 50, 111, 50)
+        painter.drawLine(39, 50, 39, 78)
+        painter.drawLine(111, 50, 111, 78)
+    finally:
+        painter.end()
+    return image
+
+
+def _dimmed_sample_image(percent):
+    """The sample image with the exact per-pixel transform night_mode_image_css's CSS
+    `filter: brightness(...)` applies in a real card: each channel multiplied by
+    night_mode_dim_factor(percent), the same function that rule calls, so this preview
+    can never show a different dim than Night Mode actually renders.
+    """
+    from aqt.qt import QColor
+    factor = night_mode_dim_factor(percent)
+    dimmed = _sample_card_image()
+    for y in range(dimmed.height()):
+        for x in range(dimmed.width()):
+            c = dimmed.pixelColor(x, y)
+            dimmed.setPixelColor(x, y, QColor(
+                min(255, round(c.red() * factor)),
+                min(255, round(c.green() * factor)),
+                min(255, round(c.blue() * factor))))
+    return dimmed
+
+
+class _NightModeSamplePane(QWidget):
+    """One half of the preview. Draws at paint time (real Qt only -- the structural
+    mock suite never triggers a paint, so this never runs there and needs nothing from
+    it beyond the plain QWidget it subclasses)."""
+
+    def __init__(self, dimmed, parent=None):
+        super().__init__(parent)
+        self._dimmed = dimmed
+        self._percent = 0
+        w, h = _SAMPLE_PANE_SIZE
+        self.setFixedWidth(w)
+        self.setFixedHeight(h)
+
+    def setPercent(self, percent):
+        self._percent = percent
+        self.update()
+
+    def paintEvent(self, event):
+        from aqt.qt import QPainter
+        image = _dimmed_sample_image(self._percent) if self._dimmed else _sample_card_image()
+        painter = QPainter(self)
+        try:
+            painter.drawImage(0, 0, image)
+        finally:
+            painter.end()
+
+
+class _NightModeDimPreview(QWidget):
+    """Normal vs dimmed, side by side, on a backdrop that is always dark: the feature
+    only ever applies while Anki itself is in Night Mode, so a preview painted on the
+    dialog's own (possibly light) window would misrepresent it. The backdrop and the
+    "Normal"/"Dimmed" captions take their colours from palette.DARK's own roles --
+    dosing_bg/dosing_fg, the pairing already tuned for a dark panel with readable text
+    on it -- never a hardcoded literal.
+    """
+
+    def __init__(self, percent, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(
+            f"background-color: {DARK['dosing_bg']}; color: {DARK['dosing_fg']};")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(14, 12, 14, 12)
+        row.setSpacing(20)
+        self._normal_pane = self._add_pane(row, dimmed=False, caption="Normal")
+        self._dimmed_pane = self._add_pane(row, dimmed=True, caption="Dimmed")
+        self.setPercent(percent)
+
+    def _add_pane(self, row, dimmed, caption):
+        col = QVBoxLayout()
+        pane = _NightModeSamplePane(dimmed)
+        label = QLabel(caption)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        col.addWidget(pane, 0, Qt.AlignmentFlag.AlignCenter)
+        col.addWidget(label)
+        row.addLayout(col)
+        return pane
+
+    def setPercent(self, percent):
+        self._dimmed_pane.setPercent(percent)
+
+
 class _NightModeDimmingDialog(QDialog):
     """How much bright images are dimmed while Anki's own Night Mode is on.
 
@@ -1012,12 +1131,12 @@ class _NightModeDimmingDialog(QDialog):
 
     def __init__(self, parent, enabled, percent):
         super().__init__(parent)
-        self.setWindowTitle(f"{APP_NAME}: Night mode dimming")
+        self.setWindowTitle(f"{APP_NAME}: Night Mode Dimming")
         self.setMinimumWidth(420)
 
         outer = QVBoxLayout(self)
         outer.setSpacing(10)
-        outer.addWidget(title_label("Night mode dimming"))
+        outer.addWidget(title_label("Night Mode Dimming"))
 
         self._enabled_cb = QCheckBox("Dim bright images in Night Mode")
         self._enabled_cb.setChecked(enabled)
@@ -1037,6 +1156,10 @@ class _NightModeDimmingDialog(QDialog):
         percent_row.addWidget(self._percent_spin)
         percent_row.addStretch()
         outer.addLayout(percent_row)
+
+        self._preview = _NightModeDimPreview(percent)
+        self._percent_spin.valueChanged.connect(self._preview.setPercent)
+        outer.addWidget(self._preview)
 
         outer.addWidget(hint_label(
             "Higher dims images more; 0 leaves them unchanged. Applies to every deck "

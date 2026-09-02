@@ -100,7 +100,7 @@ def _menu():
     # groups.
     exp = menu.addMenu("Experimental")
     add(exp, "Generate cards (AI)", generate_cards)
-    add(exp, "Night mode dimming", open_night_mode_dimming)
+    add(exp, "Night Mode Dimming", open_night_mode_dimming)
     menu.addSeparator()
     add(menu, "Settings", open_settings)
     add(menu, "About", about)
