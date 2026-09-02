@@ -31,7 +31,14 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
          # blocked check reads DECLINE, a warning reads UPDATED (attention, not yet
          # a stop), a clean card reads ACCEPT, and a card a revision changed reads
          # UPDATED's own word for that idea.
-         "blocked": "BLOCKED", "warn": "WARNING", "ok": "OK", "revised": "REVISED"}
+         "blocked": "BLOCKED", "warn": "WARNING", "ok": "OK", "revised": "REVISED",
+         # The AI Backends window's row kinds (ai_setup.py): what the detection
+         # pass found for one assistant, and which one the wizard will use. This
+         # is the window's own vocabulary rather than a card's, so these get their
+         # own words, mapped onto the existing role pairs below.
+         "found": "FOUND", "notfound": "NOT FOUND",
+         "notresponding": "NOT RESPONDING", "ignored": "IGNORED",
+         "preferred": "PREFERRED"}
 
 # A chip's palette role prefix, keyed by its kind. Not a 1:1 string match: "changed"
 # reuses the existing "updated_bg"/"updated_fg" pair rather than a "changed_bg" this
@@ -42,7 +49,15 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
 # is needed for any of them.
 _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "moved",
           "skipped": "retired", "kept": "retired",
-          "blocked": "decline", "warn": "updated", "ok": "accept", "revised": "updated"}
+          "blocked": "decline", "warn": "updated", "ok": "accept", "revised": "updated",
+          # A found assistant is a clean result (accept), one that is installed but
+          # will not answer is the same "attention, not yet a stop" as a warning
+          # (updated), one that is not there at all reads as a decline, and one the
+          # reader has set aside reuses retired the way skipped/kept already do.
+          # "preferred" borrows new, the one role that reads as a marker rather
+          # than a verdict: it says which row the settings below belong to.
+          "found": "accept", "notfound": "decline", "notresponding": "updated",
+          "ignored": "retired", "preferred": "new"}
 
 # Everything about a pill except its two colours: the shape and the type size, shared
 # between the real pill and the probe that measures it, so the measurement can never
