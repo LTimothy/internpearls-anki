@@ -11,6 +11,27 @@ from internpearls import ai_cli, ai_dialog, config
 FAKE = os.path.join(os.path.dirname(__file__), "fake_cli.py")
 
 
+def _row_text(row):
+    """Every bit of text a review row (or any widget) carries, anywhere in its
+    layout tree -- flattened, since the row skeleton splits what used to be one
+    QLabel across a header line, reason lines, and a collapsible body. Walks the
+    mock's own .node() rather than reaching for a real Qt findChildren the mock
+    doesn't have."""
+    parts = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "text" in node:
+                parts.append(node["text"])
+            for c in node.get("children", []):
+                walk(c)
+        elif isinstance(node, list):
+            for c in node:
+                walk(c)
+    walk(row.node())
+    return " ".join(parts)
+
+
 def test_setup_page_shown_when_no_backend(anki, monkeypatch):
     monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
     dlg = ai_dialog._GenerateDialog()
@@ -490,9 +511,9 @@ def test_core_cloze_card_review_row_renders_non_empty(anki, monkeypatch):
     s.checks = ai_logic.mechanical_checks(s.cards, {})
     dlg._rebuild_review()
     row = dlg.cards_lay.itemAt(0).widget()
-    label = row.layout().itemAt(1).widget()
-    assert label.text().strip() != ""
-    assert "halothane" in label.text()
+    text = _row_text(row)
+    assert text.strip() != ""
+    assert "halothane" in text
 
 
 def test_excluded_card_is_not_imported(anki, monkeypatch):
@@ -610,8 +631,7 @@ def test_review_row_shows_thumbnail_and_host_for_a_web_image(anki, monkeypatch):
     dlg._start_generation()
     dlg._wait_for_worker(timeout=15)
     row = dlg.cards_lay.itemAt(0).widget()
-    label = row.layout().itemAt(1).widget()
-    text = label.text()
+    text = _row_text(row)
     assert "example.com" in text                      # the URL's host, per I2
     assert "<img" in text or "[image" in text          # a real indication of the image
 
@@ -627,8 +647,7 @@ def test_failed_image_download_becomes_a_mechanical_check_not_a_modal(anki, monk
               for c in dlg.session.checks[0])
     assert dlg.session.included == [False]
     row = dlg.cards_lay.itemAt(0).widget()
-    label = row.layout().itemAt(1).widget()
-    assert "network is down" in label.text()
+    assert "network is down" in _row_text(row)
 
 
 def test_import_reuses_review_resolved_bytes_without_a_second_fetch(anki, monkeypatch):
