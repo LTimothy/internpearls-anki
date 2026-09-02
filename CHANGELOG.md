@@ -12,18 +12,25 @@ API key field anywhere in the add-on; it only shells out to a CLI already signed
 on your own machine, and never reads, sends, or stores a credential of any kind.
 
 The three backends are not equally sandboxed, and the setup screen says so plainly
-for each rather than folding them into one reassurance. Quick draft is one fast pass
-with no web access; Thorough drafts, checks its facts against sources it can reach
-online, then reviews its own draft before handing cards back. No card here ever
-carries an AI-generated picture: an image can only come from a real web source, one
-extracted from something you attached, or SVG the model draws itself.
+for each rather than folding them into one reassurance -- including what Quick draft
+and Thorough actually restrict, which differs by backend: Claude Code is the only one
+the add-on itself caps by mode (Quick gets one turn and no tools beyond reading files
+you attach; Thorough gets more turns and web-search tools), Codex CLI is sandboxed
+read-only in both modes so neither can reach the network, and Antigravity CLI isn't
+restricted by mode at all, so it may still reach the web even under Quick. Separately,
+and in every mode: if a drafted card proposes a picture it found online, the add-on
+itself (not the assistant) fetches that image during review so you can see it, and
+shows the host it came from. No card here ever carries an AI-generated picture: an
+image can only come from a real web source, one extracted from something you
+attached, or SVG the model draws itself.
 
 Cards you generate land in their own `Generated` subdeck and tag with a fresh local
 GUID, so a shared deck source's own sync and reconcile machinery can never match,
 retire, or overwrite one. Nothing about a session (the source text, drafts, your
 feedback, the exchange with the CLI) is saved once the dialog closes; only your
-backend choice, a deck skill you've explicitly consented to, and a rolling count of
-recent runs persist between sessions.
+backend choice, a deck skill you've explicitly consented to, a rolling usage log, and
+a rolling log of recent run durations (for the progress screen's learned time
+estimate) persist between sessions.
 
 ## v0.52.1
 

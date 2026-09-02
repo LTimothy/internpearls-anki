@@ -172,6 +172,13 @@ class _GenerateDialog(QDialog):
         self.setMinimumWidth(480)
         self.session = s = _Session()
         self._retried_json = False   # the single-retry budget on malformed model output
+        # Backend kinds with a "Test connection" run currently in flight (from
+        # either the setup page's per-backend button or the input page's single
+        # backend button -- both call _run_connection_test for the same kind).
+        # Guards against Re-check re-enabling a button mid-test and a second
+        # click starting a concurrent test that races the first to write the
+        # same status label.
+        self._testing_kinds = set()
         cfg = _cfg()
         s.deck_name = cfg["export_deck"] + "::" + ai_logic.GENERATED_DECK_LEAF
 
@@ -242,8 +249,13 @@ class _GenerateDialog(QDialog):
             override = cfg.get("ai_cli_path", "") if preferred == kind else ""
             path = ai_cli.find_cli(kind, override)
             self._detected_paths[kind] = path
-            self.test_buttons[kind].setEnabled(bool(path))
-            self.test_status[kind].setText("")
+            if kind not in self._testing_kinds:
+                # A live test's own on_done re-enables its button and its poll
+                # callback owns its status text; re-checking must not touch
+                # either mid-test, or a second click here could start a
+                # concurrent test racing the first to the same label.
+                self.test_buttons[kind].setEnabled(bool(path))
+                self.test_status[kind].setText("")
             if path:
                 res = ai_cli.probe(kind, path)
                 ok = res["ok"]
@@ -274,12 +286,16 @@ class _GenerateDialog(QDialog):
 
     def _test_setup_connection(self, kind):
         path = self._detected_paths.get(kind)
-        if not path:
+        if not path or kind in self._testing_kinds:
             return
+        self._testing_kinds.add(kind)
         btn, status = self.test_buttons[kind], self.test_status[kind]
         btn.setEnabled(False)
-        self._run_connection_test(kind, path, status.setText,
-                                  on_done=lambda: btn.setEnabled(True))
+
+        def _done():
+            self._testing_kinds.discard(kind)
+            btn.setEnabled(True)
+        self._run_connection_test(kind, path, status.setText, on_done=_done)
 
     def _run_connection_test(self, kind, path, on_status, on_done=None):
         """Run ai_cli.test_connection off the UI thread, polling the same way
@@ -438,12 +454,16 @@ class _GenerateDialog(QDialog):
 
     def _test_backend_connection(self):
         s = self.session
-        if not s.backend or not s.cli_path:
+        if not s.backend or not s.cli_path or s.backend in self._testing_kinds:
             return
+        self._testing_kinds.add(s.backend)
         self.backend_test_btn.setEnabled(False)
+
+        def _done():
+            self._testing_kinds.discard(s.backend)
+            self.backend_test_btn.setEnabled(True)
         self._run_connection_test(
-            s.backend, s.cli_path, self.backend_test_status.setText,
-            on_done=lambda: self.backend_test_btn.setEnabled(True))
+            s.backend, s.cli_path, self.backend_test_status.setText, on_done=_done)
 
     def _attach(self):
         from aqt.qt import QFileDialog
@@ -484,14 +504,16 @@ class _GenerateDialog(QDialog):
             _info(_body(deck))
             return
 
+        def _label_for(d):
+            return "Disable deck skill" if d.get("enabled") else "Enable deck skill"
+
         def _toggle(dlg):
             deck["enabled"] = not deck.get("enabled")
             save_deck_skill(deck)
-            return _body(deck)
+            return _body(deck), _label_for(deck)
 
-        label = "Disable deck skill" if deck.get("enabled") else "Enable deck skill"
         _ask_scrollable(_body(deck), yes_label="Close", no_label=None,
-                        extra_label=label, on_extra=_toggle)
+                        extra_label=_label_for(deck), on_extra=_toggle)
 
     # -- progress --------------------------------------------------------------
     def _build_progress(self):
@@ -654,10 +676,10 @@ class _GenerateDialog(QDialog):
         resolution phase that can follow it -- whichever is actually running.
 
         The scratch dir is the live workers' cwd (the CLI's --add-dir target,
-        and where image resolution reads/writes), so it can only be removed
-        once every worker that touches it has actually returned -- a
-        background reaper thread waits for that and cleans up after, rather
-        than racing it."""
+        and where image resolution reads/writes), so a background reaper
+        thread waits on every worker before removing it, rather than racing
+        it -- each join is capped at 30s, after which the reaper deletes the
+        directory regardless, so a wedged worker can't leak it forever."""
         self._gen_done = True
         self._img_done = True
         if hasattr(self, "_cancel_flag"):
@@ -759,7 +781,6 @@ class _GenerateDialog(QDialog):
 
     def _run_image_resolution(self, cards):
         s = self.session
-        self._img_error = None
         self._img_results = {}
         self._img_cancel_flag = threading.Event()
         self._img_done = False
@@ -1044,10 +1065,13 @@ class _GenerateDialog(QDialog):
 
     def _cleanup_scratch(self):
         """Remove the session's scratch directory (extracted attachment images,
-        PDF-embedded images -- real source material) on every path that ends
-        this dialog. Best-effort: a failure to delete must never raise into the
-        user's face or block the dialog from closing, and nothing about a
-        session may outlive it (see the module docstring's storage policy)."""
+        PDF-embedded images -- real source material). Called directly on every
+        path that ends this dialog EXCEPT closing mid-generation, which hands
+        the same cleanup to a background reaper instead (see
+        _cancel_running_generation) so closing never blocks on a live worker.
+        Best-effort: a failure to delete must never raise into the user's face
+        or block the dialog from closing, and nothing about a session may
+        outlive it (see the module docstring's storage policy)."""
         if self.session.scratch:
             shutil.rmtree(self.session.scratch, ignore_errors=True)
             self.session.scratch = None

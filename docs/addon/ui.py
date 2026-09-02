@@ -153,9 +153,11 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     `extra_label` adds a third button that does NOT answer the question. It carries
     ActionRole, so clicking it leaves this dialog open, runs `on_extra`, and returns
     the reader to the same undecided confirmation, which is the point: going to look
-    at something in more detail shouldn't cost you the decision you were making. If
-    `on_extra` returns a string, it replaces the body text, so the confirmation can
-    reflect whatever happened while it was open; returning None leaves the body alone.
+    at something in more detail shouldn't cost you the decision you were making.
+    `on_extra` may return a plain string (replaces the body text; None leaves it
+    alone) or a `(body_text, button_label)` pair when the click also changes what the
+    button itself should say next (e.g. a toggle whose label names the action, not
+    the current state) -- either element may be None to leave that part alone.
 
     `no_label=None` drops the second button entirely, for a caller with nothing to
     decline, just long or richly formatted content to show in a scrollable, consistently
@@ -235,8 +237,12 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
 
         def _run_extra():
             updated = on_extra(dlg) if on_extra else None
-            if updated is not None:
-                body.setText(_rich(updated))
+            new_text, new_label = ((updated if isinstance(updated, tuple)
+                                    else (updated, None)))
+            if new_text is not None:
+                body.setText(_rich(new_text))
+            if new_label is not None:
+                extra.setText(new_label)
         extra.clicked.connect(_run_extra)
     yes.clicked.connect(dlg.accept)
     bb.rejected.connect(dlg.reject)
