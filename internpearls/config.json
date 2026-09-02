@@ -13,6 +13,7 @@
   "auto_sync_interval_minutes": 15,
   "dim_images_night_mode": false,
   "dim_images_night_mode_percent": 30,
+  "dim_night_mode_scope": "images",
   "ai_backend": "",
   "ai_cli_path": "",
   "ai_model": {"claude": "", "codex": "", "agy": ""},

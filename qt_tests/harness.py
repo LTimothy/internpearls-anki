@@ -298,6 +298,8 @@ def _scene_night_mode_dimming(mock, opts):
     if "percent" in opts:
         mock.mw._config = {"dim_images_night_mode": True,
                            "dim_images_night_mode_percent": opts["percent"]}
+    if "scope" in opts:
+        mock.mw._config["dim_night_mode_scope"] = opts["scope"]
     return dialogs.open_night_mode_dimming
 
 
