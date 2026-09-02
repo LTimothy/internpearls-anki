@@ -1668,6 +1668,38 @@ def test_update_decks_syncs_and_reconciles_in_one_pass(anki, tmp_path):
     assert "Update complete" in _summary_text(trees)
 
 
+def test_update_decks_never_merges_a_generated_card_in_the_post_sync_recompute(
+        anki, tmp_path):
+    """update_decks() recomputes stranded pairs a second time after the sync runs (to
+    catch a pairing the sync itself just created), and that recompute must carry the
+    same generated-card guard the earlier, pre-sync stranded list already has. Without
+    it, a generated card whose front coincidentally matches a superseded_fronts pair
+    gets merged: the "predecessor's" scheduling overwrites her own card's history and
+    her own card gets archived as if it were the stale upstream copy."""
+    from internpearls import ai_logic, sync
+    gen_guid = ai_logic.generated_guid()
+    old = _her_card(anki, gen_guid, "old wording")
+    new = _her_card(anki, "g_new", "new wording")
+    _sched(anki, old, reps=4, ivl=12, due=90, factor=2300, lapses=1, type=2, queue=2)
+    # An unrelated retired card, just so `fresh` is non-empty and update_decks actually
+    # enters the archive/merge block the recompute lives inside; a run with nothing
+    # pending never reaches it.
+    _her_card(anki, "old_other", "an unrelated retiring card")
+    _configure(anki, _stranded_and_retired(
+        tmp_path, {"old wording": "new wording"},
+        {DECK: {"old_other": {"identity": "an unrelated retiring card",
+                              "reason": "split", "superseded_by": []}}}))
+
+    trees = _update(anki)
+
+    generated = anki.col.get_card(old.card_ids()[0])
+    assert generated.queue == 2 and generated.reps == 4   # her own card, untouched
+    assert RETIRED_TAG not in anki.col.note_by_guid(gen_guid).tags  # not archived
+    kept = anki.col.get_card(new.card_ids()[0])
+    assert kept.reps == 0        # never received the "predecessor's" scheduling
+    assert "Merged" not in _summary_text(trees)
+
+
 def test_update_decks_confirmation_shows_real_kept_new_counts(anki, tmp_path):
     """The confirmation must download and match each pending deck before showing
     it, the same way Manage decks' old "Check what will sync" preview did — a
