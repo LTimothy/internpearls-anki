@@ -86,6 +86,11 @@ NIGHT_MODE_DIM_PERCENT_FLOOR = 0
 NIGHT_MODE_DIM_PERCENT_DEFAULT = 30
 NIGHT_MODE_DIM_PERCENT_CEILING = 90
 
+# "images" dims bright images only (the original behaviour); "content" dims the whole
+# web view body instead. An unrecognized or missing value falls back to "images" rather
+# than raising, same as every other _cfg() key.
+NIGHT_MODE_SCOPE_DEFAULT = "images"
+
 # One-time migration: earlier versions wrote this next to __init__.py, so an add-on
 # update would have already wiped it. Move it over if it's still there from a
 # same-version reinstall.
@@ -147,6 +152,9 @@ def _cfg():
             c.get("dim_images_night_mode_percent", NIGHT_MODE_DIM_PERCENT_DEFAULT),
             NIGHT_MODE_DIM_PERCENT_FLOOR, NIGHT_MODE_DIM_PERCENT_DEFAULT,
             NIGHT_MODE_DIM_PERCENT_CEILING),
+        "dim_night_mode_scope": (c.get("dim_night_mode_scope")
+                                 if c.get("dim_night_mode_scope") in ("images", "content")
+                                 else NIGHT_MODE_SCOPE_DEFAULT),
         "ai_backend":            c.get("ai_backend", ""),
         "ai_cli_path":           c.get("ai_cli_path", ""),
         "ai_model":              _ai_map(c.get("ai_model")),

@@ -5,9 +5,9 @@ Everything here is presentation plus config writes; the flows that touch the
 collection or the network live in sync.py / collection.py and are called from here.
 """
 from aqt import mw
-from aqt.qt import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
-                    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox,
-                    Qt, QVBoxLayout, QWidget)
+from aqt.qt import (QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QFileDialog,
+                    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton,
+                    QScrollArea, QSpinBox, Qt, QVBoxLayout, QWidget)
 
 from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
 from .collection import installed_matching_collection, invalidate_installed
@@ -1120,16 +1120,17 @@ class _NightModeDimPreview(QWidget):
 
 
 class _NightModeDimmingDialog(QDialog):
-    """How much bright images are dimmed while Anki's own Night Mode is on.
+    """How much is dimmed, and how much of the screen, while Anki's own Night Mode is
+    on.
 
     Split out of Settings and into Experimental: it's a display tweak rather than a
-    sync-automation one, and the percentage control is new and still settling. Anki's
-    Night Mode adds a "nightMode" class to the card body (see logic.night_mode_image_css),
-    which is the only thing the dimming CSS ever matches: so this never applies in
-    Day mode, and never anything but images.
+    sync-automation one, and both controls are new and still settling. Anki's Night
+    Mode adds a "nightMode" class to the card body (see logic.night_mode_css), which
+    is the only thing either dimming rule ever matches: so this never applies in Day
+    mode, and never to the menu bar or dialogs.
     """
 
-    def __init__(self, parent, enabled, percent):
+    def __init__(self, parent, enabled, percent, scope):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Night Mode Dimming")
         self.setMinimumWidth(420)
@@ -1138,9 +1139,22 @@ class _NightModeDimmingDialog(QDialog):
         outer.setSpacing(10)
         outer.addWidget(title_label("Night Mode Dimming"))
 
-        self._enabled_cb = QCheckBox("Dim bright images in Night Mode")
+        self._enabled_cb = QCheckBox("Dim in Night Mode")
         self._enabled_cb.setChecked(enabled)
         outer.addWidget(self._enabled_cb)
+
+        self._scope_images = QRadioButton("Bright images only")
+        self._scope_content = QRadioButton("Everything on cards and deck screens")
+        group = QButtonGroup(self)
+        group.addButton(self._scope_images)
+        group.addButton(self._scope_content)
+        (self._scope_content if scope == "content" else self._scope_images).setChecked(True)
+        outer.addWidget(self._scope_images)
+        outer.addWidget(self._scope_content)
+        self._scope_hint = hint_label("")
+        outer.addWidget(self._scope_hint)
+        group.buttonToggled.connect(lambda *_: self._refresh_scope_hint())
+        self._refresh_scope_hint()
 
         percent_row = QHBoxLayout()
         percent_row.addWidget(QLabel("Dim by"))
@@ -1149,10 +1163,15 @@ class _NightModeDimmingDialog(QDialog):
                                     NIGHT_MODE_DIM_PERCENT_CEILING)
         self._percent_spin.setValue(percent)
         self._percent_spin.setSuffix("%")
-        # Nothing to dim by while the toggle above is off, so the control that sets
-        # how much follows it, same as Settings' own interval spinbox does.
+        # Nothing to dim by while the toggle above is off, so the controls that set
+        # how much (and how much of the screen) follow it, same as Settings' own
+        # interval spinbox does.
         self._percent_spin.setEnabled(enabled)
+        self._scope_images.setEnabled(enabled)
+        self._scope_content.setEnabled(enabled)
         self._enabled_cb.toggled.connect(self._percent_spin.setEnabled)
+        self._enabled_cb.toggled.connect(self._scope_images.setEnabled)
+        self._enabled_cb.toggled.connect(self._scope_content.setEnabled)
         percent_row.addWidget(self._percent_spin)
         percent_row.addStretch()
         outer.addLayout(percent_row)
@@ -1162,9 +1181,9 @@ class _NightModeDimmingDialog(QDialog):
         outer.addWidget(self._preview)
 
         outer.addWidget(hint_label(
-            "Higher dims images more; 0 leaves them unchanged. Applies to every deck "
-            "in your collection, not just Intern Pearls ones, and only while Anki "
-            "itself is in Night Mode: never in Day mode."))
+            "Higher dims more; 0 leaves it unchanged. Applies to every deck in your "
+            "collection, not just Intern Pearls ones, and only while Anki itself is "
+            "in Night Mode: never in Day mode."))
 
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -1173,10 +1192,21 @@ class _NightModeDimmingDialog(QDialog):
         bb.rejected.connect(self.reject)
         outer.addWidget(bb)
 
+    def _refresh_scope_hint(self):
+        if self._scope_content.isChecked():
+            self._scope_hint.setText(
+                "Dims cards and deck screens alike: the deck list, the overview, "
+                "and the editor, plus every card. Not the menu bar or dialogs. "
+                "Takes effect the next time a screen loads.")
+        else:
+            self._scope_hint.setText("Dims bright images on cards only, from the next card.")
+
     def values(self):
         return {
             "dim_images_night_mode": self._enabled_cb.isChecked(),
             "dim_images_night_mode_percent": self._percent_spin.value(),
+            "dim_night_mode_scope": ("content" if self._scope_content.isChecked()
+                                     else "images"),
         }
 
 
@@ -1185,7 +1215,8 @@ def open_night_mode_dimming():
     """Open Night mode dimming: on/off, and how much."""
     cfg = _cfg()
     dlg = _NightModeDimmingDialog(mw, cfg["dim_images_night_mode"],
-                                  cfg["dim_images_night_mode_percent"])
+                                  cfg["dim_images_night_mode_percent"],
+                                  cfg["dim_night_mode_scope"])
     saved = bool(dlg.exec())
     values = dlg.values()
     dlg.deleteLater()   # its controls are read above; see ui._ask_scrollable

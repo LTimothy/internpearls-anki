@@ -944,7 +944,7 @@ def test_settings_no_longer_offers_night_mode_dimming(anki):
     def respond(p):
         if p["kind"] == "dialog":
             assert find(p["tree"], t="check",
-                       label="Dim bright images in Night Mode") is None
+                       label="Dim in Night Mode") is None
             cancel = find(p["tree"], t="button", label="Cancel")
             return {"events": [{"id": cancel["id"], "click": True}]}
         return {}
@@ -960,7 +960,7 @@ def test_night_mode_dimming_saves_toggle_and_percent(anki):
 
     def respond(p):
         if p["kind"] == "dialog":
-            dim = find(p["tree"], t="check", label="Dim bright images in Night Mode")
+            dim = find(p["tree"], t="check", label="Dim in Night Mode")
             assert dim is not None
             spin = find(p["tree"], t="spin")
             # 30 is the fixed dim level every build applied before this became
@@ -989,7 +989,7 @@ def test_night_mode_dimming_percent_spinbox_follows_the_toggle(anki):
     def respond(p):
         if p["kind"] != "dialog":
             return {}
-        dim = find(p["tree"], t="check", label="Dim bright images in Night Mode")
+        dim = find(p["tree"], t="check", label="Dim in Night Mode")
         spin = find(p["tree"], t="spin")
         enabled.append(spin["enabled"])
         if len(enabled) < 3:
@@ -1017,6 +1017,34 @@ def test_night_mode_dimming_percent_range_matches_the_clamp(anki):
         return {"events": [{"id": cancel["id"], "click": True}]}
 
     drive(anki, dialogs.open_night_mode_dimming, respond)
+
+
+def test_dimming_dialog_scope_value(anki):
+    """_NightModeDimmingDialog has no dedicated save method (open_night_mode_dimming
+    reads dlg.values() after exec() and writes that into config itself), so this reads
+    values() directly rather than the brief's guessed dlg._save()."""
+    from internpearls import dialogs
+    dlg = dialogs._NightModeDimmingDialog(anki.mw, True, 30, "images")
+    dlg._scope_content.setChecked(True)
+    assert dlg.values()["dim_night_mode_scope"] == "content"
+
+
+def test_night_mode_dimming_saves_scope(anki):
+    from internpearls import dialogs
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            content = find(p["tree"], t="radio",
+                          label="Everything on cards and deck screens")
+            assert content is not None
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": content["id"], "value": True},
+                               {"id": save["id"], "click": True}]}
+        return {}
+
+    drive(anki, dialogs.open_night_mode_dimming, respond)
+    assert anki.mw._config["dim_night_mode_scope"] == "content"
 
 
 def test_the_interval_spinbox_follows_the_auto_sync_checkbox(anki):
