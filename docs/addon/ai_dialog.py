@@ -600,16 +600,28 @@ class _GenerateDialog(QDialog):
         lay.addWidget(QLabel("Instructions (optional)"))
         lay.addWidget(self.instructions_box)
 
-        # Labels are per-backend and truthful (see ai_cli.BACKENDS' "modes"), set
-        # once a backend is known -- see _refresh_backend_row. What mode
-        # enforcement actually exists differs by backend, so one label for all
-        # three would misdescribe at least one of them.
-        self.thorough_radio = QRadioButton()
-        self.quick_radio = QRadioButton()
+        # The radio itself carries only the short, stable name; the per-backend
+        # truthful sentence (ai_cli.BACKENDS' "modes", set once a backend is known
+        # -- see _refresh_backend_row) moves to a hint_label underneath, word-
+        # wrapped. A radio button doesn't wrap its own text, and that sentence runs
+        # 150-200 characters, which used to set the radio's sizeHint to its full
+        # width and, since a stacked widget's minimum is the max of its pages,
+        # forced the whole dialog to roughly 1000px wide on every page. What mode
+        # enforcement actually exists differs by backend, so the sentence still has
+        # to be shown in full, honestly, per backend -- it just no longer has to be
+        # the thing that can't wrap.
+        self.thorough_radio = QRadioButton("Thorough")
+        self.quick_radio = QRadioButton("Quick draft")
+        for radio in (self.thorough_radio, self.quick_radio):
+            radio.setStyleSheet("font-weight: 600;")
         self.thorough_radio.setChecked(True)
+        self.thorough_hint = hint_label("")
+        self.quick_hint = hint_label("")
         lay.addWidget(QLabel("Quality"))
         lay.addWidget(self.thorough_radio)
+        lay.addWidget(self.thorough_hint)
         lay.addWidget(self.quick_radio)
+        lay.addWidget(self.quick_hint)
 
         self.count_spin = QSpinBox()
         self.count_spin.setRange(1, 50)
@@ -697,8 +709,8 @@ class _GenerateDialog(QDialog):
         s = self.session
         meta = ai_cli.BACKENDS[s.backend]
         self.backend_row.setText(f"Backend: {meta['label']} (signed in)")
-        self.thorough_radio.setText(meta["modes"]["thorough"])
-        self.quick_radio.setText(meta["modes"]["quick"])
+        self.thorough_hint.setText(meta["modes"]["thorough"])
+        self.quick_hint.setText(meta["modes"]["quick"])
         reg = load_ai_usage()
         self.usage_row.setText(ai_logic.usage_line(
             reg, s.backend, now=time.time(), free_tier=(s.backend == "agy")))
