@@ -14,11 +14,12 @@ def test_open_ai_backends_builds_one_group_per_backend(anki, monkeypatch):
                      for k in ai_cli.BACKENDS}, "chosen": None})
     dlg = ai_setup._AIBackendsDialog(anki.mw)
     assert set(dlg.groups) == set(ai_cli.BACKENDS)
-    assert dlg.groups["claude"].model.isVisible() is not None   # widget exists
+    assert isinstance(dlg.groups["claude"].model, ai_setup.ModelEffortControls)
     for kind, meta in ai_cli.BACKENDS.items():
         group = dlg.groups[kind]
         assert meta["safety"] in group.status.text()
-        assert meta["label"] in group.title() or meta["label"] in group.status.text()
+        assert meta["label"] in group.title()
+        assert isinstance(group.model, ai_setup.ModelEffortControls)
 
 
 def test_toggling_enabled_writes_config(anki, monkeypatch):

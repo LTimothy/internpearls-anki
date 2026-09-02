@@ -2,7 +2,7 @@
 controls moved here from the wizard (see qt_tests/test_ai_dialog.py, which
 kept only the wizard's own pages)."""
 import harness
-from aqt.qt import QPoint
+from aqt.qt import QApplication, QPoint, QPushButton
 from internpearls import ai_cli, ai_setup
 
 
@@ -161,3 +161,28 @@ def test_model_and_effort_fields_align_and_custom_reveals_edit(monkeypatch):
     model.custom.textEdited.emit("claude-3-opus-20240229")
     conf = mw.addonManager.getConfig("internpearls")
     assert conf["ai_model"]["claude"] == "claude-3-opus-20240229"
+
+
+def test_ai_backends_dialog_fits_the_screen_and_close_is_reachable(monkeypatch):
+    """The three backend groups plus the Re-check row used to sit directly in
+    the dialog's own layout, with nothing to cap their combined height: fully
+    unfolded (every backend "not found", the widest each group's status/hint
+    text gets) that ran taller than an ordinary laptop screen and took the
+    Close button off the bottom with it. They now live inside a QScrollArea,
+    with Close kept outside it, and the dialog opens at a size clamped to the
+    available screen (see _AIBackendsDialog.__init__)."""
+    harness.bootstrap()
+    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
+    dlg = ai_setup._AIBackendsDialog(None)
+    dlg.show()
+    harness.app().processEvents()
+
+    geo = QApplication.primaryScreen().availableGeometry()
+    assert dlg.height() <= geo.height() - 60, (
+        f"dialog is {dlg.height()}px tall against a {geo.height()}px screen")
+
+    close_btn = next(b for b in dlg.findChildren(QPushButton) if b.text() == "Close")
+    assert close_btn.isVisible()
+    top_left = close_btn.mapTo(dlg, QPoint(0, 0))
+    assert 0 <= top_left.y() <= dlg.height()
+    assert top_left.y() + close_btn.height() <= dlg.height() + 1

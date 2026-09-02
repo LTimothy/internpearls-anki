@@ -4,9 +4,10 @@ shows a one-line summary and a Change link that opens this."""
 import threading
 
 from aqt import mw
-from aqt.qt import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-                    QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                    QPushButton, QRadioButton, QTimer, QVBoxLayout, QWidget, pyqtSignal)
+from aqt.qt import (QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
+                    QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
+                    QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton,
+                    QScrollArea, QTimer, QVBoxLayout, QWidget, pyqtSignal)
 
 from . import ai_cli
 from .config import ADDON_PACKAGE, APP_NAME, _cfg
@@ -212,15 +213,29 @@ class _AIBackendsDialog(QDialog):
         res = ai_cli.detect_backends(cfg)
         self._pref_group = QButtonGroup(self)
         self.groups = {}
+        # The three backend groups plus Re-check are what grow this dialog past a
+        # laptop screen (measured sizeHint ~856px unscrolled): put just that part in
+        # a QScrollArea, same idiom as the wizard's own review page (ai_dialog.py's
+        # cards_scroll), and keep the title, the intro hint above, the Test
+        # connection hint below, and the button box out here so Close is always
+        # reachable regardless of how tall the groups get.
+        groups_container = QWidget()
+        groups_lay = QVBoxLayout(groups_container)
+        groups_lay.setContentsMargins(0, 0, 0, 0)
         for kind in ai_cli.BACKENDS:
             g = _BackendGroup(kind, res["backends"][kind], cfg, self._pref_group, self)
             self.groups[kind] = g
-            lay.addWidget(g)
+            groups_lay.addWidget(g)
         brow = QHBoxLayout()
         self.recheck_btn = link_button("Re-check", on_click=lambda: self._guard(self.recheck))
         self.overall = hint_label("")
         brow.addWidget(self.recheck_btn); brow.addWidget(self.overall, 1)
-        lay.addLayout(brow)
+        groups_lay.addLayout(brow)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(groups_container)
+        lay.addWidget(scroll, 1)
         lay.addWidget(hint_label(
             "Test connection runs a real, trivial prompt through a detected CLI to "
             "confirm it can generate, not just that the binary runs. It costs one "
@@ -230,6 +245,19 @@ class _AIBackendsDialog(QDialog):
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
         self._set_overall(res)
+
+        # Opened at a size that gives the scroll area real room without outgrowing
+        # the screen it lands on, clamped the same way _GenerateDialog's own
+        # open_size does (ai_dialog.py): a fixed target, shrunk to fit whatever
+        # screen is actually available.
+        open_w, open_h = 480, 760
+        try:
+            geo = QApplication.primaryScreen().availableGeometry()
+            open_w = min(open_w, geo.width() - 60)
+            open_h = min(open_h, geo.height() - 80)
+        except Exception:
+            pass
+        self.resize(max(open_w, 420), max(open_h, 300))
 
     def _guard(self, fn, *args):
         try:

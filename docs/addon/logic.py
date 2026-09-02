@@ -89,7 +89,12 @@ def night_mode_css(enabled, percent, scope="images"):
     only (the original behaviour); "content" dims the whole web view body,
     which is every card, the deck list, the overview, and the editor. Anki adds
     the nightMode class to body only in Night Mode, so neither rule ever
-    applies in Day mode. Unknown scope, or disabled, is no CSS at all."""
+    applies in Day mode. Unknown scope, or disabled, is no CSS at all.
+
+    The two scopes return different shapes on purpose: "images" comes back as a
+    wrapped `<style>...</style>` block, since the card hook appends it straight
+    onto card HTML, while "content" comes back as bare CSS, since the web view
+    hook wraps it into the page head itself."""
     if not enabled or scope not in NIGHT_MODE_SCOPES:
         return ""
     factor = night_mode_dim_factor(percent)
