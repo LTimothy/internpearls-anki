@@ -64,7 +64,8 @@ def test_real_menu_structure():
     menu = mock_anki.load_addon_init()
     tree = menu.tree()
     labels = [n.get("label") for n in tree if n["t"] == "item"]
-    assert labels == ["Update my decks", "Manage decks", "Settings", "About"]
+    assert labels == ["Update my decks", "Manage decks", "Generate cards with AI",
+                      "Settings", "About"]
     sub = next(n for n in tree if n["t"] == "menu")
     assert sub["label"] == "Advanced"
     sub_labels = [n["label"] for n in sub["items"] if n["t"] == "item"]
@@ -76,7 +77,7 @@ def test_real_menu_structure():
         "Backup full collection", "Restore full collection",
         "Check for add-on updates"]
     # primary items above the first separator, Settings/About below the last
-    assert tree[2]["t"] == "sep" and tree[-3]["t"] == "sep"
+    assert tree[3]["t"] == "sep" and tree[-3]["t"] == "sep"
 
 
 def test_advanced_groups_source_actions_then_repair_actions(anki):

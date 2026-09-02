@@ -29,6 +29,7 @@ This file is only the menu and startup wiring. The work lives in focused modules
 from aqt import gui_hooks, mw
 from aqt.qt import QAction, QMenu
 
+from .ai_dialog import generate_cards
 from .background import _schedule_background_checks
 from .collection import (backup_collection_now, backup_deck_now, export_deck,
                          import_deck, remove_empty_cards, restore_from_backup,
@@ -64,6 +65,7 @@ def _menu():
     # as escape hatches for anyone who wants just one half on its own.
     add(menu, "Update my decks", update_decks)
     add(menu, "Manage decks", manage_decks)
+    add(menu, "Generate cards with AI", generate_cards)
     menu.addSeparator()
     adv = menu.addMenu("Advanced")
     # Four groups below, though the backup/restore group is itself two
