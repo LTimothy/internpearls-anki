@@ -146,8 +146,12 @@ class _Session:
         self.count = 10
         self.note_types = []         # selected type names
         self.deck_name = ""
-        self.attachments = []        # [(path, {"text", "images"})]
+        self.attachments = []        # [(path, {"text", "images", "images_undecoded"})]
         self.scratch = None          # tempfile.mkdtemp for this session
+        # True once the "this PDF's images couldn't be decoded here" warning has
+        # been shown for this session, so a second attached PDF hitting the same
+        # environment limitation doesn't repeat it.
+        self.pdf_image_warning_shown = False
         self.cards = []              # current draft (ai_logic card dicts)
         self.included = []           # bool per card
         self.notes = {}              # {index: revision note}
@@ -473,13 +477,26 @@ class _GenerateDialog(QDialog):
         s = self.session
         if s.scratch is None:
             s.scratch = tempfile.mkdtemp(prefix="ip-aigen-")
+        images_undecoded = False
         for p in paths:
             try:
-                s.attachments.append((p, ai_logic.extract_attachment(p, s.scratch)))
+                meta = ai_logic.extract_attachment(p, s.scratch)
             except ValueError as e:
                 _warn(str(e))
+                continue
+            s.attachments.append((p, meta))
+            images_undecoded = images_undecoded or meta["images_undecoded"]
         self.attach_label.setText(
             ", ".join(os.path.basename(p) for p, _ in s.attachments))
+        # Anki's own bundled Python doesn't carry Pillow, which pypdf needs to
+        # decode a PDF's embedded images (its text still comes through fine) --
+        # say so once per session, right when it happens, rather than leaving
+        # a PDF's figures silently missing with no explanation.
+        if images_undecoded and not s.pdf_image_warning_shown:
+            s.pdf_image_warning_shown = True
+            _warn("The text came through, but embedded images in that PDF "
+                  "couldn't be read in Anki's own Python. If you want any of "
+                  "its figures on a card, attach them separately as image files.")
 
     def _view_skills(self):
         """Show what's actually sent to the model. Dismissing this dialog (Close,
