@@ -3,6 +3,30 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.53.2
+
+Fixed two defects in "Generate cards with AI" found by hand, neither reachable by the
+automated test suites.
+
+The input page used to offer "Study Deck - Basic" and "Study Deck - Cloze" checked by
+default even before you had ever synced a deck, which is the only thing that creates
+them. Picking one before that first sync meant writing source material, waiting
+through a whole generation, and only discovering at the very last click that Import
+rejected the entire batch. Only note types actually present in your collection are
+offered now; a managed type you don't have yet shows disabled with a short reason
+instead of disappearing outright.
+
+Also, a bug in any of the wizard's buttons (Import, Revise all, Edit, Note, Test
+connection, Attach, Generate) used to show Anki's own raw "encountered a problem" box
+instead of this add-on's dialog, since a Qt button's click doesn't run through the
+same protection a menu action gets. Every one of those now shows a plain, titled
+Intern Pearls dialog with the actual error instead.
+
+Separately, the review page's include/exclude checkboxes did not visibly respond to a
+click: the underlying state was in fact changing, but nothing ever refreshed the "N
+included" count or the "Import N cards" button label, so a toggle that worked read as
+one that didn't. Both now update immediately.
+
 ## v0.53.1
 
 Fixed a shipped defect: extracting a PDF's embedded images relies on Pillow, which
