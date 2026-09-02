@@ -1368,7 +1368,7 @@ def test_night_mode_image_css_enabled_returns_dimming_rule():
 
 
 def test_night_mode_image_css_disabled_returns_empty_string():
-    # percent is irrelevant while disabled -- must still short-circuit to "".
+    # percent is irrelevant while disabled: must still short-circuit to "".
     assert logic.night_mode_image_css(False) == ""
     assert logic.night_mode_image_css(False, percent=90) == ""
 
@@ -1409,7 +1409,7 @@ def test_clamp_night_mode_dim_percent_falls_back_to_default_on_garbage():
 
 
 def test_clamp_night_mode_dim_percent_falls_back_on_a_non_finite_float():
-    """A hand-edited config.json can carry a bare `Infinity`/`NaN` token -- Python's
+    """A hand-edited config.json can carry a bare `Infinity`/`NaN` token: Python's
     own json module parses those by default even though neither is valid JSON. int()
     raises OverflowError (not ValueError) on an infinite float, which is a distinct
     exception from the garbage-input case above and must be caught too, or a stray
@@ -1426,7 +1426,7 @@ def test_clamp_night_mode_dim_percent_accepts_numeric_strings():
 def test_clamp_night_mode_dim_percent_default_matches_the_pre_existing_fixed_dim_level():
     """The property the owner asked for explicitly: leaving the percentage untouched
     on an install that already had dim_images_night_mode on must not change how dimmed
-    a card looks. That fixed level was brightness(0.7) -- i.e. dimmed by 30%."""
+    a card looks. That fixed level was brightness(0.7): i.e. dimmed by 30%."""
     default = logic.clamp_night_mode_dim_percent(None)
     assert default == 30
     assert round(1 - default / 100, 2) == 0.7

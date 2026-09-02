@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# tests/fake_cli.py -- pretend agent CLI for ai_cli tests. Behavior via argv[1]:
+# tests/fake_cli.py: pretend agent CLI for ai_cli tests. Behavior via argv[1]:
 #   ok              read stdin, emit one phase line then a claude-style result line
 #   slow            sleep 30s before answering (for timeout/cancel tests)
 #   event_then_slow emit one phase line, then sleep 30s (for a mid-run-exception test:
@@ -9,7 +9,7 @@
 #   not_signed_in   exit 1 with an auth-failure stderr message (test_connection)
 #   error_result    claude-style result line with subtype "success" but
 #                   is_error true and a human message in "result", empty
-#                   stderr, then exit 1 -- the real shape a v2.1.251 claude
+#                   stderr, then exit 1: the real shape a v2.1.251 claude
 #                   with an expired login actually emits
 #   badjson         emit a result line whose "result" text is not valid card JSON
 #   two_cards       emit two fixed cards, identically on every invocation (for

@@ -114,7 +114,7 @@ _AI_BACKEND_KINDS = ("claude", "codex", "agy")
 
 
 def _ai_map(value):
-    """ai_model/ai_effort are stored per backend kind, not as one flat value -- a
+    """ai_model/ai_effort are stored per backend kind, not as one flat value: a
     value set while one backend is active must never leak into another backend's
     argv (see ai_dialog.py's session init and ai_cli.build_argv). No shipped
     release ever wrote the old flat-string shape, so there's no migration to do,
