@@ -592,7 +592,7 @@ def test_view_skills_lists_my_rules(shot):
     assert "never use mnemonics" in body.text()
 
 
-def test_view_skills_says_none_when_empty(shot):
+def test_view_skills_omits_my_rules_heading_when_empty(shot):
     """No My rules heading at all when there is nothing under it: printing one
     that says "none" is claiming a section for content that doesn't exist.
     Just the one muted pointer at where to add some."""
@@ -691,6 +691,54 @@ def test_advanced_expands_in_place_and_aligns(shot):
                                            dlg.deck_combo)}
     assert len(xs) == 1, xs
     assert "Hide advanced" in harness.link_labels(dlg)
+
+
+def test_advanced_grid_label_column_and_count_spin_fit_their_own_text(shot):
+    """The label column has to fit this grid's own longest label, "Exact
+    number of cards", without overflowing into the field beside it (a plain
+    LABEL_W, sized for the shorter AI Backends settings panel, used to clip
+    it), and the count spinbox has to fit "auto" plus its own up/down arrows,
+    not just the bare text width. Both measured against the grid panel's own
+    font, the way the source does, so a font substitution on some platform
+    can't make this pass by accident."""
+    from aqt.qt import QFontMetrics, QLabel, Qt
+    from internpearls.ai_dialog import (_LABEL_COUNT, _LABEL_DEPTH,
+                                        _LABEL_TYPES, _LABEL_DECK)
+    from internpearls.ai_setup import LABEL_W
+
+    dlg = shot("ai-input", state="advanced").dialog
+    # _advanced_label builds one QLabel per Advanced row and nothing else in
+    # this dialog shares their exact text, so finding them by text (rather
+    # than storing them on self) is enough to reach the real widgets.
+    grid_labels = {w.text(): w for w in dlg.findChildren(QLabel)
+                  if w.text() in (_LABEL_COUNT, _LABEL_DEPTH, _LABEL_TYPES, _LABEL_DECK)}
+    assert set(grid_labels) == {_LABEL_COUNT, _LABEL_DEPTH, _LABEL_TYPES, _LABEL_DECK}
+
+    metrics = QFontMetrics(dlg.advanced_panel.font())
+    want_col_w = max(LABEL_W, max(
+        metrics.horizontalAdvance(t)
+        for t in (_LABEL_COUNT, _LABEL_DEPTH, _LABEL_TYPES, _LABEL_DECK)) + 12)
+    for text, label in grid_labels.items():
+        assert label.minimumWidth() >= want_col_w, (
+            f"{text!r} label column is {label.minimumWidth()}px, narrower "
+            f"than the {want_col_w}px its own widest sibling needs")
+
+    want_spin_w = metrics.horizontalAdvance("auto") + 40
+    assert dlg.count_spin.minimumWidth() >= want_spin_w, (
+        f"count spinbox is {dlg.count_spin.minimumWidth()}px, narrower than "
+        f"the {want_spin_w}px 'auto' plus its arrows need")
+
+    # The grid CELL's own alignment (set via the addWidget(..., alignment) it
+    # was placed with), not the QLabel's own text alignment, which
+    # _advanced_label always sets to AlignLeft|AlignVCenter regardless of row:
+    # it's the cell alignment that keeps this label level with the top of its
+    # multi-row checkbox list instead of centred against its full height.
+    grid = dlg.advanced_panel.layout()
+    types_item = grid.itemAtPosition(3, 0)
+    assert types_item.widget() is grid_labels[_LABEL_TYPES]
+    assert bool(types_item.alignment() & Qt.AlignmentFlag.AlignTop), (
+        "Note types label's grid cell is not top-aligned against its "
+        "multi-row checkbox list")
 
 
 def test_depth_chip_follows_source_length(shot):

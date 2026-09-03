@@ -7,7 +7,7 @@ import threading
 from aqt import mw
 from aqt.qt import (QApplication, QComboBox, QDesktopServices, QDialog,
                     QDialogButtonBox, QFileDialog, QGridLayout, QHBoxLayout,
-                    QLabel, QLineEdit, QPushButton, Qt, QTimer, QUrl,
+                    QLabel, QLayout, QLineEdit, QPushButton, Qt, QTimer, QUrl,
                     QVBoxLayout, QWidget, pyqtSignal)
 
 from . import ai_cli
@@ -109,21 +109,17 @@ class _WrappedHint(QLabel):
     v0.56.1 tried to fix this from resizeEvent alone: once the label has a
     width, it claims the height that width really requires as its own minimum,
     which every layout above it does honour, but only on the next layout pass.
-    That next pass does happen, but only when something later asks for one (a
-    QTimer tick, a resize, any further event loop turn). Nothing forced one
-    before this window's first paint, so the window still opened, and painted,
-    at the too small geometry its first, pre correction layout pass computed.
-    The correction landed a frame late: invisible unless the reader caught
-    that exact first frame, and gone the moment anything else repainted the
-    window (a Re-check, which rebuilds the rows from scratch, or even just
-    moving the window), which is exactly what the reader described.
-
-    Fixed by not waiting for that next pass. Once this label's own minimum
-    grows, it resizes its top-level window right there, synchronously, inside
-    the same call that discovered the real height, before control ever
-    returns to Qt's event loop, so there is no separate frame left for a
-    stale paint to occupy. Guarded so an unchanged answer never restarts
-    anything.
+    22589b4 then tried to force that next pass synchronously, from right here,
+    by reading the top-level window's minimumSizeHint() and resizing it inline.
+    That read is itself unreliable: the intermediate box layouts between this
+    label and the window keep cached geometry until Qt runs its own deferred
+    layout pass, so the value read here can be stale, and the resize this
+    branch computes from it can equal the window's current size even though
+    the window has not actually settled yet, in which case the branch's own
+    guard skips the resize and nothing happens. So this label still only ever
+    claims its own minimum; making the window honour that minimum on first
+    paint is `_settle_min_size`'s job now (see its docstring), not this
+    label's.
     """
 
     def resizeEvent(self, event):
@@ -131,13 +127,6 @@ class _WrappedHint(QLabel):
         need = self.heightForWidth(self.width()) if self.width() > 0 else 0
         if need > 0 and self.minimumHeight() != need:
             self.setMinimumHeight(need)
-            top = self.window()
-            if top is not None:
-                hint = top.minimumSizeHint()
-                grown_w = max(top.width(), hint.width())
-                grown_h = max(top.height(), hint.height())
-                if grown_w != top.width() or grown_h != top.height():
-                    top.resize(grown_w, grown_h)
 
 
 def _wrapped_hint(text):
@@ -146,6 +135,43 @@ def _wrapped_hint(text):
     a plain hint_label puts the window's minimum height back below what it needs
     and the squeeze comes back for everything under it."""
     return hint_label(text, cls=_WrappedHint)
+
+
+def _settle_min_size(dialog):
+    """Make sure `dialog` is at least as big as its layout's true minimum,
+    right now. Called from a dialog's showEvent, and once more from a
+    QTimer.singleShot(0, ...) right after that.
+
+    The layout's own SetMinimumSize constraint (set on the dialog's top-level
+    layout in its __init__) already keeps Qt's internal notion of the window's
+    minimum size in sync with its content, and QWidget.resize() already clamps
+    to that minimum on its own, so in the ordinary case this call is a no-op.
+    It exists for the first paint specifically: a wrapped _WrappedHint claims
+    its real minimum height only once it has a real width, and it can only get
+    a real width from a layout pass, which on some platforms does not finish
+    settling before that very first frame is painted. Reading and reapplying
+    minimumSizeHint() here, once after showEvent's own layout().activate()
+    call and once more on the next event loop turn, catches the window up to
+    whatever the layout had actually settled on by each of those two later
+    points, so a first frame that opened too small never survives to be the
+    one the reader sees."""
+    dialog.layout().activate()
+    hint = dialog.minimumSizeHint()
+    w = max(dialog.width(), hint.width())
+    h = max(dialog.height(), hint.height())
+    if w != dialog.width() or h != dialog.height():
+        dialog.resize(w, h)
+
+
+def _safe_settle(dialog):
+    """_settle_min_size, for the QTimer.singleShot(0, ...) call: the dialog can
+    have been closed (and its C++ object deleted) in the moment between
+    showEvent scheduling this and the event loop actually running it, which
+    _settle_min_size itself has no reason to guard against."""
+    try:
+        _settle_min_size(dialog)
+    except RuntimeError:
+        pass
 
 
 class ModelEffortControls(QWidget):
@@ -473,6 +499,11 @@ class _AIBackendsDialog(QDialog):
         self.panel = None
         self.preferred = None
         lay = QVBoxLayout(self)
+        # SetMinimumSize keeps this window's real minimum size in sync with its
+        # content on every layout pass, not just the first: see
+        # _settle_min_size's docstring for why the first paint still needs its
+        # own showEvent settle on top of this.
+        lay.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         lay.addWidget(title_label("AI Backends"))
         lay.addWidget(_wrapped_hint(
             "Card generation runs through an assistant you sign into yourself. This "
@@ -516,6 +547,10 @@ class _AIBackendsDialog(QDialog):
         # open_size does (ai_dialog.py): a fixed target, shrunk to fit whatever
         # screen is actually available. No scroll area: the rows are one line of
         # decisions each, so the whole window fits a laptop screen unfolded.
+        # This clamp can ask for a height below the layout's real minimum on a
+        # small screen; the SetMinimumSize constraint above wins that conflict,
+        # so the window opens at whatever the layout actually needs instead of
+        # the clamp's number, which is the right trade on a screen that small.
         open_w, open_h = 720, 620
         try:
             geo = QApplication.primaryScreen().availableGeometry()
@@ -524,6 +559,11 @@ class _AIBackendsDialog(QDialog):
         except Exception:
             pass
         self.resize(max(open_w, 420), max(open_h, 300))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        _settle_min_size(self)
+        QTimer.singleShot(0, lambda: _safe_settle(self))
 
     # --- state -----------------------------------------------------------
     def _guard(self, fn, *args):
