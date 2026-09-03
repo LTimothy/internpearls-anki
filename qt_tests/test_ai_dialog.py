@@ -808,3 +808,24 @@ def test_progress_page_activity_feed_renders_its_lines(shot):
     text = dlg.activity_feed.toPlainText()
     assert "Viewed _thumb-0-0.svg" in text
     assert "Searched the web" in text
+
+
+def _svg_card_label(dlg, q):
+    return next(l for l in dlg.findChildren(q.QLabel) if "fact 4" in l.text())
+
+
+def test_review_row_names_an_unresolved_svg_image_while_collapsed(shot):
+    _, q = harness.bootstrap()
+    dlg = shot("ai-review", svg=True).dialog
+    text = _svg_card_label(dlg, q).text()
+    assert "[image: drawn figure]" in text
+    assert "<img" not in text
+
+
+def test_review_row_paints_the_svg_and_drops_the_name_once_expanded(shot):
+    _, q = harness.bootstrap()
+    dlg = shot("ai-review", svg=True, expand=(3,)).dialog
+    text = _svg_card_label(dlg, q).text()
+    assert "[image: drawn figure]" not in text
+    body_images = [l for l in dlg.findChildren(q.QLabel) if "<img" in l.text()]
+    assert body_images, "the expanded body must paint the resolved SVG thumbnail"
