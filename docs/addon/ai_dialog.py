@@ -573,6 +573,7 @@ class _GenerateDialog(QDialog):
         self.resize(max(open_w, 480), open_h)
         self.session = s = _Session()
         self._retried_json = False   # the single-retry budget on malformed model output
+        self._reply_chunks = []      # accumulated delta text; reset per _start_generation
         # Backend kinds with a "Test connection" run currently in flight, from
         # the input page's single Test connection button (the setup page's own
         # per-backend buttons and Re-check now live in the separate AI Backends
@@ -1332,7 +1333,17 @@ class _GenerateDialog(QDialog):
             links=(("Cancel", self._cancel_generation),),
             chip_kinds=_PROGRESS_CHIPS)
         lay.addWidget(self.progress_row)
-        lay.addStretch()
+        # A muted, auto-scrolled log of what the assistant is doing, newest
+        # last: takes the stretch a one-row page otherwise left blank. Never
+        # shows reply text, tool arguments, or the prompt (see _poll_worker).
+        self.activity_feed = QPlainTextEdit()
+        self.activity_feed.setReadOnly(True)
+        self.activity_feed.setFrameShape(QFrame.Shape.NoFrame)
+        self.activity_feed.setMaximumBlockCount(200)
+        self.activity_feed.setStyleSheet(
+            f"QPlainTextEdit {{ background: transparent; "
+            f"color: {colors()['muted']}; }}")
+        lay.addWidget(self.activity_feed, 1)
         return page
 
     def _start_generation(self, revision=False, extra_error=None):
@@ -1390,6 +1401,8 @@ class _GenerateDialog(QDialog):
         # concurrently appended event could be silently dropped.
         self._events = deque()
         self._worker_error, self._worker_result = None, None
+        self._reply_chunks = []
+        self.activity_feed.clear()
         self._gen_done = False
         self._cancel_flag = threading.Event()
         self._t0 = time.monotonic()
@@ -1446,7 +1459,17 @@ class _GenerateDialog(QDialog):
         else:
             elapsed += "."
         parts.append(elapsed)
+        if self._reply_chunks:
+            text = "".join(self._reply_chunks)
+            n = text.count('"note_type"')
+            parts.append(f"{plural(n, 'card')} so far, {len(text):,} characters.")
         return " ".join(parts)
+
+    def _append_activity(self, text):
+        elapsed = ai_logic.format_duration(time.monotonic() - self._t0)
+        self.activity_feed.appendPlainText(f"{elapsed}  {text}")
+        bar = self.activity_feed.verticalScrollBar()
+        bar.setValue(bar.maximum())
 
     def _poll_worker(self):
         # A stopped QTimer can still be fired once more by a queued signal, or
@@ -1458,9 +1481,19 @@ class _GenerateDialog(QDialog):
         while self._events:
             evt = self._events.popleft()
             if evt["type"] == "phase":
+                # A phase line only earns a feed line of its own when it
+                # actually changed: agy fires "Working" on nearly every
+                # internal step, and each of those already gets its own
+                # activity line (see the "activity" fan-out in _run_argv).
+                if evt["phase"] != self._phase_text:
+                    self._append_activity(evt["phase"])
                 self._phase_text = evt["phase"]
                 self.progress_row.set_chip(_phase_chip(evt["phase"]))
                 self.progress_row.set_primary(f"<b>{self._phase_text}</b>")
+            elif evt["type"] == "activity":
+                self._append_activity(evt["text"])
+            elif evt["type"] == "delta":
+                self._reply_chunks.append(evt["text"])
             elif evt["type"] == "rate_limits":
                 self.session.rate_limits = evt
         self.progress_row.set_detail(self._progress_detail_text())
