@@ -200,5 +200,5 @@ it. Editable in Intern Pearls → Experimental → Night mode dimming.
 
 Your own standing instructions for the AI wizard ("My rules"), plain text, live in
 `user_files/user_skill.md`, not in this config file, so they survive an add-on update.
-Editable from the wizard's input page (Edit my rules link). An empty save removes the
+Editable from the wizard's input page (Add my rules link). An empty save removes the
 file entirely rather than leaving an empty one behind.

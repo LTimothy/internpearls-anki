@@ -268,10 +268,21 @@ def test_ai_backends_rows_dont_clip_on_first_open(monkeypatch):
     open, and the clipping does not persist past a Re-check (which rebuilds
     the rows). The existing multi-width sweep above missed this because it
     resizes and processes events at several widths in sequence, which gives
-    _WrappedHint.resizeEvent repeated chances to widen the window's minimum
-    before anything is asserted. Reproduced here with exactly one show: build
-    the dialog, resize it once to the reported width, show it, and check
-    before doing anything else."""
+    every layout pass in between a chance to settle before anything is
+    asserted.
+
+    Reproduced here the way the reader actually saw it: BOTH dimensions are
+    forced small, before the window is ever shown, the way the real open_size
+    clamp can (a screen short enough that `open_h` lands under the layout's
+    true minimum, ai_setup.py ~519-526). Exactly one show, one processEvents
+    call, then check: no second resize, no second event-loop turn to give a
+    later layout pass a chance to paper over a bad first one. Checks the
+    window's own height against its layout's real minimum, not only each
+    row's label, since a fix that only grew individual rows without ever
+    pinning the window itself could still ship the clipping this guards
+    against (see _WrappedHint's docstring, ai_setup.py, for why reading
+    top.minimumSizeHint() synchronously inside a child's resizeEvent was not
+    the fix it looked like)."""
     harness.bootstrap()
     harness.app()
     harness.apply_theme("dark")
@@ -279,10 +290,14 @@ def test_ai_backends_rows_dont_clip_on_first_open(monkeypatch):
     monkeypatch.setattr(ai_cli, "probe",
                         lambda kind, path: {"ok": True, "detail": "v1"})
     dlg = ai_setup._AIBackendsDialog(None)
-    dlg.resize(726, dlg.height())
+    dlg.resize(726, 500)
     dlg.show()
     harness.app().processEvents()
     try:
+        true_min = dlg.layout().minimumSize()
+        assert dlg.height() >= true_min.height(), (
+            f"window opened at {dlg.width()}x{dlg.height()}, below its "
+            f"layout's true minimum of {true_min.width()}x{true_min.height()}")
         for kind, row in dlg.rows.items():
             label = row.detail
             needed = label.heightForWidth(label.width())
@@ -295,23 +310,60 @@ def test_ai_backends_rows_dont_clip_on_first_open(monkeypatch):
                 f"{kind}'s detail line ends {bottom}px down a {row.height()}px "
                 f"row on first open, so its last line is clipped (window "
                 f"{dlg.width()}x{dlg.height()})")
+    finally:
+        dlg.close()
 
-        # show -> resize narrower -> check: the same first-paint gap can also
-        # show up after one resize down, before any further events settle it.
-        dlg.resize(560, dlg.height())
+
+def test_ai_backends_window_settles_even_with_a_stale_minimum_hint_read(monkeypatch):
+    """22589b4's mechanism (see _WrappedHint's docstring, ai_setup.py) read
+    top.minimumSizeHint() synchronously inside a child's resizeEvent and
+    resized the window from it. The reviewer found that read can be stale on
+    a real screen: the intermediate box layouts between a row and the window
+    have not always caught up to a change this same layout pass already made
+    elsewhere, so a Python-level minimumSizeHint() read is not something a fix
+    should have to trust.
+
+    Simulated here without needing a real screen: patch the window's own
+    minimumSizeHint() to always answer a fixed, too-small size while it is
+    built, resized, and shown, standing in for a lying (or merely stale) read
+    at every one of those points, then restore the real one and give the
+    window one more event-loop turn. Confirms _settle_min_size does not need
+    that Python-level read to be trustworthy in the first place: the
+    SetMinimumSize constraint on the window's own top-level layout keeps Qt's
+    C++-side notion of the window's minimum size (a different thing from the
+    Python-level minimumSizeHint() override this test patches) in sync with
+    its real content on every layout pass, and QWidget.resize() clamps up to
+    that regardless of what any Python override of minimumSizeHint() claims."""
+    harness.bootstrap()
+    harness.app()
+    harness.apply_theme("dark")
+    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": "/bin/echo")
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    from aqt.qt import QSize
+    stale = QSize(700, 480)
+    with monkeypatch.context() as stale_patch:
+        stale_patch.setattr(ai_setup._AIBackendsDialog, "minimumSizeHint",
+                            lambda self: stale)
+        dlg = ai_setup._AIBackendsDialog(None)
+        dlg.resize(726, 500)
+        dlg.show()
         harness.app().processEvents()
+    # the real minimumSizeHint again, the way a later layout pass sees it
+    harness.app().processEvents()
+    try:
+        true_min = dlg.layout().minimumSize()
+        assert dlg.height() >= true_min.height(), (
+            f"window is {dlg.width()}x{dlg.height()} after a stale first "
+            f"minimumSizeHint() read, below its layout's true minimum of "
+            f"{true_min.width()}x{true_min.height()}")
         for kind, row in dlg.rows.items():
             label = row.detail
             needed = label.heightForWidth(label.width())
-            assert label.height() >= needed, (
-                f"{kind}'s detail line is {label.height()}px tall at "
-                f"{label.width()}px wide after a narrower resize, where its "
-                f"text needs {needed}px (window {dlg.width()}x{dlg.height()})")
             bottom = label.mapTo(row, label.rect().bottomLeft()).y()
-            assert bottom < row.height(), (
-                f"{kind}'s detail line ends {bottom}px down a {row.height()}px "
-                f"row after a narrower resize (window {dlg.width()}x"
-                f"{dlg.height()})")
+            assert label.height() >= needed and bottom < row.height(), (
+                f"{kind}'s detail line clipped after a stale minimumSizeHint() "
+                f"read (window {dlg.width()}x{dlg.height()})")
     finally:
         dlg.close()
 
