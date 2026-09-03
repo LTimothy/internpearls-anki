@@ -3,6 +3,33 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.59.0
+
+A run used to be stopped by a fixed clock: 120 seconds for a Quick draft, 360 for a
+Thorough one, whether or not the assistant was still working. A revision on
+Antigravity CLI that was streaming six cards and a drawn figure was killed at exactly
+120 seconds and reported as a timeout. The add-on now watches for silence instead: a
+run fails only when the assistant has sent nothing for two minutes (three in Thorough),
+under a hard ceiling of 15 and 30 minutes that no healthy run reaches. Codex CLI reports
+nothing until a step finishes, so it keeps the ceiling alone rather than a silence
+rule that would cut it off mid-thought. Antigravity's own five-minute print limit is
+raised to match. The two failure messages now say which rule fired.
+
+The progress page narrates the run. Under the status row, a muted feed lists what the
+assistant is doing as it happens (viewed a file, searched the web, ran a command), and
+once the reply starts streaming the detail line counts the cards drafted so far. Claude
+Code streams partial replies through a flag the add-on now passes; Antigravity already
+did; Codex reports only finished steps, so its feed is sparser. Tool arguments, web
+queries, and reply text never reach the feed, and file names are shortened to a
+basename.
+
+Review rows follow the update screen's conventions. The front text opens the row, not
+only the caret. A card carrying a picture names it on the collapsed line ("[image:
+drawn figure]", "[image: attached file]", or "[image: from host]") until the row has
+been opened and the picture painted, so a card with a figure never reads as if it had
+none. A card that starts unchecked only because its picture has not been looked at yet
+says so under its header, and the line clears the moment it is included.
+
 ## v0.58.2
 
 A failed generation used to leave nothing behind: the wizard showed one line and the
