@@ -3,6 +3,24 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.57.1
+
+"Check for add-on updates" now tells the truth when GitHub's request limit runs out.
+The add-on's own update check calls the public GitHub API with no token, since the
+add-on repo is public, and that API allows only 60 unauthenticated requests per hour
+per IP address, shared by everyone on the same connection and by every unattended
+check this add-on runs on its own. Once that's used up, GitHub answers with the same
+403 status a bad token gets, and the add-on said "access denied (check that your token
+is valid and can read this repo)" to a person who had never entered a token at all.
+The add-on now recognizes the rate limit specifically and says so, with the time it
+resets, and no longer implies a token exists to check when none was sent.
+
+A configured GitHub token now also speeds up and backs up this same check. Signing in
+with a token in Manage decks (read access to any repo is enough) raises the request
+limit from 60 to 5,000 per hour, so the check now sends it when one is set. If the API
+is still rate limited even so, the check falls back to fetching the file straight from
+GitHub's raw CDN instead, which carries no request quota at all.
+
 ## v0.57.0
 
 Antigravity CLI runs now actually reach the model. Its print mode takes the prompt as

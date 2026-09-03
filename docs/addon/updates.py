@@ -12,7 +12,7 @@ import traceback
 from aqt import mw
 from aqt.utils import openLink
 
-from .config import ADDON_VERSION, ANKI_REPO, STATE, _load_json
+from .config import ADDON_VERSION, ANKI_REPO, STATE, _cfg, _load_json
 from .logic import version_at_least
 from .net import _BG_TIMEOUT, _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_public_raw
 from .ui import _ask, _info, _safe, _warn
@@ -51,17 +51,25 @@ def _refresh_update_action_label(latest):
         _update_action.setText("Check for add-on updates")
 
 
-def _fetch_addon_version_info(timeout=_CONNECT_TIMEOUT):
+def _fetch_addon_version_info(timeout=_CONNECT_TIMEOUT, token=None):
     """Fetch and parse the public add-on repo's version.json via the Contents API (see
     _gh_public_raw for why not the raw CDN link). Raises on any failure.
 
     Single source of truth for this fetch so the manual "Check for add-on updates"
     action and the background checks can't drift apart.
+
+    `token` is the learner's own configured GitHub token, if any: passing it to
+    _gh_public_raw raises this check's unauthenticated rate limit from 60 to 5,000
+    requests per hour, which matters because this same check also runs unattended once
+    per launch. Taken as a parameter rather than read here via _cfg() because
+    _addon_update_work below (this function's other caller) runs off the main thread,
+    where touching mw.addonManager isn't safe; callers that own the main thread read
+    the config themselves and pass the value in.
     """
-    return json.loads(_gh_public_raw("version.json", timeout=timeout))
+    return json.loads(_gh_public_raw("version.json", timeout=timeout, token=token))
 
 
-def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT):
+def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT, token=None):
     """Download the current .ankiaddon package to a temp file and return its path.
 
     mkstemp rather than a fixed name in the shared temp directory: this file is handed
@@ -69,8 +77,11 @@ def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT):
     is one anyone else can pre-create as a symlink, or replace between the write and the
     install, and have their own code installed as this add-on. mkstemp's name is
     unguessable and the file is created 0600, owned by us.
+
+    `token` is passed straight through to _gh_public_raw; see _fetch_addon_version_info
+    for why it's a parameter rather than read here.
     """
-    data = _gh_public_raw("internpearls.ankiaddon", timeout=timeout)
+    data = _gh_public_raw("internpearls.ankiaddon", timeout=timeout, token=token)
     fd, path = tempfile.mkstemp(prefix="internpearls-", suffix=".ankiaddon")
     try:
         with os.fdopen(fd, "wb") as fh:
@@ -84,12 +95,16 @@ def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT):
     return path
 
 
-def _addon_update_work(auto_update):
+def _addon_update_work(auto_update, token=None):
     """Background-safe: fetch the public repo's version info, and if `auto_update` is on
     and a newer version exists, also download the package. No Qt or mw.col access, so
     it's safe to run off the main thread. Raises on a *version* fetch failure; the
     caller decides what "stay quiet" means for that, since without a version there is
     nothing to say.
+
+    `token` is the learner's configured GitHub token, if any, read by the caller on the
+    main thread and passed in here rather than fetched with _cfg() on this side; see
+    _fetch_addon_version_info for why.
 
     A failed package download is not that: the version fetch already succeeded, so
     there IS something to say, and a newer release exists whether or not this launch
@@ -98,12 +113,13 @@ def _addon_update_work(auto_update):
     with it, so an auto-update that failed to download said nothing at all and left the
     menu label unrefreshed too.
     """
-    info = _fetch_addon_version_info(timeout=_BG_TIMEOUT)
+    info = _fetch_addon_version_info(timeout=_BG_TIMEOUT, token=token)
     package_path = None
     latest = info.get("version", "")
     if auto_update and latest and not version_at_least(ADDON_VERSION, latest):
         try:
-            package_path = _download_addon_package(timeout=_DOWNLOAD_TIMEOUT)
+            package_path = _download_addon_package(timeout=_DOWNLOAD_TIMEOUT,
+                                                   token=token)
         except Exception:
             print(traceback.format_exc())
     return {"info": info, "package_path": package_path}
@@ -112,8 +128,9 @@ def _addon_update_work(auto_update):
 @_safe
 def check_updates():
     """Compare our version to version.json in the public add-on repo; offer to update."""
+    token = _cfg()["gh_token"]
     try:
-        latest = _fetch_addon_version_info()
+        latest = _fetch_addon_version_info(token=token)
     except Exception as e:
         _warn(f"Couldn't check for updates: {e}")
         return
@@ -127,7 +144,7 @@ def check_updates():
                 yes_label="Install now", no_label="Not now"):
         return
     try:
-        mw.addonManager.install(_download_addon_package())
+        mw.addonManager.install(_download_addon_package(token=token))
         _info("Updated. Please restart Anki.")
     except Exception as e:
         _warn(f"Auto-install failed ({e}).<br>Opening the download page instead.")
