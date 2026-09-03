@@ -693,6 +693,27 @@ def test_advanced_expands_in_place_and_aligns(shot):
     assert "Hide advanced" in harness.link_labels(dlg)
 
 
+def test_advanced_expands_and_aligns_by_drawn_edge(shot):
+    """The truer version of the geometry check above: what the running style
+    actually draws, not just where QGridLayout put each control. Under
+    macOS's native style a QComboBox's bezel (deck_combo) and a QSpinBox's
+    (count_spin) both start a few pixels right of their own geometry, which
+    the plain geometry check above can't see - it passed unmodified on this
+    grid while a reader's real macOS screenshot showed it visibly ragged.
+    Under Fusion, which is what running pytest here always renders with,
+    harness.visual_left degenerates to left_x exactly, so this assertion is
+    the plain geometry check again in that case; it is written against the
+    truer property so it also means something the day this suite ever runs
+    against a native style."""
+    dlg = shot("ai-input", state="advanced").dialog
+    xs = {"count": harness.visual_left(dlg, dlg.count_spin),
+         "depth": harness.visual_left(dlg, dlg.thorough_radio),
+         "types": harness.visual_left(dlg, next(iter(dlg.type_boxes.values()))),
+         "deck": harness.visual_left(dlg, dlg.deck_combo)}
+    spread = max(xs.values()) - min(xs.values())
+    assert spread <= 1, xs
+
+
 def test_advanced_grid_label_column_and_count_spin_fit_their_own_text(shot):
     """The label column has to fit this grid's own longest label, "Exact
     number of cards", without overflowing into the field beside it (a plain
