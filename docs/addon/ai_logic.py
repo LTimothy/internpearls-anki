@@ -265,6 +265,52 @@ _WEB_TOOLS = {"WebSearch", "WebFetch", "web_search", "web_fetch",
               "google_web_search", "search_web", "read_url_content"}
 _WINDOW_S = 7 * 86400
 
+# One short sentence per visible tool/step name, keyed by backend then name.
+# "{basename}" is filled from a parameter literally named AbsolutePath (agy)
+# or file_path (claude); no other parameter is ever read, so a search query
+# or a URL the assistant chose never reaches this text. A name missing from
+# its backend's table falls back to "Used <name>" (_activity_text).
+_ACTIVITY_WORDING = {
+    "agy": {"view_file": "Viewed {basename}",
+            "list_dir": "Listed the scratch folder",
+            "find_by_name": "Searched the scratch folder",
+            "search_web": "Searched the web",
+            "read_url_content": "Read a web page",
+            "run_command": "Ran a command",
+            "grep_search": "Searched text"},
+    "claude": {"Read": "Read {basename}",
+               "WebSearch": "Searched the web",
+               "WebFetch": "Read a web page",
+               "Bash": "Ran a command",
+               "Glob": "Searched the scratch folder",
+               "Grep": "Searched the scratch folder"},
+    "codex": {"command_execution": "Ran a command",
+              "web_search": "Searched the web",
+              "reasoning": "Thinking",
+              "file_change": "Changed a file"},
+}
+_BASENAME_PARAMS = ("AbsolutePath", "file_path")
+
+
+def _activity_text(kind, name, params=None):
+    """One short sentence for a tool/step `name` under backend `kind`, from
+    _ACTIVITY_WORDING, or "Used <name>" when the name isn't in that table.
+    `params`, when a dict, is read only for a key named AbsolutePath or
+    file_path (never anything else) to fill a "{basename}" template."""
+    template = _ACTIVITY_WORDING.get(kind, {}).get(name)
+    if template is None:
+        return f"Used {name}"
+    if "{basename}" not in template:
+        return template
+    path = None
+    if isinstance(params, dict):
+        for key in _BASENAME_PARAMS:
+            v = params.get(key)
+            if isinstance(v, str) and v:
+                path = v
+                break
+    return template.format(basename=os.path.basename(path) if path else "a file")
+
 
 def _num(v, cast):
     """Coerce a value pulled out of untrusted vendor JSON, or fall back to 0."""
@@ -294,7 +340,20 @@ def parse_stream_event(kind, line):
     """Parse one line of subprocess output from a vendor CLI. Fed raw, possibly
     malformed JSON straight from a subprocess, so any shape that isn't exactly
     what's expected (missing keys, wrong nested types) must return None rather
-    than raise."""
+    than raise.
+
+    Event shape: always a dict with a "type" among "result", "error", "usage",
+    "rate_limits", "phase", "delta", or "activity". A "delta" event's "text"
+    is a chunk of the reply as it streams; an "activity" event's "text" is one
+    short sentence naming a visible step (see _activity_text), never a tool's
+    full arguments. Any event may also carry an optional "activity" string
+    alongside its own type, when the same line both changes phase (or is
+    otherwise significant) and names a step: a claude tool_use block reports
+    both, since the block that reveals the step is the same block that
+    reveals whether it is a web lookup. `_run_argv` fans a folded "activity"
+    out as its own event to on_event, before the event that carried it, so a
+    caller that only wants the feed never has to special-case where the text
+    rode in on."""
     try:
         d = json.loads(line)
     except Exception:
@@ -321,9 +380,24 @@ def parse_stream_event(kind, line):
             for block in content if isinstance(content, list) else []:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     name = block.get("name", "")
-                    if isinstance(name, str) and name in _WEB_TOOLS:
-                        return {"type": "phase", "phase": "Verify online"}
-                    return {"type": "phase", "phase": "Working"}
+                    if not isinstance(name, str):
+                        name = ""
+                    phase = ("Verify online" if name in _WEB_TOOLS else "Working")
+                    evt = {"type": "phase", "phase": phase}
+                    if name:
+                        evt["activity"] = _activity_text(
+                            "claude", name, block.get("input"))
+                    return evt
+        if t == "stream_event":
+            # --include-partial-messages, when build_argv found the flag: a
+            # text chunk of the reply as it streams, never a phase change.
+            inner = _as_dict(d.get("event"))
+            if inner.get("type") == "content_block_delta":
+                delta = _as_dict(inner.get("delta"))
+                if delta.get("type") == "text_delta":
+                    text = delta.get("text")
+                    if isinstance(text, str) and text:
+                        return {"type": "delta", "text": text}
         return None
     if kind == "codex":
         if t == "token_count":
@@ -351,6 +425,12 @@ def parse_stream_event(kind, line):
                 return ev
             return ({"type": "usage", "tokens": usage_tokens}
                     if isinstance(info, dict) else None)
+        if t == "item.started":
+            item_type = _as_dict(d.get("item")).get("type")
+            if isinstance(item_type, str) and item_type:
+                return {"type": "activity",
+                        "text": _activity_text("codex", item_type)}
+            return None
         if t in ("item.completed", "turn.completed"):
             # Shape unconfirmed against a live CLI (neither codex nor
             # Antigravity is installed here): accept text either top-level or
@@ -388,19 +468,30 @@ def parse_stream_event(kind, line):
             u = d.get("step_update")
             if not isinstance(u, dict):
                 return None
-            if u.get("step_type") == "tool":
+            step_type = u.get("step_type")
+            if step_type == "tool":
                 name = u.get("tool_name")
-                if isinstance(name, str) and name in _WEB_TOOLS:
-                    return {"type": "phase", "phase": "Verify online"}
-            evt = {"type": "phase", "phase": "Working"}
-            if u.get("step_type") == "agent_response":
-                # The running text of the reply, one chunk per step_update.
-                # _run_argv accumulates these so a run that ends with an empty
+                if not isinstance(name, str):
+                    name = ""
+                evt = {"type": "phase",
+                       "phase": "Verify online" if name in _WEB_TOOLS else "Working"}
+                # ACTIVE only, so a tool that fires ACTIVE then DONE names
+                # itself once, not twice (verified: {"tool_info": {"name":
+                # ..., "parameters": {"AbsolutePath": ...}}} against a live
+                # agy 1.1.24 view_file call).
+                if name and u.get("state") == "ACTIVE":
+                    params = _as_dict(u.get("tool_info")).get("parameters")
+                    evt["activity"] = _activity_text("agy", name, params)
+                return evt
+            if step_type == "agent_response":
+                # The running text of the reply, one chunk per step_update, as
+                # its own event kind, not a phase change. _run_argv
+                # accumulates these so a run that ends with an empty
                 # `response` on its SUCCESS result still has something to show.
                 delta = u.get("text_delta")
                 if isinstance(delta, str) and delta:
-                    evt["delta"] = delta
-            return evt
+                    return {"type": "delta", "text": delta}
+            return {"type": "phase", "phase": "Working"}
         return None
     return None
 

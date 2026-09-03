@@ -27,6 +27,18 @@ def test_run_happy_path_parses_result_and_phase():
     assert any(e.get("phase") == "Verify online" for e in events)
 
 
+def test_run_fans_a_folded_activity_out_as_its_own_event_before_the_phase():
+    # The fake "ok" CLI emits one claude tool_use (WebSearch), which now
+    # folds an "activity" string onto its phase event; _run_argv must emit
+    # that as a standalone {"type": "activity"} event first.
+    events = []
+    _run(on_event=events.append)
+    types = [e["type"] for e in events]
+    assert types.index("activity") < types.index("phase")
+    activity_events = [e for e in events if e["type"] == "activity"]
+    assert activity_events == [{"type": "activity", "text": "Searched the web"}]
+
+
 def test_run_failure_raises_generation_error_with_stderr():
     with pytest.raises(ai_cli.GenerationError) as e:
         _run("fail")
@@ -320,8 +332,8 @@ def test_agy_ndjson_fixture_deltas_match_the_final_result_text():
             evt = ai_logic.parse_stream_event("agy", line)
             if not evt:
                 continue
-            if evt.get("delta"):
-                deltas.append(evt["delta"])
+            if evt["type"] == "delta":
+                deltas.append(evt["text"])
             if evt["type"] == "result":
                 final_text = evt["text"]
     assert final_text == "ok\n"
