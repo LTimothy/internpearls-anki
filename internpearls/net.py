@@ -72,7 +72,19 @@ class RateLimitedError(RuntimeError):
     """
 
 
-def _rate_limit_message(e):
+class HttpStatusError(RuntimeError):
+    """An HTTP failure that answered with a status code, carried as `.code` so a caller
+    can branch on it (a 401/403/404 is worth retrying differently than a 5xx is)
+    without parsing the message text back apart. Still a RuntimeError, like everything
+    else this module raises, so a caller that doesn't care just catches that.
+    """
+
+    def __init__(self, message, code):
+        super().__init__(message)
+        self.code = code
+
+
+def _rate_limit_message(e, token=None):
     """None if this 403 isn't GitHub's unauthenticated rate limit; otherwise the
     sentence to raise, with a reset time when `X-RateLimit-Reset` is present.
 
@@ -82,6 +94,10 @@ def _rate_limit_message(e):
     doing anything herself. That 403 looks identical to a real auth failure unless the
     rate-limit headers are checked for, which is what used to send her to check a token
     she never sent.
+
+    `token` says whether this request already carried one: a token was still limited, so
+    telling her to sign in with one (what the no-token case says) is nonsense advice
+    when she already has.
     """
     headers = e.headers
     if headers is not None and headers.get("X-RateLimit-Remaining") == "0":
@@ -102,10 +118,13 @@ def _rate_limit_message(e):
             reset_dt = None
         if reset_dt is not None:
             minutes = max(1, round((reset_dt - datetime.now()).total_seconds() / 60))
+            unit = "minute" if minutes == 1 else "minutes"
             reset_clause = f"; it resets at {reset_dt.strftime('%H:%M')} (about " \
-                            f"{minutes} minutes)"
+                            f"{minutes} {unit})"
+    trailer = ("Your token's limit will reset then." if token else
+               "Signing in with a token in Manage decks raises the limit.")
     return ("GitHub's request limit for this connection is used up" + reset_clause +
-            ". Signing in with a token in Manage decks raises the limit.")
+            ". " + trailer)
 
 
 def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=None,
@@ -152,19 +171,19 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
                     raise DownloadCancelled("cancelled before anything was imported")
     except urllib.error.HTTPError as e:
         if e.code == 403:
-            rate_limit_msg = _rate_limit_message(e)
+            rate_limit_msg = _rate_limit_message(e, token=token)
             if rate_limit_msg is not None:
                 raise RateLimitedError(rate_limit_msg) from e
         if e.code in (401, 403):
             if token:
-                raise RuntimeError(
+                raise HttpStatusError(
                     "access denied (check that your token is valid and can read "
-                    "this repo)") from e
-            raise RuntimeError("access denied") from e
+                    "this repo)", e.code) from e
+            raise HttpStatusError("access denied", e.code) from e
         if e.code == 404:
-            raise RuntimeError(
-                "not found (check the repo name, branch, and file path)") from e
-        raise RuntimeError(f"server returned HTTP {e.code}") from e
+            raise HttpStatusError(
+                "not found (check the repo name, branch, and file path)", e.code) from e
+        raise HttpStatusError(f"server returned HTTP {e.code}", e.code) from e
     except (TimeoutError, socket.timeout) as e:
         # Bare socket timeout (isn't always wrapped in URLError); surface it fast.
         raise TransportError(
@@ -207,6 +226,11 @@ def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT, token=None):
     both attempts are rate limited rather than refused, the raw CDN is the last resort:
     no API quota to run out, at the cost of the CDN's own lag, which version.json's
     "download" field already documents for a person opening it by hand.
+
+    Only an auth-shaped failure (401/403/404) on the token attempt is worth retrying
+    without the token: dropping it can't fix an unreachable host (TransportError) or a
+    server error (5xx), and retrying either just doubles the wait on an already-dead
+    connection.
     """
     url = f"https://api.github.com/repos/{ANKI_REPO}/contents/{path}?ref={ref}"
     raw_url = f"https://raw.githubusercontent.com/{ANKI_REPO}/{ref}/{path}"
@@ -216,8 +240,10 @@ def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT, token=None):
                              timeout=timeout)
         except RateLimitedError:
             return _http_get(raw_url, timeout=timeout)
-        except RuntimeError:
-            pass  # a token that can't read this repo; fall through and retry without it
+        except HttpStatusError as e:
+            if e.code not in (401, 403, 404):
+                raise
+            # a token that can't read this repo; fall through and retry without it
     try:
         return _http_get(url, accept="application/vnd.github.raw", timeout=timeout)
     except RateLimitedError:
