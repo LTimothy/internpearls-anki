@@ -299,6 +299,25 @@ def test_progress_row_reflects_a_live_phase_event(anki, monkeypatch):
     assert "Revising" not in dlg.progress_row.detail.text()
 
 
+def test_progress_feed_and_detail_show_activity_and_deltas(anki, monkeypatch):
+    # feed_demo emits a Read tool_use (an activity line naming a basename)
+    # and a two-chunk partial-message delta carrying one card's note_type
+    # key, exercising the activity feed and the detail line's card/char
+    # count together, through the real on_event -> _poll_worker wiring.
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="feed_demo")
+    dlg._start_generation()
+    dlg._worker.join(timeout=15)
+    assert not dlg._worker.is_alive()
+    dlg._timer.fire()
+    feed_text = dlg.activity_feed.toPlainText()
+    assert "Read notes.pdf" in feed_text
+    # Never the tool's other parameters or the reply text itself.
+    assert "note_type" not in feed_text and "Front" not in feed_text
+    detail = dlg.progress_row.detail.text()
+    assert "1 card so far" in detail
+    assert "characters." in detail
+
+
 def test_completion_exception_reaches_dialog_and_recovers_to_input(anki, monkeypatch):
     """B/C: the QTimer poll -> _finish_generation path had no guard at all, so an
     exception raised while processing an already-finished generation reached
