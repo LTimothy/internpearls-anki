@@ -339,8 +339,61 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
     raise ValueError(kind)
 
 
+_RUN_LOG_CAP = 2 * 1024 * 1024  # 2 MB; the log keeps the tail, not the head
+
+
+def _elided_argv(argv, prompt):
+    """argv with the literal prompt value replaced by a length-only stand-in,
+    for the run log: the prompt carries the learner's own source material
+    (and, via active_skills, the bundled/deck/user rules), which must never
+    land in a file whose whole purpose is to be pasted somewhere for
+    debugging."""
+    return [f"<prompt, {len(a)} chars>" if a == prompt else a for a in argv]
+
+
+def _write_run_log(log_path, argv, prompt, lines, err_text, returncode, elapsed_s):
+    """Best-effort evidence file for one run: the argv (prompt elided), every
+    raw stdout line, stderr, the exit code, and the elapsed time. Overwritten
+    each run, never appended, and capped at _RUN_LOG_CAP (kept from the tail,
+    since the failure is usually near the end of the stream). `log_path` of
+    None means the caller (test_connection) wants no log at all. Never
+    raises: a failure to write this side-channel file must not turn a real
+    generation result (success or failure) into a different error."""
+    if not log_path:
+        return
+    try:
+        parts = ["argv: " + " ".join(_elided_argv(argv, prompt)), "",
+                 "--- stdout ---"]
+        parts.extend(line.rstrip("\n") for line in lines)
+        parts.extend(["", "--- stderr ---"])
+        if err_text:
+            parts.append(err_text)
+        parts.extend(["", f"exit code: {returncode}",
+                      f"elapsed: {elapsed_s:.1f}s"])
+        data = "\n".join(parts).encode("utf8")
+        if len(data) > _RUN_LOG_CAP:
+            data = data[-_RUN_LOG_CAP:]
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "wb") as fh:
+            fh.write(data)
+    except Exception:
+        pass
+
+
+def _last_line_detail(lines, err_text):
+    """First 200 chars of the last non-empty stdout line, or the stderr tail
+    when every stdout line was blank (or there were none): what the "no
+    usable reply" error names as its one clue, since the reader can't open
+    the run log from inside the error dialog."""
+    for line in reversed(lines):
+        s = line.strip()
+        if s:
+            return s[:200]
+    return (err_text or "").strip()[:200]
+
+
 def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
-              cwd=None, prompt_via_stdin=True):
+              cwd=None, prompt_via_stdin=True, log_path=None):
     start = time.monotonic()
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
@@ -364,6 +417,11 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
     # and agy always carry usage on their own terminal result and never hit
     # this fallback in practice.
     last_usage = 0
+    # agy only: the running text of the reply, one chunk per agent_response
+    # step_update. A stream that ends with a SUCCESS result but an empty
+    # "response" (the owner's real failure: the CLI's own final assembly
+    # step dropped it) still has this to fall back to.
+    agy_deltas = []
 
     lines = []
     done = threading.Event()
@@ -386,6 +444,8 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                     continue
                 if evt["type"] == "result":
                     result = evt["text"]
+                    if kind == "agy" and not result and agy_deltas:
+                        result = "".join(agy_deltas)
                     tokens = max(tokens, evt.get("tokens", 0))
                 elif evt["type"] == "error":
                     # An is_error result: never assigned to `result`, so it
@@ -395,6 +455,8 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                     tokens = max(tokens, evt["tokens"])
                 elif evt["type"] == "rate_limits":
                     rate_limits = evt
+                if kind == "agy" and evt.get("delta"):
+                    agy_deltas.append(evt["delta"])
                 if evt.get("tokens"):
                     last_usage = evt["tokens"]
                 if on_event:
@@ -437,6 +499,8 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                 stream.close()
             except Exception:
                 pass
+        _write_run_log(log_path, argv, prompt, lines, err_text,
+                       proc.returncode, time.monotonic() - start)
     if not tokens and kind == "codex":
         # Scoped to codex, the one backend the comment above `last_usage`
         # describes: claude and agy always carry usage on their own terminal
@@ -454,7 +518,11 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
         raise GenerationError(_readable_cli_error(
             kind, err_text or f"assistant exited {proc.returncode}"))
     if not result:
-        raise GenerationError("the assistant produced no usable reply")
+        raise GenerationError(
+            f"the assistant produced no usable reply ({len(lines)} events "
+            f"seen; last: {_last_line_detail(lines, err_text)}). The full "
+            f"stream is in ai_last_run.log inside the add-on's user_files "
+            f"folder.")
     return {"text": result, "tokens": tokens, "rate_limits": rate_limits,
             "duration_s": round(time.monotonic() - start, 1)}
 
@@ -470,13 +538,14 @@ def _kill(proc):
 
 
 def run_generation(kind, path, prompt, mode, scratch, image_paths=(),
-                   on_event=None, cancel=None, timeout=None, model="", effort=""):
+                   on_event=None, cancel=None, timeout=None, model="", effort="",
+                   log_path=None):
     argv, via_stdin = build_argv(kind, path, mode, scratch, list(image_paths),
                                  model=model or "", effort=effort or "",
                                  prompt=prompt)
     return _run_argv(argv, kind, prompt, on_event=on_event, cancel=cancel,
                      timeout=timeout or _TIMEOUTS[mode], cwd=scratch,
-                     prompt_via_stdin=via_stdin)
+                     prompt_via_stdin=via_stdin, log_path=log_path)
 
 
 _TEST_PROMPT = "Reply with exactly one word: ok"

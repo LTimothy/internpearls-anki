@@ -280,6 +280,11 @@ def save_declined(reg):
 # used to show a learned time estimate on the generation progress page.
 AI_USAGE = os.path.join(_USER_FILES, "ai_usage.json")
 
+# The raw stream from the most recent AI generation run, overwritten every run
+# (never appended): the one piece of evidence a failed run leaves behind, since
+# the wizard itself only ever showed the final error. See ai_cli._run_argv.
+AI_LAST_RUN_LOG = os.path.join(_USER_FILES, "ai_last_run.log")
+
 
 def load_ai_usage():
     reg = _load_json(AI_USAGE, {})

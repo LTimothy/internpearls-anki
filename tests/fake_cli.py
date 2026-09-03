@@ -25,6 +25,11 @@
 #                   which used to report 0 tokens)
 #   agy_ok          antigravity-style "event"-keyed step_update then a
 #                   SUCCESS result, the shape agy 1.1.24 actually emits
+#   agy_delta_fallback  agent_response step_updates whose text_deltas sum to
+#                   the card JSON, followed by a SUCCESS result with an EMPTY
+#                   "response": the real owner-reported shape (a stream that
+#                   narrated the whole reply but never assembled it into the
+#                   terminal result)
 #   with_image      one card carrying a url: image (I2 review-gate tests)
 import json
 import os
@@ -140,6 +145,16 @@ if mode == "agy_ok":
         flush=True)
     print(json.dumps({"event": "result", "result": {
         "status": "SUCCESS", "response": CARDS_JSON, "num_turns": 1,
+        "usage": dict(USAGE, total_tokens=15)}}))
+    sys.exit(0)
+if mode == "agy_delta_fallback":
+    half = len(CARDS_JSON) // 2
+    for chunk in (CARDS_JSON[:half], CARDS_JSON[half:]):
+        print(json.dumps({"event": "step_update", "step_update": {
+            "step_type": "agent_response", "state": "IN_PROGRESS",
+            "text_delta": chunk}}), flush=True)
+    print(json.dumps({"event": "result", "result": {
+        "status": "SUCCESS", "response": "", "num_turns": 1,
         "usage": dict(USAGE, total_tokens=15)}}))
     sys.exit(0)
 if mode == "agy_error_result":
