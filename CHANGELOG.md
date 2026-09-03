@@ -44,6 +44,10 @@ Pro; Claude Code has no free tier; Antigravity CLI stays a free, throttled Googl
 account tier, and its row notes that it replaces Gemini CLI, which stopped serving
 personal Google AI Pro and Ultra accounts on 2026-06-18.
 
+When a run fails, the wizard now shows the same one-line summary of the CLI's error
+that Test connection already used, for every backend: the first line of the message,
+trimmed, with a sign-in hint when it looks like an authentication failure.
+
 ## v0.56.1
 
 The AI Backends rows no longer cut off their own last line. Each row's muted line

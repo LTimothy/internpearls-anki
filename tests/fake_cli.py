@@ -53,6 +53,9 @@ USAGE = {"input_tokens": 10, "output_tokens": 5}
 # gets a usable result. Lets a test inspect the real argv/stdin a backend's
 # own build_argv constructs, rather than the pre-picked mode this script
 # otherwise dispatches on.
+# Recorder mode answers with an agy-shaped SUCCESS whatever the mode says, so it
+# proves only how the prompt arrived (argv vs stdin). Do not combine it with an
+# error mode and expect that error; the record path wins.
 _record_path = os.environ.get("FAKE_CLI_RECORD")
 if _record_path:
     with open(_record_path, "w", encoding="utf8") as f:
