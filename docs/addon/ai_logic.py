@@ -290,16 +290,32 @@ _ACTIVITY_WORDING = {
               "file_change": "Changed a file"},
 }
 _BASENAME_PARAMS = ("AbsolutePath", "file_path")
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
+_ACTIVITY_NAME_CAP = 60
+
+
+def _clip_activity_name(text):
+    """A tool/step name or basename, flattened and capped for the feed: model-
+    chosen text (a tool name, a file path with no slash) is otherwise
+    unbounded, and a newline inside it would split a feed line into two. Every
+    run of control characters (newlines included) becomes one space, then the
+    result is capped to _ACTIVITY_NAME_CAP characters with an ellipsis."""
+    flat = _CONTROL_RE.sub(" ", text).strip()
+    if len(flat) > _ACTIVITY_NAME_CAP:
+        flat = flat[:_ACTIVITY_NAME_CAP - 1].rstrip() + "…"
+    return flat
 
 
 def _activity_text(kind, name, params=None):
     """One short sentence for a tool/step `name` under backend `kind`, from
     _ACTIVITY_WORDING, or "Used <name>" when the name isn't in that table.
     `params`, when a dict, is read only for a key named AbsolutePath or
-    file_path (never anything else) to fill a "{basename}" template."""
+    file_path (never anything else) to fill a "{basename}" template. Both the
+    fallback name and the basename are flattened and capped (see
+    _clip_activity_name): either can be arbitrary model-chosen text."""
     template = _ACTIVITY_WORDING.get(kind, {}).get(name)
     if template is None:
-        return f"Used {name}"
+        return f"Used {_clip_activity_name(name)}"
     if "{basename}" not in template:
         return template
     path = None
@@ -309,7 +325,8 @@ def _activity_text(kind, name, params=None):
             if isinstance(v, str) and v:
                 path = v
                 break
-    return template.format(basename=os.path.basename(path) if path else "a file")
+    basename = _clip_activity_name(os.path.basename(path)) if path else "a file"
+    return template.format(basename=basename)
 
 
 def _num(v, cast):

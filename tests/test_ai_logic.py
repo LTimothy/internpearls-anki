@@ -298,6 +298,31 @@ def test_parse_claude_read_tool_use_names_the_basename():
                    "activity": "Read notes.pdf"}
 
 
+def test_activity_text_basename_clips_a_huge_slashless_path():
+    # os.path.basename of a slashless string returns it whole; a 3000-char
+    # model-chosen file_path must not reach the feed unbounded.
+    huge = "x" * 3000
+    text = ai_logic._activity_text("claude", "Read", {"file_path": huge})
+    assert text.startswith("Read ")
+    assert len(text) < 100
+    assert text.endswith("…")
+
+
+def test_activity_text_basename_flattens_a_newline():
+    path = "notes\ntoken: secret.pdf"
+    text = ai_logic._activity_text("agy", "view_file", {"AbsolutePath": path})
+    assert "\n" not in text
+    assert text == "Viewed notes token: secret.pdf"
+
+
+def test_activity_text_unknown_name_fallback_is_also_clipped():
+    huge = "y" * 3000
+    text = ai_logic._activity_text("claude", huge)
+    assert text.startswith("Used ")
+    assert len(text) < 100
+    assert text.endswith("…")
+
+
 def test_parse_claude_read_tool_use_ignores_other_parameters():
     # Only file_path may name a basename; nothing else the tool_use block
     # carries (a search query, a URL) should ever reach the activity text.
