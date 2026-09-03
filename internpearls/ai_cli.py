@@ -295,6 +295,10 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
             argv += ["--model", eff_model]
         if eff_effort:
             argv += ["--effort", eff_effort]
+        # Streams the reply as it's generated (stream_event/content_block_delta),
+        # which is where the activity feed's delta text comes from.
+        if supports_flag(path, "--include-partial-messages"):
+            argv += ["--include-partial-messages"]
         tools = []
         if mode == "thorough":
             tools += ["WebSearch", "WebFetch"]
@@ -557,6 +561,9 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                 last_line_at = time.monotonic()
                 if not evt:
                     continue
+                activity = evt.get("activity")
+                if activity and on_event:
+                    on_event({"type": "activity", "text": activity})
                 if evt["type"] == "result":
                     result = evt["text"]
                     if kind == "agy" and not result and agy_deltas:
@@ -570,8 +577,8 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                     tokens = max(tokens, evt["tokens"])
                 elif evt["type"] == "rate_limits":
                     rate_limits = evt
-                if kind == "agy" and evt.get("delta"):
-                    agy_deltas.append(evt["delta"])
+                if kind == "agy" and evt["type"] == "delta":
+                    agy_deltas.append(evt["text"])
                 if evt.get("tokens"):
                     last_usage = evt["tokens"]
                 if on_event:
