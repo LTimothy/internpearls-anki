@@ -3,6 +3,47 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.58.0
+
+The "Generate cards with AI" wizard picks its own card count now. Left alone, the
+assistant drafts one card per point the source actually teaches, up to a ceiling of
+40, and is told plainly not to pad to a number or merge points just to save cards. An
+exact count is still available in the input page's new Advanced disclosure for anyone
+who wants to pin one, and a per-backend turn cap (one turn for Quick, up to 15 for
+Thorough) still bounds a single generation call regardless of how many cards a reply
+carries, so a larger automatic count doesn't also mean a slower or costlier run.
+
+Depth now defaults from what you're actually pasting in, rather than a manual choice
+every time. Thorough kicks in once the source reaches 1,500 characters or carries any
+attachment; anything shorter starts on Quick. Two new config keys, `ai_default_count`
+and `ai_default_depth`, let you seed the wizard's starting point ahead of time; both
+only seed the control, and neither is ever written back from a single session's pick.
+
+The input page itself is rebuilt around four status rows (Backend, Cards and depth,
+Deck, Skills), each with a chip and a link into more detail, with the count spin box,
+depth radios, note-type checkboxes, and destination deck combo moved into the new
+Advanced disclosure underneath them. Each row's own honesty holds per backend: the
+Cards and depth row's detail line is built from that backend's own mode text rather
+than one shared sentence, since what Thorough actually reaches (a real web check on
+Claude Code, nothing on Codex CLI, whatever Antigravity's own approval defaults allow)
+is not the same claim on all three.
+
+The progress page is now one status row too: a chip and phase, elapsed time, and a
+trailing Cancel link, instead of three separate labels and a dialog button box. Escape
+now does exactly what Cancel does here, ending the run in place, rather than closing
+the whole dialog out from under it. The review page's header now names what a run
+actually produced, "3 cards drafted" and, when you attached files, "from 2 sources", so
+you're not left counting rows yourself.
+
+A few smaller fixes round out this batch. Codex CLI runs that finish quickly used to
+report zero tokens even when usage was there the whole time, sitting on the stream's
+`token_count` event instead of the terminal result the add-on was already reading; the
+add-on now tracks the last usage figure it saw across the whole run and falls back to
+it. Antigravity CLI's model hint in AI Backends now names `gemini-3.8-flash-low` as its
+fastest option. And the bundled authoring skill now says plainly to keep cloze text
+plain, no bold or underline inside the sentence, since the blank itself is already the
+emphasis.
+
 ## v0.57.1
 
 "Check for add-on updates" now tells the truth when GitHub's request limit runs out.
