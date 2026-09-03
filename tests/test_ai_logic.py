@@ -240,6 +240,36 @@ def test_prompt_unknown_mode_falls_back_to_thorough_text():
     assert "Mode: Thorough" in p
 
 
+def test_default_mode_thresholds():
+    assert ai_logic.AUTO_DEPTH_CHARS == 1500
+    assert ai_logic.default_mode(1499, 0) == "quick"
+    assert ai_logic.default_mode(1500, 0) == "thorough"
+    assert ai_logic.default_mode(10, 1) == "thorough"
+
+
+def test_prompt_auto_count_states_ceiling_and_rule():
+    p = ai_logic.build_prompt(**{**_PROMPT_KW, "count": None})
+    assert "up to 40 cards" in p
+    assert "one card per point the source actually teaches" in p
+    assert "do not pad" in p.lower()
+    p3 = ai_logic.build_prompt(**{**_PROMPT_KW, "count": 3})
+    assert "exactly 3 cards" in p3
+
+
+def test_auto_count_instruction_sits_after_the_stable_prefix():
+    a = ai_logic.build_prompt(**{**_PROMPT_KW, "count": None})
+    b = ai_logic.build_prompt(**{**_PROMPT_KW, "count": 7})
+    cut = min(a.find("## Task"), b.find("## Task"))
+    assert cut > 0 and a[:cut] == b[:cut]
+
+
+def test_parse_accepts_count_wrapper():
+    text = ('{"count": 1, "cards": [{"note_type": "Study Deck - Basic", '
+            '"fields": {"Front": "q", "Back": "a", "Why": "w"}}]}')
+    cards, errors = ai_logic.parse_cards_json(text, ALLOWED, FIELD_MAP)
+    assert not errors and len(cards) == 1
+
+
 import json as _json
 
 
