@@ -262,6 +262,28 @@ def test_backend_rows_never_clip_their_wrapped_detail_line():
                 f"{dlg.height()})")
 
 
+def test_settings_panel_controls_share_one_left_edge():
+    """The owner's screenshot: Executable path, Model, Effort, and Test
+    connection should all start at the same x inside the settings panel.
+    Measured with mapTo(panel, QPoint(0, 0)).x() on each control's own
+    top-level widget in the panel's grid (the path edit itself, Model's
+    field container, Effort's combo, and the Test connection button's own
+    container), across every backend (Effort is absent for codex, which has
+    no verified effort flag)."""
+    dlg = harness.render("ai-backends", found=1).dialog
+    for kind in ai_cli.BACKENDS:
+        dlg.use_backend(kind)
+        harness.app().processEvents()
+        panel = dlg.panel
+        xs = {"path": panel.path.mapTo(panel, QPoint(0, 0)).x(),
+             "model": panel.model.model_field.mapTo(panel, QPoint(0, 0)).x(),
+             "test": panel.test_btn.mapTo(panel, QPoint(0, 0)).x()}
+        if panel.model.has_effort:
+            xs["effort"] = panel.model.effort.mapTo(panel, QPoint(0, 0)).x()
+        assert len(set(xs.values())) == 1, (
+            f"{kind}'s settings controls don't share a left edge: {xs}")
+
+
 def test_ai_backends_rows_dont_clip_on_first_open(monkeypatch):
     """The reader's own report: dark mode, window about 726px wide, three
     backends found, every row's muted third line cut off mid-glyph on FIRST
