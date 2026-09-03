@@ -901,8 +901,7 @@ def _scene_ai_progress(mock, opts):
         dlg.progress_row.set_primary("<b>Verifying doses against sources</b>")
         dlg.progress_row.set_detail(
             (("Revising 11 cards. " if opts.get("revision") else "")
-            + "Verifying doses against sources. "
-            + "48s elapsed. your recent Thorough runs averaged 1m 40s"))
+            + "48s elapsed, your recent Thorough runs averaged 1m 40s."))
         dlg.stack.setCurrentWidget(dlg.progress_page)
         dlg.exec()
     return _open

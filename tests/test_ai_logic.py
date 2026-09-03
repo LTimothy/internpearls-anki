@@ -1005,3 +1005,11 @@ def test_codex_token_count_carries_usage_alongside_rate_limits():
     ev = ai_logic.parse_stream_event("codex", line)
     assert ev and ev["type"] == "rate_limits"
     assert ev.get("tokens") == 15
+
+
+def test_config_count_ceiling_matches_ai_logic():
+    # config.AI_COUNT_CEILING is a deliberate duplicate of this constant (see
+    # config.py's own comment on why it isn't imported instead); catch the two
+    # drifting apart.
+    from internpearls import config
+    assert config.AI_COUNT_CEILING == ai_logic.AUTO_COUNT_CEILING
