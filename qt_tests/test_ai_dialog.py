@@ -585,3 +585,59 @@ def test_edit_user_skill_persists_after_dialog_closes(monkeypatch, tmp_path):
     finally:
         q.QDialog.exec = original
     assert config.load_user_skill() == "new rule"
+
+
+# === the input page on the row vocabulary (mockup states A, B, C) ===========
+
+def test_input_page_matches_mockup_rows(shot):
+    """State B: four rows in the AI Backends window's own vocabulary (chip,
+    bold noun, muted detail, trailing links), and nothing from Advanced on
+    screen until it is asked for."""
+    dlg = shot("ai-input", state="ready").dialog
+    page_texts = harness.texts(dlg)
+    assert "Cards and depth" in page_texts and "Deck" in page_texts
+    assert any(t.startswith("The assistant decides the count, up to 40")
+               for t in page_texts), page_texts
+    assert "Advanced" in harness.link_labels(dlg)
+    assert not harness.visible(dlg.count_spin)
+
+
+def test_advanced_expands_in_place_and_aligns(shot):
+    """State C: the panel opens under the row that discloses it, and every one
+    of its controls starts at the same x after the fixed label column."""
+    dlg = shot("ai-input", state="advanced").dialog
+    assert harness.visible(dlg.count_spin)
+    xs = {harness.left_x(dlg, w) for w in (dlg.count_spin, dlg.thorough_radio,
+                                           dlg.deck_combo)}
+    assert len(xs) == 1, xs
+    assert "Hide advanced" in harness.link_labels(dlg)
+
+
+def test_depth_chip_follows_source_length(shot):
+    """The chip is the answer the assistant would actually take, recomputed as
+    the source grows past ai_logic.AUTO_DEPTH_CHARS."""
+    dlg = shot("ai-input", state="ready").dialog
+    dlg.source_box.setPlainText("x" * 1499)
+    assert harness.chip_text(dlg.depth_row) == "QUICK"
+    dlg.source_box.setPlainText("x" * 1500)
+    assert harness.chip_text(dlg.depth_row) == "THOROUGH"
+    dlg.source_box.setPlainText(harness.SAMPLE_SOURCE)
+
+
+def test_input_page_says_nothing_is_set_up_yet(shot):
+    """State A: with no assistant detected the backend row wears NOT SET UP and
+    says what to do about it, rather than naming a backend that isn't there."""
+    dlg = shot("ai-input", state="unset").dialog
+    assert harness.chip_text(dlg.backend_row) == "NOT SET UP"
+    assert "No assistant found" in dlg.backend_row.text()
+    assert not dlg.generate_btn.isEnabled()
+
+
+def test_input_page_fits_the_reference_screen_with_advanced_open(shot):
+    """The page's own minimum, in its tallest state, has to fit the screen the
+    rest of this suite measures against: an Advanced panel that only fits by
+    squeezing every wrapped hint below its own text is the clipping bug
+    ai_setup._WrappedHint exists to prevent, one page over."""
+    dlg = shot("ai-input", state="advanced").dialog
+    height = dlg.input_page.minimumSizeHint().height()
+    assert height <= 891 - 60, f"the input page's minimum is {height}px tall"

@@ -847,15 +847,39 @@ def _scene_ai_backends(mock, opts):
 
 
 def _scene_ai_input(mock, opts):
-    """The wizard's input page, reached the normal way (a backend was
-    detected, so __init__'s own _detect() lands here directly)."""
-    from internpearls import ai_dialog
-    _ai_backend_available()
+    """The wizard's input page, in one of the three states the mockup draws.
+
+    `state` picks which: "ready" (the default: a backend detected and material
+    pasted, so every row reads its settled answer), "unset" (nothing detected,
+    so the backend row wears NOT SET UP: the page is forced into view here,
+    since the wizard's own _detect() would land on the setup page instead), and
+    "advanced" (ready, with the Advanced panel disclosed in place).
+    """
+    from internpearls import ai_cli, ai_dialog
+    state = opts.get("state", "ready")
+    if state == "unset":
+        def _find_none(kind, override=""):
+            return None
+        ai_cli.find_cli = _find_none
+    else:
+        _ai_backend_available()
 
     def _open():
         dlg = ai_dialog._GenerateDialog()
+        if state == "unset":
+            dlg.stack.setCurrentWidget(dlg.input_page)
+        else:
+            dlg.source_box.setPlainText(SAMPLE_SOURCE)
+        if state == "advanced":
+            dlg._toggle_advanced()
         dlg.exec()
     return _open
+
+
+# Long enough to sit over ai_logic.AUTO_DEPTH_CHARS, so the "ready" scene shows
+# the settled THOROUGH answer rather than the undecided one.
+SAMPLE_SOURCE = ("Neostigmine reverses non-depolarizing neuromuscular blockade by "
+                 "inhibiting acetylcholinesterase. ") * 30
 
 
 def _scene_ai_progress(mock, opts):
@@ -991,7 +1015,8 @@ SCENES = {
     "ai-backends": (_scene_ai_backends,
                     "the AI Backends window (one row per backend, found=1 detects "
                     "all three)"),
-    "ai-input": (_scene_ai_input, "the AI wizard's input page"),
+    "ai-input": (_scene_ai_input,
+                 "the AI wizard's input page (state=unset|ready|advanced)"),
     "ai-progress": (_scene_ai_progress, "the AI wizard's progress page, mid-run"),
     "ai-review": (_scene_ai_review,
                  "the AI wizard's review page (count=N for a full-size draft)"),
@@ -1072,3 +1097,49 @@ def render(scene, theme="light", expand=(), size=(640, 560), click_labels=(), **
         raise RuntimeError(
             f"scene {scene!r} opened no dialog (it may have returned early)")
     return shots[0]
+
+
+# ------------------------------------------------------------------- readers
+_TAG_RE = None
+
+
+def plain(text):
+    """A rich-text label's words with its markup taken out, so a test can ask what
+    a row says rather than how it is marked up."""
+    global _TAG_RE
+    if _TAG_RE is None:
+        import re
+        _TAG_RE = re.compile(r"<[^>]+>")
+    import html as _html
+    return _html.unescape(_TAG_RE.sub("", text or "")).strip()
+
+
+def texts(dialog):
+    """Every label's text on a dialog, markup stripped: what the page says."""
+    _, q = bootstrap()
+    return [plain(l.text()) for l in dialog.findChildren(q.QLabel)]
+
+
+def link_labels(dialog):
+    """The labels of every flat link_button on a dialog, in tree order."""
+    _, q = bootstrap()
+    return [b.text() for b in dialog.findChildren(q.QPushButton) if b.isFlat()]
+
+
+def visible(widget):
+    """Whether a widget is really on screen, not merely un-hidden in isolation:
+    a control inside a collapsed Advanced panel is what this has to answer no for."""
+    return widget.isVisible()
+
+
+def left_x(dialog, widget):
+    """A widget's left edge in the dialog's own coordinate space."""
+    _, q = bootstrap()
+    return widget.mapTo(dialog, q.QPoint(0, 0)).x()
+
+
+def chip_text(row):
+    """The word on a row's chip pill, or "" for a row wearing none."""
+    _, q = bootstrap()
+    labels = [l for l in row.findChildren(q.QLabel) if "border-radius" in l.styleSheet()]
+    return labels[0].text() if labels else ""

@@ -365,3 +365,18 @@ def test_streaming_list_repeated_bottom_scroll_after_exhaustion_does_not_rebuild
     bar.setValue(1000)
     assert lst.shown() == 70 and len(built) == 70, \
         "scrolling to the bottom of an exhausted list must not rebuild or overrun"
+
+
+def test_chip_cell_carries_the_wizard_input_pages_own_words():
+    """The input page's four rows name their own state rather than borrowing a
+    card list's or the AI Backends window's: a backend a learner has not set up
+    yet is not a detection result, and a depth the assistant chose is not an
+    update."""
+    from internpearls import widgets
+    assert widgets.CHIPS["ready"] == "READY"
+    assert widgets.CHIPS["notsetup"] == "NOT SET UP"
+    assert widgets.CHIPS["auto"] == "AUTO"
+    assert widgets.CHIPS["thorough"] == "THOROUGH"
+    assert widgets.CHIPS["quick"] == "QUICK"
+    assert widgets.CHIPS["deck"] == "DECK"
+    assert widgets.CHIPS["skills"] == "SKILLS"
