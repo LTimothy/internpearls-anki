@@ -3,6 +3,29 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.58.2
+
+A failed generation used to leave nothing behind: the wizard showed one line and the
+whole subprocess stream was gone, which made a run that failed only sometimes, on
+material that worked fine when replayed by hand outside Anki, impossible to chase
+down after the fact. Every run now writes its own evidence to `ai_last_run.log` in
+the add-on's `user_files` folder: the argv it ran (the prompt itself elided, never
+written), every raw stdout line, stderr, the exit code, and how long it took,
+overwritten by the next run and capped at 2 MB kept from the tail. The "no usable
+reply" error itself is more specific too, naming how many stream lines it saw and
+echoing the last non-empty one, rather than a single unhelpful sentence.
+
+Antigravity CLI's own stream narrates the whole reply as it goes, one chunk per
+step, well before its terminal result line. A real run reproduced the failure this
+release fixes: that terminal result reported success but carried an empty reply,
+even though the narrated chunks amounted to a complete, valid one. The add-on now
+falls back to those accumulated chunks whenever this happens, rather than treating
+a working reply as a failure because its last line forgot to carry it.
+
+The AI Backends window's settings panel (executable path, Model, Effort, Test
+connection) got a regression test pinning down that all four already share one left
+edge, after a report that they didn't.
+
 ## v0.58.1
 
 The AI Backends window's rows could still clip their own muted third line ("Works
