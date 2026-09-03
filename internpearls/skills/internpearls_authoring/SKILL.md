@@ -156,4 +156,4 @@ diagrams (svg:<svg...>). Every image needs alt text.
   tell apart.
 
 ## Output
-Follow the output contract in the prompt exactly: a JSON list only, no prose.
+Follow the output contract in the prompt exactly: JSON only, no prose.
