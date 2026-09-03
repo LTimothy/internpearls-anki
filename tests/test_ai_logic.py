@@ -285,7 +285,54 @@ def test_parse_claude_tool_use_maps_to_phase():
     line = _json.dumps({"type": "assistant", "message": {"content": [
         {"type": "tool_use", "name": "WebSearch", "input": {}}]}})
     evt = ai_logic.parse_stream_event("claude", line)
-    assert evt == {"type": "phase", "phase": "Verify online"}
+    assert evt == {"type": "phase", "phase": "Verify online",
+                   "activity": "Searched the web"}
+
+
+def test_parse_claude_read_tool_use_names_the_basename():
+    line = _json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Read",
+         "input": {"file_path": "/private/tmp/x/notes.pdf"}}]}})
+    evt = ai_logic.parse_stream_event("claude", line)
+    assert evt == {"type": "phase", "phase": "Working",
+                   "activity": "Read notes.pdf"}
+
+
+def test_parse_claude_read_tool_use_ignores_other_parameters():
+    # Only file_path may name a basename; nothing else the tool_use block
+    # carries (a search query, a URL) should ever reach the activity text.
+    line = _json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Bash",
+         "input": {"command": "cat /secret/source.txt"}}]}})
+    evt = ai_logic.parse_stream_event("claude", line)
+    assert evt["activity"] == "Ran a command"
+    assert "secret" not in evt["activity"]
+
+
+def test_parse_claude_unknown_tool_falls_back_to_used_name():
+    line = _json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "NotebookEdit", "input": {}}]}})
+    evt = ai_logic.parse_stream_event("claude", line)
+    assert evt["activity"] == "Used NotebookEdit"
+
+
+def test_parse_claude_partial_message_delta():
+    line = _json.dumps({"type": "stream_event", "event": {
+        "type": "content_block_delta",
+        "delta": {"type": "text_delta", "text": "some cards"}}})
+    assert ai_logic.parse_stream_event("claude", line) == {
+        "type": "delta", "text": "some cards"}
+
+
+def test_parse_claude_stream_event_other_shapes_return_none():
+    for line in (
+        _json.dumps({"type": "stream_event", "event": {"type": "message_start"}}),
+        _json.dumps({"type": "stream_event", "event": {
+            "type": "content_block_delta",
+            "delta": {"type": "input_json_delta", "partial_json": "{}"}}}),
+        _json.dumps({"type": "stream_event"}),
+    ):
+        assert ai_logic.parse_stream_event("claude", line) is None
 
 
 def test_parse_claude_error_result_event():
@@ -345,6 +392,26 @@ def test_parse_codex_result_neither_shape_present_is_none():
     assert ai_logic.parse_stream_event("codex", line) is None
 
 
+def test_parse_codex_item_started_names_activity_by_item_type():
+    line = _json.dumps({"type": "item.started",
+                        "item": {"id": "1", "type": "command_execution"}})
+    assert ai_logic.parse_stream_event("codex", line) == {
+        "type": "activity", "text": "Ran a command"}
+
+
+def test_parse_codex_item_started_unknown_type_falls_back():
+    line = _json.dumps({"type": "item.started", "item": {"id": "1", "type": "mystery"}})
+    assert ai_logic.parse_stream_event("codex", line) == {
+        "type": "activity", "text": "Used mystery"}
+
+
+def test_parse_codex_item_started_without_item_type_is_none():
+    for line in (_json.dumps({"type": "item.started"}),
+                 _json.dumps({"type": "item.started", "item": {}}),
+                 _json.dumps({"type": "item.started", "item": "not a dict"})):
+        assert ai_logic.parse_stream_event("codex", line) is None
+
+
 # The agy cases below are driven by tests/agy_stream_samples.ndjson: lines
 # captured verbatim from a real agy 1.1.24 run (a trivial prompt, and the
 # empty-prompt failure), so these pin the parser to the shape the binary
@@ -386,10 +453,11 @@ def test_parse_agy_init_and_step_updates_from_captured_samples():
     steps = [ai_logic.parse_stream_event("agy", ln) for ln in _agy_lines()
              if _json.loads(ln).get("event") == "step_update"]
     # The second step is the fixture's agent_response, which now also carries
-    # its text_delta so a failed run's assembly has something to fall back to
-    # (see ai_cli._run_argv's agy_deltas accumulation).
+    # its text_delta as its own event kind, so a failed run's assembly has
+    # something to fall back to (see ai_cli._run_argv's agy_deltas
+    # accumulation).
     assert steps == [{"type": "phase", "phase": "Working"},
-                     {"type": "phase", "phase": "Working", "delta": "ok\n"}]
+                     {"type": "delta", "text": "ok\n"}]
 
 
 def test_parse_agy_tool_step_names_a_web_phase():
@@ -400,9 +468,29 @@ def test_parse_agy_tool_step_names_a_web_phase():
     other = _json.dumps({"event": "step_update", "step_update": {
         "step_type": "tool", "state": "ACTIVE", "tool_name": "view_file"}})
     assert ai_logic.parse_stream_event("agy", web) == {
-        "type": "phase", "phase": "Verify online"}
+        "type": "phase", "phase": "Verify online", "activity": "Searched the web"}
     assert ai_logic.parse_stream_event("agy", other) == {
-        "type": "phase", "phase": "Working"}
+        "type": "phase", "phase": "Working", "activity": "Viewed a file"}
+
+
+def test_parse_agy_tool_active_names_basename_from_tool_info_parameters():
+    # Verified live against agy 1.1.24: a view_file call's basename rides in
+    # tool_info.parameters.AbsolutePath.
+    line = _json.dumps({"event": "step_update", "step_update": {
+        "step_type": "tool", "state": "ACTIVE", "tool_name": "view_file",
+        "tool_info": {"name": "view_file",
+                     "parameters": {"AbsolutePath": "/tmp/x/notes.txt"}}}})
+    evt = ai_logic.parse_stream_event("agy", line)
+    assert evt["activity"] == "Viewed notes.txt"
+
+
+def test_parse_agy_tool_done_state_carries_no_activity():
+    # Only ACTIVE names the step, so a tool that fires ACTIVE then DONE is
+    # named once, not twice.
+    line = _json.dumps({"event": "step_update", "step_update": {
+        "step_type": "tool", "state": "DONE", "tool_name": "view_file"}})
+    evt = ai_logic.parse_stream_event("agy", line)
+    assert "activity" not in evt
 
 
 def test_parse_agy_malformed_shapes_return_none_rather_than_raising():
