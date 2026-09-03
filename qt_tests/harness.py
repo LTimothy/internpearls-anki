@@ -1103,18 +1103,14 @@ def render(scene, theme="light", expand=(), size=(640, 560), click_labels=(), **
 
 
 # ------------------------------------------------------------------- readers
-_TAG_RE = None
-
-
 def plain(text):
     """A rich-text label's words with its markup taken out, so a test can ask what
-    a row says rather than how it is marked up."""
-    global _TAG_RE
-    if _TAG_RE is None:
-        import re
-        _TAG_RE = re.compile(r"<[^>]+>")
-    import html as _html
-    return _html.unescape(_TAG_RE.sub("", text or "")).strip()
+    a row says rather than how it is marked up. Delegates to ai_dialog._plain
+    rather than duplicating its regex, so the two definitions can't drift apart.
+    Imported lazily, inside the call: internpearls modules cannot be imported
+    before bootstrap() installs real Qt (see that function's own comment)."""
+    from internpearls.ai_dialog import _plain
+    return _plain(text)
 
 
 def texts(dialog):
@@ -1127,12 +1123,6 @@ def link_labels(dialog):
     """The labels of every flat link_button on a dialog, in tree order."""
     _, q = bootstrap()
     return [b.text() for b in dialog.findChildren(q.QPushButton) if b.isFlat()]
-
-
-def visible(widget):
-    """Whether a widget is really on screen, not merely un-hidden in isolation:
-    a control inside a collapsed Advanced panel is what this has to answer no for."""
-    return widget.isVisible()
 
 
 def left_x(dialog, widget):

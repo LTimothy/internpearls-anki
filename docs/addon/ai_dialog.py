@@ -371,6 +371,33 @@ def _muted(text):
     return f"<span style='color:{colors()['muted']}'>{html.escape(text)}</span>"
 
 
+_MODE_LABELS = {"thorough": "Thorough: ", "quick": "Quick draft: "}
+_TRAILING_TIMING_RE = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def _depth_clause(backend, mode):
+    """What a given backend actually does at a given depth, in the Cards and
+    depth row's own voice: lower-cased, with the mode label and any trailing
+    parenthetical timing (e.g. "(up to 15 turns, 1 to 3 min)") stripped, since
+    the row already says the mode and states its own time estimate elsewhere.
+
+    Derived from ai_cli.BACKENDS rather than hardcoded here, since only that
+    dict actually knows whether a given backend can reach the web in a given
+    mode; Codex never can, Antigravity's quick mode still might, and a
+    hardcoded clause would keep telling both the same story. With no backend
+    detected yet, there is nothing to derive from, so this falls back to the
+    spec's own hedge.
+    """
+    if not backend:
+        return "verifies claims online where the backend allows"
+    text = ai_cli.BACKENDS[backend]["modes"][mode]
+    label = _MODE_LABELS[mode]
+    if text.startswith(label):
+        text = text[len(label):]
+    text = _TRAILING_TIMING_RE.sub("", text)
+    return text[:1].lower() + text[1:] if text else text
+
+
 class _InfoRow(QWidget):
     """One settled decision on the input page: a chip saying where it stands, a
     bold noun, a muted detail underneath, and the links that change it.
@@ -734,13 +761,14 @@ class _GenerateDialog(QDialog):
         lay.addWidget(self.deck_row)
 
         self.skills_row = _InfoRow(
-            "skills", "", "Sent in that order on every run.",
+            "skills", "<b>Skills</b>", "Sent in that order on every run.",
             links=(("View", lambda: self._guard(self._view_skills)),
                    ("Edit my rules", lambda: self._guard(self._edit_user_skill))))
         self.skills_link = self.skills_row.links["View"]
         self.rules_link = self.skills_row.links["Edit my rules"]
         lay.addWidget(self.skills_row)
 
+        lay.addWidget(section_rule())
         lay.addWidget(self._build_advanced())
 
         lay.addStretch()
@@ -797,7 +825,8 @@ class _GenerateDialog(QDialog):
         self.count_spin.setRange(0, ai_logic.AUTO_COUNT_CEILING)
         self.count_spin.setSpecialValueText("auto")
         self.count_spin.setValue(cfg["ai_default_count"])
-        self.count_spin.valueChanged.connect(lambda _v: self._refresh_depth_row())
+        self.count_spin.valueChanged.connect(
+            lambda _v: self._guard(self._refresh_depth_row))
         count_box = QWidget()
         count_lay = QHBoxLayout(count_box)
         count_lay.setContentsMargins(0, 0, 0, 0)
@@ -825,7 +854,7 @@ class _GenerateDialog(QDialog):
         # after that seeding, so seeding never reads as a click.
         self._depth_touched = depth in ("thorough", "quick")
         for radio in (self.thorough_radio, self.quick_radio):
-            radio.toggled.connect(lambda _c: self._depth_chosen())
+            radio.toggled.connect(lambda _c: self._guard(self._depth_chosen))
         depth_box = QWidget()
         depth_lay = QHBoxLayout(depth_box)
         depth_lay.setContentsMargins(0, 0, 0, 0)
@@ -880,7 +909,7 @@ class _GenerateDialog(QDialog):
                     f'"{name}" isn\'t in this collection yet. Sync your Intern '
                     "Pearls decks at least once to add it, or generate onto "
                     "Basic/Cloze instead.")
-            box.toggled.connect(lambda _c: self._refresh_deck_row())
+            box.toggled.connect(lambda _c: self._guard(self._refresh_deck_row))
             self.type_boxes[name] = box
             types_lay.addWidget(box)
         grid.addWidget(self._advanced_label("Note types"), 3, 0)
@@ -889,7 +918,8 @@ class _GenerateDialog(QDialog):
         self.deck_combo = QComboBox()
         self.deck_combo.setEditable(True)
         self.deck_combo.addItem(self.session.deck_name)
-        self.deck_combo.currentTextChanged.connect(lambda _t: self._refresh_deck_row())
+        self.deck_combo.currentTextChanged.connect(
+            lambda _t: self._guard(self._refresh_deck_row))
         grid.addWidget(self._advanced_label("Destination deck"), 4, 0)
         grid.addWidget(self.deck_combo, 4, 1)
 
@@ -948,8 +978,6 @@ class _GenerateDialog(QDialog):
                     f"{ai_logic.AUTO_COUNT_CEILING}.")
         else:
             said = f"Exactly {plural(count, 'card')}."
-        thorough = ("drafts, may verify online, then self-reviews")
-        quick = "exactly one turn, no web access"
         undecided = (not self.source_box.toPlainText().strip()
                      and not self.session.attachments)
         if self._depth_touched:
@@ -971,7 +999,7 @@ class _GenerateDialog(QDialog):
             else:
                 why = "Quick because the source is short"
         if why:
-            said += f" {why}: {thorough if mode == 'thorough' else quick}."
+            said += f" {why}: {_depth_clause(self.session.backend, mode)}."
         self.depth_row.set_chip(mode)
         self.depth_row.set_detail(said)
         if not self._depth_touched:
@@ -1003,14 +1031,20 @@ class _GenerateDialog(QDialog):
                                  if chosen else f"{deck}. {types}")
 
     def _refresh_skills_row(self):
-        """What gets sent on top of the material, in the order it is sent."""
+        """What gets sent on top of the material, in the order it is sent.
+
+        The primary line stays "Skills", the bold noun every other row's
+        primary bolds; what is actually sent is the row's detail, same as the
+        Deck and Cards-and-depth rows put their own answer in the muted line
+        below the noun rather than in the bold line itself."""
         parts = ["Bundled"]
         deck = load_deck_skill()
         if deck and deck.get("enabled"):
             parts.append(f"deck skill v{deck.get('version')}")
         if load_user_skill().strip():
             parts.append("my rules")
-        self.skills_row.set_primary(f"<b>{html.escape(', '.join(parts))}</b>")
+        self.skills_row.set_detail(
+            f"{', '.join(parts)}. Sent in that order on every run.")
 
     def _source_changed(self):
         text = self.source_box.toPlainText()
@@ -1169,7 +1203,16 @@ class _GenerateDialog(QDialog):
         # is actually sent, so it has to be re-read rather than left stale. Only
         # when there is one: this method is also reachable on a dialog whose
         # input page was never built.
-        if "skills_row" in self.__dict__:
+        # hasattr(), not a raw self.__dict__ poke, but guarded: a real PyQt
+        # widget whose __init__ chain never ran (as in the qt_tests harness'
+        # own __new__()-built dialogs) raises RuntimeError rather than
+        # AttributeError for an attribute Qt itself doesn't know, and hasattr
+        # only swallows the latter.
+        try:
+            has_skills_row = hasattr(self, "skills_row")
+        except RuntimeError:
+            has_skills_row = False
+        if has_skills_row:
             self._refresh_skills_row()
 
     # === progress ===============================================================
