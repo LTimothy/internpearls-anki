@@ -262,6 +262,60 @@ def test_backend_rows_never_clip_their_wrapped_detail_line():
                 f"{dlg.height()})")
 
 
+def test_ai_backends_rows_dont_clip_on_first_open(monkeypatch):
+    """The reader's own report: dark mode, window about 726px wide, three
+    backends found, every row's muted third line cut off mid-glyph on FIRST
+    open, and the clipping does not persist past a Re-check (which rebuilds
+    the rows). The existing multi-width sweep above missed this because it
+    resizes and processes events at several widths in sequence, which gives
+    _WrappedHint.resizeEvent repeated chances to widen the window's minimum
+    before anything is asserted. Reproduced here with exactly one show: build
+    the dialog, resize it once to the reported width, show it, and check
+    before doing anything else."""
+    harness.bootstrap()
+    harness.app()
+    harness.apply_theme("dark")
+    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": "/bin/echo")
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_setup._AIBackendsDialog(None)
+    dlg.resize(726, dlg.height())
+    dlg.show()
+    harness.app().processEvents()
+    try:
+        for kind, row in dlg.rows.items():
+            label = row.detail
+            needed = label.heightForWidth(label.width())
+            assert label.height() >= needed, (
+                f"{kind}'s detail line is {label.height()}px tall at "
+                f"{label.width()}px wide on first open, where its text needs "
+                f"{needed}px (window {dlg.width()}x{dlg.height()})")
+            bottom = label.mapTo(row, label.rect().bottomLeft()).y()
+            assert bottom < row.height(), (
+                f"{kind}'s detail line ends {bottom}px down a {row.height()}px "
+                f"row on first open, so its last line is clipped (window "
+                f"{dlg.width()}x{dlg.height()})")
+
+        # show -> resize narrower -> check: the same first-paint gap can also
+        # show up after one resize down, before any further events settle it.
+        dlg.resize(560, dlg.height())
+        harness.app().processEvents()
+        for kind, row in dlg.rows.items():
+            label = row.detail
+            needed = label.heightForWidth(label.width())
+            assert label.height() >= needed, (
+                f"{kind}'s detail line is {label.height()}px tall at "
+                f"{label.width()}px wide after a narrower resize, where its "
+                f"text needs {needed}px (window {dlg.width()}x{dlg.height()})")
+            bottom = label.mapTo(row, label.rect().bottomLeft()).y()
+            assert bottom < row.height(), (
+                f"{kind}'s detail line ends {bottom}px down a {row.height()}px "
+                f"row after a narrower resize (window {dlg.width()}x"
+                f"{dlg.height()})")
+    finally:
+        dlg.close()
+
+
 def test_ai_backends_scene_reads_its_detection_state(shot):
     """The harness scene, in both states it can be rendered in: with nothing
     installed every row wears NOT FOUND, and with `found=1` every row wears
