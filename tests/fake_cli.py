@@ -31,6 +31,13 @@
 #                   narrated the whole reply but never assembled it into the
 #                   terminal result)
 #   with_image      one card carrying a url: image (I2 review-gate tests)
+#   echo_prompt     a successful run that also emits a stream event echoing
+#                   the prompt back verbatim (a transcript-style "user_input"
+#                   event some CLI might legitimately emit), to prove the run
+#                   log elides that one line without touching the rest
+#   echo_prompt_garbage  emits only that echoed-prompt event, no usable
+#                   result, so the no-usable-reply error's last-line excerpt
+#                   is exercised against a line that carries the prompt
 import json
 import os
 import sys
@@ -167,6 +174,16 @@ if mode == "agy_error_result":
         "usage": {"input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0,
                   "cache_read_tokens": 0, "total_tokens": 0}}}))
     sys.exit(1)
+if mode == "echo_prompt":
+    print(json.dumps({"type": "user_input", "text": prompt}), flush=True)
+    print(json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "WebSearch", "input": {}}]}}), flush=True)
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": CARDS_JSON, "usage": USAGE}))
+    sys.exit(0)
+if mode == "echo_prompt_garbage":
+    print(json.dumps({"type": "user_input", "text": prompt}))
+    sys.exit(0)
 if mode == "agy_permission_denied":
     print('jetski: no output produced ... a tool required the "write_file" '
          "permission that headless mode cannot prompt for, so it was "
