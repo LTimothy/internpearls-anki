@@ -84,6 +84,8 @@ reviews every card before import.
   contrast whose cells name each other shares one group, or each card is free.
 - Bold and underline the one visible word that makes the blank specific
   (`<b><u>word</u></b>`), never as general emphasis.
+- Keep cloze text plain: no bold or underline inside the sentence; the blank itself is
+  the emphasis.
 
 ### Shaping an answer
 - A comparison of two things across several dimensions is an HTML <table>, not two prose

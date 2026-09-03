@@ -162,6 +162,19 @@ def test_run_generation_parses_codex_nested_item_text_shape(monkeypatch, tmp_pat
     assert res["tokens"] == 15
 
 
+def test_run_generation_reports_codex_usage_on_a_short_run(monkeypatch, tmp_path):
+    # Verified against a live short run: a token_count event carries the real
+    # usage, and the terminal turn.completed carries none. _run_argv must
+    # remember the last usage it saw and report that instead of 0.
+    monkeypatch.setattr(ai_cli, "build_argv",
+                        lambda kind, path, mode, scratch, imgs, **kw:
+                            (FAKE + ["codex_short"], True))
+    res = ai_cli.run_generation("codex", "/usr/bin/codex", "PROMPT", "quick",
+                                str(tmp_path))
+    assert '"Front": "q"' in res["text"]
+    assert res["tokens"] == 15
+
+
 def test_run_generation_parses_antigravity_result_shape(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_cli, "build_argv",
                         lambda kind, path, mode, scratch, imgs, **kw:
@@ -328,6 +341,10 @@ def test_build_argv_agy_puts_the_prompt_in_argv_after_dash_p_and_not_on_stdin(
     assert argv[argv.index("--output-format") + 1] == "stream-json"
     assert argv[argv.index("--add-dir") + 1] == "/tmp/s"
     assert "--disable-slash-commands" in argv
+
+
+def test_agy_hint_names_a_fast_model():
+    assert "gemini-3.8-flash-low" in ai_cli.BACKENDS["agy"]["model_hint"]
 
 
 def test_build_argv_agy_omits_disable_slash_commands_when_unsupported(monkeypatch):
