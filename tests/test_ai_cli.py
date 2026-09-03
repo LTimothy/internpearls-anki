@@ -78,6 +78,48 @@ def test_write_run_log_elides_a_prompt_carried_in_argv(tmp_path):
     assert "elapsed: 1.2s" in text
 
 
+def test_run_log_elides_a_stdout_line_that_echoes_the_prompt(tmp_path):
+    # A CLI that echoes the prompt into a stream event (a transcript-style
+    # "user_input" event, say) must not leak it into the run log via an
+    # unscrubbed stdout line, even though the argv itself is already elided.
+    # Only that one line is replaced; the rest of the stream survives.
+    log_path = tmp_path / "ai_last_run.log"
+    prompt = ("This is the learner's actual pasted source material for the "
+             "card batch, which must never reach the log verbatim.")
+    ai_cli._run_argv(FAKE + ["echo_prompt"], "claude", prompt,
+                     log_path=str(log_path))
+    text = log_path.read_text(encoding="utf8")
+    assert prompt not in text
+    assert "<line containing the prompt elided," in text
+    assert "WebSearch" in text            # the other stdout lines survive
+    assert "Front" in text and "Study Deck - Basic" in text
+
+
+def test_no_usable_reply_excerpt_elided_when_last_line_echoes_prompt():
+    prompt = ("This is the learner's actual pasted source material for the "
+             "card batch, which must never reach the error dialog verbatim.")
+    with pytest.raises(ai_cli.GenerationError) as e:
+        ai_cli._run_argv(FAKE + ["echo_prompt_garbage"], "claude", prompt)
+    msg = str(e.value)
+    assert prompt not in msg
+    assert "<line containing the prompt elided," in msg
+
+
+def test_run_log_unchanged_when_lines_only_share_a_short_common_word(tmp_path):
+    # "Basic" turns up in both the prompt and the fake CLI's own output (its
+    # note type is "Study Deck - Basic"), but that overlap is a single short
+    # word, not an actual echo of the prompt, so it must not trigger elision.
+    log_path = tmp_path / "ai_last_run.log"
+    prompt = ("Basic pharmacology review\n"
+             "the rest of the learner's real source material, unrelated "
+             "to anything the fake CLI ever prints back.")
+    ai_cli._run_argv(FAKE + ["ok"], "claude", prompt, log_path=str(log_path))
+    text = log_path.read_text(encoding="utf8")
+    assert "<line containing the prompt elided" not in text
+    assert "Basic" in text
+    assert "WebSearch" in text
+
+
 def test_run_log_captures_stderr_and_nonzero_exit_on_failure(tmp_path):
     log_path = tmp_path / "ai_last_run.log"
     with pytest.raises(ai_cli.GenerationError):

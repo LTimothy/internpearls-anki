@@ -351,23 +351,73 @@ def _elided_argv(argv, prompt):
     return [f"<prompt, {len(a)} chars>" if a == prompt else a for a in argv]
 
 
-def _write_run_log(log_path, argv, prompt, lines, err_text, returncode, elapsed_s):
+_MIN_NEEDLE_LEN = 20
+
+
+def _prompt_needles(prompt):
+    """Short excerpts of `prompt` to scan stdout/stderr lines against: the
+    first 80 characters of the whole prompt, plus the first 80 characters of
+    each of its first three non-empty lines. A CLI that echoes the prompt
+    back into a stream event (a transcript-style `user_input` event, say)
+    would otherwise put the learner's pasted material, and the active
+    skills, straight into ai_last_run.log even though the argv itself is
+    elided. Needles under _MIN_NEEDLE_LEN characters are dropped: a short
+    needle (a stray word, a JSON key the prompt happens to share) would elide
+    lines that merely echo common text, not lines that actually echo the
+    prompt."""
+    needles = []
+    whole = prompt.strip()[:80].strip()
+    if len(whole) >= _MIN_NEEDLE_LEN:
+        needles.append(whole)
+    non_empty = [ln.strip() for ln in prompt.splitlines() if ln.strip()]
+    for ln in non_empty[:3]:
+        needle = ln[:80].strip()
+        if len(needle) >= _MIN_NEEDLE_LEN and needle not in needles:
+            needles.append(needle)
+    return needles
+
+
+def _contains_needle(text, needles):
+    return any(n in text for n in needles)
+
+
+def _redact_line(line, needles):
+    """`line` with any trailing newline stripped, or an elision marker in its
+    place when it contains one of `needles`."""
+    stripped = line.rstrip("\n")
+    if _contains_needle(stripped, needles):
+        return f"<line containing the prompt elided, {len(stripped)} chars>"
+    return stripped
+
+
+def _write_run_log(log_path, argv, prompt, lines, err_text, returncode,
+                   elapsed_s, needles=()):
     """Best-effort evidence file for one run: the argv (prompt elided), every
     raw stdout line, stderr, the exit code, and the elapsed time. Overwritten
     each run, never appended, and capped at _RUN_LOG_CAP (kept from the tail,
     since the failure is usually near the end of the stream). `log_path` of
     None means the caller (test_connection) wants no log at all. Never
     raises: a failure to write this side-channel file must not turn a real
-    generation result (success or failure) into a different error."""
+    generation result (success or failure) into a different error.
+
+    `needles`, from _prompt_needles, redacts any stdout/stderr line that
+    echoes the prompt (see _redact_line); the argv itself is elided
+    separately by _elided_argv since it holds the whole prompt as one
+    argument rather than a line that might merely contain it.
+
+    A single `_GenerateDialog` never runs two generations at once, so this
+    one log path is never written by two runs concurrently; nothing here
+    needs to guard against that race."""
     if not log_path:
         return
     try:
         parts = ["argv: " + " ".join(_elided_argv(argv, prompt)), "",
                  "--- stdout ---"]
-        parts.extend(line.rstrip("\n") for line in lines)
+        parts.extend(_redact_line(line, needles) for line in lines)
         parts.extend(["", "--- stderr ---"])
         if err_text:
-            parts.append(err_text)
+            parts.extend(_redact_line(ln, needles)
+                        for ln in err_text.splitlines())
         parts.extend(["", f"exit code: {returncode}",
                       f"elapsed: {elapsed_s:.1f}s"])
         data = "\n".join(parts).encode("utf8")
@@ -380,20 +430,32 @@ def _write_run_log(log_path, argv, prompt, lines, err_text, returncode, elapsed_
         pass
 
 
-def _last_line_detail(lines, err_text):
+def _last_line_detail(lines, err_text, needles=()):
     """First 200 chars of the last non-empty stdout line, or the stderr tail
     when every stdout line was blank (or there were none): what the "no
     usable reply" error names as its one clue, since the reader can't open
-    the run log from inside the error dialog."""
+    the run log from inside the error dialog. Elided the same way the run
+    log is (see _redact_line) when that line echoes the prompt: this excerpt
+    lands in a dialog the learner reads directly, so it must never carry the
+    prompt any more than the log file does."""
     for line in reversed(lines):
         s = line.strip()
         if s:
+            if _contains_needle(s, needles):
+                return f"<line containing the prompt elided, {len(s)} chars>"
             return s[:200]
-    return (err_text or "").strip()[:200]
+    tail = (err_text or "").strip()
+    if tail and _contains_needle(tail, needles):
+        return f"<line containing the prompt elided, {len(tail)} chars>"
+    return tail[:200]
 
 
 def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
               cwd=None, prompt_via_stdin=True, log_path=None):
+    # Built once per run, from the prompt at hand, and reused for both the
+    # run log and the no-usable-reply excerpt below, rather than each
+    # re-deriving it from `prompt` separately.
+    needles = _prompt_needles(prompt)
     start = time.monotonic()
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
@@ -500,7 +562,7 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
             except Exception:
                 pass
         _write_run_log(log_path, argv, prompt, lines, err_text,
-                       proc.returncode, time.monotonic() - start)
+                       proc.returncode, time.monotonic() - start, needles)
     if not tokens and kind == "codex":
         # Scoped to codex, the one backend the comment above `last_usage`
         # describes: claude and agy always carry usage on their own terminal
@@ -520,9 +582,9 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
     if not result:
         raise GenerationError(
             f"the assistant produced no usable reply ({len(lines)} events "
-            f"seen; last: {_last_line_detail(lines, err_text)}). The full "
-            f"stream is in ai_last_run.log inside the add-on's user_files "
-            f"folder.")
+            f"seen; last: {_last_line_detail(lines, err_text, needles)}). "
+            f"The full stream is in ai_last_run.log inside the add-on's "
+            f"user_files folder.")
     return {"text": result, "tokens": tokens, "rate_limits": rate_limits,
             "duration_s": round(time.monotonic() - start, 1)}
 
