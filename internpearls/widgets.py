@@ -108,6 +108,193 @@ _CHIP_W = {}
 CARET_W = 14
 CARET_GAP = 6
 
+# field_inset()'s disabled-widget fallback, cached per class: a fresh, enabled
+# (checked, for a checkable class) probe's own inset, measured once each. See
+# align_field_column's docstring for why a settings grid's fixed label column
+# lines up every field's geometry but not what gets painted inside it.
+_FIELD_INSET = {}
+
+
+def _visual_inset(widget, at=None):
+    """How many pixels right of `widget`'s own left edge the running style actually
+    starts painting, found by grabbing `widget` and scanning for the first run of
+    pixels that aren't the plain window background (a run of one can be a single
+    blended antialiasing pixel; two in a row is real paint).
+
+    QStyle's own subControlRect/subElementRect answers can't be trusted for this:
+    under macOS's native style, CC_ComboBox's SC_ComboBoxFrame subcontrol reports a
+    null rect for a QComboBox, and SE_PushButtonContents/SE_LineEditContents both
+    answer a text content margin, not where the bezel itself starts. Reading back
+    what the style actually painted is the only way to see it.
+
+    Scans `widget`'s own middle row by default. `at`, when given, is some other
+    widget inside `widget` to scan level with instead: a field container can hold
+    more than one child at different heights (the Advanced grid's note-type column
+    is a whole stack of checkboxes), and the container's own vertical middle can
+    land between two of them, or on a disabled one whose indicator is drawn too
+    close to the background to register as paint at all. Scanning `widget`'s own
+    full width from x=0 rather than just the leading control's also catches an
+    offset the leading control's own bezel can't see by itself: a free-text Model
+    field's line edit sits a few pixels right of `widget`'s left edge because it
+    shares a layout with a hidden QComboBox sibling that still reserves that
+    combo's own focus-ring margin, which only shows up by scanning the field as a
+    whole.
+
+    Imports QPalette lazily: the fake Qt tests/ installs has no QPalette at all
+    (nothing there ever paints), so this can only be resolved once real Qt is
+    running, the same reason harness.plain() imports ai_dialog lazily.
+    """
+    from aqt.qt import QPalette
+    pix = widget.grab()
+    img = pix.toImage()
+    if img.isNull() or img.height() == 0:
+        return 0
+    dpr = img.devicePixelRatio() or 1
+    if at is not None:
+        row = round(at.mapTo(widget, at.rect().center()).y() * dpr)
+        row = max(0, min(row, img.height() - 1))
+    else:
+        row = img.height() // 2
+    bg = widget.palette().color(QPalette.ColorRole.Window)
+    limit = min(img.width(), int(widget.width() * dpr))
+    run = 0
+    for px in range(limit):
+        if img.pixelColor(px, row) != bg:
+            run += 1
+            if run >= 2:
+                return round((px - 1) / dpr)
+        else:
+            run = 0
+    return 0
+
+
+def field_inset(container, leading):
+    """How far right of `container`'s own left edge the running style actually
+    starts painting `container`'s content, scanned level with `leading` (the
+    control inside `container` that actually draws that field's left edge).
+
+    Measures `container` itself, scanned at `leading`'s own row, when `leading`
+    is enabled: that is the true answer for this particular field, position
+    within its own layout included, not just `leading`'s own bezel in isolation.
+
+    Falls back to a fresh, enabled (and, for a checkable class, checked) probe of
+    `leading`'s own class, cached per class, when `leading` is disabled: a
+    disabled "sync your decks first" note-type checkbox's indicator is drawn at
+    low enough contrast against the window that a live scan can miss it entirely
+    and measure "no inset" for a control that has one, the same reason the
+    checkbox probe in ai_dialog.py's own `_checkbox_column_width` polishes before
+    measuring rather than trusting an unstyled sizeHint.
+
+    0 when `container` can't be grabbed at all: tests/ builds every screen this
+    runs from against a fake Qt (mock_anki.QWidget has no grab(), no palette(),
+    and a resize() that takes two ints rather than a QSize) that never paints
+    anything, so there is nothing here to measure and nothing to compensate for.
+    """
+    if not hasattr(container, "grab"):
+        return 0
+    if leading.isEnabled():
+        return _visual_inset(container, at=leading)
+    cls = type(leading)
+    if cls not in _FIELD_INSET:
+        probe = cls()
+        setter = getattr(probe, "setChecked", None)
+        if setter is not None:
+            setter(True)
+        probe.resize(probe.sizeHint())
+        probe.ensurePolished()
+        _FIELD_INSET[cls] = _visual_inset(probe)
+    return _FIELD_INSET[cls]
+
+
+def field_slot(widget):
+    """Wrap a bare leaf field (one grid's own field column has nothing else to put
+    beside it: Effort's combo, the wizard's deck combo) in a thin box with its own
+    zero-margin layout, so `align_field_column` has a left margin to adjust. Every
+    other field in these grids already sits in a box of its own (Executable path's
+    line edit plus its Browse button, the Advanced grid's count spinbox plus its
+    hint) and reuses that box's own layout instead of getting wrapped again.
+    """
+    slot = QWidget()
+    lay = QHBoxLayout(slot)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+    lay.addWidget(widget)
+    return slot
+
+
+def align_field_column(rows):
+    """Nudge whichever of a settings grid's field-column containers the running
+    style insets less than the column's most-inset member right by the
+    difference, so every field's drawn left edge lands on one x instead of just
+    its geometry's.
+
+    ai_setup._SettingsPanel and ai_dialog._build_advanced both lay their controls
+    into a QGridLayout with a fixed label column, which lines up every field's
+    geometry but not what gets painted inside it: measured on macOS, a QComboBox's
+    native bezel starts about 4px right of its own geometry (space macOS reserves
+    for a focus ring it only draws when the control is actually focused), while a
+    QLineEdit's or QPushButton's bezel starts flush with its geometry, so a text
+    field and a combo box in the same column read as two different left edges even
+    though QGridLayout placed them at the same x. Fusion (offscreen, what the qt
+    test suite runs under) insets nothing, so every field measures 0 there and this
+    is a no-op: the geometry an offscreen exact-equality check already asserts on
+    is untouched.
+
+    `rows` is `[(container, leading), ...]`: `container` is the widget actually
+    placed in the grid's field column (wrap a bare leaf with `field_slot` first,
+    so it has a layout this can set a margin on), and `leading` is whichever
+    control inside it actually draws that field's left edge (the container itself
+    for a bare leaf; the visible one of two alternatives for a field that swaps
+    between them, e.g. a Model field's combo vs. its free-text line edit). Safe to
+    call more than once as a field's own leading control changes: every
+    container's left margin is reset to 0 and its layout re-activated before
+    anything is measured, so a second call always measures each field's own
+    intrinsic inset rather than the first call's already-compensated one (which
+    would otherwise read as needing less margin than it really does, since part
+    of its own inset is now sitting in the margin the first call just gave it).
+
+    Applying a margin is itself measured and corrected, not trusted at face
+    value: a QRadioButton or QCheckBox as a layout's first item, under macOS's
+    native style, ends up only about half of a requested left margin right of
+    where it started (verified: asking for a 4px margin moves one 2px, asking
+    for 10px moves it 8px), a style-specific layout-spacing quirk neither this
+    function nor its caller needs to understand to correct for.
+
+    A no-op outright against the fake Qt tests/ installs: mock_anki's own
+    QHBoxLayout/QVBoxLayout has no contentsMargins() getter at all (nothing
+    there ever paints, so nothing there has ever needed one).
+    """
+    if not rows or not hasattr(rows[0][0], "grab"):
+        return
+    for container, _leading in rows:
+        lay = container.layout()
+        m = lay.contentsMargins()
+        if m.left():
+            lay.setContentsMargins(0, m.top(), m.right(), m.bottom())
+        lay.activate()
+    insets = [field_inset(container, leading) for container, leading in rows]
+    target = max(insets, default=0)
+    if not target:
+        return
+    for (container, leading), inset in zip(rows, insets):
+        want = target - inset
+        if not want:
+            continue
+        lay = container.layout()
+        applied = 0
+        # A handful of correction passes is plenty: the shortfall seen in
+        # practice is a near-constant few pixels, not a wild nonlinearity, so
+        # this converges in one or two passes and the cap only guards against
+        # a style whose quirk this hasn't been measured against.
+        for _ in range(5):
+            m = lay.contentsMargins()
+            lay.setContentsMargins(applied, m.top(), m.right(), m.bottom())
+            lay.activate()
+            actual = leading.mapTo(container, leading.rect().topLeft()).x()
+            if actual >= want:
+                break
+            applied += want - actual
+
 
 def chip_column_width(kinds=None):
     """The width of the chip column, which is also the width of every pill in it.

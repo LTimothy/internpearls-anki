@@ -1135,6 +1135,50 @@ def left_x(dialog, widget):
     return widget.mapTo(dialog, q.QPoint(0, 0)).x()
 
 
+def visual_left(dialog, widget):
+    """Where the running style actually draws `widget`'s own left edge, in the
+    dialog's own coordinate space - independent of `widgets.align_field_column`'s
+    own compensation, which this exists to check: grabs `dialog` itself and scans
+    for the first run of pixels level with `widget`'s own middle that aren't the
+    plain window background, starting a little left of `widget`'s own geometry
+    (its compensating margin, if any, moved it right of the label column, not
+    left, so nothing legitimate can be found further left than that) and never
+    reading past `widget`'s own right edge, so a neighbouring control's paint
+    can't be mistaken for this one's.
+
+    Under Fusion, which is what running this suite (QT_QPA_PLATFORM=offscreen)
+    always renders with, every control's bezel starts flush with its own
+    geometry, so this equals `left_x` exactly and a test built on it degenerates
+    to the plain geometry check. It only diverges under a style that insets some
+    control classes more than others, which macOS's native style does: verified
+    separately, with no QT_QPA_PLATFORM set, by a script that imports this
+    module and calls render() directly (a real display connection is required;
+    pytest here always runs offscreen).
+    """
+    from aqt.qt import QPalette
+    gx = left_x(dialog, widget)
+    pix = dialog.grab()
+    img = pix.toImage()
+    if img.isNull() or img.height() == 0:
+        return gx
+    dpr = img.devicePixelRatio() or 1
+    gy = widget.mapTo(dialog, widget.rect().center()).y()
+    row = max(0, min(round(gy * dpr), img.height() - 1))
+    bg = dialog.palette().color(QPalette.ColorRole.Window)
+    pad = 20
+    start = max(0, round((gx - pad) * dpr))
+    end = min(img.width(), round((gx + widget.width()) * dpr))
+    run = 0
+    for px in range(start, end):
+        if img.pixelColor(px, row) != bg:
+            run += 1
+            if run >= 2:
+                return round((px - 1) / dpr)
+        else:
+            run = 0
+    return gx
+
+
 def chip_text(row):
     """The word on a row's chip pill, or "" for a row wearing none."""
     _, q = bootstrap()
