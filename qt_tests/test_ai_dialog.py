@@ -470,6 +470,40 @@ def test_view_skills_extra_button_toggles_and_leaves_dialog_open(monkeypatch):
     assert calls == [1]   # the explicit click, and only the explicit click, ran it
 
 
+def test_progress_page_cancel_link_cancels_the_run(monkeypatch):
+    """The Cancel link that replaced the old QDialogButtonBox button (Task 4)
+    must still stop the run directly, never through QDialog.reject()'s own
+    "discard the drafted cards" confirm (see _build_progress's comment)."""
+    harness.bootstrap()
+    app = harness.app()
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
+              cancel=None, timeout=None, model=None, effort=None:
+            {"text": "[]", "tokens": 0, "duration_s": 0})
+
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    app.processEvents()
+    dlg.source_box.setPlainText("Regional block landmarks and needle depths")
+    dlg._start_generation()
+    app.processEvents()
+    assert dlg.stack.currentWidget() is dlg.progress_page
+
+    from aqt.qt import QPushButton
+    btn = next(b for b in dlg.progress_page.findChildren(QPushButton)
+              if b.text() == "Cancel")
+    btn.click()
+    assert dlg._cancel_flag.is_set()
+    assert dlg.stack.currentWidget() is dlg.progress_page   # reject() never ran
+
+
 def test_view_skills_toggle_button_relabels_after_each_click(monkeypatch):
     """Minor fix: the extra button used to keep reading "Disable deck skill"
     even after a click actually disabled it. It must now name the action
