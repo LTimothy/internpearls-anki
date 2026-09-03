@@ -32,6 +32,31 @@ def _row_text(row):
     return " ".join(parts)
 
 
+def _walk_widgets(root):
+    """Every live widget under `root`, not just its rendered node: the caret's
+    accessible name isn't something node() carries (see review.py's own
+    _caret_widget/_walk_widgets, mirrored here for the wizard's own rows)."""
+    seen, stack, out = set(), [root], []
+    while stack:
+        w = stack.pop()
+        if id(w) in seen:
+            continue
+        seen.add(id(w))
+        out.append(w)
+        stack.extend(v for v in vars(w).values() if hasattr(v, "wid"))
+        layout = getattr(w, "_layout", None)
+        if layout is not None:
+            stack.extend(getattr(layout, "_children", []) or [])
+    return out
+
+
+def _caret_widget(row):
+    from internpearls import ai_dialog as _ad
+    return next(w for w in _walk_widgets(row)
+                if getattr(w, "text", None) and w.text() in (_ad._CARET_CLOSED,
+                                                              _ad._CARET_OPEN))
+
+
 def test_setup_page_shown_when_no_backend(anki, monkeypatch):
     monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
     dlg = ai_dialog._GenerateDialog()
@@ -728,6 +753,58 @@ def test_review_row_shows_thumbnail_and_host_for_a_web_image(anki, monkeypatch):
     text = _row_text(row)
     assert "example.com" in text                      # the URL's host, per I2
     assert "<img" in text or "[image" in text          # a real indication of the image
+
+
+def test_review_row_names_the_image_while_collapsed_and_gives_a_reason(anki, monkeypatch):
+    _stub_fetch_image(monkeypatch)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    row = dlg.cards_lay.itemAt(0).widget()
+    assert "[image: from example.com]" in _row_text(row)
+    assert "Has a picture" in _row_text(row)   # excluded by the gate, so the row says why
+
+
+def test_review_row_drops_the_image_name_once_expanded_and_painted(anki, monkeypatch):
+    _stub_fetch_image(monkeypatch)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    row = dlg.cards_lay.itemAt(0).widget()
+    caret = _caret_widget(row)
+    caret.clicked.emit()   # first expand: the mock's QImage treats the real thumb as ok
+    text = _row_text(row)
+    assert "[image: from example.com]" not in text
+    assert "<img" in text
+
+
+def test_review_row_reason_is_silent_on_a_kept_verbatim_cards_own_uncheck(anki, monkeypatch):
+    # A card the last revision left untouched keeps whatever the learner set for
+    # it herself; the reason line must not reappear just because it still
+    # happens to carry an image, or it would misreport her own choice as the
+    # gate's default (see _apply_review_state's own comment).
+    dlg = _ready_dialog(anki, monkeypatch)
+    s = dlg.session
+    s.cards = [_basic_card("Q1", "svg:<svg xmlns='http://www.w3.org/2000/svg'/>")]
+    s.checks = ai_logic.mechanical_checks(s.cards, {}, {})
+    s.updated = set()                    # kept verbatim from the prior revision
+    s.image_data = {0: [{"state": "ok", "kind": "svg"}]}
+    dlg._pending_prev_included = [False]  # her own earlier uncheck, unrelated to the gate
+    dlg._apply_review_state()
+    assert 0 not in s.image_gated
+    row = dlg.cards_lay.itemAt(0).widget()
+    assert "Has a picture" not in _row_text(row)
+
+
+def test_review_row_reason_is_silent_once_the_learner_checks_it_herself(anki, monkeypatch):
+    _stub_fetch_image(monkeypatch)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    dlg._on_include_toggled(0, True)
+    dlg._rebuild_review()
+    row = dlg.cards_lay.itemAt(0).widget()
+    assert "Has a picture" not in _row_text(row)   # she included it; nothing left to explain
 
 
 def test_failed_image_download_becomes_a_mechanical_check_not_a_modal(anki, monkeypatch):

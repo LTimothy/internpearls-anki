@@ -19,6 +19,7 @@ widgets Anki does. Nothing in this directory ships in the .ankiaddon.
 """
 import os
 import sys
+import tempfile
 import types
 from collections import namedtuple
 
@@ -930,7 +931,14 @@ def _scene_ai_review(mock, opts):
     """The wizard's review page, with a drafted set that exercises both a
     block-level check (a duplicate) and a warn-level one (a long answer), so
     chips and reasons have something to render. `count` (default 4) lets a
-    caller ask for a full 50-card draft to prove the list stays reachable."""
+    caller ask for a full 50-card draft to prove the list stays reachable.
+    opts["svg"] gives the last card a real inline-SVG image, resolved to a
+    thumbnail file on disk the way _run_image_resolution leaves it, so the
+    row's collapsed picture tag and expand-to-paint behaviour can be
+    rendered with a real QImage decode rather than a mock. Kept off the
+    first three cards, which already carry the block/warn/revised chips
+    this scene otherwise demonstrates.
+    """
     from internpearls import ai_dialog, ai_logic
     _ai_backend_available()
     n = opts.get("count", 4)
@@ -951,6 +959,18 @@ def _scene_ai_review(mock, opts):
             s.checks[1] = [{"code": "long-answer", "level": "warn",
                             "message": "answer is long; consider trimming"}]
         s.image_data = {}
+        if opts.get("svg"):
+            last = n - 1
+            svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40">'
+                  '<rect width="40" height="40" fill="blue"/></svg>')
+            s.scratch = tempfile.mkdtemp(prefix="ip-aigen-qt-")
+            path = os.path.join(s.scratch, f"_thumb-{last}-0.svg")
+            with open(path, "w", encoding="utf8") as fh:
+                fh.write(svg)
+            cards[last]["images"] = [{"source": f"svg:{svg}", "alt": "", "attribution": ""}]
+            s.included[last] = False
+            s.image_gated = {last}
+            s.image_data[last] = [{"state": "ok", "kind": "svg", "path": path}]
         s.tokens_last_run = 12345
         dlg._rebuild_review()
         dlg.stack.setCurrentWidget(dlg.review_page)
