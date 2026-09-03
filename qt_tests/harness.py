@@ -884,20 +884,25 @@ SAMPLE_SOURCE = ("Neostigmine reverses non-depolarizing neuromuscular blockade b
 
 def _scene_ai_progress(mock, opts):
     """The wizard's progress page, mid-run: the one status row a live
-    generation leaves it in (chip, bold phase, muted turn/drafted/elapsed
-    line, trailing Cancel), without actually running a background worker
-    (there is nothing here to poll)."""
+    generation leaves it in (chip, bold phase, muted phase/elapsed line,
+    trailing Cancel), without actually running a background worker (there
+    is nothing here to poll). opts["revision"] renders the revising-a-
+    draft form, where the row's own session already holds the draft being
+    revised; without it this is a first-run scene, so session.cards stays
+    empty the way a real fresh run's does."""
     from internpearls import ai_dialog
     _ai_backend_available()
 
     def _open():
         dlg = ai_dialog._GenerateDialog()
-        dlg.session.cards = _ai_synthetic_cards(11)
+        if opts.get("revision"):
+            dlg.session.cards = _ai_synthetic_cards(11)
         dlg.progress_row.set_chip("verifying")
         dlg.progress_row.set_primary("<b>Verifying doses against sources</b>")
         dlg.progress_row.set_detail(
-            "Turn 4. Drafted 11 cards so far. "
-            "48s elapsed. your recent Thorough runs averaged 1m 40s")
+            (("Revising 11 cards. " if opts.get("revision") else "")
+            + "Verifying doses against sources. "
+            + "48s elapsed. your recent Thorough runs averaged 1m 40s"))
         dlg.stack.setCurrentWidget(dlg.progress_page)
         dlg.exec()
     return _open
