@@ -28,9 +28,17 @@ _STATE_CHIPS = ("found", "notfound", "notresponding", "ignored")
 _PREFERRED_CHIPS = ("preferred",)
 
 # A second name a reader may know a backend by, shown muted beside its executable.
-# Not in ai_cli.BACKENDS: nothing outside this window has any use for it.
-_ALSO_KNOWN = {"agy": "formerly Gemini CLI, which stopped serving personal "
-                      "Google AI Pro and Ultra accounts on 2026-06-18"}
+# Not in ai_cli.BACKENDS: nothing outside this window has any use for it. Kept
+# short on purpose: this sits on the unwrapped label line, so anything longer
+# than a bare alias pushes the whole dialog's minimum width out with it. The
+# fuller shutdown note lives in _SHUTDOWN_NOTE instead, on the wrapped detail
+# line, where a long sentence costs height, not width.
+_ALSO_KNOWN = {"agy": "formerly Gemini CLI"}
+
+# Folded into the wrapped muted detail line, after the safety sentence, rather
+# than the unwrapped label line above: see _ALSO_KNOWN's comment for why.
+_SHUTDOWN_NOTE = {"agy": "Gemini CLI stopped serving personal Google AI Pro "
+                        "and Ultra accounts on 2026-06-18."}
 
 
 def _write(key, value):
@@ -231,13 +239,19 @@ class _BackendRow(QWidget):
         caps_lay.setSpacing(CARET_GAP)
         if ai_cli.image_capable(kind):
             caps_lay.addWidget(_capability_pill("image attach: supported", "accept"))
-        if "free tier" in meta["subscription"]:
+        free_tier = meta["free_tier"]
+        if free_tier == "throttled":
             caps_lay.addWidget(_capability_pill("free tier, throttled", "new"))
+        elif free_tier == "capped":
+            caps_lay.addWidget(_capability_pill("free tier available", "new"))
         caps_lay.addStretch()
         body_lay.addWidget(caps)
 
-        self.detail = _wrapped_hint(
-            f"Works with a {meta['subscription']}. {meta['safety']}.")
+        detail_text = f"Works with a {meta['subscription']}. {meta['safety']}."
+        shutdown_note = _SHUTDOWN_NOTE.get(kind)
+        if shutdown_note:
+            detail_text += f" {shutdown_note}"
+        self.detail = _wrapped_hint(detail_text)
         body_lay.addWidget(self.detail)
         lay.addWidget(body, 1)
 
