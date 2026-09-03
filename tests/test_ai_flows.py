@@ -531,6 +531,28 @@ def test_review_header_names_sources_when_attachments_were_used(anki, monkeypatc
     assert dlg.review_header.text() == "1 card drafted from 2 sources · 1 included"
 
 
+def test_attached_document_text_is_redacted_from_the_run_log(anki, monkeypatch):
+    """The extracted text of an attachment is folded into the source section the
+    backend sees, so it needs the same run-log echo protection as pasted text:
+    the wizard must hand it to run_generation as one of the redact_texts."""
+    seen = {}
+    real_run = ai_cli.run_generation
+
+    def capturing(*a, **kw):
+        seen["redact_texts"] = kw.get("redact_texts", ())
+        return real_run(*a, **kw)
+
+    monkeypatch.setattr(ai_cli, "run_generation", capturing)
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg.session.attachments.append(
+        ("notes.pdf", {"text": "extra source text", "images": [],
+                       "images_undecoded": []}))
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    assert "extra source text" in seen["redact_texts"]
+    assert dlg.session.source in seen["redact_texts"]
+
+
 def test_revise_all_label_pluralizes_a_single_queued_note(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
