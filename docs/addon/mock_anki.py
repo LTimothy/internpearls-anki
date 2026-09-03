@@ -1337,6 +1337,21 @@ class QPlainTextEdit(QWidget):
     def toPlainText(self):
         return self._text
 
+    def clear(self):
+        self.setPlainText("")
+
+    def appendPlainText(self, line):
+        self._text = line if not self._text else self._text + "\n" + line
+
+    def setMaximumBlockCount(self, n):
+        self._max_block_count = n
+
+    def verticalScrollBar(self):
+        # A no-op scrollbar stand-in: the activity feed calls setValue(maximum())
+        # to auto-scroll, which is meaningless without real layout, but must not
+        # raise in the mock harness.
+        return types.SimpleNamespace(maximum=lambda: 0, setValue=lambda v: None)
+
     def setPlaceholderText(self, t):
         self._placeholder = t
 

@@ -52,6 +52,10 @@
 #                   a working assistant that keeps talking (idle-timeout tests)
 #   trickle_then_gap  one phase line, then a 1s pause before the result: the
 #                   pause a small idle threshold should catch
+#   feed_demo       claude-style: a Read tool_use (names a basename), a
+#                   two-chunk partial-message delta carrying one card's
+#                   "note_type" key, then the normal result (progress-feed
+#                   and detail-line flows tests)
 import json
 import os
 import sys
@@ -224,6 +228,19 @@ if mode == "trickle_then_gap":
     print(json.dumps({"type": "assistant", "message": {"content": [
         {"type": "tool_use", "name": "WebSearch", "input": {}}]}}), flush=True)
     time.sleep(1)
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": CARDS_JSON, "usage": USAGE}))
+    sys.exit(0)
+if mode == "feed_demo":
+    def _delta_event(text):
+        return {"type": "stream_event", "event": {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": text}}}
+    print(json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Read",
+         "input": {"file_path": "/private/tmp/x/notes.pdf"}}]}}), flush=True)
+    print(json.dumps(_delta_event('[{"note_type": "Study Deck - Basic", ')), flush=True)
+    print(json.dumps(_delta_event('"fields": {"Front": "q", "Back": "a"}}]')), flush=True)
     print(json.dumps({"type": "result", "subtype": "success",
                       "result": CARDS_JSON, "usage": USAGE}))
     sys.exit(0)

@@ -889,7 +889,9 @@ def _scene_ai_progress(mock, opts):
     is nothing here to poll). opts["revision"] renders the revising-a-
     draft form, where the row's own session already holds the draft being
     revised; without it this is a first-run scene, so session.cards stays
-    empty the way a real fresh run's does."""
+    empty the way a real fresh run's does. A few sample activity lines
+    always fill the feed below the row (a live run leaves it non-empty
+    almost immediately), without running an actual worker."""
     from internpearls import ai_dialog
     _ai_backend_available()
 
@@ -902,6 +904,11 @@ def _scene_ai_progress(mock, opts):
         dlg.progress_row.set_detail(
             (("Revising 11 cards. " if opts.get("revision") else "")
             + "48s elapsed, your recent Thorough runs averaged 1m 40s."))
+        for line in ("12s  Listed the scratch folder",
+                    "34s  Viewed _thumb-0-0.svg",
+                    "41s  Searched the web",
+                    "1m 12s  Verifying doses against sources"):
+            dlg.activity_feed.appendPlainText(line)
         dlg.stack.setCurrentWidget(dlg.progress_page)
         dlg.exec()
     return _open
