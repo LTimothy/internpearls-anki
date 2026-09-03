@@ -120,6 +120,104 @@ def test_run_log_unchanged_when_lines_only_share_a_short_common_word(tmp_path):
     assert "WebSearch" in text
 
 
+# === redact_texts: the production prompt (ai_logic.build_prompt) buries the
+# learner's source material, focus text, and saved rules well past the first
+# three lines under bundled skill and schema boilerplate, so a CLI that
+# echoes back only that material (not the prompt's front) would otherwise
+# match no needle at all and leak the learner's own words into the run log.
+# These tests build a real prompt through build_prompt, with the bundled
+# skill, a source text, a focus text, and a user skill all present, so the
+# needles under test are exercised against the actual shape a run sees.
+_SOURCE = (
+    "Digoxin toxicity classically presents with GI upset, visual halos, and "
+    "cardiac dysrhythmias. Renal clearance means dose adjustment is required "
+    "in elderly patients and anyone with reduced creatinine clearance, since "
+    "levels accumulate quietly over days before symptoms appear. Hypokalemia "
+    "and hypomagnesemia both potentiate toxicity even at a therapeutic level, "
+    "so electrolytes are checked alongside any digoxin level. Treatment for "
+    "severe toxicity is digoxin-specific antibody fragments, not simply "
+    "holding the dose and waiting for it to clear on its own.")
+_FOCUS = "Focus: emphasize the electrolyte interactions and elderly dosing."
+_USER_SKILL = "Always cite Barash for any drug dose stated on a card."
+assert len(_SOURCE) > 240   # exercises the middle/end window needles
+
+
+def _real_prompt():
+    return ai_logic.build_prompt(
+        skills=ai_logic.active_skills(None, _USER_SKILL),
+        source=_SOURCE, note_types=["Basic"],
+        field_map={"Basic": ["Front", "Back"]}, count=3,
+        instructions=_FOCUS, mode="quick")
+
+
+def _run_echo(monkeypatch, tmp_path, fake_mode, echo_text):
+    monkeypatch.setenv("FAKE_CLI_ECHO_TEXT", echo_text)
+    monkeypatch.setattr(ai_cli, "build_argv",
+                        lambda kind, path, mode, scratch, imgs, **kw:
+                            (FAKE + [fake_mode], True))
+    log_path = tmp_path / "ai_last_run.log"
+    res = ai_cli.run_generation(
+        "claude", "/usr/bin/claude", _real_prompt(), "quick", str(tmp_path),
+        log_path=str(log_path), redact_texts=(_SOURCE, _FOCUS, _USER_SKILL))
+    return res, log_path.read_text(encoding="utf8")
+
+
+def test_redact_texts_elides_an_echoed_source_material_section(
+        monkeypatch, tmp_path):
+    _, text = _run_echo(monkeypatch, tmp_path, "echo_env",
+                        "## Source material\n" + _SOURCE)
+    assert _SOURCE not in text
+    assert "<line containing the prompt elided," in text
+    assert "Front" in text   # the normal result line still survives untouched
+
+
+def test_redact_texts_elides_an_echoed_focus_text(monkeypatch, tmp_path):
+    _, text = _run_echo(monkeypatch, tmp_path, "echo_env",
+                        "## User instructions\n" + _FOCUS)
+    assert _FOCUS not in text
+    assert "<line containing the prompt elided," in text
+
+
+def test_redact_texts_elides_an_echoed_middle_of_a_long_source(
+        monkeypatch, tmp_path):
+    # A chunk taken from around the source's midpoint, wide enough (200
+    # chars, centered) to be guaranteed to contain the narrower 80-char
+    # middle-window needle _body_needles derives for a text this long.
+    center = len(_SOURCE) // 2
+    middle_quote = _SOURCE[max(0, center - 100):center + 100]
+    _, text = _run_echo(monkeypatch, tmp_path, "echo_env", middle_quote)
+    assert middle_quote not in text
+    assert "<line containing the prompt elided," in text
+
+
+def test_redact_texts_does_not_elide_a_short_legitimate_quote(
+        monkeypatch, tmp_path):
+    # A card reply is allowed to legitimately repeat a short run of the
+    # source (e.g. a drug name and a few surrounding words); anything under
+    # the 20-char needle floor must not trip elision.
+    short_quote = _SOURCE[:15]
+    assert len(short_quote) < 20
+    res, text = _run_echo(monkeypatch, tmp_path, "echo_env_in_card",
+                          short_quote)
+    assert short_quote in text
+    assert "<line containing the prompt elided," not in text
+    assert "Quote:" in res["text"]   # sanity: the run produced the card
+
+
+def test_redact_texts_elides_a_full_80_char_quote_even_in_a_normal_reply(
+        monkeypatch, tmp_path):
+    # Accepted trade-off, deliberate: a card that legitimately quotes a full
+    # 80-character run of the source verbatim also gets its log line elided.
+    # The run log is a debugging aid, not the card content itself, and a
+    # line that repeats 80 straight characters of the learner's material is
+    # safe to hide from it even when the reply that produced it was fine.
+    full_quote = _SOURCE[:80]
+    assert len(full_quote) == 80
+    _, text = _run_echo(monkeypatch, tmp_path, "echo_env_in_card", full_quote)
+    assert full_quote not in text
+    assert "<line containing the prompt elided," in text
+
+
 def test_run_log_captures_stderr_and_nonzero_exit_on_failure(tmp_path):
     log_path = tmp_path / "ai_last_run.log"
     with pytest.raises(ai_cli.GenerationError):

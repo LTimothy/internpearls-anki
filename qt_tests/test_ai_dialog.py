@@ -25,7 +25,8 @@ def test_wizard_renders_all_pages(monkeypatch):
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None, model=None, effort=None, log_path=None: {"text": json.dumps(cards), "tokens": 15,
+              cancel=None, timeout=None, model=None, effort=None, log_path=None,
+              redact_texts=(): {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
 
     dlg = ai_dialog._GenerateDialog()
@@ -110,7 +111,8 @@ def test_import_enables_real_undo_action_with_the_native_shortcut(monkeypatch):
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None, model=None, effort=None, log_path=None: {"text": json.dumps(cards), "tokens": 15,
+              cancel=None, timeout=None, model=None, effort=None, log_path=None,
+              redact_texts=(): {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
 
     dlg = ai_dialog._GenerateDialog()
@@ -151,7 +153,8 @@ def test_review_row_renders_a_real_image_thumbnail(monkeypatch, tmp_path):
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None, model=None, effort=None, log_path=None: {"text": json.dumps(cards), "tokens": 15,
+              cancel=None, timeout=None, model=None, effort=None, log_path=None,
+              redact_texts=(): {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
     png = str(tmp_path / "pic.png")
     image = QImage(40, 30, QImage.Format.Format_RGB32)
@@ -203,7 +206,8 @@ def test_review_checkbox_click_updates_count_and_button_label(monkeypatch):
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None, model=None, effort=None, log_path=None: {"text": json.dumps(cards), "tokens": 15,
+              cancel=None, timeout=None, model=None, effort=None, log_path=None,
+              redact_texts=(): {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
 
     dlg = ai_dialog._GenerateDialog()
@@ -300,7 +304,8 @@ def test_completion_timer_exception_shows_dialog_and_recovers_to_input(monkeypat
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None, model=None, effort=None, log_path=None: {"text": "[]", "tokens": 1, "duration_s": 0.1})
+              cancel=None, timeout=None, model=None, effort=None, log_path=None,
+              redact_texts=(): {"text": "[]", "tokens": 1, "duration_s": 0.1})
 
     def boom(*a, **k):
         raise RuntimeError("boom in completion path")
@@ -485,7 +490,8 @@ def test_progress_page_cancel_link_cancels_the_run(monkeypatch):
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None, model=None, effort=None, log_path=None:
+              cancel=None, timeout=None, model=None, effort=None, log_path=None,
+              redact_texts=():
             {"text": "[]", "tokens": 0, "duration_s": 0})
 
     dlg = ai_dialog._GenerateDialog()
@@ -522,7 +528,8 @@ def test_progress_page_escape_cancels_the_run_without_closing(monkeypatch):
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
-              cancel=None, timeout=None, model=None, effort=None, log_path=None:
+              cancel=None, timeout=None, model=None, effort=None, log_path=None,
+              redact_texts=():
             {"text": "[]", "tokens": 0, "duration_s": 0})
 
     dlg = ai_dialog._GenerateDialog()
