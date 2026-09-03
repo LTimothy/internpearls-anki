@@ -19,6 +19,12 @@ from .widgets import CARET_GAP, chip_cell
 
 _POLL_MS = 200
 
+# The width of a settings grid's label column, so every field in one starts at the
+# same x after it. Module level rather than only on _SettingsPanel: the wizard's own
+# Advanced panel lays out against the same column so the two screens read as one
+# form (ai_dialog._build_input).
+LABEL_W = 108
+
 # The chips a backend row can wear, and the one the preferred row wears instead
 # of a Use link. Two sets rather than one because they are two columns: the
 # leading state chip is measured against the four words it can actually say, and
@@ -308,7 +314,7 @@ class _SettingsPanel(QWidget):
     window and clipped the Model combo. Every label starts at the panel's left
     edge and every field at the same x after it.
     """
-    LABEL_W = 108
+    LABEL_W = LABEL_W
 
     def __init__(self, kind, cfg, dlg):
         super().__init__()

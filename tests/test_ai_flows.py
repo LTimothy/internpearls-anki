@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from internpearls import ai_cli, ai_dialog, config
+from internpearls import ai_cli, ai_dialog, ai_logic, config
 
 FAKE = os.path.join(os.path.dirname(__file__), "fake_cli.py")
 
@@ -122,7 +122,8 @@ def test_input_page_shows_a_backends_link_and_no_model_combo(anki, monkeypatch):
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     dlg = ai_dialog._GenerateDialog()
     assert dlg.change_link.text() == "Setup"
-    assert dlg.backend_row.text() == "Backend: Claude Code, sonnet, medium effort"
+    assert ("Backend: Claude Code, sonnet, medium effort"
+            in dlg.backend_row.text())
     assert not hasattr(dlg, "model_combo")
 
 
@@ -212,7 +213,7 @@ def test_cancel_generation_preserves_inputs(anki, monkeypatch):
     dlg._wait_for_worker(timeout=15)
     assert dlg.stack.currentWidget() is dlg.input_page
     assert dlg.source_box.toPlainText() == "LAST toxicity source text"
-    assert dlg.instructions_box.toPlainText() == ""
+    assert dlg.instructions_box.text() == ""
     assert not dlg.session.cards   # nothing touched the collection
 
 
@@ -1010,3 +1011,136 @@ def test_user_skill_roundtrip_and_removal(anki):
     config.save_user_skill("   ")
     assert config.load_user_skill() == ""
     assert not os.path.exists(config.USER_SKILL)
+
+
+# === the input page's assistant-decided defaults =============================
+
+def _capture_prompt(monkeypatch):
+    """Record the keyword arguments the wizard builds its prompt from, and hand
+    back a prompt that still reads like one."""
+    from internpearls import ai_logic
+    seen = {}
+    real = ai_logic.build_prompt
+
+    def spy(**kw):
+        seen.update(kw)
+        return real(**kw)
+    monkeypatch.setattr(ai_logic, "build_prompt", spy)
+    return seen
+
+
+def test_generate_leaves_the_count_to_the_assistant_by_default(anki, monkeypatch):
+    """Nothing touched: no number is sent at all, and the depth is the one
+    ai_logic.default_mode picks from the material's own length."""
+    dlg = _ready_dialog(anki, monkeypatch)
+    seen = _capture_prompt(monkeypatch)
+    dlg.source_box.setPlainText("short paste")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert seen["count"] is None
+    assert seen["mode"] == "quick"
+    assert dlg.session.count is None
+    assert dlg.session.mode == "quick"
+
+
+def test_generate_sends_thorough_for_long_material(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    seen = _capture_prompt(monkeypatch)
+    dlg.source_box.setPlainText("x" * ai_logic.AUTO_DEPTH_CHARS)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert seen["count"] is None
+    assert seen["mode"] == "thorough"
+
+
+def test_generate_passes_an_exact_count_set_in_advanced(anki, monkeypatch):
+    """A number typed into Advanced overrides the assistant's own judgment, and
+    a depth the learner picked overrides what the source length would have said."""
+    dlg = _ready_dialog(anki, monkeypatch)
+    seen = _capture_prompt(monkeypatch)
+    dlg.source_box.setPlainText("short paste")
+    dlg.count_spin.setValue(12)
+    dlg.thorough_radio.setChecked(True)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert seen["count"] == 12
+    assert seen["mode"] == "thorough"   # the learner's own choice, not the length's
+
+
+def test_advanced_controls_are_seeded_from_config(anki, monkeypatch):
+    """The two config keys seed the controls and nothing else: the wizard never
+    writes either one back on its own."""
+    anki.mw._config = {"ai_default_count": 7, "ai_default_depth": "quick"}
+    dlg = _ready_dialog(anki, monkeypatch)
+    seen = _capture_prompt(monkeypatch)
+    assert dlg.count_spin.value() == 7
+    assert dlg.quick_radio.isChecked()
+    dlg.source_box.setPlainText("x" * 4000)   # long enough that auto would say thorough
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert seen["count"] == 7
+    assert seen["mode"] == "quick"
+    assert "ai_default_count" in anki.mw._config   # untouched, not rewritten
+    assert anki.mw._config["ai_default_count"] == 7
+
+
+def test_backend_row_reads_ready_with_the_model_and_effort(anki, monkeypatch):
+    from internpearls import widgets
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    assert widgets.CHIPS[dlg.backend_row.chip_kind] == "READY"
+    assert "Backend: Claude Code, sonnet, medium effort" in dlg.backend_row.text()
+
+
+def test_backend_row_reads_not_set_up_with_the_setup_sentence(anki, monkeypatch):
+    from internpearls import widgets
+    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
+    dlg = ai_dialog._GenerateDialog()
+    assert widgets.CHIPS[dlg.backend_row.chip_kind] == "NOT SET UP"
+    assert ("No assistant found. Install one, sign in once in a terminal, then "
+            "set it up here.") in dlg.backend_row.text()
+
+
+def test_advanced_disclosure_hides_and_shows_the_panel_in_place(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    assert dlg.advanced_panel.isVisible() is False
+    assert dlg.advanced_link.text() == "Advanced"
+    dlg._toggle_advanced()
+    assert dlg.advanced_panel.isVisible() is True
+    assert dlg.advanced_link.text() == "Hide advanced"
+    dlg._toggle_advanced()
+    assert dlg.advanced_panel.isVisible() is False
+
+
+def test_depth_row_reads_the_assistants_own_decision(anki, monkeypatch):
+    from internpearls import widgets
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg.source_box.setPlainText("")
+    assert widgets.CHIPS[dlg.depth_row.chip_kind] == "AUTO"
+    assert "Depth follows the source" in dlg.depth_row.text()
+    dlg.source_box.setPlainText("x" * ai_logic.AUTO_DEPTH_CHARS)
+    assert widgets.CHIPS[dlg.depth_row.chip_kind] == "THOROUGH"
+    assert "up to 40" in dlg.depth_row.text()
+    dlg.source_box.setPlainText("short")
+    assert widgets.CHIPS[dlg.depth_row.chip_kind] == "QUICK"
+
+
+def test_deck_and_skills_rows_say_where_cards_land_and_what_is_sent(anki, monkeypatch):
+    from internpearls import widgets
+    dlg = _ready_dialog(anki, monkeypatch)
+    assert widgets.CHIPS[dlg.deck_row.chip_kind] == "DECK"
+    assert dlg.session.deck_name in dlg.deck_row.text()
+    assert widgets.CHIPS[dlg.skills_row.chip_kind] == "SKILLS"
+    assert "Sent in that order on every run." in dlg.skills_row.text()
+    assert dlg.skills_link.text() == "View"
+    assert dlg.rules_link.text() == "Edit my rules"
+
+
+def test_generate_stays_disabled_until_a_backend_is_ready(anki, monkeypatch):
+    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
+    dlg = ai_dialog._GenerateDialog()
+    dlg.source_box.setPlainText("plenty of source material")
+    assert not dlg.generate_btn.isEnabled()
