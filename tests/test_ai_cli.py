@@ -351,7 +351,21 @@ def test_run_agy_permission_denied_stderr_raises_the_readable_sentence():
 def test_run_timeout_kills_process():
     with pytest.raises(ai_cli.GenerationError) as e:
         _run("slow", timeout=2)
-    assert "time" in str(e.value).lower()
+    assert "ran for over" in str(e.value)
+
+
+def test_run_idle_none_survives_a_slow_but_talkative_run():
+    # idle defaults to None (no idle rule) so a run that keeps emitting
+    # lines only ever hits the hard cap, never a silence check it never
+    # asked for.
+    res = _run("trickle", idle=1, timeout=30)
+    assert '"Front": "q"' in res["text"]
+
+
+def test_run_idle_timeout_names_the_wait():
+    with pytest.raises(ai_cli.GenerationError) as e:
+        _run("trickle_then_gap", idle=0.5, timeout=30)
+    assert "went quiet" in str(e.value)
 
 
 def test_run_cancel_kills_process():
@@ -647,6 +661,19 @@ def test_build_argv_agy_omits_sandbox_when_unsupported(monkeypatch):
     monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
     argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
     assert "--sandbox" not in argv
+
+
+def test_build_argv_agy_adds_print_timeout_matching_the_hard_cap(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "thorough", "/tmp/s", [])
+    assert argv[argv.index("--print-timeout") + 1] == "30m"
+
+
+def test_build_argv_agy_omits_print_timeout_when_unsupported(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag",
+                        lambda path, flag, **kw: flag != "--print-timeout")
+    argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
+    assert "--print-timeout" not in argv
 
 
 def test_build_argv_agy_never_skips_permissions(monkeypatch):

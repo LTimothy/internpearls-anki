@@ -48,6 +48,10 @@
 #                   whatever text is in FAKE_CLI_ECHO_TEXT: models a normal,
 #                   legitimate reply that happens to quote some of the
 #                   source material rather than transcribing the prompt back
+#   trickle         emits a phase line every 0.3s for about 2s, then a result:
+#                   a working assistant that keeps talking (idle-timeout tests)
+#   trickle_then_gap  one phase line, then a 1s pause before the result: the
+#                   pause a small idle threshold should catch
 import json
 import os
 import sys
@@ -207,6 +211,21 @@ if mode == "echo_env_in_card":
              "tags": [], "images": [], "rationale": "r"}]
     print(json.dumps({"type": "result", "subtype": "success",
                       "result": json.dumps(cards), "usage": USAGE}))
+    sys.exit(0)
+if mode == "trickle":
+    for _ in range(7):
+        print(json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "WebSearch", "input": {}}]}}), flush=True)
+        time.sleep(0.3)
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": CARDS_JSON, "usage": USAGE}))
+    sys.exit(0)
+if mode == "trickle_then_gap":
+    print(json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "WebSearch", "input": {}}]}}), flush=True)
+    time.sleep(1)
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": CARDS_JSON, "usage": USAGE}))
     sys.exit(0)
 if mode == "agy_permission_denied":
     print('jetski: no output produced ... a tool required the "write_file" '
