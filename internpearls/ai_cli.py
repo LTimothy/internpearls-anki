@@ -17,7 +17,7 @@ import threading
 import time
 import warnings
 
-from .ai_logic import parse_stream_event
+from .ai_logic import parse_stream_event, format_duration
 
 # "install_url" is where the AI Backends window's install-guide link sends a
 # reader who does not have this CLI yet: the tool's own documentation, never a
@@ -104,7 +104,11 @@ BACKENDS = {
 _COMMON_DIRS = ("/opt/homebrew/bin", "/usr/local/bin",
                 os.path.expanduser("~/.local/bin"),
                 os.path.expanduser("~/.npm-global/bin"))
-_TIMEOUTS = {"quick": 120, "thorough": 360}
+# Idle: how long stdout can go silent before a run is considered hung. Cap: a
+# ceiling far above any healthy run, so it only ever catches an idle rule that
+# never fires (a backend with no per-line output at all).
+_IDLE_S = {"quick": 120, "thorough": 180}
+_CAP_S = {"quick": 900, "thorough": 1800}
 # Turn budget per generation call, not per card: an automatic (count=None)
 # draft still fits inside one call, it just returns more cards in the same
 # reply, so this ceiling stays put regardless of how many cards get drafted.
@@ -331,6 +335,11 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
             argv += ["--model", model]
         if effort and supports_flag(path, "--effort"):
             argv += ["--effort", effort]
+        # agy's own idle-agnostic ceiling defaults to 5 minutes, well under our
+        # hard cap; raise it to match so agy doesn't cut a healthy long run
+        # before our own cap would. Go duration syntax (e.g. "15m").
+        if supports_flag(path, "--print-timeout"):
+            argv += ["--print-timeout", f"{_CAP_S[mode] // 60}m"]
         # -p and its value go last, on purpose: agy takes the prompt as this
         # flag's value, so anything appended after it would be read as argv
         # noise rather than as an option.
@@ -493,7 +502,7 @@ def _last_line_detail(lines, err_text, needles=()):
 
 def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
               cwd=None, prompt_via_stdin=True, log_path=None,
-              redact_texts=()):
+              redact_texts=(), idle=None):
     # Built once per run, from the prompt (and any extra redact_texts) at
     # hand, and reused for both the run log and the no-usable-reply excerpt
     # below, rather than each re-deriving it separately.
@@ -539,11 +548,13 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
     t.start()
     seen = 0
     err_text = ""
+    last_line_at = start
     try:
         while True:
             while seen < len(lines):
                 evt = parse_stream_event(kind, lines[seen])
                 seen += 1
+                last_line_at = time.monotonic()
                 if not evt:
                     continue
                 if evt["type"] == "result":
@@ -569,9 +580,15 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                 break
             if cancel and cancel():
                 raise GenerationCancelled("cancelled")
-            if time.monotonic() - start > timeout:
+            now = time.monotonic()
+            if idle is not None and now - last_line_at > idle:
                 raise GenerationError(
-                    "the assistant timed out; try Quick draft or a shorter source")
+                    f"the assistant went quiet for {format_duration(idle)}; "
+                    f"the run log shows what it last sent")
+            if now - start > timeout:
+                raise GenerationError(
+                    f"the assistant ran for over {format_duration(timeout)} "
+                    f"and was stopped")
             time.sleep(0.05)
         # stderr is read here, before the finally block below closes it, so
         # a failure message survives the cleanup.
@@ -648,9 +665,9 @@ def run_generation(kind, path, prompt, mode, scratch, image_paths=(),
                                  model=model or "", effort=effort or "",
                                  prompt=prompt)
     return _run_argv(argv, kind, prompt, on_event=on_event, cancel=cancel,
-                     timeout=timeout or _TIMEOUTS[mode], cwd=scratch,
+                     timeout=timeout or _CAP_S[mode], cwd=scratch,
                      prompt_via_stdin=via_stdin, log_path=log_path,
-                     redact_texts=redact_texts)
+                     redact_texts=redact_texts, idle=_IDLE_S[mode])
 
 
 _TEST_PROMPT = "Reply with exactly one word: ok"
