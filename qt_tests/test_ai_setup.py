@@ -99,7 +99,7 @@ def test_model_set_under_claude_does_not_leak_into_codex(monkeypatch):
 
     def fake_run_generation(kind, path, prompt, mode, scratch, image_paths=(),
                             on_event=None, cancel=None, timeout=None,
-                            model="", effort=""):
+                            model="", effort="", log_path=None):
         captured["model"] = model
         return {"text": "[]", "tokens": 0, "duration_s": 0.1}
     monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)

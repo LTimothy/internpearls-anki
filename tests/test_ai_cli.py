@@ -38,6 +38,95 @@ def test_run_garbage_output_raises():
         _run("garbage")
 
 
+def test_run_no_usable_reply_error_names_event_count_and_last_line():
+    # A stream that never produces a parseable result must not just say "no
+    # usable reply": it names how many stream lines it saw, echoes the last
+    # non-empty one (the owner's only clue without opening the log file), and
+    # points at ai_last_run.log for the full stream.
+    with pytest.raises(ai_cli.GenerationError) as e:
+        _run("garbage")
+    msg = str(e.value)
+    assert "1 events seen" in msg
+    assert "not json" in msg
+    assert "ai_last_run.log" in msg
+    assert "user_files" in msg
+
+
+def test_run_log_written_with_stdout_and_exit_code(tmp_path):
+    log_path = tmp_path / "ai_last_run.log"
+    _run("ok", log_path=str(log_path))
+    text = log_path.read_text(encoding="utf8")
+    assert "--- stdout ---" in text
+    assert "Front" in text and "WebSearch" in text  # a raw stdout line made it in verbatim
+    assert "exit code: 0" in text
+
+
+def test_write_run_log_elides_a_prompt_carried_in_argv(tmp_path):
+    # agy carries the prompt in argv (see build_argv); the run's own
+    # material, and the bundled/deck/user skill text riding along in it,
+    # must never land in a file whose whole purpose is to be shared for
+    # debugging (see _elided_argv).
+    log_path = tmp_path / "ai_last_run.log"
+    prompt = "the learner's actual source material"
+    argv = ["/usr/bin/agy", "-p", prompt]
+    ai_cli._write_run_log(str(log_path), argv, prompt,
+                          ['{"event": "result"}\n'], "", 0, 1.2)
+    text = log_path.read_text(encoding="utf8")
+    assert prompt not in text
+    assert f"<prompt, {len(prompt)} chars>" in text
+    assert "exit code: 0" in text
+    assert "elapsed: 1.2s" in text
+
+
+def test_run_log_captures_stderr_and_nonzero_exit_on_failure(tmp_path):
+    log_path = tmp_path / "ai_last_run.log"
+    with pytest.raises(ai_cli.GenerationError):
+        _run("fail", log_path=str(log_path))
+    text = log_path.read_text(encoding="utf8")
+    assert "--- stderr ---" in text
+    assert "boom" in text
+    assert "exit code: 2" in text
+
+
+def test_run_log_is_overwritten_not_appended(tmp_path):
+    log_path = tmp_path / "ai_last_run.log"
+    _run("ok", log_path=str(log_path))
+    first_size = log_path.stat().st_size
+    _run("ok", log_path=str(log_path))
+    second_size = log_path.stat().st_size
+    assert second_size == first_size   # identical run, identical log; not doubled
+
+
+def test_run_log_over_cap_is_truncated_to_its_tail(tmp_path):
+    padding = "x" * 80
+    lines = [f"line {i} {padding}\n" for i in range(30000)]  # well over 2 MB
+    assert len("".join(lines).encode("utf8")) > ai_cli._RUN_LOG_CAP
+    log_path = tmp_path / "ai_last_run.log"
+    ai_cli._write_run_log(str(log_path), ["cmd"], "PROMPT", lines, "", 0, 1.0)
+    data = log_path.read_bytes()
+    assert len(data) <= ai_cli._RUN_LOG_CAP
+    text = data.decode("utf8", errors="ignore")
+    assert "line 29999" in text     # the tail survived
+    assert "line 0 " not in text    # the head was cut
+
+
+def test_connection_writes_no_log(monkeypatch):
+    calls = []
+    real_write = ai_cli._write_run_log
+
+    def spying_write(log_path, *a, **kw):
+        calls.append(log_path)
+        return real_write(log_path, *a, **kw)
+
+    monkeypatch.setattr(ai_cli, "_write_run_log", spying_write)
+    monkeypatch.setattr(ai_cli, "build_argv",
+                        lambda kind, path, mode, scratch, imgs, **kw:
+                            (FAKE + ["ok"], True))
+    res = ai_cli.test_connection("claude", "/usr/bin/claude")
+    assert res["state"] == "working"
+    assert calls == [None]   # _write_run_log was called, but asked to log nothing
+
+
 def test_run_error_result_raises_with_the_clis_own_message_not_exit_code():
     # Real shape from a v2.1.251 claude with an expired login: subtype
     # "success", is_error true, empty stderr, exit 1. The raised message must
@@ -63,6 +152,40 @@ def test_run_error_result_text_never_reaches_parse_cards_json():
         "Failed to authenticate: OAuth session expired and could not be refreshed",
         {"Study Deck - Basic"}, {"Study Deck - Basic": ["Front", "Back"]})
     assert cards == [] and errors   # confirms this text was never valid card JSON
+
+
+def test_run_agy_uses_accumulated_deltas_when_result_response_is_empty():
+    # The owner's real bug: agy's own stream narrated the whole reply as
+    # agent_response text_deltas but its terminal result carried an empty
+    # "response". _run_argv must fall back to the accumulated deltas rather
+    # than treating this as "no usable reply".
+    res = ai_cli._run_argv(FAKE + ["agy_delta_fallback"], "agy", "PROMPT",
+                           prompt_via_stdin=False)
+    cards, errors = ai_logic.parse_cards_json(
+        res["text"], {"Study Deck - Basic"},
+        {"Study Deck - Basic": ["Front", "Back"]})
+    assert not errors
+    assert cards[0]["fields"]["Front"] == "q"
+
+
+def test_agy_ndjson_fixture_deltas_match_the_final_result_text():
+    # tests/agy_stream_samples.ndjson is a captured real agy stream where the
+    # terminal result already carries the text; the accumulated deltas must
+    # agree with it (a sanity check on the accumulation itself, independent
+    # of the fallback path above).
+    path = os.path.join(os.path.dirname(__file__), "agy_stream_samples.ndjson")
+    deltas, final_text = [], None
+    with open(path, encoding="utf8") as fh:
+        for line in fh:
+            evt = ai_logic.parse_stream_event("agy", line)
+            if not evt:
+                continue
+            if evt.get("delta"):
+                deltas.append(evt["delta"])
+            if evt["type"] == "result":
+                final_text = evt["text"]
+    assert final_text == "ok\n"
+    assert "".join(deltas) == "ok\n"
 
 
 def test_run_agy_error_result_raises_the_readable_antigravity_sentence():

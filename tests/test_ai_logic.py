@@ -385,8 +385,11 @@ def test_parse_agy_init_and_step_updates_from_captured_samples():
     assert ai_logic.parse_stream_event("agy", _agy_line("init")) is None
     steps = [ai_logic.parse_stream_event("agy", ln) for ln in _agy_lines()
              if _json.loads(ln).get("event") == "step_update"]
+    # The second step is the fixture's agent_response, which now also carries
+    # its text_delta so a failed run's assembly has something to fall back to
+    # (see ai_cli._run_argv's agy_deltas accumulation).
     assert steps == [{"type": "phase", "phase": "Working"},
-                     {"type": "phase", "phase": "Working"}]
+                     {"type": "phase", "phase": "Working", "delta": "ok\n"}]
 
 
 def test_parse_agy_tool_step_names_a_web_phase():
