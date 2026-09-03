@@ -1311,10 +1311,9 @@ class _GenerateDialog(QDialog):
 
         self._worker = threading.Thread(target=work, daemon=True)
         self._worker.start()
-        self._turn_count = 0
+        self._phase_text = "Drafting cards with " + ai_cli.BACKENDS[s.backend]["label"]
         self.progress_row.set_chip("drafting")
-        self.progress_row.set_primary(
-            "<b>Drafting cards with " + ai_cli.BACKENDS[s.backend]["label"] + "</b>")
+        self.progress_row.set_primary(f"<b>{self._phase_text}</b>")
         self.progress_row.set_detail(self._progress_detail_text())
         self.stack.setCurrentWidget(self.progress_page)
         self._timer = QTimer(self)
@@ -1322,20 +1321,23 @@ class _GenerateDialog(QDialog):
         self._timer.start(200)
 
     def _progress_detail_text(self):
-        """The progress row's muted detail line: "Turn N. Drafted M cards so
-        far. <elapsed> elapsed.", using only what is actually known at the
-        moment it's called. The turn count is only meaningful once a phase
-        event has arrived (0 reads as "not started yet", not "turn zero"),
-        and how many cards are drafted is only knowable once a reply has
-        actually been parsed (s.cards stays [] through a fresh run's whole
-        progress page); a revision is the one case both are known from the
-        start, since s.cards there is still the pre-revision draft.
+        """The progress row's muted detail line: "<phase sentence>. <elapsed>
+        elapsed.", using only what is actually known at the moment it's
+        called. The phase sentence mirrors whatever the row's own bold title
+        currently says (see the sites that set self._phase_text); no per-
+        backend turn count is reported here, since backends emit phase
+        events at wildly different rates (Claude only on tool use, Antigravity
+        on nearly every internal step, Codex never), so a raw count would not
+        mean the same thing across backends. On a revision turn, s.cards
+        still holds the pre-revision draft being revised (a fresh run clears
+        it first), which is known from the very start, unlike anything about
+        the new draft.
         """
         parts = []
-        if self._turn_count:
-            parts.append(f"Turn {self._turn_count}.")
         if self.session.cards:
-            parts.append(f"Drafted {plural(len(self.session.cards), 'card')} so far.")
+            parts.append(f"Revising {plural(len(self.session.cards), 'card')}.")
+        if self._phase_text:
+            parts.append(f"{self._phase_text}.")
         elapsed = f"{ai_logic.format_duration(int(time.monotonic() - self._t0))} elapsed."
         if self._duration_estimate:
             elapsed += " " + self._duration_estimate
@@ -1352,9 +1354,9 @@ class _GenerateDialog(QDialog):
         while self._events:
             evt = self._events.popleft()
             if evt["type"] == "phase":
-                self._turn_count += 1
+                self._phase_text = evt["phase"]
                 self.progress_row.set_chip(_phase_chip(evt["phase"]))
-                self.progress_row.set_primary(f"<b>{evt['phase']}</b>")
+                self.progress_row.set_primary(f"<b>{self._phase_text}</b>")
             elif evt["type"] == "rate_limits":
                 self.session.rate_limits = evt
         self.progress_row.set_detail(self._progress_detail_text())
@@ -1550,10 +1552,11 @@ class _GenerateDialog(QDialog):
 
         self._img_worker = threading.Thread(target=work, daemon=True)
         self._img_worker.start()
-        # The row's detail (turn/drafted/elapsed) is left exactly as the CLI
-        # phase last set it: this phase never learns a new turn number and
-        # the elapsed clock isn't this phase's own, so redrawing it here
-        # would show a number that stopped moving rather than a true one.
+        # The row's detail (phase/elapsed) is left exactly as the CLI phase
+        # last set it: this phase has no phase events of its own and the
+        # elapsed clock isn't this phase's own, so redrawing it here would
+        # show a phase sentence and a clock that both stopped moving rather
+        # than true ones.
         self.progress_row.set_chip("working")
         self.progress_row.set_primary("<b>Resolving images</b>")
         self.stack.setCurrentWidget(self.progress_page)
@@ -1972,6 +1975,23 @@ class _GenerateDialog(QDialog):
         if self.session.scratch:
             shutil.rmtree(self.session.scratch, ignore_errors=True)
             self.session.scratch = None
+
+    def keyPressEvent(self, event):
+        """On the progress page, Escape must take the same path as the
+        Cancel link (see _build_progress's own comment on why that link
+        calls _cancel_generation directly rather than reject()): a run in
+        flight keeps running and the page stays up until it actually stops.
+        Left to QDialog's default routing, Escape reaches reject() instead,
+        which asks its own "discard this run" confirm and, once answered,
+        closes the whole dialog. That is a materially bigger, more
+        destructive action than the Cancel link takes for the identical
+        keypress, so this override sends Escape through the same path
+        instead."""
+        if (event.key() == Qt.Key.Key_Escape
+                and self.stack.currentWidget() is self.progress_page):
+            self._cancel_generation()
+            return
+        super().keyPressEvent(event)
 
     def reject(self):
         """Closing mid-review discards everything unsaved: nothing about a

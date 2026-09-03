@@ -504,6 +504,47 @@ def test_progress_page_cancel_link_cancels_the_run(monkeypatch):
     assert dlg.stack.currentWidget() is dlg.progress_page   # reject() never ran
 
 
+def test_progress_page_escape_cancels_the_run_without_closing(monkeypatch):
+    """Escape on the progress page must take the same path as the Cancel
+    link, not QDialog's default reject() routing. Left unhandled, Escape
+    reaches reject(), which pops its own "discard this run" confirm and, if
+    confirmed, closes the whole dialog: a much bigger action for the same
+    keypress than the Cancel link's direct _cancel_generation call, and not
+    something a stray Escape should ever trigger."""
+    harness.bootstrap()
+    app = harness.app()
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
+              cancel=None, timeout=None, model=None, effort=None:
+            {"text": "[]", "tokens": 0, "duration_s": 0})
+
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    app.processEvents()
+    dlg.source_box.setPlainText("Regional block landmarks and needle depths")
+    dlg._start_generation()
+    app.processEvents()
+    assert dlg.stack.currentWidget() is dlg.progress_page
+
+    from aqt.qt import QEvent, QKeyEvent, Qt
+    event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape,
+                      Qt.KeyboardModifier.NoModifier)
+    dlg.keyPressEvent(event)
+    assert dlg._cancel_flag.is_set()
+    # Still up, still on the progress page: reject() never ran, so no
+    # confirm dialog and no close.
+    assert dlg.isVisible()
+    assert dlg.stack.currentWidget() is dlg.progress_page
+    assert dlg.result() == 0   # QDialog.Rejected/Accepted are both nonzero
+
+
 def test_view_skills_toggle_button_relabels_after_each_click(monkeypatch):
     """Minor fix: the extra button used to keep reading "Disable deck skill"
     even after a click actually disabled it. It must now name the action
