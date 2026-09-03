@@ -25,6 +25,7 @@ from .ai_logic import parse_stream_event
 BACKENDS = {
     "claude": {"label": "Claude Code", "exe": "claude",
                "subscription": "Claude Pro or Max subscription",
+               "free_tier": "",
                "install_url": "https://docs.anthropic.com/en/docs/claude-code",
                "safety": "Tools fully restricted (strongest)",
                # Cheaper-but-smart default: without a model flag, claude runs the
@@ -49,6 +50,7 @@ BACKENDS = {
     "codex": {"label": "Codex CLI", "exe": "codex",
               "subscription": "ChatGPT account (free tier: about 50 coding "
                               "messages a day; more on Go, Plus, or Pro)",
+              "free_tier": "capped",
               "install_url": "https://github.com/openai/codex",
               "safety": "Sandboxed read-only; no writes or network",
               # No forced default here: --model is only passed when the user sets
@@ -71,6 +73,7 @@ BACKENDS = {
                           "network either way (15 to 30 s)"}},
     "agy": {"label": "Antigravity CLI", "exe": "agy",
             "subscription": "Google account (free tier, throttled)",
+            "free_tier": "throttled",
             "install_url": "https://github.com/google-antigravity/antigravity-cli",
             "safety": "Relies on the assistant's own approval defaults",
             # agy 1.1.24 documents both --model and --effort in its own --help,
@@ -142,6 +145,34 @@ _flag_support_cache = {}
 # alnum on either side of the match keeps it from firing on a longer flag that
 # merely contains this one as a prefix.
 _FLAG_RE_CACHE = {}
+# agy's build_argv probes four separate flags on the same binary, each a fresh
+# `supports_flag` call; without this, that was four `agy --help` shell-outs
+# (10s timeout apiece) before the run clock even starts. Cached per
+# (path, subcommand) so the help text is fetched once per binary per session,
+# independent of which flag is being asked about.
+_help_text_cache = {}
+
+
+def _help_text(path, subcommand):
+    key = (path, subcommand)
+    if key in _help_text_cache:
+        return _help_text_cache[key]
+    text = ""
+    try:
+        r = subprocess.run([path, "--help"], capture_output=True,
+                           text=True, timeout=10)
+        text += (r.stdout or "") + (r.stderr or "")
+    except Exception:
+        pass
+    if subcommand:
+        try:
+            r = subprocess.run([path, subcommand, "--help"], capture_output=True,
+                               text=True, timeout=10)
+            text += (r.stdout or "") + (r.stderr or "")
+        except Exception:
+            pass
+    _help_text_cache[key] = text
+    return text
 
 
 def _flag_regex(flag):
@@ -159,29 +190,18 @@ def supports_flag(path, flag, subcommand=None):
     under `<cli> <subcommand> --help`, not the top-level help (this is why the
     original codex probe, which never passed one, could never actually detect
     -m/--model there); passing one probes that output too, on top of the
-    top-level help, and either mentioning the flag counts as support. agy has
-    no documented tool-restriction switch (an upstream read-only request is
-    open), so we probe rather than assume: passing an unsupported flag would
-    hard-fail every run, which is worse than the safety gap it would close.
-    Never raise: a missing/broken binary just means "flag not detected", the
-    safe default. Do not replace this with an unconditional flag append."""
+    top-level help, and either mentioning the flag counts as support. The
+    flags this probes for (`--sandbox`, `--model`, `--effort`,
+    `--disable-slash-commands`, among others) are not guaranteed to exist in
+    every agy version, so we probe rather than assume: passing an unsupported
+    flag would hard-fail every run, which is worse than the safety gap it
+    would close. Never raise: a missing/broken binary just means "flag not
+    detected", the safe default. Do not replace this with an unconditional
+    flag append."""
     key = (path, flag, subcommand)
     if key in _flag_support_cache:
         return _flag_support_cache[key]
-    text = ""
-    try:
-        r = subprocess.run([path, "--help"], capture_output=True,
-                           text=True, timeout=10)
-        text += (r.stdout or "") + (r.stderr or "")
-    except Exception:
-        pass
-    if subcommand:
-        try:
-            r = subprocess.run([path, subcommand, "--help"], capture_output=True,
-                               text=True, timeout=10)
-            text += (r.stdout or "") + (r.stderr or "")
-        except Exception:
-            pass
+    text = _help_text(path, subcommand)
     result = bool(_flag_regex(flag).search(text))
     _flag_support_cache[key] = result
     return result
@@ -408,10 +428,14 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                 pass
     if error_msg:
         # The CLI's own explanation beats stderr and beats the bare exit code,
-        # regardless of returncode: an is_error result is always fatal.
-        raise GenerationError(error_msg)
+        # regardless of returncode: an is_error result is always fatal. Routed
+        # through the same readable-message mapping test_connection uses, so
+        # a wizard run gets the same plain sentence a Test connection click
+        # would have gotten for the identical failure.
+        raise GenerationError(_readable_cli_error(kind, error_msg))
     if proc.returncode != 0:
-        raise GenerationError(err_text or f"assistant exited {proc.returncode}")
+        raise GenerationError(_readable_cli_error(
+            kind, err_text or f"assistant exited {proc.returncode}"))
     if not result:
         raise GenerationError("the assistant produced no usable reply")
     return {"text": result, "tokens": tokens, "rate_limits": rate_limits,
@@ -444,23 +468,30 @@ _AUTH_HINTS = ("not logged in", "not authenticated", "unauthoriz", "auth error",
               "authentication required", "run `claude login`", "run `codex login`")
 
 
-def _readable_cli_error(raw):
+def _readable_cli_error(kind, raw):
     """Turn a CLI's raw stderr into one short, human sentence. Never shown
     verbatim: a not-signed-in CLI's stderr is often a multi-line stack of its
     own auth-library noise, which is exactly what a user waiting on "Test
-    connection" should not have to parse to learn "go sign in"."""
+    connection" should not have to parse to learn "go sign in".
+
+    `kind` gates the Antigravity-specific sentences below to agy: claude and
+    codex stderr can legitimately contain the same words ("auto-denied",
+    "empty prompt") without being about Antigravity at all, and naming the
+    wrong product would be worse than the generic fallback."""
     text = (raw or "").strip()
     low = text.lower()
     if any(h in low for h in _AUTH_HINTS):
         return "not signed in: run it once in a terminal and sign in there"
-    # Antigravity's own two failure sentences, both long and both about
-    # something the reader cannot act on as written.
-    if "auto-denied" in low or "headless mode cannot prompt" in low:
-        return ("Antigravity refused a file write; the add-on never enables "
-                "writes, so this run used a tool it should not have.")
-    if "empty prompt" in low:
-        return ("Antigravity received an empty prompt, so it had nothing to "
-                "work from.")
+    if kind == "agy":
+        # Antigravity's own two failure sentences, both long and both about
+        # something the reader cannot act on as written.
+        if "auto-denied" in low or "headless mode cannot prompt" in low:
+            return ("Antigravity refused a file write; the add-on never "
+                    "enables writes, so this run used a tool it should not "
+                    "have.")
+        if "empty prompt" in low:
+            return ("Antigravity received an empty prompt, so it had "
+                    "nothing to work from.")
     first_line = text.splitlines()[0] if text else "no output from the assistant"
     return first_line[:200]
 
@@ -482,8 +513,8 @@ def test_connection(kind, path, timeout=45):
         run_generation(kind, path, _TEST_PROMPT, "quick", scratch, timeout=timeout)
         return {"state": "working", "detail": "connected and responding"}
     except GenerationError as e:
-        return {"state": "not_working", "detail": _readable_cli_error(str(e))}
+        return {"state": "not_working", "detail": _readable_cli_error(kind, str(e))}
     except Exception as e:
-        return {"state": "not_working", "detail": _readable_cli_error(str(e))}
+        return {"state": "not_working", "detail": _readable_cli_error(kind, str(e))}
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

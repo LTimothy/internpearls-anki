@@ -23,10 +23,21 @@
 #                   SUCCESS result, the shape agy 1.1.24 actually emits
 #   with_image      one card carrying a url: image (I2 review-gate tests)
 import json
+import os
 import sys
 import time
 
 mode = sys.argv[1] if len(sys.argv) > 1 else "ok"
+
+if "--help" in sys.argv:
+    # supports_flag's own probe call: it runs `[path, "--help"]` (and
+    # `[path, <subcommand>, "--help"]`) via subprocess.run without
+    # redirecting stdin, so reading it here (as the real modes below do)
+    # risked blocking on whatever the test process's own stdin is. Answer
+    # without touching stdin and report every flag build_argv might gate on.
+    print("--sandbox  --model  --effort  --disable-slash-commands  -p, --print")
+    sys.exit(0)
+
 prompt = sys.stdin.read()
 # "Study Deck - Basic" (not the bare "Basic" note type) so a flow test can carry
 # this card all the way through import against the mock collection's default model.
@@ -35,6 +46,21 @@ CARDS = [{"note_type": "Study Deck - Basic",
          "tags": [], "images": [], "rationale": "r"}]
 CARDS_JSON = json.dumps(CARDS)
 USAGE = {"input_tokens": 10, "output_tokens": 5}
+
+# When set, dump the exact argv this process received and what (if anything)
+# it read from stdin to that path, as JSON, then answer as an agy-shaped
+# success so a caller driving the real build_argv (not a stubbed one) still
+# gets a usable result. Lets a test inspect the real argv/stdin a backend's
+# own build_argv constructs, rather than the pre-picked mode this script
+# otherwise dispatches on.
+_record_path = os.environ.get("FAKE_CLI_RECORD")
+if _record_path:
+    with open(_record_path, "w", encoding="utf8") as f:
+        json.dump({"argv": sys.argv, "stdin": prompt}, f)
+    print(json.dumps({"event": "result", "result": {
+        "status": "SUCCESS", "response": CARDS_JSON, "num_turns": 1,
+        "usage": dict(USAGE, total_tokens=15)}}))
+    sys.exit(0)
 
 if mode == "fail":
     print("boom", file=sys.stderr)
@@ -102,6 +128,21 @@ if mode == "agy_ok":
         "status": "SUCCESS", "response": CARDS_JSON, "num_turns": 1,
         "usage": dict(USAGE, total_tokens=15)}}))
     sys.exit(0)
+if mode == "agy_error_result":
+    # The captured ERROR result line from tests/agy_stream_samples.ndjson: an
+    # empty-prompt failure reported through the "result" event, not stderr.
+    print(json.dumps({"event": "result", "result": {
+        "conversation_id": "", "status": "ERROR", "response": "",
+        "error": 'Error: empty prompt. Usage: agy --print "your prompt here"',
+        "duration_seconds": 0.0, "num_turns": 0,
+        "usage": {"input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0,
+                  "cache_read_tokens": 0, "total_tokens": 0}}}))
+    sys.exit(1)
+if mode == "agy_permission_denied":
+    print('jetski: no output produced ... a tool required the "write_file" '
+         "permission that headless mode cannot prompt for, so it was "
+         "auto-denied ...", file=sys.stderr)
+    sys.exit(1)
 print(json.dumps({"type": "assistant", "message": {"content": [
     {"type": "tool_use", "name": "WebSearch", "input": {}}]}}), flush=True)
 print(json.dumps({"type": "result", "subtype": "success",

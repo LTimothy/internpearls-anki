@@ -1,4 +1,5 @@
 # tests/test_ai_cli.py
+import json
 import os
 import sys
 import threading
@@ -62,6 +63,26 @@ def test_run_error_result_text_never_reaches_parse_cards_json():
         "Failed to authenticate: OAuth session expired and could not be refreshed",
         {"Study Deck - Basic"}, {"Study Deck - Basic": ["Front", "Back"]})
     assert cards == [] and errors   # confirms this text was never valid card JSON
+
+
+def test_run_agy_error_result_raises_the_readable_antigravity_sentence():
+    # The captured ERROR result line (tests/agy_stream_samples.ndjson) must
+    # reach the caller as the same plain sentence Test connection would give
+    # for the identical failure, not the raw agy error text.
+    with pytest.raises(ai_cli.GenerationError) as e:
+        ai_cli._run_argv(FAKE + ["agy_error_result"], "agy", "PROMPT",
+                         prompt_via_stdin=False)
+    assert str(e.value) == ("Antigravity received an empty prompt, so it had "
+                            "nothing to work from.")
+
+
+def test_run_agy_permission_denied_stderr_raises_the_readable_sentence():
+    with pytest.raises(ai_cli.GenerationError) as e:
+        ai_cli._run_argv(FAKE + ["agy_permission_denied"], "agy", "PROMPT",
+                         prompt_via_stdin=False)
+    assert str(e.value) == ("Antigravity refused a file write; the add-on "
+                            "never enables writes, so this run used a tool "
+                            "it should not have.")
 
 
 def test_run_timeout_kills_process():
@@ -149,6 +170,27 @@ def test_run_generation_parses_antigravity_result_shape(monkeypatch, tmp_path):
                                 str(tmp_path))
     assert '"Front": "q"' in res["text"]
     assert res["tokens"] == 15
+
+
+def test_run_generation_agy_sends_empty_stdin_and_prompt_last_in_argv(
+        monkeypatch, tmp_path):
+    """End-to-end through the real build_argv (not stubbed): agy takes the
+    prompt in argv rather than on stdin, and -p/the prompt must be the last
+    two elements so nothing after them is mistaken for argv noise. Verified
+    by what the fake CLI actually received, not by inspecting the argv this
+    process constructed."""
+    record = tmp_path / "record.json"
+    monkeypatch.setenv("FAKE_CLI_RECORD", str(record))
+    fake_agy = os.path.join(os.path.dirname(__file__), "fake_cli.py")
+    scratch = str(tmp_path)
+    prompt = "PROMPT TEXT FOR AGY"
+
+    res = ai_cli.run_generation("agy", fake_agy, prompt, "quick", scratch)
+
+    assert '"Front": "q"' in res["text"]
+    seen = json.loads(record.read_text())
+    assert seen["stdin"] == ""
+    assert seen["argv"][-2:] == ["-p", prompt]
 
 
 def test_find_cli_prefers_override(tmp_path):
@@ -339,6 +381,7 @@ def test_supports_flag_missing_binary_returns_false():
 
 def test_supports_flag_caches_per_path_and_flag(monkeypatch):
     ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
     calls = []
     real_run = ai_cli.subprocess.run
 
@@ -362,6 +405,7 @@ def test_supports_flag_rejects_substring_match(monkeypatch):
     # one as a substring must not count as support.
     monkeypatch.setenv("FAKE_HELP_TOP", "--max-turns <N>  cap the turn count")
     ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
     assert ai_cli.supports_flag(FAKE_HELP, "-m") is False
 
 
@@ -369,12 +413,14 @@ def test_supports_flag_rejects_longer_flag_that_contains_this_one(monkeypatch):
     # "--model-provider" documented, but not "--model" itself.
     monkeypatch.setenv("FAKE_HELP_TOP", "--model-provider <name>  set the provider")
     ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
     assert ai_cli.supports_flag(FAKE_HELP, "--model") is False
 
 
 def test_supports_flag_accepts_word_boundary_match(monkeypatch):
     monkeypatch.setenv("FAKE_HELP_TOP", "-m, --model <MODEL>  the model to use")
     ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
     assert ai_cli.supports_flag(FAKE_HELP, "--model") is True
 
 
@@ -385,6 +431,7 @@ def test_supports_flag_probes_named_subcommands_help(monkeypatch):
     monkeypatch.setenv("FAKE_HELP_SUBCOMMAND", "exec")
     monkeypatch.setenv("FAKE_HELP_SUB", "-m, --model <MODEL>  the model to use")
     ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
     assert ai_cli.supports_flag(FAKE_HELP, "--model") is False
     assert ai_cli.supports_flag(FAKE_HELP, "--model", subcommand="exec") is True
 
@@ -392,7 +439,30 @@ def test_supports_flag_probes_named_subcommands_help(monkeypatch):
 def test_supports_flag_still_detects_agy_sandbox_with_tightened_matching(monkeypatch):
     monkeypatch.setenv("FAKE_HELP_TOP", "--sandbox  run in a restricted sandbox")
     ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
     assert ai_cli.supports_flag(FAKE_HELP, "--sandbox") is True
+
+
+def test_supports_flag_shares_one_help_call_across_different_flags(monkeypatch):
+    # agy's build_argv probes four separate flags (--sandbox, --model,
+    # --effort, --disable-slash-commands) on the same binary; before the help
+    # text was cached per (path, subcommand), each was its own `--help` shell-
+    # out with its own 10s timeout, all before the run clock even starts.
+    monkeypatch.setenv("FAKE_HELP_TOP",
+                       "--sandbox  run sandboxed\n-m, --model <M>  the model")
+    ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
+    calls = []
+    real_run = ai_cli.subprocess.run
+
+    def spying_run(argv, *a, **kw):
+        calls.append(tuple(argv))
+        return real_run(argv, *a, **kw)
+
+    monkeypatch.setattr(ai_cli.subprocess, "run", spying_run)
+    assert ai_cli.supports_flag(FAKE_HELP, "--sandbox") is True
+    assert ai_cli.supports_flag(FAKE_HELP, "--model") is True
+    assert len(calls) == 1
 
 
 def test_resolve_claude_effort_passes_through_known_level():
@@ -552,30 +622,41 @@ def test_connection_cleans_up_its_scratch_dir(monkeypatch, tmp_path):
 
 def test_readable_cli_error_recognizes_common_auth_phrasing():
     assert "sign in" in ai_cli._readable_cli_error(
-        "Error: not authenticated, please log in").lower()
+        "claude", "Error: not authenticated, please log in").lower()
 
 
 def test_readable_cli_error_falls_back_to_trimmed_first_line():
-    assert ai_cli._readable_cli_error("boom\nsome traceback\nmore junk") == "boom"
+    assert ai_cli._readable_cli_error(
+        "claude", "boom\nsome traceback\nmore junk") == "boom"
 
 
 def test_readable_cli_error_explains_an_antigravity_auto_denied_tool():
     raw = ('jetski: no output produced ... a tool required the "write_file" '
            "permission that headless mode cannot prompt for, so it was "
            "auto-denied ...")
-    assert ai_cli._readable_cli_error(raw) == (
+    assert ai_cli._readable_cli_error("agy", raw) == (
         "Antigravity refused a file write; the add-on never enables writes, "
         "so this run used a tool it should not have.")
 
 
 def test_readable_cli_error_explains_an_antigravity_empty_prompt():
     raw = 'Error: empty prompt. Usage: agy --print "your prompt here"'
-    assert ai_cli._readable_cli_error(raw) == (
+    assert ai_cli._readable_cli_error("agy", raw) == (
         "Antigravity received an empty prompt, so it had nothing to work from.")
 
 
 def test_readable_cli_error_handles_empty_input():
-    assert ai_cli._readable_cli_error("") == "no output from the assistant"
+    assert ai_cli._readable_cli_error("claude", "") == "no output from the assistant"
+
+
+def test_readable_cli_error_does_not_blame_antigravity_for_other_backends():
+    # "auto-denied" is generic wording a non-agy backend's stderr could contain
+    # on its own; only kind == "agy" gets the Antigravity-specific sentence.
+    raw = ('the sandboxed tool call was auto-denied by the local policy '
+          "before it ran")
+    detail = ai_cli._readable_cli_error("claude", raw)
+    assert "Antigravity" not in detail
+    assert "auto-denied" in detail
 
 
 def test_detect_backends_skips_disabled_and_honours_preference(monkeypatch):
