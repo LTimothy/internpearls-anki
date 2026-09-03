@@ -27,9 +27,9 @@ from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
 from . import ai_cli, ai_logic, collection
 from .ai_setup import (LABEL_W, _safe_settle, _settle_min_size, _wrapped_hint,
                        run_connection_test_async)
-from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
-                     save_ai_usage, load_deck_skill, save_deck_skill,
-                     load_user_skill, save_user_skill)
+from .config import (AI_LAST_RUN_LOG, APP_NAME, TARGET_FIELDS, _cfg,
+                     load_ai_usage, save_ai_usage, load_deck_skill,
+                     save_deck_skill, load_user_skill, save_user_skill)
 from .logic import cloze_filled_html, field_preview_html, plural
 from .net import fetch_card_image
 from .palette import colors
@@ -1374,7 +1374,8 @@ class _GenerateDialog(QDialog):
                     image_paths=image_paths, on_event=self._events.append,
                     cancel=self._cancel_flag.is_set,
                     model=gen_cfg["ai_model"][s.backend],
-                    effort=gen_cfg["ai_effort"][s.backend])
+                    effort=gen_cfg["ai_effort"][s.backend],
+                    log_path=AI_LAST_RUN_LOG)
             except Exception as e:
                 self._worker_error = e
 

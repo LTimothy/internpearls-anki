@@ -392,7 +392,15 @@ def parse_stream_event(kind, line):
                 name = u.get("tool_name")
                 if isinstance(name, str) and name in _WEB_TOOLS:
                     return {"type": "phase", "phase": "Verify online"}
-            return {"type": "phase", "phase": "Working"}
+            evt = {"type": "phase", "phase": "Working"}
+            if u.get("step_type") == "agent_response":
+                # The running text of the reply, one chunk per step_update.
+                # _run_argv accumulates these so a run that ends with an empty
+                # `response` on its SUCCESS result still has something to show.
+                delta = u.get("text_delta")
+                if isinstance(delta, str) and delta:
+                    evt["delta"] = delta
+            return evt
         return None
     return None
 
