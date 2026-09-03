@@ -1250,12 +1250,35 @@ def test_backend_row_reads_not_set_up_with_the_setup_sentence(anki, monkeypatch)
 def test_advanced_disclosure_hides_and_shows_the_panel_in_place(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     assert dlg.advanced_panel.isVisible() is False
+    assert dlg.advanced_rule.isVisible() is False
     assert dlg.advanced_link.text() == "Advanced"
     dlg._toggle_advanced()
     assert dlg.advanced_panel.isVisible() is True
+    assert dlg.advanced_rule.isVisible() is True
     assert dlg.advanced_link.text() == "Hide advanced"
     dlg._toggle_advanced()
     assert dlg.advanced_panel.isVisible() is False
+    assert dlg.advanced_rule.isVisible() is False
+
+
+def test_deck_row_detail_is_one_sentence_with_no_note_type_chosen(anki, monkeypatch):
+    """_refresh_deck_row used to say "pick one under Advanced." and then, on
+    the very same line, "Change it under Advanced." again: the no-note-type
+    case already ends on "under Advanced" itself, so it must stay one
+    sentence rather than pointing there twice."""
+    dlg = _ready_dialog(anki, monkeypatch)
+    for box in dlg.type_boxes.values():
+        box.setChecked(False)
+    dlg._refresh_deck_row()
+    detail = dlg.deck_row.detail.text()
+    assert detail.endswith("pick one under Advanced.")
+    assert detail.count("Advanced") == 1
+
+    for box in dlg.type_boxes.values():
+        box.setChecked(True)
+        break
+    dlg._refresh_deck_row()
+    assert dlg.deck_row.detail.text().endswith("Change it under Advanced.")
 
 
 def test_depth_row_reads_the_assistants_own_decision(anki, monkeypatch):
