@@ -195,6 +195,8 @@ This is the one place the add-on deletes rather than archives, because there is 
 
 **Check for add-on updates** compares your installed version against the public repo's `version.json`. If a newer version exists, it offers to download and install the `.ankiaddon`. You still need to restart Anki afterward. This is the on-demand version of what the Settings toggles below do on their own, which is why most people never need it: it's here as a fallback, not the primary way to stay current.
 
+This check (and the once-per-launch background version of it) reads GitHub's public API with no token, since the add-on repo itself is public, and GitHub allows only 60 such requests per hour per IP address, shared with everyone else on the same connection. If that limit is used up, the check says so plainly, with the time it resets, rather than telling you to check a token you never sent. Signing in with a GitHub token in Manage decks (even one scoped to a completely different repo, read access is all it needs) raises that limit to 5,000 requests per hour and speeds this check up too, since it's tried first when one is set.
+
 ### Settings
 
 Sync automation and add-on update behavior, kept separate from Manage decks since those answer a different question ("which decks, which fields, from where" versus "how automatic, how often"):
