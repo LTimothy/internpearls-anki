@@ -56,6 +56,14 @@
 #                   two-chunk partial-message delta carrying one card's
 #                   "note_type" key, then the normal result (progress-feed
 #                   and detail-line flows tests)
+#   codex_long_gap  codex-style: an unrecognized turn.started line, a
+#                   sleep, then item.completed with the result: codex can
+#                   go a whole turn silent between recognized events, and
+#                   the idle rule must not apply to it (see run_generation)
+#   agy_search_then_delta  agy-style: a search_web tool step (ACTIVE, names
+#                   the Verify online phase), then an agent_response
+#                   text_delta, then the result: proves a delta after a
+#                   non-Working phase resets the chip to Working first
 import json
 import os
 import sys
@@ -230,6 +238,21 @@ if mode == "trickle_then_gap":
     time.sleep(1)
     print(json.dumps({"type": "result", "subtype": "success",
                       "result": CARDS_JSON, "usage": USAGE}))
+    sys.exit(0)
+if mode == "codex_long_gap":
+    print(json.dumps({"type": "turn.started"}), flush=True)
+    time.sleep(1.2)
+    print(json.dumps({"type": "item.completed", "text": CARDS_JSON, "usage": USAGE}))
+    sys.exit(0)
+if mode == "agy_search_then_delta":
+    print(json.dumps({"event": "step_update", "step_update": {
+        "step_type": "tool", "state": "ACTIVE", "tool_name": "search_web"}}), flush=True)
+    print(json.dumps({"event": "step_update", "step_update": {
+        "step_type": "agent_response", "state": "IN_PROGRESS",
+        "text_delta": "hello"}}), flush=True)
+    print(json.dumps({"event": "result", "result": {
+        "status": "SUCCESS", "response": CARDS_JSON, "num_turns": 1,
+        "usage": dict(USAGE, total_tokens=15)}}))
     sys.exit(0)
 if mode == "feed_demo":
     def _delta_event(text):

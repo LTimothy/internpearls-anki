@@ -39,6 +39,19 @@ def test_run_fans_a_folded_activity_out_as_its_own_event_before_the_phase():
     assert activity_events == [{"type": "activity", "text": "Searched the web"}]
 
 
+def test_run_resets_phase_to_working_before_a_delta_after_verify_online():
+    events = []
+    ai_cli._run_argv(FAKE + ["agy_search_then_delta"], "agy", "PROMPT",
+                     on_event=events.append, prompt_via_stdin=False)
+    verify_idx = next(i for i, e in enumerate(events)
+                      if e["type"] == "phase" and e["phase"] == "Verify online")
+    delta_idx = next(i for i, e in enumerate(events) if e["type"] == "delta")
+    working_between = [i for i, e in enumerate(events)
+                       if verify_idx < i < delta_idx
+                       and e["type"] == "phase" and e["phase"] == "Working"]
+    assert working_between, "a delta after Verify online must reset the chip first"
+
+
 def test_run_failure_raises_generation_error_with_stderr():
     with pytest.raises(ai_cli.GenerationError) as e:
         _run("fail")
@@ -378,6 +391,34 @@ def test_run_idle_timeout_names_the_wait():
     with pytest.raises(ai_cli.GenerationError) as e:
         _run("trickle_then_gap", idle=0.5, timeout=30)
     assert "went quiet" in str(e.value)
+
+
+def test_run_generation_codex_has_no_idle_rule_even_with_a_tiny_threshold(monkeypatch):
+    # codex can go a whole healthy turn silent between recognized events
+    # (verified live); run_generation must never pass it an idle rule,
+    # whatever _IDLE_S says.
+    monkeypatch.setattr(ai_cli, "_IDLE_S", {"quick": 0.1, "thorough": 0.1})
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs, **kw:
+            (FAKE + ["codex_long_gap"], True))
+    res = ai_cli.run_generation("codex", "/usr/bin/x", "PROMPT", "quick",
+                                "/tmp", timeout=5)
+    assert '"Front": "q"' in res["text"]
+
+
+def test_run_log_records_exit_code_minus_9_on_an_idle_kill(tmp_path):
+    log_path = tmp_path / "ai_last_run.log"
+    with pytest.raises(ai_cli.GenerationError):
+        _run("trickle_then_gap", idle=0.3, timeout=30, log_path=str(log_path))
+    assert "exit code: -9" in log_path.read_text(encoding="utf8")
+
+
+def test_run_log_records_exit_code_minus_9_on_a_cap_kill(tmp_path):
+    log_path = tmp_path / "ai_last_run.log"
+    with pytest.raises(ai_cli.GenerationError):
+        _run("slow", timeout=1, log_path=str(log_path))
+    assert "exit code: -9" in log_path.read_text(encoding="utf8")
 
 
 def test_run_cancel_kills_process():
