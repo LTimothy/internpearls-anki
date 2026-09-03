@@ -1369,8 +1369,9 @@ class _GenerateDialog(QDialog):
             s.scratch = tempfile.mkdtemp(prefix="ip-aigen-")
         extra_text = "\n\n".join(a[1]["text"] for a in s.attachments if a[1]["text"])
         image_names = [name for _, meta in s.attachments for name in meta["images"]]
+        user_skill_text = load_user_skill()
         prompt = ai_logic.build_prompt(
-            skills=ai_logic.active_skills(load_deck_skill(), load_user_skill()),
+            skills=ai_logic.active_skills(load_deck_skill(), user_skill_text),
             source=(s.source + ("\n\n## Attached document text\n" + extra_text
                                 if extra_text else "")),
             note_types=s.note_types, field_map=FIELD_MAP, count=s.count,
@@ -1404,7 +1405,8 @@ class _GenerateDialog(QDialog):
                     cancel=self._cancel_flag.is_set,
                     model=gen_cfg["ai_model"][s.backend],
                     effort=gen_cfg["ai_effort"][s.backend],
-                    log_path=AI_LAST_RUN_LOG)
+                    log_path=AI_LAST_RUN_LOG,
+                    redact_texts=(s.source, s.instructions, user_skill_text))
             except Exception as e:
                 self._worker_error = e
 

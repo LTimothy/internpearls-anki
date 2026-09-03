@@ -354,26 +354,67 @@ def _elided_argv(argv, prompt):
 _MIN_NEEDLE_LEN = 20
 
 
-def _prompt_needles(prompt):
-    """Short excerpts of `prompt` to scan stdout/stderr lines against: the
-    first 80 characters of the whole prompt, plus the first 80 characters of
-    each of its first three non-empty lines. A CLI that echoes the prompt
-    back into a stream event (a transcript-style `user_input` event, say)
-    would otherwise put the learner's pasted material, and the active
-    skills, straight into ai_last_run.log even though the argv itself is
-    elided. Needles under _MIN_NEEDLE_LEN characters are dropped: a short
-    needle (a stray word, a JSON key the prompt happens to share) would elide
-    lines that merely echo common text, not lines that actually echo the
-    prompt."""
+def _body_needles(text, include_windows=False):
+    """Short excerpts of `text` to scan stdout/stderr lines against: the
+    first 80 characters of the whole (stripped) text, plus the first 80
+    characters of each of its first three non-empty lines. When
+    `include_windows` is set and the text runs longer than 240 characters,
+    two more needles are added, one 80-character window from the middle and
+    one from the end, so a partial echo of the body (not just its opening)
+    is still caught. Needles under _MIN_NEEDLE_LEN characters are dropped: a
+    short needle (a stray word, a JSON key the text happens to share) would
+    elide lines that merely echo common text, not lines that actually echo
+    the text."""
     needles = []
-    whole = prompt.strip()[:80].strip()
+    stripped = text.strip()
+    whole = stripped[:80].strip()
     if len(whole) >= _MIN_NEEDLE_LEN:
         needles.append(whole)
-    non_empty = [ln.strip() for ln in prompt.splitlines() if ln.strip()]
+    non_empty = [ln.strip() for ln in text.splitlines() if ln.strip()]
     for ln in non_empty[:3]:
         needle = ln[:80].strip()
         if len(needle) >= _MIN_NEEDLE_LEN and needle not in needles:
             needles.append(needle)
+    if include_windows and len(stripped) > 240:
+        mid = (len(stripped) - 80) // 2
+        window = stripped[mid:mid + 80].strip()
+        if len(window) >= _MIN_NEEDLE_LEN and window not in needles:
+            needles.append(window)
+        tail = stripped[-80:].strip()
+        if len(tail) >= _MIN_NEEDLE_LEN and tail not in needles:
+            needles.append(tail)
+    return needles
+
+
+def _prompt_needles(prompt):
+    """Short excerpts of the whole `prompt` (see _body_needles) to scan
+    stdout/stderr lines against. A CLI that echoes the prompt back into a
+    stream event (a transcript-style `user_input` event, say) would
+    otherwise put the learner's pasted material, and the active skills,
+    straight into ai_last_run.log even though the argv itself is elided.
+    Kept as the whole-prompt case alongside `_redact_needles`, which also
+    covers a CLI that echoes only a piece of the prompt (the source text
+    buried mid-prompt, say) rather than the prompt as a whole."""
+    return _body_needles(prompt)
+
+
+def _redact_needles(prompt, redact_texts=()):
+    """The needles for one run: `_prompt_needles(prompt)` plus, for each
+    non-empty text in `redact_texts` (the learner's own source material,
+    focus text, and saved rules, as opposed to the full prompt those sit
+    inside), the wider needle set from `_body_needles(..., include_windows=
+    True)`. The production prompt (ai_logic.build_prompt) buries the
+    learner's material well past its first three lines under bundled skill
+    and schema boilerplate, so a CLI that echoes only that material back (a
+    transcript-style event carrying just the task content, the realistic
+    shape) would match none of the whole-prompt needles alone."""
+    needles = list(_prompt_needles(prompt))
+    for text in redact_texts:
+        if not text or not text.strip():
+            continue
+        for n in _body_needles(text, include_windows=True):
+            if n not in needles:
+                needles.append(n)
     return needles
 
 
@@ -451,11 +492,12 @@ def _last_line_detail(lines, err_text, needles=()):
 
 
 def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
-              cwd=None, prompt_via_stdin=True, log_path=None):
-    # Built once per run, from the prompt at hand, and reused for both the
-    # run log and the no-usable-reply excerpt below, rather than each
-    # re-deriving it from `prompt` separately.
-    needles = _prompt_needles(prompt)
+              cwd=None, prompt_via_stdin=True, log_path=None,
+              redact_texts=()):
+    # Built once per run, from the prompt (and any extra redact_texts) at
+    # hand, and reused for both the run log and the no-usable-reply excerpt
+    # below, rather than each re-deriving it separately.
+    needles = _redact_needles(prompt, redact_texts)
     start = time.monotonic()
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
@@ -601,13 +643,14 @@ def _kill(proc):
 
 def run_generation(kind, path, prompt, mode, scratch, image_paths=(),
                    on_event=None, cancel=None, timeout=None, model="", effort="",
-                   log_path=None):
+                   log_path=None, redact_texts=()):
     argv, via_stdin = build_argv(kind, path, mode, scratch, list(image_paths),
                                  model=model or "", effort=effort or "",
                                  prompt=prompt)
     return _run_argv(argv, kind, prompt, on_event=on_event, cancel=cancel,
                      timeout=timeout or _TIMEOUTS[mode], cwd=scratch,
-                     prompt_via_stdin=via_stdin, log_path=log_path)
+                     prompt_via_stdin=via_stdin, log_path=log_path,
+                     redact_texts=redact_texts)
 
 
 _TEST_PROMPT = "Reply with exactly one word: ok"

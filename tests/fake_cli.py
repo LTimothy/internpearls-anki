@@ -38,6 +38,16 @@
 #   echo_prompt_garbage  emits only that echoed-prompt event, no usable
 #                   result, so the no-usable-reply error's last-line excerpt
 #                   is exercised against a line that carries the prompt
+#   echo_env        a successful run that emits a stream event echoing back
+#                   whatever text is in FAKE_CLI_ECHO_TEXT, verbatim, on its
+#                   own line, then the normal CARDS_JSON result: models a CLI
+#                   that echoes only a piece of the prompt (the source
+#                   section, the focus text) rather than the prompt as a
+#                   whole
+#   echo_env_in_card  a successful run whose one card's Front field embeds
+#                   whatever text is in FAKE_CLI_ECHO_TEXT: models a normal,
+#                   legitimate reply that happens to quote some of the
+#                   source material rather than transcribing the prompt back
 import json
 import os
 import sys
@@ -183,6 +193,20 @@ if mode == "echo_prompt":
     sys.exit(0)
 if mode == "echo_prompt_garbage":
     print(json.dumps({"type": "user_input", "text": prompt}))
+    sys.exit(0)
+if mode == "echo_env":
+    echoed = os.environ.get("FAKE_CLI_ECHO_TEXT", "")
+    print(json.dumps({"type": "user_input", "text": echoed}), flush=True)
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": CARDS_JSON, "usage": USAGE}))
+    sys.exit(0)
+if mode == "echo_env_in_card":
+    echoed = os.environ.get("FAKE_CLI_ECHO_TEXT", "")
+    cards = [{"note_type": "Study Deck - Basic",
+             "fields": {"Front": "Quote: " + echoed, "Back": "a"},
+             "tags": [], "images": [], "rationale": "r"}]
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": json.dumps(cards), "usage": USAGE}))
     sys.exit(0)
 if mode == "agy_permission_denied":
     print('jetski: no output produced ... a tool required the "write_file" '
