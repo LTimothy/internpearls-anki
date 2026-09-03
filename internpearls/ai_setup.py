@@ -314,8 +314,6 @@ class _SettingsPanel(QWidget):
     window and clipped the Model combo. Every label starts at the panel's left
     edge and every field at the same x after it.
     """
-    LABEL_W = LABEL_W
-
     def __init__(self, kind, cfg, dlg):
         super().__init__()
         self.kind = kind
@@ -329,7 +327,7 @@ class _SettingsPanel(QWidget):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(CARET_GAP)
         grid.setVerticalSpacing(6)
-        grid.setColumnMinimumWidth(0, self.LABEL_W)
+        grid.setColumnMinimumWidth(0, LABEL_W)
         grid.setColumnStretch(1, 1)
 
         self.path = QLineEdit(cfg["ai_cli_path"][kind])
@@ -370,7 +368,7 @@ class _SettingsPanel(QWidget):
 
     def _label(self, text):
         lbl = QLabel(text)
-        lbl.setFixedWidth(self.LABEL_W)
+        lbl.setFixedWidth(LABEL_W)
         lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         return lbl
 
