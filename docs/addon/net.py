@@ -10,6 +10,7 @@ generous timeout so a big deck on a slow link isn't cut off mid-transfer.
 import socket
 import urllib.error
 import urllib.request
+from datetime import datetime
 
 from .config import ANKI_REPO
 
@@ -59,6 +60,54 @@ class DownloadCancelled(RuntimeError):
     """
 
 
+class RateLimitedError(RuntimeError):
+    """GitHub answered 403 because this connection is out of unauthenticated requests,
+    not because a token was wrong or the repo is private.
+
+    Its own class so `_gh_public_raw` can fall back to the raw CDN specifically on this
+    failure, and not on a genuine auth failure (401, or a 403 that isn't about the rate
+    limit), where falling back would just as likely fail again for the same reason. Still
+    a RuntimeError, like every other failure this module raises, so a caller that doesn't
+    care catches it anyway.
+    """
+
+
+def _rate_limit_message(e):
+    """None if this 403 isn't GitHub's unauthenticated rate limit; otherwise the
+    sentence to raise, with a reset time when `X-RateLimit-Reset` is present.
+
+    GitHub's core API allows 60 requests per hour per IP with no token, shared by
+    every unattended check this add-on runs on its own (the launch-time update check,
+    the deck auto-sync poll), so a shared connection can exhaust it without the learner
+    doing anything herself. That 403 looks identical to a real auth failure unless the
+    rate-limit headers are checked for, which is what used to send her to check a token
+    she never sent.
+    """
+    headers = e.headers
+    if headers is not None and headers.get("X-RateLimit-Remaining") == "0":
+        pass
+    else:
+        try:
+            body = e.read().decode("utf-8", "replace")
+        except Exception:
+            body = ""
+        if "rate limit" not in body.lower():
+            return None
+    reset_clause = ""
+    reset_hdr = headers.get("X-RateLimit-Reset") if headers is not None else None
+    if reset_hdr:
+        try:
+            reset_dt = datetime.fromtimestamp(int(reset_hdr))
+        except (TypeError, ValueError, OSError):
+            reset_dt = None
+        if reset_dt is not None:
+            minutes = max(1, round((reset_dt - datetime.now()).total_seconds() / 60))
+            reset_clause = f"; it resets at {reset_dt.strftime('%H:%M')} (about " \
+                            f"{minutes} minutes)"
+    return ("GitHub's request limit for this connection is used up" + reset_clause +
+            ". Signing in with a token in Manage decks raises the limit.")
+
+
 def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=None,
               on_response=None):
     """GET `url`, raising a RuntimeError with an actionable message on failure, or a
@@ -102,10 +151,16 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
                 if not on_chunk(len(buf)):
                     raise DownloadCancelled("cancelled before anything was imported")
     except urllib.error.HTTPError as e:
+        if e.code == 403:
+            rate_limit_msg = _rate_limit_message(e)
+            if rate_limit_msg is not None:
+                raise RateLimitedError(rate_limit_msg) from e
         if e.code in (401, 403):
-            raise RuntimeError(
-                "access denied (check that your token is valid and can read this "
-                "repo)") from e
+            if token:
+                raise RuntimeError(
+                    "access denied (check that your token is valid and can read "
+                    "this repo)") from e
+            raise RuntimeError("access denied") from e
         if e.code == 404:
             raise RuntimeError(
                 "not found (check the repo name, branch, and file path)") from e
@@ -130,22 +185,43 @@ def _gh_raw(repo, path, token, ref, timeout=_CONNECT_TIMEOUT, on_chunk=None):
                      timeout=timeout, on_chunk=on_chunk)
 
 
-def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT):
-    """Raw bytes of a file in the public add-on repo, via the Contents API rather than
-    raw.githubusercontent.com.
+def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT, token=None):
+    """Raw bytes of a file in the public add-on repo. Tries, in order: the Contents
+    API with `token` (when the learner has one configured), the Contents API with no
+    token, then raw.githubusercontent.com if the API is rate limited.
 
-    raw.githubusercontent.com is served through a CDN that can lag well behind a push.
-    Confirmed directly: right after pushing a new version.json, the Contents API
-    reflected it immediately, while the raw CDN link for the same file and branch still
-    served the previous content more than two minutes later. That gap is exactly why
-    "Check for add-on updates" once failed to see a version that had already been
-    pushed. Anything this add-on fetches about itself now goes through the API instead.
-    No token is needed since this repo is public; version.json still lists the raw CDN
-    URL under "download" as a convenience for a person opening it by hand, where a
-    brief delay is harmless.
+    The Contents API is preferred over raw.githubusercontent.com because that CDN is
+    served through a cache that can lag well behind a push. Confirmed directly: right
+    after pushing a new version.json, the Contents API reflected it immediately, while
+    the raw CDN link for the same file and branch still served the previous content
+    more than two minutes later. That gap is exactly why "Check for add-on updates"
+    once failed to see a version that had already been pushed.
+
+    No token is required, since this repo is public, but the API's unauthenticated
+    limit is a shared 60 requests per hour per IP, easily used up by the launch-time
+    update check and the deck auto-sync poll running on their own. A learner's own
+    token (read scope on any repo is enough) raises that to 5,000 per hour, so it's
+    tried first when configured. A token that can't read this public repo at all, say a
+    fine-grained token scoped to other repos, is retried without it rather than failing
+    outright, so a bad token never leaves this check worse off than having none. If
+    both attempts are rate limited rather than refused, the raw CDN is the last resort:
+    no API quota to run out, at the cost of the CDN's own lag, which version.json's
+    "download" field already documents for a person opening it by hand.
     """
     url = f"https://api.github.com/repos/{ANKI_REPO}/contents/{path}?ref={ref}"
-    return _http_get(url, accept="application/vnd.github.raw", timeout=timeout)
+    raw_url = f"https://raw.githubusercontent.com/{ANKI_REPO}/{ref}/{path}"
+    if token:
+        try:
+            return _http_get(url, token=token, accept="application/vnd.github.raw",
+                             timeout=timeout)
+        except RateLimitedError:
+            return _http_get(raw_url, timeout=timeout)
+        except RuntimeError:
+            pass  # a token that can't read this repo; fall through and retry without it
+    try:
+        return _http_get(url, accept="application/vnd.github.raw", timeout=timeout)
+    except RateLimitedError:
+        return _http_get(raw_url, timeout=timeout)
 
 
 # Raster only: SVG is an active format, and one downloaded from an arbitrary URL is

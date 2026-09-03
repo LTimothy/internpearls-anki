@@ -5828,9 +5828,9 @@ def test_a_failed_auto_update_download_still_says_a_version_is_out(anki, monkeyp
     updates.register_update_action(stub)
     anki.mw._config = {"auto_update_addon": True, "notify_addon_updates": True}
     monkeypatch.setattr(updates, "_fetch_addon_version_info",
-                        lambda timeout=None: {"version": "99.0.0"})
+                        lambda timeout=None, token=None: {"version": "99.0.0"})
 
-    def boom(timeout=None):
+    def boom(timeout=None, token=None):
         raise RuntimeError("the download failed")
 
     monkeypatch.setattr(updates, "_download_addon_package", boom)
