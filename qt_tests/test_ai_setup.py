@@ -327,13 +327,13 @@ def test_ai_backends_window_settles_even_with_a_stale_minimum_hint_read(monkeypa
     minimumSizeHint() to always answer a fixed, too-small size while it is
     built, resized, and shown, standing in for a lying (or merely stale) read
     at every one of those points, then restore the real one and give the
-    window one more event-loop turn. Confirms _settle_min_size does not need
-    that Python-level read to be trustworthy in the first place: the
-    SetMinimumSize constraint on the window's own top-level layout keeps Qt's
-    C++-side notion of the window's minimum size (a different thing from the
-    Python-level minimumSizeHint() override this test patches) in sync with
-    its real content on every layout pass, and QWidget.resize() clamps up to
-    that regardless of what any Python override of minimumSizeHint() claims."""
+    window one more event-loop turn. Pins the property, not a cause: the window
+    ends at or above its layout's real minimum even though every Python-level
+    minimumSizeHint() read lied. Instrumented runs showed Qt's default top-level
+    constraint already enforces this offscreen, so the SetMinimumSize constraint
+    and the show-time settle are belt and braces for the real screen, where the
+    first paint could otherwise commit before the wrapped labels reported their
+    height; this test would stay green with either of them removed."""
     harness.bootstrap()
     harness.app()
     harness.apply_theme("dark")

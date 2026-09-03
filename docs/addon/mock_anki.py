@@ -1473,7 +1473,7 @@ class QLayout:
     called on) has no real layout engine to constrain."""
     class SizeConstraint:
         SetDefaultConstraint = 0
-        SetMinimumSize = 3
+        SetMinimumSize = 2
 
 
 class QVBoxLayout(_Layout):

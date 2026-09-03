@@ -765,7 +765,11 @@ def test_input_page_fits_the_reference_screen_with_advanced_open(shot):
     """The page's own minimum, in its tallest state, has to fit the screen the
     rest of this suite measures against: an Advanced panel that only fits by
     squeezing every wrapped hint below its own text is the clipping bug
-    ai_setup._WrappedHint exists to prevent, one page over."""
+    ai_setup._WrappedHint exists to prevent, one page over.
+
+    Since v0.58.1 the wizard's top-level layout carries SetMinimumSize, so this
+    budget is a hard floor, not a warning: on an 891px screen the window cannot be
+    shrunk below the Advanced-open minimum this asserts."""
     dlg = shot("ai-input", state="advanced").dialog
     height = dlg.input_page.minimumSizeHint().height()
     assert height <= 891 - 80, f"the input page's minimum is {height}px tall"
