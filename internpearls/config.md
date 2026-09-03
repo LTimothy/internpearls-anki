@@ -153,6 +153,23 @@ matched as a whole flag token (not a substring another flag might contain, like
 only when the installed CLI's own help documents it, so an older Codex CLI without the
 flag isn't hard-broken by receiving it anyway.
 
+## ai_default_count
+
+How many cards the "Generate cards with AI" wizard should ask for by default. `0` (the
+default) means automatic: no number is sent at all, and the assistant makes one card per
+point the source actually teaches, up to 40. A value from 1 to 40 pre-fills the wizard's
+Advanced panel with that exact number instead. Anything else, including a negative or a
+value past 40, reads as automatic. This only seeds the control; changing the number in
+the wizard applies to that session and is never written back here.
+
+## ai_default_depth
+
+Which depth the wizard should start on: `thorough` (drafts, may verify online, then
+self-reviews) or `quick` (exactly one turn, no web access). Defaults to `auto`, which
+lets the material decide: thorough for a source over 1,500 characters or any attachment,
+quick for a short paste. As with the count above, this only seeds the control; picking a
+depth in the wizard applies to that session and is never written back here.
+
 ## dim_images_night_mode
 
 When on, bright pictures are dimmed while Anki itself is in Night Mode, so a

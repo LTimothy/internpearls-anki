@@ -113,6 +113,13 @@ TARGET_FIELDS = {
 # the same config.json.
 ADDON_PACKAGE = __name__.split(".")[0]
 
+# The largest exact card count the wizard's Advanced panel will take, and the
+# ceiling the assistant is held to when it picks the number itself. Duplicated
+# from ai_logic.AUTO_COUNT_CEILING rather than imported: this module is the
+# constants/config layer and stays free of ai_logic's own imports, the same
+# reason the backend kinds below are not imported from ai_cli.
+AI_COUNT_CEILING = 40
+
 # Keep in sync with ai_cli.BACKENDS' keys. Not imported from there to avoid coupling
 # this module (constants/config only) to ai_cli's subprocess machinery.
 _AI_BACKEND_KINDS = ("claude", "codex", "agy")
@@ -149,6 +156,17 @@ def _cli_path_map(value, preferred):
     return _ai_map(value)
 
 
+def _default_count(value):
+    """ai_default_count as a number the spin box can take, or 0 for automatic.
+    A hand-edited string, a negative, or anything past the ceiling reads as
+    automatic rather than as a number nothing here could honour."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return n if 0 < n <= AI_COUNT_CEILING else 0
+
+
 def _cfg():
     c = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
     return {
@@ -178,6 +196,14 @@ def _cfg():
         "ai_backend_enabled":    _ai_bool_map(c.get("ai_backend_enabled")),
         "ai_model":              _ai_map(c.get("ai_model")),
         "ai_effort":             _ai_map(c.get("ai_effort")),
+        # Seeds for the wizard's Advanced controls, never written back by it.
+        # 0 (or absent, or anything that isn't a positive number) means
+        # "automatic": no count is sent and the assistant decides, up to
+        # ai_logic.AUTO_COUNT_CEILING.
+        "ai_default_count":      _default_count(c.get("ai_default_count")),
+        "ai_default_depth":      (c.get("ai_default_depth")
+                                  if c.get("ai_default_depth") in ("thorough", "quick")
+                                  else "auto"),
     }
 
 
