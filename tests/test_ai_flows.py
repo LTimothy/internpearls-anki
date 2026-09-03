@@ -343,6 +343,17 @@ def test_progress_feed_and_detail_show_activity_and_deltas(anki, monkeypatch):
     assert "characters." in detail
 
 
+def test_progress_feed_caps_at_200_lines(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg.activity_feed.setMaximumBlockCount(200)
+    for n in range(250):
+        dlg.activity_feed.appendPlainText(f"line {n}")
+    lines = dlg.activity_feed.toPlainText().split("\n")
+    assert len(lines) == 200
+    assert lines[0] == "line 50"     # the oldest 50 lines were trimmed
+    assert lines[-1] == "line 249"
+
+
 def test_completion_exception_reaches_dialog_and_recovers_to_input(anki, monkeypatch):
     """B/C: the QTimer poll -> _finish_generation path had no guard at all, so an
     exception raised while processing an already-finished generation reached
@@ -670,6 +681,17 @@ def _basic_card(front, source):
             "rationale": ""}
 
 
+def test_card_image_names_only_svg_attached_and_url_sources():
+    svg_card = _basic_card("Q1", "svg:<svg xmlns='http://www.w3.org/2000/svg'/>")
+    attached_card = _basic_card("Q2", "attached:photo.png")
+    url_card = _basic_card("Q3", "url:https://example.com/pic.png")
+    other_card = _basic_card("Q4", "bogus:whatever")
+    assert ai_dialog._card_image_names(svg_card) == ["drawn figure"]
+    assert ai_dialog._card_image_names(attached_card) == ["attached file"]
+    assert ai_dialog._card_image_names(url_card) == ["from example.com"]
+    assert ai_dialog._card_image_names(other_card) == []   # unrecognized: no name
+
+
 def test_two_svg_images_get_distinct_media_filenames(anki, monkeypatch):
     # _do_import only ever reuses what review already resolved (see I2): it
     # never calls svg_to_media itself, so the test seeds session.image_data
@@ -765,6 +787,22 @@ def test_review_row_names_the_image_while_collapsed_and_gives_a_reason(anki, mon
     assert "Has a picture" in _row_text(row)   # excluded by the gate, so the row says why
 
 
+def test_resolved_image_name_stays_dropped_across_a_rebuild(anki, monkeypatch):
+    # The per-row "already painted" set used to be a local closure, lost on
+    # every _rebuild_review (Edit, Note, a revision), so a picture the
+    # learner already saw got named again.
+    _stub_fetch_image(monkeypatch)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    row = dlg.cards_lay.itemAt(0).widget()
+    _caret_widget(row).clicked.emit()   # first expand: paints it, drops the name
+    assert "[image: from example.com]" not in _row_text(row)
+    dlg._rebuild_review()
+    new_row = dlg.cards_lay.itemAt(0).widget()
+    assert "[image: from example.com]" not in _row_text(new_row)
+
+
 def test_review_row_drops_the_image_name_once_expanded_and_painted(anki, monkeypatch):
     _stub_fetch_image(monkeypatch)
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
@@ -797,14 +835,17 @@ def test_review_row_reason_is_silent_on_a_kept_verbatim_cards_own_uncheck(anki, 
 
 
 def test_review_row_reason_is_silent_once_the_learner_checks_it_herself(anki, monkeypatch):
+    # _row_text walks every node regardless of visibility, so this checks the
+    # widget's own isVisible() directly: the whole point is that ticking the
+    # box hides this exact widget live, without a rebuild.
     _stub_fetch_image(monkeypatch)
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
     dlg._start_generation()
     dlg._wait_for_worker(timeout=15)
-    dlg._on_include_toggled(0, True)
-    dlg._rebuild_review()
-    row = dlg.cards_lay.itemAt(0).widget()
-    assert "Has a picture" not in _row_text(row)   # she included it; nothing left to explain
+    reason_row = dlg._image_reason_rows[0]
+    assert reason_row.isVisible()
+    dlg._on_include_toggled(0, True)   # the live path a checkbox toggle takes
+    assert not reason_row.isVisible()   # she included it; nothing left to explain
 
 
 def test_failed_image_download_becomes_a_mechanical_check_not_a_modal(anki, monkeypatch):

@@ -1324,6 +1324,7 @@ class QPlainTextEdit(QWidget):
         self._text = text
         self._placeholder = ""
         self._readonly = False
+        self._max_block_count = 0   # 0: unlimited, matches real QPlainTextEdit's default
         # Real QPlainTextEdit emits this on every edit; the review dialog connects it
         # to the debounced save, so a mock without it hides whether that wiring exists.
         self._changed = []
@@ -1342,6 +1343,10 @@ class QPlainTextEdit(QWidget):
 
     def appendPlainText(self, line):
         self._text = line if not self._text else self._text + "\n" + line
+        if self._max_block_count > 0:
+            lines = self._text.split("\n")
+            if len(lines) > self._max_block_count:
+                self._text = "\n".join(lines[-self._max_block_count:])
 
     def setMaximumBlockCount(self, n):
         self._max_block_count = n
