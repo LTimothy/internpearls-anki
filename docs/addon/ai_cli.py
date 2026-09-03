@@ -553,6 +553,11 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
     seen = 0
     err_text = ""
     last_line_at = start
+    # The last phase actually emitted, so a delta arriving after a "Verify
+    # online" tool step can put the chip back to "Working": a reply chunk is
+    # not itself a verify step, and agy no longer resets phase on every
+    # response chunk the way it used to.
+    last_phase = None
     try:
         while True:
             while seen < len(lines):
@@ -564,7 +569,13 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                 activity = evt.get("activity")
                 if activity and on_event:
                     on_event({"type": "activity", "text": activity})
-                if evt["type"] == "result":
+                if evt["type"] == "phase":
+                    last_phase = evt["phase"]
+                elif evt["type"] == "delta":
+                    if last_phase not in (None, "Working") and on_event:
+                        on_event({"type": "phase", "phase": "Working"})
+                    last_phase = "Working"
+                elif evt["type"] == "result":
                     result = evt["text"]
                     if kind == "agy" and not result and agy_deltas:
                         result = "".join(agy_deltas)
@@ -671,10 +682,16 @@ def run_generation(kind, path, prompt, mode, scratch, image_paths=(),
     argv, via_stdin = build_argv(kind, path, mode, scratch, list(image_paths),
                                  model=model or "", effort=effort or "",
                                  prompt=prompt)
+    # codex can go a whole healthy turn (verified live: a 5s run's only
+    # silent gap was 5s, with no item.started at all) with nothing on
+    # stdout between turn.started and its terminal item; an idle rule would
+    # kill that run sooner than the old hard cap ever did. claude and agy
+    # stream enough that the idle rule still means something for them.
+    idle = None if kind == "codex" else _IDLE_S[mode]
     return _run_argv(argv, kind, prompt, on_event=on_event, cancel=cancel,
                      timeout=timeout or _CAP_S[mode], cwd=scratch,
                      prompt_via_stdin=via_stdin, log_path=log_path,
-                     redact_texts=redact_texts, idle=_IDLE_S[mode])
+                     redact_texts=redact_texts, idle=idle)
 
 
 _TEST_PROMPT = "Reply with exactly one word: ok"
