@@ -522,16 +522,31 @@ def load_bundled_skill():
 USER_SKILL_MAX_CHARS = 20000
 
 
+_USER_SKILL_HEADING = (
+    "## The learner's own rules\n"
+    "Apply these on top of the rules above. Where they disagree on style, "
+    "wording, emphasis, or what to prioritise, the learner's rules win. The "
+    "output contract, the image rules, and the safety rules above always win.")
+
+
 def active_skills(deck_skill, user_skill=""):
     """Bundled first, then a consented deck skill, then the learner's own
     rules. The order is the cache-friendly stable prefix: the part that
-    changes least goes first."""
+    changes least goes first.
+
+    The learner's own text is prefixed with a heading that states how it
+    ranks against everything before it, rather than being appended bare: bare,
+    a short "no mnemonics" reads as one more line of the bundled skill's own
+    voice, with no signal that it came from the learner or that it should ever
+    outrank a bundled instruction it conflicts with. The bundled and deck
+    texts stay exactly as loaded, heading included in the user block instead,
+    so the cache-friendly stable prefix above it never moves."""
     skills = [load_bundled_skill()]
     if deck_skill and deck_skill.get("enabled") and deck_skill.get("text"):
         skills.append(deck_skill["text"])
     user = (user_skill or "").strip()
     if user:
-        skills.append(user)
+        skills.append(f"{_USER_SKILL_HEADING}\n\n{user}")
     return skills
 
 

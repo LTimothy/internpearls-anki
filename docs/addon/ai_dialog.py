@@ -19,10 +19,10 @@ from collections import deque
 
 from aqt import mw
 from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
-                    QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout,
-                    QKeySequence, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-                    QRadioButton, QScrollArea, QSpinBox,
-                    QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
+                    QDialogButtonBox, QFontMetrics, QFrame, QGridLayout,
+                    QHBoxLayout, QKeySequence, QLabel, QLineEdit,
+                    QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
+                    QSpinBox, QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
 from .ai_setup import LABEL_W, _wrapped_hint, run_connection_test_async
@@ -80,8 +80,15 @@ class _UserSkillDialog(QDialog):
         lay.addWidget(hint_label(
             "Sent to the assistant after the bundled and deck skills, on every run. "
             "Plain text. It costs tokens each turn, so keep it short and specific: "
-            "what to emphasise, what to avoid, how you like a card phrased."))
+            "what to emphasise, what to avoid, how you like a card phrased. On "
+            "style, wording, and emphasis, your own rules win over the bundled "
+            "skill where the two disagree; the output format and the rule against "
+            "raster images always win, over these rules included."))
         self.editor = QPlainTextEdit()
+        self.editor.setPlaceholderText(
+            "Prefer cloze for lists and thresholds.\n"
+            "Always give doses with units and the route.\n"
+            "No mnemonics.")
         self.editor.setPlainText(load_user_skill())
         lay.addWidget(self.editor, 1)
         row = QHBoxLayout()
@@ -386,10 +393,13 @@ def _depth_clause(backend, mode):
     mode; Codex never can, Antigravity's quick mode still might, and a
     hardcoded clause would keep telling both the same story. With no backend
     detected yet, there is nothing to derive from, so this falls back to the
-    spec's own hedge.
+    spec's own hedge, but only for thorough: quick draft never claims to
+    verify anything online regardless of which backend eventually runs it, so
+    hedging about one is a promise this mode was never going to keep. Empty
+    tells the caller there is nothing to say, not a clause of its own.
     """
     if not backend:
-        return "verifies claims online where the backend allows"
+        return "verifies claims online where the backend allows" if mode == "thorough" else ""
     text = ai_cli.BACKENDS[backend]["modes"][mode]
     label = _MODE_LABELS[mode]
     if text.startswith(label):
@@ -755,21 +765,29 @@ class _GenerateDialog(QDialog):
         self.advanced_link = self.depth_row.links["Advanced"]
         lay.addWidget(self.depth_row)
 
-        self.deck_row = _InfoRow(
-            "deck", "<b>Deck</b>", "",
-            links=(("Change", lambda: self._guard(self._change_deck)),))
+        self.deck_row = _InfoRow("deck", "<b>Deck</b>", "")
         lay.addWidget(self.deck_row)
 
+        # The trailing link's own initial label already matches whether
+        # there's anything to edit yet; _refresh_skills_row keeps it in sync
+        # after that (the dict key below only has to name the one it starts as).
+        rules_label = "Edit my rules" if load_user_skill().strip() else "Add my rules"
         self.skills_row = _InfoRow(
             "skills", "<b>Skills</b>", "Sent in that order on every run.",
             links=(("View", lambda: self._guard(self._view_skills)),
-                   ("Edit my rules", lambda: self._guard(self._edit_user_skill))))
+                   (rules_label, lambda: self._guard(self._edit_user_skill))))
         self.skills_link = self.skills_row.links["View"]
-        self.rules_link = self.skills_row.links["Edit my rules"]
+        self.rules_link = self.skills_row.links[rules_label]
         lay.addWidget(self.skills_row)
 
-        lay.addWidget(section_rule())
+        self.advanced_rule = section_rule()
+        lay.addWidget(self.advanced_rule)
         lay.addWidget(self._build_advanced())
+        # Collapsed by default, same as the panel it introduces: two rules
+        # stacking at the bottom (this one, then the one above the button box)
+        # is only right while there is something of Advanced's own between
+        # them to separate.
+        self.advanced_rule.setVisible(False)
 
         lay.addStretch()
         lay.addWidget(section_rule())
@@ -790,14 +808,15 @@ class _GenerateDialog(QDialog):
         self._refresh_skills_row()
         return page
 
-    def _advanced_label(self, text):
-        """A label in the Advanced grid's own column. Minimum width rather than
-        ai_setup._SettingsPanel's fixed width, since "Exact number of cards" is
-        longer than that column and a fixed width would clip it; the column
-        still starts every field at one x, which is the property that matters.
+    def _advanced_label(self, text, col_w):
+        """A label in the Advanced grid's own column, sized so the widest label
+        in this grid ("Exact number of cards") fits without overflowing into
+        the field beside it, the way ai_setup._SettingsPanel's own fixed
+        LABEL_W does for its own, shorter labels. Every field still starts at
+        the same x: `col_w` is the one width every call in this grid is given.
         """
         lbl = QLabel(text)
-        lbl.setMinimumWidth(LABEL_W)
+        lbl.setMinimumWidth(col_w)
         lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         return lbl
 
@@ -815,7 +834,16 @@ class _GenerateDialog(QDialog):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(CARET_GAP)
         grid.setVerticalSpacing(6)
-        grid.setColumnMinimumWidth(0, LABEL_W)
+        # LABEL_W (the AI Backends settings panel's own column) is too narrow
+        # for this grid's own longest label, "Exact number of cards", which
+        # used to overflow into the spinbox beside it. Measured against every
+        # label this grid actually shows, not just that one, so the column
+        # never wins by coincidence if a shorter grid grows a longer label
+        # later.
+        labels = ("Exact number of cards", "Depth", "Note types", "Destination deck")
+        metrics = QFontMetrics(QLabel().font())
+        col_w = max(LABEL_W, max(metrics.horizontalAdvance(t) for t in labels) + 12)
+        grid.setColumnMinimumWidth(0, col_w)
         grid.setColumnStretch(1, 1)
 
         self.count_spin = QSpinBox()
@@ -824,6 +852,11 @@ class _GenerateDialog(QDialog):
         # says "auto" without a second checkbox to mean the same thing.
         self.count_spin.setRange(0, ai_logic.AUTO_COUNT_CEILING)
         self.count_spin.setSpecialValueText("auto")
+        # Wide enough for "auto" itself plus the spinbox's own up/down arrows,
+        # which used to clip that word: a bare font-metrics width only covers
+        # the text, not the control drawn around it.
+        self.count_spin.setMinimumWidth(
+            metrics.horizontalAdvance("auto") + 40)
         self.count_spin.setValue(cfg["ai_default_count"])
         self.count_spin.valueChanged.connect(
             lambda _v: self._guard(self._refresh_depth_row))
@@ -834,7 +867,7 @@ class _GenerateDialog(QDialog):
         count_lay.addWidget(self.count_spin)
         count_lay.addWidget(hint_label(
             f"blank lets the assistant decide, up to {ai_logic.AUTO_COUNT_CEILING}"), 1)
-        grid.addWidget(self._advanced_label("Exact number of cards"), 0, 0)
+        grid.addWidget(self._advanced_label("Exact number of cards", col_w), 0, 0)
         grid.addWidget(count_box, 0, 1)
 
         # The radio carries only the short, stable name; the per-backend
@@ -862,7 +895,7 @@ class _GenerateDialog(QDialog):
         depth_lay.addWidget(self.thorough_radio)
         depth_lay.addWidget(self.quick_radio)
         depth_lay.addStretch()
-        grid.addWidget(self._advanced_label("Depth"), 1, 0)
+        grid.addWidget(self._advanced_label("Depth", col_w), 1, 0)
         grid.addWidget(depth_box, 1, 1)
 
         self.thorough_hint = _wrapped_hint("")
@@ -912,7 +945,8 @@ class _GenerateDialog(QDialog):
             box.toggled.connect(lambda _c: self._guard(self._refresh_deck_row))
             self.type_boxes[name] = box
             types_lay.addWidget(box)
-        grid.addWidget(self._advanced_label("Note types"), 3, 0)
+        grid.addWidget(self._advanced_label("Note types", col_w), 3, 0,
+                      Qt.AlignmentFlag.AlignTop)
         grid.addWidget(types_box, 3, 1)
 
         self.deck_combo = QComboBox()
@@ -920,7 +954,7 @@ class _GenerateDialog(QDialog):
         self.deck_combo.addItem(self.session.deck_name)
         self.deck_combo.currentTextChanged.connect(
             lambda _t: self._guard(self._refresh_deck_row))
-        grid.addWidget(self._advanced_label("Destination deck"), 4, 0)
+        grid.addWidget(self._advanced_label("Destination deck", col_w), 4, 0)
         grid.addWidget(self.deck_combo, 4, 1)
 
         self.advanced_panel = panel
@@ -933,14 +967,8 @@ class _GenerateDialog(QDialog):
         what a change in here actually changed."""
         shown = not self.advanced_panel.isVisible()
         self.advanced_panel.setVisible(shown)
+        self.advanced_rule.setVisible(shown)
         self.advanced_link.setText("Hide advanced" if shown else "Advanced")
-
-    def _change_deck(self):
-        """The Deck row's own link. There is one deck chooser and it lives in
-        Advanced, so this opens that rather than a second one of its own."""
-        if not self.advanced_panel.isVisible():
-            self._toggle_advanced()
-        self.deck_combo.setFocus()
 
     def _depth_chosen(self):
         """A depth the learner picked outranks the one the material implies, for
@@ -999,7 +1027,8 @@ class _GenerateDialog(QDialog):
             else:
                 why = "Quick because the source is short"
         if why:
-            said += f" {why}: {_depth_clause(self.session.backend, mode)}."
+            clause = _depth_clause(self.session.backend, mode)
+            said += f" {why}: {clause}." if clause else f" {why}."
         self.depth_row.set_chip(mode)
         self.depth_row.set_detail(said)
         if not self._depth_touched:
@@ -1027,8 +1056,12 @@ class _GenerateDialog(QDialog):
             types = chosen[0] + "."
         else:
             types = "No note type selected yet: pick one under Advanced."
-        self.deck_row.set_detail(f"{deck}. Every accepted card lands here, as {types}"
-                                 if chosen else f"{deck}. {types}")
+        said = (f"{deck}. Every accepted card lands here, as {types}"
+               if chosen else f"{deck}. {types}")
+        # The row's own Change link is gone; Advanced is the one place that
+        # changes the deck now, so the detail always says where to find it.
+        said += " Change it under Advanced."
+        self.deck_row.set_detail(said)
 
     def _refresh_skills_row(self):
         """What gets sent on top of the material, in the order it is sent.
@@ -1041,10 +1074,12 @@ class _GenerateDialog(QDialog):
         deck = load_deck_skill()
         if deck and deck.get("enabled"):
             parts.append(f"deck skill v{deck.get('version')}")
-        if load_user_skill().strip():
+        has_rules = bool(load_user_skill().strip())
+        if has_rules:
             parts.append("my rules")
         self.skills_row.set_detail(
             f"{', '.join(parts)}. Sent in that order on every run.")
+        self.rules_link.setText("Edit my rules" if has_rules else "Add my rules")
 
     def _source_changed(self):
         text = self.source_box.toPlainText()
@@ -1176,9 +1211,14 @@ class _GenerateDialog(QDialog):
             if user:
                 n = user.count("\n") + 1
                 parts += ["", f"My rules ({n} line{'s' if n != 1 else ''})", "", user]
-            else:
-                parts += ["", "My rules: none"]
-            return _skills_html(parts)
+            body = _skills_html(parts)
+            if not user:
+                # Nothing to show, so nothing is claimed under a "My rules"
+                # heading either: one muted line pointing at where to add
+                # some, instead of a heading whose only content is "none".
+                body += (f'<br><br><span style="color:{colors()["muted"]}">'
+                        "Add your own rules from the wizard's Skills row.</span>")
+            return body
 
         if not deck:
             # The plain QMessageBox _info opens has no scroll area, so long text
@@ -2004,13 +2044,12 @@ class _GenerateDialog(QDialog):
         (QDialog's own closeEvent calls reject()), except on the progress page,
         where keyPressEvent intercepts Escape above and runs the cancel path
         instead of ever reaching here. So this is the one place that has to
-        handle closing mid-generation too, for the close box's own path: a run
-        in flight is
-        real, billed work, not something to silently throw away on a stray
-        Escape, so it gets the same kind of confirm as discarding a draft:
-        but once confirmed, the actual cancel is handed off (see
-        _cancel_running_generation) rather than blocking this call on
-        however long the subprocess takes to die."""
+        handle closing mid-generation too, for the close box's own path: a
+        run in flight is real, billed work, not something to silently throw
+        away on a stray Escape, so it gets the same kind of confirm as
+        discarding a draft. Once confirmed, though, the actual cancel is
+        handed off (see _cancel_running_generation) rather than blocking this
+        call on however long the subprocess takes to die."""
         if (self.stack.currentWidget() is self.review_page
                 and self.session.cards
                 and not _ask(

@@ -100,16 +100,30 @@ class _WrappedHint(QLabel):
 
     A word-wrapped QLabel reports a minimum height of one line, whatever it
     actually wraps to, and a QVBoxLayout builds a window's minimum height out of
-    exactly those minimums: height-for-width never reaches it. So this window,
-    which clamps its own open height to the screen it lands on, could open
+    exactly those minimums: height for width never reaches it. So this window,
+    which opens at a size chosen before any label has a real width, could open
     shorter than its text needs, and every wrapped paragraph and backend row was
     then squeezed below its own minimum until "Works with a ... ." was cut off
     mid-glyph at the row's bottom edge.
 
-    Fixed at the only place that knows the answer: once the label has a width, it
-    claims the height that width really requires as its own minimum, which every
-    layout above it does honour. Guarded so an unchanged answer never restarts the
-    layout.
+    v0.56.1 tried to fix this from resizeEvent alone: once the label has a
+    width, it claims the height that width really requires as its own minimum,
+    which every layout above it does honour, but only on the next layout pass.
+    That next pass does happen, but only when something later asks for one (a
+    QTimer tick, a resize, any further event loop turn). Nothing forced one
+    before this window's first paint, so the window still opened, and painted,
+    at the too small geometry its first, pre correction layout pass computed.
+    The correction landed a frame late: invisible unless the reader caught
+    that exact first frame, and gone the moment anything else repainted the
+    window (a Re-check, which rebuilds the rows from scratch, or even just
+    moving the window), which is exactly what the reader described.
+
+    Fixed by not waiting for that next pass. Once this label's own minimum
+    grows, it resizes its top-level window right there, synchronously, inside
+    the same call that discovered the real height, before control ever
+    returns to Qt's event loop, so there is no separate frame left for a
+    stale paint to occupy. Guarded so an unchanged answer never restarts
+    anything.
     """
 
     def resizeEvent(self, event):
@@ -117,6 +131,13 @@ class _WrappedHint(QLabel):
         need = self.heightForWidth(self.width()) if self.width() > 0 else 0
         if need > 0 and self.minimumHeight() != need:
             self.setMinimumHeight(need)
+            top = self.window()
+            if top is not None:
+                hint = top.minimumSizeHint()
+                grown_w = max(top.width(), hint.width())
+                grown_h = max(top.height(), hint.height())
+                if grown_w != top.width() or grown_h != top.height():
+                    top.resize(grown_w, grown_h)
 
 
 def _wrapped_hint(text):
