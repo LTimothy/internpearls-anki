@@ -755,9 +755,7 @@ class _GenerateDialog(QDialog):
         self.advanced_link = self.depth_row.links["Advanced"]
         lay.addWidget(self.depth_row)
 
-        self.deck_row = _InfoRow(
-            "deck", "<b>Deck</b>", "",
-            links=(("Change", lambda: self._guard(self._change_deck)),))
+        self.deck_row = _InfoRow("deck", "<b>Deck</b>", "")
         lay.addWidget(self.deck_row)
 
         self.skills_row = _InfoRow(
@@ -768,8 +766,14 @@ class _GenerateDialog(QDialog):
         self.rules_link = self.skills_row.links["Edit my rules"]
         lay.addWidget(self.skills_row)
 
-        lay.addWidget(section_rule())
+        self.advanced_rule = section_rule()
+        lay.addWidget(self.advanced_rule)
         lay.addWidget(self._build_advanced())
+        # Collapsed by default, same as the panel it introduces: two rules
+        # stacking at the bottom (this one, then the one above the button box)
+        # is only right while there is something of Advanced's own between
+        # them to separate.
+        self.advanced_rule.setVisible(False)
 
         lay.addStretch()
         lay.addWidget(section_rule())
@@ -933,14 +937,8 @@ class _GenerateDialog(QDialog):
         what a change in here actually changed."""
         shown = not self.advanced_panel.isVisible()
         self.advanced_panel.setVisible(shown)
+        self.advanced_rule.setVisible(shown)
         self.advanced_link.setText("Hide advanced" if shown else "Advanced")
-
-    def _change_deck(self):
-        """The Deck row's own link. There is one deck chooser and it lives in
-        Advanced, so this opens that rather than a second one of its own."""
-        if not self.advanced_panel.isVisible():
-            self._toggle_advanced()
-        self.deck_combo.setFocus()
 
     def _depth_chosen(self):
         """A depth the learner picked outranks the one the material implies, for
@@ -1027,8 +1025,12 @@ class _GenerateDialog(QDialog):
             types = chosen[0] + "."
         else:
             types = "No note type selected yet: pick one under Advanced."
-        self.deck_row.set_detail(f"{deck}. Every accepted card lands here, as {types}"
-                                 if chosen else f"{deck}. {types}")
+        said = (f"{deck}. Every accepted card lands here, as {types}"
+               if chosen else f"{deck}. {types}")
+        # The row's own Change link is gone; Advanced is the one place that
+        # changes the deck now, so the detail always says where to find it.
+        said += " Change it under Advanced."
+        self.deck_row.set_detail(said)
 
     def _refresh_skills_row(self):
         """What gets sent on top of the material, in the order it is sent.
