@@ -80,8 +80,15 @@ class _UserSkillDialog(QDialog):
         lay.addWidget(hint_label(
             "Sent to the assistant after the bundled and deck skills, on every run. "
             "Plain text. It costs tokens each turn, so keep it short and specific: "
-            "what to emphasise, what to avoid, how you like a card phrased."))
+            "what to emphasise, what to avoid, how you like a card phrased. On "
+            "style, wording, and emphasis, your own rules win over the bundled "
+            "skill where the two disagree; the output format and the rule against "
+            "raster images always win, over these rules included."))
         self.editor = QPlainTextEdit()
+        self.editor.setPlaceholderText(
+            "Prefer cloze for lists and thresholds.\n"
+            "Always give doses with units and the route.\n"
+            "No mnemonics.")
         self.editor.setPlainText(load_user_skill())
         lay.addWidget(self.editor, 1)
         row = QHBoxLayout()
@@ -758,12 +765,16 @@ class _GenerateDialog(QDialog):
         self.deck_row = _InfoRow("deck", "<b>Deck</b>", "")
         lay.addWidget(self.deck_row)
 
+        # The trailing link's own initial label already matches whether
+        # there's anything to edit yet; _refresh_skills_row keeps it in sync
+        # after that (the dict key below only has to name the one it starts as).
+        rules_label = "Edit my rules" if load_user_skill().strip() else "Add my rules"
         self.skills_row = _InfoRow(
             "skills", "<b>Skills</b>", "Sent in that order on every run.",
             links=(("View", lambda: self._guard(self._view_skills)),
-                   ("Edit my rules", lambda: self._guard(self._edit_user_skill))))
+                   (rules_label, lambda: self._guard(self._edit_user_skill))))
         self.skills_link = self.skills_row.links["View"]
-        self.rules_link = self.skills_row.links["Edit my rules"]
+        self.rules_link = self.skills_row.links[rules_label]
         lay.addWidget(self.skills_row)
 
         self.advanced_rule = section_rule()
@@ -1059,10 +1070,12 @@ class _GenerateDialog(QDialog):
         deck = load_deck_skill()
         if deck and deck.get("enabled"):
             parts.append(f"deck skill v{deck.get('version')}")
-        if load_user_skill().strip():
+        has_rules = bool(load_user_skill().strip())
+        if has_rules:
             parts.append("my rules")
         self.skills_row.set_detail(
             f"{', '.join(parts)}. Sent in that order on every run.")
+        self.rules_link.setText("Edit my rules" if has_rules else "Add my rules")
 
     def _source_changed(self):
         text = self.source_box.toPlainText()
@@ -1194,9 +1207,14 @@ class _GenerateDialog(QDialog):
             if user:
                 n = user.count("\n") + 1
                 parts += ["", f"My rules ({n} line{'s' if n != 1 else ''})", "", user]
-            else:
-                parts += ["", "My rules: none"]
-            return _skills_html(parts)
+            body = _skills_html(parts)
+            if not user:
+                # Nothing to show, so nothing is claimed under a "My rules"
+                # heading either: one muted line pointing at where to add
+                # some, instead of a heading whose only content is "none".
+                body += (f'<br><br><span style="color:{colors()["muted"]}">'
+                        "Add your own rules from the wizard's Skills row.</span>")
+            return body
 
         if not deck:
             # The plain QMessageBox _info opens has no scroll area, so long text

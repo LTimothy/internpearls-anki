@@ -593,11 +593,16 @@ def test_view_skills_lists_my_rules(shot):
 
 
 def test_view_skills_says_none_when_empty(shot):
+    """No My rules heading at all when there is nothing under it: printing one
+    that says "none" is claiming a section for content that doesn't exist.
+    Just the one muted pointer at where to add some."""
     _, q = harness.bootstrap()
     s = shot("ai-view-skills")
     dlg = s.dialog
-    body = next(l for l in dlg.findChildren(q.QLabel) if "My rules" in l.text())
-    assert "My rules: none" in body.text()
+    body = next(l for l in dlg.findChildren(q.QLabel)
+               if "Add your own rules" in l.text())
+    assert "Add your own rules from the wizard's Skills row." in body.text()
+    assert not any("My rules" in l.text() for l in dlg.findChildren(q.QLabel))
 
 
 def test_my_rules_editor_saves_and_counts(monkeypatch, tmp_path):
