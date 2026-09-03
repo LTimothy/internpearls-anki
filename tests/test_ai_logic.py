@@ -989,3 +989,19 @@ def test_sweep_computes_dir_bytes_once_per_survivor(tmp_path, monkeypatch):
     ai_logic.sweep_stale_scratch(str(tmp_path), max_total_bytes=5000, now=now)
     assert sorted(calls) == sorted([str(a), str(b)])
     assert len(calls) == 2   # once per survivor, not recomputed in the cap loop
+
+
+def test_codex_token_count_carries_usage_alongside_rate_limits():
+    # Verified against a live short run: codex reports rate limits and token
+    # usage on the same token_count event ("info" beside "rate_limits"), and
+    # a short run's terminal item.completed carries no usage at all. Before
+    # this fix, the rate_limits branch returned early and info's usage was
+    # dropped on the floor, so a run like this reported 0 tokens.
+    line = _json.dumps({"type": "token_count",
+                        "rate_limits": {"primary": {"used_percent": 10.0,
+                                                    "resets_at": "2026-09-02"}},
+                        "info": {"total_tokens": 15, "input_tokens": 10,
+                                "output_tokens": 5}})
+    ev = ai_logic.parse_stream_event("codex", line)
+    assert ev and ev["type"] == "rate_limits"
+    assert ev.get("tokens") == 15

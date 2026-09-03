@@ -327,18 +327,29 @@ def parse_stream_event(kind, line):
         return None
     if kind == "codex":
         if t == "token_count":
+            # A short run's terminal item.completed/turn.completed carries no
+            # usage at all: codex reports it here instead, on "info", which
+            # can ride alongside "rate_limits" on the very same event. Read
+            # both rather than returning as soon as rate_limits is found, or
+            # info's usage is dropped on the floor (verified against a live
+            # short run that generated three valid cards but reported 0
+            # tokens for exactly this reason).
+            info = d.get("info")
+            usage_tokens = _usage_tokens(info) if isinstance(info, dict) else 0
             rl = d.get("rate_limits")
             if isinstance(rl, dict) and rl:
                 primary_raw, secondary_raw = rl.get("primary"), rl.get("secondary")
                 if not isinstance(primary_raw, dict) and not isinstance(secondary_raw, dict):
                     return None  # rate_limits present but unusable; not a "no limits" line
                 primary, secondary = _as_dict(primary_raw), _as_dict(secondary_raw)
-                return {"type": "rate_limits",
-                        "primary_pct": _num(primary.get("used_percent"), float),
-                        "secondary_pct": _num(secondary.get("used_percent"), float),
-                        "resets": primary.get("resets_at") or ""}
-            info = d.get("info")
-            return ({"type": "usage", "tokens": _usage_tokens(info)}
+                ev = {"type": "rate_limits",
+                      "primary_pct": _num(primary.get("used_percent"), float),
+                      "secondary_pct": _num(secondary.get("used_percent"), float),
+                      "resets": primary.get("resets_at") or ""}
+                if usage_tokens:
+                    ev["tokens"] = usage_tokens
+                return ev
+            return ({"type": "usage", "tokens": usage_tokens}
                     if isinstance(info, dict) else None)
         if t in ("item.completed", "turn.completed"):
             # Shape unconfirmed against a live CLI (neither codex nor

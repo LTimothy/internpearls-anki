@@ -19,6 +19,10 @@
 #                   (the shape parse_stream_event's codex branch was actually
 #                   reading before I9; kept alongside codex_top since neither
 #                   shape is confirmed against a live codex binary)
+#   codex_short     a verified-real shape: a token_count event carrying both
+#                   rate_limits and usage info, then a turn.completed with
+#                   text but no usage at all (a short run's actual shape,
+#                   which used to report 0 tokens)
 #   agy_ok          antigravity-style "event"-keyed step_update then a
 #                   SUCCESS result, the shape agy 1.1.24 actually emits
 #   with_image      one card carrying a url: image (I2 review-gate tests)
@@ -113,6 +117,13 @@ if mode == "codex_nested":
     print(json.dumps({"type": "item.completed",
                       "item": {"type": "agent_message", "text": CARDS_JSON},
                       "usage": USAGE}))
+    sys.exit(0)
+if mode == "codex_short":
+    print(json.dumps({"type": "token_count",
+                      "rate_limits": {"primary": {"used_percent": 5.0,
+                                                  "resets_at": "2026-09-02"}},
+                      "info": dict(USAGE, total_tokens=15)}), flush=True)
+    print(json.dumps({"type": "turn.completed", "text": CARDS_JSON}))
     sys.exit(0)
 if mode == "with_image":
     cards = [{"note_type": "Study Deck - Basic",

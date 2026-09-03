@@ -85,8 +85,8 @@ BACKENDS = {
             "default_model": "",
             "default_effort": "",
             "model_aliases": [],
-            "model_hint": ('blank for agy\'s default, or an id from "agy models" '
-                           "such as gemini-3.8-flash-medium"),
+            "model_hint": ('blank for agy\'s default, or an id from "agy models"; '
+                           "gemini-3.8-flash-low is the fastest"),
             "effort_levels": ["low", "medium", "high"],
             # agy's build_argv never restricts tools or turns by mode, so nothing
             # here enforces "no web access" even in Quick; only the prompt's
@@ -358,6 +358,12 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
     except OSError:
         pass
     result, tokens, rate_limits, error_msg = None, 0, None, None
+    # codex can report usage on a non-terminal event (token_count) and carry
+    # none at all on the terminal result of a short run; remember whatever
+    # usage was last seen on any event so the run still reports it. claude
+    # and agy always carry usage on their own terminal result and never hit
+    # this fallback in practice.
+    last_usage = 0
 
     lines = []
     done = threading.Event()
@@ -389,6 +395,8 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                     tokens = max(tokens, evt["tokens"])
                 elif evt["type"] == "rate_limits":
                     rate_limits = evt
+                if evt.get("tokens"):
+                    last_usage = evt["tokens"]
                 if on_event:
                     on_event(evt)
             if done.is_set() and proc.poll() is not None:
@@ -429,6 +437,8 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                 stream.close()
             except Exception:
                 pass
+    if not tokens:
+        tokens = last_usage
     if error_msg:
         # The CLI's own explanation beats stderr and beats the bare exit code,
         # regardless of returncode: an is_error result is always fatal. Routed
