@@ -833,6 +833,20 @@ class QFont:
         return self._strike_out
 
 
+class QFontMetrics:
+    """Enough of QFontMetrics for a label-column width computed from text, the
+    way ai_dialog._build_advanced sizes its own label column: a fixed width
+    per character is not real font metrics, but it preserves the one thing
+    that computation cares about, that a longer string measures wider than a
+    shorter one."""
+
+    def __init__(self, font=None):
+        self._font = font
+
+    def horizontalAdvance(self, text):
+        return len(text) * 7
+
+
 class Signal:
     def __init__(self):
         self._slots = []
@@ -2212,7 +2226,8 @@ def install():
     for name, obj in (("Qt", _Qt), ("QApplication", _QApplication),
                       ("QTimer", _QTimer), ("QProgressDialog", _QProgressDialog),
                       ("QFileDialog", _QFileDialog), ("QKeySequence", _QKeySequence),
-                      ("QFontDatabase", _QFontDatabase), ("QLabel", QLabel),
+                      ("QFontDatabase", _QFontDatabase), ("QFontMetrics", QFontMetrics),
+                      ("QLabel", QLabel),
                       ("QPushButton", QPushButton), ("QAction", QAction),
                       ("QMenu", QMenu), ("QCheckBox", QCheckBox),
                       ("QComboBox", QComboBox), ("QRadioButton", QRadioButton),

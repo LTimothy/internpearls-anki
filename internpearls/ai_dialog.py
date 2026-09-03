@@ -19,10 +19,10 @@ from collections import deque
 
 from aqt import mw
 from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
-                    QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout,
-                    QKeySequence, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-                    QRadioButton, QScrollArea, QSpinBox,
-                    QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
+                    QDialogButtonBox, QFontMetrics, QFrame, QGridLayout,
+                    QHBoxLayout, QKeySequence, QLabel, QLineEdit,
+                    QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
+                    QSpinBox, QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
 from .ai_setup import LABEL_W, _wrapped_hint, run_connection_test_async
@@ -794,14 +794,15 @@ class _GenerateDialog(QDialog):
         self._refresh_skills_row()
         return page
 
-    def _advanced_label(self, text):
-        """A label in the Advanced grid's own column. Minimum width rather than
-        ai_setup._SettingsPanel's fixed width, since "Exact number of cards" is
-        longer than that column and a fixed width would clip it; the column
-        still starts every field at one x, which is the property that matters.
+    def _advanced_label(self, text, col_w):
+        """A label in the Advanced grid's own column, sized so the widest label
+        in this grid ("Exact number of cards") fits without overflowing into
+        the field beside it, the way ai_setup._SettingsPanel's own fixed
+        LABEL_W does for its own, shorter labels. Every field still starts at
+        the same x: `col_w` is the one width every call in this grid is given.
         """
         lbl = QLabel(text)
-        lbl.setMinimumWidth(LABEL_W)
+        lbl.setMinimumWidth(col_w)
         lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         return lbl
 
@@ -819,7 +820,16 @@ class _GenerateDialog(QDialog):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(CARET_GAP)
         grid.setVerticalSpacing(6)
-        grid.setColumnMinimumWidth(0, LABEL_W)
+        # LABEL_W (the AI Backends settings panel's own column) is too narrow
+        # for this grid's own longest label, "Exact number of cards", which
+        # used to overflow into the spinbox beside it. Measured against every
+        # label this grid actually shows, not just that one, so the column
+        # never wins by coincidence if a shorter grid grows a longer label
+        # later.
+        labels = ("Exact number of cards", "Depth", "Note types", "Destination deck")
+        metrics = QFontMetrics(QLabel().font())
+        col_w = max(LABEL_W, max(metrics.horizontalAdvance(t) for t in labels) + 12)
+        grid.setColumnMinimumWidth(0, col_w)
         grid.setColumnStretch(1, 1)
 
         self.count_spin = QSpinBox()
@@ -828,6 +838,11 @@ class _GenerateDialog(QDialog):
         # says "auto" without a second checkbox to mean the same thing.
         self.count_spin.setRange(0, ai_logic.AUTO_COUNT_CEILING)
         self.count_spin.setSpecialValueText("auto")
+        # Wide enough for "auto" itself plus the spinbox's own up/down arrows,
+        # which used to clip that word: a bare font-metrics width only covers
+        # the text, not the control drawn around it.
+        self.count_spin.setMinimumWidth(
+            metrics.horizontalAdvance("auto") + 40)
         self.count_spin.setValue(cfg["ai_default_count"])
         self.count_spin.valueChanged.connect(
             lambda _v: self._guard(self._refresh_depth_row))
@@ -838,7 +853,7 @@ class _GenerateDialog(QDialog):
         count_lay.addWidget(self.count_spin)
         count_lay.addWidget(hint_label(
             f"blank lets the assistant decide, up to {ai_logic.AUTO_COUNT_CEILING}"), 1)
-        grid.addWidget(self._advanced_label("Exact number of cards"), 0, 0)
+        grid.addWidget(self._advanced_label("Exact number of cards", col_w), 0, 0)
         grid.addWidget(count_box, 0, 1)
 
         # The radio carries only the short, stable name; the per-backend
@@ -866,7 +881,7 @@ class _GenerateDialog(QDialog):
         depth_lay.addWidget(self.thorough_radio)
         depth_lay.addWidget(self.quick_radio)
         depth_lay.addStretch()
-        grid.addWidget(self._advanced_label("Depth"), 1, 0)
+        grid.addWidget(self._advanced_label("Depth", col_w), 1, 0)
         grid.addWidget(depth_box, 1, 1)
 
         self.thorough_hint = _wrapped_hint("")
@@ -916,7 +931,8 @@ class _GenerateDialog(QDialog):
             box.toggled.connect(lambda _c: self._guard(self._refresh_deck_row))
             self.type_boxes[name] = box
             types_lay.addWidget(box)
-        grid.addWidget(self._advanced_label("Note types"), 3, 0)
+        grid.addWidget(self._advanced_label("Note types", col_w), 3, 0,
+                      Qt.AlignmentFlag.AlignTop)
         grid.addWidget(types_box, 3, 1)
 
         self.deck_combo = QComboBox()
@@ -924,7 +940,7 @@ class _GenerateDialog(QDialog):
         self.deck_combo.addItem(self.session.deck_name)
         self.deck_combo.currentTextChanged.connect(
             lambda _t: self._guard(self._refresh_deck_row))
-        grid.addWidget(self._advanced_label("Destination deck"), 4, 0)
+        grid.addWidget(self._advanced_label("Destination deck", col_w), 4, 0)
         grid.addWidget(self.deck_combo, 4, 1)
 
         self.advanced_panel = panel
