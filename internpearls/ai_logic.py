@@ -669,18 +669,21 @@ def sweep_stale_scratch(tmp_dir, prefix=SCRATCH_PREFIX, max_age_s=86400,
         removed.append(path)
         return True
 
+    # A survivor is either a directory not yet old enough to remove, or a
+    # stale one whose removal just failed (a permission error, say): either
+    # way its bytes still count toward the cap, so it must not be dropped
+    # from `survivors` and quietly escape the size check below. `_dir_bytes`
+    # is computed once here and carried along, rather than recomputed per
+    # survivor in the size-cap loop.
     survivors = []
     for mtime, path in entries:
-        if now - mtime > max_age_s:
-            if not _drop(path):
-                continue
-        else:
-            survivors.append(path)
-    total = sum(_dir_bytes(p) for p in survivors)
-    for path in survivors:
+        if now - mtime > max_age_s and _drop(path):
+            continue
+        survivors.append((path, _dir_bytes(path)))
+    total = sum(size for _path, size in survivors)
+    for path, size in survivors:
         if total <= max_total_bytes:
             break
-        size = _dir_bytes(path)
         if _drop(path):
             total -= size
     return removed

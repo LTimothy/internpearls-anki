@@ -917,3 +917,45 @@ def test_sweep_never_raises_on_a_missing_dir_or_an_unremovable_entry(tmp_path,
 
     monkeypatch.setattr(ai_logic.shutil, "rmtree", _boom)
     assert ai_logic.sweep_stale_scratch(str(tmp_path), now=now) == []
+
+
+def test_sweep_counts_an_unremovable_stale_dir_toward_the_byte_cap(tmp_path,
+                                                                    monkeypatch):
+    # A stale directory whose deletion fails used to be dropped from
+    # `survivors` outright, so its bytes escaped the total and the cap
+    # sweep below never saw them. It must still count as a survivor: here
+    # that's what forces the fresh (not-stale) dir to be evicted instead,
+    # since the total only exceeds the cap once the stuck dir's bytes count.
+    now = 1_000_000.0
+    stuck = _scratch(tmp_path, "ip-aigen-stuck", 90000, size=9000, now=now)
+    fresh = _scratch(tmp_path, "ip-aigen-fresh", 10, size=9000, now=now)
+    real_rmtree = ai_logic.shutil.rmtree
+
+    def _flaky(path):
+        if path == str(stuck):
+            raise OSError("permission denied")
+        return real_rmtree(path)
+
+    monkeypatch.setattr(ai_logic.shutil, "rmtree", _flaky)
+    removed = ai_logic.sweep_stale_scratch(str(tmp_path), max_total_bytes=10000,
+                                           now=now)
+    assert removed == [str(fresh)]
+    assert stuck.exists()   # never removed, but its bytes still counted
+    assert not fresh.exists()
+
+
+def test_sweep_computes_dir_bytes_once_per_survivor(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    a = _scratch(tmp_path, "ip-aigen-a", 300, size=6000, now=now)
+    b = _scratch(tmp_path, "ip-aigen-b", 100, size=6000, now=now)
+    calls = []
+    real_dir_bytes = ai_logic._dir_bytes
+
+    def spy(path):
+        calls.append(path)
+        return real_dir_bytes(path)
+
+    monkeypatch.setattr(ai_logic, "_dir_bytes", spy)
+    ai_logic.sweep_stale_scratch(str(tmp_path), max_total_bytes=5000, now=now)
+    assert sorted(calls) == sorted([str(a), str(b)])
+    assert len(calls) == 2   # once per survivor, not recomputed in the cap loop

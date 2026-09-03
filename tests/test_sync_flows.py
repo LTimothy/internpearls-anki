@@ -5781,6 +5781,27 @@ def test_startup_scheduling_never_reaches_ankis_own_error_dialog(anki):
     background._stop_auto_sync_timer()
 
 
+def test_schedule_background_checks_is_wrapped_and_sweep_is_wrapped_once(anki,
+                                                                          monkeypatch):
+    """A copy-paste left the sweep helper carrying @_bg_safe twice and stripped it off
+    the scheduler entirely, so a bad config would have crashed straight into Anki's own
+    error dialog on every launch instead of a quiet tooltip."""
+    from internpearls import background
+
+    assert hasattr(background._schedule_background_checks, "__wrapped__")
+    assert not hasattr(background._sweep_ai_scratch_background.__wrapped__,
+                       "__wrapped__")   # wrapped exactly once, not twice
+
+    def boom():
+        raise RuntimeError("bad config")
+
+    monkeypatch.setattr(background, "_cfg", boom)
+    background._schedule_background_checks()   # must not raise past the decorator
+
+    assert any("background check failed" in t for t in anki.gui.tooltips)
+    background._stop_auto_sync_timer()
+
+
 # ------------------------------------------- backup buckets and their neighbours
 def test_a_prehash_backup_belongs_only_to_the_deck_that_wrote_it(anki):
     """Labels are "<sanitized deck name> <hash>", and an older file carries the name

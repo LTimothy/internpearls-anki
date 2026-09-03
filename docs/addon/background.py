@@ -397,7 +397,6 @@ def _restart_auto_sync_timer(minutes):
 
 
 @_bg_safe
-@_bg_safe
 def _sweep_ai_scratch_background():
     """Clear scratch directories a crashed AI-generation session left in the
     system temp dir. The wizard removes its own on close, so this only ever
@@ -407,6 +406,7 @@ def _sweep_ai_scratch_background():
                        lambda _result, _error: None)
 
 
+@_bg_safe
 def _schedule_background_checks():
     """Run once, a couple seconds after Anki finishes starting up: the add-on-update
     check, a sweep of any leftover AI scratch directories, and, only if auto-sync is on
