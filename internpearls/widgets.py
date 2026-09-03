@@ -46,7 +46,13 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
          # anything. AUTO/THOROUGH/QUICK are the three answers one row gives.
          "ready": "READY", "notsetup": "NOT SET UP",
          "auto": "AUTO", "thorough": "THOROUGH", "quick": "QUICK",
-         "deck": "DECK", "skills": "SKILLS"}
+         "deck": "DECK", "skills": "SKILLS",
+         # The AI wizard's progress-row kinds (ai_dialog._build_progress): which
+         # stage a live generation is in. Its own words, same reason the input
+         # page's row kinds above are their own: a stage isn't a detection
+         # result or a decision either, it's just where the run currently is.
+         "drafting": "DRAFTING", "verifying": "VERIFYING",
+         "reviewing": "REVIEWING", "working": "WORKING"}
 
 # A chip's palette role prefix, keyed by its kind. Not a 1:1 string match: "changed"
 # reuses the existing "updated_bg"/"updated_fg" pair rather than a "changed_bg" this
@@ -75,7 +81,13 @@ _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "mo
           # role there is rather than colouring a decision nobody made.
           "ready": "accept", "notsetup": "decline",
           "auto": "new", "thorough": "new", "quick": "new",
-          "deck": "retired", "skills": "retired"}
+          "deck": "retired", "skills": "retired",
+          # A run's current stage is a marker, not a verdict, the same reason
+          # the depth answers above borrow "new" rather than a role of their
+          # own: none of drafting/verifying/reviewing/working is good or bad
+          # news, it's just where the run is right now.
+          "drafting": "new", "verifying": "new",
+          "reviewing": "new", "working": "new"}
 
 # Everything about a pill except its two colours: the shape and the type size, shared
 # between the real pill and the probe that measures it, so the measurement can never
