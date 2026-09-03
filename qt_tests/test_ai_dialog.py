@@ -801,3 +801,10 @@ def test_input_page_fits_the_reference_screen_with_advanced_open(shot):
     dlg = shot("ai-input", state="advanced").dialog
     height = dlg.input_page.minimumSizeHint().height()
     assert height <= 891 - 80, f"the input page's minimum is {height}px tall"
+
+
+def test_progress_page_activity_feed_renders_its_lines(shot):
+    dlg = shot("ai-progress").dialog
+    text = dlg.activity_feed.toPlainText()
+    assert "Viewed _thumb-0-0.svg" in text
+    assert "Searched the web" in text
