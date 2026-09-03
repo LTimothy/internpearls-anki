@@ -321,17 +321,23 @@ def _queued_note_row(note, indent):
 
 def _card_image_names(card, resolved=frozenset()):
     """Names for a card's collapsed-line picture tag (mirrors review._image_text):
-    "drawn figure" for an inline SVG or attached file, "from <host>" for a web
-    image. `resolved` is the (0-based) image indices whose thumbnail has already
-    painted in the expanded body; those drop out here. A picture that failed to
-    resolve keeps its name, since the name is the fallback."""
+    "drawn figure" for an inline SVG, "attached file" for an attachment, "from
+    <host>" for a web image. `resolved` is the (0-based) image indices whose
+    thumbnail has already painted in the expanded body; those drop out here. A
+    picture that failed to resolve keeps its name, since the name is the
+    fallback. A source _resolve_one_image itself doesn't recognize (kind
+    "other") gets no name: nothing here can say what it even is."""
     names = []
     for j, im in enumerate(card.get("images") or []):
         if j in resolved:
             continue
         src = im.get("source", "")
-        names.append(f"from {_url_host(src[4:])}" if src.startswith("url:")
-                    else "drawn figure")
+        if src.startswith("url:"):
+            names.append(f"from {_url_host(src[4:])}")
+        elif src.startswith("svg:"):
+            names.append("drawn figure")
+        elif src.startswith("attached:"):
+            names.append("attached file")
     return names
 
 
@@ -562,6 +568,13 @@ class _Session:
         # "images" list: see _resolve_one_image. Populated at review time
         # (before the review page ever shows), reused unchanged by import.
         self.image_data = {}
+        # {card index: set of image indices whose thumbnail has actually
+        # painted}, so a picture the learner already saw stays dropped from
+        # the primary line across a rebuild (Edit, Note, a revision): the
+        # per-row closure _build_review_row used to keep this in was rebuilt
+        # from scratch every time. Cleared and repopulated the same places
+        # image_data itself is (see _start_image_phase, _apply_review_state).
+        self.image_resolved = {}
         # Indices excluded by default purely because they carry an unreviewed
         # image (see _apply_review_state): what _build_review_row's reason
         # line gates on, so a card the learner unchecked herself never gets a
@@ -603,6 +616,7 @@ class _GenerateDialog(QDialog):
         self.session = s = _Session()
         self._retried_json = False   # the single-retry budget on malformed model output
         self._reply_chunks = []      # accumulated delta text; reset per _start_generation
+        self._image_reason_rows = {}  # {card index: reason-row widget}; set by _rebuild_review
         # Backend kinds with a "Test connection" run currently in flight, from
         # the input page's single Test connection button (the setup page's own
         # per-backend buttons and Re-check now live in the separate AI Backends
@@ -1392,6 +1406,7 @@ class _GenerateDialog(QDialog):
                 # report a bogus "updated N, kept M verbatim" diff against it.
                 s.cards, s.included, s.notes = [], [], {}
                 s.updated, s.image_data = set(), {}
+                s.image_resolved = {}
                 s.revision_shape_mismatch = False
         # The depth the learner picked if they picked one, else the one the
         # material's own length and attachments imply (ai_logic.default_mode).
@@ -1750,6 +1765,11 @@ class _GenerateDialog(QDialog):
         image_errors = {i: [r["error"] for r in results if r.get("state") == "error"]
                         for i, results in s.image_data.items()}
         image_errors = {i: msgs for i, msgs in image_errors.items() if msgs}
+        # A card this revision actually changed carries a new image set (if
+        # any), so whatever was painted for its old images means nothing;
+        # a kept-verbatim card's own resolved indices carry over untouched.
+        s.image_resolved = {i: v for i, v in s.image_resolved.items()
+                            if i not in s.updated and i < len(s.cards)}
         s.checks = ai_logic.mechanical_checks(
             s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
             image_errors)
@@ -1854,6 +1874,7 @@ class _GenerateDialog(QDialog):
                 w.setVisible(False)
                 w.deleteLater()
         self.include_boxes = []
+        self._image_reason_rows = {}
         for i, card in enumerate(s.cards):
             if i:
                 self.cards_lay.addWidget(_separator())
@@ -1883,9 +1904,12 @@ class _GenerateDialog(QDialog):
 
         body = QWidget()
         caret = QPushButton(_CARET_CLOSED)
-        # Images this row's picture tag has already dropped, once painted on
-        # first expand (mirrors review._card_row's own `resolved` convention).
-        resolved_images = set()
+        # Images this row's picture tag has already dropped, once painted:
+        # kept on the session (keyed by card index), not a local closure, so
+        # a picture already seen stays dropped across a rebuild (Edit, Note,
+        # a revision) rather than being named again from a fresh empty set
+        # (mirrors review._card_row's own `resolved` convention).
+        resolved_images = s.image_resolved.setdefault(i, set())
 
         def _name_caret(expanded):
             verb = "Hide card" if expanded else "Show card"
@@ -1894,14 +1918,15 @@ class _GenerateDialog(QDialog):
 
         def _toggle():
             expanded = not body.isVisible()
-            if expanded and card["images"] and not resolved_images:
+            if expanded and card["images"]:
                 results = s.image_data.get(i) or []
+                before = len(resolved_images)
                 for j in range(len(card["images"])):
                     res = results[j] if j < len(results) else None
                     if (res and res.get("state") == "ok" and res.get("path")
                             and _image_tag(res["path"])):
                         resolved_images.add(j)
-                if resolved_images:
+                if len(resolved_images) > before:
                     primary.setText(_preview_style() +
                                     _card_primary_html(card, resolved_images))
             body.setVisible(expanded)
@@ -1934,7 +1959,8 @@ class _GenerateDialog(QDialog):
         # The primary line opens the row too (review._ClickableLabel), same as
         # the update screen: the click target is the text a reader is already
         # looking at, not just the small caret beside it.
-        primary = _ClickableLabel(_preview_style() + _card_primary_html(card), _toggle)
+        primary = _ClickableLabel(
+            _preview_style() + _card_primary_html(card, resolved_images), _toggle)
         primary.setWordWrap(True)
         primary.setTextFormat(Qt.TextFormat.RichText)
         primary.setOpenExternalLinks(False)
@@ -1954,10 +1980,17 @@ class _GenerateDialog(QDialog):
         for entry in entries:
             if entry.get("level") != "ok":
                 outer.addWidget(_check_reason_row(entry, indent))
-        if not s.included[i] and i in s.image_gated:
-            outer.addWidget(_check_reason_row(
+        if i in s.image_gated:
+            # Built whenever the gate applies to this card at all (that
+            # membership is fixed for this render), visibility tracks the
+            # include box live: _on_include_toggled shows/hides this exact
+            # widget rather than requiring a full rebuild to catch up.
+            reason_row = _check_reason_row(
                 {"level": "warn", "message": "Has a picture: open the row to "
-                                             "check it before including."}, indent))
+                                             "check it before including."}, indent)
+            reason_row.setVisible(not s.included[i])
+            self._image_reason_rows[i] = reason_row
+            outer.addWidget(reason_row)
         if i in s.notes:
             outer.addWidget(_queued_note_row(s.notes[i], indent))
 
@@ -2016,6 +2049,9 @@ class _GenerateDialog(QDialog):
         row (including the very one mid-click) is unnecessary churn.
         """
         self.session.included[i] = value
+        reason_row = self._image_reason_rows.get(i)
+        if reason_row is not None:
+            reason_row.setVisible(not value)
         self._update_review_summary()
 
     def _update_review_summary(self):
