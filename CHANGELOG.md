@@ -7,14 +7,17 @@ this repo's `README.md` ("Versioning").
 
 The AI Backends window's rows could still clip their own muted third line ("Works
 with a ... . Tools fully restricted (strongest)."), cut off mid-glyph, on first open.
-A wrapped label's real height was only ever discovered from its own resize, and the
-layout correction that followed only took effect on whatever later event happened to
-trigger a relayout, which could land a frame after this window's first paint: the
-window itself had already opened, and painted, at the too-small geometry computed
-before that correction. Any later repaint (a Re-check, or just moving the window)
-showed it correctly, which is why it never seemed to persist. Fixed by growing the
-window right there, synchronously, the moment a label discovers it needs more room,
-rather than waiting on a later pass.
+An earlier attempt at this fix tried to grow the window from right inside a wrapped
+label's own resize, by reading the window's minimumSizeHint() synchronously and
+resizing from it there and then, but that read is not reliable at that exact moment:
+the box layouts between a row and the window do not all catch up to a layout change
+within the same pass it happened in, so the value read there could still be short,
+and the window's first paint went out at the too-small geometry it computed. Any
+later repaint (a Re-check, or just moving the window) showed it correctly, which is
+why it never seemed to persist. Fixed by settling the window's size after its own
+showEvent instead, once its layout has actually finished activating, with one more
+pass on the next event-loop turn as a backstop; the window's top-level layout also
+now enforces its own real minimum on every layout pass, not only at first paint.
 
 The wizard's input page is a little simpler. The Deck row's own Change link opened
 the same Advanced panel the Advanced link already does, so it's gone, with the row's

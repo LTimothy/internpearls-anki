@@ -20,12 +20,13 @@ from collections import deque
 from aqt import mw
 from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
                     QDialogButtonBox, QFontMetrics, QFrame, QGridLayout,
-                    QHBoxLayout, QKeySequence, QLabel, QLineEdit,
+                    QHBoxLayout, QKeySequence, QLabel, QLayout, QLineEdit,
                     QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
                     QSpinBox, QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
-from .ai_setup import LABEL_W, _wrapped_hint, run_connection_test_async
+from .ai_setup import (LABEL_W, _safe_settle, _settle_min_size, _wrapped_hint,
+                       run_connection_test_async)
 from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
                      save_ai_usage, load_deck_skill, save_deck_skill,
                      load_user_skill, save_user_skill)
@@ -52,6 +53,14 @@ SOFT_SOURCE_LIMIT = 25000
 # Image resolution (download/read/render) runs off the UI thread and polls on
 # this cadence, the same as the generation worker's own poll below.
 _IMG_POLL_MS = 200
+
+# The Advanced grid's own row labels (_GenerateDialog._build_advanced), named
+# once so the column-width measurement and each row's own _advanced_label
+# call can never drift apart from what the other actually shows.
+_LABEL_COUNT = "Exact number of cards"
+_LABEL_DEPTH = "Depth"
+_LABEL_TYPES = "Note types"
+_LABEL_DECK = "Destination deck"
 
 
 def _skills_html(parts):
@@ -549,6 +558,10 @@ class _GenerateDialog(QDialog):
         # The same width the AI Backends window opens at (ai_setup.py's own
         # open_size): the two carry the same rows, and a row that wraps in one
         # and not the other reads as two different vocabularies.
+        # This clamp can ask for a height below the current page's real
+        # layout minimum on a small screen; the SetMinimumSize constraint set
+        # on `lay` below wins that conflict, so the window opens at whatever
+        # the layout actually needs instead of the clamp's number.
         open_w, open_h = 720, 680
         try:
             geo = QApplication.primaryScreen().availableGeometry()
@@ -570,6 +583,11 @@ class _GenerateDialog(QDialog):
 
         self.stack = QStackedWidget()
         lay = QVBoxLayout(self)
+        # See ai_setup._AIBackendsDialog's own SetMinimumSize: the wizard's
+        # pages wrap _wrapped_hint rows the same way that window's rows do, so
+        # they need the same guarantee against opening below their real
+        # minimum on first paint.
+        lay.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         lay.addWidget(self.stack)
 
         self.setup_page = self._build_setup()
@@ -581,6 +599,11 @@ class _GenerateDialog(QDialog):
             self.stack.addWidget(page)
 
         self._detect(cfg)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        _settle_min_size(self)
+        QTimer.singleShot(0, lambda: _safe_settle(self))
 
     def _guard(self, fn, *args, **kwargs):
         """Run a widget-signal callback the way @_safe protects a menu action, so a
@@ -840,8 +863,8 @@ class _GenerateDialog(QDialog):
         # label this grid actually shows, not just that one, so the column
         # never wins by coincidence if a shorter grid grows a longer label
         # later.
-        labels = ("Exact number of cards", "Depth", "Note types", "Destination deck")
-        metrics = QFontMetrics(QLabel().font())
+        labels = (_LABEL_COUNT, _LABEL_DEPTH, _LABEL_TYPES, _LABEL_DECK)
+        metrics = QFontMetrics(panel.font())
         col_w = max(LABEL_W, max(metrics.horizontalAdvance(t) for t in labels) + 12)
         grid.setColumnMinimumWidth(0, col_w)
         grid.setColumnStretch(1, 1)
@@ -867,7 +890,7 @@ class _GenerateDialog(QDialog):
         count_lay.addWidget(self.count_spin)
         count_lay.addWidget(hint_label(
             f"blank lets the assistant decide, up to {ai_logic.AUTO_COUNT_CEILING}"), 1)
-        grid.addWidget(self._advanced_label("Exact number of cards", col_w), 0, 0)
+        grid.addWidget(self._advanced_label(_LABEL_COUNT, col_w), 0, 0)
         grid.addWidget(count_box, 0, 1)
 
         # The radio carries only the short, stable name; the per-backend
@@ -895,7 +918,7 @@ class _GenerateDialog(QDialog):
         depth_lay.addWidget(self.thorough_radio)
         depth_lay.addWidget(self.quick_radio)
         depth_lay.addStretch()
-        grid.addWidget(self._advanced_label("Depth", col_w), 1, 0)
+        grid.addWidget(self._advanced_label(_LABEL_DEPTH, col_w), 1, 0)
         grid.addWidget(depth_box, 1, 1)
 
         self.thorough_hint = _wrapped_hint("")
@@ -945,7 +968,7 @@ class _GenerateDialog(QDialog):
             box.toggled.connect(lambda _c: self._guard(self._refresh_deck_row))
             self.type_boxes[name] = box
             types_lay.addWidget(box)
-        grid.addWidget(self._advanced_label("Note types", col_w), 3, 0,
+        grid.addWidget(self._advanced_label(_LABEL_TYPES, col_w), 3, 0,
                       Qt.AlignmentFlag.AlignTop)
         grid.addWidget(types_box, 3, 1)
 
@@ -954,7 +977,7 @@ class _GenerateDialog(QDialog):
         self.deck_combo.addItem(self.session.deck_name)
         self.deck_combo.currentTextChanged.connect(
             lambda _t: self._guard(self._refresh_deck_row))
-        grid.addWidget(self._advanced_label("Destination deck", col_w), 4, 0)
+        grid.addWidget(self._advanced_label(_LABEL_DECK, col_w), 4, 0)
         grid.addWidget(self.deck_combo, 4, 1)
 
         self.advanced_panel = panel
@@ -1056,11 +1079,15 @@ class _GenerateDialog(QDialog):
             types = chosen[0] + "."
         else:
             types = "No note type selected yet: pick one under Advanced."
-        said = (f"{deck}. Every accepted card lands here, as {types}"
-               if chosen else f"{deck}. {types}")
         # The row's own Change link is gone; Advanced is the one place that
-        # changes the deck now, so the detail always says where to find it.
-        said += " Change it under Advanced."
+        # changes the deck now, so the detail always says where to find it,
+        # once. The no-note-type case already ends on "under Advanced" itself,
+        # so it stays a single sentence rather than saying so twice.
+        if chosen:
+            said = (f"{deck}. Every accepted card lands here, as {types} "
+                    "Change it under Advanced.")
+        else:
+            said = f"{deck}. {types}"
         self.deck_row.set_detail(said)
 
     def _refresh_skills_row(self):
@@ -1217,7 +1244,7 @@ class _GenerateDialog(QDialog):
                 # heading either: one muted line pointing at where to add
                 # some, instead of a heading whose only content is "none".
                 body += (f'<br><br><span style="color:{colors()["muted"]}">'
-                        "Add your own rules from the wizard's Skills row.</span>")
+                         "Add your own rules from the wizard's Skills row.</span>")
             return body
 
         if not deck:
