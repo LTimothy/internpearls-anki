@@ -84,7 +84,7 @@ def parse_cards_json(text, allowed_types, field_map):
         # N is advisory only, the real count is len(cards)
         data = data["cards"]
     if not isinstance(data, list) or not data:
-        return [], ["reply must be a non-empty JSON list of cards"]
+        return [], ["reply must be a non-empty JSON list of cards, or an object with a non-empty \"cards\" list"]
     cards = []
     for i, raw in enumerate(data, 1):
         if not isinstance(raw, dict):
@@ -197,7 +197,7 @@ def mechanical_checks(cards, existing_fronts, image_errors=None):
 
 
 _CONTRACT = """## Output contract
-Reply with ONLY a JSON list, no prose before or after. Each element:
+Reply with ONLY JSON, no prose before or after: a list of cards, or, when asked to state the count first, an object {"count": N, "cards": [...]}. Each card:
 {"note_type": <one of the allowed types>,
  "fields": {<every field for that type, "" when empty>},
  "tags": [<short topic tags>],
