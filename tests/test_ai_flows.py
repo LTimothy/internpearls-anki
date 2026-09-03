@@ -1077,6 +1077,24 @@ def test_import_buttons_own_click_signal_surfaces_a_bug_as_a_dialog(anki, monkey
     assert dlg._result is None                      # the dialog is still open
 
 
+def test_advanced_controls_own_signals_are_guarded_too(anki, monkeypatch):
+    """count_spin, the depth radios, a note-type checkbox, and deck_combo all
+    changed the row they drive directly on their own signal, bypassing
+    self._guard, so a bug in the handler they call would reach Anki's raw
+    crash box the same way _do_import once did (see the test above). Exercise
+    one of the four (deck_combo.currentTextChanged) through its real signal,
+    with the handler it calls made to raise, and confirm the guard still
+    catches it."""
+    dlg = _ready_dialog(anki, monkeypatch)
+
+    def boom():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(dlg, "_refresh_deck_row", boom)
+    dlg.deck_combo.setCurrentText("Some Other Deck")   # must not raise past the signal
+    assert any("boom" in w for w in anki.gui.warnings)
+
+
 def test_user_skill_roundtrip_and_removal(anki):
     assert config.load_user_skill() == ""
     config.save_user_skill("keep every card atomic\n")
@@ -1199,6 +1217,25 @@ def test_depth_row_reads_the_assistants_own_decision(anki, monkeypatch):
     assert "up to 40" in dlg.depth_row.text()
     dlg.source_box.setPlainText("short")
     assert widgets.CHIPS[dlg.depth_row.chip_kind] == "QUICK"
+
+
+def test_depth_row_names_what_each_backend_actually_does(anki, monkeypatch):
+    """The Cards-and-depth row's detail is derived from ai_cli.BACKENDS' own
+    per-mode description, not a hardcoded clause: Codex is always sandboxed
+    read-only with no network, even in Thorough, and the row has to say so
+    rather than repeating claude's "may verify online" story for every
+    backend."""
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg.thorough_radio.setChecked(True)
+    claude_text = dlg.depth_row.text()
+
+    dlg.session.backend = "codex"
+    dlg._refresh_depth_row()
+    codex_text = dlg.depth_row.text()
+
+    assert claude_text != codex_text
+    assert "cannot" in codex_text
+    assert "verify" in codex_text and "online" in codex_text
 
 
 def test_deck_and_skills_rows_say_where_cards_land_and_what_is_sent(anki, monkeypatch):
