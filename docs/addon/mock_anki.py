@@ -1455,9 +1455,25 @@ class _Layout:
     def setContentsMargins(self, *a):
         self._margins = tuple(a) if len(a) == 4 else self._margins
 
+    def setSizeConstraint(self, c):
+        pass
+
+    def activate(self):
+        pass
+
     def node(self):
         return {"t": self.kind, "id": self.wid,
                 "children": [c.node() for c in self._children]}
+
+
+class QLayout:
+    """Only used here for its SizeConstraint enum: ai_setup._AIBackendsDialog and
+    ai_dialog._GenerateDialog both read QLayout.SizeConstraint.SetMinimumSize at
+    construction time, and _Layout above (what setSizeConstraint is actually
+    called on) has no real layout engine to constrain."""
+    class SizeConstraint:
+        SetDefaultConstraint = 0
+        SetMinimumSize = 3
 
 
 class QVBoxLayout(_Layout):
@@ -2237,7 +2253,7 @@ def install():
                       ("QDialog", QDialog), ("QDialogButtonBox", QDialogButtonBox),
                       ("QFrame", QFrame), ("QHBoxLayout", QHBoxLayout),
                       ("QFormLayout", QFormLayout),
-                      ("QGridLayout", QGridLayout),
+                      ("QGridLayout", QGridLayout), ("QLayout", QLayout),
                       ("QDesktopServices", _QDesktopServices), ("QUrl", _QUrl),
                       ("QImage", QImage),
                       ("QLineEdit", QLineEdit), ("QMessageBox", QMessageBox),
