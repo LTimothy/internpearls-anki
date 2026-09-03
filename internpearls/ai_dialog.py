@@ -30,10 +30,11 @@ from .ai_setup import (LABEL_W, _safe_settle, _settle_min_size, _wrapped_hint,
 from .config import (AI_LAST_RUN_LOG, APP_NAME, TARGET_FIELDS, _cfg,
                      load_ai_usage, save_ai_usage, load_deck_skill,
                      save_deck_skill, load_user_skill, save_user_skill)
-from .logic import cloze_filled_html, field_preview_html, plural
+from .logic import cloze_filled_html, field_preview_html, note_display_label, plural
 from .net import fetch_card_image
 from .palette import colors
-from .review import _CARET_CLOSED, _CARET_OPEN, _image_tag, _rich_label, _separator
+from .review import (_CARET_CLOSED, _CARET_OPEN, _ClickableLabel, _image_tag,
+                     _preview_style, _rich_label, _separator)
 from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
                  link_button, muted_label, section_rule, title_label, tooltip)
 from .widgets import (CARET_GAP, CARET_W, align_field_column, chip_cell,
@@ -318,15 +319,38 @@ def _queued_note_row(note, indent):
     return _accent_row(text, "updated", indent)
 
 
-def _card_primary_html(card):
+def _card_image_names(card, resolved=frozenset()):
+    """Names for a card's collapsed-line picture tag (mirrors review._image_text):
+    "drawn figure" for an inline SVG or attached file, "from <host>" for a web
+    image. `resolved` is the (0-based) image indices whose thumbnail has already
+    painted in the expanded body; those drop out here. A picture that failed to
+    resolve keeps its name, since the name is the fallback."""
+    names = []
+    for j, im in enumerate(card.get("images") or []):
+        if j in resolved:
+            continue
+        src = im.get("source", "")
+        names.append(f"from {_url_host(src[4:])}" if src.startswith("url:")
+                    else "drawn figure")
+    return names
+
+
+def _card_primary_html(card, resolved=frozenset()):
     """The row's bold collapsed line: the front, or a cloze note's text with its
     deletions filled in: the fact under review lives in the deletions, so it is
-    shown rather than blanked (mirrors review._primary_html)."""
+    shown rather than blanked (mirrors review._primary_html). Ends with a
+    picture tag (review._image_text's shape) for any image not yet in
+    `resolved`."""
     ntype = card["note_type"]
     primary_field = ai_logic.PRIMARY_FIELD.get(ntype, "Front")
     text = field_preview_html(card["fields"].get(primary_field, ""))
     if primary_field == "Text":
         text = cloze_filled_html(text, escape=False)
+    names = _card_image_names(card, resolved)
+    if names:
+        tag = html.escape(f"[image: {', '.join(names)}]")
+        text = (f'{text}&nbsp;&nbsp;<span style="color: {colors()["dim"]};">'
+                f'{tag}</span>' if text else tag)
     return f"<b>{text}</b>"
 
 
@@ -538,6 +562,11 @@ class _Session:
         # "images" list: see _resolve_one_image. Populated at review time
         # (before the review page ever shows), reused unchanged by import.
         self.image_data = {}
+        # Indices excluded by default purely because they carry an unreviewed
+        # image (see _apply_review_state): what _build_review_row's reason
+        # line gates on, so a card the learner unchecked herself never gets a
+        # reason line explaining a default she didn't hit.
+        self.image_gated = set()
         # True when the last revision came back with a different card count than
         # it was sent: the one shape the prompt promises but nothing verifies.
         # See _finish_generation: this disables the per-index diff entirely.
@@ -1728,6 +1757,14 @@ class _GenerateDialog(QDialog):
             not any(c["level"] == "block" for c in per) and not s.cards[i]["images"]
             for i, per in enumerate(s.checks)]
         prev_included = self._pending_prev_included
+        # Only the cards whose CURRENT inclusion is actually the default computed
+        # above (a fresh draft, or one this revision changed) can have been
+        # excluded by the image gate; a card kept verbatim from before carries
+        # her own earlier decision instead, whatever the fresh default would say.
+        s.image_gated = {
+            i for i, per in enumerate(s.checks)
+            if (prev_included is None or i in s.updated)
+            and s.cards[i]["images"] and not any(c["level"] == "block" for c in per)}
         if prev_included is not None:
             # A card the revision left verbatim keeps whatever the user set for
             # it (an override she made on purpose survives); only a genuinely
@@ -1837,6 +1874,7 @@ class _GenerateDialog(QDialog):
         entries = s.checks[i]
         kind = _review_row_kind(entries, i in s.updated)
         indent = _review_row_indent()
+        card_label = note_display_label(list(card["fields"].values()), max_len=60)
 
         row = QWidget()
         outer = QVBoxLayout(row)
@@ -1845,11 +1883,30 @@ class _GenerateDialog(QDialog):
 
         body = QWidget()
         caret = QPushButton(_CARET_CLOSED)
+        # Images this row's picture tag has already dropped, once painted on
+        # first expand (mirrors review._card_row's own `resolved` convention).
+        resolved_images = set()
+
+        def _name_caret(expanded):
+            verb = "Hide card" if expanded else "Show card"
+            caret.setAccessibleName(f"{verb}: {card_label}")
+            caret.setToolTip(verb)
 
         def _toggle():
             expanded = not body.isVisible()
+            if expanded and card["images"] and not resolved_images:
+                results = s.image_data.get(i) or []
+                for j in range(len(card["images"])):
+                    res = results[j] if j < len(results) else None
+                    if (res and res.get("state") == "ok" and res.get("path")
+                            and _image_tag(res["path"])):
+                        resolved_images.add(j)
+                if resolved_images:
+                    primary.setText(_preview_style() +
+                                    _card_primary_html(card, resolved_images))
             body.setVisible(expanded)
             caret.setText(_CARET_OPEN if expanded else _CARET_CLOSED)
+            _name_caret(expanded)
 
         header = QWidget()
         hlay = QHBoxLayout(header)
@@ -1862,6 +1919,7 @@ class _GenerateDialog(QDialog):
                             f" color: {colors()['caret']};")
         caret.setCursor(Qt.CursorShape.PointingHandCursor)
         caret.clicked.connect(_toggle)
+        _name_caret(False)
         hlay.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
 
         hlay.addWidget(chip_cell(kind, _REVIEW_CHIP_KINDS), 0, Qt.AlignmentFlag.AlignTop)
@@ -1873,8 +1931,14 @@ class _GenerateDialog(QDialog):
         self.include_boxes.append(box)
         hlay.addWidget(box, 0, Qt.AlignmentFlag.AlignTop)
 
-        primary = _rich_label(_card_primary_html(card))
+        # The primary line opens the row too (review._ClickableLabel), same as
+        # the update screen: the click target is the text a reader is already
+        # looking at, not just the small caret beside it.
+        primary = _ClickableLabel(_preview_style() + _card_primary_html(card), _toggle)
         primary.setWordWrap(True)
+        primary.setTextFormat(Qt.TextFormat.RichText)
+        primary.setOpenExternalLinks(False)
+        primary.setCursor(Qt.CursorShape.PointingHandCursor)
         hlay.addWidget(primary, 1)
 
         # The note type: no longer a parenthetical crowding the front, but a
@@ -1890,6 +1954,10 @@ class _GenerateDialog(QDialog):
         for entry in entries:
             if entry.get("level") != "ok":
                 outer.addWidget(_check_reason_row(entry, indent))
+        if not s.included[i] and i in s.image_gated:
+            outer.addWidget(_check_reason_row(
+                {"level": "warn", "message": "Has a picture: open the row to "
+                                             "check it before including."}, indent))
         if i in s.notes:
             outer.addWidget(_queued_note_row(s.notes[i], indent))
 
