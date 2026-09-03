@@ -3,6 +3,43 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.58.1
+
+The AI Backends window's rows could still clip their own muted third line ("Works
+with a ... . Tools fully restricted (strongest)."), cut off mid-glyph, on first open.
+A wrapped label's real height was only ever discovered from its own resize, and the
+layout correction that followed only took effect on whatever later event happened to
+trigger a relayout, which could land a frame after this window's first paint: the
+window itself had already opened, and painted, at the too-small geometry computed
+before that correction. Any later repaint (a Re-check, or just moving the window)
+showed it correctly, which is why it never seemed to persist. Fixed by growing the
+window right there, synchronously, the moment a label discovers it needs more room,
+rather than waiting on a later pass.
+
+The wizard's input page is a little simpler. The Deck row's own Change link opened
+the same Advanced panel the Advanced link already does, so it's gone, with the row's
+detail pointing at Advanced instead. The horizontal rule introducing that panel now
+collapses and reappears with it, instead of always sitting there whether the panel is
+open or not.
+
+The Advanced panel's own grid is fixed: "Exact number of cards" no longer overflows
+into the spinbox beside it, which is now wide enough for its own "auto" special value
+too. Note types lines up with the first of its four checkboxes now, rather than
+centred against all of them.
+
+My rules is easier to find and use. Its wizard link now reads "Add my rules" until
+you've saved any and "Edit my rules" after, and View skills no longer prints "My
+rules: none" when there's nothing there, just one line pointing at where to add some.
+The editor's own hint states plainly how your rules rank against the bundled skill:
+they win on style, wording, and emphasis where the two disagree, but the output
+format and the rule against raster images always win regardless, and shows three
+short examples. That ranking now actually reaches the assistant, not just the
+editor's own hint text: your rules are sent with a heading stating the same thing.
+
+A few smaller fixes round out this release: a usage-count fallback scoped to the one
+backend it was ever needed for, a cloze-rule wording fix in the bundled skill, and a
+depth-row hedge that no longer claims Quick draft verifies anything online.
+
 ## v0.58.0
 
 The "Generate cards with AI" wizard picks its own card count now. Left alone, the
