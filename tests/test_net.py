@@ -111,9 +111,30 @@ def test_a_403_with_no_remaining_quota_reads_as_a_rate_limit_not_a_bad_token(
     msg = str(e.value)
     assert "GitHub's request limit for this connection is used up" in msg
     assert "resets at" in msg
-    assert "minutes" in msg
+    # 1700000700 is well in the past by the time this runs, so the clamp floors this
+    # at "1 minute" (singular) rather than "1 minutes".
+    assert "about 1 minute)" in msg
     assert "Signing in with a token in Manage decks raises the limit" in msg
     assert "token is valid" not in msg
+
+
+def test_a_403_rate_limit_with_a_token_sent_points_at_the_token_and_pluralizes(
+        monkeypatch):
+    """A token was sent and still got rate limited: telling her to sign in with one
+    (the no-token sentence) is nonsense advice, so the trailing sentence has to change.
+    A reset a few minutes out also has to come out plural."""
+    import time
+
+    from internpearls import net
+    reset_ts = int(time.time()) + 300  # about 5 minutes out
+    _urlopen(monkeypatch, _http_error(
+        403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(reset_ts)}))
+    with pytest.raises(net.RateLimitedError) as e:
+        net._http_get("http://example.invalid", token="t0ken")
+    msg = str(e.value)
+    assert "about 5 minutes)" in msg
+    assert "Your token's limit will reset then." in msg
+    assert "Signing in with a token" not in msg
 
 
 def test_a_403_without_the_rate_limit_headers_or_token_is_plain_access_denied(
@@ -171,6 +192,69 @@ def test_gh_public_raw_with_a_bad_token_retries_without_it(monkeypatch):
     assert calls == ["Bearer badtoken", None]
 
 
+def test_gh_public_raw_propagates_a_transport_error_on_the_token_attempt_without_retrying(
+        monkeypatch):
+    """An unreachable host isn't fixed by dropping the token: retrying just doubles the
+    wait on a connection that was never going to answer either way."""
+    from internpearls import net
+    calls = []
+
+    def fake(req, timeout=None):
+        calls.append(req.full_url)
+        raise urllib.error.URLError("nodename nor servname provided")
+
+    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    with pytest.raises(net.TransportError):
+        net._gh_public_raw("version.json", token="t0ken")
+    assert len(calls) == 1, "a dead connection must not be retried a second time"
+
+
+def test_gh_public_raw_propagates_a_server_error_on_the_token_attempt_without_retrying(
+        monkeypatch):
+    """A 5xx is the server's own problem, not the token's; dropping the token can't fix
+    it, so it isn't worth a second request either."""
+    from internpearls import net
+    calls = []
+
+    def fake(req, timeout=None):
+        calls.append(req.full_url)
+        raise _http_error(500)
+
+    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    with pytest.raises(RuntimeError) as e:
+        net._gh_public_raw("version.json", token="t0ken")
+    assert "HTTP 500" in str(e.value)
+    assert len(calls) == 1
+
+
+def test_gh_public_raw_chains_through_token_then_rate_limit_then_cdn(monkeypatch):
+    """The full three-hop path in one test: a token that can't read this repo falls
+    through to an unauthenticated retry, which is itself rate limited, so the raw CDN
+    is the last resort. The tests above each prove one link; this proves the chain."""
+    from internpearls import net
+    seen = []
+
+    def fake(req, timeout=None):
+        seen.append((req.full_url, req.get_header("Authorization")))
+        if req.get_header("Authorization"):
+            raise _http_error(403)  # auth-shaped: this token can't read this repo
+        if "api.github.com" in req.full_url:
+            raise _http_error(403, headers={"X-RateLimit-Remaining": "0"})
+        return _Response(b"cdn bytes")
+
+    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    data = net._gh_public_raw("version.json", ref="main", token="badtoken")
+    assert data == b"cdn bytes"
+    assert seen == [
+        ("https://api.github.com/repos/LTimothy/internpearls-anki/contents/"
+         "version.json?ref=main", "Bearer badtoken"),
+        ("https://api.github.com/repos/LTimothy/internpearls-anki/contents/"
+         "version.json?ref=main", None),
+        ("https://raw.githubusercontent.com/LTimothy/internpearls-anki/main/"
+         "version.json", None),
+    ]
+
+
 def test_gh_public_raw_falls_back_to_the_raw_cdn_when_rate_limited(monkeypatch):
     """The API's own quota is out; the raw CDN needs no token and no quota, so it's the
     last resort rather than a failed check."""
@@ -196,7 +280,10 @@ def test_gh_public_raw_falls_back_to_the_raw_cdn_when_rate_limited(monkeypatch):
 
 def test_the_update_check_passes_the_configured_token(monkeypatch, anki):
     """updates.py's own fetch has to actually use the learner's token, not just accept
-    the parameter: the whole point is raising the check's rate limit."""
+    the parameter: the whole point is raising the check's rate limit. Goes through
+    check_updates() itself, the real entry point that reads _cfg()["gh_token"], so this
+    proves the config is actually wired up rather than just that the parameter, handed
+    in directly, threads through to _gh_public_raw."""
     from internpearls import updates
     anki.mw._config = {"github_token": "her-token"}
     seen = {}
@@ -206,6 +293,10 @@ def test_the_update_check_passes_the_configured_token(monkeypatch, anki):
         return b'{"version": "0.1.0"}'
 
     monkeypatch.setattr(updates, "_gh_public_raw", fake_public_raw)
+    updates.check_updates()
+    assert seen["token"] == "her-token"
+
+    seen.clear()
     updates._fetch_addon_version_info(token=updates._cfg()["gh_token"])
     assert seen["token"] == "her-token"
 
