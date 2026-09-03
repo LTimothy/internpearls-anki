@@ -105,6 +105,9 @@ _COMMON_DIRS = ("/opt/homebrew/bin", "/usr/local/bin",
                 os.path.expanduser("~/.local/bin"),
                 os.path.expanduser("~/.npm-global/bin"))
 _TIMEOUTS = {"quick": 120, "thorough": 360}
+# Turn budget per generation call, not per card: an automatic (count=None)
+# draft still fits inside one call, it just returns more cards in the same
+# reply, so this ceiling stays put regardless of how many cards get drafted.
 _MAX_TURNS = {"quick": 1, "thorough": 15}
 # Image-input support per backend. All three read an attached image: agy does
 # it headlessly with view_file against the scratch dir build_argv passes as
