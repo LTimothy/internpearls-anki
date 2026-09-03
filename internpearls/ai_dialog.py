@@ -732,7 +732,7 @@ class _GenerateDialog(QDialog):
         # invited a second copy of the source material into it.
         self.instructions_box = QLineEdit()
         self.instructions_box.setPlaceholderText(
-            'Anything specific to focus on, e.g. "emphasize dosing"')
+            'Focus (optional), e.g. "emphasize dosing"')
         lay.addWidget(self.instructions_box)
 
         lay.addWidget(section_rule())
@@ -1067,6 +1067,8 @@ class _GenerateDialog(QDialog):
         """
         s = self.session
         if not s.backend:
+            # Defensive: _detect routes a backendless dialog straight to the
+            # setup page, so only the harness's "unset" scene renders this.
             self.backend_row.set_chip("notsetup")
             self.backend_row.set_primary("<b>Backend</b>")
             self.backend_row.set_detail(
@@ -1321,26 +1323,26 @@ class _GenerateDialog(QDialog):
         self._timer.start(200)
 
     def _progress_detail_text(self):
-        """The progress row's muted detail line: "<phase sentence>. <elapsed>
-        elapsed.", using only what is actually known at the moment it's
-        called. The phase sentence mirrors whatever the row's own bold title
-        currently says (see the sites that set self._phase_text); no per-
-        backend turn count is reported here, since backends emit phase
-        events at wildly different rates (Claude only on tool use, Antigravity
-        on nearly every internal step, Codex never), so a raw count would not
-        mean the same thing across backends. On a revision turn, s.cards
-        still holds the pre-revision draft being revised (a fresh run clears
-        it first), which is known from the very start, unlike anything about
-        the new draft.
+        """The progress row's muted detail line: "<elapsed> elapsed[, <learned
+        estimate>].", using only what is actually known at the moment it's
+        called. The current phase isn't repeated here: the row's own bold
+        title already carries it (see the sites that set self._phase_text),
+        and no per-backend turn count is reported either, since backends emit
+        phase events at wildly different rates (Claude only on tool use,
+        Antigravity on nearly every internal step, Codex never), so a raw
+        count would not mean the same thing across backends. On a revision
+        turn, s.cards still holds the pre-revision draft being revised (a
+        fresh run clears it first), which is known from the very start,
+        unlike anything about the new draft.
         """
         parts = []
         if self.session.cards:
             parts.append(f"Revising {plural(len(self.session.cards), 'card')}.")
-        if self._phase_text:
-            parts.append(f"{self._phase_text}.")
-        elapsed = f"{ai_logic.format_duration(int(time.monotonic() - self._t0))} elapsed."
+        elapsed = f"{ai_logic.format_duration(int(time.monotonic() - self._t0))} elapsed"
         if self._duration_estimate:
-            elapsed += " " + self._duration_estimate
+            elapsed += f", {self._duration_estimate}."
+        else:
+            elapsed += "."
         parts.append(elapsed)
         return " ".join(parts)
 
@@ -1999,8 +2001,11 @@ class _GenerateDialog(QDialog):
         docstring), so this confirmation is the only chance to back out.
 
         Qt routes Escape and the window's close box through this same method
-        (QDialog's own closeEvent calls reject()), so this is the one place
-        that has to handle closing mid-generation too: a run in flight is
+        (QDialog's own closeEvent calls reject()), except on the progress page,
+        where keyPressEvent intercepts Escape above and runs the cancel path
+        instead of ever reaching here. So this is the one place that has to
+        handle closing mid-generation too, for the close box's own path: a run
+        in flight is
         real, billed work, not something to silently throw away on a stray
         Escape, so it gets the same kind of confirm as discarding a draft:
         but once confirmed, the actual cancel is handed off (see
