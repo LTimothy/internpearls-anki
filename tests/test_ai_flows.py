@@ -241,16 +241,26 @@ def test_progress_detail_omits_what_is_not_yet_known(anki, monkeypatch):
     assert text.endswith("elapsed.")
 
 
-def test_progress_detail_states_phase_and_revising_count_once_known(anki, monkeypatch):
+def test_progress_detail_states_revising_count_once_known(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._phase_text = "Verifying doses against sources"
     dlg._t0 = time.monotonic() - 5
     dlg._duration_estimate = None
     dlg.session.cards = [{}] * 11
     text = dlg._progress_detail_text()
-    assert text.startswith(
-        "Revising 11 cards. Verifying doses against sources. ")
-    assert text.endswith("elapsed.")
+    # The phase sentence itself isn't repeated here: the bold title already
+    # carries it.
+    assert text == "Revising 11 cards. 5s elapsed."
+
+
+def test_progress_detail_joins_learned_estimate_with_a_comma(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._phase_text = "Verifying doses against sources"
+    dlg._t0 = time.monotonic() - 48
+    dlg._duration_estimate = "your recent Thorough runs averaged 1m 40s"
+    dlg.session.cards = []
+    text = dlg._progress_detail_text()
+    assert text == "48s elapsed, your recent Thorough runs averaged 1m 40s."
 
 
 def test_progress_row_reflects_a_live_phase_event(anki, monkeypatch):
@@ -266,7 +276,9 @@ def test_progress_row_reflects_a_live_phase_event(anki, monkeypatch):
     assert dlg._phase_text == "Verify online"
     assert dlg.progress_row.chip_kind == "verifying"
     assert "Verify online" in dlg.progress_row.primary.text()
-    assert "Verify online." in dlg.progress_row.detail.text()
+    # The phase itself isn't repeated in the detail line: the bold title
+    # (checked above) already carries it.
+    assert dlg.progress_row.detail.text().endswith("elapsed.")
     # This is a fresh run, not a revision: no draft exists yet to revise, so
     # the line never claims one is being revised.
     assert "Revising" not in dlg.progress_row.detail.text()

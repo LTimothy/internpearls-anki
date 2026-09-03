@@ -9,9 +9,11 @@ The "Generate cards with AI" wizard picks its own card count now. Left alone, th
 assistant drafts one card per point the source actually teaches, up to a ceiling of
 40, and is told plainly not to pad to a number or merge points just to save cards. An
 exact count is still available in the input page's new Advanced disclosure for anyone
-who wants to pin one, and a per-backend turn cap (one turn for Quick, up to 15 for
-Thorough) still bounds a single generation call regardless of how many cards a reply
-carries, so a larger automatic count doesn't also mean a slower or costlier run.
+who wants to pin one. On Claude Code, a per-backend turn cap (one turn for Quick, up
+to 15 for Thorough) still bounds a single generation call regardless of how many cards
+a reply carries, so a larger automatic count doesn't also mean a slower or costlier
+run there; Codex CLI and Antigravity CLI have no turn cap and are bounded only by the
+run timeout.
 
 Depth now defaults from what you're actually pasting in, rather than a manual choice
 every time. Thorough kicks in once the source reaches 1,500 characters or carries any
