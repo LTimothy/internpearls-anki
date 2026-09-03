@@ -127,7 +127,21 @@ def test_input_page_shows_a_backends_link_and_no_model_combo(anki, monkeypatch):
     assert not hasattr(dlg, "model_combo")
 
 
-def test_input_page_has_an_edit_my_rules_link(anki, monkeypatch):
+def test_input_page_offers_to_add_my_rules_when_none_are_saved(anki, monkeypatch):
+    """No saved rules yet, so the link offers to add some rather than edit
+    something that doesn't exist."""
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    assert dlg.rules_link.text() == "Add my rules"
+
+
+def test_input_page_offers_to_edit_my_rules_once_some_are_saved(anki, monkeypatch):
+    from internpearls import config
+    config.save_user_skill("never use mnemonics")
     monkeypatch.setattr(
         ai_cli, "find_cli",
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
@@ -135,6 +149,7 @@ def test_input_page_has_an_edit_my_rules_link(anki, monkeypatch):
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     dlg = ai_dialog._GenerateDialog()
     assert dlg.rules_link.text() == "Edit my rules"
+    assert "my rules" in dlg.skills_row.text()
 
 
 # === I7: Test connection (input page's own single-backend button) =========
@@ -1258,7 +1273,7 @@ def test_deck_and_skills_rows_say_where_cards_land_and_what_is_sent(anki, monkey
     assert widgets.CHIPS[dlg.skills_row.chip_kind] == "SKILLS"
     assert "Sent in that order on every run." in dlg.skills_row.text()
     assert dlg.skills_link.text() == "View"
-    assert dlg.rules_link.text() == "Edit my rules"
+    assert dlg.rules_link.text() == "Add my rules"
 
 
 def test_generate_stays_disabled_until_a_backend_is_ready(anki, monkeypatch):

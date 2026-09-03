@@ -589,9 +589,26 @@ def test_active_skills_appends_user_rules_last():
     deck = {"enabled": True, "text": "deck text"}
     out = ai_logic.active_skills(deck, "  my rules  ")
     assert out[0] == ai_logic.load_bundled_skill()
-    assert out[1:] == ["deck text", "my rules"]
+    assert out[1] == "deck text"
+    assert out[2].endswith("my rules")
     assert ai_logic.active_skills(None, "") == [ai_logic.load_bundled_skill()]
     assert ai_logic.USER_SKILL_MAX_CHARS == 20000
+
+
+def test_active_skills_user_block_carries_the_ranking_heading():
+    """The heading that states how the learner's own rules rank appears only
+    when there is a user skill to rank, comes before the rules themselves, and
+    leaves the bundled and deck texts untouched (the stable cache prefix)."""
+    deck = {"enabled": True, "text": "deck text"}
+    with_user = ai_logic.active_skills(deck, "no mnemonics")
+    without_user = ai_logic.active_skills(deck)
+    assert with_user[:2] == without_user
+    assert "The learner's own rules" not in with_user[0]
+    assert "The learner's own rules" not in with_user[1]
+    heading, _, rules = with_user[2].partition("\n\n")
+    assert "The learner's own rules" in heading
+    assert "the learner's rules win" in heading
+    assert rules == "no mnemonics"
 
 
 # A hand-written minimal PDF byte string (no real xref table) was tried first
