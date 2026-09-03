@@ -1406,7 +1406,10 @@ class _GenerateDialog(QDialog):
                     model=gen_cfg["ai_model"][s.backend],
                     effort=gen_cfg["ai_effort"][s.backend],
                     log_path=AI_LAST_RUN_LOG,
-                    redact_texts=(s.source, s.instructions, user_skill_text))
+                    # Attached document text is part of the source section the
+                    # backend sees, so it needs the same echo protection.
+                    redact_texts=(s.source, extra_text, s.instructions,
+                                  user_skill_text))
             except Exception as e:
                 self._worker_error = e
 
