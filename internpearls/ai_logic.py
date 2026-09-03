@@ -31,6 +31,27 @@ _SVG_JS_URI_RE = re.compile(r"javascript\s*:", re.I)
 PRIMARY_FIELD = {"Study Deck - Basic": "Front", "Study Deck - Cloze": "Text",
                  "Study Deck - Image ID": "Image", "Basic": "Front", "Cloze": "Text"}
 LONG_ANSWER_WORDS = 60
+AUTO_COUNT_CEILING = 40
+AUTO_DEPTH_CHARS = 1500
+
+
+def default_mode(source_chars, attachment_count):
+    """Thorough for material long enough to carry claims worth verifying, or for
+    any attachment (a figure or PDF page always deserves the self-review pass);
+    Quick for a short paste."""
+    if attachment_count > 0 or source_chars >= AUTO_DEPTH_CHARS:
+        return "thorough"
+    return "quick"
+
+
+def _count_instruction(count):
+    if count is None:
+        return (f"Make one card per point the source actually teaches under the inclusion "
+                f"standard above, up to {AUTO_COUNT_CEILING} cards. Do not pad to a number "
+                f"and do not merge points to save cards. If the source carries more than "
+                f"{AUTO_COUNT_CEILING} testable points, keep the ones most likely to be "
+                f"tested. State the count first as {{\"count\": N, \"cards\": [...]}}.")
+    return f"Make exactly {int(count)} cards."
 
 
 def generated_guid():
@@ -58,6 +79,10 @@ def parse_cards_json(text, allowed_types, field_map):
         data = json.loads(_find_json(text))
     except Exception as e:
         return [], [f"reply was not valid JSON: {e}"]
+    if isinstance(data, dict) and isinstance(data.get("cards"), list):
+        # tolerate the auto-count reply shape {"count": N, "cards": [...]};
+        # N is advisory only, the real count is len(cards)
+        data = data["cards"]
     if not isinstance(data, list) or not data:
         return [], ["reply must be a non-empty JSON list of cards"]
     cards = []
@@ -206,8 +231,8 @@ def build_prompt(skills, source, note_types, field_map, count, instructions="",
     parts.append("## Allowed note types and their fields\n"
                  + json.dumps(schema, indent=1))
     parts.append(_CONTRACT)
-    parts.append(f"## Task\nDraft about {count} flashcards from the source "
-                 "material below. Quality over count.")
+    parts.append("## Task\nDraft flashcards from the source material below. "
+                 "Quality over count. " + _count_instruction(count))
     parts.append(_MODE_INSTRUCTIONS.get(mode, _MODE_INSTRUCTIONS["thorough"]))
     if instructions.strip():
         parts.append("## User instructions\n" + instructions.strip())
