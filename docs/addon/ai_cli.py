@@ -437,7 +437,11 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                 stream.close()
             except Exception:
                 pass
-    if not tokens:
+    if not tokens and kind == "codex":
+        # Scoped to codex, the one backend the comment above `last_usage`
+        # describes: claude and agy always carry usage on their own terminal
+        # result, so falling back here for them would only ever repeat a
+        # figure their own result already gave, never recover a missing one.
         tokens = last_usage
     if error_msg:
         # The CLI's own explanation beats stderr and beats the bare exit code,
