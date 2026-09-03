@@ -15,7 +15,7 @@ from .config import ADDON_PACKAGE, APP_NAME, _cfg
 from .palette import colors
 from .ui import (_safe, hint_label, link_button, section_label, section_rule,
                  title_label)
-from .widgets import CARET_GAP, chip_cell
+from .widgets import CARET_GAP, align_field_column, chip_cell, field_slot
 
 _POLL_MS = 200
 
@@ -391,15 +391,19 @@ class _SettingsPanel(QWidget):
 
         self.model = ModelEffortControls(kind, cfg["ai_model"][kind],
                                          cfg["ai_effort"][kind], self)
+        self._effort_slot = None
         row = 1
         for text, field in self.model.rows():
+            if text == "Effort":
+                field = self._effort_slot = field_slot(field)
             grid.addWidget(self._label(text), row, 0)
             grid.addWidget(field, row, 1)
             row += 1
 
         self.test_btn = QPushButton("Test connection")
         self.test_status = _wrapped_hint("Not tested yet")
-        test_box = QWidget()
+        self._path_box = path_box
+        self._test_box = test_box = QWidget()
         test_lay = QHBoxLayout(test_box)
         test_lay.setContentsMargins(0, 0, 0, 0)
         test_lay.setSpacing(CARET_GAP)
@@ -407,11 +411,46 @@ class _SettingsPanel(QWidget):
         test_lay.addWidget(self.test_status, 1)
         grid.addWidget(test_box, row, 1)
         outer.addLayout(grid)
+        self._realign()
 
         self.path.editingFinished.connect(lambda: dlg._guard(self._commit_path))
         browse.clicked.connect(lambda: dlg._guard(self._browse))
         self.model.changed.connect(lambda: dlg._guard(self._commit_model))
+        self.model.changed.connect(lambda: dlg._guard(self._realign))
         self.test_btn.clicked.connect(lambda: dlg._guard(dlg._test, kind))
+
+    def showEvent(self, event):
+        """A panel rebuilt by recheck() after the dialog is already on screen
+        (a Re-check click, a preferred-backend switch) never gets the dialog's
+        own showEvent again, only its own first one - and _realign() run back
+        in __init__ measured this panel's fields before they had ever actually
+        been laid out on screen, which under macOS's native style is not the
+        same geometry they settle at once shown. Same two-pass settle as
+        _settle_min_size's own docstring: once here, once more on the next
+        event loop turn, so a first frame that compensated against provisional
+        geometry never survives to be the one the reader sees."""
+        super().showEvent(event)
+        self._realign()
+        QTimer.singleShot(0, self._safe_realign)
+
+    def _safe_realign(self):
+        try:
+            self._realign()
+        except RuntimeError:      # the panel can already be gone by then
+            pass
+
+    def _realign(self):
+        """Line every field's drawn left edge up on one x (see
+        widgets.align_field_column): reapplied on every Model/Effort change, not
+        just once at open, because a Model field's leading control itself changes
+        (its combo vs. its free-text line edit, see ModelEffortControls._on_combo)
+        and the two draw at different insets under macOS's native style."""
+        rows = [(self._path_box, self.path), (self._test_box, self.test_btn),
+                (self.model.model_field,
+                 self.model.combo if self.model.combo.isVisible() else self.model.custom)]
+        if self._effort_slot is not None:
+            rows.append((self._effort_slot, self.model.effort))
+        align_field_column(rows)
 
     def _label(self, text):
         lbl = QLabel(text)

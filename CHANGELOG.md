@@ -26,6 +26,14 @@ The AI Backends window's settings panel (executable path, Model, Effort, Test
 connection) got a regression test pinning down that all four already share one left
 edge, after a report that they didn't.
 
+That regression test checked geometry, not what was actually drawn: on a real Mac,
+macOS's native style insets a combo box's and a spin box's own bezel a few pixels
+right of the geometry Qt gives them, so the settings panel's Model and Effort combos,
+and the wizard's Advanced grid (its count spinbox, note-type checkboxes, and deck
+combo alike), came out visibly indented past the fields beside them despite passing
+that check. Both grids now measure each field against the running style and nudge
+the others over to match, so every field's drawn edge lines up, not just its geometry.
+
 ## v0.58.1
 
 The AI Backends window's rows could still clip their own muted third line ("Works

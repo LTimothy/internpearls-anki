@@ -284,6 +284,37 @@ def test_settings_panel_controls_share_one_left_edge():
             f"{kind}'s settings controls don't share a left edge: {xs}")
 
 
+def test_settings_panel_controls_share_one_visual_left_edge():
+    """The truer version of the geometry check above: what the running style
+    actually draws, not just where QGridLayout put each control. Under
+    macOS's native style a QComboBox's bezel starts a few pixels right of its
+    own geometry (space reserved for a focus ring it only draws when
+    focused), which the plain geometry check above can't see at all - it
+    passed unmodified on this very panel while a reader's real macOS
+    screenshot showed Model and Effort visibly indented past Executable path
+    and Test connection. Under Fusion, which is what running pytest here
+    always renders with, harness.visual_left degenerates to left_x exactly
+    (see its own docstring), so this assertion is the plain geometry check
+    again in that case; it is written against the truer property so it also
+    means something the day this suite ever runs against a native style.
+    """
+    dlg = harness.render("ai-backends", found=1).dialog
+    for kind in ai_cli.BACKENDS:
+        dlg.use_backend(kind)
+        harness.app().processEvents()
+        panel = dlg.panel
+        model_leading = (panel.model.combo if panel.model.combo.isVisible()
+                         else panel.model.custom)
+        xs = {"path": harness.visual_left(dlg, panel.path),
+             "model": harness.visual_left(dlg, model_leading),
+             "test": harness.visual_left(dlg, panel.test_btn)}
+        if panel.model.has_effort:
+            xs["effort"] = harness.visual_left(dlg, panel.model.effort)
+        spread = max(xs.values()) - min(xs.values())
+        assert spread <= 1, (
+            f"{kind}'s settings controls don't share a drawn left edge: {xs}")
+
+
 def test_ai_backends_rows_dont_clip_on_first_open(monkeypatch):
     """The reader's own report: dark mode, window about 726px wide, three
     backends found, every row's muted third line cut off mid-glyph on FIRST

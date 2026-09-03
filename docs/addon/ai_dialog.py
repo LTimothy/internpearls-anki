@@ -36,7 +36,8 @@ from .palette import colors
 from .review import _CARET_CLOSED, _CARET_OPEN, _image_tag, _rich_label, _separator
 from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
                  link_button, muted_label, section_rule, title_label, tooltip)
-from .widgets import CARET_GAP, CARET_W, chip_cell, chip_column_width
+from .widgets import (CARET_GAP, CARET_W, align_field_column, chip_cell,
+                      chip_column_width, field_slot)
 
 # Note types a generated card may name. Keep in sync with
 # collection._GENERATED_ALLOWED_TYPES: the types this add-on manages, plus
@@ -603,7 +604,17 @@ class _GenerateDialog(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         _settle_min_size(self)
-        QTimer.singleShot(0, lambda: _safe_settle(self))
+        align_field_column(self._advanced_align_rows)
+        QTimer.singleShot(0, lambda: (_safe_settle(self), self._safe_realign_advanced()))
+
+    def _safe_realign_advanced(self):
+        """align_field_column, for the singleShot(0) call: like _safe_settle, the
+        dialog can already be closed (its C++ object deleted) by the time the
+        event loop actually runs this."""
+        try:
+            align_field_column(self._advanced_align_rows)
+        except RuntimeError:
+            pass
 
     def _guard(self, fn, *args, **kwargs):
         """Run a widget-signal callback the way @_safe protects a menu action, so a
@@ -977,8 +988,26 @@ class _GenerateDialog(QDialog):
         self.deck_combo.addItem(self.session.deck_name)
         self.deck_combo.currentTextChanged.connect(
             lambda _t: self._guard(self._refresh_deck_row))
+        deck_slot = field_slot(self.deck_combo)
         grid.addWidget(self._advanced_label(_LABEL_DECK, col_w), 4, 0)
-        grid.addWidget(self.deck_combo, 4, 1)
+        grid.addWidget(deck_slot, 4, 1)
+
+        # Line every field's drawn left edge up on one x, the way ai_setup's own
+        # settings grid does (see widgets.align_field_column): a QSpinBox, two
+        # QRadioButtons, a column of QCheckBoxes and a QComboBox all sit in this
+        # one field column, and macOS's native style insets a combo box's bezel
+        # from its geometry by more than it insets the others. Stashed rather
+        # than run right here: this panel starts hidden (below), and a hidden
+        # widget's children have never actually been laid out on screen, so
+        # measuring them now would compensate against provisional geometry.
+        # showEvent runs it once real geometry exists, the same reason it also
+        # calls _settle_min_size rather than sizing the window right here.
+        self._advanced_align_rows = [
+            (count_box, self.count_spin),
+            (depth_box, self.thorough_radio),
+            (types_box, next(iter(self.type_boxes.values()))),
+            (deck_slot, self.deck_combo),
+        ]
 
         self.advanced_panel = panel
         panel.setVisible(False)
