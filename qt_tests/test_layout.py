@@ -757,3 +757,17 @@ def test_ai_input_quality_labels_dont_clip_and_hints_wrap(shot):
     # The wrap fix's whole point: this dialog no longer has to be roughly
     # 1000px wide to fit one backend's mode sentence unwrapped.
     assert dlg.width() < 800
+
+    # The Cards and depth row's own detail line (dlg.depth_row.detail, not
+    # either mode hint above) goes through the same _wrapped_hint, and its
+    # text changes length with which mode is picked ("Quick, your choice: "
+    # plus this backend's own quick-mode clause). Checked here with quick
+    # selected, since that is the state this test's own scene had not put it
+    # in before.
+    dlg.quick_radio.setChecked(True)
+    harness.app().processEvents()
+    detail = dlg.depth_row.detail
+    needed = detail.heightForWidth(detail.width())
+    assert needed <= detail.height() + 1, (
+        f"depth row detail {detail.text()[:60]!r} needs {needed}px, "
+        f"has {detail.height()}px with Quick selected")
