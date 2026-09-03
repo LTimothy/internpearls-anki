@@ -633,14 +633,14 @@ def test_input_page_matches_mockup_rows(shot):
     assert any(t.startswith("The assistant decides the count, up to 40")
                for t in page_texts), page_texts
     assert "Advanced" in harness.link_labels(dlg)
-    assert not harness.visible(dlg.count_spin)
+    assert not dlg.count_spin.isVisible()
 
 
 def test_advanced_expands_in_place_and_aligns(shot):
     """State C: the panel opens under the row that discloses it, and every one
     of its controls starts at the same x after the fixed label column."""
     dlg = shot("ai-input", state="advanced").dialog
-    assert harness.visible(dlg.count_spin)
+    assert dlg.count_spin.isVisible()
     xs = {harness.left_x(dlg, w) for w in (dlg.count_spin, dlg.thorough_radio,
                                            dlg.deck_combo)}
     assert len(xs) == 1, xs
@@ -674,4 +674,4 @@ def test_input_page_fits_the_reference_screen_with_advanced_open(shot):
     ai_setup._WrappedHint exists to prevent, one page over."""
     dlg = shot("ai-input", state="advanced").dialog
     height = dlg.input_page.minimumSizeHint().height()
-    assert height <= 891 - 60, f"the input page's minimum is {height}px tall"
+    assert height <= 891 - 80, f"the input page's minimum is {height}px tall"
