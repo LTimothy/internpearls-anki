@@ -119,7 +119,8 @@ def _check_addon_updates_background():
                 f"v{ADDON_VERSION}). Intern Pearls → Advanced → Check for add-on "
                 "updates to install.", period=8000, parent=mw)
 
-    _run_in_background(lambda: _addon_update_work(cfg["auto_update_addon"]), _finish)
+    _run_in_background(
+        lambda: _addon_update_work(cfg["auto_update_addon"], cfg["gh_token"]), _finish)
 
 
 _auto_sync_in_progress = False
