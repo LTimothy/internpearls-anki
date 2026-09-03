@@ -217,6 +217,61 @@ def test_cancel_generation_preserves_inputs(anki, monkeypatch):
     assert not dlg.session.cards   # nothing touched the collection
 
 
+# === Task 4: progress row ===================================================
+
+def test_phase_chip_maps_phase_text_to_the_right_stage():
+    assert ai_dialog._phase_chip("Drafting cards with Claude Code") == "drafting"
+    assert ai_dialog._phase_chip("Verify online") == "verifying"
+    assert ai_dialog._phase_chip("Checking claims online") == "verifying"
+    assert ai_dialog._phase_chip("Self-review") == "reviewing"
+    assert ai_dialog._phase_chip("Final review of the whole set") == "reviewing"
+    assert ai_dialog._phase_chip("Working") == "working"
+    assert ai_dialog._phase_chip("") == "working"
+    assert ai_dialog._phase_chip(None) == "working"
+
+
+def test_progress_detail_omits_what_is_not_yet_known(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._turn_count = 0
+    dlg._t0 = time.monotonic()
+    dlg._duration_estimate = None
+    dlg.session.cards = []
+    text = dlg._progress_detail_text()
+    assert "Turn" not in text
+    assert "Drafted" not in text
+    assert text.endswith("elapsed.")
+
+
+def test_progress_detail_states_turn_and_drafted_count_once_known(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._turn_count = 4
+    dlg._t0 = time.monotonic() - 5
+    dlg._duration_estimate = None
+    dlg.session.cards = [{}] * 11
+    text = dlg._progress_detail_text()
+    assert text.startswith("Turn 4. Drafted 11 cards so far. ")
+    assert text.endswith("elapsed.")
+
+
+def test_progress_row_reflects_a_live_phase_event(anki, monkeypatch):
+    # The default "ok" fake_cli mode emits one WebSearch tool_use event (a
+    # real subprocess line, not a stub) before its result line, so this
+    # exercises the actual on_event -> _poll_worker wiring, not a hand-fed
+    # deque.
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._worker.join(timeout=15)
+    assert not dlg._worker.is_alive()
+    dlg._timer.fire()   # the real wiring: timeout -> _guard_completion(_poll_worker)
+    assert dlg._turn_count == 1
+    assert dlg.progress_row.chip_kind == "verifying"
+    assert "Verify online" in dlg.progress_row.primary.text()
+    assert "Turn 1." in dlg.progress_row.detail.text()
+    # The card count wasn't known yet when this event was processed (parsing
+    # only happens once the run finishes), so it stays out of the line.
+    assert "Drafted" not in dlg.progress_row.detail.text()
+
+
 def test_completion_exception_reaches_dialog_and_recovers_to_input(anki, monkeypatch):
     """B/C: the QTimer poll -> _finish_generation path had no guard at all, so an
     exception raised while processing an already-finished generation reached
@@ -427,8 +482,26 @@ def test_review_header_pluralizes_a_single_draft_card(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
     dlg._wait_for_worker()
-    assert "1 draft card " in dlg.review_header.text()
-    assert "1 draft cards" not in dlg.review_header.text()
+    assert "1 card drafted" in dlg.review_header.text()
+    assert "1 cards drafted" not in dlg.review_header.text()
+
+
+def test_review_header_names_the_drafted_count(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    assert dlg.review_header.text() == "1 card drafted · 1 included"
+
+
+def test_review_header_names_sources_when_attachments_were_used(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg.session.attachments.append(
+        ("notes.pdf", {"text": "extra source text", "images": [],
+                       "images_undecoded": []}))
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    # K = attachments + 1: the pasted source itself counts as the first one.
+    assert dlg.review_header.text() == "1 card drafted from 2 sources · 1 included"
 
 
 def test_revise_all_label_pluralizes_a_single_queued_note(anki, monkeypatch):
