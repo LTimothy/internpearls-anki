@@ -393,10 +393,13 @@ def _depth_clause(backend, mode):
     mode; Codex never can, Antigravity's quick mode still might, and a
     hardcoded clause would keep telling both the same story. With no backend
     detected yet, there is nothing to derive from, so this falls back to the
-    spec's own hedge.
+    spec's own hedge, but only for thorough: quick draft never claims to
+    verify anything online regardless of which backend eventually runs it, so
+    hedging about one is a promise this mode was never going to keep. Empty
+    tells the caller there is nothing to say, not a clause of its own.
     """
     if not backend:
-        return "verifies claims online where the backend allows"
+        return "verifies claims online where the backend allows" if mode == "thorough" else ""
     text = ai_cli.BACKENDS[backend]["modes"][mode]
     label = _MODE_LABELS[mode]
     if text.startswith(label):
@@ -1024,7 +1027,8 @@ class _GenerateDialog(QDialog):
             else:
                 why = "Quick because the source is short"
         if why:
-            said += f" {why}: {_depth_clause(self.session.backend, mode)}."
+            clause = _depth_clause(self.session.backend, mode)
+            said += f" {why}: {clause}." if clause else f" {why}."
         self.depth_row.set_chip(mode)
         self.depth_row.set_detail(said)
         if not self._depth_touched:
@@ -2040,13 +2044,12 @@ class _GenerateDialog(QDialog):
         (QDialog's own closeEvent calls reject()), except on the progress page,
         where keyPressEvent intercepts Escape above and runs the cancel path
         instead of ever reaching here. So this is the one place that has to
-        handle closing mid-generation too, for the close box's own path: a run
-        in flight is
-        real, billed work, not something to silently throw away on a stray
-        Escape, so it gets the same kind of confirm as discarding a draft:
-        but once confirmed, the actual cancel is handed off (see
-        _cancel_running_generation) rather than blocking this call on
-        however long the subprocess takes to die."""
+        handle closing mid-generation too, for the close box's own path: a
+        run in flight is real, billed work, not something to silently throw
+        away on a stray Escape, so it gets the same kind of confirm as
+        discarding a draft. Once confirmed, though, the actual cancel is
+        handed off (see _cancel_running_generation) rather than blocking this
+        call on however long the subprocess takes to die."""
         if (self.stack.currentWidget() is self.review_page
                 and self.session.cards
                 and not _ask(

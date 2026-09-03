@@ -1104,21 +1104,46 @@ def test_import_buttons_own_click_signal_surfaces_a_bug_as_a_dialog(anki, monkey
     assert dlg._result is None                      # the dialog is still open
 
 
-def test_advanced_controls_own_signals_are_guarded_too(anki, monkeypatch):
+def _trigger_count_spin(dlg):
+    dlg.count_spin.setValue(dlg.count_spin.value() + 1)
+
+
+def _trigger_depth_radio(dlg):
+    other = (dlg.quick_radio if dlg.thorough_radio.isChecked()
+            else dlg.thorough_radio)
+    other.setChecked(True)
+
+
+def _trigger_note_type_checkbox(dlg):
+    box = next(iter(dlg.type_boxes.values()))
+    box.setChecked(not box.isChecked())
+
+
+def _trigger_deck_combo(dlg):
+    dlg.deck_combo.setCurrentText("Some Other Deck")
+
+
+@pytest.mark.parametrize("trigger,handler", [
+    (_trigger_count_spin, "_refresh_depth_row"),
+    (_trigger_depth_radio, "_depth_chosen"),
+    (_trigger_note_type_checkbox, "_refresh_deck_row"),
+    (_trigger_deck_combo, "_refresh_deck_row"),
+], ids=["count_spin", "depth_radio", "note_type_checkbox", "deck_combo"])
+def test_advanced_controls_own_signals_are_guarded_too(
+        anki, monkeypatch, trigger, handler):
     """count_spin, the depth radios, a note-type checkbox, and deck_combo all
-    changed the row they drive directly on their own signal, bypassing
-    self._guard, so a bug in the handler they call would reach Anki's raw
-    crash box the same way _do_import once did (see the test above). Exercise
-    one of the four (deck_combo.currentTextChanged) through its real signal,
-    with the handler it calls made to raise, and confirm the guard still
-    catches it."""
+    change the row they drive directly on their own signal, bypassing
+    self._guard, so a bug in the handler any one of them calls would reach
+    Anki's raw crash box the same way _do_import once did (see the test
+    above). Exercises each of the four through its real signal, with the
+    handler it calls made to raise, and confirms the guard still catches it."""
     dlg = _ready_dialog(anki, monkeypatch)
 
-    def boom():
+    def boom(*_a):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(dlg, "_refresh_deck_row", boom)
-    dlg.deck_combo.setCurrentText("Some Other Deck")   # must not raise past the signal
+    monkeypatch.setattr(dlg, handler, boom)
+    trigger(dlg)   # must not raise past the signal connection
     assert any("boom" in w for w in anki.gui.warnings)
 
 
@@ -1274,6 +1299,26 @@ def test_deck_and_skills_rows_say_where_cards_land_and_what_is_sent(anki, monkey
     assert "Sent in that order on every run." in dlg.skills_row.text()
     assert dlg.skills_link.text() == "View"
     assert dlg.rules_link.text() == "Add my rules"
+
+
+def test_skills_row_detail_names_each_part_that_is_actually_sent(anki, monkeypatch):
+    """The Skills row's detail is a plain list of what's actually going out on
+    this run, so it has to name each part that is: Bundled always, the deck
+    skill's own version only while consented and enabled, and "my rules" only
+    once something is saved there."""
+    dlg = _ready_dialog(anki, monkeypatch)
+    assert "Bundled" in dlg.skills_row.text()
+    assert "deck skill v" not in dlg.skills_row.text()
+    assert "my rules" not in dlg.skills_row.text()
+
+    config.save_deck_skill({"text": "DECK", "version": 3, "enabled": True,
+                            "hash": "x", "consented_on": "2026-01-01"})
+    config.save_user_skill("never use mnemonics")
+    dlg._refresh_skills_row()
+    assert "Bundled" in dlg.skills_row.text()
+    assert "deck skill v3" in dlg.skills_row.text()
+    assert "my rules" in dlg.skills_row.text()
+    assert dlg.rules_link.text() == "Edit my rules"
 
 
 def test_generate_stays_disabled_until_a_backend_is_ready(anki, monkeypatch):
