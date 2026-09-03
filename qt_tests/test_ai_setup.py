@@ -174,6 +174,23 @@ def test_every_row_is_one_compact_block_with_its_own_chip(monkeypatch):
         assert widgets.CHIPS["found" if kind == "claude" else "notfound"] in pills
 
 
+def test_free_tier_pill_reflects_metadata_not_a_subscription_substring(monkeypatch):
+    """The pill used to key off "free tier" in meta["subscription"], which
+    also matched Codex's "free tier: about 50 coding messages a day" wording
+    and gave it the agy-specific "throttled" pill. Explicit
+    BACKENDS[kind]["free_tier"] now decides the pill per backend: agy is
+    throttled, codex is capped (a different pill), claude has none."""
+    dlg = _dialog(monkeypatch, found=("claude", "codex", "agy"))
+    pills = {kind: [w.text() for w in dlg.rows[kind].findChildren(
+        type(dlg.rows[kind].title))] for kind in ("claude", "codex", "agy")}
+    assert "free tier, throttled" not in pills["claude"]
+    assert "free tier available" not in pills["claude"]
+    assert "free tier, throttled" not in pills["codex"]
+    assert "free tier available" in pills["codex"]
+    assert "free tier, throttled" in pills["agy"]
+    assert "free tier available" not in pills["agy"]
+
+
 def test_ai_backends_dialog_fits_a_laptop_screen_unscrolled(monkeypatch):
     """The three backend groups plus the Re-check row used to sit directly in
     the dialog's own layout with nothing capping their height: fully unfolded
@@ -197,6 +214,18 @@ def test_ai_backends_dialog_fits_a_laptop_screen_unscrolled(monkeypatch):
         top_left = close_btn.mapTo(dlg, QPoint(0, 0))
         assert 0 <= top_left.y() <= dlg.height()
         assert top_left.y() + close_btn.height() <= dlg.height() + 1
+
+
+def test_ai_backends_dialog_minimum_width_stays_reasonable(monkeypatch):
+    """The agy label line used to carry the shutdown note unwrapped
+    ("(agy, formerly Gemini CLI, which stopped serving personal Google AI Pro
+    and Ultra accounts on 2026-06-18)"), which pushed minimumSizeHint().width()
+    to about 1200px. The note now lives on the wrapped muted detail line
+    instead, so the label stays a short alias and the dialog's minimum width
+    stays sane with all three backends found."""
+    dlg = _dialog(monkeypatch, found=("claude", "codex", "agy"))
+    width = dlg.minimumSizeHint().width()
+    assert width <= 800, f"AI Backends minimum width is {width}px"
 
 
 def test_backend_rows_never_clip_their_wrapped_detail_line():
