@@ -329,6 +329,33 @@ def _card_body_fields(card):
 # four rows start their text at the same x (see widgets.chip_column_width).
 _INPUT_CHIPS = ("ready", "notsetup", "auto", "thorough", "quick", "deck", "skills")
 
+# The chips the progress row can wear, its own set (see chip_column_width): a
+# stage word, never one of the input page's or a card row's own vocabulary.
+_PROGRESS_CHIPS = ("drafting", "verifying", "reviewing", "working")
+
+# What a phase event's own text maps to, checked as a case-insensitive
+# substring since a phase is a short sentence a backend wrote (see
+# ai_logic.parse_stream_event), not a fixed vocabulary this add-on controls.
+# Order matters: the first match wins, so "self-review" being listed after
+# "verify" doesn't matter here (the two never share a word), but a phase
+# naming more than one stage would take the earliest one in this dict.
+_PHASE_CHIP_KEYWORDS = {"drafting": "drafting", "verify": "verifying",
+                        "online": "verifying", "self-review": "reviewing",
+                        "review": "reviewing"}
+
+
+def _phase_chip(phase_text):
+    """Which of the progress row's four chips a phase's own text names.
+    Unmatched text (including "Working", the vendor CLIs' own generic tool-use
+    label) reads as WORKING, the same catch-all role a plain assistant turn
+    already gets."""
+    t = (phase_text or "").lower()
+    for needle, kind in _PHASE_CHIP_KEYWORDS.items():
+        if needle in t:
+            return kind
+    return "working"
+
+
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
@@ -353,10 +380,18 @@ class _InfoRow(QWidget):
     in one should not have to learn a second vocabulary in the other. The chip
     lives in its own fixed-width column, so every row's noun starts at the same
     x whatever word its chip happens to be.
+
+    `chip_kinds` is the set the owning page measures its column against (see
+    widgets.chip_column_width): the input page's rows default to their own
+    seven-word set, but the progress row (its only user outside the input
+    page) passes its own four-word set instead, so its single row isn't
+    measured against words it can never show.
     """
 
-    def __init__(self, chip, primary_html, detail="", links=()):
+    def __init__(self, chip, primary_html, detail="", links=(),
+                chip_kinds=_INPUT_CHIPS):
         super().__init__()
+        self._chip_kinds = chip_kinds
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 6, CARET_GAP, 6)
         lay.setSpacing(CARET_GAP)
@@ -414,7 +449,7 @@ class _InfoRow(QWidget):
                 old.setVisible(False)
                 old.setParent(None)
                 old.deleteLater()
-        self._chip_lay.addWidget(chip_cell(kind, _INPUT_CHIPS))
+        self._chip_lay.addWidget(chip_cell(kind, self._chip_kinds))
 
     def set_primary(self, markup):
         self.primary.setText(markup)
@@ -1139,25 +1174,24 @@ class _GenerateDialog(QDialog):
 
     # === progress ===============================================================
     def _build_progress(self):
+        """The progress page: one status row, on the same shape _InfoRow
+        already gives the input page's rows, so a reader who has just read
+        those doesn't meet a second vocabulary in here. Cancel rides as the
+        row's own trailing link rather than a QDialogButtonBox button: it is
+        wired straight to _cancel_generation below, the same direct
+        connection the old button used, never through self.reject() (see
+        that method's own comment for why that path can't be used here), so
+        moving it into the row changes nothing about what a click does.
+        """
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.addWidget(title_label("Generating cards"))
-        self.progress_label = QLabel("Starting")
-        self.phase_label = hint_label("")
-        self.elapsed_label = hint_label("")
-        lay.addWidget(self.progress_label)
-        lay.addWidget(self.phase_label)
-        lay.addWidget(self.elapsed_label)
+        self.progress_row = _InfoRow(
+            "drafting", "<b>Starting</b>", "",
+            links=(("Cancel", self._cancel_generation),),
+            chip_kinds=_PROGRESS_CHIPS)
+        lay.addWidget(self.progress_row)
         lay.addStretch()
-        bb = QDialogButtonBox()
-        cancel = bb.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
-        # Not bb.rejected -> self.reject: that would route Cancel through the
-        # "discard the drafted cards" confirm reject() opens for the review page,
-        # which this run in flight isn't on. This only stops the run; Escape and
-        # the window's close box still go through reject()'s own generation-in-
-        # progress confirm.
-        cancel.clicked.connect(self._cancel_generation)
-        lay.addWidget(bb)
         return page
 
     def _start_generation(self, revision=False, extra_error=None):
@@ -1234,13 +1268,36 @@ class _GenerateDialog(QDialog):
 
         self._worker = threading.Thread(target=work, daemon=True)
         self._worker.start()
-        self.progress_label.setText(
-            "Drafting cards with " + ai_cli.BACKENDS[s.backend]["label"])
-        self.phase_label.setText("")
+        self._turn_count = 0
+        self.progress_row.set_chip("drafting")
+        self.progress_row.set_primary(
+            "<b>Drafting cards with " + ai_cli.BACKENDS[s.backend]["label"] + "</b>")
+        self.progress_row.set_detail(self._progress_detail_text())
         self.stack.setCurrentWidget(self.progress_page)
         self._timer = QTimer(self)
         self._timer.timeout.connect(lambda: self._guard_completion(self._poll_worker))
         self._timer.start(200)
+
+    def _progress_detail_text(self):
+        """The progress row's muted detail line: "Turn N. Drafted M cards so
+        far. <elapsed> elapsed.", using only what is actually known at the
+        moment it's called. The turn count is only meaningful once a phase
+        event has arrived (0 reads as "not started yet", not "turn zero"),
+        and how many cards are drafted is only knowable once a reply has
+        actually been parsed (s.cards stays [] through a fresh run's whole
+        progress page); a revision is the one case both are known from the
+        start, since s.cards there is still the pre-revision draft.
+        """
+        parts = []
+        if self._turn_count:
+            parts.append(f"Turn {self._turn_count}.")
+        if self.session.cards:
+            parts.append(f"Drafted {plural(len(self.session.cards), 'card')} so far.")
+        elapsed = f"{ai_logic.format_duration(int(time.monotonic() - self._t0))} elapsed."
+        if self._duration_estimate:
+            elapsed += " " + self._duration_estimate
+        parts.append(elapsed)
+        return " ".join(parts)
 
     def _poll_worker(self):
         # A stopped QTimer can still be fired once more by a queued signal, or
@@ -1252,13 +1309,12 @@ class _GenerateDialog(QDialog):
         while self._events:
             evt = self._events.popleft()
             if evt["type"] == "phase":
-                self.phase_label.setText(evt["phase"])
+                self._turn_count += 1
+                self.progress_row.set_chip(_phase_chip(evt["phase"]))
+                self.progress_row.set_primary(f"<b>{evt['phase']}</b>")
             elif evt["type"] == "rate_limits":
                 self.session.rate_limits = evt
-        text = f"Elapsed {int(time.monotonic() - self._t0)}s"
-        if self._duration_estimate:
-            text += " · " + self._duration_estimate
-        self.elapsed_label.setText(text)
+        self.progress_row.set_detail(self._progress_detail_text())
         if self._worker.is_alive():
             return
         self._timer.stop()
@@ -1451,8 +1507,12 @@ class _GenerateDialog(QDialog):
 
         self._img_worker = threading.Thread(target=work, daemon=True)
         self._img_worker.start()
-        self.progress_label.setText("Resolving images")
-        self.phase_label.setText("")
+        # The row's detail (turn/drafted/elapsed) is left exactly as the CLI
+        # phase last set it: this phase never learns a new turn number and
+        # the elapsed clock isn't this phase's own, so redrawing it here
+        # would show a number that stopped moving rather than a true one.
+        self.progress_row.set_chip("working")
+        self.progress_row.set_primary("<b>Resolving images</b>")
         self.stack.setCurrentWidget(self.progress_page)
         self._img_timer = QTimer(self)
         self._img_timer.timeout.connect(
@@ -1722,8 +1782,13 @@ class _GenerateDialog(QDialog):
         """
         s = self.session
         n_inc = sum(s.included)
-        self.review_header.setText(
-            f"Review {plural(len(s.cards), 'draft card')} · {n_inc} included")
+        header = f"{plural(len(s.cards), 'card')} drafted"
+        if s.attachments:
+            # K = every attachment plus the pasted source itself, which is
+            # always the first source whether or not there's any text in it.
+            header += f" from {len(s.attachments) + 1} sources"
+        header += f" · {n_inc} included"
+        self.review_header.setText(header)
 
         footer = (f"Last run ~{round(s.tokens_last_run / 1000)}k tokens"
                  if s.tokens_last_run else "")

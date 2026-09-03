@@ -380,3 +380,15 @@ def test_chip_cell_carries_the_wizard_input_pages_own_words():
     assert widgets.CHIPS["quick"] == "QUICK"
     assert widgets.CHIPS["deck"] == "DECK"
     assert widgets.CHIPS["skills"] == "SKILLS"
+
+
+def test_chip_cell_carries_the_wizard_progress_rows_own_words():
+    """The progress row names the run's current stage, not a verdict: all four
+    borrow the "new" role, the marker rather than a colour judging the run."""
+    from internpearls import widgets
+    assert widgets.CHIPS["drafting"] == "DRAFTING"
+    assert widgets.CHIPS["verifying"] == "VERIFYING"
+    assert widgets.CHIPS["reviewing"] == "REVIEWING"
+    assert widgets.CHIPS["working"] == "WORKING"
+    for kind in ("drafting", "verifying", "reviewing", "working"):
+        assert widgets._ROLES[kind] == "new"
