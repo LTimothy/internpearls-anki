@@ -232,24 +232,24 @@ def test_phase_chip_maps_phase_text_to_the_right_stage():
 
 def test_progress_detail_omits_what_is_not_yet_known(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
-    dlg._turn_count = 0
+    dlg._phase_text = None
     dlg._t0 = time.monotonic()
     dlg._duration_estimate = None
     dlg.session.cards = []
     text = dlg._progress_detail_text()
-    assert "Turn" not in text
-    assert "Drafted" not in text
+    assert "Revising" not in text
     assert text.endswith("elapsed.")
 
 
-def test_progress_detail_states_turn_and_drafted_count_once_known(anki, monkeypatch):
+def test_progress_detail_states_phase_and_revising_count_once_known(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
-    dlg._turn_count = 4
+    dlg._phase_text = "Verifying doses against sources"
     dlg._t0 = time.monotonic() - 5
     dlg._duration_estimate = None
     dlg.session.cards = [{}] * 11
     text = dlg._progress_detail_text()
-    assert text.startswith("Turn 4. Drafted 11 cards so far. ")
+    assert text.startswith(
+        "Revising 11 cards. Verifying doses against sources. ")
     assert text.endswith("elapsed.")
 
 
@@ -263,13 +263,13 @@ def test_progress_row_reflects_a_live_phase_event(anki, monkeypatch):
     dlg._worker.join(timeout=15)
     assert not dlg._worker.is_alive()
     dlg._timer.fire()   # the real wiring: timeout -> _guard_completion(_poll_worker)
-    assert dlg._turn_count == 1
+    assert dlg._phase_text == "Verify online"
     assert dlg.progress_row.chip_kind == "verifying"
     assert "Verify online" in dlg.progress_row.primary.text()
-    assert "Turn 1." in dlg.progress_row.detail.text()
-    # The card count wasn't known yet when this event was processed (parsing
-    # only happens once the run finishes), so it stays out of the line.
-    assert "Drafted" not in dlg.progress_row.detail.text()
+    assert "Verify online." in dlg.progress_row.detail.text()
+    # This is a fresh run, not a revision: no draft exists yet to revise, so
+    # the line never claims one is being revised.
+    assert "Revising" not in dlg.progress_row.detail.text()
 
 
 def test_completion_exception_reaches_dialog_and_recovers_to_input(anki, monkeypatch):
