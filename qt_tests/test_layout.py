@@ -734,7 +734,7 @@ def test_ai_input_quality_labels_dont_clip_and_hints_wrap(shot):
     elided, and the long sentence moves to a word-wrapped hint_label
     underneath, which must actually wrap rather than force the dialog wide."""
     _, q = harness.bootstrap()
-    s = shot("ai-input")
+    s = shot("ai-input", state="advanced")   # the radios live in Advanced now
     dlg = s.dialog
 
     for radio, label in ((dlg.thorough_radio, "Thorough"),

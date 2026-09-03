@@ -7,6 +7,7 @@ dialog mid-review discards it after a confirm (see _GenerateDialog.reject).
 """
 import html
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -18,13 +19,13 @@ from collections import deque
 
 from aqt import mw
 from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
-                    QDialogButtonBox, QFrame, QHBoxLayout,
-                    QKeySequence, QLabel, QPlainTextEdit, QPushButton,
+                    QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout,
+                    QKeySequence, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
                     QRadioButton, QScrollArea, QSpinBox,
                     QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
-from .ai_setup import run_connection_test_async
+from .ai_setup import LABEL_W, _wrapped_hint, run_connection_test_async
 from .config import (APP_NAME, TARGET_FIELDS, _cfg, load_ai_usage,
                      save_ai_usage, load_deck_skill, save_deck_skill,
                      load_user_skill, save_user_skill)
@@ -33,7 +34,7 @@ from .net import fetch_card_image
 from .palette import colors
 from .review import _CARET_CLOSED, _CARET_OPEN, _image_tag, _rich_label, _separator
 from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
-                 link_button, muted_label, title_label, tooltip)
+                 link_button, muted_label, section_rule, title_label, tooltip)
 from .widgets import CARET_GAP, CARET_W, chip_cell, chip_column_width
 
 # Note types a generated card may name. Keep in sync with
@@ -324,16 +325,120 @@ def _card_body_fields(card):
     return [(n, card["fields"].get(n, "")) for n in order if n not in skip]
 
 
+# The chips the input page's own rows can wear, measured as one column so all
+# four rows start their text at the same x (see widgets.chip_column_width).
+_INPUT_CHIPS = ("ready", "notsetup", "auto", "thorough", "quick", "deck", "skills")
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _plain(markup):
+    """A rich-text label's words with its markup taken out: what a row says,
+    rather than how it is marked up. Rows carry HTML so one line can hold a bold
+    noun and a muted detail, and a caller asking what the row says should not
+    have to know that."""
+    return html.unescape(_TAG_RE.sub("", markup or "")).strip()
+
+
+def _muted(text):
+    return f"<span style='color:{colors()['muted']}'>{html.escape(text)}</span>"
+
+
+class _InfoRow(QWidget):
+    """One settled decision on the input page: a chip saying where it stands, a
+    bold noun, a muted detail underneath, and the links that change it.
+
+    The same shape as ai_setup._BackendRow, deliberately: the wizard and the AI
+    Backends window are one flow, and a reader who has just chosen an assistant
+    in one should not have to learn a second vocabulary in the other. The chip
+    lives in its own fixed-width column, so every row's noun starts at the same
+    x whatever word its chip happens to be.
+    """
+
+    def __init__(self, chip, primary_html, detail="", links=()):
+        super().__init__()
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 6, CARET_GAP, 6)
+        lay.setSpacing(CARET_GAP)
+
+        # The chip is rebuilt in place rather than restyled, since chip_cell
+        # owns both the pill's colours and the column's width; the container is
+        # what stays put in the layout.
+        self.chip_kind = None
+        self._chip_box = QWidget()
+        self._chip_lay = QHBoxLayout(self._chip_box)
+        self._chip_lay.setContentsMargins(0, 0, 0, 0)
+        self._chip_lay.setSpacing(0)
+        lay.addWidget(self._chip_box, 0, Qt.AlignmentFlag.AlignTop)
+
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(2)
+        self.primary = QLabel(primary_html)
+        self.primary.setTextFormat(Qt.TextFormat.RichText)
+        self.primary.setWordWrap(True)
+        body_lay.addWidget(self.primary)
+        # Every wrapped line on this page goes through _wrapped_hint, so the
+        # page's own minimum height is the height its text really needs rather
+        # than one line per paragraph (see ai_setup._WrappedHint).
+        self.detail = _wrapped_hint(detail)
+        body_lay.addWidget(self.detail)
+        self.body_lay = body_lay
+        lay.addWidget(body, 1)
+
+        trailing = QWidget()
+        trail_lay = QHBoxLayout(trailing)
+        trail_lay.setContentsMargins(0, 0, 0, 0)
+        trail_lay.setSpacing(CARET_GAP)
+        self.links = {}
+        for label, on_click in links:
+            button = link_button(label, on_click=on_click)
+            self.links[label] = button
+            trail_lay.addWidget(button)
+        lay.addWidget(trailing, 0, Qt.AlignmentFlag.AlignTop)
+        self.set_chip(chip)
+
+    def set_chip(self, kind):
+        if kind == self.chip_kind and self._chip_lay.count():
+            return
+        self.chip_kind = kind
+        while self._chip_lay.count():
+            item = self._chip_lay.takeAt(0)
+            old = item.widget()
+            if old is not None:
+                # Detached now, not merely hidden and queued: deleteLater only
+                # runs on the next event loop pass, and until it does the old
+                # pill is still a child of this row, so anything reading the
+                # row's chip reads the word it used to say.
+                old.setVisible(False)
+                old.setParent(None)
+                old.deleteLater()
+        self._chip_lay.addWidget(chip_cell(kind, _INPUT_CHIPS))
+
+    def set_primary(self, markup):
+        self.primary.setText(markup)
+
+    def set_detail(self, text):
+        self.detail.setText(text)
+
+    def text(self):
+        """Everything this row says, as one string, markup stripped: what a test
+        reads instead of walking two labels that are one statement between them."""
+        return " ".join(t for t in (_plain(self.primary.text()),
+                                    _plain(self.detail.text())) if t)
+
+
 class _Session:
     """State shared by every page of the wizard."""
 
     def __init__(self):
         self.backend = None          # kind string
         self.cli_path = None
-        self.mode = "thorough"       # or "quick"
+        self.mode = "thorough"       # or "quick", resolved at Generate time
         self.source = ""
         self.instructions = ""
-        self.count = 10
+        self.count = None            # None: the assistant decides, up to the ceiling
         self.note_types = []         # selected type names
         self.deck_name = ""
         self.attachments = []        # [(path, {"text", "images", "images_undecoded"})]
@@ -369,7 +474,10 @@ class _GenerateDialog(QDialog):
         # than left to whatever the tallest page's natural sizeHint happens to be:
         # the input page's expanding source box used to set that for every page,
         # leaving the review and progress pages floating in space they never asked for.
-        open_w, open_h = 640, 680
+        # The same width the AI Backends window opens at (ai_setup.py's own
+        # open_size): the two carry the same rows, and a row that wraps in one
+        # and not the other reads as two different vocabularies.
+        open_w, open_h = 720, 680
         try:
             geo = QApplication.primaryScreen().availableGeometry()
             open_w = min(open_w, geo.width() - 60)
@@ -503,8 +611,11 @@ class _GenerateDialog(QDialog):
             f"Ready: {ai_cli.BACKENDS[s.backend]['label']} detected." if s.backend
             else "No enabled assistant detected yet. Configure one, then come back.")
         self.stack.setCurrentWidget(self.input_page if s.backend else self.setup_page)
-        if s.backend:
-            self._refresh_backend_row()
+        # Refreshed either way: the input page can be shown with nothing
+        # detected (its own row says so), and Generate's enablement reads the
+        # backend as well as the source.
+        self._refresh_backend_row()
+        self._source_changed()
 
     def _open_backends(self):
         from .ai_setup import open_ai_backends
@@ -513,66 +624,198 @@ class _GenerateDialog(QDialog):
 
     # === input ==================================================================
     def _build_input(self):
+        """The input page: what to make cards from, then one row per decision
+        the wizard has already made about the run, in the AI Backends window's
+        own vocabulary (chip, bold noun, muted detail, trailing links).
+
+        Every one of those decisions has a defensible default, so none of them
+        is a control the reader has to answer before generating: the exact
+        count, the depth, the note types and the destination deck all live
+        behind one Advanced disclosure that opens in place, under the rows it
+        overrides, rather than on a page or a dialog of its own. The rows stay
+        on screen while it is open, so a change made in there can be read back
+        off the row it changed.
+        """
         page = QWidget()
         lay = QVBoxLayout(page)
+        lay.addWidget(title_label("Generate cards"))
+        lay.addWidget(_wrapped_hint(
+            "Paste what you are studying. The assistant reads it under the deck's "
+            "own authoring rules, decides how many cards it deserves, and shows "
+            "you every draft before anything is added."))
 
         self.source_box = QPlainTextEdit()
         self.source_box.setPlaceholderText(
             "Paste lecture notes, an article excerpt, or a topic outline")
         self.source_box.textChanged.connect(self._source_changed)
-        lay.addWidget(QLabel("Source material"))
-        lay.addWidget(self.source_box)
-        self.char_label = hint_label("0 characters")
-        lay.addWidget(self.char_label)
+        lay.addWidget(self.source_box, 1)
 
+        # Attach, what is attached, and how much material there is: one line,
+        # with the character count pushed to the right edge, since it is the
+        # number a reader compares against the soft limit rather than reads
+        # inline with the filenames.
         self.attach_btn = QPushButton("Attach images or PDFs")
         self.attach_btn.clicked.connect(lambda: self._guard(self._attach))
         self.attach_label = hint_label("No files attached")
+        self.char_label = hint_label("0 characters")
         attach_row = QHBoxLayout()
         attach_row.addWidget(self.attach_btn)
         attach_row.addWidget(self.attach_label)
+        attach_row.addStretch()
+        attach_row.addWidget(self.char_label)
         lay.addLayout(attach_row)
 
-        self.instructions_box = QPlainTextEdit()
-        self.instructions_box.setMaximumHeight(60)
+        lay.addWidget(section_rule())
+        # One line, not a box: a focus note is a phrase, and a multi-line box
+        # invited a second copy of the source material into it.
+        self.instructions_box = QLineEdit()
         self.instructions_box.setPlaceholderText(
             'Anything specific to focus on, e.g. "emphasize dosing"')
-        lay.addWidget(QLabel("Instructions (optional)"))
         lay.addWidget(self.instructions_box)
 
-        # The radio itself carries only the short, stable name; the per-backend
-        # truthful sentence (ai_cli.BACKENDS' "modes", set once a backend is known,
-        # see _refresh_backend_row) moves to a hint_label underneath, word-
-        # wrapped. A radio button doesn't wrap its own text, and that sentence runs
-        # 150-200 characters, which used to set the radio's sizeHint to its full
-        # width and, since a stacked widget's minimum is the max of its pages,
-        # forced the whole dialog to roughly 1000px wide on every page. What mode
-        # enforcement actually exists differs by backend, so the sentence still has
-        # to be shown in full, honestly, per backend: it just no longer has to be
-        # the thing that can't wrap.
+        lay.addWidget(section_rule())
+        self.backend_row = _InfoRow(
+            "notsetup", "<b>Backend</b>", "",
+            links=(("Test", lambda: self._guard(self._test_backend_connection)),
+                   ("Setup", lambda: self._guard(self._open_backends))))
+        self.backend_test_btn = self.backend_row.links["Test"]
+        self.change_link = self.backend_row.links["Setup"]
+        # The test's own answer is a second muted line under the safety
+        # sentence rather than folded into it: it is written by a background
+        # poll that knows nothing about the rest of the row.
+        self.backend_test_status = _wrapped_hint("Not tested yet")
+        self.backend_row.body_lay.addWidget(self.backend_test_status)
+        lay.addWidget(self.backend_row)
+
+        self.depth_row = _InfoRow(
+            "auto", "<b>Cards and depth</b>", "",
+            links=(("Advanced", lambda: self._guard(self._toggle_advanced)),))
+        self.advanced_link = self.depth_row.links["Advanced"]
+        lay.addWidget(self.depth_row)
+
+        self.deck_row = _InfoRow(
+            "deck", "<b>Deck</b>", "",
+            links=(("Change", lambda: self._guard(self._change_deck)),))
+        lay.addWidget(self.deck_row)
+
+        self.skills_row = _InfoRow(
+            "skills", "", "Sent in that order on every run.",
+            links=(("View", lambda: self._guard(self._view_skills)),
+                   ("Edit my rules", lambda: self._guard(self._edit_user_skill))))
+        self.skills_link = self.skills_row.links["View"]
+        self.rules_link = self.skills_row.links["Edit my rules"]
+        lay.addWidget(self.skills_row)
+
+        lay.addWidget(self._build_advanced())
+
+        lay.addStretch()
+        lay.addWidget(section_rule())
+        bb = QDialogButtonBox()
+        bb.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
+        self.generate_btn = bb.addButton(
+            "Generate", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.generate_btn.setEnabled(False)
+        self.generate_btn.setDefault(True)
+        bb.rejected.connect(self.reject)
+        bb.accepted.connect(lambda: self._guard(self._start_generation))
+        lay.addWidget(bb)
+        self.usage_row = hint_label("")
+        lay.addWidget(self.usage_row)
+
+        self._refresh_depth_row()
+        self._refresh_deck_row()
+        self._refresh_skills_row()
+        return page
+
+    def _advanced_label(self, text):
+        """A label in the Advanced grid's own column. Minimum width rather than
+        ai_setup._SettingsPanel's fixed width, since "Exact number of cards" is
+        longer than that column and a fixed width would clip it; the column
+        still starts every field at one x, which is the property that matters.
+        """
+        lbl = QLabel(text)
+        lbl.setMinimumWidth(LABEL_W)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        return lbl
+
+    def _build_advanced(self):
+        """Everything the wizard already decided, offered for overriding: the
+        exact count, the depth, the note types, and where the cards land.
+
+        Hidden until asked for, and laid out as the same fixed-label-column grid
+        the AI Backends window's settings panel uses, so every control in it
+        starts at one left edge instead of stepping in and out with its label.
+        """
+        cfg = _cfg()
+        panel = QWidget()
+        grid = QGridLayout(panel)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(CARET_GAP)
+        grid.setVerticalSpacing(6)
+        grid.setColumnMinimumWidth(0, LABEL_W)
+        grid.setColumnStretch(1, 1)
+
+        self.count_spin = QSpinBox()
+        # 0 is not "no cards": it is the minimum, and a QSpinBox shows its
+        # special value text there instead of the number, which is how this
+        # says "auto" without a second checkbox to mean the same thing.
+        self.count_spin.setRange(0, ai_logic.AUTO_COUNT_CEILING)
+        self.count_spin.setSpecialValueText("auto")
+        self.count_spin.setValue(cfg["ai_default_count"])
+        self.count_spin.valueChanged.connect(lambda _v: self._refresh_depth_row())
+        count_box = QWidget()
+        count_lay = QHBoxLayout(count_box)
+        count_lay.setContentsMargins(0, 0, 0, 0)
+        count_lay.setSpacing(CARET_GAP)
+        count_lay.addWidget(self.count_spin)
+        count_lay.addWidget(hint_label(
+            f"blank lets the assistant decide, up to {ai_logic.AUTO_COUNT_CEILING}"), 1)
+        grid.addWidget(self._advanced_label("Exact number of cards"), 0, 0)
+        grid.addWidget(count_box, 0, 1)
+
+        # The radio carries only the short, stable name; the per-backend
+        # sentence (ai_cli.BACKENDS' "modes", set in _refresh_backend_row) wraps
+        # underneath. A radio button does not wrap its own text, and that
+        # sentence runs 150-200 characters, which used to set the whole
+        # dialog's minimum width on every page.
         self.thorough_radio = QRadioButton("Thorough")
         self.quick_radio = QRadioButton("Quick draft")
         for radio in (self.thorough_radio, self.quick_radio):
             radio.setStyleSheet("font-weight: 600;")
-        self.thorough_radio.setChecked(True)
-        self.thorough_hint = hint_label("")
-        self.quick_hint = hint_label("")
-        lay.addWidget(QLabel("Quality"))
-        lay.addWidget(self.thorough_radio)
-        lay.addWidget(self.thorough_hint)
-        lay.addWidget(self.quick_radio)
-        lay.addWidget(self.quick_hint)
+        depth = cfg["ai_default_depth"]
+        self._syncing_depth = False
+        (self.quick_radio if depth == "quick" else self.thorough_radio).setChecked(True)
+        # A depth set in config is a decision already taken, so it counts as
+        # touched; anything else leaves the material to decide. Connected only
+        # after that seeding, so seeding never reads as a click.
+        self._depth_touched = depth in ("thorough", "quick")
+        for radio in (self.thorough_radio, self.quick_radio):
+            radio.toggled.connect(lambda _c: self._depth_chosen())
+        depth_box = QWidget()
+        depth_lay = QHBoxLayout(depth_box)
+        depth_lay.setContentsMargins(0, 0, 0, 0)
+        depth_lay.setSpacing(CARET_GAP)
+        depth_lay.addWidget(self.thorough_radio)
+        depth_lay.addWidget(self.quick_radio)
+        depth_lay.addStretch()
+        grid.addWidget(self._advanced_label("Depth"), 1, 0)
+        grid.addWidget(depth_box, 1, 1)
 
-        self.count_spin = QSpinBox()
-        self.count_spin.setRange(1, 50)
-        self.count_spin.setValue(10)
-        count_row = QHBoxLayout()
-        count_row.addWidget(QLabel("Target count"))
-        count_row.addWidget(self.count_spin)
-        lay.addLayout(count_row)
+        self.thorough_hint = _wrapped_hint("")
+        self.quick_hint = _wrapped_hint("")
+        modes_box = QWidget()
+        modes_lay = QVBoxLayout(modes_box)
+        modes_lay.setContentsMargins(0, 0, 0, 0)
+        modes_lay.setSpacing(2)
+        modes_lay.addWidget(self.thorough_hint)
+        modes_lay.addWidget(self.quick_hint)
+        grid.addWidget(modes_box, 2, 1)
 
         self.type_boxes = {}
-        lay.addWidget(QLabel("Note types"))
+        types_box = QWidget()
+        types_lay = QVBoxLayout(types_box)
+        types_lay.setContentsMargins(0, 0, 0, 0)
+        types_lay.setSpacing(2)
         for name in FIELD_MAP:
             # Study Deck - Image ID isn't offered here at all: its primary
             # field IS the image, and a card's images travel separately from
@@ -602,77 +845,189 @@ class _GenerateDialog(QDialog):
                     f'"{name}" isn\'t in this collection yet. Sync your Intern '
                     "Pearls decks at least once to add it, or generate onto "
                     "Basic/Cloze instead.")
+            box.toggled.connect(lambda _c: self._refresh_deck_row())
             self.type_boxes[name] = box
-            lay.addWidget(box)
+            types_lay.addWidget(box)
+        grid.addWidget(self._advanced_label("Note types"), 3, 0)
+        grid.addWidget(types_box, 3, 1)
 
         self.deck_combo = QComboBox()
         self.deck_combo.setEditable(True)
         self.deck_combo.addItem(self.session.deck_name)
-        lay.addWidget(QLabel("Destination deck"))
-        lay.addWidget(self.deck_combo)
+        self.deck_combo.currentTextChanged.connect(lambda _t: self._refresh_deck_row())
+        grid.addWidget(self._advanced_label("Destination deck"), 4, 0)
+        grid.addWidget(self.deck_combo, 4, 1)
 
-        backend_row_lay = QHBoxLayout()
-        self.backend_row = hint_label("")
-        self.change_link = link_button(
-            "Setup", on_click=lambda: self._guard(self._open_backends))
-        backend_row_lay.addWidget(self.backend_row, 1)
-        backend_row_lay.addWidget(self.change_link)
-        lay.addLayout(backend_row_lay)
+        self.advanced_panel = panel
+        panel.setVisible(False)
+        return panel
 
-        backend_test_row = QHBoxLayout()
-        self.backend_test_btn = link_button(
-            "Test connection",
-            on_click=lambda: self._guard(self._test_backend_connection))
-        self.backend_test_status = hint_label("Not tested yet")
-        backend_test_row.addWidget(self.backend_test_btn)
-        backend_test_row.addWidget(self.backend_test_status, 1)
-        lay.addLayout(backend_test_row)
-        skills_row = QHBoxLayout()
-        self.skills_link = link_button("View skills", on_click=self._view_skills)
-        self.rules_link = link_button(
-            "Edit my rules", on_click=lambda: self._guard(self._edit_user_skill))
-        skills_row.addWidget(self.skills_link)
-        skills_row.addWidget(self.rules_link)
-        skills_row.addStretch()
-        lay.addLayout(skills_row)
-        self.usage_row = hint_label("")
-        lay.addWidget(self.usage_row)
+    def _toggle_advanced(self):
+        """Open (or close) Advanced. In place, not a page of its own: the rows
+        above stay on screen and keep saying what they say, so a reader can see
+        what a change in here actually changed."""
+        shown = not self.advanced_panel.isVisible()
+        self.advanced_panel.setVisible(shown)
+        self.advanced_link.setText("Hide advanced" if shown else "Advanced")
 
-        lay.addStretch()
-        bb = QDialogButtonBox()
-        bb.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
-        self.generate_btn = bb.addButton(
-            "Generate", QDialogButtonBox.ButtonRole.AcceptRole)
-        self.generate_btn.setEnabled(False)
-        self.generate_btn.setDefault(True)
-        bb.rejected.connect(self.reject)
-        bb.accepted.connect(lambda: self._guard(self._start_generation))
-        lay.addWidget(bb)
-        return page
+    def _change_deck(self):
+        """The Deck row's own link. There is one deck chooser and it lives in
+        Advanced, so this opens that rather than a second one of its own."""
+        if not self.advanced_panel.isVisible():
+            self._toggle_advanced()
+        self.deck_combo.setFocus()
+
+    def _depth_chosen(self):
+        """A depth the learner picked outranks the one the material implies, for
+        the rest of this session. Never written to config: the wizard reads
+        ai_default_depth, it does not set it.
+
+        Ignored while _refresh_depth_row is moving the radios itself: showing
+        the reader which depth the material implies must not read as them
+        having chosen it."""
+        if self._syncing_depth:
+            return
+        self._depth_touched = True
+        self._refresh_depth_row()
+
+    def _resolved_count(self):
+        """The exact number to ask for, or None to leave it to the assistant."""
+        value = self.count_spin.value()
+        return value if value else None
+
+    def _resolved_mode(self):
+        """The depth this run will actually use: the learner's own pick if there
+        was one, else what the material's own length and attachments imply."""
+        if self._depth_touched:
+            return "thorough" if self.thorough_radio.isChecked() else "quick"
+        return ai_logic.default_mode(len(self.source_box.toPlainText()),
+                                     len(self.session.attachments))
+
+    def _refresh_depth_row(self):
+        """What the Cards and depth row says, recomputed from everything that
+        can change its answer: the count, the radios, the material's length and
+        whatever is attached."""
+        count = self._resolved_count()
+        if count is None:
+            said = (f"The assistant decides the count, up to "
+                    f"{ai_logic.AUTO_COUNT_CEILING}.")
+        else:
+            said = f"Exactly {plural(count, 'card')}."
+        thorough = ("drafts, may verify online, then self-reviews")
+        quick = "exactly one turn, no web access"
+        undecided = (not self.source_box.toPlainText().strip()
+                     and not self.session.attachments)
+        if self._depth_touched:
+            mode = self._resolved_mode()
+            why = ("Thorough, your choice" if mode == "thorough"
+                   else "Quick, your choice")
+        elif undecided:
+            mode = "auto"
+            why = None
+            said += (" Depth follows the source: thorough for longer material or "
+                     "attachments, quick otherwise.")
+        else:
+            mode = self._resolved_mode()
+            if mode == "thorough":
+                why = ("Thorough because you attached a file"
+                       if self.session.attachments
+                       else f"Thorough because the source is over "
+                            f"{ai_logic.AUTO_DEPTH_CHARS:,} characters")
+            else:
+                why = "Quick because the source is short"
+        if why:
+            said += f" {why}: {thorough if mode == 'thorough' else quick}."
+        self.depth_row.set_chip(mode)
+        self.depth_row.set_detail(said)
+        if not self._depth_touched:
+            # Advanced has to open on the depth this run would really use, not on
+            # a stale one: an untouched radio pair is a readout, and only becomes
+            # a choice when the reader moves it.
+            self._syncing_depth = True
+            try:
+                thorough_mode = self._resolved_mode() == "thorough"
+                # Both, explicitly: a real QRadioButton unchecks its sibling for
+                # us, but saying so is what keeps this readout honest wherever
+                # the two are not in one exclusive group.
+                self.thorough_radio.setChecked(thorough_mode)
+                self.quick_radio.setChecked(not thorough_mode)
+            finally:
+                self._syncing_depth = False
+
+    def _refresh_deck_row(self):
+        """Where accepted cards land, and on which note types."""
+        deck = self.deck_combo.currentText().strip() or self.session.deck_name
+        chosen = [n for n, b in self.type_boxes.items() if b.isChecked()]
+        if len(chosen) > 1:
+            types = ", ".join(chosen[:-1]) + " and " + chosen[-1] + "."
+        elif chosen:
+            types = chosen[0] + "."
+        else:
+            types = "No note type selected yet: pick one under Advanced."
+        self.deck_row.set_detail(f"{deck}. Every accepted card lands here, as {types}"
+                                 if chosen else f"{deck}. {types}")
+
+    def _refresh_skills_row(self):
+        """What gets sent on top of the material, in the order it is sent."""
+        parts = ["Bundled"]
+        deck = load_deck_skill()
+        if deck and deck.get("enabled"):
+            parts.append(f"deck skill v{deck.get('version')}")
+        if load_user_skill().strip():
+            parts.append("my rules")
+        self.skills_row.set_primary(f"<b>{html.escape(', '.join(parts))}</b>")
 
     def _source_changed(self):
         text = self.source_box.toPlainText()
         n = len(text)
         warn = "; consider splitting the material" if n > SOFT_SOURCE_LIMIT else ""
         self.char_label.setText(f"{n:,} characters{warn}")
-        self.generate_btn.setEnabled(bool(text.strip()))
+        # Both halves of "can this run at all": material to work from, and an
+        # assistant to work through. The button used to go live on the source
+        # alone, which offered a Generate that could only fail.
+        self.generate_btn.setEnabled(bool(text.strip()) and bool(self.session.backend))
+        self._refresh_depth_row()
 
     def _refresh_backend_row(self):
+        """What the Backend row says: which assistant this run goes through, on
+        what model and effort, and what it is allowed to do while it runs.
+
+        Also handles having no assistant at all, since this page can be reached
+        with none detected: the row then says so and says what to do about it,
+        rather than naming a backend that isn't there.
+        """
         s = self.session
+        if not s.backend:
+            self.backend_row.set_chip("notsetup")
+            self.backend_row.set_primary("<b>Backend</b>")
+            self.backend_row.set_detail(
+                "No assistant found. Install one, sign in once in a terminal, "
+                "then set it up here.")
+            self.backend_test_btn.setVisible(False)
+            self.backend_test_status.setText("")
+            self.thorough_hint.setText("")
+            self.quick_hint.setText("")
+            self.usage_row.setText("")
+            return
         meta = ai_cli.BACKENDS[s.backend]
         cfg = _cfg()
         model = cfg["ai_model"][s.backend] or meta["default_model"]
         effort = cfg["ai_effort"][s.backend] or meta["default_effort"]
-        bits = [meta["label"], model or "default model"]
+        bits = [model or "default model"]
         if effort and meta.get("effort_levels"):
             bits.append(f"{effort} effort")
-        self.backend_row.setText("Backend: " + ", ".join(bits))
+        self.backend_row.set_chip("ready")
+        self.backend_row.set_primary(
+            f"<b>Backend:</b> {html.escape(meta['label'])}, "
+            f"{_muted(', '.join(bits))}")
+        self.backend_row.set_detail(f"{meta['safety']}.")
+        self.backend_test_btn.setVisible(True)
+        self.backend_test_status.setText("Not tested yet")
         self.thorough_hint.setText(meta["modes"]["thorough"])
         self.quick_hint.setText(meta["modes"]["quick"])
         reg = load_ai_usage()
         self.usage_row.setText(ai_logic.usage_line(
             reg, s.backend, now=time.time(), free_tier=(s.backend == "agy")))
-        self.backend_test_status.setText("Not tested yet")
 
     def _test_backend_connection(self):
         s = self.session
@@ -710,6 +1065,9 @@ class _GenerateDialog(QDialog):
         self.attach_label.setText(
             ", ".join(os.path.basename(p) for p, _ in s.attachments)
             or "No files attached")
+        # An attachment is one of the two things the depth default reads, so the
+        # row has to re-answer as soon as one lands.
+        self._refresh_depth_row()
         # Anki's own bundled Python doesn't carry Pillow, which pypdf needs to
         # decode a PDF's embedded images (its text still comes through fine):
         # say so once per session, right when it happens, rather than leaving
@@ -724,6 +1082,7 @@ class _GenerateDialog(QDialog):
         dlg = _UserSkillDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             save_user_skill(dlg.text())
+            self._refresh_skills_row()
 
     def _view_skills(self):
         """Show what's actually sent to the model. Dismissing this dialog (Close,
@@ -771,6 +1130,12 @@ class _GenerateDialog(QDialog):
 
         _ask_scrollable(_body(deck), yes_label="Close", no_label=None,
                         extra_label=_label_for(deck), on_extra=_toggle)
+        # Consent can have been flipped in there, and the Skills row names what
+        # is actually sent, so it has to be re-read rather than left stale. Only
+        # when there is one: this method is also reachable on a dialog whose
+        # input page was never built.
+        if "skills_row" in self.__dict__:
+            self._refresh_skills_row()
 
     # === progress ===============================================================
     def _build_progress(self):
@@ -813,12 +1178,16 @@ class _GenerateDialog(QDialog):
                 s.cards, s.included, s.notes = [], [], {}
                 s.updated, s.image_data = set(), {}
                 s.revision_shape_mismatch = False
-        s.mode = "thorough" if self.thorough_radio.isChecked() else "quick"
+        # The depth the learner picked if they picked one, else the one the
+        # material's own length and attachments imply (ai_logic.default_mode).
+        s.mode = self._resolved_mode()
         self._duration_estimate = ai_logic.duration_estimate_line(
             load_ai_usage(), s.backend, s.mode)
         s.source = self.source_box.toPlainText()
-        s.instructions = self.instructions_box.toPlainText()
-        s.count = self.count_spin.value()
+        s.instructions = self.instructions_box.text()
+        # None means automatic: no number is sent and the assistant makes one
+        # card per point the source teaches, up to ai_logic.AUTO_COUNT_CEILING.
+        s.count = self._resolved_count()
         s.note_types = [n for n, b in self.type_boxes.items() if b.isChecked()]
         s.deck_name = self.deck_combo.currentText().strip() or s.deck_name
         if s.scratch is None:

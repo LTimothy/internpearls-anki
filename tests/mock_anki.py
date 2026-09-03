@@ -896,6 +896,13 @@ class QWidget:
     def setObjectName(self, n):
         pass
 
+    def setParent(self, parent):
+        """Qt's reparenting, used to detach a widget the moment it is replaced
+        rather than when deleteLater eventually runs. There is no parent chain
+        here (see node()), and a widget already taken out of its layout is out of
+        everything this mock walks, so this only has to exist."""
+        pass
+
     def setToolTip(self, t):
         self._tooltip = t
 
@@ -1342,10 +1349,16 @@ class QSpinBox(QWidget):
     def __init__(self, *a, **k):
         super().__init__()
         self._value, self._min, self._max, self._suffix = 0, 0, 99, ""
+        self._special = ""
         self.valueChanged = Signal()
 
     def setRange(self, lo, hi):
         self._min, self._max = lo, hi
+
+    def setSpecialValueText(self, text):
+        """What a real QSpinBox shows in place of its minimum value, which is how
+        the AI wizard's Advanced panel says "auto" rather than "0"."""
+        self._special = text
 
     def setValue(self, v):
         self._value = int(v)
@@ -1360,7 +1373,7 @@ class QSpinBox(QWidget):
     def node(self):
         return {"t": "spin", "id": self.wid, "value": self._value,
                 "min": self._min, "max": self._max, "suffix": self._suffix,
-                "enabled": self._enabled}
+                "special": self._special, "enabled": self._enabled}
 
 
 class _LayoutItem:

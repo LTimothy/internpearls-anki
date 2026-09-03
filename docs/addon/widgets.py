@@ -38,7 +38,15 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
          # own words, mapped onto the existing role pairs below.
          "found": "FOUND", "notfound": "NOT FOUND",
          "notresponding": "NOT RESPONDING", "ignored": "IGNORED",
-         "preferred": "PREFERRED"}
+         "preferred": "PREFERRED",
+         # The AI wizard's input-page row kinds (ai_dialog._build_input). Its
+         # own words rather than the detection window's: a backend a learner
+         # has not set up yet is not a detection result, and the depth the
+         # assistant settled on is a decision about this run, not a verdict on
+         # anything. AUTO/THOROUGH/QUICK are the three answers one row gives.
+         "ready": "READY", "notsetup": "NOT SET UP",
+         "auto": "AUTO", "thorough": "THOROUGH", "quick": "QUICK",
+         "deck": "DECK", "skills": "SKILLS"}
 
 # A chip's palette role prefix, keyed by its kind. Not a 1:1 string match: "changed"
 # reuses the existing "updated_bg"/"updated_fg" pair rather than a "changed_bg" this
@@ -57,7 +65,17 @@ _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "mo
           # "preferred" borrows new, the one role that reads as a marker rather
           # than a verdict: it says which row the settings below belong to.
           "found": "accept", "notfound": "decline", "notresponding": "updated",
-          "ignored": "retired", "preferred": "new"}
+          "ignored": "retired", "preferred": "new",
+          # A ready backend is a clean result (accept) and one that is not set
+          # up yet reads as a decline, the same pairing the detection window
+          # already uses. The three depth answers borrow "new", the role that
+          # reads as a marker rather than a verdict, since none of them is
+          # good or bad news. DECK and SKILLS are labels on rows that never
+          # change: they name what a row is about, so they take the quietest
+          # role there is rather than colouring a decision nobody made.
+          "ready": "accept", "notsetup": "decline",
+          "auto": "new", "thorough": "new", "quick": "new",
+          "deck": "retired", "skills": "retired"}
 
 # Everything about a pill except its two colours: the shape and the type size, shared
 # between the real pill and the probe that measures it, so the measurement can never
