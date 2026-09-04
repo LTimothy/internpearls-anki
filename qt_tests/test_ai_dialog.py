@@ -877,6 +877,21 @@ def test_review_rows_render_in_light_and_dark(tmp_path):
             assert dlg.decision_cells[1].buttons["skip"].isChecked()
             assert dlg.note_boxes[1].isVisible()
             assert "half-time only" in dlg.note_boxes[1].toPlainText()
+            # The note box sits under the card's own text, not flush with the
+            # page's left edge: its x (within its own indent-margin wrapper)
+            # must match the body's own indented content (here, the "links"
+            # row Edit/Add note sit in, a direct child of the body's own
+            # indent-margin layout) at the same x. A hidden widget's geometry
+            # is stale (Qt skips laying out an invisible item), so row 1's
+            # body is opened here too, alongside the note box Skip already
+            # revealed, rather than reading either widget's x cold.
+            _, q = harness.bootstrap()
+            carets = [b for b in dlg.findChildren(q.QPushButton)
+                     if b.text() in (ai_dialog._CARET_CLOSED, ai_dialog._CARET_OPEN)]
+            carets[1].click()
+            harness.app().processEvents()
+            links_widget = dlg._add_note_buttons[1].parent()
+            assert dlg.note_boxes[1].x() == links_widget.x()
             png = os.path.join(out_dir, fname)
             dlg.grab().toImage().save(png, "PNG")
             assert os.path.exists(png)
