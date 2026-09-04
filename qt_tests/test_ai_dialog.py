@@ -866,7 +866,9 @@ def test_review_rows_render_in_light_and_dark(tmp_path):
     import os
     from internpearls import ai_dialog
 
-    out_dir = __import__("tempfile").mkdtemp(prefix="render-test-")
+    # IP_SHOT_DIR lets a developer collect the PNGs somewhere stable; CI has no
+    # such folder, so the test's own tmp_path is the default.
+    out_dir = os.environ.get("IP_SHOT_DIR") or str(tmp_path)
     os.makedirs(out_dir, exist_ok=True)
 
     try:
