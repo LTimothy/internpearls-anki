@@ -3,6 +3,21 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.59.1
+
+An Antigravity run reported "SUCCESS" and still produced no cards. It had spent nearly
+its whole turn thinking, tried to look outside its scratch folder and run a command,
+had both refused by the headless sandbox, and then stopped without ever writing a
+reply. The add-on caught this as "no usable reply," with the raw stream JSON pasted
+into the dialog, which was neither readable nor actionable. It now recognizes an empty
+reply as its own case: a single plain sentence naming how long the run took and how
+many tools the sandbox refused, and the add-on retries once on its own, telling the
+assistant plainly not to touch any tool or folder outside scratch. If the retry also
+comes back empty, the dialog says so and points at trying again, picking a lower-effort
+model, or using another assistant. Antigravity's own prompt now spells out the same
+scratch-folder restriction up front, so a run is less likely to wander outside it in
+the first place.
+
 ## v0.59.0
 
 A run used to be stopped by a fixed clock: 120 seconds for a Quick draft, 360 for a
