@@ -203,7 +203,9 @@ def test_ai_backends_dialog_fits_a_laptop_screen_unscrolled(monkeypatch):
     for found in ((), ("claude", "codex", "agy")):
         dlg = _dialog(monkeypatch, found=found)
         height = dlg.sizeHint().height()
-        assert height <= 640, (
+        # 660, not 640: the v0.60.0 safety sentences are longer, since they now
+        # spell out the sandboxed toolset each backend actually gets.
+        assert height <= 660, (
             f"AI Backends is {height}px tall with found={found or 'nothing'}")
 
         geo = QApplication.primaryScreen().availableGeometry()
