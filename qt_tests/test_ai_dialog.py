@@ -178,14 +178,14 @@ def test_review_row_renders_a_real_image_thumbnail(monkeypatch, tmp_path):
     assert "example.com" in text
 
 
-def test_review_checkbox_click_updates_count_and_button_label(monkeypatch):
-    """Bug: clicking a review card's checkbox visibly did nothing: the box
-    stayed checked, the "N included" header never moved, and the Import
-    button's label never moved. The underlying wiring (toggled -> write
+def test_review_decision_click_updates_count_and_button_label(monkeypatch):
+    """Bug: clicking a review card's decision control visibly did nothing: the
+    control stayed on Include, the "N included" header never moved, and the
+    Import button's label never moved. The underlying wiring (on_change -> write
     session.included) actually worked; nothing ever refreshed the header or
-    button off that write, so a toggle that DID happen left no visible sign it
+    button off that write, so a click that DID happen left no visible sign it
     had, which reads exactly like a broken control. Drives the real
-    QCheckBox's own click() (a genuine Qt press+release, not a direct call
+    QPushButton's own click() (a genuine Qt press+release, not a direct call
     into session state), so this fails again if the widget wiring itself ever
     breaks, not just the summary refresh.
     """
@@ -221,18 +221,18 @@ def test_review_checkbox_click_updates_count_and_button_label(monkeypatch):
     assert "2 included" in dlg.review_header.text()
     assert dlg.import_btn.text() == "Import 2 cards"
 
-    box0 = dlg.include_boxes[0]
-    box0.click()
+    cell0 = dlg.decision_cells[0]
+    cell0.buttons["skip"].click()
     app.processEvents()
 
-    assert box0.isChecked() is False                     # the widget itself flips
+    assert cell0.buttons["skip"].isChecked() is True      # the control itself flips
     assert dlg.session.included == [False, True]          # and the model behind it
     assert "1 included" in dlg.review_header.text()       # ...visibly, in the header
     assert dlg.import_btn.text() == "Import 1 card"       # ...and the button
 
-    box0.click()   # toggling back must be just as visible
+    cell0.buttons["include"].click()   # toggling back must be just as visible
     app.processEvents()
-    assert box0.isChecked() is True
+    assert cell0.buttons["include"].isChecked() is True
     assert dlg.session.included == [True, True]
     assert "2 included" in dlg.review_header.text()
     assert dlg.import_btn.text() == "Import 2 cards"
@@ -829,3 +829,59 @@ def test_review_row_paints_the_svg_and_drops_the_name_once_expanded(shot):
     assert "[image: drawn figure]" not in text
     body_images = [l for l in dlg.findChildren(q.QLabel) if "<img" in l.text()]
     assert body_images, "the expanded body must paint the resolved SVG thumbnail"
+
+
+def _build_review_render_dialog(theme):
+    """Three drafted cards: row 0 is expanded, row 1 is skipped with a note (both
+    visible whether the row is open or not), row 2 stays a plain Include row."""
+    _, q = harness.bootstrap()
+    app = harness.app()
+    harness.apply_theme(theme)
+    from internpearls import ai_dialog, ai_logic
+
+    harness._ai_backend_available()
+    dlg = ai_dialog._GenerateDialog()
+    s = dlg.session
+    cards = harness._ai_synthetic_cards(3)
+    s.cards = cards
+    s.included = [True, False, True]
+    s.notes = {1: "make it one short cloze on the half-time only"}
+    s.checks = ai_logic.mechanical_checks(cards, {}, {})
+    dlg._rebuild_review()
+    dlg.stack.setCurrentWidget(dlg.review_page)
+    dlg.resize(720, 620)
+    dlg.show()
+    app.processEvents()
+    carets = [b for b in dlg.findChildren(q.QPushButton)
+             if b.text() in (ai_dialog._CARET_CLOSED, ai_dialog._CARET_OPEN)]
+    carets[0].click()
+    app.processEvents()
+    return dlg
+
+
+def test_review_rows_render_in_light_and_dark(tmp_path):
+    """One row expanded, one skipped with a note, in both themes: a rendered PNG
+    for a human to eyeball, and a check that the decision control and the note box
+    both actually painted."""
+    import os
+    from internpearls import ai_dialog
+
+    out_dir = ("/private/tmp/claude-501/-Users-tim-Claude-Code/"
+              "602a1035-6350-457d-8113-d6af3530df6f/scratchpad")
+    os.makedirs(out_dir, exist_ok=True)
+
+    try:
+        for theme, fname in (("light", "ai-review-v0.60-light.png"),
+                             ("dark", "ai-review-v0.60-dark.png")):
+            dlg = _build_review_render_dialog(theme)
+            assert dlg.decision_cells[1].buttons["skip"].isChecked()
+            assert dlg.note_boxes[1].isVisible()
+            assert "half-time only" in dlg.note_boxes[1].toPlainText()
+            png = os.path.join(out_dir, fname)
+            dlg.grab().toImage().save(png, "PNG")
+            assert os.path.exists(png)
+    finally:
+        # Theme state is a process-wide singleton (harness.bootstrap's stub theme
+        # manager), not reset per test: leaving it on "dark" would leak into a later
+        # test that assumes the default light theme without setting its own.
+        harness.apply_theme("light")
