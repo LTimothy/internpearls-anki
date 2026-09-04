@@ -35,8 +35,9 @@ from .net import fetch_card_image
 from .palette import colors
 from .review import (_CARET_CLOSED, _CARET_OPEN, _ClickableLabel, _image_tag,
                      _preview_style, _rich_label, _separator)
-from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
-                 link_button, muted_label, section_rule, title_label, tooltip)
+from .ui import (_ask, _ask_scrollable, _info, _safe, _warn, hint_label,
+                 link_button, muted_label, section_label, section_rule, title_label,
+                 tooltip)
 from .widgets import (CARET_GAP, CARET_W, align_field_column, chip_cell,
                       chip_column_width, decision_cell, field_slot,
                       row_text_indent)
@@ -133,6 +134,57 @@ class _UserSkillDialog(QDialog):
         if len(self.editor.toPlainText()) > ai_logic.USER_SKILL_MAX_CHARS:
             return
         super().accept()
+
+
+# A field's edit box height, in lines of its own font: Front/Back/Text carry the
+# card's core prompt so they get the most room, Why is the longest field on a card,
+# and everything else (Dosing, Notes, Image, and any field not listed here, e.g. Tag
+# or Back Extra) is short enough for two.
+_EDIT_FIELD_LINES = {"Front": 3, "Back": 3, "Text": 3, "Why": 5}
+_EDIT_FIELD_LINES_DEFAULT = 2
+
+
+def _lines_height(edit, lines):
+    """A QPlainTextEdit's fixed height for `lines` rows of its own font (the same
+    estimate review.py's feedback-digest box uses for its own content-sized box)."""
+    metrics = edit.fontMetrics()
+    return int(lines * metrics.lineSpacing() + edit.document().documentMargin() * 2
+              + edit.frameWidth() * 2) + 4
+
+
+class _EditCardDialog(QDialog):
+    """Edit card: every field on one card, plus its tags, in one dialog rather than
+    the old prompt-per-field chain (one modal per field, no way to touch tags at all,
+    and no way to see the whole card while editing one piece of it)."""
+
+    def __init__(self, parent, card):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME}: Edit card")
+        lay = QVBoxLayout(self)
+        lay.addWidget(muted_label(html.escape(card["note_type"])))
+        self._field_edits = {}
+        for name in FIELD_MAP[card["note_type"]]:
+            lay.addWidget(section_label(name, top_margin=6))
+            edit = QPlainTextEdit(card["fields"].get(name, ""))
+            edit.setFixedHeight(_lines_height(
+                edit, _EDIT_FIELD_LINES.get(name, _EDIT_FIELD_LINES_DEFAULT)))
+            lay.addWidget(edit)
+            self._field_edits[name] = edit
+        lay.addWidget(section_label("Tags", top_margin=6))
+        self.tags_edit = QLineEdit(", ".join(card.get("tags") or []))
+        lay.addWidget(self.tags_edit)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.setFixedWidth(640)
+
+    def fields(self):
+        return {name: edit.toPlainText() for name, edit in self._field_edits.items()}
+
+    def tags(self):
+        return [t.strip() for t in self.tags_edit.text().split(",") if t.strip()]
 
 
 _FALLBACK_UNDO_SHORTCUT = "Cmd+Z" if sys.platform == "darwin" else "Ctrl+Z"
@@ -2282,15 +2334,28 @@ class _GenerateDialog(QDialog):
         self.check_btn.setEnabled(bool(s.cards))
 
     def _edit_card(self, i):
-        """Hand-edit one card's fields, right in the review list. Nothing here
-        touches the model: this is a plain in-memory edit, prompted field by
-        field, cancellable at any field without losing the ones already typed."""
-        card = self.session.cards[i]
-        for name in FIELD_MAP[card["note_type"]]:
-            new = _prompt(f"{name}:", default=card["fields"].get(name, ""))
-            if new is None:
-                return
-            card["fields"][name] = new
+        """Hand-edit one card's fields and tags, right in the review list, in
+        one dialog covering the whole card. Nothing here touches the model:
+        this is a plain in-memory edit, applied only if OK is clicked.
+
+        On OK, recompute mechanical checks the same way _accept_correction
+        does (same duplicate map, same image errors): an edited front can
+        turn into a duplicate of an existing card, or clear a block that was
+        forcing the card to Skip, so the checks and the decision it drives
+        must not be left stale."""
+        s = self.session
+        card = s.cards[i]
+        dlg = _EditCardDialog(self, card)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        card["fields"].update(dlg.fields())
+        card["tags"] = dlg.tags()
+        s.updated.add(i)
+        s.checks = ai_logic.mechanical_checks(
+            s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
+            _image_errors(s))
+        if any(c["level"] == "block" for c in s.checks[i]):
+            s.included[i] = False
         self._rebuild_review()
 
     def _build_verdict_row(self, i, verdict, indent):
