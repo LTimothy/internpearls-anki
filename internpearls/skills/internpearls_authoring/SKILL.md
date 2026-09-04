@@ -136,12 +136,18 @@ rationale when a fact was checked. Do not trust your own first draft on clinical
 card with two contrasted conditions backwards reads just as fluently as a correct one.
 
 ## Images
-Never generate a raster image. Any real image is fair game: a file attached to this
-prompt (attached:<filename>), a real image from any web source (url:https://..., with
+Never generate a raster image. When you have web tools in this run, a figure of a real
+thing (an ECG or capnography trace, anatomy, radiology, histology, a chemical structure,
+a device, a waveform) must be a real image you found online (url:https://..., with
 attribution: a textbook figure, a radiology teaching file, an encyclopaedia diagram, a
-journal figure), or a simple SVG you draw yourself for structural diagrams, inline
-(svg:<svg...>) or saved in the scratch folder when you have file tools
-(file:<name>.svg). This is a private study deck, so licensing is not a reason to leave
+journal figure). Never draw one of these; a drawn ECG trace or drawn anatomy is wrong
+more often than not. Drawing an SVG, inline (svg:<svg...>) or saved in the scratch
+folder when you have file tools (file:<name>.svg), is allowed only for a simple
+schematic (a labelled box-and-arrow flow, a small comparison grid) when no real image
+fits, and only as a last resort. When you have no web tools in this run (Quick mode, or
+a backend with no web access), do not draw a figure of a real thing either: use only
+the files attached to this prompt for images, and skip the figure entirely rather than
+invent or draw one. This is a private study deck, so licensing is not a reason to leave
 a good figure out; pick the one that teaches best and record where it came from. Every
 image needs alt text.
 - Ask which job the figure does. This tool cannot make image-front cards, so a figure the

@@ -218,11 +218,26 @@ Reply with ONLY JSON, no prose before or after: a list of cards, or, when asked 
  "images": [{"source": "attached:<filename>" | "url:https://..." | "svg:<svg...>" | "file:<name>.svg",
              "alt": "<what it shows>", "attribution": "<source credit>"}],
  "rationale": "<one line: why this card earns its place>"}
-Never invent an image; never generate a raster image. Images come only from the
-attached files, a real web source found during verification, or simple SVG you
-draw yourself for structural diagrams: draw it inline as svg:<svg...>, or, if you
-have file tools, save it as a .svg file in the scratch folder and reference it as
-file:<name>.svg instead of inlining it."""
+See the image rules below for what belongs in "images" and when."""
+
+
+_IMAGE_RULES_WEB = """## Images
+A figure of a real thing (an ECG or capnography trace, anatomy, radiology,
+histology, a chemical structure, a device, a waveform) must be a real image
+found online, cited as url:https://... . Never draw one of these; a drawn
+figure of a real thing is wrong more often than not. Drawing an SVG
+(svg:<svg...> inline, or file:<name>.svg with file tools) is allowed only for
+a simple schematic, such as a labelled box-and-arrow flow or a small
+comparison grid, when no real image fits, and only as a last resort. Never
+invent an image; never generate a raster image."""
+
+_IMAGE_RULES_NO_WEB = """## Images
+You have no web tools to search with in this run: do not draw a figure of a
+real thing (an ECG or capnography trace, anatomy, radiology, histology, a
+chemical structure, a device, a waveform) either, since a drawn one cannot be
+verified and is wrong more often than not. Use only the files attached to
+this prompt for images, and skip the figure entirely rather than invent or
+draw one. Never invent an image; never generate a raster image."""
 
 
 _MODE_INSTRUCTIONS = {
@@ -238,7 +253,10 @@ _MODE_INSTRUCTIONS = {
 
 def build_prompt(skills, source, note_types, field_map, count, instructions="",
                  attachments=(), cards=None, feedback="", notes=None,
-                 checks=None, mode="thorough", backend=""):
+                 checks=None, mode="thorough", backend="", web=True):
+    """web (from ai_cli.web_capable) says whether the backend has web tools at
+    all; Quick mode never spends a turn searching regardless, so the image
+    rules sent are the no-web set whenever mode == "quick" too."""
     notes = notes or {}
     parts = []
     for s in skills:
@@ -247,6 +265,7 @@ def build_prompt(skills, source, note_types, field_map, count, instructions="",
     parts.append("## Allowed note types and their fields\n"
                  + json.dumps(schema, indent=1))
     parts.append(_CONTRACT)
+    parts.append(_IMAGE_RULES_WEB if (web and mode != "quick") else _IMAGE_RULES_NO_WEB)
     parts.append("## Task\nDraft flashcards from the source material below. "
                  "Quality over count. " + _count_instruction(count))
     parts.append(_MODE_INSTRUCTIONS.get(mode, _MODE_INSTRUCTIONS["thorough"]))
