@@ -81,7 +81,8 @@ if "--help" in sys.argv:
     # redirecting stdin, so reading it here (as the real modes below do)
     # risked blocking on whatever the test process's own stdin is. Answer
     # without touching stdin and report every flag build_argv might gate on.
-    print("--sandbox  --model  --effort  --disable-slash-commands  -p, --print")
+    print("--sandbox  --model  --effort  --disable-slash-commands  -p, --print"
+         "  --restricted  --permission-mode")
     sys.exit(0)
 
 prompt = sys.stdin.read()

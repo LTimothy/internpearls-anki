@@ -1511,10 +1511,10 @@ def test_depth_row_reads_the_assistants_own_decision(anki, monkeypatch):
 
 def test_depth_row_names_what_each_backend_actually_does(anki, monkeypatch):
     """The Cards-and-depth row's detail is derived from ai_cli.BACKENDS' own
-    per-mode description, not a hardcoded clause: Codex is always sandboxed
-    read-only with no network, even in Thorough, and the row has to say so
-    rather than repeating claude's "may verify online" story for every
-    backend."""
+    per-mode description, not a hardcoded clause: Codex's sandbox in Thorough
+    allows writes inside scratch but no network unless Codex is configured
+    for it, and the row has to say so rather than repeating claude's "may
+    verify online" story for every backend."""
     dlg = _ready_dialog(anki, monkeypatch)
     dlg.thorough_radio.setChecked(True)
     claude_text = dlg.depth_row.text()
@@ -1524,7 +1524,7 @@ def test_depth_row_names_what_each_backend_actually_does(anki, monkeypatch):
     codex_text = dlg.depth_row.text()
 
     assert claude_text != codex_text
-    assert "cannot" in codex_text
+    assert "sandbox" in codex_text.lower()
     assert "verify" in codex_text and "online" in codex_text
 
 
@@ -1564,3 +1564,30 @@ def test_generate_stays_disabled_until_a_backend_is_ready(anki, monkeypatch):
     dlg = ai_dialog._GenerateDialog()
     dlg.source_box.setPlainText("plenty of source material")
     assert not dlg.generate_btn.isEnabled()
+
+
+def test_resolve_one_image_file_reads_svg_from_scratch(tmp_path):
+    (tmp_path / "diagram.svg").write_text("<svg></svg>")
+    res = ai_dialog._resolve_one_image({"source": "file:diagram.svg"}, str(tmp_path))
+    assert res["state"] == "ok"
+    assert res["kind"] == "file"
+    assert res["name"] == "diagram.svg"
+    assert res["bytes"] == b"<svg></svg>"
+
+
+def test_resolve_one_image_file_rejects_missing_file(tmp_path):
+    res = ai_dialog._resolve_one_image({"source": "file:nope.svg"}, str(tmp_path))
+    assert res["state"] == "error" and "not found" in res["error"].lower()
+
+
+def test_resolve_one_image_file_rejects_non_svg_extension(tmp_path):
+    (tmp_path / "figure.png").write_bytes(b"\x89PNG")
+    res = ai_dialog._resolve_one_image({"source": "file:figure.png"}, str(tmp_path))
+    assert res["state"] == "error" and "svg" in res["error"].lower()
+
+
+def test_resolve_one_image_file_rejects_a_path_component():
+    res = ai_dialog._resolve_one_image({"source": "file:../secrets.svg"}, "/tmp/scratch")
+    assert res["state"] == "error" and "invalid" in res["error"].lower()
+    res2 = ai_dialog._resolve_one_image({"source": "file:sub/dir.svg"}, "/tmp/scratch")
+    assert res2["state"] == "error" and "invalid" in res2["error"].lower()

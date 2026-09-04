@@ -81,6 +81,25 @@ def test_parse_rejects_bad_image_entry():
     assert cards == [] and any("image" in e.lower() for e in errors)
 
 
+def test_parse_accepts_file_svg_image_source():
+    good = ('[{"note_type": "Basic", "fields": {"Front": "x", "Back": "y"},'
+           '"images": [{"source": "file:diagram.svg", "alt": "a"}]}]')
+    cards, errors = ai_logic.parse_cards_json(good, ALLOWED, FIELD_MAP)
+    assert errors == []
+    assert cards[0]["images"][0]["source"] == "file:diagram.svg"
+
+
+def test_parse_rejects_file_source_not_ending_in_svg():
+    bad = ('[{"note_type": "Basic", "fields": {"Front": "x", "Back": "y"},'
+           '"images": [{"source": "file:diagram.png"}]}]')
+    cards, errors = ai_logic.parse_cards_json(bad, ALLOWED, FIELD_MAP)
+    assert cards == [] and any("image" in e.lower() for e in errors)
+
+
+def test_contract_mentions_file_image_source():
+    assert "file:" in ai_logic._CONTRACT
+
+
 def test_parse_rejects_tags_as_string():
     bad = '[{"note_type": "Basic", "fields": {"Front": "x", "Back": "y"}, "tags": "LAST"}]'
     cards, errors = ai_logic.parse_cards_json(bad, ALLOWED, FIELD_MAP)
