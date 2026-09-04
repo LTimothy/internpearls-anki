@@ -3,9 +3,11 @@
 
 No aqt imports: callers hand in paths and callbacks, so this stays testable
 with a fake CLI script. The security posture lives in build_argv: no backend
-ever gets write, shell, or edit tools; thorough mode allowlists web tools
-only; claude additionally gets Read scoped to the scratch dir when images
-are attached (that is how it views them).
+ever gets shell access; thorough mode allowlists a small set of file and web
+tools, confined to the scratch folder (claude: --restricted plus an
+allowlist; codex: an OS sandbox around the scratch cwd); quick stays
+tool-free except claude's Read, scoped to the scratch dir, when images are
+attached (that is how it views them).
 """
 import json
 import os
@@ -28,7 +30,8 @@ BACKENDS = {
                "subscription": "Claude Pro or Max subscription",
                "free_tier": "",
                "install_url": "https://docs.anthropic.com/en/docs/claude-code",
-               "safety": "Tools fully restricted (strongest)",
+               "safety": "File tools confined to the scratch folder, web "
+                        "read-only, no shell",
                # Cheaper-but-smart default: without a model flag, claude runs the
                # account default, the top model for a Max subscriber, which burns
                # credits fast across Thorough's up-to-15-turn loop. sonnet/medium
@@ -44,7 +47,9 @@ BACKENDS = {
                # and gates web tools by mode (--max-turns, --tools). See build_argv.
                "modes": {
                    "thorough": "Thorough: drafts, may search the web to verify "
-                               "facts, then self-reviews (up to 15 turns, 1 to 3 min)",
+                               "facts and read or write files in the scratch "
+                               "folder, then self-reviews (up to 15 turns, "
+                               "1 to 3 min)",
                    "quick": "Quick draft: exactly one turn, still no web access. "
                            "But if you attach files, it can read the scratch copy "
                            "of exactly those files, to view them (15 to 30 s)"}},
@@ -53,7 +58,9 @@ BACKENDS = {
                               "messages a day; more on Go, Plus, or Pro)",
               "free_tier": "capped",
               "install_url": "https://github.com/openai/codex",
-              "safety": "Sandboxed read-only; no writes or network",
+              "safety": "OS sandbox: commands and writes confined to the "
+                       "scratch folder, no network unless Codex is "
+                       "configured for it",
               # No forced default here: --model is only passed when the user sets
               # one (see build_argv), and only when supports_flag confirms this
               # codex actually documents it (probed as `codex exec --help`, where
@@ -67,8 +74,10 @@ BACKENDS = {
                             "blank to use codex's own default",
               "modes": {
                   "thorough": "Thorough: asked to draft, verify, then self-review; "
-                              "always sandboxed read-only with no network, so it "
-                              "cannot actually verify anything online (1 to 3 min)",
+                              "sandboxed to the scratch folder (writes allowed "
+                              "there), no network unless Codex is configured "
+                              "for it, so it may not be able to verify anything "
+                              "online (1 to 3 min)",
                   "quick": "Quick draft: asked for a single pass with no "
                           "verification; always sandboxed read-only with no "
                           "network either way (15 to 30 s)"}},
@@ -76,7 +85,9 @@ BACKENDS = {
             "subscription": "Google account (free tier, throttled)",
             "free_tier": "throttled",
             "install_url": "https://github.com/google-antigravity/antigravity-cli",
-            "safety": "Relies on the assistant's own approval defaults",
+            "safety": "Reads the scratch folder only; cannot write files in "
+                     "headless mode; relies on its own approval defaults "
+                     "for the rest",
             # agy 1.1.24 documents both --model and --effort in its own --help,
             # and `agy models` lists the ids it accepts. There is no short alias
             # list to close over, so Model stays free text and build_argv sends
@@ -317,19 +328,32 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
             argv += ["--include-partial-messages"]
         tools = []
         if mode == "thorough":
-            tools += ["WebSearch", "WebFetch"]
-        if image_paths:
+            # --restricted removes Bash and confines the file tools below to
+            # the working directories named by --add-dir; without it a named
+            # file tool can still reach outside the scratch folder.
+            if supports_flag(path, "--restricted"):
+                argv += ["--restricted"]
+            argv += ["--add-dir", scratch]
+            tools += ["Read", "Glob", "Grep", "Write", "WebSearch", "WebFetch"]
+        elif image_paths:
             tools.append("Read")
             argv += ["--add-dir", scratch]
         # --tools is an allowlist of what's even available to the model, not just
         # what's auto-approved: naming this small a set here (never Bash/Edit/
-        # Write/NotebookEdit/Task) is what makes "worst case: bad card text"
-        # true regardless of anything the model tries to do.
+        # NotebookEdit/Task) is what makes "worst case: bad card text" true
+        # regardless of anything the model tries to do.
         tool_list = ",".join(tools)
         argv += ["--tools", tool_list, "--allowedTools", tool_list]
+        if mode == "thorough" and supports_flag(path, "--permission-mode"):
+            # Write is on the allowlist above; without this, Claude Code still
+            # stops to ask for edit approval it can never receive headlessly.
+            argv += ["--permission-mode", "acceptEdits"]
         return argv, True
     if kind == "codex":
-        argv = [path, "exec", "--json", "--sandbox", "read-only",
+        # Thorough gets a real OS sandbox around scratch (reads and writes
+        # there, nothing outside it); quick stays read-only, tool-free.
+        sandbox = "workspace-write" if mode == "thorough" else "read-only"
+        argv = [path, "exec", "--json", "--sandbox", sandbox,
                 "--skip-git-repo-check", "-C", scratch]
         if model and supports_flag(path, "--model", subcommand="exec"):
             argv += ["--model", model]

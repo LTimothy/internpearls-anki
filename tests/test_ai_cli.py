@@ -599,6 +599,73 @@ def test_build_argv_codex_images_flag():
     assert "exec" in argv and "--image" in joined and "a.png" in joined
 
 
+def test_build_argv_claude_thorough_full_toolset_gated_by_supports_flag(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "thorough",
+                                "/tmp/scratch", [])
+    assert "--restricted" in argv
+    assert argv[argv.index("--add-dir") + 1] == "/tmp/scratch"
+    tools = argv[argv.index("--tools") + 1]
+    assert tools == "Read,Glob,Grep,Write,WebSearch,WebFetch"
+    assert argv[argv.index("--allowedTools") + 1] == tools
+    assert argv[argv.index("--permission-mode") + 1] == "acceptEdits"
+
+
+def test_build_argv_claude_thorough_omits_new_flags_when_unsupported(monkeypatch):
+    # An older claude without --restricted/--permission-mode documented must
+    # not be hard-broken by passing either anyway; the tool allowlist and
+    # --add-dir are unconditional in thorough mode either way.
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "thorough",
+                                "/tmp/scratch", [])
+    assert "--restricted" not in argv
+    assert "--permission-mode" not in argv
+    assert "--add-dir" in argv
+    assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep,Write,WebSearch,WebFetch"
+
+
+def test_build_argv_claude_quick_stays_exactly_as_before(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick",
+                                "/tmp/scratch", [])
+    assert "--restricted" not in argv
+    assert "--permission-mode" not in argv
+    assert "--add-dir" not in argv
+    assert argv[argv.index("--tools") + 1] == ""
+
+
+def test_build_argv_claude_thorough_flags_detected_against_real_help_probe(
+        monkeypatch):
+    monkeypatch.setenv("FAKE_HELP_TOP",
+                       "--restricted  run restricted\n--permission-mode <M>  set mode")
+    ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
+    argv, _ = ai_cli.build_argv("claude", FAKE_HELP, "thorough", "/tmp/s", [])
+    assert "--restricted" in argv
+    assert argv[argv.index("--permission-mode") + 1] == "acceptEdits"
+
+
+def test_build_argv_claude_quick_flags_not_added_even_when_help_lists_them(
+        monkeypatch):
+    monkeypatch.setenv("FAKE_HELP_TOP",
+                       "--restricted  run restricted\n--permission-mode <M>  set mode")
+    ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
+    argv, _ = ai_cli.build_argv("claude", FAKE_HELP, "quick", "/tmp/s", [])
+    assert "--restricted" not in argv
+    assert "--permission-mode" not in argv
+
+
+def test_build_argv_codex_thorough_is_workspace_write():
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "thorough", "/tmp/s", [])
+    assert argv[argv.index("--sandbox") + 1] == "workspace-write"
+
+
+def test_build_argv_codex_quick_stays_read_only():
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [])
+    assert argv[argv.index("--sandbox") + 1] == "read-only"
+
+
 def test_build_argv_claude_defaults_to_sonnet_medium():
     # The owner-chosen default: without any config override, claude must never
     # fall through to the account's own default model (the top model for a Max
@@ -901,22 +968,21 @@ def test_claude_mode_text_matches_what_build_argv_actually_restricts():
     assert "no web access" in modes["quick"].lower()
 
 
-def test_codex_argv_is_mode_invariant_so_its_text_must_not_claim_mode_enforcement():
-    # codex's build_argv never branches on mode (always --sandbox read-only, no
-    # turn cap set), so neither mode's text may claim online verification
-    # actually happens, or that a turn limit is enforced.
+def test_codex_argv_sandbox_differs_by_mode_and_text_matches():
+    # Thorough gets a real OS sandbox (writes allowed inside scratch); quick
+    # stays read-only. Neither mode's text may claim online verification
+    # actually happens, or that a turn limit is enforced (build_argv sets none).
     thorough_argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "thorough",
                                          "/tmp/s", [])
     quick_argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick",
                                       "/tmp/s", [])
-    assert thorough_argv == quick_argv
-    assert "read-only" in thorough_argv
+    assert "workspace-write" in thorough_argv
+    assert "read-only" in quick_argv
     modes = ai_cli.BACKENDS["codex"]["modes"]
     for text in modes.values():
         assert "verifies facts online" not in text.lower()
-    # Thorough is the only one that even mentions verification, so it's the
-    # one that must disclaim actually doing it online.
-    assert "cannot" in modes["thorough"].lower() and "online" in modes["thorough"].lower()
+    assert "sandbox" in modes["thorough"].lower()
+    assert "read-only" in modes["quick"].lower()
 
 
 def test_agy_argv_is_mode_invariant_so_quick_must_not_claim_no_web_access():

@@ -179,7 +179,8 @@ def _resolve_one_image(im, scratch):
     src = im.get("source", "")
     kind = ("url" if src.startswith("url:") else
            "svg" if src.startswith("svg:") else
-           "attached" if src.startswith("attached:") else "other")
+           "attached" if src.startswith("attached:") else
+           "file" if src.startswith("file:") else "other")
     try:
         if kind == "svg":
             name, data = ai_logic.svg_to_media(src[4:], 0)
@@ -195,6 +196,26 @@ def _resolve_one_image(im, scratch):
             with open(path, "rb") as fh:
                 data = fh.read()
             return {"state": "ok", "kind": "attached", "bytes": data,
+                    "name": name, "path": path}
+        if kind == "file":
+            # A file the assistant saved in the scratch folder while it had
+            # write tools (thorough mode only). name must be a bare basename
+            # inside scratch, not a path elsewhere, and must be an .svg file:
+            # nothing else is trusted to render safely on a card.
+            name = src.split(":", 1)[1]
+            if os.path.basename(name) != name or not name:
+                return {"state": "error", "kind": kind,
+                        "error": f"invalid file image name: {name!r}"}
+            if not name.lower().endswith(".svg"):
+                return {"state": "error", "kind": kind,
+                        "error": f"file image must be .svg: {name!r}"}
+            path = os.path.join(scratch, name)
+            if not os.path.isfile(path):
+                return {"state": "error", "kind": kind,
+                        "error": f"file image not found in scratch: {name!r}"}
+            with open(path, "rb") as fh:
+                data = fh.read()
+            return {"state": "ok", "kind": "file", "bytes": data,
                     "name": name, "path": path}
         return {"state": "error", "kind": kind,
                 "error": f"unrecognized image source: {src!r}"}
@@ -338,6 +359,8 @@ def _card_image_names(card, resolved=frozenset()):
             names.append("drawn figure")
         elif src.startswith("attached:"):
             names.append("attached file")
+        elif src.startswith("file:"):
+            names.append("drawn figure")
     return names
 
 
@@ -2167,9 +2190,9 @@ class _GenerateDialog(QDialog):
         the filename is chosen here from the index alone, so two cards each
         drawing their own SVG would collide on the same filename (and one
         image silently overwrite the other) if each card started counting
-        from 0 again. A url:/attached: image can't collide with an svg: one
-        either, since a url: filename always carries a raster extension and
-        an attached name is scoped to its own scratch dir.
+        from 0 again. A url:/attached:/file: image can't collide with an svg:
+        one either, since a url: filename always carries a raster extension
+        and an attached/file name is scoped to its own scratch dir.
         """
         s = self.session
         pairs = [(i, c) for i, (c, inc) in enumerate(zip(s.cards, s.included)) if inc]
@@ -2197,7 +2220,7 @@ class _GenerateDialog(QDialog):
                     svg_index += 1
                 elif res["kind"] == "url":
                     name = f"generated-{pos}-{len(files)}.{res['ext']}"
-                else:  # attached
+                else:  # attached or file
                     name = res["name"]
                 media[name] = res["bytes"]
                 files.append(name)
