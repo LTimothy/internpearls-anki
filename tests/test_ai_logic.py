@@ -240,6 +240,28 @@ def test_prompt_unknown_mode_falls_back_to_thorough_text():
     assert "Mode: Thorough" in p
 
 
+def test_prompt_names_the_sandbox_only_for_agy():
+    # I9's real failure: agy tried grep_search and run_command against a
+    # folder outside the scratch dir, both refused by the headless sandbox,
+    # and burned its whole turn on it instead of replying. Only agy's own
+    # CLI has no other way to be told this, so the other backends' prompts
+    # must not carry the paragraph at all.
+    agy_prompt = ai_logic.build_prompt(**_PROMPT_KW, backend="agy")
+    default_prompt = ai_logic.build_prompt(**_PROMPT_KW)
+    claude_prompt = ai_logic.build_prompt(**_PROMPT_KW, backend="claude")
+    assert "scratch folder" in agy_prompt.lower()
+    assert "do not run commands" in agy_prompt.lower()
+    assert "scratch folder already given" not in default_prompt.lower()
+    assert "scratch folder already given" not in claude_prompt.lower()
+
+
+def test_prompt_agy_sandbox_note_sits_after_the_stable_prefix():
+    a = ai_logic.build_prompt(**_PROMPT_KW)
+    b = ai_logic.build_prompt(**_PROMPT_KW, backend="agy")
+    cut = min(a.find("## Task"), b.find("## Task"))
+    assert cut > 0 and a[:cut] == b[:cut]
+
+
 def test_default_mode_thresholds():
     assert ai_logic.AUTO_DEPTH_CHARS == 1500
     assert ai_logic.default_mode(1499, 0) == "quick"

@@ -984,6 +984,62 @@ def test_malformed_json_retries_once_then_fails(anki, monkeypatch):
               for w in anki.gui.warnings)
 
 
+def _ready_agy_dialog(anki, monkeypatch, cli_mode):
+    # Same shape as _ready_dialog, but detects only agy: the empty-reply
+    # nudge and the sandbox prompt paragraph are both agy-specific.
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": sys.executable if kind == "agy" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs, **kw:
+            ([sys.executable, FAKE, cli_mode], False))
+    dlg = ai_dialog._GenerateDialog()
+    assert dlg.session.backend == "agy"
+    dlg.source_box.setPlainText("LAST toxicity source text")
+    return dlg
+
+
+def _prompt_capturing_run_generation(monkeypatch):
+    """Like _counting_run_generation, but keeps each call's actual `prompt`
+    argument too, so a test can check what a retry actually asked for."""
+    prompts = []
+    real_run = ai_cli.run_generation
+
+    def capturing(kind, path, prompt, *a, **kw):
+        prompts.append(prompt)
+        return real_run(kind, path, prompt, *a, **kw)
+
+    monkeypatch.setattr(ai_cli, "run_generation", capturing)
+    return prompts
+
+
+def test_empty_reply_retries_once_with_sandbox_nudge_then_reports(anki, monkeypatch):
+    # I9: an agy run that spends its whole turn on refused tools and never
+    # writes a reply must retry once, telling the model not to touch tools
+    # or any folder but scratch, then (if that also comes back empty) show
+    # one plain-sentence message naming the retry and the log file, never
+    # the raw stream JSON.
+    prompts = _prompt_capturing_run_generation(monkeypatch)
+    dlg = _ready_agy_dialog(anki, monkeypatch, "agy_empty_reply")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)   # first attempt: empty, triggers a retry
+    dlg._wait_for_worker(timeout=15)   # retry: also empty, gives up
+    assert len(prompts) == 2
+    assert "scratch folder" in prompts[0].lower()   # I9's build_prompt paragraph
+    assert "your previous reply was empty" in prompts[1].lower()
+    assert "do not call any tool" in prompts[1].lower()
+    assert dlg.stack.currentWidget() is dlg.input_page
+    assert not dlg.session.cards
+    warnings = [w.lower() for w in anki.gui.warnings]
+    assert any("without writing a reply" in w for w in warnings)
+    assert any("already retried once" in w for w in warnings)
+    assert any("ai_last_run.log" in w for w in warnings)
+    assert not any("{" in w for w in warnings)
+
+
 def test_view_skills_escapes_raw_html_and_preserves_line_breaks(anki):
     parts = ["line one", "",
             "Comparisons use an HTML <table>. Four or more use <ul>."]
