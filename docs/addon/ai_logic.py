@@ -338,7 +338,7 @@ def build_check_prompt(skills, cards, field_map, backend="", web=True):
     return "\n\n".join(parts) + "\n"
 
 
-def parse_verdicts_json(text, n_cards, field_map):
+def parse_verdicts_json(text, n_cards, field_map, web=True):
     """Parse a check run's reply into (verdicts, errors).
 
     verdicts is {index: verdict-dict}, covering every 0..n_cards-1 index: an
@@ -354,6 +354,16 @@ def parse_verdicts_json(text, n_cards, field_map):
     the card doesn't have, cropping the offending index to the synthetic
     fallback) adds one line to errors rather than failing the whole reply,
     the same tolerance parse_cards_json extends per-card.
+
+    Citation honesty is enforced here, not by trusting the prompt: a
+    "confirmed" verdict is only as good as what it cites. With web=False
+    (no web tools were available to the backend at all) every "confirmed"
+    downgrades to "unverified", prefixed "no web access, from recall only: ".
+    With web=True, a "confirmed" carrying no valid http(s) source downgrades
+    the same way, prefixed "no source given: ". A "corrected" verdict keeps
+    its correction either way (it proposes new text, not a claim of proof),
+    but an unsourced one still gets the "no source given: " prefix so the
+    row itself says the fix wasn't backed by a citation.
     """
     try:
         data = json.loads(_find_json_obj(text))
@@ -398,7 +408,16 @@ def parse_verdicts_json(text, n_cards, field_map):
             if not url.lower().startswith(("http://", "https://")):
                 continue
             sources.append({"title": str(src.get("title") or url), "url": url})
-        parsed[idx] = {"verdict": verdict, "note": note.strip(),
+        note = note.strip()
+        if verdict == "confirmed" and not web:
+            verdict = "unverified"
+            note = "no web access, from recall only: " + note
+        elif verdict == "confirmed" and not sources:
+            verdict = "unverified"
+            note = "no source given: " + note
+        elif verdict == "corrected" and not sources:
+            note = "no source given: " + note
+        parsed[idx] = {"verdict": verdict, "note": note,
                        "correction": correction, "sources": sources}
     for i in range(n_cards):
         if i not in parsed:

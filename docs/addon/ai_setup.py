@@ -360,6 +360,8 @@ def _state_chip(info):
 
 
 def _open_url(url):
+    if not url.lower().startswith(("http://", "https://")):
+        return
     QDesktopServices.openUrl(QUrl(url))
 
 

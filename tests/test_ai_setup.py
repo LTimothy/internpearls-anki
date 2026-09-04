@@ -154,6 +154,16 @@ def test_install_guide_link_opens_that_backends_documentation(anki, monkeypatch)
                                        for k in ai_cli.BACKENDS]
 
 
+def test_open_url_refuses_a_non_http_scheme(anki):
+    from aqt.qt import QDesktopServices
+    from internpearls import ai_setup
+    QDesktopServices.opened.clear()
+    ai_setup._open_url("javascript:alert(1)")
+    assert QDesktopServices.opened == []
+    ai_setup._open_url("https://example.com")
+    assert QDesktopServices.opened == ["https://example.com"]
+
+
 def test_settings_panel_follows_the_preferred_backend(anki, monkeypatch):
     from internpearls import ai_setup
     _all_found(monkeypatch)
