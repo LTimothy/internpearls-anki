@@ -2026,6 +2026,10 @@ class _GenerateDialog(QDialog):
         # body below, so they read whether the row is open or not (review._card_row's
         # own caption/box placement). Pre-filled and shown when a note already exists
         # (a queued note surviving a rebuild); otherwise revealed by Skip or Add note.
+        # Wrapped in their own container rather than added straight to `outer`, so
+        # they can carry the same left indent as the body (`blay`'s own margins,
+        # below) and stop at the same right edge as the decision cell instead of
+        # running the row's full width flush with the page's left edge.
         caption = muted_label(_REVIEW_NOTE_CAPTION)
         note_box = QPlainTextEdit(s.notes.get(i, ""))
         note_box.setPlaceholderText(_REVIEW_NOTE_PLACEHOLDER)
@@ -2035,6 +2039,13 @@ class _GenerateDialog(QDialog):
         note_box.setVisible(has_note)
         self.note_boxes[i] = note_box
         self._note_captions[i] = caption
+
+        note_area = QWidget()
+        note_lay = QVBoxLayout(note_area)
+        note_lay.setContentsMargins(indent, 0, 0, 0)
+        note_lay.setSpacing(4)
+        note_lay.addWidget(caption)
+        note_lay.addWidget(note_box)
 
         def _on_note_changed(idx=i, nb=note_box):
             text = nb.toPlainText().strip()
@@ -2114,8 +2125,7 @@ class _GenerateDialog(QDialog):
         blay.addWidget(links)
 
         outer.addWidget(body)
-        outer.addWidget(caption)
-        outer.addWidget(note_box)
+        outer.addWidget(note_area)
         return row
 
     def _on_review_decision(self, i, state):
