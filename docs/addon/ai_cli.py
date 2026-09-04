@@ -7,6 +7,7 @@ ever gets write, shell, or edit tools; thorough mode allowlists web tools
 only; claude additionally gets Read scoped to the scratch dir when images
 are attached (that is how it views them).
 """
+import json
 import os
 import re
 import shutil
@@ -121,6 +122,21 @@ _IMAGE_CAPABLE = {"claude": True, "codex": True, "agy": True}
 
 class GenerationError(RuntimeError):
     pass
+
+
+class EmptyReply(GenerationError):
+    """A run that finished cleanly but never wrote a usable reply: no crash,
+    no error result, just nothing to parse. `events` is the raw stream line
+    count; `turns`/`refused_tools` are agy-only diagnostics (None/0 for any
+    other backend, since only agy's stream reports a turn count and refused
+    sandbox tool calls in a shape worth counting)."""
+
+    def __init__(self, message, events, turns, refused_tools, duration_s):
+        super().__init__(message)
+        self.events = events
+        self.turns = turns
+        self.refused_tools = refused_tools
+        self.duration_s = duration_s
 
 
 class GenerationCancelled(RuntimeError):
@@ -484,24 +500,37 @@ def _write_run_log(log_path, argv, prompt, lines, err_text, returncode,
         pass
 
 
-def _last_line_detail(lines, err_text, needles=()):
-    """First 200 chars of the last non-empty stdout line, or the stderr tail
-    when every stdout line was blank (or there were none): what the "no
-    usable reply" error names as its one clue, since the reader can't open
-    the run log from inside the error dialog. Elided the same way the run
-    log is (see _redact_line) when that line echoes the prompt: this excerpt
-    lands in a dialog the learner reads directly, so it must never carry the
-    prompt any more than the log file does."""
-    for line in reversed(lines):
-        s = line.strip()
-        if s:
-            if _contains_needle(s, needles):
-                return f"<line containing the prompt elided, {len(s)} chars>"
-            return s[:200]
-    tail = (err_text or "").strip()
-    if tail and _contains_needle(tail, needles):
-        return f"<line containing the prompt elided, {len(tail)} chars>"
-    return tail[:200]
+def _agy_empty_reply_diagnostics(lines):
+    """Scan raw agy stream-json `lines` for what an EmptyReply needs to
+    report: the backend's own `num_turns` from its terminal result (None if
+    it never sent one), and how many tool steps the sandbox refused (a
+    step_update in state ERROR whose message mentions permission). Reads the
+    raw lines directly rather than through parse_stream_event, which drops
+    a tool step_update's state/message once it has picked a phase."""
+    turns = None
+    refused = 0
+    for line in lines:
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(d, dict):
+            continue
+        event = d.get("event")
+        if event == "result":
+            r = d.get("result")
+            n = r.get("num_turns") if isinstance(r, dict) else None
+            if isinstance(n, int) and not isinstance(n, bool):
+                turns = n
+        elif event == "step_update":
+            u = d.get("step_update")
+            if not isinstance(u, dict):
+                continue
+            if u.get("step_type") == "tool" and u.get("state") == "ERROR":
+                msg = u.get("message") or u.get("error") or ""
+                if isinstance(msg, str) and "permission" in msg.lower():
+                    refused += 1
+    return turns, refused
 
 
 def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
@@ -657,11 +686,21 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
         raise GenerationError(_readable_cli_error(
             kind, err_text or f"assistant exited {proc.returncode}"))
     if not result:
-        raise GenerationError(
-            f"the assistant produced no usable reply ({len(lines)} events "
-            f"seen; last: {_last_line_detail(lines, err_text, needles)}). "
-            f"The full stream is in ai_last_run.log inside the add-on's "
-            f"user_files folder.")
+        duration_s = round(time.monotonic() - start, 1)
+        turns, refused_tools = ((_agy_empty_reply_diagnostics(lines))
+                                if kind == "agy" else (None, 0))
+        if kind == "agy":
+            msg = (f"{BACKENDS[kind]['label']} finished after "
+                  f"{format_duration(duration_s)} without writing a reply")
+            if refused_tools:
+                msg += (f"; it tried {refused_tools} tool(s) the sandbox "
+                       f"refused")
+        else:
+            msg = (f"the assistant produced no usable reply ({len(lines)} "
+                  f"events seen). The full stream is in ai_last_run.log "
+                  f"inside the add-on's user_files folder.")
+        raise EmptyReply(msg, events=len(lines), turns=turns,
+                         refused_tools=refused_tools, duration_s=duration_s)
     return {"text": result, "tokens": tokens, "rate_limits": rate_limits,
             "duration_s": round(time.monotonic() - start, 1)}
 
