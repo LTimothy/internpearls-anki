@@ -1506,7 +1506,7 @@ class _GenerateDialog(QDialog):
                 feedback=self.feedback_box.toPlainText() if revision else "",
                 notes=s.notes if revision else None,
                 checks=s.checks if revision else None, mode=s.mode,
-                backend=s.backend)
+                backend=s.backend, web=ai_cli.web_capable(s.backend))
         if extra_error:
             prompt += ("\n\n## Your previous reply failed validation\n"
                       + "\n".join(extra_error))
