@@ -1286,7 +1286,7 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
     """Write accepted AI-generated cards into `deck_name` as one undoable operation.
 
     Media contract (the other half lives in the review dialog that calls this): by the
-    time a card reaches here, every attached:/url:/svg: image it references has already
+    time a card reaches here, every attached:/url:/svg:/file: image it references has already
     been resolved to bytes by that dialog, and the filenames it chose for THAT card are
     listed in card["_media_files"], in render order. `media` is {filename: bytes} for
     every such file across the whole accepted batch. This function only writes those

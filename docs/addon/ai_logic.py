@@ -17,7 +17,8 @@ GENERATED_TAG_LEAF = "Generated"
 GENERATED_DECK_LEAF = "Generated"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.S)
-_IMAGE_SOURCE_RE = re.compile(r"^(attached:[\w .\-]+|url:https://\S+|svg:<svg.*)$", re.S)
+_IMAGE_SOURCE_RE = re.compile(
+    r"^(attached:[\w .\-]+|url:https://\S+|svg:<svg.*|file:[\w .\-]+\.svg)$", re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
 _CLOZE_OK_RE = re.compile(r"\{\{c\d+::[^{}]+?\}\}")
 _CLOZE_OPEN_RE = re.compile(r"\{\{c\d+")
@@ -117,7 +118,7 @@ def parse_cards_json(text, allowed_types, field_map):
                            and _IMAGE_SOURCE_RE.match(str(im.get("source", ""))))]
         if bad_img:
             errors.append(f"card {i}: invalid image source (allowed: attached:, "
-                          f"url:https:, svg:<svg)")
+                          f"url:https:, svg:<svg, file:<name>.svg)")
             continue
         cards.append({
             "note_type": ntype,
@@ -201,12 +202,14 @@ Reply with ONLY JSON, no prose before or after: a list of cards, or, when asked 
 {"note_type": <one of the allowed types>,
  "fields": {<every field for that type, "" when empty>},
  "tags": [<short topic tags>],
- "images": [{"source": "attached:<filename>" | "url:https://..." | "svg:<svg...>",
+ "images": [{"source": "attached:<filename>" | "url:https://..." | "svg:<svg...>" | "file:<name>.svg",
              "alt": "<what it shows>", "attribution": "<source credit>"}],
  "rationale": "<one line: why this card earns its place>"}
 Never invent an image; never generate a raster image. Images come only from the
 attached files, a real web source found during verification, or simple SVG you
-draw yourself for structural diagrams."""
+draw yourself for structural diagrams: draw it inline as svg:<svg...>, or, if you
+have file tools, save it as a .svg file in the scratch folder and reference it as
+file:<name>.svg instead of inlining it."""
 
 
 _MODE_INSTRUCTIONS = {
