@@ -901,3 +901,29 @@ def test_review_rows_render_in_light_and_dark(tmp_path):
         # manager), not reset per test: leaving it on "dark" would leak into a later
         # test that assumes the default light theme without setting its own.
         harness.apply_theme("light")
+
+
+def test_review_verdicts_render_in_light_and_dark(tmp_path):
+    """A confirmed row (with its source link), a corrected row (with its
+    proposed text and Accept/Keep mine), and an unverified row, in both
+    themes: PNG for a human to eyeball, plus a check that the correction's
+    own links actually painted."""
+    import os
+
+    # IP_SHOT_DIR lets a developer collect the PNGs somewhere stable; CI has
+    # no such folder, so the test's own tmp_path is the default.
+    out_dir = os.environ.get("IP_SHOT_DIR") or str(tmp_path)
+    os.makedirs(out_dir, exist_ok=True)
+
+    try:
+        for theme, fname in (("light", "ai-review-verdicts-v0.61-light.png"),
+                             ("dark", "ai-review-verdicts-v0.61-dark.png")):
+            shot = harness.render("ai-review", theme=theme, verdicts=True,
+                                  count=3, size=(720, 640))
+            links = harness.link_labels(shot.dialog)
+            assert "Accept" in links and "Keep mine" in links
+            png = os.path.join(out_dir, fname)
+            shot.image.save(png, "PNG")
+            assert os.path.exists(png)
+    finally:
+        harness.apply_theme("light")
