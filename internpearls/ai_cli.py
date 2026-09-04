@@ -72,7 +72,8 @@ BACKENDS = {
               "default_effort": "",
               "model_aliases": [],
               "model_hint": "e.g. gpt-5.1-codex, o3, or a full model name; leave "
-                            "blank to use codex's own default",
+                            "blank to use the model set in codex's own "
+                            "config file",
               "modes": {
                   "thorough": "Thorough: asked to draft, verify, then self-review; "
                               "sandboxed to the scratch folder (writes allowed "
@@ -295,7 +296,11 @@ def resolve_claude_effort(effort):
 
 
 _CODEX_CONFIG_PATH = os.path.expanduser("~/.codex/config.toml")
-_TOML_KV_RE = re.compile(r'^(\w+)\s*=\s*"([^"]*)"\s*$')
+# Double- or single-quoted value, an optional trailing "# comment" after the
+# closing quote, both stripped by the two capture groups below (whichever
+# quote style matched carries the value; the other group is None).
+_TOML_KV_RE = re.compile(
+    r'^(\w+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\')\s*(?:#.*)?$')
 
 
 def configured_default(path=None):
@@ -305,15 +310,17 @@ def configured_default(path=None):
     way the add-on can name what codex would actually use when nothing is
     configured here. A tiny hand parser, not a toml library: only the
     top-level `model` and `model_reasoning_effort` keys matter, as plain
-    `key = "value"` lines, stopping at the first `[section]` header so a
-    profile-scoped override is never mistaken for the CLI's own default.
+    `key = "value"` (or `key = 'value'`, optionally trailing a `# comment`)
+    lines, stopping at the first `[section]` header so a profile-scoped
+    override is never mistaken for the CLI's own default.
     Returns (model, effort); either is "" when absent, and both are "" when
-    the file is missing, unreadable, or carries neither key in that shape."""
+    the file is missing, unreadable, not valid text, or carries neither key
+    in that shape."""
     path = path or _CODEX_CONFIG_PATH
     try:
         with open(path, encoding="utf8") as fh:
             text = fh.read()
-    except OSError:
+    except (OSError, UnicodeDecodeError, ValueError):
         return "", ""
     model, effort = "", ""
     for line in text.splitlines():
@@ -325,7 +332,8 @@ def configured_default(path=None):
         m = _TOML_KV_RE.match(s)
         if not m:
             continue
-        key, val = m.group(1), m.group(2)
+        key = m.group(1)
+        val = m.group(2) if m.group(2) is not None else m.group(3)
         if key == "model":
             model = val
         elif key == "model_reasoning_effort":
@@ -333,14 +341,19 @@ def configured_default(path=None):
     return model, effort
 
 
-def model_effort_line(kind, cfg_model="", cfg_effort=""):
+def model_effort_line(kind, cfg_model="", cfg_effort="", path=None):
     """'Model: <id>, effort: <level> (add-on default)' or '(your setting)', the
     line every backend row shows (AI Backends and the wizard's backend row).
     `cfg_model`/`cfg_effort` are the learner's config values for `kind`, ""
     meaning unset. codex has no add-on-forced default (see build_argv): with
     nothing configured here, its pair comes from its own config.toml
     (configured_default) instead of BACKENDS' default_model/default_effort,
-    and a codex with no model there just says so rather than naming a blank."""
+    tagged "(Codex's own setting)" so it isn't mistaken for something this
+    add-on chose; a codex with no model there just says so rather than naming
+    a blank. `path` is the resolved CLI path, used only for agy: build_argv
+    only actually sends --model/--effort when supports_flag confirms this
+    binary understands them, so the "(add-on default)" tag here reads the
+    same supports_flag results rather than assuming they'd be sent."""
     meta = BACKENDS[kind]
     if cfg_model or cfg_effort:
         model = cfg_model or meta["default_model"]
@@ -350,6 +363,16 @@ def model_effort_line(kind, cfg_model="", cfg_effort=""):
         model, effort = configured_default()
         if not model:
             return "Model: Codex's own default"
+        tag = "Codex's own setting"
+    elif kind == "agy":
+        model, effort = meta["default_model"], meta["default_effort"]
+        if path is not None:
+            if not supports_flag(path, "--model"):
+                model = ""
+            if not supports_flag(path, "--effort"):
+                effort = ""
+        if not model and not effort:
+            return "Model: Antigravity's own default"
         tag = "add-on default"
     else:
         model, effort = meta["default_model"], meta["default_effort"]

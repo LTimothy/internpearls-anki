@@ -450,6 +450,7 @@ def test_ai_backends_rows_show_the_v0_60_default_and_setting_wording(
     dlg = _dialog(monkeypatch, found=("claude", "codex", "agy"))
     monkeypatch.setattr(ai_cli, "configured_default",
                         lambda path=None: ("gpt-5.1-codex", "high"))
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
     mw.addonManager.writeConfig("internpearls", {
         **mw.addonManager.getConfig("internpearls"),
         "ai_model": {"claude": "opus", "codex": "", "agy": ""},
@@ -461,7 +462,7 @@ def test_ai_backends_rows_show_the_v0_60_default_and_setting_wording(
     codex_text = dlg.rows["codex"].text()
     agy_text = dlg.rows["agy"].text()
     assert "Model: opus, effort: high (your setting)" in claude_text
-    assert "Model: gpt-5.1-codex, effort: high (add-on default)" in codex_text
+    assert "Model: gpt-5.1-codex, effort: high (Codex's own setting)" in codex_text
     assert ("Model: gemini-3.8-flash-low, effort: low (add-on default)"
            in agy_text)
 
