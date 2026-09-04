@@ -64,6 +64,10 @@
 #                   the Verify online phase), then an agent_response
 #                   text_delta, then the result: proves a delta after a
 #                   non-Working phase resets the chip to Working first
+#   agy_empty_reply  agy-style: two tool steps refused (ACTIVE then ERROR
+#                   "permission check failed"), no agent_response delta at
+#                   all, then a SUCCESS result with an empty response: the
+#                   owner's real empty-reply shape (EmptyReply tests)
 import json
 import os
 import sys
@@ -272,6 +276,22 @@ if mode == "agy_permission_denied":
          "permission that headless mode cannot prompt for, so it was "
          "auto-denied ...", file=sys.stderr)
     sys.exit(1)
+if mode == "agy_empty_reply":
+    # The owner's real shape: a run that spends its whole budget thinking,
+    # tries two tools the headless sandbox refuses, and ends on a SUCCESS
+    # result with an empty response and no agent_response delta at all to
+    # fall back to.
+    for tool in ("grep_search", "run_command"):
+        print(json.dumps({"event": "step_update", "step_update": {
+            "step_type": "tool", "state": "ACTIVE", "tool_name": tool}}),
+            flush=True)
+        print(json.dumps({"event": "step_update", "step_update": {
+            "step_type": "tool", "state": "ERROR", "tool_name": tool,
+            "message": "permission check failed"}}), flush=True)
+    print(json.dumps({"event": "result", "result": {
+        "status": "SUCCESS", "response": "", "num_turns": 1,
+        "usage": dict(USAGE, total_tokens=24800)}}))
+    sys.exit(0)
 print(json.dumps({"type": "assistant", "message": {"content": [
     {"type": "tool_use", "name": "WebSearch", "input": {}}]}}), flush=True)
 print(json.dumps({"type": "result", "subtype": "success",
