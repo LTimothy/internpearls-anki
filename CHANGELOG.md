@@ -3,6 +3,27 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.62.0
+
+The AI wizard's image policy is web-first now: when the backend has web tools and
+they're actually in play (Thorough, not Codex), a figure of a real thing (an ECG or
+capnography trace, anatomy, radiology, histology, a chemical structure, a device, a
+waveform) has to be a real image found online and cited by URL, never drawn. Drawing an
+SVG is still available for a simple schematic when no real image fits, and only as a
+last resort. Quick mode and a backend with no web access skip the figure entirely
+instead of drawing one, since neither can check it. A drawn SVG's review thumbnail also
+renders correctly now: the root shape that used to leave a white square in one corner
+with the drawing spilling past it is normalized before it ever reaches the card, and the
+review row rasterizes it directly instead of trusting Qt's own SVG plugin.
+
+A review row's collapsed line now always names every picture on the card, open or not:
+it used to drop the name for good the first time you opened the row, which read as
+inconsistent next to the "Has a picture" reason line that stayed.
+
+Edit, on the review page, opens one dialog for the whole card instead of a prompt per
+field: every field at once, sized to what it typically holds, plus a tags line, with
+OK and Cancel.
+
 ## v0.61.0
 
 Check facts, a new button beside Revise all on the AI wizard's review page. It sends
