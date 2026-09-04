@@ -937,7 +937,9 @@ def _scene_ai_review(mock, opts):
     row's collapsed picture tag and expand-to-paint behaviour can be
     rendered with a real QImage decode rather than a mock. Kept off the
     first three cards, which already carry the block/warn/revised chips
-    this scene otherwise demonstrates.
+    this scene otherwise demonstrates. opts["verdicts"] adds a Check facts
+    verdict to cards 0-2: confirmed with a source link, corrected with its
+    proposed text and Accept/Keep mine, and unverified.
     """
     from internpearls import ai_dialog, ai_logic
     _ai_backend_available()
@@ -972,6 +974,22 @@ def _scene_ai_review(mock, opts):
             s.image_gated = {last}
             s.image_data[last] = [{"state": "ok", "kind": "svg", "path": path}]
         s.tokens_last_run = 12345
+        if opts.get("verdicts"):
+            s.verdicts = {
+                0: {"verdict": "confirmed", "note": "dose matches the cited reference",
+                   "correction": None,
+                   "sources": [{"title": "UpToDate: LAST", "url": "https://example.com/last"}]},
+            }
+            if n > 1:
+                s.verdicts[1] = {
+                    "verdict": "corrected", "note": "the recommended bolus is lower",
+                    "correction": {"Back": "A revised answer with the corrected dose."},
+                    "sources": [{"title": "ASRA checklist", "url": "https://example.com/asra"}]}
+            if n > 2:
+                s.verdicts[2] = {
+                    "verdict": "unverified",
+                    "note": "no web access; could not confirm from recall alone",
+                    "correction": None, "sources": []}
         dlg._rebuild_review()
         dlg.stack.setCurrentWidget(dlg.review_page)
         dlg.exec()
@@ -1053,7 +1071,8 @@ SCENES = {
                  "the AI wizard's input page (state=unset|ready|advanced)"),
     "ai-progress": (_scene_ai_progress, "the AI wizard's progress page, mid-run"),
     "ai-review": (_scene_ai_review,
-                 "the AI wizard's review page (count=N for a full-size draft)"),
+                 "the AI wizard's review page (count=N for a full-size draft, "
+                 "verdicts=True for a fact-check pass)"),
     "ai-view-skills": (_scene_ai_view_skills,
                        "View skills with no deck skill installed (real bundled text)"),
     "ai-my-rules": (_scene_ai_my_rules, "the My rules editor"),
