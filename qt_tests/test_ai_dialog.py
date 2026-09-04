@@ -822,11 +822,11 @@ def test_review_row_names_an_unresolved_svg_image_while_collapsed(shot):
     assert "<img" not in text
 
 
-def test_review_row_paints_the_svg_and_drops_the_name_once_expanded(shot):
+def test_review_row_keeps_naming_the_svg_once_expanded(shot):
     _, q = harness.bootstrap()
     dlg = shot("ai-review", svg=True, expand=(3,)).dialog
     text = _svg_card_label(dlg, q).text()
-    assert "[image: drawn figure]" not in text
+    assert "[image: drawn figure]" in text
     body_images = [l for l in dlg.findChildren(q.QLabel) if "<img" in l.text()]
     assert body_images, "the expanded body must paint the resolved SVG thumbnail"
 

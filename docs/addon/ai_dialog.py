@@ -373,18 +373,17 @@ _VERDICT_LABELS = {"confirmed": "Confirmed", "corrected": "Corrected",
 _VERDICT_ROLE = {"confirmed": "accept", "corrected": "updated"}
 
 
-def _card_image_names(card, resolved=frozenset()):
+def _card_image_names(card):
     """Names for a card's collapsed-line picture tag (mirrors review._image_text):
     "drawn figure" for an inline SVG, "attached file" for an attachment, "from
-    <host>" for a web image. `resolved` is the (0-based) image indices whose
-    thumbnail has already painted in the expanded body; those drop out here. A
-    picture that failed to resolve keeps its name, since the name is the
-    fallback. A source _resolve_one_image itself doesn't recognize (kind
-    "other") gets no name: nothing here can say what it even is."""
+    <host>" for a web image. Always lists every picture the card carries, opened
+    or not: a picture that resolved and painted in the expanded body still names
+    itself here, so the collapsed line stays an honest summary of what the card
+    holds rather than only what hasn't been looked at yet. A source
+    _resolve_one_image itself doesn't recognize (kind "other") gets no name:
+    nothing here can say what it even is."""
     names = []
-    for j, im in enumerate(card.get("images") or []):
-        if j in resolved:
-            continue
+    for im in card.get("images") or []:
         src = im.get("source", "")
         if src.startswith("url:"):
             names.append(f"from {_url_host(src[4:])}")
@@ -397,18 +396,18 @@ def _card_image_names(card, resolved=frozenset()):
     return names
 
 
-def _card_primary_html(card, resolved=frozenset()):
+def _card_primary_html(card):
     """The row's bold collapsed line: the front, or a cloze note's text with its
     deletions filled in: the fact under review lives in the deletions, so it is
     shown rather than blanked (mirrors review._primary_html). Ends with a
-    picture tag (review._image_text's shape) for any image not yet in
-    `resolved`."""
+    picture tag (review._image_text's shape) naming every image the card
+    carries."""
     ntype = card["note_type"]
     primary_field = ai_logic.PRIMARY_FIELD.get(ntype, "Front")
     text = field_preview_html(card["fields"].get(primary_field, ""))
     if primary_field == "Text":
         text = cloze_filled_html(text, escape=False)
-    names = _card_image_names(card, resolved)
+    names = _card_image_names(card)
     if names:
         tag = html.escape(f"[image: {', '.join(names)}]")
         text = (f'{text}&nbsp;&nbsp;<span style="color: {colors()["dim"]};">'
@@ -628,13 +627,6 @@ class _Session:
         # "images" list: see _resolve_one_image. Populated at review time
         # (before the review page ever shows), reused unchanged by import.
         self.image_data = {}
-        # {card index: set of image indices whose thumbnail has actually
-        # painted}, so a picture the learner already saw stays dropped from
-        # the primary line across a rebuild (Edit, Note, a revision): the
-        # per-row closure _build_review_row used to keep this in was rebuilt
-        # from scratch every time. Cleared and repopulated the same places
-        # image_data itself is (see _start_image_phase, _apply_review_state).
-        self.image_resolved = {}
         # Indices excluded by default purely because they carry an unreviewed
         # image (see _apply_review_state): what _build_review_row's reason
         # line gates on, so a card the learner unchecked herself never gets a
@@ -1477,7 +1469,6 @@ class _GenerateDialog(QDialog):
                 # report a bogus "updated N, kept M verbatim" diff against it.
                 s.cards, s.included, s.notes = [], [], {}
                 s.updated, s.image_data = set(), {}
-                s.image_resolved = {}
                 s.revision_shape_mismatch = False
         # The depth the learner picked if they picked one, else the one the
         # material's own length and attachments imply (ai_logic.default_mode).
@@ -1906,11 +1897,6 @@ class _GenerateDialog(QDialog):
         once the background image-resolution phase above has finished."""
         s = self.session
         image_errors = _image_errors(s)
-        # A card this revision actually changed carries a new image set (if
-        # any), so whatever was painted for its old images means nothing;
-        # a kept-verbatim card's own resolved indices carry over untouched.
-        s.image_resolved = {i: v for i, v in s.image_resolved.items()
-                            if i not in s.updated and i < len(s.cards)}
         s.checks = ai_logic.mechanical_checks(
             s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
             image_errors)
@@ -2054,12 +2040,6 @@ class _GenerateDialog(QDialog):
 
         body = QWidget()
         caret = QPushButton(_CARET_CLOSED)
-        # Images this row's picture tag has already dropped, once painted:
-        # kept on the session (keyed by card index), not a local closure, so
-        # a picture already seen stays dropped across a rebuild (Edit, Note,
-        # a revision) rather than being named again from a fresh empty set
-        # (mirrors review._card_row's own `resolved` convention).
-        resolved_images = s.image_resolved.setdefault(i, set())
 
         def _name_caret(expanded):
             verb = "Hide card" if expanded else "Show card"
@@ -2068,17 +2048,6 @@ class _GenerateDialog(QDialog):
 
         def _toggle():
             expanded = not body.isVisible()
-            if expanded and card["images"]:
-                results = s.image_data.get(i) or []
-                before = len(resolved_images)
-                for j in range(len(card["images"])):
-                    res = results[j] if j < len(results) else None
-                    if (res and res.get("state") == "ok" and res.get("path")
-                            and _image_tag(res["path"])):
-                        resolved_images.add(j)
-                if len(resolved_images) > before:
-                    primary.setText(_preview_style() +
-                                    _card_primary_html(card, resolved_images))
             body.setVisible(expanded)
             caret.setText(_CARET_OPEN if expanded else _CARET_CLOSED)
             _name_caret(expanded)
@@ -2104,7 +2073,7 @@ class _GenerateDialog(QDialog):
         # the update screen: the click target is the text a reader is already
         # looking at, not just the small caret beside it.
         primary = _ClickableLabel(
-            _preview_style() + _card_primary_html(card, resolved_images), _toggle)
+            _preview_style() + _card_primary_html(card), _toggle)
         primary.setWordWrap(True)
         primary.setTextFormat(Qt.TextFormat.RichText)
         primary.setOpenExternalLinks(False)
