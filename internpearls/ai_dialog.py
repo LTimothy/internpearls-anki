@@ -38,7 +38,8 @@ from .review import (_CARET_CLOSED, _CARET_OPEN, _ClickableLabel, _image_tag,
 from .ui import (_ask, _ask_scrollable, _info, _prompt, _safe, _warn, hint_label,
                  link_button, muted_label, section_rule, title_label, tooltip)
 from .widgets import (CARET_GAP, CARET_W, align_field_column, chip_cell,
-                      chip_column_width, field_slot)
+                      chip_column_width, decision_cell, field_slot,
+                      row_text_indent)
 
 # Note types a generated card may name. Keep in sync with
 # collection._GENERATED_ALLOWED_TYPES: the types this add-on manages, plus
@@ -272,29 +273,40 @@ def _image_row_html(session, i, card):
 # these four words and none of the update screen's (see widgets.py:67-74).
 _REVIEW_CHIP_KINDS = ("blocked", "warn", "ok", "revised")
 
-# The include checkbox's own column width, measured the same way chip_column_width
-# measures a pill: an unpolished QCheckBox's sizeHint reports the wrong font, and a
-# fixed width is what keeps every row's checkbox (and everything after it) lined up
-# in one column rather than each row's box floating at its own natural width.
-_CHECK_W = {}
+# The row's decision control: Include or Skip only, no Never (there is nothing to
+# remember a draft against; see review._NEW_OPTIONS for the update screen's own set).
+_REVIEW_DECISION_OPTIONS = [("include", "Include"), ("skip", "Skip")]
+
+_REVIEW_NOTE_CAPTION = "Skipped. What should change? Sent with the next Revise all."
+_REVIEW_NOTE_PLACEHOLDER = "e.g. trim the answer, split into two cards"
 
 
-def _checkbox_column_width():
-    if "w" not in _CHECK_W:
-        probe = QCheckBox()
-        probe.ensurePolished()
-        _CHECK_W["w"] = probe.sizeHint().width()
-    return _CHECK_W["w"]
+def _chip_with_type(kind, note_type, kinds):
+    """The row's chip, with its note type as a small tag underneath: the same
+    shape review._chip_with_source draws for a card's source reference, adapted
+    for a kind/label pair instead of a detail dict (this row's chip kind is
+    already computed by _review_row_kind, not derived the way _row_chip does)."""
+    cell = chip_cell(kind, kinds)
+    wrap = QWidget()
+    lay = QVBoxLayout(wrap)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(1)
+    lay.addWidget(cell)
+    tag = QLabel(html.escape(note_type))
+    tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    tag.setWordWrap(True)
+    tag.setStyleSheet(f"color: {colors()['dim']}; font-size: 10px;")
+    lay.addWidget(tag)
+    wrap.setFixedWidth(chip_column_width(kinds))
+    return wrap
 
 
 def _review_row_indent():
-    """Where the review row's primary text sits, and what its expanded body and its
-    reason lines indent by: past the caret, the checkbox, and the chip, each with
-    its own gap. Mirrors widgets.row_text_indent's arithmetic, but can't reuse it
-    directly: that helper assumes every leading column is chip-width, and the
-    checkbox here is not one."""
-    return (CARET_W + CARET_GAP + _checkbox_column_width() + CARET_GAP
-           + chip_column_width(_REVIEW_CHIP_KINDS) + CARET_GAP)
+    """Where the review row's primary text sits, and what its expanded body and
+    its reason lines indent by: past the caret and the chip column, each with its
+    own gap. The decision control sits at the row's right edge instead, so it
+    doesn't add to this."""
+    return row_text_indent(1, _REVIEW_CHIP_KINDS)
 
 
 def _review_row_kind(entries, updated):
@@ -341,15 +353,6 @@ def _check_reason_row(entry, indent):
         msg += f" &middot; existing card: &ldquo;{html.escape(existing)}&rdquo;"
     role = "decline" if entry.get("level") == "block" else "updated"
     return _accent_row(f"<i>{msg}</i>", role, indent)
-
-
-def _queued_note_row(note, indent):
-    """The revision note queued for this card (see _note_card), shown on the row
-    it belongs to instead of only living inside a modal prompt's memory."""
-    text = f"<i>&ldquo;{html.escape(note)}&rdquo;</i>&nbsp;&nbsp;" \
-          f"<span style='color:{colors()['dim']}; font-size:11px'>" \
-          "&middot; sent on the next Revise all</span>"
-    return _accent_row(text, "updated", indent)
 
 
 def _card_image_names(card, resolved=frozenset()):
@@ -1928,7 +1931,10 @@ class _GenerateDialog(QDialog):
                 # on screen for one frame while the new rows are being built.
                 w.setVisible(False)
                 w.deleteLater()
-        self.include_boxes = []
+        self.decision_cells = []
+        self.note_boxes = {}
+        self._note_captions = {}
+        self._add_note_buttons = {}
         self._image_reason_rows = {}
         for i, card in enumerate(s.cards):
             if i:
@@ -1938,13 +1944,13 @@ class _GenerateDialog(QDialog):
         self._update_review_summary()
 
     def _build_review_row(self, i, card):
-        """One drafted card as a row: caret, chip, include checkbox, bold front.
-        The check(s) flagging it and any queued revision note sit under the header,
-        visible whether the row is open or not (the same treatment
-        review._change_note_row gives a deck source's own change note); the back,
-        why, dosing and images sit in the body the caret reveals. Edit and Note are
-        link_buttons at the end of that body (review.py's own "Add note"
-        placement) rather than native push buttons crowding every row.
+        """One drafted card as a row, on review._card_row's own skeleton: caret,
+        chip (with the note type as a small tag underneath, review._chip_with_source's
+        own placement), bold front, and a decision control (Include/Skip) at the
+        header's right edge. Skip reveals the same 50px note box the update screen
+        uses, under the header whether the row is open or not; the back, why, dosing
+        and images sit in the body the caret reveals, with Edit and the quiet Add
+        note link (shown only while the box is closed) at the end of it.
         """
         s = self.session
         entries = s.checks[i]
@@ -2002,14 +2008,8 @@ class _GenerateDialog(QDialog):
         _name_caret(False)
         hlay.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
 
-        hlay.addWidget(chip_cell(kind, _REVIEW_CHIP_KINDS), 0, Qt.AlignmentFlag.AlignTop)
-
-        box = QCheckBox()
-        box.setChecked(s.included[i])
-        box.setAccessibleName("Include this card")
-        box.toggled.connect(lambda v, idx=i: self._guard(self._on_include_toggled, idx, v))
-        self.include_boxes.append(box)
-        hlay.addWidget(box, 0, Qt.AlignmentFlag.AlignTop)
+        hlay.addWidget(_chip_with_type(kind, card["note_type"], _REVIEW_CHIP_KINDS),
+                       0, Qt.AlignmentFlag.AlignTop)
 
         # The primary line opens the row too (review._ClickableLabel), same as
         # the update screen: the click target is the text a reader is already
@@ -2022,13 +2022,41 @@ class _GenerateDialog(QDialog):
         primary.setCursor(Qt.CursorShape.PointingHandCursor)
         hlay.addWidget(primary, 1)
 
-        # The note type: no longer a parenthetical crowding the front, but a
-        # quiet trailing label off to the row's right, the same treatment
-        # widgets.simple_row gives a trailing count or destination: metadata about
-        # the row, read after the card itself rather than inline with it.
-        type_label = hint_label(html.escape(card["note_type"]))
-        type_label.setWordWrap(False)
-        hlay.addWidget(type_label, 0, Qt.AlignmentFlag.AlignTop)
+        # The note box and its caption: built for every row and appended after the
+        # body below, so they read whether the row is open or not (review._card_row's
+        # own caption/box placement). Pre-filled and shown when a note already exists
+        # (a queued note surviving a rebuild); otherwise revealed by Skip or Add note.
+        caption = muted_label(_REVIEW_NOTE_CAPTION)
+        note_box = QPlainTextEdit(s.notes.get(i, ""))
+        note_box.setPlaceholderText(_REVIEW_NOTE_PLACEHOLDER)
+        note_box.setFixedHeight(50)
+        has_note = bool(s.notes.get(i))
+        caption.setVisible(has_note)
+        note_box.setVisible(has_note)
+        self.note_boxes[i] = note_box
+        self._note_captions[i] = caption
+
+        def _on_note_changed(idx=i, nb=note_box):
+            text = nb.toPlainText().strip()
+            if text:
+                s.notes[idx] = text
+            else:
+                s.notes.pop(idx, None)
+            self._update_review_summary()
+        note_box.textChanged.connect(_on_note_changed)
+
+        add_note = link_button(
+            "Add note", on_click=lambda: self._guard(self._reveal_review_note, i))
+        add_note.setVisible(not has_note)
+        self._add_note_buttons[i] = add_note
+
+        hlay.addStretch()
+        initial = "include" if s.included[i] else "skip"
+        cell = decision_cell(
+            _REVIEW_DECISION_OPTIONS, initial,
+            lambda v, idx=i: self._guard(self._on_review_decision, idx, v), card_label)
+        self.decision_cells.append(cell)
+        hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
 
         outer.addWidget(header)
 
@@ -2038,7 +2066,7 @@ class _GenerateDialog(QDialog):
         if i in s.image_gated:
             # Built whenever the gate applies to this card at all (that
             # membership is fixed for this render), visibility tracks the
-            # include box live: _on_include_toggled shows/hides this exact
+            # decision control live: _on_review_decision shows/hides this exact
             # widget rather than requiring a full rebuild to catch up.
             reason_row = _check_reason_row(
                 {"level": "warn", "message": "Has a picture: open the row to "
@@ -2046,8 +2074,6 @@ class _GenerateDialog(QDialog):
             reason_row.setVisible(not s.included[i])
             self._image_reason_rows[i] = reason_row
             outer.addWidget(reason_row)
-        if i in s.notes:
-            outer.addWidget(_queued_note_row(s.notes[i], indent))
 
         body.setVisible(False)
         blay = QVBoxLayout(body)
@@ -2078,58 +2104,82 @@ class _GenerateDialog(QDialog):
             blay.addWidget(_rich_label(img_html))
 
         edit_btn = link_button("Edit", on_click=lambda: self._guard(self._edit_card, i))
-        note_btn = link_button("Note", on_click=lambda: self._guard(self._note_card, i))
         links = QWidget()
         llay = QHBoxLayout(links)
         llay.setContentsMargins(0, 0, 0, 0)
         llay.setSpacing(CARET_GAP)
         llay.addWidget(edit_btn)
-        llay.addWidget(note_btn)
+        llay.addWidget(add_note)
         llay.addStretch()
         blay.addWidget(links)
 
         outer.addWidget(body)
+        outer.addWidget(caption)
+        outer.addWidget(note_box)
         return row
 
-    def _on_include_toggled(self, i, value):
-        """A card's checkbox flipped: write the new state and refresh what depends
-        on it. Split from _rebuild_review's own toggled.connect (which used to
-        write s.included and stop there) because that left the toggle with no
-        visible effect at all: the box itself flips (Qt paints that on its own),
-        but nothing ever recomputed the "N included" header or the "Import N
-        cards" button label, so a click that genuinely worked read as doing
-        nothing. Updates only those two labels rather than calling the full
-        _rebuild_review: a checkbox toggle doesn't change any card's text, badges,
-        or note, so nothing else on the page needs to move, and rebuilding every
-        row (including the very one mid-click) is unnecessary churn.
+    def _on_review_decision(self, i, state):
+        """A card's decision control changed: write the new state and refresh what
+        depends on it, without a full _rebuild_review (a decision doesn't change any
+        card's text, badges, or note, so nothing else on the page needs to move).
+
+        Skip reveals the note box (its text is what the next Revise all sends as
+        this card's note); the box stays open if it already carries text, whichever
+        way the control moves. A picture-gated row's reason line clears once the
+        decision moves back to Include.
         """
-        self.session.included[i] = value
+        s = self.session
+        s.included[i] = state == "include"
         reason_row = self._image_reason_rows.get(i)
         if reason_row is not None:
-            reason_row.setVisible(not value)
+            reason_row.setVisible(state == "skip")
+        box = self.note_boxes.get(i)
+        if box is not None:
+            show_box = bool(box.toPlainText().strip()) or state == "skip"
+            box.setVisible(show_box)
+            caption = self._note_captions.get(i)
+            if caption is not None:
+                caption.setVisible(show_box)
+            add_note = self._add_note_buttons.get(i)
+            if add_note is not None:
+                add_note.setVisible(not show_box)
         self._update_review_summary()
+
+    def _reveal_review_note(self, i):
+        """Add note (in the body) opens the same box Skip reveals under the
+        header, whatever the row's current decision."""
+        box = self.note_boxes.get(i)
+        if box is not None:
+            box.setVisible(True)
+        caption = self._note_captions.get(i)
+        if caption is not None:
+            caption.setVisible(True)
+        add_note = self._add_note_buttons.get(i)
+        if add_note is not None:
+            add_note.setVisible(False)
 
     def _update_review_summary(self):
         """Recompute the review header, the run-level footer, and the two button
         labels from current session state. Called after a full _rebuild_review,
-        and on its own by _on_include_toggled, which needs exactly this and
-        nothing more.
+        and on its own by _on_review_decision and a note box's textChanged, which
+        need exactly this and nothing more.
 
         Split in two, the way the update screen separates what the reader is
         deciding from run-level facts (review.py:1238-1246): the header under
         the title stays what she's actually choosing between (how many cards,
-        how many she's kept included), and everything about the run itself
+        how many included vs. skipped), and everything about the run itself
         (token spend, the rate-limit window, the revision diff) moves to a
         small-print footer under the list, rather than one line carrying both.
         """
         s = self.session
         n_inc = sum(s.included)
+        n_skip = len(s.cards) - n_inc
         header = f"{plural(len(s.cards), 'card')} drafted"
         if s.attachments:
             # K = every attachment plus the pasted source itself, which is
             # always the first source whether or not there's any text in it.
             header += f" from {len(s.attachments) + 1} sources"
-        header += f" · {n_inc} included"
+        header += f" · {n_inc} included, {n_skip} skipped"
         self.review_header.setText(header)
 
         footer = (f"Last run ~{round(s.tokens_last_run / 1000)}k tokens"
@@ -2164,19 +2214,6 @@ class _GenerateDialog(QDialog):
                 return
             card["fields"][name] = new
         self._rebuild_review()
-
-    def _note_card(self, i):
-        """Queue (or clear) a per-card revision note. This never calls the
-        model by itself: it only marks the card for the next Revise all,
-        which is what sends every queued note in one turn (see _revise_all)."""
-        note = _prompt("Revision note for this card:",
-                       default=self.session.notes.get(i, ""))
-        if note is not None:
-            if note.strip():
-                self.session.notes[i] = note.strip()
-            else:
-                self.session.notes.pop(i, None)
-            self._rebuild_review()
 
     def _revise_all(self):
         """The only path that sends card-level feedback to the model: one CLI

@@ -238,6 +238,29 @@ def test_generation_reaches_review_with_cards(anki, monkeypatch):
     assert dlg.session.included == [True]
 
 
+def test_decision_cell_click_skips_and_updates_header(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    cell = dlg.decision_cells[0]
+    assert cell.buttons["include"].isChecked()
+    cell.buttons["skip"].click()
+    assert dlg.session.included == [False]
+    assert "0 included, 1 skipped" in dlg.review_header.text()
+    assert dlg.import_btn.text() == "Import 0 cards"
+
+    cell.buttons["include"].click()
+    assert dlg.session.included == [True]
+    assert "1 included, 0 skipped" in dlg.review_header.text()
+
+
+def test_decision_cell_has_only_include_and_skip(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert set(dlg.decision_cells[0].buttons) == {"include", "skip"}
+
+
 def test_generation_failure_returns_to_input(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="fail")
     dlg._start_generation()
@@ -435,6 +458,23 @@ def test_review_note_queue_and_revise_all(anki, monkeypatch):
     assert dlg.session.notes == {}          # consumed by the revision
 
 
+def test_skip_reveals_the_note_box_and_its_text_rides_the_next_revise_all(anki, monkeypatch):
+    calls = _counting_run_generation(monkeypatch)
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    box = dlg.note_boxes[0]
+    assert not box.isVisible()
+    dlg.decision_cells[0].buttons["skip"].click()
+    assert box.isVisible()
+    box.setPlainText("make it one short cloze on the half-time only")
+    assert dlg.session.notes[0] == "make it one short cloze on the half-time only"
+    dlg._revise_all()
+    dlg._wait_for_worker()
+    assert len(calls) == 2
+    assert dlg.session.notes == {}          # consumed by the revision
+
+
 # === Minor: a fresh Generate after an existing draft is not a revision =====
 
 def test_fresh_generate_after_back_does_not_report_a_bogus_diff(anki, monkeypatch):
@@ -468,17 +508,25 @@ def test_edit_card_updates_fields_via_prompt(anki, monkeypatch):
     assert dlg.session.cards[0]["fields"]["Front"] == "NEW FRONT"
 
 
-def test_note_card_queues_and_clears_a_revision_note(anki, monkeypatch):
+def test_note_box_queues_and_clears_a_revision_note(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
     dlg._wait_for_worker()
-    anki.gui.interactive = True
-    anki.gui.interactions.append({"text": "make it a cloze", "ok": True})
-    dlg._note_card(0)
+    box = dlg.note_boxes[0]
+    box.setPlainText("make it a cloze")
     assert dlg.session.notes[0] == "make it a cloze"
-    anki.gui.interactions.append({"text": "", "ok": True})
-    dlg._note_card(0)
+    box.setPlainText("")
     assert 0 not in dlg.session.notes
+
+
+def test_add_note_link_opens_the_box(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    box = dlg.note_boxes[0]
+    assert not box.isVisible()
+    dlg._reveal_review_note(0)
+    assert box.isVisible()
 
 
 def test_import_writes_notes_and_closes(anki, monkeypatch):
@@ -572,7 +620,7 @@ def test_review_header_names_the_drafted_count(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
     dlg._wait_for_worker()
-    assert dlg.review_header.text() == "1 card drafted · 1 included"
+    assert dlg.review_header.text() == "1 card drafted · 1 included, 0 skipped"
 
 
 def test_review_header_names_sources_when_attachments_were_used(anki, monkeypatch):
@@ -583,7 +631,7 @@ def test_review_header_names_sources_when_attachments_were_used(anki, monkeypatc
     dlg._start_generation()
     dlg._wait_for_worker()
     # K = attachments + 1: the pasted source itself counts as the first one.
-    assert dlg.review_header.text() == "1 card drafted from 2 sources · 1 included"
+    assert dlg.review_header.text() == "1 card drafted from 2 sources · 1 included, 0 skipped"
 
 
 def test_attached_document_text_is_redacted_from_the_run_log(anki, monkeypatch):
@@ -764,6 +812,7 @@ def test_image_card_starts_excluded_by_default(anki, monkeypatch):
     dlg._wait_for_worker(timeout=15)
     assert dlg.session.included == [False]
     assert all(c["level"] != "block" for c in dlg.session.checks[0])   # not blocked, just gated
+    assert dlg.decision_cells[0].buttons["skip"].isChecked()
 
 
 def test_review_row_shows_thumbnail_and_host_for_a_web_image(anki, monkeypatch):
@@ -836,15 +885,15 @@ def test_review_row_reason_is_silent_on_a_kept_verbatim_cards_own_uncheck(anki, 
 
 def test_review_row_reason_is_silent_once_the_learner_checks_it_herself(anki, monkeypatch):
     # _row_text walks every node regardless of visibility, so this checks the
-    # widget's own isVisible() directly: the whole point is that ticking the
-    # box hides this exact widget live, without a rebuild.
+    # widget's own isVisible() directly: the whole point is that choosing
+    # Include hides this exact widget live, without a rebuild.
     _stub_fetch_image(monkeypatch)
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
     dlg._start_generation()
     dlg._wait_for_worker(timeout=15)
     reason_row = dlg._image_reason_rows[0]
     assert reason_row.isVisible()
-    dlg._on_include_toggled(0, True)   # the live path a checkbox toggle takes
+    dlg._on_review_decision(0, "include")   # the live path a decision click takes
     assert not reason_row.isVisible()   # she included it; nothing left to explain
 
 
