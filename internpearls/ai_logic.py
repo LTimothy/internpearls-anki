@@ -72,6 +72,19 @@ def _find_json(text):
     return text[start:end + 1] if 0 <= start < end else text
 
 
+_FENCE_OBJ_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
+
+
+def _find_json_obj(text):
+    """Same tolerance as _find_json, for a reply that's a JSON object rather
+    than a list (a check run's {"verdicts": [...]} shape)."""
+    m = _FENCE_OBJ_RE.search(text or "")
+    if m:
+        return m.group(1)
+    start, end = (text or "").find("{"), (text or "").rfind("}")
+    return text[start:end + 1] if 0 <= start < end else text
+
+
 def parse_cards_json(text, allowed_types, field_map):
     """Parse a model reply into card dicts. Returns (cards, errors); any error
     empties cards, so a caller never imports a half-valid batch silently."""
@@ -268,6 +281,131 @@ def build_prompt(skills, source, note_types, field_map, count, instructions="",
         if feedback.strip():
             parts.append("## Feedback on the whole set\n" + feedback.strip())
     return "\n\n".join(parts) + "\n"
+
+
+_VERDICT_WORDS = ("confirmed", "corrected", "unverified")
+
+_CHECK_CONTRACT = """## Output contract
+Reply with ONLY JSON, no prose before or after:
+{"verdicts": [{"index": <0-based card index>,
+               "verdict": "confirmed" | "corrected" | "unverified",
+               "note": "<one sentence: what was checked and what was found>",
+               "correction": {<field>: "<new value>"} | null,
+               "sources": [{"title": "...", "url": "https://..."}]}]}
+One verdict per card. A correction proposes new text for one or more of that
+card's own fields; it never changes the card's note type or field set, and it
+never proposes a new card."""
+
+
+def build_check_prompt(skills, cards, field_map, backend="", web=True):
+    """The fact-check turn's prompt: skills, then the drafted cards to verify.
+
+    Unlike build_prompt, this never asks for new cards or a revised set: the
+    reply is a verdict per card, not the cards themselves. `web` (from
+    ai_cli.web_capable) decides which rules section is sent: a backend with
+    no web tools is told outright to answer from its own knowledge and mark
+    every card unverified, rather than being asked to do something it can't.
+    """
+    parts = []
+    for s in skills:
+        parts.append(s.strip())
+    note_types = sorted({c["note_type"] for c in cards if c["note_type"] in field_map})
+    if note_types:
+        schema = {t: field_map[t] for t in note_types}
+        parts.append("## Allowed note types and their fields\n"
+                     + json.dumps(schema, indent=1))
+    parts.append(_CHECK_CONTRACT)
+    rules = ["## Task: check facts",
+             "Check every number, dose, threshold, mechanism and eponym on "
+             "each card below. Cite only a source you actually opened; never "
+             "invent a citation. A correction is new field text only, never "
+             "a new card or a different note type."]
+    if web:
+        rules.append("You have web tools here: use them to verify each "
+                     "claim. Mark a card \"unverified\" with the reason when "
+                     "nothing could be opened for it.")
+    else:
+        rules.append("You have no web access in this environment: answer "
+                     "from your own knowledge only. Mark every card "
+                     "\"unverified\" with the reason \"no web access\", and "
+                     "still use \"note\" to flag anything that looks wrong "
+                     "from recall.")
+    parts.append("\n".join(rules))
+    lines = [f"### Card {i}\n" + json.dumps(
+        {"note_type": c["note_type"], "fields": c["fields"]}, indent=1)
+        for i, c in enumerate(cards)]
+    parts.append("## Cards to check\n" + "\n".join(lines))
+    return "\n\n".join(parts) + "\n"
+
+
+def parse_verdicts_json(text, n_cards, field_map):
+    """Parse a check run's reply into (verdicts, errors).
+
+    verdicts is {index: verdict-dict}, covering every 0..n_cards-1 index: an
+    index the reply never covers, or whose entry fails validation, gets a
+    synthetic "unverified" entry instead of leaving a hole, so a caller can
+    render one line per card unconditionally. field_map is {index: [that
+    card's field names]}, used only to check a correction's keys, since this
+    function is never handed the cards themselves.
+
+    A reply that isn't a JSON object with a "verdicts" list is unusable
+    outright: ({}, [one error]). Otherwise every malformed *entry* (bad
+    index, unknown verdict word, missing note, a correction naming a field
+    the card doesn't have, cropping the offending index to the synthetic
+    fallback) adds one line to errors rather than failing the whole reply,
+    the same tolerance parse_cards_json extends per-card.
+    """
+    try:
+        data = json.loads(_find_json_obj(text))
+    except Exception as e:
+        return {}, [f"reply was not valid JSON: {e}"]
+    raw_list = data.get("verdicts") if isinstance(data, dict) else None
+    if not isinstance(raw_list, list):
+        return {}, ["reply must be a JSON object with a \"verdicts\" list"]
+
+    errors = []
+    parsed = {}
+    for j, raw in enumerate(raw_list):
+        if not isinstance(raw, dict):
+            errors.append(f"verdict {j}: not an object")
+            continue
+        idx = raw.get("index")
+        if (not isinstance(idx, int) or isinstance(idx, bool)
+                or not (0 <= idx < n_cards)):
+            errors.append(f"verdict {j}: invalid index {idx!r}")
+            continue
+        verdict = raw.get("verdict")
+        if verdict not in _VERDICT_WORDS:
+            errors.append(f"card {idx}: unknown verdict {verdict!r}")
+            continue
+        note = raw.get("note")
+        if not isinstance(note, str) or not note.strip():
+            errors.append(f"card {idx}: missing note")
+            continue
+        correction = raw.get("correction")
+        if correction is not None:
+            allowed = set(field_map.get(idx, []))
+            if (not isinstance(correction, dict) or not correction
+                    or not set(correction) <= allowed):
+                errors.append(f"card {idx}: correction has an unknown field")
+                continue
+            correction = {k: str(v) for k, v in correction.items()}
+        sources = []
+        for src in raw.get("sources") or []:
+            if not isinstance(src, dict):
+                continue
+            url = str(src.get("url", ""))
+            if not url.lower().startswith(("http://", "https://")):
+                continue
+            sources.append({"title": str(src.get("title") or url), "url": url})
+        parsed[idx] = {"verdict": verdict, "note": note.strip(),
+                       "correction": correction, "sources": sources}
+    for i in range(n_cards):
+        if i not in parsed:
+            parsed[i] = {"verdict": "unverified",
+                        "note": "the assistant returned no verdict for this card",
+                        "correction": None, "sources": []}
+    return parsed, errors
 
 
 _WEB_TOOLS = {"WebSearch", "WebFetch", "web_search", "web_fetch",
