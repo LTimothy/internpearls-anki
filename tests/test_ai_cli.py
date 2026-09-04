@@ -739,9 +739,10 @@ def test_build_argv_agy_sends_model_and_effort_only_when_set_and_supported(
                                 model="gemini-3.8-flash-medium", effort="high")
     assert argv[argv.index("--model") + 1] == "gemini-3.8-flash-medium"
     assert argv[argv.index("--effort") + 1] == "high"
-    # Nothing set: agy's own default, no flag at all.
+    # Nothing set: falls back to the add-on's own default, same as claude.
     bare, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
-    assert "--model" not in bare and "--effort" not in bare
+    assert bare[bare.index("--model") + 1] == "gemini-3.8-flash-low"
+    assert bare[bare.index("--effort") + 1] == "low"
     # Set, but this binary does not document them: passing either would hard
     # fail every run, so neither is sent.
     monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
@@ -749,6 +750,15 @@ def test_build_argv_agy_sends_model_and_effort_only_when_set_and_supported(
                                        [], model="gemini-3.8-flash-medium",
                                        effort="high")
     assert "--model" not in unsupported and "--effort" not in unsupported
+
+
+def test_build_argv_agy_default_model_effort_omitted_when_unsupported(
+        monkeypatch):
+    # Same guard as an explicit override: an older agy without --model/
+    # --effort documented must not be handed the add-on's default either.
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])
+    assert "--model" not in argv and "--effort" not in argv
 
 
 def test_build_argv_agy_puts_the_prompt_in_argv_after_dash_p_and_not_on_stdin(
@@ -1134,3 +1144,72 @@ def test_detect_backends_uses_per_backend_override(monkeypatch):
            "ai_cli_path": {"claude": "/opt/claude", "codex": "", "agy": ""}}
     ai_cli.detect_backends(cfg)
     assert seen["claude"] == "/opt/claude" and seen["codex"] == ""
+
+
+def test_configured_default_reads_model_and_effort(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('model = "gpt-5.1-codex"\nmodel_reasoning_effort = "high"\n')
+    assert ai_cli.configured_default(str(cfg)) == ("gpt-5.1-codex", "high")
+
+
+def test_configured_default_missing_file_returns_blank(tmp_path):
+    assert ai_cli.configured_default(str(tmp_path / "nope.toml")) == ("", "")
+
+
+def test_configured_default_malformed_file_returns_blank(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_bytes(b"\x00not a toml file at all {{{")
+    assert ai_cli.configured_default(str(cfg)) == ("", "")
+
+
+def test_configured_default_ignores_a_profile_scoped_override(tmp_path):
+    # A key under a [profiles.x] section is not the CLI's own top-level
+    # default; the hand parser must stop reading at the first section header.
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('model = "gpt-5.1-codex"\n\n'
+                   '[profiles.fast]\nmodel = "o3"\n')
+    assert ai_cli.configured_default(str(cfg)) == ("gpt-5.1-codex", "")
+
+
+def test_configured_default_missing_keys_returns_blank(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('some_other_key = "x"\n')
+    assert ai_cli.configured_default(str(cfg)) == ("", "")
+
+
+def test_model_effort_line_claude_add_on_default():
+    assert (ai_cli.model_effort_line("claude", "", "")
+            == "Model: sonnet, effort: medium (add-on default)")
+
+
+def test_model_effort_line_claude_your_setting():
+    assert (ai_cli.model_effort_line("claude", "opus", "high")
+            == "Model: opus, effort: high (your setting)")
+
+
+def test_model_effort_line_agy_add_on_default():
+    assert (ai_cli.model_effort_line("agy", "", "")
+            == "Model: gemini-3.8-flash-low, effort: low (add-on default)")
+
+
+def test_model_effort_line_codex_uses_configured_default(monkeypatch):
+    monkeypatch.setattr(ai_cli, "configured_default",
+                        lambda path=None: ("gpt-5.1-codex", "high"))
+    assert (ai_cli.model_effort_line("codex", "", "")
+            == "Model: gpt-5.1-codex, effort: high (add-on default)")
+
+
+def test_model_effort_line_codex_names_its_own_default_when_config_is_bare(
+        monkeypatch):
+    monkeypatch.setattr(ai_cli, "configured_default", lambda path=None: ("", ""))
+    assert ai_cli.model_effort_line("codex", "", "") == "Model: Codex's own default"
+
+
+def test_model_effort_line_codex_your_setting_skips_the_config_file(
+        monkeypatch):
+    def boom(path=None):
+        raise AssertionError("configured_default must not be read once the "
+                             "learner set a model")
+    monkeypatch.setattr(ai_cli, "configured_default", boom)
+    assert (ai_cli.model_effort_line("codex", "o3", "")
+            == "Model: o3 (your setting)")

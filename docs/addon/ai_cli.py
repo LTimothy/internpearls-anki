@@ -41,7 +41,8 @@ BACKENDS = {
                "default_model": "sonnet",
                "default_effort": "medium",
                "model_aliases": ["sonnet", "opus", "haiku"],
-               "model_hint": "e.g. sonnet, opus, haiku, or a full model name",
+               "model_hint": "sonnet is the add-on default; haiku is faster, "
+                             "opus is stronger; or a full model name",
                "effort_levels": ["low", "medium", "high", "xhigh", "max"],
                # Truthful per-backend: only claude's build_argv actually caps turns
                # and gates web tools by mode (--max-turns, --tools). See build_argv.
@@ -91,14 +92,17 @@ BACKENDS = {
             # agy 1.1.24 documents both --model and --effort in its own --help,
             # and `agy models` lists the ids it accepts. There is no short alias
             # list to close over, so Model stays free text and build_argv sends
-            # either flag only when the user set one AND supports_flag finds it
-            # in this binary's help, so an older agy is not hard-broken. Blank
-            # means agy's own default, already a cheap Flash tier.
-            "default_model": "",
-            "default_effort": "",
+            # either flag (the learner's override, or this default) only when
+            # supports_flag finds it in this binary's help, so an older agy is
+            # not hard-broken. gemini-3.8-flash-low/low is the owner-chosen
+            # default: fastest of the catalogue, and the one that does not burn
+            # its turn thinking. See build_argv.
+            "default_model": "gemini-3.8-flash-low",
+            "default_effort": "low",
             "model_aliases": [],
-            "model_hint": ('blank for agy\'s default, or an id from "agy models"; '
-                           "gemini-3.8-flash-low is the fastest"),
+            "model_hint": ("gemini-3.8-flash-low is the add-on default; "
+                           "gemini-3.8-flash-medium or gemini-3.1-pro-low are "
+                           "stronger, or any id from \"agy models\""),
             "effort_levels": ["low", "medium", "high"],
             # agy's build_argv never restricts tools or turns by mode, so nothing
             # here enforces "no web access" even in Quick; only the prompt's
@@ -290,6 +294,72 @@ def resolve_claude_effort(effort):
     return effort if effort in levels else BACKENDS["claude"]["default_effort"]
 
 
+_CODEX_CONFIG_PATH = os.path.expanduser("~/.codex/config.toml")
+_TOML_KV_RE = re.compile(r'^(\w+)\s*=\s*"([^"]*)"\s*$')
+
+
+def configured_default(path=None):
+    """codex's own default model and reasoning effort, read from its config
+    file (`path`, or ~/.codex/config.toml). codex's catalogue isn't listable
+    non-interactively (`codex models` needs a terminal), so this is the only
+    way the add-on can name what codex would actually use when nothing is
+    configured here. A tiny hand parser, not a toml library: only the
+    top-level `model` and `model_reasoning_effort` keys matter, as plain
+    `key = "value"` lines, stopping at the first `[section]` header so a
+    profile-scoped override is never mistaken for the CLI's own default.
+    Returns (model, effort); either is "" when absent, and both are "" when
+    the file is missing, unreadable, or carries neither key in that shape."""
+    path = path or _CODEX_CONFIG_PATH
+    try:
+        with open(path, encoding="utf8") as fh:
+            text = fh.read()
+    except OSError:
+        return "", ""
+    model, effort = "", ""
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if s.startswith("["):
+            break
+        m = _TOML_KV_RE.match(s)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2)
+        if key == "model":
+            model = val
+        elif key == "model_reasoning_effort":
+            effort = val
+    return model, effort
+
+
+def model_effort_line(kind, cfg_model="", cfg_effort=""):
+    """'Model: <id>, effort: <level> (add-on default)' or '(your setting)', the
+    line every backend row shows (AI Backends and the wizard's backend row).
+    `cfg_model`/`cfg_effort` are the learner's config values for `kind`, ""
+    meaning unset. codex has no add-on-forced default (see build_argv): with
+    nothing configured here, its pair comes from its own config.toml
+    (configured_default) instead of BACKENDS' default_model/default_effort,
+    and a codex with no model there just says so rather than naming a blank."""
+    meta = BACKENDS[kind]
+    if cfg_model or cfg_effort:
+        model = cfg_model or meta["default_model"]
+        effort = cfg_effort or meta["default_effort"]
+        tag = "your setting"
+    elif kind == "codex":
+        model, effort = configured_default()
+        if not model:
+            return "Model: Codex's own default"
+        tag = "add-on default"
+    else:
+        model, effort = meta["default_model"], meta["default_effort"]
+        tag = "add-on default"
+    bits = [f"Model: {model}" if model else "Model: default"]
+    if effort:
+        bits.append(f"effort: {effort}")
+    return ", ".join(bits) + f" ({tag})"
+
+
 # macOS caps a process's whole argument block (ARG_MAX, 1 MB in practice), and
 # agy takes the prompt as an argument rather than on stdin. A prompt anywhere
 # near this size is a pasted book, not a lecture excerpt, so refuse it with a
@@ -375,10 +445,15 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
         # can be expanded by agy instead of read as text.
         if supports_flag(path, "--disable-slash-commands"):
             argv += ["--disable-slash-commands"]
-        if model and supports_flag(path, "--model"):
-            argv += ["--model", model]
-        if effort and supports_flag(path, "--effort"):
-            argv += ["--effort", effort]
+        # Mirrors claude's eff_model/eff_effort: an explicit config value always
+        # wins, else the add-on's own default, so agy never runs on whatever
+        # its own account default happens to be.
+        eff_model = model or BACKENDS["agy"]["default_model"]
+        eff_effort = effort or BACKENDS["agy"]["default_effort"]
+        if eff_model and supports_flag(path, "--model"):
+            argv += ["--model", eff_model]
+        if eff_effort and supports_flag(path, "--effort"):
+            argv += ["--effort", eff_effort]
         # agy's own idle-agnostic ceiling defaults to 5 minutes, well under our
         # hard cap; raise it to match so agy doesn't cut a healthy long run
         # before our own cap would. Go duration syntax (e.g. "15m").
