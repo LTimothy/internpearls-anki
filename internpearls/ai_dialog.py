@@ -25,8 +25,8 @@ from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
                     QSpinBox, QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic, collection
-from .ai_setup import (LABEL_W, _safe_settle, _settle_min_size, _wrapped_hint,
-                       run_connection_test_async)
+from .ai_setup import (LABEL_W, _open_url, _safe_settle, _settle_min_size,
+                       _wrapped_hint, run_connection_test_async)
 from .config import (AI_LAST_RUN_LOG, APP_NAME, TARGET_FIELDS, _cfg,
                      load_ai_usage, save_ai_usage, load_deck_skill,
                      save_deck_skill, load_user_skill, save_user_skill)
@@ -353,6 +353,14 @@ def _check_reason_row(entry, indent):
         msg += f" &middot; existing card: &ldquo;{html.escape(existing)}&rdquo;"
     role = "decline" if entry.get("level") == "block" else "updated"
     return _accent_row(f"<i>{msg}</i>", role, indent)
+
+
+# A Check facts verdict's own label and palette role (see _build_verdict_row):
+# "unverified" has no role here since it takes colors()["warning"] directly
+# rather than one of the existing "<role>_bg" pairs _accent_row's roles read.
+_VERDICT_LABELS = {"confirmed": "Confirmed", "corrected": "Corrected",
+                   "unverified": "Unverified"}
+_VERDICT_ROLE = {"confirmed": "accept", "corrected": "updated"}
 
 
 def _card_image_names(card, resolved=frozenset()):
@@ -2159,6 +2167,10 @@ class _GenerateDialog(QDialog):
             self._image_reason_rows[i] = reason_row
             outer.addWidget(reason_row)
 
+        verdict = s.verdicts.get(i)
+        if verdict:
+            outer.addWidget(self._build_verdict_row(i, verdict, indent))
+
         body.setVisible(False)
         blay = QVBoxLayout(body)
         blay.setContentsMargins(indent, 2, 0, 2)
@@ -2302,6 +2314,111 @@ class _GenerateDialog(QDialog):
             if new is None:
                 return
             card["fields"][name] = new
+        self._rebuild_review()
+
+    def _build_verdict_row(self, i, verdict, indent):
+        """A Check facts verdict, on _check_reason_row's own shape (an accent
+        bar plus one line of italic text): Confirmed in the ok colour,
+        Corrected in the revised colour, Unverified in the warning colour.
+        Source titles ride after the note as real links (opened through
+        ai_setup._open_url, the same path the AI Backends window's install
+        links use), the URL itself as each link's tooltip. A Corrected
+        verdict still carrying its proposed text also gets an Accept/Keep
+        mine block underneath."""
+        kind = verdict["verdict"]
+        label = _VERDICT_LABELS.get(kind, "Unverified")
+        if kind == "corrected" and verdict.get("kept_yours"):
+            label += " (kept yours)"
+        msg = html.escape(f"{label}: {verdict.get('note', '')}")
+        sources = verdict.get("sources") or []
+        if sources:
+            links = []
+            for src in sources:
+                url = html.escape(src.get("url", ""), quote=True)
+                title = html.escape(src.get("title") or src.get("url") or "source")
+                links.append(f'<a href="{url}" title="{url}">{title}</a>')
+            msg += " &middot; " + ", ".join(links)
+
+        row = QWidget()
+        outer = QVBoxLayout(row)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+
+        line = QWidget()
+        llay = QHBoxLayout(line)
+        llay.setContentsMargins(indent, 0, 0, 0)
+        llay.setSpacing(0)
+        label_widget = muted_label(f"<i>{msg}</i>")
+        label_widget.setTextFormat(Qt.TextFormat.RichText)
+        label_widget.setOpenExternalLinks(False)
+        label_widget.linkActivated.connect(_open_url)
+        c = colors()
+        if kind == "unverified":
+            bar = c["warning"]
+        else:
+            bar = c[_VERDICT_ROLE.get(kind, "updated") + "_bg"]
+        # The border-none reset is load-bearing: Qt drops a lone border-left on a
+        # QLabel unless the border shorthand is cleared first (see _accent_row).
+        label_widget.setStyleSheet(
+            f"border: none; border-left: 3px solid {bar}; padding-left: 8px;"
+            f" color: {c['muted']};")
+        llay.addWidget(label_widget)
+        outer.addWidget(line)
+
+        if kind == "corrected" and verdict.get("correction"):
+            outer.addWidget(self._build_correction_block(i, verdict, indent))
+        return row
+
+    def _build_correction_block(self, i, verdict, indent):
+        """The proposed field text under the card's current text, with Accept
+        and Keep mine. Only shown while the verdict still carries a
+        correction; both links clear it, one by applying it first."""
+        card = self.session.cards[i]
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(indent + 8, 0, 0, 0)
+        lay.setSpacing(2)
+        updated_fg = colors()["updated_fg"]
+        for field, new_value in verdict["correction"].items():
+            current = field_preview_html(card["fields"].get(field, ""))
+            proposed = field_preview_html(new_value)
+            lay.addWidget(_rich_label(
+                f"<b>{html.escape(field)}</b>: {current} &rarr; "
+                f"<span style='color:{updated_fg}'>{proposed}</span>"))
+        links = QWidget()
+        llay = QHBoxLayout(links)
+        llay.setContentsMargins(0, 0, 0, 0)
+        llay.setSpacing(CARET_GAP)
+        llay.addWidget(link_button(
+            "Accept", on_click=lambda: self._guard(self._accept_correction, i)))
+        llay.addWidget(link_button(
+            "Keep mine", on_click=lambda: self._guard(self._keep_correction, i)))
+        llay.addStretch()
+        lay.addWidget(links)
+        return box
+
+    def _accept_correction(self, i):
+        """Write the proposed fields into the card in place, mark it updated
+        (the same set a revision's own diff uses), and drop the correction so
+        the row no longer offers it."""
+        s = self.session
+        verdict = s.verdicts.get(i)
+        if not verdict or not verdict.get("correction"):
+            return
+        s.cards[i]["fields"].update(verdict["correction"])
+        s.updated.add(i)
+        verdict["correction"] = None
+        self._rebuild_review()
+
+    def _keep_correction(self, i):
+        """Drop the proposed correction without touching the card; the
+        verdict line stays, worded as kept rather than pending."""
+        s = self.session
+        verdict = s.verdicts.get(i)
+        if not verdict:
+            return
+        verdict["correction"] = None
+        verdict["kept_yours"] = True
         self._rebuild_review()
 
     def _revise_all(self):

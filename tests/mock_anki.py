@@ -1037,6 +1037,7 @@ class QLabel(QWidget):
     def __init__(self, text="", *a, **k):
         super().__init__()
         self._text = text
+        self.linkActivated = Signal()
 
     def text(self):
         return self._text
