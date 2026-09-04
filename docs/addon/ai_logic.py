@@ -222,7 +222,7 @@ _MODE_INSTRUCTIONS = {
 
 def build_prompt(skills, source, note_types, field_map, count, instructions="",
                  attachments=(), cards=None, feedback="", notes=None,
-                 checks=None, mode="thorough"):
+                 checks=None, mode="thorough", backend=""):
     notes = notes or {}
     parts = []
     for s in skills:
@@ -234,6 +234,12 @@ def build_prompt(skills, source, note_types, field_map, count, instructions="",
     parts.append("## Task\nDraft flashcards from the source material below. "
                  "Quality over count. " + _count_instruction(count))
     parts.append(_MODE_INSTRUCTIONS.get(mode, _MODE_INSTRUCTIONS["thorough"]))
+    if backend == "agy":
+        parts.append(
+            "## Sandbox\nThe only folder you may read is the scratch folder "
+            "already given to you. Do not run commands, search any other "
+            "folder, or write files. Reply with the JSON itself as your "
+            "text output.")
     if instructions.strip():
         parts.append("## User instructions\n" + instructions.strip())
     if attachments:

@@ -63,18 +63,22 @@ def test_run_garbage_output_raises():
         _run("garbage")
 
 
-def test_run_no_usable_reply_error_names_event_count_and_last_line():
+def test_run_no_usable_reply_error_names_event_count():
     # A stream that never produces a parseable result must not just say "no
-    # usable reply": it names how many stream lines it saw, echoes the last
-    # non-empty one (the owner's only clue without opening the log file), and
-    # points at ai_last_run.log for the full stream.
-    with pytest.raises(ai_cli.GenerationError) as e:
+    # usable reply": it names how many stream lines it saw and points at
+    # ai_last_run.log for the full stream. It no longer echoes the raw last
+    # line itself (that excerpt used to leak straight into the dialog; the
+    # full stream in the log already covers it).
+    with pytest.raises(ai_cli.EmptyReply) as e:
         _run("garbage")
     msg = str(e.value)
     assert "1 events seen" in msg
-    assert "not json" in msg
+    assert "not json" not in msg
     assert "ai_last_run.log" in msg
     assert "user_files" in msg
+    assert e.value.events == 1
+    assert e.value.turns is None
+    assert e.value.refused_tools == 0
 
 
 def test_run_log_written_with_stdout_and_exit_code(tmp_path):
@@ -120,14 +124,17 @@ def test_run_log_elides_a_stdout_line_that_echoes_the_prompt(tmp_path):
     assert "Front" in text and "Study Deck - Basic" in text
 
 
-def test_no_usable_reply_excerpt_elided_when_last_line_echoes_prompt():
+def test_no_usable_reply_message_never_carries_the_raw_stream_line():
+    # The "no usable reply" message no longer echoes any stdout line at all
+    # (see test_run_no_usable_reply_error_names_event_count), so a stream
+    # that happens to echo the prompt back can't leak it into the dialog
+    # either; the run log (a separate file) still elides that line.
     prompt = ("This is the learner's actual pasted source material for the "
              "card batch, which must never reach the error dialog verbatim.")
-    with pytest.raises(ai_cli.GenerationError) as e:
+    with pytest.raises(ai_cli.EmptyReply) as e:
         ai_cli._run_argv(FAKE + ["echo_prompt_garbage"], "claude", prompt)
     msg = str(e.value)
     assert prompt not in msg
-    assert "<line containing the prompt elided," in msg
 
 
 def test_run_log_unchanged_when_lines_only_share_a_short_common_word(tmp_path):
@@ -371,6 +378,24 @@ def test_run_agy_permission_denied_stderr_raises_the_readable_sentence():
     assert str(e.value) == ("Antigravity refused a file write; the add-on "
                             "never enables writes, so this run used a tool "
                             "it should not have.")
+
+
+def test_run_agy_empty_reply_reports_refused_tools_with_no_json_in_the_message():
+    # The owner's real bug: 24.6k of 24.8k output tokens on thinking, two
+    # tools the sandbox refused, no agent_response delta at all, then a
+    # SUCCESS result with an empty response. Must raise EmptyReply, not the
+    # raw JSON the old "no usable reply (...; last: {...})" message showed.
+    with pytest.raises(ai_cli.EmptyReply) as e:
+        ai_cli._run_argv(FAKE + ["agy_empty_reply"], "agy", "PROMPT",
+                         prompt_via_stdin=False)
+    err = e.value
+    assert err.refused_tools == 2
+    assert err.turns == 1
+    assert err.events > 0
+    assert "{" not in str(err)
+    assert str(err) == (
+        f"Antigravity CLI finished after {ai_logic.format_duration(err.duration_s)} "
+        f"without writing a reply; it tried 2 tool(s) the sandbox refused")
 
 
 def test_run_timeout_kills_process():

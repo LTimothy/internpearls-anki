@@ -1435,7 +1435,8 @@ class _GenerateDialog(QDialog):
             cards=s.cards if revision else None,
             feedback=self.feedback_box.toPlainText() if revision else "",
             notes=s.notes if revision else None,
-            checks=s.checks if revision else None, mode=s.mode)
+            checks=s.checks if revision else None, mode=s.mode,
+            backend=s.backend)
         if extra_error:
             prompt += ("\n\n## Your previous reply failed validation\n"
                       + "\n".join(extra_error))
@@ -1625,6 +1626,27 @@ class _GenerateDialog(QDialog):
         s = self.session
         err, res = self._worker_error, self._worker_result
         if isinstance(err, ai_cli.GenerationCancelled):
+            self._return_to_input_or_review()
+            return
+        if isinstance(err, ai_cli.EmptyReply):
+            if not self._retried_json:
+                # Same single-retry budget malformed JSON uses (see below):
+                # one automatic re-ask per generation, whichever kind of bad
+                # reply triggers it.
+                self._retried_json = True
+                self._start_generation(
+                    revision=self._last_revision,
+                    extra_error=["Your previous reply was empty. Do not "
+                                "call any tool; the only folder you may "
+                                "read is the scratch folder already "
+                                "provided. Reply with the JSON now."])
+                self._append_activity("Reply was empty, retrying once")
+                return
+            _warn(f"{err}\n\nThe add-on already retried once. Try again, "
+                 "pick a lower-effort model in AI Backends (for "
+                 "Antigravity, an id ending in -low), or use another "
+                 "assistant. The full stream is in ai_last_run.log inside "
+                 "the add-on's user_files folder.")
             self._return_to_input_or_review()
             return
         if err or not res:
