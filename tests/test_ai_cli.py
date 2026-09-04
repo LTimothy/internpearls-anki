@@ -806,6 +806,13 @@ def test_image_capable_table():
         assert ai_cli.image_capable(kind)
 
 
+def test_web_capable_table():
+    assert ai_cli.web_capable("claude")
+    assert ai_cli.web_capable("agy")
+    assert not ai_cli.web_capable("codex")
+    assert not ai_cli.web_capable("unknown-backend")
+
+
 def test_build_argv_agy_adds_sandbox_when_supported(monkeypatch):
     monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
     argv, _ = ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [])

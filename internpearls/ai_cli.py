@@ -135,6 +135,13 @@ _MAX_TURNS = {"quick": 1, "thorough": 15}
 # --add-dir, verified against agy 1.1.24.
 _IMAGE_CAPABLE = {"claude": True, "codex": True, "agy": True}
 
+# Whether a backend's thorough-mode argv actually hands it web tools: claude's
+# build_argv allowlists WebSearch/WebFetch in thorough mode, agy runs under its
+# own approval defaults which include web access (see BACKENDS["agy"]'s own
+# "safety" note), and codex is sandboxed with no network unless the user has
+# configured it themselves, which this add-on cannot see or assume.
+_WEB_CAPABLE = {"claude": True, "codex": False, "agy": True}
+
 
 class GenerationError(RuntimeError):
     pass
@@ -161,6 +168,10 @@ class GenerationCancelled(RuntimeError):
 
 def image_capable(kind):
     return _IMAGE_CAPABLE.get(kind, False)
+
+
+def web_capable(kind):
+    return _WEB_CAPABLE.get(kind, False)
 
 
 def find_cli(kind, override=""):
