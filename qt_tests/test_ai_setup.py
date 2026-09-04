@@ -39,7 +39,8 @@ def test_backend_row_shows_model_and_effort_for_claude(monkeypatch):
 def test_backend_row_shows_free_text_model_and_effort_for_agy(monkeypatch):
     """agy documents --model and --effort in its own help and lists ids under
     `agy models`, so Model is free text (no short alias list to close over)
-    and Effort is a real combo whose blank entry sends no flag at all."""
+    and Effort is a real combo whose blank entry leaves the add-on's own
+    default (gemini-3.8-flash-low, low) in play rather than an override."""
     dlg = _dialog(monkeypatch, found=("agy",))
     assert dlg.panel.kind == "agy"
     model = dlg.panel.model
@@ -48,7 +49,7 @@ def test_backend_row_shows_free_text_model_and_effort_for_agy(monkeypatch):
     assert "gemini" in model.custom.placeholderText()
     assert model.effort.isVisible() is True
     assert model.effort.currentData() == ""
-    assert model.effort.itemText(0) == "Default"
+    assert model.effort.itemText(0) == "Default (low)"
     assert [label for label, _field in model.rows()] == ["Model", "Effort"]
     assert model.values() == ("", "")
 
@@ -203,9 +204,10 @@ def test_ai_backends_dialog_fits_a_laptop_screen_unscrolled(monkeypatch):
     for found in ((), ("claude", "codex", "agy")):
         dlg = _dialog(monkeypatch, found=found)
         height = dlg.sizeHint().height()
-        # 660, not 640: the v0.60.0 safety sentences are longer, since they now
-        # spell out the sandboxed toolset each backend actually gets.
-        assert height <= 660, (
+        # 720, not 640: the v0.60.0 safety sentences are longer (they spell out
+        # the sandboxed toolset each backend actually gets), and each row now
+        # also carries its own Model/effort default line.
+        assert height <= 720, (
             f"AI Backends is {height}px tall with found={found or 'nothing'}")
 
         geo = QApplication.primaryScreen().availableGeometry()
@@ -435,3 +437,37 @@ def test_ai_backends_scene_reads_its_detection_state(shot):
         for kind, row in dlg.rows.items():
             pills = [w.text() for w in row.findChildren(type(row.title))]
             assert widgets.CHIPS[want] in pills, f"{kind} in {opts}"
+
+
+def test_ai_backends_rows_show_the_v0_60_default_and_setting_wording(
+        monkeypatch, tmp_path):
+    """Every row's Model line shows the new 'Model: <id>, effort: <level>
+    (add-on default)'/(your setting) wording, and a rendered PNG of the
+    scene is saved for a human to look at."""
+    import os
+    from aqt import mw
+
+    dlg = _dialog(monkeypatch, found=("claude", "codex", "agy"))
+    monkeypatch.setattr(ai_cli, "configured_default",
+                        lambda path=None: ("gpt-5.1-codex", "high"))
+    mw.addonManager.writeConfig("internpearls", {
+        **mw.addonManager.getConfig("internpearls"),
+        "ai_model": {"claude": "opus", "codex": "", "agy": ""},
+        "ai_effort": {"claude": "high", "codex": "", "agy": ""}})
+    dlg.recheck()
+    QApplication.instance().processEvents()
+
+    claude_text = dlg.rows["claude"].text()
+    codex_text = dlg.rows["codex"].text()
+    agy_text = dlg.rows["agy"].text()
+    assert "Model: opus, effort: high (your setting)" in claude_text
+    assert "Model: gpt-5.1-codex, effort: high (add-on default)" in codex_text
+    assert ("Model: gemini-3.8-flash-low, effort: low (add-on default)"
+           in agy_text)
+
+    out_dir = ("/private/tmp/claude-501/-Users-tim-Claude-Code/"
+              "602a1035-6350-457d-8113-d6af3530df6f/scratchpad")
+    os.makedirs(out_dir, exist_ok=True)
+    png = os.path.join(out_dir, "ai-backends-v0.60.0-wording.png")
+    dlg.grab().toImage().save(png, "PNG")
+    assert os.path.exists(png)

@@ -1240,15 +1240,12 @@ class _GenerateDialog(QDialog):
             return
         meta = ai_cli.BACKENDS[s.backend]
         cfg = _cfg()
-        model = cfg["ai_model"][s.backend] or meta["default_model"]
-        effort = cfg["ai_effort"][s.backend] or meta["default_effort"]
-        bits = [model or "default model"]
-        if effort and meta.get("effort_levels"):
-            bits.append(f"{effort} effort")
+        summary = ai_cli.model_effort_line(
+            s.backend, cfg["ai_model"][s.backend], cfg["ai_effort"][s.backend])
         self.backend_row.set_chip("ready")
         self.backend_row.set_primary(
             f"<b>Backend:</b> {html.escape(meta['label'])}, "
-            f"{_muted(', '.join(bits))}")
+            f"{_muted(summary)}")
         self.backend_row.set_detail(f"{meta['safety']}.")
         self.backend_test_btn.setVisible(True)
         self.backend_test_status.setText("Not tested yet")

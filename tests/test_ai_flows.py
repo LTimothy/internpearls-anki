@@ -147,7 +147,7 @@ def test_input_page_shows_a_backends_link_and_no_model_combo(anki, monkeypatch):
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     dlg = ai_dialog._GenerateDialog()
     assert dlg.change_link.text() == "Setup"
-    assert ("Backend: Claude Code, sonnet, medium effort"
+    assert ("Backend: Claude Code, Model: sonnet, effort: medium (add-on default)"
             in dlg.backend_row.text())
     assert not hasattr(dlg, "model_combo")
 
@@ -1450,7 +1450,8 @@ def test_backend_row_reads_ready_with_the_model_and_effort(anki, monkeypatch):
     monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
     dlg = ai_dialog._GenerateDialog()
     assert widgets.CHIPS[dlg.backend_row.chip_kind] == "READY"
-    assert "Backend: Claude Code, sonnet, medium effort" in dlg.backend_row.text()
+    assert ("Backend: Claude Code, Model: sonnet, effort: medium (add-on default)"
+            in dlg.backend_row.text())
 
 
 def test_backend_row_reads_not_set_up_with_the_setup_sentence(anki, monkeypatch):
