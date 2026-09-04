@@ -195,7 +195,12 @@ class ModelEffortControls(QWidget):
         self.combo = QComboBox()
         self.custom = QLineEdit()
         self.custom.setPlaceholderText(meta["model_hint"])
-        aliases = [a for a in ([meta["default_model"]] + list(meta.get("model_aliases", []))) if a]
+        # A closed combo only for a backend with a real short alias list
+        # (claude); agy and codex now also carry a default_model (agy's own,
+        # codex's read from its config.toml), but that alone must not turn
+        # free text into a single-item combo.
+        aliases = ([a for a in ([meta["default_model"]] + list(meta["model_aliases"]))
+                   if a] if meta.get("model_aliases") else [])
         self._aliases = list(dict.fromkeys(aliases))
         self.model_field = QWidget()
         model_field_lay = QVBoxLayout(self.model_field)
@@ -264,7 +269,7 @@ class _BackendRow(QWidget):
     what it can do, what account it needs, and the two decisions this window
     offers about it (use it, or set it aside)."""
 
-    def __init__(self, kind, info, preferred, dlg):
+    def __init__(self, kind, info, preferred, dlg, cfg):
         super().__init__()
         meta = ai_cli.BACKENDS[kind]
         self.kind = kind
@@ -300,6 +305,10 @@ class _BackendRow(QWidget):
         caps_lay.addStretch()
         body_lay.addWidget(caps)
 
+        self.model_line = _wrapped_hint(ai_cli.model_effort_line(
+            kind, cfg["ai_model"][kind], cfg["ai_effort"][kind]))
+        body_lay.addWidget(self.model_line)
+
         detail_text = f"Works with a {meta['subscription']}. {meta['safety']}."
         shutdown_note = _SHUTDOWN_NOTE.get(kind)
         if shutdown_note:
@@ -333,7 +342,7 @@ class _BackendRow(QWidget):
     def text(self):
         """Everything this row says, as one string: what a test reads instead of
         walking three labels that are one sentence between them."""
-        return " ".join([self.title.text(), self.detail.text()])
+        return " ".join([self.title.text(), self.model_line.text(), self.detail.text()])
 
 
 def _state_chip(info):
@@ -649,7 +658,7 @@ class _AIBackendsDialog(QDialog):
         for i, kind in enumerate(ai_cli.BACKENDS):
             if i:
                 self._rows_lay.addWidget(section_rule())
-            row = _BackendRow(kind, res["backends"][kind], preferred, self)
+            row = _BackendRow(kind, res["backends"][kind], preferred, self, cfg)
             self.rows[kind] = row
             self._rows_lay.addWidget(row)
         if preferred != self.preferred:
