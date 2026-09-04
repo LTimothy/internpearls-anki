@@ -306,7 +306,8 @@ class _BackendRow(QWidget):
         body_lay.addWidget(caps)
 
         self.model_line = _wrapped_hint(ai_cli.model_effort_line(
-            kind, cfg["ai_model"][kind], cfg["ai_effort"][kind]))
+            kind, cfg["ai_model"][kind], cfg["ai_effort"][kind],
+            path=info["path"]))
         body_lay.addWidget(self.model_line)
 
         detail_text = f"Works with a {meta['subscription']}. {meta['safety']}."
