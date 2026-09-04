@@ -901,6 +901,136 @@ def test_accept_correction_rechecks_and_blocks_a_new_duplicate():
     assert dlg.decision_cells[1].buttons["include"].isChecked()
 
 
+# === Edit card: one dialog for every field plus tags, replacing the old =====
+# === prompt-per-field chain ==================================================
+
+def _edit_card_dialog(theme="light"):
+    _, q = harness.bootstrap()
+    harness.app()
+    harness.apply_theme(theme)
+    from internpearls import ai_dialog
+
+    card = harness._ai_synthetic_cards(1)[0]
+    card["fields"]["Image"] = "a picture of the block landmarks"
+    card["tags"] = ["LAST", "regional"]
+    return ai_dialog._EditCardDialog(None, card), card
+
+
+def test_edit_card_dialog_shows_note_type_every_field_and_tags():
+    _, q = harness.bootstrap()
+    dlg, card = _edit_card_dialog()
+    from internpearls import ai_dialog
+
+    labels = "".join(w.text() for w in dlg.findChildren(q.QLabel))
+    assert card["note_type"] in labels
+    for name in ai_dialog.FIELD_MAP[card["note_type"]]:
+        assert name in dlg._field_edits
+        assert dlg._field_edits[name].toPlainText() == card["fields"].get(name, "")
+    assert dlg.tags_edit.text() == "LAST, regional"
+
+
+def test_edit_card_dialog_field_heights_differ_by_field():
+    dlg, card = _edit_card_dialog()
+    # Why (5 lines) must open taller than Dosing/Notes/Image (2 lines each).
+    assert dlg._field_edits["Why"].height() > dlg._field_edits["Dosing"].height()
+    assert dlg._field_edits["Dosing"].height() == dlg._field_edits["Notes"].height()
+
+
+def test_edit_card_dialog_opens_at_640_wide():
+    dlg, _ = _edit_card_dialog()
+    assert dlg.width() == 640
+
+
+def test_edit_card_dialog_escape_rejects():
+    _, q = harness.bootstrap()
+    dlg, _ = _edit_card_dialog()
+    dlg.show()
+    harness.app().processEvents()
+    from internpearls.ai_dialog import QDialog as _QDialog
+    event = q.QKeyEvent(q.QEvent.Type.KeyPress, q.Qt.Key.Key_Escape,
+                        q.Qt.KeyboardModifier.NoModifier)
+    dlg.keyPressEvent(event)
+    assert dlg.result() == _QDialog.DialogCode.Rejected
+
+
+def test_edit_card_ok_writes_fields_and_tags_and_reruns_checks(monkeypatch):
+    """_edit_card must apply the dialog's fields and tags, mark the card
+    updated, and recompute mechanical checks the same way _accept_correction
+    does: a hand-typed front that collides with an existing card has to
+    force the card to Skip, exactly like an accepted correction would."""
+    mock, q = harness.bootstrap()
+    harness.app()
+    from internpearls import ai_dialog, ai_logic
+
+    harness._ai_backend_available()
+    dlg = ai_dialog._GenerateDialog()
+    s = dlg.session
+    cards = harness._ai_synthetic_cards(1)
+    cards[0]["tags"] = ["old"]
+    s.cards = cards
+    s.included = [True]
+    s.checks = ai_logic.mechanical_checks(cards, {}, {})
+    mock.col.add_note("existing-front-guid",
+                      ["An existing card's front", "back", "", "", "", "", ""],
+                      ["InternPearls"], deck="Intern Pearls::Intern Custom")
+
+    def fake_exec(self):
+        self._field_edits["Front"].setPlainText("An existing card's front")
+        self.tags_edit.setText("new, tags")
+        return ai_dialog.QDialog.DialogCode.Accepted
+    monkeypatch.setattr(ai_dialog._EditCardDialog, "exec", fake_exec)
+
+    dlg._edit_card(0)
+    assert s.cards[0]["fields"]["Front"] == "An existing card's front"
+    assert s.cards[0]["tags"] == ["new", "tags"]
+    assert 0 in s.updated
+    assert any(c["code"] == "duplicate" and c["level"] == "block" for c in s.checks[0])
+    assert s.included[0] is False
+
+
+def test_edit_card_cancel_leaves_the_card_untouched(monkeypatch):
+    mock, q = harness.bootstrap()
+    harness.app()
+    from internpearls import ai_dialog, ai_logic
+
+    harness._ai_backend_available()
+    dlg = ai_dialog._GenerateDialog()
+    s = dlg.session
+    cards = harness._ai_synthetic_cards(1)
+    cards[0]["tags"] = ["old"]
+    s.cards = cards
+    s.included = [True]
+    s.checks = ai_logic.mechanical_checks(cards, {}, {})
+    original_fields = dict(cards[0]["fields"])
+
+    def fake_exec(self):
+        self._field_edits["Front"].setPlainText("a change that must not stick")
+        self.tags_edit.setText("must, not, stick")
+        return ai_dialog.QDialog.DialogCode.Rejected
+    monkeypatch.setattr(ai_dialog._EditCardDialog, "exec", fake_exec)
+
+    dlg._edit_card(0)
+    assert s.cards[0]["fields"] == original_fields
+    assert s.cards[0]["tags"] == ["old"]
+    assert s.updated == set()
+
+
+def test_edit_card_dialog_renders_and_saves_a_png(tmp_path):
+    import os
+
+    dlg, card = _edit_card_dialog()
+    dlg.resize(640, dlg.sizeHint().height())
+    dlg.show()
+    harness.app().processEvents()
+    # IP_SHOT_DIR lets a developer collect the PNG somewhere stable; CI has no
+    # such folder, so the test's own tmp_path is the default.
+    out_dir = os.environ.get("IP_SHOT_DIR") or str(tmp_path)
+    os.makedirs(out_dir, exist_ok=True)
+    png = os.path.join(out_dir, "ai-edit-card.png")
+    dlg.grab().toImage().save(png, "PNG")
+    assert os.path.exists(png)
+
+
 def test_review_rows_render_in_light_and_dark(tmp_path):
     """One row expanded, one skipped with a note, in both themes: a rendered PNG
     for a human to eyeball, and a check that the decision control and the note box

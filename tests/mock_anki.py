@@ -1686,6 +1686,10 @@ def _apply_events(events):
 
 
 class QDialog(QWidget):
+    class DialogCode:
+        # Qt's own values: exec()/accept()/reject() below already agree with these.
+        Rejected, Accepted = 0, 1
+
     def __init__(self, parent=None, *a, **k):
         super().__init__()
         self._title = ""

@@ -657,19 +657,63 @@ def test_fresh_generate_after_back_does_not_report_a_bogus_diff(anki, monkeypatc
     assert "verbatim" not in dlg.review_footer.text()
 
 
-def test_edit_card_updates_fields_via_prompt(anki, monkeypatch):
+def test_edit_card_applies_dialog_fields_tags_and_reruns_checks(anki, monkeypatch):
+    """_edit_card now opens one whole-card dialog rather than a prompt per
+    field (real Qt: qt_tests/test_ai_dialog.py exercises the dialog itself).
+    Under the mock suite this checks the surrounding control flow: applying
+    the dialog's fields and tags, marking the card updated, and recomputing
+    mechanical checks the way _accept_correction does."""
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
     dlg._wait_for_worker()
     card = dlg.session.cards[0]
-    order = ai_dialog.FIELD_MAP[card["note_type"]]
-    anki.gui.interactive = True
-    anki.gui.interactions = [
-        {"text": "NEW FRONT" if name == "Front" else card["fields"].get(name, ""),
-         "ok": True}
-        for name in order]
+    new_fields = dict(card["fields"], Front="NEW FRONT")
+
+    class _FakeEditDialog:
+        def __init__(self, parent, card):
+            pass
+
+        def exec(self):
+            return ai_dialog.QDialog.DialogCode.Accepted
+
+        def fields(self):
+            return new_fields
+
+        def tags(self):
+            return ["new-tag"]
+
+    monkeypatch.setattr(ai_dialog, "_EditCardDialog", _FakeEditDialog)
     dlg._edit_card(0)
     assert dlg.session.cards[0]["fields"]["Front"] == "NEW FRONT"
+    assert dlg.session.cards[0]["tags"] == ["new-tag"]
+    assert 0 in dlg.session.updated
+
+
+def test_edit_card_cancel_leaves_the_card_untouched(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    original_fields = dict(dlg.session.cards[0]["fields"])
+    original_tags = list(dlg.session.cards[0]["tags"])
+
+    class _FakeEditDialog:
+        def __init__(self, parent, card):
+            pass
+
+        def exec(self):
+            return ai_dialog.QDialog.DialogCode.Rejected
+
+        def fields(self):
+            raise AssertionError("fields() must not be read on Cancel")
+
+        def tags(self):
+            raise AssertionError("tags() must not be read on Cancel")
+
+    monkeypatch.setattr(ai_dialog, "_EditCardDialog", _FakeEditDialog)
+    dlg._edit_card(0)
+    assert dlg.session.cards[0]["fields"] == original_fields
+    assert dlg.session.cards[0]["tags"] == original_tags
+    assert dlg.session.updated == set()
 
 
 def test_note_box_queues_and_clears_a_revision_note(anki, monkeypatch):
