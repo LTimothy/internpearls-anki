@@ -301,6 +301,16 @@ def _chip_with_type(kind, note_type, kinds):
     return wrap
 
 
+def _image_errors(s):
+    """{card index: [error message, ...]} for cards with a failed image,
+    from the session's resolved s.image_data. Shared by _apply_review_state
+    and _accept_correction so both feed ai_logic.mechanical_checks the same
+    inputs."""
+    image_errors = {i: [r["error"] for r in results if r.get("state") == "error"]
+                    for i, results in s.image_data.items()}
+    return {i: msgs for i, msgs in image_errors.items() if msgs}
+
+
 def _review_row_indent():
     """Where the review row's primary text sits, and what its expanded body and
     its reason lines indent by: past the caret and the chip column, each with its
@@ -1794,7 +1804,7 @@ class _GenerateDialog(QDialog):
         s = self.session
         field_map = {i: FIELD_MAP[c["note_type"]] for i, c in enumerate(s.cards)}
         verdicts, errors = ai_logic.parse_verdicts_json(
-            res["text"], len(s.cards), field_map)
+            res["text"], len(s.cards), field_map, web=ai_cli.web_capable(s.backend))
         if errors:
             if not self._retried_json:
                 self._retried_json = True
@@ -1895,9 +1905,7 @@ class _GenerateDialog(QDialog):
         Called directly by _start_image_phase when a draft has no images, or
         once the background image-resolution phase above has finished."""
         s = self.session
-        image_errors = {i: [r["error"] for r in results if r.get("state") == "error"]
-                        for i, results in s.image_data.items()}
-        image_errors = {i: msgs for i, msgs in image_errors.items() if msgs}
+        image_errors = _image_errors(s)
         # A card this revision actually changed carries a new image set (if
         # any), so whatever was painted for its old images means nothing;
         # a kept-verbatim card's own resolved indices carry over untouched.
@@ -2400,7 +2408,13 @@ class _GenerateDialog(QDialog):
     def _accept_correction(self, i):
         """Write the proposed fields into the card in place, mark it updated
         (the same set a revision's own diff uses), and drop the correction so
-        the row no longer offers it."""
+        the row no longer offers it. Then recompute mechanical checks the same
+        way _apply_review_state does (same duplicate map, same image errors):
+        an accepted correction can turn a card's front into a duplicate of one
+        already in her collection, and a card that now carries a block is
+        forced to Skip rather than trusting whatever decision was made before
+        the correction changed its fields. A card that stays clean keeps
+        whatever she'd already chosen."""
         s = self.session
         verdict = s.verdicts.get(i)
         if not verdict or not verdict.get("correction"):
@@ -2408,6 +2422,11 @@ class _GenerateDialog(QDialog):
         s.cards[i]["fields"].update(verdict["correction"])
         s.updated.add(i)
         verdict["correction"] = None
+        s.checks = ai_logic.mechanical_checks(
+            s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
+            _image_errors(s))
+        if any(c["level"] == "block" for c in s.checks[i]):
+            s.included[i] = False
         self._rebuild_review()
 
     def _keep_correction(self, i):
