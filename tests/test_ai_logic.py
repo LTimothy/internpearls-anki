@@ -1193,9 +1193,11 @@ def test_svg_to_media_rejects_javascript_uri():
 
 def test_svg_to_media_accepts_a_real_diagram():
     """The rejection checks must not catch the shapes, text, groups, and styling a
-    model-drawn diagram is actually made of."""
+    model-drawn diagram is actually made of. Absolute width/height on the root
+    keeps normalization a no-op, so the bytes still round-trip exactly."""
     markup = (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" '
+        'viewBox="0 0 100 100">'
         '<path d="M10 10 L90 90" stroke="black" fill="none"/>'
         '<rect x="5" y="5" width="20" height="20" fill="#3366cc" stroke="black" '
         'stroke-width="2"/>'
@@ -1207,6 +1209,46 @@ def test_svg_to_media_accepts_a_real_diagram():
     )
     name, data = ai_logic.svg_to_media(markup, 1)
     assert name == "generated-1.svg"
+    assert data == markup.encode("utf8")
+
+
+# --- svg_to_media: normalizing a percent-sized root and its 100%/100% rect ---
+
+
+def test_svg_to_media_sets_absolute_size_from_viewbox():
+    markup = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" '
+             'width="100%" height="100%">'
+             '<rect width="100%" height="100%" fill="white"/>'
+             '<circle cx="50" cy="50" r="20"/></svg>')
+    _, data = ai_logic.svg_to_media(markup, 0)
+    text = data.decode()
+    assert 'width="400"' in text and 'height="300"' in text
+    assert text.index('width="400"') < text.index("viewBox")
+
+
+def test_svg_to_media_replaces_the_full_percent_background_rect():
+    markup = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">'
+             '<rect width="100%" height="100%" fill="white"/>'
+             '<circle cx="50" cy="50" r="20"/></svg>')
+    _, data = ai_logic.svg_to_media(markup, 0)
+    text = data.decode()
+    assert 'width="100%"' not in text
+    assert '<rect x="0" y="0" width="400" height="300" fill="white"/>' in text
+    # the replacement background rect is the first child, before the circle
+    assert text.index("<rect") < text.index("<circle")
+
+
+def test_svg_to_media_leaves_an_absolute_sized_svg_alone():
+    markup = ('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" '
+             'viewBox="0 0 40 40"><rect width="40" height="40" fill="blue"/></svg>')
+    _, data = ai_logic.svg_to_media(markup, 0)
+    assert data == markup.encode("utf8")
+
+
+def test_svg_to_media_leaves_a_viewbox_less_svg_alone():
+    # nothing to compute an absolute size from, so normalization is a no-op
+    markup = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="3"/></svg>'
+    _, data = ai_logic.svg_to_media(markup, 0)
     assert data == markup.encode("utf8")
 
 

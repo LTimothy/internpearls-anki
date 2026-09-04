@@ -29,6 +29,10 @@ _CLOZE_OPEN_RE = re.compile(r"\{\{c\d+")
 _SVG_SCRIPT_RE = re.compile(r"<script", re.I)
 _SVG_EVENT_ATTR_RE = re.compile(r"\bon\w+\s*=", re.I)
 _SVG_JS_URI_RE = re.compile(r"javascript\s*:", re.I)
+_SVG_OPEN_TAG_RE = re.compile(r"<svg\b[^>]*>", re.S)
+_SVG_ATTR_RE = re.compile(r'([\w:-]+)\s*=\s*"([^"]*)"|([\w:-]+)\s*=\s*\'([^\']*)\'')
+_SVG_RECT_PAIR_RE = re.compile(r"<rect\b[^>]*?>.*?</rect>", re.S)
+_SVG_RECT_SELF_RE = re.compile(r"<rect\b[^>]*?/>", re.S)
 PRIMARY_FIELD = {"Study Deck - Basic": "Front", "Study Deck - Cloze": "Text",
                  "Study Deck - Image ID": "Image", "Basic": "Front", "Cloze": "Text"}
 LONG_ANSWER_WORDS = 60
@@ -946,12 +950,96 @@ def extract_attachment(path, dest_dir):
             "images_undecoded": images_undecoded}
 
 
+def _svg_attrs(tag_text):
+    attrs = {}
+    for m in _SVG_ATTR_RE.finditer(tag_text):
+        if m.group(1) is not None:
+            attrs[m.group(1)] = m.group(2)
+        else:
+            attrs[m.group(3)] = m.group(4)
+    return attrs
+
+
+def _svg_viewbox_size(value):
+    """The (width, height) a viewBox="minx miny width height" attribute
+    names, or None if it doesn't parse to exactly four numbers."""
+    parts = value.replace(",", " ").split()
+    if len(parts) != 4:
+        return None
+    try:
+        nums = [float(p) for p in parts]
+    except ValueError:
+        return None
+    return nums[2], nums[3]
+
+
+def _is_absolute_length(value):
+    """True for a plain number (with an optional unit other than "%"), false
+    for a percentage or a missing value: Qt's SVG rasterizer sizes a
+    percent/missing root against a default viewport, not the SVG's own
+    viewBox, which is what leaves a background rect the wrong size."""
+    v = (value or "").strip()
+    return bool(v) and not v.endswith("%")
+
+
+def _normalize_svg(markup):
+    """Fix the shape that renders wrong in Qt: a root <svg> with a viewBox but
+    no absolute width/height, and a background <rect> sized width="100%"
+    height="100%" (which Qt then sizes against a default viewport instead of
+    the viewBox, leaving a white square in one corner with the drawing
+    spilling past it). Only acts when the root carries a parseable viewBox;
+    anything else is left exactly as drawn."""
+    tag_match = _SVG_OPEN_TAG_RE.search(markup)
+    if not tag_match:
+        return markup
+    tag = tag_match.group(0)
+    attrs = _svg_attrs(tag)
+    view_box = attrs.get("viewBox")
+    size = _svg_viewbox_size(view_box) if view_box else None
+    if size is None:
+        return markup
+    if (_is_absolute_length(attrs.get("width"))
+            and _is_absolute_length(attrs.get("height"))):
+        return markup   # already sizes correctly against its own viewBox
+
+    vb_w, vb_h = size
+    new_tag = tag
+    for name in ("width", "height"):
+        new_tag = re.sub(rf'\s+{name}\s*=\s*("[^"]*"|\'[^\']*\')', "", new_tag)
+    new_tag = new_tag.replace(
+        "<svg", f'<svg width="{_num_str(vb_w)}" height="{_num_str(vb_h)}"', 1)
+
+    def _drop_full_percent_rect(m):
+        rattrs = _svg_attrs(m.group(0))
+        w, h = rattrs.get("width", "").strip(), rattrs.get("height", "").strip()
+        return "" if w == "100%" and h == "100%" else m.group(0)
+
+    body = markup[tag_match.end():]
+    body = _SVG_RECT_PAIR_RE.sub(_drop_full_percent_rect, body)
+    body = _SVG_RECT_SELF_RE.sub(_drop_full_percent_rect, body)
+    vb_parts = view_box.replace(",", " ").split()
+    bg_rect = (f'<rect x="{vb_parts[0]}" y="{vb_parts[1]}" '
+              f'width="{_num_str(vb_w)}" height="{_num_str(vb_h)}" fill="white"/>')
+    return markup[:tag_match.start()] + new_tag + bg_rect + body
+
+
+def _num_str(n):
+    """A viewBox number as clean text: whole numbers without a trailing
+    ".0", since an svg width/height attribute is usually written that way."""
+    return str(int(n)) if float(n).is_integer() else str(n)
+
+
 def svg_to_media(markup, index):
     """Model-drawn SVG as a media file: (filename, bytes), or ValueError for anything
     that isn't SVG or carries a script vector. SVG renders inside Anki's own webview, so
     a <script> element, an on*= event-handler attribute, or a javascript: URI is
     executable content on a card, not decoration; rejected rather than sanitized. `index`
-    is coerced to int so it can never carry a path separator into the filename."""
+    is coerced to int so it can never carry a path separator into the filename.
+
+    Before encoding, the markup is normalized (see _normalize_svg) so a root with a
+    viewBox but no absolute size gets one, and a width="100%" height="100%" background
+    rect (sized against Qt's default viewport, not the viewBox) is replaced with a
+    proper full-size one."""
     m = (markup or "").strip()
     if not m.startswith("<svg"):
         raise ValueError("not svg markup")
@@ -961,6 +1049,7 @@ def svg_to_media(markup, index):
         raise ValueError("svg with an event-handler attribute rejected")
     if _SVG_JS_URI_RE.search(m):
         raise ValueError("svg with a javascript: URI rejected")
+    m = _normalize_svg(m)
     return f"generated-{int(index)}.svg", m.encode("utf8")
 
 
