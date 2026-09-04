@@ -356,8 +356,8 @@ def test_parse_verdicts_happy_path():
 
 def test_parse_verdicts_strips_markdown_fence():
     text = "```json\n" + _verdicts_text([
-        {"index": 0, "verdict": "confirmed", "note": "ok",
-         "correction": None, "sources": []}]) + "\n```"
+        {"index": 0, "verdict": "confirmed", "note": "ok", "correction": None,
+         "sources": [{"title": "Ref", "url": "https://example.com/ref"}]}]) + "\n```"
     verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
     assert errors == []
     assert verdicts[0]["verdict"] == "confirmed"
@@ -389,6 +389,39 @@ def test_parse_verdicts_rejects_correction_with_unknown_field():
     verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
     assert any("unknown field" in e for e in errors)
     assert verdicts[0]["verdict"] == "unverified"   # fell back, entry rejected
+
+
+def test_parse_verdicts_confirmed_without_source_downgrades():
+    text = _verdicts_text([
+        {"index": 0, "verdict": "confirmed", "note": "matches the source",
+         "correction": None, "sources": []}])
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert errors == []
+    assert verdicts[0]["verdict"] == "unverified"
+    assert verdicts[0]["note"] == "no source given: matches the source"
+
+
+def test_parse_verdicts_no_web_downgrades_every_confirmed():
+    text = _verdicts_text([
+        {"index": 0, "verdict": "confirmed", "note": "matches the source",
+         "correction": None,
+         "sources": [{"title": "Ref", "url": "https://example.com/ref"}]}])
+    verdicts, errors = ai_logic.parse_verdicts_json(
+        text, 1, _CHECK_FIELD_MAP, web=False)
+    assert errors == []
+    assert verdicts[0]["verdict"] == "unverified"
+    assert verdicts[0]["note"] == "no web access, from recall only: matches the source"
+
+
+def test_parse_verdicts_corrected_without_source_keeps_correction():
+    text = _verdicts_text([
+        {"index": 0, "verdict": "corrected", "note": "dose was off",
+         "correction": {"Back": "1.0 mL/kg"}, "sources": []}])
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert errors == []
+    assert verdicts[0]["verdict"] == "corrected"
+    assert verdicts[0]["correction"] == {"Back": "1.0 mL/kg"}
+    assert verdicts[0]["note"] == "no source given: dose was off"
 
 
 def test_parse_claude_result_event():

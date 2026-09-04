@@ -859,6 +859,48 @@ def _build_review_render_dialog(theme):
     return dlg
 
 
+def test_accept_correction_rechecks_and_blocks_a_new_duplicate():
+    """Accepting a correction that turns a card's Front into an existing
+    card's front must not just apply the text: it has to re-run mechanical
+    checks, since the correction itself can be what makes the card a
+    duplicate. A card that comes back blocked is forced to Skip; a benign
+    correction (no new problem) leaves her Include decision alone."""
+    mock, q = harness.bootstrap()
+    harness.app()
+    from internpearls import ai_dialog, ai_logic
+
+    harness._ai_backend_available()
+    dlg = ai_dialog._GenerateDialog()
+    s = dlg.session
+    cards = harness._ai_synthetic_cards(2)
+    s.cards = cards
+    s.included = [True, True]
+    s.checks = ai_logic.mechanical_checks(cards, {}, {})
+    s.verdicts = {
+        0: {"verdict": "corrected", "note": "front collides",
+           "correction": {"Front": "An existing card's front"},
+           "sources": []},
+        1: {"verdict": "corrected", "note": "minor wording fix",
+           "correction": {"Back": "A tidier answer."}, "sources": []},
+    }
+    mock.col.add_note("existing-front-guid",
+                      ["An existing card's front", "back", "", "", "", "", ""],
+                      ["InternPearls"], deck="Intern Pearls::Intern Custom")
+
+    dlg._accept_correction(0)
+    assert s.cards[0]["fields"]["Front"] == "An existing card's front"
+    assert any(c["code"] == "duplicate" and c["level"] == "block"
+              for c in s.checks[0])
+    assert s.included[0] is False
+    assert dlg.decision_cells[0].buttons["skip"].isChecked()
+
+    dlg._accept_correction(1)
+    assert s.cards[1]["fields"]["Back"] == "A tidier answer."
+    assert not any(c["level"] == "block" for c in s.checks[1])
+    assert s.included[1] is True
+    assert dlg.decision_cells[1].buttons["include"].isChecked()
+
+
 def test_review_rows_render_in_light_and_dark(tmp_path):
     """One row expanded, one skipped with a note, in both themes: a rendered PNG
     for a human to eyeball, and a check that the decision control and the note box
