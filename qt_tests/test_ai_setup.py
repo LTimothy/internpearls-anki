@@ -466,8 +466,9 @@ def test_ai_backends_rows_show_the_v0_60_default_and_setting_wording(
     assert ("Model: gemini-3.8-flash-low, effort: low (add-on default)"
            in agy_text)
 
-    out_dir = ("/private/tmp/claude-501/-Users-tim-Claude-Code/"
-              "602a1035-6350-457d-8113-d6af3530df6f/scratchpad")
+    # IP_SHOT_DIR lets a developer collect the PNGs somewhere stable; CI has no
+    # such folder, so the test's own tmp_path is the default.
+    out_dir = os.environ.get("IP_SHOT_DIR") or str(tmp_path)
     os.makedirs(out_dir, exist_ok=True)
     png = os.path.join(out_dir, "ai-backends-v0.60.0-wording.png")
     dlg.grab().toImage().save(png, "PNG")

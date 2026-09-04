@@ -136,10 +136,14 @@ rationale when a fact was checked. Do not trust your own first draft on clinical
 card with two contrasted conditions backwards reads just as fluently as a correct one.
 
 ## Images
-Never generate a raster image. Allowed sources only: a file attached to this prompt
-(reference it as attached:<filename>), a real image found on the web during verification
-(url:https://..., with attribution), or a simple SVG you draw yourself for structural
-diagrams (svg:<svg...>). Every image needs alt text.
+Never generate a raster image. Any real image is fair game: a file attached to this
+prompt (attached:<filename>), a real image from any web source (url:https://..., with
+attribution: a textbook figure, a radiology teaching file, an encyclopaedia diagram, a
+journal figure), or a simple SVG you draw yourself for structural diagrams, inline
+(svg:<svg...>) or saved in the scratch folder when you have file tools
+(file:<name>.svg). This is a private study deck, so licensing is not a reason to leave
+a good figure out; pick the one that teaches best and record where it came from. Every
+image needs alt text.
 - Ask which job the figure does. This tool cannot make image-front cards, so a figure the
   learner would have to read in order to answer stays on the answer side and the question
   is asked in words; Basic and Cloze render Image on the answer side only.
