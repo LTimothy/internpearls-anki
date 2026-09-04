@@ -3,6 +3,30 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.60.0
+
+Thorough mode now gives each backend a scoped, sandboxed toolset instead of leaving it
+tool-free. Claude Code runs with `--restricted`, file tools plus web search, confined
+to the scratch folder, no shell. Codex CLI runs under its own OS sandbox, commands and
+writes confined to scratch. Antigravity CLI still can't write a file in headless mode,
+so its own safety line says exactly that rather than claiming otherwise, and stays
+read-only there. The toolset lets a drafted figure save as a file in scratch instead of
+inlining it in the JSON reply, re-read as the assistant keeps working; raster images and
+anything that isn't SVG, an attachment, or a cited URL are still rejected.
+
+Every backend now has its own add-on default model and effort, the way Claude Code
+already did. Antigravity CLI defaults to its fastest catalogue entry, the one that
+doesn't burn its turn thinking. Codex CLI has no listable catalogue outside a terminal,
+so the add-on reads the pair straight out of its own config file and shows that instead
+of guessing. Every backend's row in AI Backends now says plainly whether what's shown is
+the add-on's default or your own setting.
+
+The review rows on Generate cards with AI now match Update my decks: an Include/Skip
+control at the header's right edge in place of the checkbox, the note type moved to a
+small tag under the chip, and Skip revealing a note box under the header for what should
+change, sent along on the next Revise all. A card gated for an unreviewed picture, or
+blocked outright, starts on Skip with its reason showing, same as before.
+
 ## v0.59.1
 
 An Antigravity run reported "SUCCESS" and still produced no cards. It had spent nearly
