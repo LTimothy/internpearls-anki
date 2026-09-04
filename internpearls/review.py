@@ -104,6 +104,41 @@ _CARET_OPEN = "▾"
 _IMAGE_MAX_W = 540
 
 
+def _svg_thumbnail(svg_path):
+    """Rasterize a drawn SVG to a PNG thumbnail, its background painted white by the
+    add-on rather than trusted to the SVG's own markup or to Qt's SVG image plugin:
+    QImage(path) sizes a root with no absolute width/height against a default
+    viewport, not the SVG's own viewBox, which is what used to leave a white square
+    in one corner with the drawing spilling past it (svg_to_media normalizes the
+    file itself for the same reason, but this covers a file that predates that fix).
+
+    Returns the PNG's path, or None if PyQt6.QtSvg isn't available or the file
+    doesn't parse as SVG; the caller falls back to the plain QImage(local_path) path
+    either way.
+    """
+    try:
+        from PyQt6.QtCore import Qt as _Qt
+        from PyQt6.QtGui import QImage as _QImage, QPainter
+        from PyQt6.QtSvg import QSvgRenderer
+    except ImportError:
+        return None
+    renderer = QSvgRenderer(svg_path)
+    if not renderer.isValid():
+        return None
+    size = renderer.defaultSize()
+    if size.width() <= 0 or size.height() <= 0:
+        return None
+    width = min(size.width(), _IMAGE_MAX_W)
+    height = max(1, round(size.height() * width / size.width()))
+    image = _QImage(width, height, _QImage.Format.Format_ARGB32)
+    image.fill(_Qt.GlobalColor.white)
+    painter = QPainter(image)
+    renderer.render(painter)
+    painter.end()
+    png_path = svg_path + ".png"
+    return png_path if image.save(png_path, "PNG") else None
+
+
 def _image_tag(local_path):
     """One extracted picture as an <img> Qt's rich text can paint, capped to the row.
 
@@ -112,6 +147,10 @@ def _image_tag(local_path):
     it shrinks a large one. A file Qt cannot decode returns None, so the caller keeps
     naming it instead of painting a broken image.
     """
+    if local_path.lower().endswith(".svg"):
+        thumb = _svg_thumbnail(local_path)
+        if thumb:
+            local_path = thumb
     image = QImage(local_path)
     if image.isNull():
         return None
