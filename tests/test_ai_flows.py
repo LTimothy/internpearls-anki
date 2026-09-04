@@ -23,6 +23,8 @@ def _row_text(row):
         if isinstance(node, dict):
             if "text" in node:
                 parts.append(node["text"])
+            if "label" in node:   # a button's own text (e.g. Edit, Accept)
+                parts.append(node["label"])
             for c in node.get("children", []):
                 walk(c)
         elif isinstance(node, list):
@@ -562,6 +564,62 @@ def test_check_facts_new_draft_clears_prior_verdicts(anki, monkeypatch):
     dlg._revise_all()
     dlg._wait_for_worker(timeout=15)
     assert dlg.session.verdicts == {}
+
+
+def test_verdict_rows_render_confirmed_corrected_and_unverified(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.session.verdicts = {
+        0: {"verdict": "confirmed", "note": "matches the source",
+           "correction": None,
+           "sources": [{"title": "Ref", "url": "https://example.com/ref"}]}}
+    dlg._rebuild_review()
+    text = _row_text(dlg.cards_lay._children[0])
+    assert "Confirmed: matches the source" in text
+    assert "Ref" in text
+
+
+def test_corrected_verdict_shows_proposed_text_with_accept_and_keep_mine(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.session.verdicts = {
+        0: {"verdict": "corrected", "note": "dose was off",
+           "correction": {"Back": "corrected answer"}, "sources": []}}
+    dlg._rebuild_review()
+    text = _row_text(dlg.cards_lay._children[0])
+    assert "Corrected: dose was off" in text
+    assert "corrected answer" in text
+    assert "Accept" in text and "Keep mine" in text
+
+
+def test_accept_correction_writes_field_and_marks_updated(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.session.verdicts = {
+        0: {"verdict": "corrected", "note": "dose was off",
+           "correction": {"Back": "corrected answer"}, "sources": []}}
+    dlg._accept_correction(0)
+    assert dlg.session.cards[0]["fields"]["Back"] == "corrected answer"
+    assert 0 in dlg.session.updated
+    assert dlg.session.verdicts[0]["correction"] is None
+
+
+def test_keep_mine_drops_correction_and_marks_kept(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    original_back = dlg.session.cards[0]["fields"]["Back"]
+    dlg.session.verdicts = {
+        0: {"verdict": "corrected", "note": "dose was off",
+           "correction": {"Back": "corrected answer"}, "sources": []}}
+    dlg._keep_correction(0)
+    assert dlg.session.cards[0]["fields"]["Back"] == original_back
+    assert dlg.session.verdicts[0]["correction"] is None
+    text = _row_text(dlg.cards_lay._children[0])
+    assert "Corrected (kept yours): dose was off" in text
 
 
 def test_skip_reveals_the_note_box_and_its_text_rides_the_next_revise_all(anki, monkeypatch):
