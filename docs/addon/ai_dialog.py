@@ -15,7 +15,7 @@ import threading
 import time
 import traceback
 import urllib.parse
-from collections import deque
+from collections import Counter, deque
 
 from aqt import mw
 from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
@@ -416,7 +416,7 @@ _INPUT_CHIPS = ("ready", "notsetup", "auto", "thorough", "quick", "deck", "skill
 
 # The chips the progress row can wear, its own set (see chip_column_width): a
 # stage word, never one of the input page's or a card row's own vocabulary.
-_PROGRESS_CHIPS = ("drafting", "verifying", "reviewing", "working")
+_PROGRESS_CHIPS = ("drafting", "verifying", "reviewing", "working", "checking")
 
 # What a phase event's own text maps to, checked as a case-insensitive
 # substring since a phase is a short sentence a backend wrote (see
@@ -429,11 +429,15 @@ _PHASE_CHIP_KEYWORDS = {"drafting": "drafting", "verify": "verifying",
                         "review": "reviewing"}
 
 
-def _phase_chip(phase_text):
-    """Which of the progress row's four chips a phase's own text names.
+def _phase_chip(phase_text, check=False):
+    """Which of the progress row's chips a phase's own text names.
     Unmatched text (including "Working", the vendor CLIs' own generic tool-use
     label) reads as WORKING, the same catch-all role a plain assistant turn
-    already gets."""
+    already gets. A check run always reads CHECKING regardless of what the
+    backend's own phase text says: drafting/verifying/reviewing describe a
+    draft's stages, not what a fact-check turn is doing."""
+    if check:
+        return "checking"
     t = (phase_text or "").lower()
     for needle, kind in _PHASE_CHIP_KEYWORDS.items():
         if needle in t:
@@ -624,6 +628,17 @@ class _Session:
         self.revision_shape_mismatch = False
         self.tokens_last_run = 0
         self.rate_limits = None
+        # True only while a Check facts run is in flight or has just landed:
+        # _start_generation sets it, _finish_generation routes on it (verdict
+        # parsing instead of card parsing), and it decides which retry nudge
+        # a malformed reply gets.
+        self.check = False
+        # {card index: verdict dict} from the last completed check run, empty
+        # until Check facts has run once. Cleared whenever a fresh draft or a
+        # revision lands (_finish_generation): a verdict is about one card's
+        # exact content, and a revision can change what card index i even
+        # means, so carrying stale verdicts over would mislabel the new text.
+        self.verdicts = {}
 
 
 class _GenerateDialog(QDialog):
@@ -1425,19 +1440,21 @@ class _GenerateDialog(QDialog):
         lay.addWidget(self.activity_feed, 1)
         return page
 
-    def _start_generation(self, revision=False, extra_error=None):
+    def _start_generation(self, revision=False, extra_error=None, check=False):
         s = self.session
         self._last_revision = revision
+        self._last_check = check
+        s.check = check
         # extra_error is only set on our own re-entry after a malformed reply
         # (see _finish_generation); any other call is a fresh request, so the
         # one-retry budget resets here rather than in the caller.
         if extra_error is None:
             self._retried_json = False
-            if not revision:
-                # A genuinely fresh (non-revision) request: Back-then-Generate
-                # can reach here with an unrelated earlier draft still sitting
-                # in s.cards, and _finish_generation's revision detection goes
-                # only by "is s.cards non-empty": left uncleared, a brand
+            if not revision and not check:
+                # A genuinely fresh (non-revision, non-check) request: Back-then-
+                # Generate can reach here with an unrelated earlier draft still
+                # sitting in s.cards, and _finish_generation's revision detection
+                # goes only by "is s.cards non-empty": left uncleared, a brand
                 # new draft would read as a revision of that stale one and
                 # report a bogus "updated N, kept M verbatim" diff against it.
                 s.cards, s.included, s.notes = [], [], {}
@@ -1446,7 +1463,9 @@ class _GenerateDialog(QDialog):
                 s.revision_shape_mismatch = False
         # The depth the learner picked if they picked one, else the one the
         # material's own length and attachments imply (ai_logic.default_mode).
-        s.mode = self._resolved_mode()
+        # A check run always runs Thorough, whatever depth the draft used: the
+        # spec calls it "one extra assistant turn, in Thorough mode".
+        s.mode = "thorough" if check else self._resolved_mode()
         self._duration_estimate = ai_logic.duration_estimate_line(
             load_ai_usage(), s.backend, s.mode)
         s.source = self.source_box.toPlainText()
@@ -1461,18 +1480,24 @@ class _GenerateDialog(QDialog):
         extra_text = "\n\n".join(a[1]["text"] for a in s.attachments if a[1]["text"])
         image_names = [name for _, meta in s.attachments for name in meta["images"]]
         user_skill_text = load_user_skill()
-        prompt = ai_logic.build_prompt(
-            skills=ai_logic.active_skills(load_deck_skill(), user_skill_text),
-            source=(s.source + ("\n\n## Attached document text\n" + extra_text
-                                if extra_text else "")),
-            note_types=s.note_types, field_map=FIELD_MAP, count=s.count,
-            instructions=s.instructions,
-            attachments=image_names if ai_cli.image_capable(s.backend) else [],
-            cards=s.cards if revision else None,
-            feedback=self.feedback_box.toPlainText() if revision else "",
-            notes=s.notes if revision else None,
-            checks=s.checks if revision else None, mode=s.mode,
-            backend=s.backend)
+        if check:
+            prompt = ai_logic.build_check_prompt(
+                skills=ai_logic.active_skills(load_deck_skill(), user_skill_text),
+                cards=s.cards, field_map=FIELD_MAP, backend=s.backend,
+                web=ai_cli.web_capable(s.backend))
+        else:
+            prompt = ai_logic.build_prompt(
+                skills=ai_logic.active_skills(load_deck_skill(), user_skill_text),
+                source=(s.source + ("\n\n## Attached document text\n" + extra_text
+                                    if extra_text else "")),
+                note_types=s.note_types, field_map=FIELD_MAP, count=s.count,
+                instructions=s.instructions,
+                attachments=image_names if ai_cli.image_capable(s.backend) else [],
+                cards=s.cards if revision else None,
+                feedback=self.feedback_box.toPlainText() if revision else "",
+                notes=s.notes if revision else None,
+                checks=s.checks if revision else None, mode=s.mode,
+                backend=s.backend)
         if extra_error:
             prompt += ("\n\n## Your previous reply failed validation\n"
                       + "\n".join(extra_error))
@@ -1509,8 +1534,9 @@ class _GenerateDialog(QDialog):
 
         self._worker = threading.Thread(target=work, daemon=True)
         self._worker.start()
-        self._phase_text = "Drafting cards with " + ai_cli.BACKENDS[s.backend]["label"]
-        self.progress_row.set_chip("drafting")
+        verb = "Checking facts with " if check else "Drafting cards with "
+        self._phase_text = verb + ai_cli.BACKENDS[s.backend]["label"]
+        self.progress_row.set_chip("checking" if check else "drafting")
         self.progress_row.set_primary(f"<b>{self._phase_text}</b>")
         self.progress_row.set_detail(self._progress_detail_text())
         self.stack.setCurrentWidget(self.progress_page)
@@ -1532,15 +1558,17 @@ class _GenerateDialog(QDialog):
         unlike anything about the new draft.
         """
         parts = []
-        if self.session.cards:
+        if self.session.cards and not self.session.check:
             parts.append(f"Revising {plural(len(self.session.cards), 'card')}.")
+        elif self.session.check:
+            parts.append(f"Checking {plural(len(self.session.cards), 'card')}.")
         elapsed = f"{ai_logic.format_duration(int(time.monotonic() - self._t0))} elapsed"
         if self._duration_estimate:
             elapsed += f", {self._duration_estimate}."
         else:
             elapsed += "."
         parts.append(elapsed)
-        if self._reply_chunks:
+        if self._reply_chunks and not self.session.check:
             text = "".join(self._reply_chunks)
             n = text.count('"note_type"')
             parts.append(f"{plural(n, 'card')} so far, {len(text):,} characters.")
@@ -1569,8 +1597,14 @@ class _GenerateDialog(QDialog):
                 if evt["phase"] != self._phase_text:
                     self._append_activity(evt["phase"])
                 self._phase_text = evt["phase"]
-                self.progress_row.set_chip(_phase_chip(evt["phase"]))
-                self.progress_row.set_primary(f"<b>{self._phase_text}</b>")
+                self.progress_row.set_chip(
+                    _phase_chip(evt["phase"], check=self.session.check))
+                # A check run's own title ("Checking facts with <backend>")
+                # stays put rather than being overwritten by the backend's raw
+                # phase text (e.g. "Verify online"): that vocabulary describes
+                # a draft's stages, not a fact-check turn.
+                if not self.session.check:
+                    self.progress_row.set_primary(f"<b>{self._phase_text}</b>")
             elif evt["type"] == "activity":
                 self._append_activity(evt["text"])
             elif evt["type"] == "delta":
@@ -1670,12 +1704,13 @@ class _GenerateDialog(QDialog):
                 # one automatic re-ask per generation, whichever kind of bad
                 # reply triggers it.
                 self._retried_json = True
+                nudge = ("Your previous reply was empty. Do not call any "
+                        "tool; the only folder you may read is the scratch "
+                        "folder already provided. Reply with the "
+                        + ("verdicts JSON now." if s.check else "JSON now."))
                 self._start_generation(
-                    revision=self._last_revision,
-                    extra_error=["Your previous reply was empty. Do not "
-                                "call any tool; the only folder you may "
-                                "read is the scratch folder already "
-                                "provided. Reply with the JSON now."])
+                    revision=self._last_revision, check=self._last_check,
+                    extra_error=[nudge])
                 self._append_activity("Reply was empty, retrying once")
                 return
             _warn(f"{err}\n\nThe add-on already retried once. Try again, "
@@ -1688,6 +1723,9 @@ class _GenerateDialog(QDialog):
         if err or not res:
             _warn(f"Generation failed: {err}")
             self._return_to_input_or_review()
+            return
+        if s.check:
+            self._finish_check(res)
             return
         cards, errors = ai_logic.parse_cards_json(res["text"], s.note_types, FIELD_MAP)
         if errors:
@@ -1705,6 +1743,7 @@ class _GenerateDialog(QDialog):
                                     now=time.time())
         reg = ai_logic.record_duration(reg, s.backend, s.mode, res["duration_s"])
         save_ai_usage(reg)
+        s.verdicts = {}   # a new draft/revision makes any prior check stale
 
         # Card matching across a revision, by position: the prompt sends the
         # previous draft and instructs the model to return the SAME cards in the
@@ -1739,6 +1778,34 @@ class _GenerateDialog(QDialog):
         # didn't mark as updated.
         self._pending_prev_included = prev_included if same_shape else None
         self._start_image_phase()
+
+    def _finish_check(self, res):
+        """A Check facts run's own completion path: parse verdicts rather than
+        cards, then straight back to the review page (no image phase; a check
+        never touches images)."""
+        s = self.session
+        field_map = {i: FIELD_MAP[c["note_type"]] for i, c in enumerate(s.cards)}
+        verdicts, errors = ai_logic.parse_verdicts_json(
+            res["text"], len(s.cards), field_map)
+        if errors:
+            if not self._retried_json:
+                self._retried_json = True
+                self._start_generation(revision=self._last_revision, check=True,
+                                       extra_error=errors)
+                return
+            _warn("The assistant's fact-check reply still could not be used "
+                  "after a retry:\n" + "\n".join(errors[:5]))
+            self._return_to_input_or_review()
+            return
+        s.tokens_last_run = res["tokens"]
+        reg = ai_logic.record_usage(load_ai_usage(), s.backend, res["tokens"],
+                                    now=time.time())
+        reg = ai_logic.record_duration(reg, s.backend, s.mode, res["duration_s"])
+        save_ai_usage(reg)
+        s.verdicts = verdicts
+        s.check = False
+        self._rebuild_review()
+        self.stack.setCurrentWidget(self.review_page)
 
     def _start_image_phase(self):
         """Resolve every image on the current draft before review ever shows
@@ -1859,13 +1926,16 @@ class _GenerateDialog(QDialog):
 
     def _return_to_input_or_review(self):
         """Where a cancelled or failed request lands. A revision (Revise all)
-        starts from an existing draft that _finish_generation never touches
-        until a new draft actually parses, so on cancel/failure s.cards is
-        still the pre-revision draft: send the user back to it (with its
-        hand edits, include choices, and queued notes intact) rather than the
-        input page, which is otherwise a dead end no Back button reaches. A
-        first generation has no draft yet, so it still falls back to input."""
-        if self._last_revision and self.session.cards:
+        or a check (Check facts) both start from an existing draft that
+        _finish_generation never touches until the new reply actually parses,
+        so on cancel/failure s.cards is still that pre-run draft: send the
+        user back to it (with its hand edits, include choices, and queued
+        notes intact) rather than the input page, which is otherwise a dead
+        end no Back button reaches. A first generation has no draft yet, so
+        it still falls back to input."""
+        if (self._last_revision or self._last_check) and self.session.cards:
+            s = self.session
+            s.check = False   # a cancelled/failed check must not linger mid-run
             self._rebuild_review()
             self.stack.setCurrentWidget(self.review_page)
         else:
@@ -1907,6 +1977,9 @@ class _GenerateDialog(QDialog):
         self.revise_btn = bb.addButton(
             "Revise all", QDialogButtonBox.ButtonRole.ActionRole)
         self.revise_btn.clicked.connect(lambda: self._guard(self._revise_all))
+        self.check_btn = bb.addButton(
+            "Check facts", QDialogButtonBox.ButtonRole.ActionRole)
+        self.check_btn.clicked.connect(lambda: self._guard(self._check_facts))
         self.import_btn = bb.addButton(
             "Import", QDialogButtonBox.ButtonRole.AcceptRole)
         self.import_btn.clicked.connect(lambda: self._guard(self._do_import))
@@ -2190,6 +2263,11 @@ class _GenerateDialog(QDialog):
             # always the first source whether or not there's any text in it.
             header += f" from {len(s.attachments) + 1} sources"
         header += f" · {n_inc} included, {n_skip} skipped"
+        if s.verdicts:
+            counts = Counter(v["verdict"] for v in s.verdicts.values())
+            bits = [f"{counts[k]} {k}" for k in ai_logic._VERDICT_WORDS if counts.get(k)]
+            if bits:
+                header += " · " + ", ".join(bits)
         self.review_header.setText(header)
 
         footer = (f"Last run ~{round(s.tokens_last_run / 1000)}k tokens"
@@ -2212,6 +2290,7 @@ class _GenerateDialog(QDialog):
         self.import_btn.setText(f"Import {plural(n_inc, 'card')}")
         self.revise_btn.setText(
             "Revise all" + (f" ({plural(len(s.notes), 'note')})" if s.notes else ""))
+        self.check_btn.setEnabled(bool(s.cards))
 
     def _edit_card(self, i):
         """Hand-edit one card's fields, right in the review list. Nothing here
@@ -2230,6 +2309,11 @@ class _GenerateDialog(QDialog):
         turn carrying the set-level feedback plus every queued note, with
         every un-noted card marked keep-verbatim (see ai_logic.build_prompt)."""
         self._start_generation(revision=True)
+
+    def _check_facts(self):
+        """One extra assistant turn that asks for a verdict per drafted card
+        rather than a revised set (see ai_logic.build_check_prompt)."""
+        self._start_generation(check=True)
 
     def _do_import(self):
         """Write the included cards to the collection. Every image was already

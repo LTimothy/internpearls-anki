@@ -458,6 +458,112 @@ def test_review_note_queue_and_revise_all(anki, monkeypatch):
     assert dlg.session.notes == {}          # consumed by the revision
 
 
+# === Check facts ==============================================================
+
+def test_check_facts_stores_verdicts_and_updates_header(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.stack.currentWidget() is dlg.review_page
+
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs, **kw:
+            ([sys.executable, FAKE, "verdicts_ok"], True))
+    dlg._check_facts()
+    assert dlg.session.check
+    assert dlg.session.mode == "thorough"
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert not dlg.session.check              # run finished
+    assert dlg.session.verdicts[0]["verdict"] == "confirmed"
+    assert dlg.session.verdicts[0]["sources"] == [
+        {"title": "Ref", "url": "https://example.com/ref"}]
+    assert "1 confirmed" in dlg.review_header.text()
+
+
+def test_check_facts_runs_thorough_even_after_a_quick_draft(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg.quick_radio.setChecked(True)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.session.mode == "quick"
+
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs, **kw:
+            ([sys.executable, FAKE, "verdicts_ok"], True))
+    dlg._check_facts()
+    assert dlg.session.mode == "thorough"
+    dlg._wait_for_worker(timeout=15)
+
+
+def test_check_facts_disabled_button_reflects_no_cards(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.check_btn.isEnabled()
+
+
+def test_check_facts_malformed_reply_retries_once_then_warns(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs, **kw:
+            ([sys.executable, FAKE, "badjson"], True))
+    dlg._check_facts()
+    dlg._wait_for_worker(timeout=15)   # first attempt: malformed, triggers a retry
+    dlg._wait_for_worker(timeout=15)   # retry: also malformed, gives up
+    assert dlg.stack.currentWidget() is dlg.review_page   # back to the draft, not input
+    assert dlg.session.cards                              # draft itself survives
+    assert not dlg.session.check
+    assert any("retry" in w.lower() or "valid" in w.lower()
+              for w in anki.gui.warnings)
+
+
+def test_check_facts_empty_reply_nudge_asks_for_verdicts(anki, monkeypatch):
+    prompts = _prompt_capturing_run_generation(monkeypatch)
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    prompts.clear()
+
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs, **kw:
+            ([sys.executable, FAKE, "agy_empty_reply"], False))
+    dlg._check_facts()
+    dlg._wait_for_worker(timeout=15)   # first attempt: empty, triggers a retry
+    dlg._wait_for_worker(timeout=15)   # retry: also empty, gives up
+    assert len(prompts) == 2
+    assert "verdicts json now" in prompts[1].lower()
+
+
+def test_check_facts_new_draft_clears_prior_verdicts(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs, **kw:
+            ([sys.executable, FAKE, "verdicts_ok"], True))
+    dlg._check_facts()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.session.verdicts
+
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs, **kw:
+            ([sys.executable, FAKE, "ok"], True))
+    dlg.session.notes[0] = "make it a cloze"
+    dlg._revise_all()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.session.verdicts == {}
+
+
 def test_skip_reveals_the_note_box_and_its_text_rides_the_next_revise_all(anki, monkeypatch):
     calls = _counting_run_generation(monkeypatch)
     dlg = _ready_dialog(anki, monkeypatch)

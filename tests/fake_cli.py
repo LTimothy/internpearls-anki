@@ -30,6 +30,8 @@
 #                   "response": the real owner-reported shape (a stream that
 #                   narrated the whole reply but never assembled it into the
 #                   terminal result)
+#   verdicts_ok     claude-style result carrying a {"verdicts": [...]} reply,
+#                   one confirmed card with a source (Check facts tests)
 #   with_image      one card carrying a url: image (I2 review-gate tests)
 #   echo_prompt     a successful run that also emits a stream event echoing
 #                   the prompt back verbatim (a transcript-style "user_input"
@@ -167,6 +169,15 @@ if mode == "codex_short":
                                                   "resets_at": "2026-09-02"}},
                       "info": dict(USAGE, total_tokens=15)}), flush=True)
     print(json.dumps({"type": "turn.completed", "text": CARDS_JSON}))
+    sys.exit(0)
+if mode == "verdicts_ok":
+    verdicts = {"verdicts": [{"index": 0, "verdict": "confirmed",
+                              "note": "matches the cited reference",
+                              "correction": None,
+                              "sources": [{"title": "Ref",
+                                          "url": "https://example.com/ref"}]}]}
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": json.dumps(verdicts), "usage": USAGE}))
     sys.exit(0)
 if mode == "with_image":
     cards = [{"note_type": "Study Deck - Basic",

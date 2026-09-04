@@ -52,7 +52,8 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
          # page's row kinds above are their own: a stage isn't a detection
          # result or a decision either, it's just where the run currently is.
          "drafting": "DRAFTING", "verifying": "VERIFYING",
-         "reviewing": "REVIEWING", "working": "WORKING"}
+         "reviewing": "REVIEWING", "working": "WORKING",
+         "checking": "CHECKING"}
 
 # A chip's palette role prefix, keyed by its kind. Not a 1:1 string match: "changed"
 # reuses the existing "updated_bg"/"updated_fg" pair rather than a "changed_bg" this
@@ -87,7 +88,7 @@ _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "mo
           # own: none of drafting/verifying/reviewing/working is good or bad
           # news, it's just where the run is right now.
           "drafting": "new", "verifying": "new",
-          "reviewing": "new", "working": "new"}
+          "reviewing": "new", "working": "new", "checking": "new"}
 
 # Everything about a pill except its two colours: the shape and the type size, shared
 # between the real pill and the probe that measures it, so the measurement can never
