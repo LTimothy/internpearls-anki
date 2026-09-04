@@ -1196,7 +1196,7 @@ def test_model_effort_line_codex_uses_configured_default(monkeypatch):
     monkeypatch.setattr(ai_cli, "configured_default",
                         lambda path=None: ("gpt-5.1-codex", "high"))
     assert (ai_cli.model_effort_line("codex", "", "")
-            == "Model: gpt-5.1-codex, effort: high (add-on default)")
+            == "Model: gpt-5.1-codex, effort: high (Codex's own setting)")
 
 
 def test_model_effort_line_codex_names_its_own_default_when_config_is_bare(
@@ -1213,3 +1213,45 @@ def test_model_effort_line_codex_your_setting_skips_the_config_file(
     monkeypatch.setattr(ai_cli, "configured_default", boom)
     assert (ai_cli.model_effort_line("codex", "o3", "")
             == "Model: o3 (your setting)")
+
+
+def test_model_effort_line_agy_add_on_default_when_flags_supported(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    assert (ai_cli.model_effort_line("agy", "", "", path="/bin/agy")
+            == "Model: gemini-3.8-flash-low, effort: low (add-on default)")
+
+
+def test_model_effort_line_agy_names_its_own_default_when_flags_unsupported(
+        monkeypatch):
+    # An older agy that doesn't document --model/--effort: build_argv would
+    # never send either flag, so the wording must not claim "add-on default"
+    # for a value that was never actually sent.
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    assert (ai_cli.model_effort_line("agy", "", "", path="/bin/agy")
+            == "Model: Antigravity's own default")
+
+
+def test_configured_default_invalid_utf8_returns_blank(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_bytes(b"\xff\xfe")
+    assert ai_cli.configured_default(str(cfg)) == ("", "")
+
+
+def test_configured_default_reads_a_trailing_comment(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('model = "gpt-5.1-codex" # the fast one\n'
+                   'model_reasoning_effort = "high" # thorough\n')
+    assert ai_cli.configured_default(str(cfg)) == ("gpt-5.1-codex", "high")
+
+
+def test_configured_default_reads_single_quoted_values(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("model = 'gpt-5.1-codex'\n"
+                   "model_reasoning_effort = 'high'\n")
+    assert ai_cli.configured_default(str(cfg)) == ("gpt-5.1-codex", "high")
+
+
+def test_configured_default_reads_single_quoted_value_with_a_comment(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("model = 'gpt-5.1-codex' # the fast one\n")
+    assert ai_cli.configured_default(str(cfg)) == ("gpt-5.1-codex", "")

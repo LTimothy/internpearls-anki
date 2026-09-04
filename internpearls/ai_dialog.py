@@ -201,7 +201,10 @@ def _resolve_one_image(im, scratch):
             # A file the assistant saved in the scratch folder while it had
             # write tools (thorough mode only). name must be a bare basename
             # inside scratch, not a path elsewhere, and must be an .svg file:
-            # nothing else is trusted to render safely on a card.
+            # nothing else is trusted to render safely on a card. The
+            # basename check alone doesn't stop a symlink dropped in scratch
+            # from pointing outside it, so also reject a symlink outright and
+            # require the resolved path to actually stay under scratch.
             name = src.split(":", 1)[1]
             if os.path.basename(name) != name or not name:
                 return {"state": "error", "kind": kind,
@@ -210,10 +213,19 @@ def _resolve_one_image(im, scratch):
                 return {"state": "error", "kind": kind,
                         "error": f"file image must be .svg: {name!r}"}
             path = os.path.join(scratch, name)
-            if not os.path.isfile(path):
+            if os.path.islink(path):
+                return {"state": "error", "kind": kind,
+                        "error": f"file image must not be a symlink: {name!r}"}
+            real_scratch = os.path.realpath(scratch)
+            real_path = os.path.realpath(path)
+            if real_path != real_scratch and not real_path.startswith(
+                    real_scratch + os.sep):
+                return {"state": "error", "kind": kind,
+                        "error": f"file image escapes scratch folder: {name!r}"}
+            if not os.path.isfile(real_path):
                 return {"state": "error", "kind": kind,
                         "error": f"file image not found in scratch: {name!r}"}
-            with open(path, "rb") as fh:
+            with open(real_path, "rb") as fh:
                 data = fh.read()
             return {"state": "ok", "kind": "file", "bytes": data,
                     "name": name, "path": path}
@@ -1241,7 +1253,8 @@ class _GenerateDialog(QDialog):
         meta = ai_cli.BACKENDS[s.backend]
         cfg = _cfg()
         summary = ai_cli.model_effort_line(
-            s.backend, cfg["ai_model"][s.backend], cfg["ai_effort"][s.backend])
+            s.backend, cfg["ai_model"][s.backend], cfg["ai_effort"][s.backend],
+            path=s.cli_path)
         self.backend_row.set_chip("ready")
         self.backend_row.set_primary(
             f"<b>Backend:</b> {html.escape(meta['label'])}, "

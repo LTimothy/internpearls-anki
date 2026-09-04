@@ -1592,3 +1592,38 @@ def test_resolve_one_image_file_rejects_a_path_component():
     assert res["state"] == "error" and "invalid" in res["error"].lower()
     res2 = ai_dialog._resolve_one_image({"source": "file:sub/dir.svg"}, "/tmp/scratch")
     assert res2["state"] == "error" and "invalid" in res2["error"].lower()
+
+
+def test_resolve_one_image_file_rejects_a_symlink_pointing_outside_scratch(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.svg"
+    secret.write_text("<svg>secret</svg>")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (scratch / "diagram.svg").symlink_to(secret)
+    res = ai_dialog._resolve_one_image({"source": "file:diagram.svg"}, str(scratch))
+    assert res["state"] == "error"
+    assert "symlink" in res["error"].lower()
+
+
+def test_resolve_one_image_file_rejects_a_symlinked_directory_component(tmp_path):
+    # The entry named by "file:" is itself a symlink whose target is a
+    # directory outside scratch, not a file: os.path.islink() rejects it
+    # regardless of what the symlink points at, so this must fail the same
+    # way a symlinked-to-a-file entry does.
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (scratch / "diagram.svg").symlink_to(outside_dir)
+    res = ai_dialog._resolve_one_image({"source": "file:diagram.svg"}, str(scratch))
+    assert res["state"] == "error"
+    assert "symlink" in res["error"].lower()
+
+
+def test_resolve_one_image_file_accepts_a_real_file_in_scratch(tmp_path):
+    (tmp_path / "ok.svg").write_text("<svg>ok</svg>")
+    res = ai_dialog._resolve_one_image({"source": "file:ok.svg"}, str(tmp_path))
+    assert res["state"] == "ok"
+    assert res["bytes"] == b"<svg>ok</svg>"
