@@ -1000,23 +1000,9 @@ def test_review_row_names_the_image_while_collapsed_and_gives_a_reason(anki, mon
     assert "Has a picture" in _row_text(row)   # excluded by the gate, so the row says why
 
 
-def test_resolved_image_name_stays_dropped_across_a_rebuild(anki, monkeypatch):
-    # The per-row "already painted" set used to be a local closure, lost on
-    # every _rebuild_review (Edit, Note, a revision), so a picture the
-    # learner already saw got named again.
-    _stub_fetch_image(monkeypatch)
-    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
-    dlg._start_generation()
-    dlg._wait_for_worker(timeout=15)
-    row = dlg.cards_lay.itemAt(0).widget()
-    _caret_widget(row).clicked.emit()   # first expand: paints it, drops the name
-    assert "[image: from example.com]" not in _row_text(row)
-    dlg._rebuild_review()
-    new_row = dlg.cards_lay.itemAt(0).widget()
-    assert "[image: from example.com]" not in _row_text(new_row)
-
-
-def test_review_row_drops_the_image_name_once_expanded_and_painted(anki, monkeypatch):
+def test_review_row_keeps_naming_the_image_once_expanded_and_painted(anki, monkeypatch):
+    # The collapsed line always names every picture on the card; opening the
+    # row to paint its thumbnail must not make the name disappear for good.
     _stub_fetch_image(monkeypatch)
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
     dlg._start_generation()
@@ -1025,8 +1011,11 @@ def test_review_row_drops_the_image_name_once_expanded_and_painted(anki, monkeyp
     caret = _caret_widget(row)
     caret.clicked.emit()   # first expand: the mock's QImage treats the real thumb as ok
     text = _row_text(row)
-    assert "[image: from example.com]" not in text
+    assert "[image: from example.com]" in text
     assert "<img" in text
+    dlg._rebuild_review()
+    new_row = dlg.cards_lay.itemAt(0).widget()
+    assert "[image: from example.com]" in _row_text(new_row)
 
 
 def test_review_row_reason_is_silent_on_a_kept_verbatim_cards_own_uncheck(anki, monkeypatch):
