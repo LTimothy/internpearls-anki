@@ -313,6 +313,83 @@ def test_parse_accepts_count_wrapper():
 
 import json as _json
 
+# === check facts: build_check_prompt / parse_verdicts_json ===================
+
+_CHECK_CARDS = [_card(Front="First sign of LAST?", Back="CNS excitation",
+                      Why="CNS precedes CV collapse."),
+               _card(Front="Lipid bolus dose?", Back="1.5 mL/kg of 20% emulsion",
+                     Why="ASRA checklist.")]
+_CHECK_FIELD_MAP = {i: FIELD_MAP[c["note_type"]] for i, c in enumerate(_CHECK_CARDS)}
+
+
+def test_check_prompt_carries_contract_and_cards():
+    p = ai_logic.build_check_prompt(["SKILL"], _CHECK_CARDS, FIELD_MAP, web=True)
+    assert "## Task: check facts" in p
+    assert "verdicts" in p
+    assert "First sign of LAST?" in p and "Lipid bolus dose?" in p
+
+
+def test_check_prompt_no_web_tells_the_backend_to_mark_everything_unverified():
+    p = ai_logic.build_check_prompt(["SKILL"], _CHECK_CARDS, FIELD_MAP, web=False)
+    assert "no web access" in p
+    assert "web tools" not in p
+
+
+def _verdicts_text(verdicts):
+    return _json.dumps({"verdicts": verdicts})
+
+
+def test_parse_verdicts_happy_path():
+    text = _verdicts_text([
+        {"index": 0, "verdict": "confirmed", "note": "matches the source",
+         "correction": None,
+         "sources": [{"title": "Ref", "url": "https://example.com/ref"}]},
+        {"index": 1, "verdict": "corrected", "note": "dose was off",
+         "correction": {"Back": "1.0 mL/kg"}, "sources": []},
+    ])
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 2, _CHECK_FIELD_MAP)
+    assert errors == []
+    assert verdicts[0]["verdict"] == "confirmed"
+    assert verdicts[0]["sources"] == [{"title": "Ref", "url": "https://example.com/ref"}]
+    assert verdicts[1]["correction"] == {"Back": "1.0 mL/kg"}
+
+
+def test_parse_verdicts_strips_markdown_fence():
+    text = "```json\n" + _verdicts_text([
+        {"index": 0, "verdict": "confirmed", "note": "ok",
+         "correction": None, "sources": []}]) + "\n```"
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert errors == []
+    assert verdicts[0]["verdict"] == "confirmed"
+
+
+def test_parse_verdicts_missing_index_becomes_unverified():
+    text = _verdicts_text([{"index": 0, "verdict": "confirmed", "note": "ok",
+                            "correction": None, "sources": []}])
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 2, _CHECK_FIELD_MAP)
+    assert errors == []
+    assert verdicts[1]["verdict"] == "unverified"
+    assert "no verdict" in verdicts[1]["note"]
+
+
+def test_parse_verdicts_drops_a_bad_url_scheme():
+    text = _verdicts_text([
+        {"index": 0, "verdict": "confirmed", "note": "ok", "correction": None,
+         "sources": [{"title": "bad", "url": "javascript:alert(1)"},
+                     {"title": "good", "url": "https://example.com"}]}])
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert errors == []
+    assert verdicts[0]["sources"] == [{"title": "good", "url": "https://example.com"}]
+
+
+def test_parse_verdicts_rejects_correction_with_unknown_field():
+    text = _verdicts_text([
+        {"index": 0, "verdict": "corrected", "note": "bad field",
+         "correction": {"NotAField": "x"}, "sources": []}])
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert any("unknown field" in e for e in errors)
+    assert verdicts[0]["verdict"] == "unverified"   # fell back, entry rejected
+
 
 def test_parse_claude_result_event():
     line = _json.dumps({"type": "result", "subtype": "success",
