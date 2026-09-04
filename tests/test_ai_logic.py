@@ -259,6 +259,38 @@ def test_prompt_unknown_mode_falls_back_to_thorough_text():
     assert "Mode: Thorough" in p
 
 
+def _flat(text):
+    """Collapse whitespace so a needle can span a wrapped prompt line."""
+    return " ".join(text.split())
+
+
+def test_prompt_image_rules_thorough_with_web():
+    p = _flat(ai_logic.build_prompt(**_PROMPT_KW, mode="thorough", web=True))
+    assert "must be a real image found online" in p
+    assert "Never draw one of these" in p
+    assert "last resort" in p
+    assert "no web tools" not in p.lower()
+    assert "never generate a raster image" in p.lower()
+
+
+def test_prompt_image_rules_thorough_without_web():
+    p = _flat(ai_logic.build_prompt(**_PROMPT_KW, mode="thorough", web=False))
+    assert "no web tools" in p.lower()
+    assert "skip the figure entirely" in p
+    assert "must be a real image found online" not in p
+    assert "never generate a raster image" in p.lower()
+
+
+def test_prompt_image_rules_quick():
+    # Quick never spends a turn searching, even on a web-capable backend, so
+    # it gets the same no-web image policy as a backend with none at all.
+    p = _flat(ai_logic.build_prompt(**_PROMPT_KW, mode="quick", web=True))
+    assert "no web tools" in p.lower()
+    assert "skip the figure entirely" in p
+    assert "must be a real image found online" not in p
+    assert "never generate a raster image" in p.lower()
+
+
 def test_prompt_names_the_sandbox_only_for_agy():
     # I9's real failure: agy tried grep_search and run_command against a
     # folder outside the scratch dir, both refused by the headless sandbox,
