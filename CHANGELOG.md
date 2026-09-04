@@ -3,6 +3,17 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.61.0
+
+Check facts, a new button beside Revise all on the AI wizard's review page. It sends
+the drafted cards back for one more turn, always in Thorough mode, asking for a
+verdict per card instead of a revised set: confirmed, corrected, or unverified, each
+with a one-sentence reason and, when the backend actually opened one, a cited source
+shown as a link. A corrected card shows the assistant's proposed text under your own,
+with Accept and Keep mine links; nothing changes without a click. Codex CLI has no
+network in its own sandbox, so it answers honestly there too: every card comes back
+"Unverified: no web access" rather than a confirmation it can't back up.
+
 ## v0.60.0
 
 Thorough mode now gives each backend a scoped, sandboxed toolset instead of leaving it
