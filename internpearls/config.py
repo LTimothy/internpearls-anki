@@ -204,6 +204,11 @@ def _cfg():
         "ai_default_depth":      (c.get("ai_default_depth")
                                   if c.get("ai_default_depth") in ("thorough", "quick")
                                   else "auto"),
+        # Duplicate-scan pairs the reader has said aren't duplicates, keyed by
+        # dupes.pair_key so a rescan never re-offers them. Config-backed, not
+        # user_files: it's a preference about which pairs to show, not sync
+        # bookkeeping the add-on itself needs to survive an update.
+        "dupes_ignored": list(c.get("dupes_ignored", [])),
     }
 
 
@@ -272,6 +277,16 @@ def load_declined():
 
 def save_declined(reg):
     _save_json(DECLINED, reg)
+
+
+def add_dupes_ignored(key):
+    """Add one pair_key to the duplicate-scan ignore list, saved to the add-on's own
+    config (see `_cfg`'s `dupes_ignored`)."""
+    conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
+    ignored = set(conf.get("dupes_ignored", []))
+    ignored.add(key)
+    conf["dupes_ignored"] = sorted(ignored)
+    mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
 
 # Rolling per-backend usage counters for AI generation: {kind: [{ts, tokens}]},

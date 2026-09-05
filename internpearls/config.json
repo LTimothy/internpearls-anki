@@ -20,5 +20,6 @@
   "ai_model": {"claude": "", "codex": "", "agy": ""},
   "ai_effort": {"claude": "", "codex": "", "agy": ""},
   "ai_default_count": 0,
-  "ai_default_depth": "auto"
+  "ai_default_depth": "auto",
+  "dupes_ignored": []
 }

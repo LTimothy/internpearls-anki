@@ -1370,3 +1370,54 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
         # Whatever landed before a mid-loop failure is still exactly one undo step.
         col.merge_undo_entries(undo_target)
     return count
+
+
+def _home_deck_name(col, note):
+    """The deck a note's card actually lives in, resolved through `odid` when it's
+    sitting in a filtered deck. A note with no cards (shouldn't happen; guards
+    against a stray unlinked note) reads as ''."""
+    cids = note.card_ids()
+    if not cids:
+        return ""
+    card = col.get_card(cids[0])
+    did = getattr(card, "odid", 0) or card.did
+    return col.decks.name(did) or ""
+
+
+def note_rows(col, scope_tag=None, deck_name=None):
+    """`[(note_id, text, deck_name, note_type)]` for the notes selected by `scope_tag`
+    or by `deck_name` (mutually exclusive; neither given returns every note in the
+    collection). `text` is the note's first two fields, joined by a space, since that's
+    what the duplicate scan compares. `deck_name` in each row is the note's home deck,
+    resolved through `odid` for a card currently sitting in a filtered deck (see
+    `_home_deck_name`), which is also how a deck-scoped selection is filtered: a plain
+    `deck:"X"` search already resolves a filtered deck's cards to their original deck.
+    """
+    if scope_tag:
+        search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'
+    elif deck_name:
+        search = f'deck:"{deck_name}"'
+    else:
+        search = ""
+    rows = []
+    for nid in col.find_notes(search):
+        note = col.get_note(nid)
+        text = " ".join(note.fields[:2])
+        rows.append((nid, text, _home_deck_name(col, note), note.note_type()["name"]))
+    return rows
+
+
+def suspend_notes(col, note_ids):
+    """Suspend every card of every note in `note_ids`, through the collection's own
+    scheduler API only (never a direct SQL write, so this is undone from Anki's own
+    Browse exactly like any other suspend)."""
+    cids = [cid for nid in note_ids for cid in col.get_note(nid).card_ids()]
+    if cids:
+        col.sched.suspend_cards(cids)
+
+
+def unsuspend_notes(col, note_ids):
+    """The other half of `suspend_notes`."""
+    cids = [cid for nid in note_ids for cid in col.get_note(nid).card_ids()]
+    if cids:
+        col.sched.unsuspend_cards(cids)
