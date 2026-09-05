@@ -3,6 +3,19 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.63.0
+
+Scan for duplicates, a new Experimental tool. It compares two scopes of your
+collection (the cards this add-on manages against everything else, by default, or
+either side pinned to a single deck) by the words each card actually uses rather than
+by exact text, so a card restating the same fact in different words still turns up. A
+filtered deck's cards are credited to their real home deck. Each candidate row carries
+Suspend ours, Suspend theirs, Keep both, and Ignore pair, all reversible; Copy list puts
+the whole list on the clipboard. Judge with AI, once a backend is set up, sends the
+candidate pairs' front and back text only (no note ids, no scheduling data) to your
+assistant in one Thorough turn and turns a verdict into a chip, folding anything judged
+different out of the way.
+
 ## v0.62.0
 
 The AI wizard's image policy is web-first now: when the backend has web tools and
