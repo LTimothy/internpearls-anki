@@ -38,7 +38,7 @@ from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_
                      _load_json, _save_json, load_declined, load_deck_skill,
                      save_declined, save_deck_skill)
 from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes_for,
-                    source_label_for,
+                    source_label_for, group_change_notes,
                     declined_drop, declined_guids,
                     decks_to_update, feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
@@ -366,13 +366,15 @@ def sync_decks():
         The chip carries what the old line spelled out in a parenthesis: a deck you
         have none of yet is NEW, one already in your collection is UPDATED. The count
         is the manifest's own total for the deck rather than a kept/new split, since
-        Sync decks downloads nothing before this confirmation.
+        Sync decks downloads nothing before this confirmation. Worded as a deck total
+        ("6 cards in deck") rather than a bare count, so it doesn't read as how many
+        cards this particular sync is about to change.
         """
         short = d["name"].split("::")[-1]
         cards = d.get("cards")
         kind = "changed" if d["name"] in installed else "new"
         return ("row", kind, short,
-                plural(cards, "card") if cards is not None else "")
+                f"{plural(cards, 'card')} in deck" if cards is not None else "")
 
     items = [("header", "Update these decks?")]
     for i, d in enumerate(todo):
@@ -1353,10 +1355,11 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
 
     `extra` is `_retired_moved_items`' {deck: [row, ...]}: rows that belong to a deck
     but are read from the ledgers rather than from a downloaded .apkg. They are folded
-    in under that deck's own heading, after its added and changed cards, so one deck
-    reads as one section covering everything happening to it. A deck whose only pending
-    work is a retirement or a relocation still gets a heading of its own at the end,
-    since it has rows to show and no other section would carry them.
+    in under that deck's own heading, through the same grouping pass as its added and
+    changed cards (see `_grouped_rows`), so one deck reads as one section covering
+    everything happening to it. A deck whose only pending work is a retirement or a
+    relocation still gets a heading of its own at the end, since it has rows to show
+    and no other section would carry them.
 
     `registry` is config.load_declined()'s own {guid: entry}. A card previously
     declined "never" is dropped from the list entirely and counted in `hidden` instead
@@ -1405,19 +1408,59 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
                 items.append(("sep",))   # between rows, not before the first
             items.append(row)
 
+    def _grouped_rows(details, extra_rows, deck_name):
+        """This deck's card details and its raw `_retired_moved_items` rows, folded
+        through group_change_notes into the deck section's own row list.
+
+        A group of more than one member whose note survived (a card whose note is
+        empty, or a retired row naming no card in this batch, never merges into
+        anything with a note) gets one ("group_note", note) header, rendered the same
+        accent-barred way a single card's own because-line already is (see
+        review._change_note_row); the header's own entry is then dropped from each
+        member card's own `change_notes`, so it is not shown twice, while any other
+        entry on that card (a feedback/maintainer pairing) still renders on the card
+        itself. A retired member still carries its own reason regardless of grouping;
+        that is a different fact than the shared note and always renders. A moved row
+        never groups (nothing in group_change_notes reads it) and always trails.
+        """
+        retired_raw = [r for r in extra_rows if r.get("row_kind") == "retired"]
+        moved_raw = [r for r in extra_rows if r.get("row_kind") == "moved"]
+        retired_ids = {id(r) for r in retired_raw}
+        rows = []
+        for group in group_change_notes(details, retired_raw):
+            members, note = group["members"], group["note"]
+            header = len(members) > 1 and note is not None
+            if header:
+                rows.append(("group_note", note))
+            key = (note.get("kind"), note.get("note"), note.get("on")) if note else None
+            for m in members:
+                if id(m) in retired_ids:
+                    rows.append(("retired", m["identity"], m.get("reason", "")))
+                    continue
+                if header:
+                    cn = m.get("change_notes") or []
+                    kept = [e for e in cn if not (isinstance(e, dict) and
+                            (e.get("kind"), e.get("note"), e.get("on")) == key)]
+                    if len(kept) != len(cn):
+                        m = dict(m, change_notes=kept)
+                rows.append(("card", deck_name, m))
+        for m in moved_raw:
+            rows.append(("moved", m["front"], m["to"]))
+        return rows
+
     for d in todo:
-        card_rows = []
+        details = []
         pc = preview.get(d["name"])
         src = downloaded.get(d["name"])
         if pc and src and not isinstance(src, Exception) and (pc[2] or pc[3]):
             try:
                 rids = [r for r, _, _ in pc[2]] + list(pc[3])
-                details = apkg_note_details(src, rids)
+                fetched = apkg_note_details(src, rids)
             except Exception as e:
                 failed.append(f"{d['name'].split('::')[-1]} ({e})")
-                details = []
+                fetched = []
             new_rids = {r for r, _, _ in pc[2]}
-            for detail in details:
+            for detail in fetched:
                 detail["kind"] = "new" if detail["rid"] in new_rids else "changed"
                 detail["was"] = pc[3].get(detail["rid"], {})
                 entry = (registry or {}).get(detail["guid"])
@@ -1439,15 +1482,15 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
                     notes = change_notes_for(change_notes, detail["guid"], incoming)
                     if notes:
                         detail["change_notes"] = notes
-                card_rows.append(("card", d["name"], detail))
-            if details:
+                details.append(detail)
+            if fetched:
                 sources[d["name"]] = src
-        rows = card_rows + _extra_for(d["name"])
+        rows = _grouped_rows(details, _extra_for(d["name"]), d["name"])
         if rows:
             _section(d["name"].split("::")[-1], rows)
 
-    for deck, rows in extra.items():
-        _section(deck.split("::")[-1], rows)
+    for deck, extra_rows in extra.items():
+        _section(deck.split("::")[-1], _grouped_rows([], extra_rows, deck))
     return items, failed, sources, hidden
 
 
@@ -1467,26 +1510,32 @@ def _retired_moved_items(fresh, moves, her):
 
     Single-line and never expanding (see widgets.simple_row): these are the learner's own
     cards, known only by front (or identity) and a deck, so there is nothing more to read
-    out of the collection for either kind. Within a deck they come after its cards and in
-    the order archived, then moved, so the reader meets all four kinds in one sensible
-    sequence: what is being added, what is changing, what is being archived, what is
-    moving.
+    out of the collection for either kind. Within a deck they come after its cards, ahead
+    of `_gather_pending_items`' own grouping (see group_change_notes): a retired card
+    named in another row's `superseded_by` is pulled up beside it there, so this is only
+    their order before that pass runs.
 
-    Returns {deck: [row, ...]} where each row is ("retired", identity) or ("moved",
-    front, dest_deck_short), empty when there is nothing of either kind pending. `her`
-    is `_reconcile_pending`'s own {guid: nid} map, needed to read a moved card's current
+    Returns {deck: [row, ...]}, empty when there is nothing of either kind pending. A
+    retired row is a dict carrying `guid`, `identity`, `reason`, and `superseded_by`
+    (raw, not yet rendered) so `_gather_pending_items` can hand it to group_change_notes;
+    a moved row is `{"row_kind": "moved", "front", "to"}`, which needs no grouping and
+    goes straight to its own ("moved", front, dest_deck_short) tuple. `her` is
+    `_reconcile_pending`'s own {guid: nid} map, needed to read a moved card's current
     front out of the collection.
     """
     by_deck = {}
     for r in fresh:
-        by_deck.setdefault(r["deck"], []).append(("retired", r["identity"]))
+        by_deck.setdefault(r["deck"], []).append({
+            "row_kind": "retired", "guid": r["guid"], "identity": r["identity"],
+            "reason": r.get("reason", ""),
+            "superseded_by": list(r.get("superseded_by") or [])})
     for m in moves:
         # note_display_label, not the raw first field: these rows sit in the same list
         # as the new and changed cards, which are labeled that way for the reason an
         # image note's first field is an <img> and a cloze's is its own braces.
         front = note_display_label(mw.col.get_note(her[m["guid"]]).fields)
         by_deck.setdefault(m["from"], []).append(
-            ("moved", front, m["to"].split("::")[-1]))
+            {"row_kind": "moved", "front": front, "to": m["to"].split("::")[-1]})
     return by_deck
 
 

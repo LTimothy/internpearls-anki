@@ -684,6 +684,37 @@ def _change_note_row(note, indent):
     return row
 
 
+def _retired_row(identity, reason, chips):
+    """A retired ledger entry's row: its identity through `simple_row`, and, when the
+    ledger recorded one, its reason as a second, muted line beneath, in the same
+    unquoted italic style a maintainer's change note renders in (`_change_note_html`).
+
+    A separate label stacked under the row rather than folded into its own primary
+    text with a `<br>`: keeps the identity readable as its own line for anything that
+    reads a row's text (a screen reader, or a test asserting on a specific label), and
+    lines the reason up under the row's own text column via `row_text_indent` rather
+    than the row's left edge. Non-expanding, like the row itself: this is one more
+    line, not a disclosure.
+    """
+    row = simple_row("retired", identity, chips=chips)
+    if not reason:
+        return row
+    wrap = QWidget()
+    lay = QVBoxLayout(wrap)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+    lay.addWidget(row)
+    label = muted_label(f"<i>{html.escape(reason)}</i>")
+    label.setTextFormat(Qt.TextFormat.RichText)
+    line = QWidget()
+    line_lay = QHBoxLayout(line)
+    line_lay.setContentsMargins(row_text_indent(1, chips), 0, 0, 4)
+    line_lay.setSpacing(0)
+    line_lay.addWidget(label)
+    lay.addWidget(line)
+    return wrap
+
+
 def _chip_with_source(detail, chips):
     """The row's chip column, with the deck source's where-this-came-from label as a
     small tag directly under the chip when the card carries one.
@@ -1193,21 +1224,29 @@ def build_update_body(items, sources, flags, new_index, decisions,
     the same as any other confirmation.
 
     `items` is a mix of ("header", text), ("note", html), ("sep",), ("deck", deck_short,
-    counts), ("card", deck_name, detail), ("retired", identity), and ("moved", front,
-    dest_deck_short) entries, one per row, built by sync.py from every deck's new and
-    changed cards (_gather_pending_items) and from the retired/relocated cards it finds
-    pending (_retired_moved_items). The first three are the shapes build_list_body takes
-    too, and are drawn by the same builder: a header groups a run of rows, a note is the
-    sentence introducing one, and a sep draws the hairline between two rows. A "deck"
-    row is the per-deck summary that opens the list, in a section of its own where
-    nothing is ever chipped and nothing ever expands, so it declines the caret and chip
-    columns (see simple_row) and its deck names share a left edge with the heading
-    directly above them. Alignment is decided per section, by whether anything in that
-    section is chipped, which is why the card sections below keep the columns their own
-    unchipped rows would otherwise not need. A "retired" or "moved" row renders through
-    widgets.simple_row rather than `_card_row`: single-line and never expanding, since
-    a retired or relocated card is known only by its front (or identity) and a deck,
-    with nothing more to read out of the collection for it. `sources` is
+    counts), ("card", deck_name, detail), ("retired", identity) or ("retired", identity,
+    reason), ("moved", front, dest_deck_short), and ("group_note", note) entries, one per
+    row, built by sync.py from every deck's new and changed cards (_gather_pending_items)
+    and from the retired/relocated cards it finds pending (_retired_moved_items), folded
+    through group_change_notes (see `_grouped_rows` in sync.py). The first three are the
+    shapes build_list_body takes too, and are drawn by the same builder: a header groups
+    a run of rows, a note is the sentence introducing one, and a sep draws the hairline
+    between two rows. A "deck" row is the per-deck summary that opens the list, in a
+    section of its own where nothing is ever chipped and nothing ever expands, so it
+    declines the caret and chip columns (see simple_row) and its deck names share a left
+    edge with the heading directly above them. Alignment is decided per section, by
+    whether anything in that section is chipped, which is why the card sections below
+    keep the columns their own unchipped rows would otherwise not need. A "retired" or
+    "moved" row renders through widgets.simple_row rather than `_card_row`: single-line
+    and never expanding, since a retired or relocated card is known only by its front
+    (or identity) and a deck, with nothing more to read out of the collection for it. A
+    ledger retirement's own reason (its 3rd element, when present) renders as a second,
+    muted line under the identity, unquoted, the way a card's own change note renders; a
+    stranded-pair row has no reason of its own and stays one line. A "group_note" row is
+    one shared change note rendered once, over the member rows beneath it, through the
+    same accent-barred style a single card's own note already uses (`_change_note_row`);
+    each member card's own matching entry is already dropped from its `change_notes`
+    before this screen ever sees it, so the note is not shown twice. `sources` is
     {deck_name: .apkg path}, threaded straight into build_resolvers so a row's picture
     extracts from the same already-downloaded file this screen read the rest of the
     card from.
@@ -1316,10 +1355,15 @@ def build_update_body(items, sources, flags, new_index, decisions,
             _, deck_short, counts = item
             return simple_row(None, deck_short, counts, card_columns=False)
         if item[0] == "retired":
-            return simple_row("retired", item[1], chips=chips)
+            # A stranded-pair row (see sync._stranded_items) is a 2-tuple with no
+            # reason of its own; a ledger retirement carries one as its 3rd element.
+            reason = item[2] if len(item) > 2 else ""
+            return _retired_row(item[1], reason, chips)
         if item[0] == "moved":
             _, front, dest_short = item
             return simple_row("moved", front, f"→ {dest_short}", chips=chips)
+        if item[0] == "group_note":
+            return _change_note_row(item[1], 0)
         _, deck_name, detail = item
         row = _card_row(detail, flags, boxes, decisions, _on_decide,
                         resolve=resolvers.get(deck_name), chips=chips)
