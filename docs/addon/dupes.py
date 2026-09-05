@@ -106,8 +106,11 @@ def build_index(rows):
 
 def find_candidates(left_rows, right_rows, threshold=0.5, top=3):
     """For each row on the left, the best `top` rows on the right at cosine
-    similarity >= `threshold`, as `[(score, left_row, right_row)]` sorted by score
-    descending (ties broken by left row order, then right row order).
+    similarity >= `threshold`, as `[(score, left_row, right_row, shares)]` sorted by
+    score descending (ties broken by left row order, then right row order). `shares`
+    is that pair's top five shared tokens (query weight times document weight,
+    descending), the terms that actually carried the score, for a screen to show
+    the reader what the number means rather than just the number itself.
 
     Builds one `Index` over `right_rows` and queries it once per left row, walking
     only the postings lists for tokens the query actually has (an inverted index),
@@ -128,9 +131,12 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3):
             continue
         q_norm = math.sqrt(sum(w * w for w in query.values())) or 1.0
         scores = {}
+        contrib = {}
         for tok, qw in query.items():
             for ri, dw in index.postings.get(tok, ()):
-                scores[ri] = scores.get(ri, 0.0) + qw * dw
+                value = qw * dw
+                scores[ri] = scores.get(ri, 0.0) + value
+                contrib.setdefault(ri, {})[tok] = value
         ranked = []
         for ri, dot in scores.items():
             cosine = dot / (q_norm * index.doc_norm[ri])
@@ -138,7 +144,9 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3):
                 ranked.append((cosine, ri))
         ranked.sort(key=lambda t: (-t[0], t[1]))
         for cosine, ri in ranked[:top]:
-            out.append((cosine, left, right_rows[ri]))
+            top_tokens = sorted(contrib.get(ri, {}).items(), key=lambda kv: -kv[1])[:5]
+            shares = [tok for tok, _ in top_tokens]
+            out.append((cosine, left, right_rows[ri], shares))
     out.sort(key=lambda t: -t[0])
     return out
 
