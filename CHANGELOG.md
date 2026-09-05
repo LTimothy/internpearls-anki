@@ -9,9 +9,10 @@ Scan for duplicates, a new Experimental tool. It compares two scopes of your
 collection (the cards this add-on manages against everything else, by default, or
 either side pinned to a single deck) by the words each card actually uses rather than
 by exact text, so a card restating the same fact in different words still turns up. A
-filtered deck's cards are credited to their real home deck. A "Skip CC Anki" toggle,
-on by default, leaves that reference deck out of the comparison, since a match there
-isn't real coverage. Each row's chip, body and action links (Suspend ours, Suspend
+filtered deck's cards are credited to their real home deck. An "Exclude decks" field
+leaves out any note whose home deck path contains one of a comma-separated list of
+names, so a reference deck you don't review doesn't count as coverage. Each row's
+chip, body and action links (Suspend ours, Suspend
 theirs, Keep both, Ignore pair) follow the update screen's own row layout, so the
 links show whether or not the row is open; Copy list puts the whole list on the
 clipboard. Judge with AI, once a backend is set up, sends the candidate pairs' front

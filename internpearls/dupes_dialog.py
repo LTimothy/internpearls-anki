@@ -15,17 +15,17 @@ import threading
 import time
 
 from aqt import mw
-from aqt.qt import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame,
-                    QHBoxLayout, QLabel, QPushButton, QScrollArea, Qt, QTimer,
-                    QVBoxLayout, QWidget)
+from aqt.qt import (QComboBox, QDialog, QDialogButtonBox, QFrame,
+                    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, Qt,
+                    QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic
 from .collection import note_rows, suspend_notes
-from .config import APP_NAME, _cfg, add_dupes_ignored
+from .config import APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks
 from .dupes import find_candidates, pair_key
 from .logic import plain_text
 from .palette import colors
-from .ui import _safe, copy_to_clipboard, hint_label, link_button, title_label
+from .ui import _safe, copy_to_clipboard, hint_label, link_button, section_label, title_label
 from .widgets import CARET_GAP, CARET_W
 
 # This dialog's own chip vocabulary. Unlike widgets.CHIPS, a candidate's label carries
@@ -128,6 +128,7 @@ class _DuplicateScanDialog(QDialog):
         self._left_count = self._right_count = 0
         self._deck_names = sorted({d.name for d in mw.col.decks.all_names_and_ids()})
         self._fold_open = False
+        self._any_excluded = False
 
         outer = QVBoxLayout(self)
         outer.addWidget(title_label("Scan for duplicates"))
@@ -161,13 +162,11 @@ class _DuplicateScanDialog(QDialog):
         links_row.addStretch()
         outer.addLayout(links_row)
 
-        self.skip_cc_anki = QCheckBox("Skip CC Anki")
-        self.skip_cc_anki.setChecked(True)
-        self.skip_cc_anki.setToolTip(
-            "CC Anki is a 2,900-note reference deck you don't review, so a match "
-            "there isn't coverage.")
-        self.skip_cc_anki.toggled.connect(lambda _checked: self._rescan())
-        outer.addWidget(self.skip_cc_anki)
+        outer.addWidget(section_label("Exclude decks"))
+        self.exclude_edit = QLineEdit(", ".join(_cfg()["dupes_excluded_decks"]))
+        self.exclude_edit.setPlaceholderText("deck names or parts of names, comma separated")
+        self.exclude_edit.editingFinished.connect(self._exclude_edited)
+        outer.addWidget(self.exclude_edit)
 
         self.summary_label = hint_label("")
         outer.addWidget(self.summary_label)
@@ -203,11 +202,28 @@ class _DuplicateScanDialog(QDialog):
         self._rescan()
 
     # ------------------------------------------------------------------ scope
+    def _excluded_decks(self):
+        return [t.strip() for t in self.exclude_edit.text().split(",") if t.strip()]
+
+    def _apply_exclusions(self, rows):
+        excluded = [e.lower() for e in self._excluded_decks()]
+        if not excluded:
+            return rows
+        filtered = [r for r in rows
+                   if not any(e in r[2].lower() for e in excluded)]
+        if len(filtered) != len(rows):
+            self._any_excluded = True
+        return filtered
+
+    def _exclude_edited(self):
+        set_dupes_excluded_decks(self._excluded_decks())
+        self._rescan()
+
     def _left_rows(self):
         if self.left_combo.currentIndex() == 0:
             return note_rows(mw.col, scope_tag=self._scope_tag)
         deck = self._deck_names[self.left_combo.currentIndex() - 1]
-        return note_rows(mw.col, deck_name=deck)
+        return self._apply_exclusions(note_rows(mw.col, deck_name=deck))
 
     def _right_rows(self):
         if self.right_combo.currentIndex() == 0:
@@ -216,13 +232,12 @@ class _DuplicateScanDialog(QDialog):
         else:
             deck = self._deck_names[self.right_combo.currentIndex() - 1]
             rows = note_rows(mw.col, deck_name=deck)
-        if self.skip_cc_anki.isChecked():
-            rows = [r for r in rows if "cc anki" not in r[2].lower()]
-        return rows
+        return self._apply_exclusions(rows)
 
     # ------------------------------------------------------------------ scan
     @_safe
     def _rescan(self):
+        self._any_excluded = False
         left_rows = self._left_rows()
         right_rows = self._right_rows()
         self._left_count, self._right_count = len(left_rows), len(right_rows)
@@ -281,8 +296,9 @@ class _DuplicateScanDialog(QDialog):
     def _summary_text(self):
         text = (f"{self._left_count} scanned against {self._right_count}, "
                f"{len(self._pairs)} candidates")
-        if self.skip_cc_anki.isChecked():
-            text += " (CC Anki skipped)"
+        excluded = self._excluded_decks()
+        if excluded and self._any_excluded:
+            text += f" ({len(excluded)} decks excluded)"
         same = sum(1 for p in self._pairs if p["judged"] == "same")
         if same:
             text += f", {same} judged the same"

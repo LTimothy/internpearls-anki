@@ -21,5 +21,6 @@
   "ai_effort": {"claude": "", "codex": "", "agy": ""},
   "ai_default_count": 0,
   "ai_default_depth": "auto",
-  "dupes_ignored": []
+  "dupes_ignored": [],
+  "dupes_excluded_decks": []
 }
