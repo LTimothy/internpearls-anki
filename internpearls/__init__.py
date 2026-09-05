@@ -35,6 +35,7 @@ from .collection import (backup_collection_now, backup_deck_now, export_deck,
                          import_deck, remove_empty_cards, restore_from_backup,
                          update_notetypes)
 from .dialogs import about, manage_decks, open_night_mode_dimming, open_settings
+from .dupes_dialog import open_duplicate_scan
 from .nightmode import dim_images_in_night_mode, dim_webviews_in_night_mode
 from .sync import (clean_up_duplicates, import_single, reconcile_decks,
                    register_reconcile_action, sync_decks, update_decks)
@@ -101,6 +102,7 @@ def _menu():
     exp = menu.addMenu("Experimental")
     add(exp, "Generate Cards (AI)", generate_cards)
     add(exp, "Night Mode Dimming", open_night_mode_dimming)
+    add(exp, "Scan for duplicates", open_duplicate_scan)
     menu.addSeparator()
     add(menu, "Settings", open_settings)
     add(menu, "About", about)
