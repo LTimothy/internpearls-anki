@@ -212,6 +212,10 @@ def _cfg():
         # Deck-name substrings the duplicate scan leaves out of the comparison; see
         # `set_dupes_excluded_decks`.
         "dupes_excluded_decks": list(c.get("dupes_excluded_decks", [])),
+        # Duplicate-scan cosine threshold, set via the Sensitivity combo (Strict
+        # 0.6 / Normal 0.5 / Loose 0.4). See `set_dupes_threshold`.
+        "dupes_threshold": (c.get("dupes_threshold")
+                            if c.get("dupes_threshold") in (0.6, 0.5, 0.4) else 0.5),
     }
 
 
@@ -297,6 +301,14 @@ def set_dupes_excluded_decks(names):
     `dupes_excluded_decks`)."""
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
     conf["dupes_excluded_decks"] = list(names)
+    mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
+
+
+def set_dupes_threshold(value):
+    """Persist the duplicate-scan Sensitivity threshold (see `_cfg`'s
+    `dupes_threshold`)."""
+    conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
+    conf["dupes_threshold"] = value
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
 

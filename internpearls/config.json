@@ -22,5 +22,6 @@
   "ai_default_count": 0,
   "ai_default_depth": "auto",
   "dupes_ignored": [],
-  "dupes_excluded_decks": []
+  "dupes_excluded_decks": [],
+  "dupes_threshold": 0.5
 }

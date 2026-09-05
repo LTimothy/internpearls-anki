@@ -21,7 +21,8 @@ from aqt.qt import (QComboBox, QDialog, QDialogButtonBox, QFrame,
 
 from . import ai_cli, ai_logic
 from .collection import note_rows, suspend_notes
-from .config import APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks
+from .config import (APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks,
+                     set_dupes_threshold)
 from .dupes import find_candidates, pair_key
 from .logic import field_preview_text, plain_text
 from .palette import colors
@@ -29,17 +30,20 @@ from .ui import _safe, copy_to_clipboard, hint_label, link_button, section_label
 from .widgets import CARET_GAP, CARET_W
 
 # This dialog's own chip vocabulary. Unlike widgets.CHIPS, a candidate's label carries
-# its own score (CANDIDATE 0.77), so it can't be one of a fixed finite set of labels the
-# way every other screen's chips are. The column is still measured the way
+# its own band and score ("Similar 0.64"), so it can't be one of a fixed finite set of
+# labels the way every other screen's chips are. The column is still measured the way
 # widgets.chip_column_width measures one, just against this dialog's own fixed set of
-# exemplar labels rather than CHIPS: the score is always rendered to two decimal places
-# (dupes.find_candidates), so "CANDIDATE 0.00" is exactly as wide as any real score this
-# window can show, and the set never has to be recomputed against whatever pairs happen
-# to be on screen.
+# exemplar labels rather than CHIPS: "Likely duplicate 0.00" is the widest a real band
+# label can render (the score is always two decimal places, see `_band_label`), so the
+# set never has to be recomputed against whatever pairs happen to be on screen.
 _CHIP_STYLE = ("border-radius: 3px; padding: 1px 6px; font-size: 11px; font-weight: 600;")
 _ROLES = {"candidate": "new", "duplicate": "accept", "overlaps": "updated",
          "suspended": "retired"}
-_CHIP_LABELS = ("CANDIDATE 0.00", "DUPLICATE", "OVERLAPS", "SUSPENDED")
+_CHIP_LABELS = ("Likely duplicate 0.00", "DUPLICATE", "OVERLAPS", "SUSPENDED")
+
+# The Sensitivity combo: label shown, and the cosine threshold it sets. Order matches
+# the combo's own item order, so an index round-trips straight into this list.
+_SENSITIVITY_LEVELS = (("Strict", 0.6), ("Normal", 0.5), ("Loose", 0.4))
 
 # chip_column_width()'s answer, measured once: not computed at import, since these
 # modules load before a QApplication exists and font metrics before that point are
@@ -48,6 +52,23 @@ _CHIP_W = {}
 
 _HINT = ("Compares two scopes of your collection by the words each card actually uses, "
         "so a paraphrase counts even when the wording doesn't match.")
+
+_SCORE_HINT = ("The score is how much of the rare vocabulary the two cards share, from "
+              "0 to 1; common words count for little, drug names and numbers count for "
+              "a lot.")
+
+
+def _band_label(score):
+    """The score's readability band, plus the number itself: 'Likely duplicate 0.77',
+    'Similar 0.64', 'Weak match 0.52'. Bands, not a bare number, are what tells a
+    reader whether a pair is worth looking at without doing the math themselves."""
+    if score >= 0.7:
+        band = "Likely duplicate"
+    elif score >= 0.6:
+        band = "Similar"
+    else:
+        band = "Weak match"
+    return f"{band} {score:.2f}"
 
 
 def _pill(text, kind):
@@ -68,7 +89,7 @@ def _chip_label(pair):
         return "DUPLICATE", "duplicate"
     if judged == "overlaps":
         return "OVERLAPS", "overlaps"
-    return f"CANDIDATE {pair['score']:.2f}", "candidate"
+    return _band_label(pair["score"]), "candidate"
 
 
 def _chip_column_width():
@@ -135,6 +156,8 @@ class _DuplicateScanDialog(QDialog):
         self._deck_names = sorted({d.name for d in mw.col.decks.all_names_and_ids()})
         self._fold_open = False
         self._any_excluded = False
+        self._right_dropped = 0
+        self._last_scanned_exclude_text = None
 
         outer = QVBoxLayout(self)
         outer.addWidget(title_label("Scan for duplicates"))
@@ -157,6 +180,16 @@ class _DuplicateScanDialog(QDialog):
         links_row = QHBoxLayout()
         links_row.addWidget(link_button("Rescan", self._rescan))
         cfg = _cfg()
+        links_row.addWidget(QLabel("Sensitivity:"))
+        self.sensitivity_combo = QComboBox()
+        for label, _ in _SENSITIVITY_LEVELS:
+            self.sensitivity_combo.addItem(label)
+        current_threshold = cfg["dupes_threshold"]
+        idx = next((i for i, (_, v) in enumerate(_SENSITIVITY_LEVELS)
+                   if v == current_threshold), 1)
+        self.sensitivity_combo.setCurrentIndex(idx)
+        self.sensitivity_combo.currentIndexChanged.connect(self._sensitivity_changed)
+        links_row.addWidget(self.sensitivity_combo)
         chosen = ai_cli.detect_backends(cfg)["chosen"]
         self._judge_backend = chosen
         self.judge_btn = link_button("Judge with AI", self._judge_with_ai)
@@ -176,6 +209,7 @@ class _DuplicateScanDialog(QDialog):
 
         self.summary_label = hint_label("")
         outer.addWidget(self.summary_label)
+        outer.addWidget(hint_label(_SCORE_HINT))
 
         self._rows_container = QWidget()
         self._rows_layout = QVBoxLayout(self._rows_container)
@@ -195,6 +229,13 @@ class _DuplicateScanDialog(QDialog):
         rows_outer.addStretch()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        # Always-on vertical, always-off horizontal: a policy-driven scrollbar that
+        # only appears once content overflows narrows the viewport when it shows up,
+        # which reflows these word-wrapped labels taller, which can push content past
+        # the threshold that made the bar appear in the first place, and so on. A
+        # bar that never appears or disappears has nothing left to oscillate.
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setWidget(rows_body)
         outer.addWidget(scroll, 1)
 
@@ -222,7 +263,19 @@ class _DuplicateScanDialog(QDialog):
         return filtered
 
     def _exclude_edited(self):
+        """editingFinished fires on any focus loss, not just a real edit, so clicking
+        into the candidate list after typing used to rescan and rebuild the rows
+        underfoot. Only rescan when the text actually moved since the last scan;
+        Enter and the Rescan link both still work, since the text before either has
+        already changed (Enter) or Rescan bypasses this gate entirely."""
+        text = self.exclude_edit.text()
+        if text == self._last_scanned_exclude_text:
+            return
         set_dupes_excluded_decks(self._excluded_decks())
+        self._rescan()
+
+    def _sensitivity_changed(self, index):
+        set_dupes_threshold(_SENSITIVITY_LEVELS[index][1])
         self._rescan()
 
     def _left_rows(self):
@@ -238,12 +291,15 @@ class _DuplicateScanDialog(QDialog):
         else:
             deck = self._deck_names[self.right_combo.currentIndex() - 1]
             rows = note_rows(mw.col, deck_name=deck)
-        return self._apply_exclusions(rows)
+        filtered = self._apply_exclusions(rows)
+        self._right_dropped = len(rows) - len(filtered)
+        return filtered
 
     # ------------------------------------------------------------------ scan
     @_safe
     def _rescan(self, *_):
         self._any_excluded = False
+        self._last_scanned_exclude_text = self.exclude_edit.text()
         left_rows = self._left_rows()
         right_rows = self._right_rows()
         self._left_count, self._right_count = len(left_rows), len(right_rows)
@@ -252,11 +308,12 @@ class _DuplicateScanDialog(QDialog):
         self._scan_result = None
         self._scan_error = None
         self._t0 = time.monotonic()
+        threshold = _cfg()["dupes_threshold"]
 
         def work():
             try:
                 self._scan_result = find_candidates(left_rows, right_rows,
-                                                    threshold=0.5, top=3)
+                                                    threshold=threshold, top=3)
             except Exception as e:
                 self._scan_error = e
 
@@ -280,13 +337,13 @@ class _DuplicateScanDialog(QDialog):
             return
         ignored = set(_cfg()["dupes_ignored"])
         self._pairs = []
-        for score, left, right in self._scan_result:
+        for score, left, right, shares in self._scan_result:
             key = pair_key(left[0], right[0])
             if key in ignored:
                 continue
             self._pairs.append({"score": score, "left": left, "right": right,
                                "key": key, "judged": None, "note": "",
-                               "suspended": set()})
+                               "suspended": set(), "shares": shares})
         self._rebuild_list()
 
     def _wait_for_scan(self, timeout=15):
@@ -299,16 +356,45 @@ class _DuplicateScanDialog(QDialog):
         self._finish_scan()
 
     # ------------------------------------------------------------------ list
+    def _exclusion_feedback(self):
+        """Two lines about the Exclude decks field, or none: whether it actually did
+        anything ("Excluding 1 deck (2,903 cards)"), and, separately, any entry that
+        matched no deck in the collection at all ("No deck matches 'CC Anki'", in the
+        warning colour) rather than the field silently doing nothing. Without this a
+        typo in the field looked identical to it working."""
+        entries = self._excluded_decks()
+        if not entries:
+            return None, None
+        deck_names_lower = [d.lower() for d in self._deck_names]
+        unmatched = [e for e in entries
+                    if not any(e.lower() in name for name in deck_names_lower)]
+        matched = [e for e in entries if e not in unmatched]
+        info = None
+        if matched:
+            n = len(matched)
+            dropped = self._right_dropped
+            info = (f"Excluding {n} deck{'s' if n != 1 else ''} "
+                    f"({dropped:,} card{'s' if dropped != 1 else ''})")
+        warn = None
+        if unmatched:
+            c = colors()
+            names = "; ".join(f"No deck matches '{_esc(e)}'" for e in unmatched)
+            warn = f"<span style='color:{c['warning']};'>{names}</span>"
+        return info, warn
+
     def _summary_text(self):
         text = (f"{self._left_count} scanned against {self._right_count}, "
                f"{len(self._pairs)} candidates")
-        excluded = self._excluded_decks()
-        if excluded and self._any_excluded:
-            text += f" ({len(excluded)} decks excluded)"
         same = sum(1 for p in self._pairs if p["judged"] == "same")
         if same:
             text += f", {same} judged the same"
-        return text
+        lines = [text]
+        info, warn = self._exclusion_feedback()
+        if info:
+            lines.append(info)
+        if warn:
+            lines.append(warn)
+        return "<br>".join(lines)
 
     def _rebuild_list(self):
         self.summary_label.setText(self._summary_text())
@@ -373,10 +459,15 @@ class _DuplicateScanDialog(QDialog):
         cl.addWidget(pill)
         hl.addWidget(chip_cell, 0, Qt.AlignmentFlag.AlignTop)
 
+        shares_html = ""
+        if pair.get("shares"):
+            shares_html = (f"<br><span style='color:{c['muted']};'>shares: "
+                          f"{_esc(', '.join(pair['shares']))}</span>")
         primary = QLabel(
             f"<b>ours:</b> {_esc(left_front)}<br>"
             f"<span style='color:{c['muted']};'>theirs: {_esc(right_front)}"
-            f" ({_esc(pair['right'][2])}, {_esc(pair['right'][3])})</span>")
+            f" ({_esc(pair['right'][2])}, {_esc(pair['right'][3])})</span>"
+            f"{shares_html}")
         primary.setWordWrap(True)
         primary.setTextFormat(Qt.TextFormat.RichText)
         hl.addWidget(primary, 1)
