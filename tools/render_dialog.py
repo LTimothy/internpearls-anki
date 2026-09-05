@@ -49,6 +49,8 @@ def main():
                          "That second part is an approximation, not a reproduction of "
                          "night mode")
     ap.add_argument("--feedback", action="store_true", help="confirm: feedback boxes on")
+    ap.add_argument("--grouped", action="store_true",
+                    help="confirm: render a shared change-note group instead")
     ap.add_argument("--expand", default="", help="row indices to open, e.g. 0,2")
     ap.add_argument("--limit", type=int, default=0, help="confirm: cap the card count")
     ap.add_argument("--decks-dir", default="", help="manage-decks: a local source folder")
@@ -67,7 +69,7 @@ def main():
         theme="dark" if args.dark else "light",
         expand=[int(i) for i in args.expand.split(",") if i.strip()],
         size=(width, height),
-        limit=args.limit, feedback=args.feedback,
+        limit=args.limit, feedback=args.feedback, grouped=args.grouped,
         decks_dir=args.decks_dir,
     )
     shot.image.save(args.out)

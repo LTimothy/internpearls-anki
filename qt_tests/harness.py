@@ -450,6 +450,10 @@ def _scene_confirm(mock, opts):
 
     The retired and moved rows are invented, generic fixture content, same as
     synthetic_details() above: no real card or deck name belongs in this repo.
+
+    `grouped=True` renders the shape group_change_notes produces instead: one shared
+    note as a ("group_note", ...) header over its two member cards, a plain row with
+    no chip, a retired row carrying a reason, then a moved row.
     """
     from internpearls import review
     from internpearls.ui import _ask_with_widget
@@ -468,14 +472,31 @@ def _scene_confirm(mock, opts):
     items = [("header", "1 deck has updates:"),
              ("deck", "Example Deck", "3 kept (1 changing) · 2 new"),
              ("header", "Example Deck")]
-    for i, d in enumerate(details):
-        if i:
-            items.append(("sep",))
-        items.append(("card", "Example Deck", d))
-    items += [("sep",),
-              ("retired", "An older phrasing of a since-split card"),
-              ("sep",),
-              ("moved", "A card whose deck was reorganized", "Regional Basics")]
+    if opts.get("grouped"):
+        # One shared note grouping the first two cards (see logic.group_change_notes),
+        # a plain row with no chip, a retired row carrying its reason, and a moved
+        # row: every row kind this screen can build to a group, in one render.
+        group_note = {"kind": "feedback",
+                      "note": "an example reviewer request naming both cards"}
+        # The group's own header already shows this note, so the member card no
+        # longer carries it, the same stripping _grouped_rows does in sync.py.
+        card0, card1 = details[0], dict(details[1], change_notes=[])
+        items += [("group_note", group_note),
+                  ("card", "Example Deck", card0), ("sep",),
+                  ("card", "Example Deck", card1), ("sep",),
+                  ("card", "Example Deck", details[2]), ("sep",),
+                  ("retired", "An older phrasing of a since-split card",
+                   "split into two focused cards"), ("sep",),
+                  ("moved", "A card whose deck was reorganized", "Regional Basics")]
+    else:
+        for i, d in enumerate(details):
+            if i:
+                items.append(("sep",))
+            items.append(("card", "Example Deck", d))
+        items += [("sep",),
+                  ("retired", "An older phrasing of a since-split card"),
+                  ("sep",),
+                  ("moved", "A card whose deck was reorganized", "Regional Basics")]
     sources = {"Example Deck": _fixture_image_apkg()} if opts.get("image") else {}
     # What is left above the list now that the per-deck summary is the list's own first
     # section: update_decks()'s fixed notes about the run as a whole.
