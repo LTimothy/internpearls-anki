@@ -1172,12 +1172,12 @@ class _NightModeDimmingDialog(QDialog):
 
     def __init__(self, parent, enabled, percent, scope):
         super().__init__(parent)
-        self.setWindowTitle(f"{APP_NAME}: Night Mode Dimming")
+        self.setWindowTitle(f"{APP_NAME}: Night mode dimming")
         self.setMinimumWidth(420)
 
         outer = QVBoxLayout(self)
         outer.setSpacing(10)
-        outer.addWidget(title_label("Night Mode Dimming"))
+        outer.addWidget(title_label("Night mode dimming"))
 
         self._enabled_cb = QCheckBox("Dim in Night Mode")
         self._enabled_cb.setChecked(enabled)
@@ -1270,7 +1270,7 @@ def open_night_mode_dimming():
             dim_line = (f"Bright images are dimmed {values['dim_images_night_mode_percent']}% "
                        "in Night Mode.")
     else:
-        dim_line = "Night Mode Dimming is off."
+        dim_line = "Night mode dimming is off."
     _info(f"Night mode dimming saved.<br><br>{dim_line}")
 
 

@@ -23,7 +23,7 @@ from . import ai_cli, ai_logic
 from .collection import note_rows, suspend_notes
 from .config import APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks
 from .dupes import find_candidates, pair_key
-from .logic import plain_text
+from .logic import field_preview_text, plain_text
 from .palette import colors
 from .ui import _safe, copy_to_clipboard, hint_label, link_button, section_label, title_label
 from .widgets import CARET_GAP, CARET_W
@@ -104,9 +104,15 @@ def _row_rule():
 
 
 def _note_texts(nid):
+    """A note's front and back as plain text. A front that is only a picture
+    (an image-identification note) is named rather than left blank."""
     note = mw.col.get_note(nid)
-    front = plain_text(note.fields[0]) if note.fields else ""
-    back = plain_text(note.fields[1]) if len(note.fields) > 1 else ""
+    fields = list(note.fields)
+    front = field_preview_text(fields[0]) if fields else ""
+    if not front.strip():
+        front = next((field_preview_text(f) for f in fields[1:]
+                      if field_preview_text(f).strip()), "")
+    back = plain_text(fields[1]) if len(fields) > 1 else ""
     return front, back
 
 
@@ -156,7 +162,7 @@ class _DuplicateScanDialog(QDialog):
         self.judge_btn = link_button("Judge with AI", self._judge_with_ai)
         self.judge_btn.setEnabled(bool(chosen))
         if not chosen:
-            self.judge_btn.setToolTip("Set up an AI backend first (Generate Cards (AI)"
+            self.judge_btn.setToolTip("Set up an AI backend first (Generate cards (AI)"
                                       " > Setup).")
         links_row.addWidget(self.judge_btn)
         links_row.addStretch()
@@ -236,7 +242,7 @@ class _DuplicateScanDialog(QDialog):
 
     # ------------------------------------------------------------------ scan
     @_safe
-    def _rescan(self):
+    def _rescan(self, *_):
         self._any_excluded = False
         left_rows = self._left_rows()
         right_rows = self._right_rows()
@@ -332,7 +338,7 @@ class _DuplicateScanDialog(QDialog):
                     self._rows_layout.addWidget(_row_rule())
                     self._rows_layout.addWidget(self._build_row(pair))
 
-    def _toggle_fold(self):
+    def _toggle_fold(self, *_):
         self._fold_open = not self._fold_open
         self._rebuild_list()
 
@@ -442,7 +448,7 @@ class _DuplicateScanDialog(QDialog):
         self._pairs.remove(pair)
         self._rebuild_list()
 
-    def _copy_list(self):
+    def _copy_list(self, *_):
         lines = []
         for p in self._pairs:
             left_front, _ = _note_texts(p["left"][0])
@@ -453,7 +459,7 @@ class _DuplicateScanDialog(QDialog):
 
     # ------------------------------------------------------------------ AI judging
     @_safe
-    def _judge_with_ai(self):
+    def _judge_with_ai(self, *_):
         if not self._judge_backend or not self._pairs:
             return
         cfg = _cfg()
