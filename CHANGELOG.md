@@ -3,6 +3,22 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.65.1
+
+Four fixes to Scan for duplicates from a real run against a small collection.
+Exclude decks now applies to both sides always; it used to skip the left side
+whenever it was left on "Cards this add-on manages," so excluding a deck that sat
+on that side did nothing. A tiny comparison pool used to let a single shared rare
+word carry a pair to "Likely duplicate" on its own; a pair now needs at least two
+shared informative words (three once either card runs past twelve), carrying a
+real share of the shorter card's own vocabulary, not just a passing score. Strict
+and Normal show "Likely duplicate" or "Possible" based on that evidence; Loose
+drops the requirement and goes back to the raw score. The summary now says
+plainly when either side has fewer than 50 cards, so a thin comparison doesn't
+read as a clean bill. A picture-only front's image name no longer counts toward
+the shared vocabulary, so two unrelated picture cards can't match on a shared
+figure's filename alone.
+
 ## v0.65.0
 
 A note that explains more than one card, or a retired card and the replacement a note
