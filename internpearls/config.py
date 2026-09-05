@@ -11,7 +11,7 @@ from aqt import mw
 
 from .logic import clamp_night_mode_dim_percent
 
-ADDON_VERSION = "0.64.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.65.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # own notes); when it does, an add-on release that understands the new shape must bump
