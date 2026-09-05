@@ -3,6 +3,27 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.64.0
+
+Three fixes to Scan for duplicates from a second real-use round. The candidate list's
+scroll bar used to appear and disappear as its word-wrapped rows reflowed, which read
+as flashing and made the list unscrollable; the vertical bar is always on now and the
+horizontal one always off, so nothing about the list's own width ever changes. The
+Exclude decks field used to rescan on every focus loss, including one with nothing
+typed, which is why clicking into the list right after typing felt like it rebuilt
+underfoot; it now rescans only when the text actually changed since the last scan (Enter
+and Rescan still always work). That field's effect is visible now too: the summary
+reports "Excluding N deck(s) (M cards)" when an entry matches something, and flags any
+entry that matches no deck at all ("No deck matches '...'") in the warning colour,
+instead of a typo looking identical to it working.
+
+The score itself reads as something now instead of a bare number. Each candidate's chip
+shows a band ("Likely duplicate", "Similar", "Weak match") alongside the number, and its
+row names the shared vocabulary that actually drove the match ("shares: fenoldopam,
+agonist, receptor"). A one-line hint under the summary explains what the score means. A
+new Sensitivity control (Strict / Normal / Loose) sets how high a match has to score to
+show up at all, remembered across sessions and rescanning on change.
+
 ## v0.63.1
 
 Two fixes to Scan for duplicates from its first real use. Rescan and Judge with AI
