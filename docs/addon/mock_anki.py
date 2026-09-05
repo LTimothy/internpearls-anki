@@ -332,6 +332,12 @@ class _Decks:
                 return n
         return None
 
+    def all_names_and_ids(self):
+        """Anki's decks.all_names_and_ids(): every deck, name and id, for a picker
+        that lists real decks (dupes_dialog's scope combos)."""
+        return [types.SimpleNamespace(id=i, name=n)
+               for n, i in sorted(self.names.items())]
+
 
 class _Db:
     def __init__(self, col):
