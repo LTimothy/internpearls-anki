@@ -1,4 +1,4 @@
-"""The Night Mode Dimming preview: a live example card, normal and dimmed side by
+"""The Night mode dimming preview: a live example card, normal and dimmed side by
 side, so the percent spinner's number is not abstract.
 
 The per-pixel transform itself (night_mode_dim_factor) is unit-tested in

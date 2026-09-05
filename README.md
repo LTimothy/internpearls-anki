@@ -98,13 +98,13 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 | `excluded_decks` | Deck names opted out of syncing. Also editable from Manage decks. |
 | `export_deck` | The deck that Backup/Restore/Export intern pearls deck and the automatic pre-sync backup operate on (default: `Intern Pearls::Intern Custom`). |
 | `auto_sync_decks`, `auto_sync_interval_minutes`, `notify_addon_updates`, `auto_update_addon` | Sync and update automation, see Settings below and `config.md` for details on each. |
-| `dim_images_night_mode`, `dim_images_night_mode_percent` | Dim bright pictures while Anki itself is in Night Mode, and by how much (a percentage, 0-90). Applies to every deck in your collection, not just this add-on's. Also editable from Experimental > Night Mode Dimming, see below. |
+| `dim_images_night_mode`, `dim_images_night_mode_percent` | Dim bright pictures while Anki itself is in Night Mode, and by how much (a percentage, 0-90). Applies to every deck in your collection, not just this add-on's. Also editable from Experimental > Night mode dimming, see below. |
 
 ### Experimental submenu
 
-Features that are new or still settling, tucked away from the top level and from Advanced's own established groups: **Generate Cards (AI)**, **Night Mode Dimming**, and **Scan for duplicates**.
+Features that are new or still settling, tucked away from the top level and from Advanced's own established groups: **Generate cards (AI)**, **Night mode dimming**, and **Scan for duplicates**.
 
-#### Generate Cards (AI)
+#### Generate cards (AI)
 
 Drafts new cards from source material you paste in or attach, through an AI coding-assistant CLI you already have installed and signed into on your own machine. There is no API key field anywhere in the add-on, and no credential of any kind is ever read, sent, or stored by it: the add-on only shells out to a CLI you set up yourself, the same way you'd run it from a terminal.
 
@@ -157,7 +157,7 @@ A View link shows exactly what's sent to the assistant on top of your material: 
 
 Beside View on the wizard's input page, a second link, Add my rules until you've saved any and Edit my rules after, opens a plain-text box for your own standing instructions, sent after the bundled and deck skills on every run. It's yours alone: nothing here is fetched from a deck source or shared with anyone. It costs tokens every turn, so it's meant for something short and specific, what to emphasise, what to avoid, how you like a card phrased, capped at 20,000 characters; the box's own placeholder shows three short examples. On style, wording, and emphasis your rules win over the bundled skill where the two disagree, which is stated both in the editor's own hint and in what's actually sent to the assistant; the output format and the rule against raster images always win regardless. Saving an empty box clears it; View always shows whether you have one set and how many lines it is.
 
-#### Night Mode Dimming
+#### Night mode dimming
 
 Softens the glare of a white-background page while Anki itself is in Night Mode; it never applies in Day mode. Applies to every deck in your collection, not just the ones this add-on manages, whichever scope you pick: the images rule rides along with the markup of every card Anki renders rather than sitting on one note type, and the content rule goes into the head of each web view as it loads. Neither reaches the menu bar or a dialog such as Settings, since those are native windows Anki draws itself rather than the web content the rules apply to.
 

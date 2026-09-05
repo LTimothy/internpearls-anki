@@ -3,6 +3,18 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.63.1
+
+Two fixes to Scan for duplicates from its first real use. Rescan and Judge with AI
+failed with "takes 1 positional argument but 2 were given": a flat link is a real
+button, so its click hands the handler a checked flag, and the error guard forwarded it
+into a method that took none. Both handlers accept it now. A card whose front is only a
+picture (an image-identification note) showed an empty "ours:" line; the row now names
+the picture the way the update screen does, and falls back to the next filled field.
+
+Menu labels are sentence case throughout: "Generate cards (AI)" and "Night mode dimming"
+under Experimental match the rest of the menu.
+
 ## v0.63.0
 
 Scan for duplicates, a new Experimental tool. It compares two scopes of your
@@ -308,7 +320,7 @@ wizard alone, which is the only thing it is ever about: a "Set up an assistant" 
 on the first-run page, and a Setup link beside the backend summary on the input page.
 The window itself is unchanged.
 
-The Night Mode Dimming preview holds still. The hint under the scope radios is one
+The Night mode dimming preview holds still. The hint under the scope radios is one
 line for bright images only and three for everything on cards and deck screens, so the
 Dim by row and the preview below it slid down as soon as the second scope was picked;
 the hint now stands as tall as the longer of the two either way.
@@ -338,7 +350,7 @@ model cannot be set from here at all. `ai_cli_path` in config.json is now per ba
 rather than one flat string; a path already saved under the old shape carries over
 automatically to the preferred backend.
 
-Night Mode Dimming can now dim more than images. A scope choice under the checkbox
+Night mode dimming can now dim more than images. A scope choice under the checkbox
 picks between bright images only, the previous behaviour, and everything Anki draws as
 a web page: cards, the deck list, the overview, and the editor. The menu bar and
 dialogs are native windows and stay as they are. A changed scope or percentage shows
@@ -382,11 +394,11 @@ at all (its default is already the cheap tier). Two new config keys, `ai_model`
 and `ai_effort`, hold whatever's picked, stored per backend so a value set while
 one backend is active is never pre-filled or sent for another.
 
-The Experimental menu's dimming item is renamed to "Night Mode Dimming", title
+The Experimental menu's dimming item is renamed to "Night mode dimming", title
 case, and its dialog now shows a live side-by-side Normal/Dimmed preview so a
 chosen dim percent can be judged before it's applied, rather than only after
 closing the dialog and opening a real card. "Generate cards (AI)" is now
-"Generate Cards (AI)", title case to match.
+"Generate cards (AI)", title case to match.
 
 The bundled internpearls-authoring skill (used by the AI wizard's prompts) is
 replaced with a distilled version of the house card-authoring rules covering

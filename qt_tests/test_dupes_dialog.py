@@ -289,3 +289,29 @@ def test_collapsed_row_height_matches_content():
         "plus margins): it is not sizing to its own content")
     dlg.close()
     dlg.deleteLater()
+
+
+def test_link_slots_accept_the_clicked_flag(monkeypatch):
+    """A flat link is a real QPushButton, so its clicked signal hands the slot a
+    checked flag; the error guard's wrapper forwards it as-is."""
+    mock, _ = harness.bootstrap()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    dlg._rescan(False)
+    dlg._wait_for_scan()
+    assert "3 candidates" in dlg.summary_label.text()
+    dlg._toggle_fold(False)
+    dlg._copy_list(False)
+
+
+def test_picture_only_front_is_named_not_blank():
+    mock, _ = harness.bootstrap()
+    _populate(mock)
+    col = mock.mw.col
+    col.add_note("g7", ['<img src="landmarks.png">', "The interscalene groove"],
+                 ["InternPearls"], deck="Intern Custom")
+    from internpearls import dupes_dialog
+    nid = next(n.id for n in col._notes.values() if n.guid == "g7")
+    front, back = dupes_dialog._note_texts(nid)
+    assert "landmarks.png" in front
+    assert back == "The interscalene groove"

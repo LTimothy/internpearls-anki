@@ -76,7 +76,7 @@ def test_real_menu_structure():
         "Backup full collection", "Restore full collection",
         "Check for add-on updates"]
     exp_labels = [n["label"] for n in submenus["Experimental"]["items"] if n["t"] == "item"]
-    assert exp_labels == ["Generate Cards (AI)", "Night Mode Dimming",
+    assert exp_labels == ["Generate cards (AI)", "Night mode dimming",
                          "Scan for duplicates"]
     # primary items above the first separator, Settings/About below the last
     assert tree[2]["t"] == "sep" and tree[-3]["t"] == "sep"
@@ -1103,7 +1103,7 @@ def test_night_mode_dimming_confirmation_when_off(anki):
         if p["kind"] == "dialog":
             save = find(p["tree"], t="button", label="Save")
             return {"events": [{"id": save["id"], "click": True}]}
-        assert "Night Mode Dimming is off." in p["text"]
+        assert "Night mode dimming is off." in p["text"]
         return {}
 
     drive(anki, dialogs.open_night_mode_dimming, respond)

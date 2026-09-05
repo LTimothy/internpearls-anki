@@ -1,4 +1,4 @@
-"""Night Mode Dimming: bright images only, or every web view, while Anki's own
+"""Night mode dimming: bright images only, or every web view, while Anki's own
 Night Mode is on. Never Day mode, never native Qt windows (a CSS filter cannot
 reach them)."""
 from .config import _cfg

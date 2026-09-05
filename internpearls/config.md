@@ -92,7 +92,7 @@ An explicit path to each backend's own CLI binary, used instead of searching `PA
 the usual install locations. Stored per backend kind, as an object with `claude`,
 `codex`, and `agy` keys (`{"claude": "", "codex": "", "agy": ""}`); an empty entry
 searches normally for that backend. Editable from the AI Backends window's Executable
-path field, per backend; that window opens from the Generate Cards (AI) wizard's own
+path field, per backend; that window opens from the Generate cards (AI) wizard's own
 Setup link, and has no menu item of its own. Defaults to `{"claude": "", "codex": "", "agy": ""}`.
 
 A config written before this became per-backend stored `ai_cli_path` as a single
