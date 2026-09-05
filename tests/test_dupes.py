@@ -36,10 +36,11 @@ def test_find_candidates_matches_paraphrase():
             (3, "totally unrelated fact about propofol induction", "Theirs", "Cloze")]
     results = find_candidates(left, right, threshold=0.3, top=3)
     assert results
-    score, l, r = results[0]
+    score, l, r, shares = results[0]
     assert l[0] == 1
     assert r[0] == 2
     assert score > 0.3
+    assert shares
 
 
 def test_find_candidates_respects_threshold():
@@ -63,6 +64,26 @@ def test_find_candidates_sorted_descending():
     results = find_candidates(left, right, threshold=0.1, top=3)
     scores = [r[0] for r in results]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_find_candidates_shares_top_tokens_by_contribution():
+    left = [(1, "fenoldopam is a selective D1 receptor agonist used for hypertension",
+             "Ours", "Basic")]
+    right = [(2, "fenoldopam is a selective D1 receptor agonist", "Theirs", "Cloze"),
+            (3, "the sky is blue and the grass is green", "Theirs", "Cloze")]
+    results = find_candidates(left, right, threshold=0.1, top=3)
+    score, l, r, shares = results[0]
+    assert r[0] == 2
+    assert "fenoldopam" in shares
+    assert len(shares) <= 5
+
+
+def test_find_candidates_shares_empty_when_no_overlap():
+    left = [(1, "ketamine induction dose", "Ours", "Basic")]
+    right = [(2, "ketamine induction dose", "Theirs", "Cloze")]
+    results = find_candidates(left, right, threshold=0.1, top=3)
+    score, l, r, shares = results[0]
+    assert shares
 
 
 def test_pair_key_order_independent():
