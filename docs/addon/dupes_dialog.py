@@ -41,9 +41,13 @@ _ROLES = {"candidate": "new", "duplicate": "accept", "overlaps": "updated",
          "suspended": "retired"}
 _CHIP_LABELS = ("Likely duplicate 0.00", "DUPLICATE", "OVERLAPS", "SUSPENDED")
 
-# The Sensitivity combo: label shown, and the cosine threshold it sets. Order matches
-# the combo's own item order, so an index round-trips straight into this list.
-_SENSITIVITY_LEVELS = (("Strict", 0.6), ("Normal", 0.5), ("Loose", 0.4))
+# The Sensitivity combo: label, cosine threshold, and evidence floor (dupes.
+# find_candidates' `min_shared`) it sets. Order matches the combo's own item order, so
+# an index round-trips straight into this list. Strict is the full evidence gate (see
+# find_candidates); Normal asks for one shared token fewer; Loose is 0, which disables
+# the gate entirely and falls back to the raw cosine threshold, same as before this
+# gate existed.
+_SENSITIVITY_LEVELS = (("Strict", 0.6, 2), ("Normal", 0.5, 1), ("Loose", 0.4, 0))
 
 # chip_column_width()'s answer, measured once: not computed at import, since these
 # modules load before a QApplication exists and font metrics before that point are
@@ -58,16 +62,27 @@ _SCORE_HINT = ("The score is how much of the rare vocabulary the two cards share
               "a lot.")
 
 
-def _band_label(score):
+def _band_label(score, shared_count=None, min_shared=None):
     """The score's readability band, plus the number itself: 'Likely duplicate 0.77',
-    'Similar 0.64', 'Weak match 0.52'. Bands, not a bare number, are what tells a
-    reader whether a pair is worth looking at without doing the math themselves."""
-    if score >= 0.7:
-        band = "Likely duplicate"
-    elif score >= 0.6:
-        band = "Similar"
-    else:
-        band = "Weak match"
+    'Possible 0.52'. Bands, not a bare number, are what tells a reader whether a pair
+    is worth looking at without doing the math themselves.
+
+    Every pair shown here already cleared `min_shared` (dupes.find_candidates' own
+    evidence floor for the sensitivity in effect), so the band only has to say whether
+    it cleared it with room to spare: `shared_count` at least one past `min_shared` is
+    "Likely duplicate", right at the floor is "Possible". `min_shared` of 0/None means
+    Loose sensitivity, which has no evidence floor to grade against; those pairs fall
+    back to the score-only bands this screen used before the evidence gate existed.
+    """
+    if not min_shared:
+        if score >= 0.7:
+            band = "Likely duplicate"
+        elif score >= 0.6:
+            band = "Similar"
+        else:
+            band = "Weak match"
+        return f"{band} {score:.2f}"
+    band = "Likely duplicate" if (shared_count or 0) > min_shared else "Possible"
     return f"{band} {score:.2f}"
 
 
@@ -81,7 +96,7 @@ def _pill(text, kind):
     return lbl
 
 
-def _chip_label(pair):
+def _chip_label(pair, min_shared=None):
     if pair.get("suspended"):
         return "SUSPENDED", "suspended"
     judged = pair.get("judged")
@@ -89,7 +104,7 @@ def _chip_label(pair):
         return "DUPLICATE", "duplicate"
     if judged == "overlaps":
         return "OVERLAPS", "overlaps"
-    return _band_label(pair["score"]), "candidate"
+    return _band_label(pair["score"], len(pair.get("shares") or ()), min_shared), "candidate"
 
 
 def _chip_column_width():
@@ -156,7 +171,9 @@ class _DuplicateScanDialog(QDialog):
         self._deck_names = sorted({d.name for d in mw.col.decks.all_names_and_ids()})
         self._fold_open = False
         self._any_excluded = False
+        self._left_dropped = 0
         self._right_dropped = 0
+        self._min_shared = 1
         self._last_scanned_exclude_text = None
 
         outer = QVBoxLayout(self)
@@ -182,10 +199,10 @@ class _DuplicateScanDialog(QDialog):
         cfg = _cfg()
         links_row.addWidget(QLabel("Sensitivity:"))
         self.sensitivity_combo = QComboBox()
-        for label, _ in _SENSITIVITY_LEVELS:
+        for label, _, _ in _SENSITIVITY_LEVELS:
             self.sensitivity_combo.addItem(label)
         current_threshold = cfg["dupes_threshold"]
-        idx = next((i for i, (_, v) in enumerate(_SENSITIVITY_LEVELS)
+        idx = next((i for i, (_, v, _) in enumerate(_SENSITIVITY_LEVELS)
                    if v == current_threshold), 1)
         self.sensitivity_combo.setCurrentIndex(idx)
         self.sensitivity_combo.currentIndexChanged.connect(self._sensitivity_changed)
@@ -278,15 +295,36 @@ class _DuplicateScanDialog(QDialog):
         set_dupes_threshold(_SENSITIVITY_LEVELS[index][1])
         self._rescan()
 
-    def _left_rows(self):
+    def _current_level(self):
+        """(threshold, min_shared) for whatever sensitivity is currently configured,
+        falling back to Normal if the stored threshold matches no level (shouldn't
+        happen, but a stale config value is safer read as the default than crashing)."""
+        threshold = _cfg()["dupes_threshold"]
+        return next(((t, m) for _, t, m in _SENSITIVITY_LEVELS if t == threshold),
+                    _SENSITIVITY_LEVELS[1][1:])
+
+    def _raw_left_rows(self):
+        """The left side's rows before exclusions: what "cards this add-on manages"
+        (or a pinned deck) means on its own, independent of the Exclude decks field.
+        `_right_rows`'s "Everything else" needs this unfiltered set to decide what
+        counts as the left side; using the already-excluded `_left_rows` there would
+        hand an excluded add-on card to the right side instead of dropping it, and
+        then exclude it a second time as a "their" card that happens to share its
+        deck name."""
         if self.left_combo.currentIndex() == 0:
             return note_rows(mw.col, scope_tag=self._scope_tag)
         deck = self._deck_names[self.left_combo.currentIndex() - 1]
-        return self._apply_exclusions(note_rows(mw.col, deck_name=deck))
+        return note_rows(mw.col, deck_name=deck)
+
+    def _left_rows(self):
+        rows = self._raw_left_rows()
+        filtered = self._apply_exclusions(rows)
+        self._left_dropped = len(rows) - len(filtered)
+        return filtered
 
     def _right_rows(self):
         if self.right_combo.currentIndex() == 0:
-            left_ids = {r[0] for r in self._left_rows()}
+            left_ids = {r[0] for r in self._raw_left_rows()}
             rows = [r for r in note_rows(mw.col) if r[0] not in left_ids]
         else:
             deck = self._deck_names[self.right_combo.currentIndex() - 1]
@@ -308,12 +346,14 @@ class _DuplicateScanDialog(QDialog):
         self._scan_result = None
         self._scan_error = None
         self._t0 = time.monotonic()
-        threshold = _cfg()["dupes_threshold"]
+        threshold, min_shared = self._current_level()
+        self._min_shared = min_shared
 
         def work():
             try:
                 self._scan_result = find_candidates(left_rows, right_rows,
-                                                    threshold=threshold, top=3)
+                                                    threshold=threshold, top=3,
+                                                    min_shared=min_shared)
             except Exception as e:
                 self._scan_error = e
 
@@ -372,7 +412,7 @@ class _DuplicateScanDialog(QDialog):
         info = None
         if matched:
             n = len(matched)
-            dropped = self._right_dropped
+            dropped = self._left_dropped + self._right_dropped
             info = (f"Excluding {n} deck{'s' if n != 1 else ''} "
                     f"({dropped:,} card{'s' if dropped != 1 else ''})")
         warn = None
@@ -382,6 +422,25 @@ class _DuplicateScanDialog(QDialog):
             warn = f"<span style='color:{c['warning']};'>{names}</span>"
         return info, warn
 
+    def _side_label(self, combo, default):
+        if combo.currentIndex() == 0:
+            return default
+        return self._deck_names[combo.currentIndex() - 1]
+
+    def _thin_pool_notes(self):
+        """A plain line per side scanned with fewer than 50 cards, naming the side and
+        its count, so a clean-looking result from a thin comparison doesn't read as a
+        clean bill: 'Everything else has only 9 cards; pick a deck to compare against'."""
+        notes = []
+        for combo, default, count in (
+                (self.left_combo, "Cards this add-on manages", self._left_count),
+                (self.right_combo, "Everything else", self._right_count)):
+            if count < 50:
+                notes.append(f"{self._side_label(combo, default)} has only {count} "
+                            f"card{'s' if count != 1 else ''}; pick a deck to compare "
+                            "against")
+        return notes
+
     def _summary_text(self):
         text = (f"{self._left_count} scanned against {self._right_count}, "
                f"{len(self._pairs)} candidates")
@@ -389,6 +448,7 @@ class _DuplicateScanDialog(QDialog):
         if same:
             text += f", {same} judged the same"
         lines = [text]
+        lines.extend(self._thin_pool_notes())
         info, warn = self._exclusion_feedback()
         if info:
             lines.append(info)
@@ -448,7 +508,7 @@ class _DuplicateScanDialog(QDialog):
         caret.setFixedWidth(CARET_W)
         hl.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
 
-        label, role = _chip_label(pair)
+        label, role = _chip_label(pair, self._min_shared)
         width = _chip_column_width()
         chip_cell = QWidget()
         chip_cell.setFixedWidth(width)
