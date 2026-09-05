@@ -3,6 +3,18 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.65.0
+
+A note that explains more than one card, or a retired card and the replacement a note
+also explains, now shows once, as a single explanation above every row it caused,
+instead of the same words repeated on each row. A retired card's row can also carry a
+short reason from the deck source, shown as a second line under its identity, when the
+deck source recorded one. Feedback and a maintainer's own note on the same card now
+always show feedback first, whatever their dates, since it explains why the card was
+touched at all. Sync decks' own per-deck row now reads its size as a deck total
+("6 cards in deck") rather than a bare count, so it doesn't look like a count of what's
+about to change.
+
 ## v0.64.0
 
 Three fixes to Scan for duplicates from a second real-use round. The candidate list's
