@@ -209,6 +209,9 @@ def _cfg():
         # user_files: it's a preference about which pairs to show, not sync
         # bookkeeping the add-on itself needs to survive an update.
         "dupes_ignored": list(c.get("dupes_ignored", [])),
+        # Deck-name substrings the duplicate scan leaves out of the comparison; see
+        # `set_dupes_excluded_decks`.
+        "dupes_excluded_decks": list(c.get("dupes_excluded_decks", [])),
     }
 
 
@@ -286,6 +289,14 @@ def add_dupes_ignored(key):
     ignored = set(conf.get("dupes_ignored", []))
     ignored.add(key)
     conf["dupes_ignored"] = sorted(ignored)
+    mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
+
+
+def set_dupes_excluded_decks(names):
+    """Persist the duplicate-scan deck-exclusion list (see `_cfg`'s
+    `dupes_excluded_decks`)."""
+    conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
+    conf["dupes_excluded_decks"] = list(names)
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
 

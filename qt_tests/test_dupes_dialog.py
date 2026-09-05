@@ -38,10 +38,9 @@ def _build_dialog(mock):
     return dlg
 
 
-def _populate_with_cc_anki(mock):
-    """The base three pairs, plus a fourth candidate whose other side sits in the CC
-    Anki reference deck: the note the learner doesn't review, so a match there isn't
-    coverage (see the "Skip CC Anki" toggle)."""
+def _populate_with_reference_deck(mock):
+    """The base three pairs, plus a fourth candidate whose other side sits in a
+    reference deck the learner wants to exclude from the comparison."""
     _populate(mock)
     col = mock.mw.col
     col.add_note("g7", ["Sugammadex reverses rocuronium blockade by encapsulation",
@@ -49,7 +48,7 @@ def _populate_with_cc_anki(mock):
                  ["InternPearls"], deck="Intern Custom")
     col.add_note("g8", ["Sugammadex reverses rocuronium blockade through encapsulation",
                         "Chelates rocuronium and vecuronium molecules"],
-                 ["Other"], deck="CC Anki")
+                 ["Other"], deck="Reference decks")
 
 
 def test_duplicate_scan_finds_three_candidates():
@@ -77,6 +76,7 @@ def test_duplicate_scan_renders_light_and_dark(tmp_path):
                          ("dark", "dupes-scan-dark.png")):
         harness.apply_theme(theme)
         dlg = _build_dialog(mock)
+        dlg.exclude_edit.setText("Reference decks")
         dlg.resize(800, 560)
         dlg.show()
         harness.app().processEvents()
@@ -177,29 +177,60 @@ def test_judge_with_ai_updates_chips_and_folds_different(monkeypatch):
     dlg.deleteLater()
 
 
-def test_skip_cc_anki_excludes_reference_deck_by_default():
+def test_exclude_decks_empty_by_default_excludes_nothing():
     mock, _ = harness.bootstrap()
     harness.app()
-    _populate_with_cc_anki(mock)
+    _populate_with_reference_deck(mock)
     dlg = _build_dialog(mock)
-    assert dlg.skip_cc_anki.isChecked()
-    fronts = {p["right"][1] for p in dlg._pairs}
-    assert not any("Sugammadex" in f for f in fronts)
-    assert "(CC Anki skipped)" in dlg.summary_label.text()
-    dlg.deleteLater()
-
-
-def test_skip_cc_anki_toggle_off_includes_reference_deck():
-    mock, _ = harness.bootstrap()
-    harness.app()
-    _populate_with_cc_anki(mock)
-    dlg = _build_dialog(mock)
-    dlg.skip_cc_anki.setChecked(False)
-    dlg._wait_for_scan()
+    assert dlg.exclude_edit.text() == ""
     fronts = {p["right"][1] for p in dlg._pairs}
     assert any("Sugammadex" in f for f in fronts)
-    assert "(CC Anki skipped)" not in dlg.summary_label.text()
+    assert "decks excluded" not in dlg.summary_label.text()
     dlg.deleteLater()
+
+
+def test_exclude_decks_by_substring():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_with_reference_deck(mock)
+    dlg = _build_dialog(mock)
+    dlg.exclude_edit.setText("Reference")
+    dlg._exclude_edited()
+    dlg._wait_for_scan()
+    fronts = {p["right"][1] for p in dlg._pairs}
+    assert not any("Sugammadex" in f for f in fronts)
+    assert "(1 decks excluded)" in dlg.summary_label.text()
+    dlg.deleteLater()
+
+
+def test_exclude_decks_case_insensitive():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_with_reference_deck(mock)
+    dlg = _build_dialog(mock)
+    dlg.exclude_edit.setText("reference decks")
+    dlg._exclude_edited()
+    dlg._wait_for_scan()
+    fronts = {p["right"][1] for p in dlg._pairs}
+    assert not any("Sugammadex" in f for f in fronts)
+    dlg.deleteLater()
+
+
+def test_exclude_decks_persisted_across_dialog_reopen():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_with_reference_deck(mock)
+    dlg = _build_dialog(mock)
+    dlg.exclude_edit.setText("Reference decks")
+    dlg._exclude_edited()
+    dlg._wait_for_scan()
+    dlg.deleteLater()
+
+    dlg2 = _build_dialog(mock)
+    assert dlg2.exclude_edit.text() == "Reference decks"
+    fronts = {p["right"][1] for p in dlg2._pairs}
+    assert not any("Sugammadex" in f for f in fronts)
+    dlg2.deleteLater()
 
 
 def test_row_actions_are_visible_while_collapsed():
