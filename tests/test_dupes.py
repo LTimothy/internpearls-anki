@@ -23,6 +23,16 @@ def test_normalise_keeps_digits():
     assert "1" in normalise("ketamine 1 to 2 mg/kg").split()
 
 
+def test_normalise_strips_image_name_keeps_surrounding_text():
+    text = "[image: carotid_stent_diagram.png] Name this vascular structure"
+    normalised = normalise(text)
+    assert "carotid" not in normalised
+    assert "stent" not in normalised
+    assert "diagram" not in normalised
+    assert "vascular" in normalised
+    assert "structure" in normalised
+
+
 def test_build_index_basic():
     rows = [(1, "fenoldopam is a selective D1 receptor agonist", "Deck", "Basic")]
     idx = build_index(rows)
@@ -84,6 +94,72 @@ def test_find_candidates_shares_empty_when_no_overlap():
     results = find_candidates(left, right, threshold=0.1, top=3)
     score, l, r, shares = results[0]
     assert shares
+
+
+def test_find_candidates_rejects_single_shared_word_in_tiny_pool():
+    """A tiny comparison pool collapses IDF weights, so one rare shared word alone
+    can carry a pair past a low threshold with nothing else in common. The evidence
+    floor (at least two shared informative tokens) drops it regardless of score."""
+    left = [(1, "Phenylephrine bolus dose is one hundred micrograms intravenously "
+                "for hypotension", "Ours", "Basic")]
+    right = [(2, "The patient chart mentions phenylephrine allergy documented "
+                 "yesterday afternoon clearly", "Theirs", "Basic")]
+    assert find_candidates(left, right, threshold=0.1, top=3, min_shared=2) == []
+
+
+def test_find_candidates_min_shared_zero_disables_the_evidence_floor():
+    """Loose sensitivity (min_shared=0) is the raw cosine threshold, same as before
+    the evidence floor existed: a single shared rare word is enough."""
+    left = [(1, "Phenylephrine bolus dose is one hundred micrograms intravenously "
+                "for hypotension", "Ours", "Basic")]
+    right = [(2, "The patient chart mentions phenylephrine allergy documented "
+                 "yesterday afternoon clearly", "Theirs", "Basic")]
+    results = find_candidates(left, right, threshold=0.1, top=3, min_shared=0)
+    assert results
+    assert results[0][3] == ["phenylephrine"]
+
+
+def test_find_candidates_needs_three_shared_tokens_when_text_is_long():
+    """Once either side runs past 12 informative tokens, the evidence floor rises
+    from two shared tokens to three."""
+    left = [(1, "one two three four five six seven eight nine ten eleven twelve "
+                "thirteen alphaword betaword", "Ours", "Basic")]
+    right = [(2, "alphaword betaword completely different topic entirely", "Theirs",
+             "Basic")]
+    # only two shared tokens (alphaword, betaword) while the left text has 15
+    # informative tokens (> 12), so the floor is three: rejected.
+    assert find_candidates(left, right, threshold=0.05, top=3, min_shared=2) == []
+
+
+def test_find_candidates_rejects_low_weight_share_even_with_enough_shared_tokens():
+    """Three shared tokens can still be a small fraction of a longer text's own
+    vocabulary; the shared tokens must also carry at least 40% of the shorter
+    text's weight."""
+    left = [(1, "Ketamine induction dose is one to two milligrams per kilogram "
+                "given intravenously during rapid sequence induction for trauma "
+                "patients today", "Ours", "Basic")]
+    right = [(2, "The dibucaine number of ninety two indicates normal "
+                 "pseudocholinesterase activity in this ketamine induction case "
+                 "reviewed", "Theirs", "Basic")]
+    assert find_candidates(left, right, threshold=0.05, top=3, min_shared=2) == []
+
+
+def test_find_candidates_accepts_pair_that_clears_both_evidence_checks():
+    left = [(1, "Ketamine induction dose one to two mg per kg intravenously",
+             "Ours", "Basic")]
+    right = [(2, "The induction dose of ketamine is one to two mg per kg", "Theirs",
+             "Basic")]
+    results = find_candidates(left, right, threshold=0.3, top=3, min_shared=2)
+    assert results
+    assert results[0][0] > 0.3
+
+
+def test_find_candidates_image_names_do_not_match_across_picture_only_fronts():
+    left = [(1, "[image: carotid_stent_diagram.png] Identify this vessel on "
+                "ultrasound", "Ours", "Image")]
+    right = [(2, "[image: carotid_stent_diagram.png] Unrelated fact about "
+                 "propofol clearance rate", "Theirs", "Image")]
+    assert find_candidates(left, right, threshold=0.1, top=3, min_shared=2) == []
 
 
 def test_pair_key_order_independent():
