@@ -279,7 +279,7 @@ def test_sync_confirmation_lists_each_deck_as_a_row_under_one_heading(anki, tmp_
     assert not [t for t in texts if "<li>" in t or "<ul>" in t]
     assert "Update these decks?" in texts
     assert "Pharm" in texts and "Other" in texts
-    assert texts.count("1 card") == 2                 # each deck's own size, trailing
+    assert texts.count("1 card in deck") == 2          # each deck's own size, trailing
     # Pharm is already in the collection, so it reads as an update; Other is arriving.
     assert [t for t in texts if t in widgets.CHIPS.values()] == [
         widgets.CHIPS["changed"], widgets.CHIPS["new"]]
@@ -2087,6 +2087,86 @@ def test_change_notes_on_new_rows_only_for_installed_decks(anki, tmp_path, monke
     assert pharm_detail["change_notes"] == change_notes["g2"]
     assert other_detail["kind"] == "new"
     assert "change_notes" not in other_detail
+
+
+def test_two_cards_sharing_one_change_note_render_as_a_single_group(anki, tmp_path,
+                                                                     monkeypatch):
+    """Two changed cards carrying the identical recorded note used to caption each of
+    them separately. They now fold into one ("group_note", ...) header ahead of both
+    cards' own rows, and neither card's own `change_notes` repeats the entry the
+    header already shows."""
+    from internpearls.logic import note_fields_hash
+    anki.col.add_note("g1", _fields("Front one", back="the old answer one"),
+                      TAGS.split())
+    anki.col.add_note("g2", _fields("Front two", back="the old answer two"),
+                      TAGS.split())
+    new1 = _fields("Front one", back="the new answer one")
+    new2 = _fields("Front two", back="the new answer two")
+    shared = {"kind": "feedback", "note": "make both of these tables",
+             "hash": None}   # replaced per-card below, same note text/kind
+    note1 = dict(shared, hash=note_fields_hash(new1))
+    note2 = dict(shared, hash=note_fields_hash(new2))
+    folder = _write_source(
+        tmp_path, {DECK: ("v2", [("g1", new1, TAGS), ("g2", new2, TAGS)], None)},
+        change_notes={"g1": [note1], "g2": [note2]})
+    _configure(anki, folder)
+    captured = _capture_update_items(monkeypatch)
+    _update(anki, accept=False)
+    items = captured[0]
+    group_notes = [i for i in items if i[0] == "group_note"]
+    assert len(group_notes) == 1
+    assert group_notes[0][1]["note"] == "make both of these tables"
+    d1 = _card_detail(items, "g1")
+    d2 = _card_detail(items, "g2")
+    assert d1.get("change_notes") in (None, [])
+    assert d2.get("change_notes") in (None, [])
+    # The group header sits ahead of both member rows.
+    gi = items.index(group_notes[0])
+    card_positions = [i for i, it in enumerate(items) if it[0] == "card"
+                     and it[2]["guid"] in ("g1", "g2")]
+    assert all(p > gi for p in card_positions)
+
+
+def test_retired_row_carries_its_reason(anki, tmp_path, monkeypatch):
+    """A ledger retirement's `reason` now rides along on the pending row so the
+    confirmation can show why the card is being archived, not just that it is."""
+    from internpearls import sync
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    folder = _write_source(
+        tmp_path, {},
+        retired={DECK: {"old1": {"identity": "bulky crisis card",
+                                 "reason": "split into two focused cards",
+                                 "superseded_by": []}}})
+    _configure(anki, folder)
+    captured = _capture_update_items(monkeypatch)
+    _update(anki, accept=False)
+    items = captured[0]
+    retired = [i for i in items if i[0] == "retired" and i[1] == "bulky crisis card"]
+    assert len(retired) == 1
+    assert retired[0][2] == "split into two focused cards"
+
+
+def test_retired_row_joins_the_group_of_its_replacement(anki, tmp_path, monkeypatch):
+    """A retired card naming a changed card in `superseded_by` joins that card's own
+    change-note group, so the two read as one change: the note explaining the rewrite,
+    the new wording, and the old copy being archived, together."""
+    from internpearls.logic import note_fields_hash
+    anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    new_fields = _fields("Front one", back="the new answer")
+    note = {"kind": "maintainer", "note": "split the table into a single card",
+           "hash": note_fields_hash(new_fields)}
+    folder = _write_source(
+        tmp_path, {DECK: ("v2", [("g1", new_fields, TAGS)], None)},
+        retired={DECK: {"old1": {"identity": "bulky crisis card",
+                                 "reason": "split", "superseded_by": ["g1"]}}},
+        change_notes={"g1": [note]})
+    _configure(anki, folder)
+    captured = _capture_update_items(monkeypatch)
+    _update(anki, accept=False)
+    items = captured[0]
+    kinds = [i[0] for i in items if i[0] in ("group_note", "card", "retired")]
+    assert kinds == ["group_note", "card", "retired"]
 
 
 def test_review_box_starts_empty_with_nothing_summarized(anki, tmp_path):
