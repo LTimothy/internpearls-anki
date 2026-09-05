@@ -1371,3 +1371,48 @@ def test_config_count_ceiling_matches_ai_logic():
     # drifting apart.
     from internpearls import config
     assert config.AI_COUNT_CEILING == ai_logic.AUTO_COUNT_CEILING
+
+
+def test_build_dupes_judge_prompt_has_no_note_ids_or_scheduling():
+    pairs = [{"ours": {"front": "ketamine dose", "back": "1-2 mg/kg"},
+             "theirs": {"front": "induction dose of ketamine",
+                       "back": "1 to 2 mg/kg IV"}}]
+    prompt = ai_logic.build_dupes_judge_prompt(pairs)
+    assert "ketamine" in prompt
+    assert "note_id" not in prompt.lower()
+    assert "guid" not in prompt.lower()
+    assert "interval" not in prompt.lower() and "due" not in prompt.lower()
+    assert "same" in prompt and "overlaps" in prompt and "different" in prompt
+
+
+def test_parse_dupes_verdicts_json_happy_path():
+    import json as _json
+    reply = _json.dumps({"verdicts": [
+        {"pair": 0, "verdict": "same", "note": "same fact"},
+        {"pair": 1, "verdict": "different", "note": "unrelated"},
+    ]})
+    verdicts, errors = ai_logic.parse_dupes_verdicts_json(reply, 2)
+    assert errors == []
+    assert verdicts[0]["verdict"] == "same"
+    assert verdicts[1]["verdict"] == "different"
+
+
+def test_parse_dupes_verdicts_json_missing_index_defaults_to_different():
+    import json as _json
+    reply = _json.dumps({"verdicts": [{"pair": 0, "verdict": "same", "note": "x"}]})
+    verdicts, errors = ai_logic.parse_dupes_verdicts_json(reply, 2)
+    assert verdicts[1]["verdict"] == "different"
+
+
+def test_parse_dupes_verdicts_json_bad_reply():
+    verdicts, errors = ai_logic.parse_dupes_verdicts_json("not json", 1)
+    assert verdicts == {}
+    assert errors
+
+
+def test_parse_dupes_verdicts_json_unknown_verdict_word():
+    import json as _json
+    reply = _json.dumps({"verdicts": [{"pair": 0, "verdict": "maybe", "note": "x"}]})
+    verdicts, errors = ai_logic.parse_dupes_verdicts_json(reply, 1)
+    assert errors
+    assert verdicts[0]["verdict"] == "different"

@@ -450,6 +450,78 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
     return parsed, errors
 
 
+_DUPES_VERDICT_WORDS = ("same", "overlaps", "different")
+
+_DUPES_CONTRACT = """## Output contract
+Reply with exactly one JSON object, nothing else:
+{"verdicts": [{"pair": 0, "verdict": "same", "note": "one short sentence"}]}
+One entry per pair below, "pair" matching its own number. "verdict" is exactly one of
+"same" (both sides test the same fact), "overlaps" (they share part of the same fact,
+not all of it), or "different" (they don't test the same fact). "note" is one short
+sentence saying why."""
+
+
+def build_dupes_judge_prompt(pairs):
+    """The duplicate scan's optional AI stage, in one Thorough turn: front and back of
+    each side of every candidate pair, asked for a same/overlaps/different verdict.
+
+    `pairs` is `[{"ours": {"front": ..., "back": ...}, "theirs": {"front": ..., "back":
+    ...}}]`. Deliberately just the two fields each side: no note id (kept local to the
+    add-on, never sent) and no scheduling data, the same discipline build_check_prompt
+    already follows for a card's own fact-check turn.
+    """
+    lines = [f"### Pair {i}\n" + json.dumps(p, indent=1) for i, p in enumerate(pairs)]
+    task = ("## Task: judge duplicate candidates\n"
+           "Each pair below is a candidate match between two flashcards from a "
+           "lexical similarity scan. Say whether they test the same fact, overlap "
+           "partly, or test different facts.")
+    return "\n\n".join([task, _DUPES_CONTRACT,
+                        "## Pairs to judge\n" + "\n".join(lines)]) + "\n"
+
+
+def parse_dupes_verdicts_json(text, n_pairs):
+    """Parse a duplicate-judging reply into (verdicts, errors), the same tolerance
+    parse_verdicts_json extends per-card: a reply that isn't a JSON object with a
+    "verdicts" list is unusable outright; a malformed individual entry adds one line
+    to errors rather than failing the whole reply. Every index 0..n_pairs-1 comes back
+    covered, an index the reply never mentions gets a synthetic "different" entry
+    (the safe default: nothing is claimed a duplicate without an actual verdict for it).
+    """
+    try:
+        data = json.loads(_find_json_obj(text))
+    except Exception as e:
+        return {}, [f"reply was not valid JSON: {e}"]
+    raw_list = data.get("verdicts") if isinstance(data, dict) else None
+    if not isinstance(raw_list, list):
+        return {}, ["reply must be a JSON object with a \"verdicts\" list"]
+
+    errors = []
+    parsed = {}
+    for j, raw in enumerate(raw_list):
+        if not isinstance(raw, dict):
+            errors.append(f"verdict {j}: not an object")
+            continue
+        idx = raw.get("pair")
+        if (not isinstance(idx, int) or isinstance(idx, bool)
+                or not (0 <= idx < n_pairs)):
+            errors.append(f"verdict {j}: invalid pair {idx!r}")
+            continue
+        verdict = raw.get("verdict")
+        if verdict not in _DUPES_VERDICT_WORDS:
+            errors.append(f"pair {idx}: unknown verdict {verdict!r}")
+            continue
+        note = raw.get("note")
+        if not isinstance(note, str) or not note.strip():
+            errors.append(f"pair {idx}: missing note")
+            continue
+        parsed[idx] = {"verdict": verdict, "note": note.strip()}
+    for i in range(n_pairs):
+        if i not in parsed:
+            parsed[i] = {"verdict": "different",
+                        "note": "the assistant returned no verdict for this pair"}
+    return parsed, errors
+
+
 _WEB_TOOLS = {"WebSearch", "WebFetch", "web_search", "web_fetch",
               "google_web_search", "search_web", "read_url_content"}
 _WINDOW_S = 7 * 86400

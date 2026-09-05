@@ -1,12 +1,16 @@
 """Scan for duplicates: lexical duplicate candidates across two scopes of the
 collection, on the update screen's own row vocabulary (chip, bold line, muted detail,
-trailing links, rules between rows).
+trailing links, rules between rows), plus an optional one-turn AI judging pass.
 
 The scan itself (`dupes.find_candidates`) is pure CPU work with no collection access,
 so it runs on a background thread while a busy line with elapsed time covers it; the
 collection reads that feed it, and the only write this dialog ever makes (suspending a
-card), happen on the main thread, through collection.py's own API.
+card), happen on the main thread, through collection.py's own API. Judging with AI runs
+the same way: one CLI call on a background thread, a busy line with elapsed time rather
+than the AI wizard's own activity feed, since reusing that feed's session-driven state
+machine here would be a rewrite of this screen for a single optional button.
 """
+import tempfile
 import threading
 import time
 
@@ -14,6 +18,7 @@ from aqt import mw
 from aqt.qt import (QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
                     QPushButton, QScrollArea, Qt, QTimer, QVBoxLayout, QWidget)
 
+from . import ai_cli, ai_logic
 from .collection import note_rows, suspend_notes
 from .config import APP_NAME, _cfg, add_dupes_ignored
 from .dupes import find_candidates, pair_key
@@ -115,7 +120,19 @@ class _DuplicateScanDialog(QDialog):
         scope_row.addWidget(self.right_combo, 1)
         outer.addLayout(scope_row)
 
-        outer.addWidget(link_button("Rescan", self._rescan, align_left=True))
+        links_row = QHBoxLayout()
+        links_row.addWidget(link_button("Rescan", self._rescan))
+        cfg = _cfg()
+        chosen = ai_cli.detect_backends(cfg)["chosen"]
+        self._judge_backend = chosen
+        self.judge_btn = link_button("Judge with AI", self._judge_with_ai)
+        self.judge_btn.setEnabled(bool(chosen))
+        if not chosen:
+            self.judge_btn.setToolTip("Set up an AI backend first (Generate Cards (AI)"
+                                      " > Setup).")
+        links_row.addWidget(self.judge_btn)
+        links_row.addStretch()
+        outer.addLayout(links_row)
 
         self.summary_label = hint_label("")
         outer.addWidget(self.summary_label)
@@ -345,6 +362,77 @@ class _DuplicateScanDialog(QDialog):
             lines.append(f"{p['score']:.2f} | {left_front} | "
                         f"{right_front} ({p['right'][2]})")
         copy_to_clipboard("\n".join(lines))
+
+    # ------------------------------------------------------------------ AI judging
+    @_safe
+    def _judge_with_ai(self):
+        if not self._judge_backend or not self._pairs:
+            return
+        cfg = _cfg()
+        kind = self._judge_backend
+        path = ai_cli.detect_backends(cfg)["backends"][kind]["path"]
+        payload = []
+        judged_pairs = list(self._pairs)
+        for p in judged_pairs:
+            left_front, left_back = _note_texts(p["left"][0])
+            right_front, right_back = _note_texts(p["right"][0])
+            payload.append({"ours": {"front": left_front, "back": left_back},
+                           "theirs": {"front": right_front, "back": right_back}})
+        prompt = ai_logic.build_dupes_judge_prompt(payload)
+        scratch = tempfile.mkdtemp(prefix="ip-dupejudge-")
+        self._judge_pairs = judged_pairs
+        self._judge_scratch = scratch
+        self._judge_result = None
+        self._judge_error = None
+        self._judge_t0 = time.monotonic()
+
+        def work():
+            try:
+                self._judge_result = ai_cli.run_generation(
+                    kind, path, prompt, "thorough", scratch,
+                    model=cfg["ai_model"].get(kind, ""),
+                    effort=cfg["ai_effort"].get(kind, ""))
+            except Exception as e:
+                self._judge_error = e
+
+        self._judge_worker = threading.Thread(target=work, daemon=True)
+        self._judge_worker.start()
+        self.judge_btn.setEnabled(False)
+        self.summary_label.setText("Judging with AI...")
+        self._judge_timer = QTimer(self)
+        self._judge_timer.timeout.connect(self._poll_judge)
+        self._judge_timer.start(200)
+
+    def _poll_judge(self):
+        if self._judge_worker.is_alive():
+            elapsed = int(time.monotonic() - self._judge_t0)
+            self.summary_label.setText(f"Judging with AI... {elapsed}s elapsed")
+            return
+        self._judge_timer.stop()
+        self._finish_judge()
+
+    def _finish_judge(self):
+        self.judge_btn.setEnabled(bool(self._judge_backend))
+        if self._judge_error or not self._judge_result:
+            self._rebuild_list()
+            return
+        verdicts, errors = ai_logic.parse_dupes_verdicts_json(
+            self._judge_result["text"], len(self._judge_pairs))
+        for i, pair in enumerate(self._judge_pairs):
+            v = verdicts.get(i)
+            if v:
+                pair["judged"] = v["verdict"]
+                pair["note"] = v["note"]
+        self._rebuild_list()
+
+    def _wait_for_judge(self, timeout=15):
+        """Test helper: run the judging call to completion synchronously, without a
+        live QTimer, the same shape `_wait_for_scan` uses."""
+        end = time.time() + timeout
+        while self._judge_worker.is_alive() and time.time() < end:
+            time.sleep(0.02)
+        self._judge_timer.stop()
+        self._finish_judge()
 
 
 @_safe
