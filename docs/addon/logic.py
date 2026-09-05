@@ -85,7 +85,7 @@ NIGHT_MODE_SCOPES = ("images", "content")
 
 
 def night_mode_css(enabled, percent, scope="images"):
-    """The one CSS source for Night Mode Dimming. "images" dims bright images
+    """The one CSS source for Night mode dimming. "images" dims bright images
     only (the original behaviour); "content" dims the whole web view body,
     which is every card, the deck list, the overview, and the editor. Anki adds
     the nightMode class to body only in Night Mode, so neither rule ever
