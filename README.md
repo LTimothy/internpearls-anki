@@ -102,7 +102,7 @@ You can also edit these directly under Tools > Add-ons > Intern Pearls Deck Tool
 
 ### Experimental submenu
 
-Features that are new or still settling, tucked away from the top level and from Advanced's own established groups: **Generate Cards (AI)** and **Night Mode Dimming**.
+Features that are new or still settling, tucked away from the top level and from Advanced's own established groups: **Generate Cards (AI)**, **Night Mode Dimming**, and **Scan for duplicates**.
 
 #### Generate Cards (AI)
 
@@ -168,6 +168,16 @@ Softens the glare of a white-background page while Anki itself is in Night Mode;
   - **Everything on cards and deck screens**: every card, plus the deck list, the overview, and the editor, dimmed as a whole page rather than just their images.
 
 The config is read each time a screen is drawn, but what counts as "the next one" differs by scope: the images scope takes effect from the very next card, since only a card's own image markup carries the rule. The content scope takes effect from the next screen that loads, since it dims the page as a whole rather than one card's markup, so a screen already on-screen when you save doesn't repaint itself immediately.
+
+#### Scan for duplicates
+
+Finds cards in your collection that restate a fact your Intern Pearls cards already carry, worded differently. A plain text match misses this entirely, since two cards stating the same fact in different words share almost no substring; this compares them by the words each card actually uses, weighted by how rare that word is across the pool being searched, so a paraphrase counts.
+
+By default it compares the cards this add-on manages against everything else in your collection, but either side can be pointed at a single deck instead, from the two combos at the top. A filtered deck's cards are always credited to their real home deck, not the filtered deck itself. Rescan runs the comparison again from scratch; it's a background pass over text already in your collection, never a network call, so even a large collection finishes in a few seconds.
+
+Each candidate is a row: a chip with its similarity score, your card's front in bold, and the other card's front, deck, and note type underneath in muted text. Opening a row shows both cards' answers side by side. Four links per row, all reversible and none destructive: **Suspend ours** and **Suspend theirs** go through Anki's own scheduler, exactly like suspending from Browse, and mark the row so you can see it happened; **Keep both** just closes the row; **Ignore pair** remembers the pair so it never comes back on a future rescan. Copy list puts the whole candidate list on the clipboard as plain text, one line per pair.
+
+**Judge with AI**, once you've set up a backend in AI Backends, sends every candidate pair's front and back text (never a note id, never scheduling data) to your chosen assistant in one Thorough turn, asking whether the two cards test the same fact, overlap partly, or test different facts. A verdict turns the row's chip into DUPLICATE or OVERLAPS; a pair the assistant calls different drops below a "Judged different" fold rather than cluttering the main list. Nothing here is ever imported, merged, or deleted: judging only changes what a row says, never your collection.
 
 ### Advanced submenu
 
