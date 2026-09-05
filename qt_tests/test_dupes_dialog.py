@@ -115,3 +115,49 @@ def test_copy_list_puts_pairs_on_clipboard():
     text = QApplication.clipboard().text()
     assert "|" in text
     dlg.deleteLater()
+
+
+def test_judge_button_disabled_without_backend():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    from internpearls import ai_cli
+    ai_cli.find_cli = lambda kind, override="": None
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    assert not dlg.judge_btn.isEnabled()
+    dlg.deleteLater()
+
+
+def test_judge_with_ai_updates_chips_and_folds_different(monkeypatch):
+    import json as _json
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    assert dlg.judge_btn.isEnabled()
+
+    reply = _json.dumps({"verdicts": [
+        {"pair": 0, "verdict": "same", "note": "same fact, different wording"},
+        {"pair": 1, "verdict": "overlaps", "note": "shares part of the fact"},
+        {"pair": 2, "verdict": "different", "note": "not the same fact"},
+    ]})
+
+    from internpearls import ai_cli
+
+    def fake_run_generation(kind, path, prompt, mode, scratch, **kw):
+        assert "note_id" not in prompt.lower()
+        return {"text": reply, "tokens": 10, "rate_limits": None, "duration_s": 0.1}
+    monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)
+
+    dlg._judge_with_ai()
+    dlg._wait_for_judge()
+
+    judged = {p["key"]: p["judged"] for p in dlg._pairs}
+    assert "same" in judged.values()
+    assert "overlaps" in judged.values()
+    assert "different" in judged.values()
+    # a "different" pair sits under the fold, not among the shown rows
+    shown = [p for p in dlg._pairs if p["judged"] != "different"]
+    assert len(shown) == 2
+    dlg.deleteLater()
