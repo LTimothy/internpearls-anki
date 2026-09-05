@@ -390,12 +390,21 @@ def test_exclusion_feedback_escapes_entry_text():
 
 def test_score_band_labels():
     from internpearls.dupes_dialog import _band_label
-    assert _band_label(0.7) == "Likely duplicate 0.70"
-    assert _band_label(0.85) == "Likely duplicate 0.85"
-    assert _band_label(0.6) == "Similar 0.60"
-    assert _band_label(0.65) == "Similar 0.65"
-    assert _band_label(0.5) == "Weak match 0.50"
-    assert _band_label(0.55) == "Weak match 0.55"
+    # With an evidence floor in effect (Strict min_shared=2, Normal min_shared=1),
+    # the band is decided by shared-token count, not the raw score: one token past
+    # the floor is "Likely duplicate", right at the floor is "Possible".
+    assert _band_label(0.7, shared_count=3, min_shared=2) == "Likely duplicate 0.70"
+    assert _band_label(0.7, shared_count=2, min_shared=2) == "Possible 0.70"
+    assert _band_label(0.55, shared_count=2, min_shared=1) == "Likely duplicate 0.55"
+    assert _band_label(0.55, shared_count=1, min_shared=1) == "Possible 0.55"
+    # Loose (min_shared falsy) has no evidence floor to grade against, so it falls
+    # back to the original score-only bands.
+    assert _band_label(0.7, shared_count=1, min_shared=0) == "Likely duplicate 0.70"
+    assert _band_label(0.85, shared_count=1, min_shared=0) == "Likely duplicate 0.85"
+    assert _band_label(0.6, shared_count=1, min_shared=0) == "Similar 0.60"
+    assert _band_label(0.65, shared_count=1, min_shared=0) == "Similar 0.65"
+    assert _band_label(0.5, shared_count=1, min_shared=0) == "Weak match 0.50"
+    assert _band_label(0.55, shared_count=1, min_shared=0) == "Weak match 0.55"
 
 
 def test_row_shows_shares_line():
@@ -429,6 +438,77 @@ def test_sensitivity_combo_defaults_to_normal_and_persists():
     dlg2 = _build_dialog(mock)
     assert dlg2.sensitivity_combo.currentText() == "Strict"
     dlg2.deleteLater()
+
+
+def _populate_with_left_side_reference_deck(mock):
+    """The base three pairs, plus a fourth candidate whose *left* (add-on-managed)
+    side sits in a reference deck the learner wants to exclude from the comparison,
+    exercising exclusion on the side that isn't a single pinned deck."""
+    _populate(mock)
+    col = mock.mw.col
+    col.add_note("g7", ["Sugammadex reverses rocuronium blockade by encapsulation",
+                        "Selectively binds rocuronium and vecuronium"],
+                 ["InternPearls"], deck="Reference decks")
+    col.add_note("g8", ["Sugammadex reverses rocuronium blockade through encapsulation",
+                        "Chelates rocuronium and vecuronium molecules"],
+                 ["Other"], deck="Ankisthesia")
+
+
+def test_exclude_decks_applies_to_the_left_side_too():
+    """Exclusion used to only apply to the left side when it was pinned to a single
+    deck; with the left combo on its default ("Cards this add-on manages"), an
+    excluded deck's own add-on-managed cards must still drop out of the comparison."""
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_with_left_side_reference_deck(mock)
+    dlg = _build_dialog(mock)
+    dlg.exclude_edit.setText("Reference decks")
+    dlg._exclude_edited()
+    dlg._wait_for_scan()
+    fronts = {p["left"][1] for p in dlg._pairs}
+    assert not any("Sugammadex" in f for f in fronts)
+    assert dlg._left_count == 3
+    text = dlg.summary_label.text()
+    assert "Excluding 1 deck (1 card)" in text
+    dlg.deleteLater()
+
+
+def test_sensitivity_strict_drops_a_single_shared_word_pair():
+    """A pair sharing only one rare word in a tiny pool used to score high enough to
+    show up as 'Likely duplicate' on a single shared word; Strict's evidence floor
+    drops it, Loose (the raw threshold) still shows it."""
+    mock, _ = harness.bootstrap()
+    harness.app()
+    import mock_anki
+    mock.mw.col = mock_anki.MockCollection()
+    mock.mw._config = {}
+    col = mock.mw.col
+    col.add_note("w1", ["Phenylephrine bolus dose today", "For hypotension"],
+                 ["InternPearls"], deck="Intern Custom")
+    col.add_note("w2", ["Phenylephrine allergy noted", "At intake"],
+                 ["Other"], deck="Ankisthesia")
+
+    dlg = _build_dialog(mock)
+    dlg.sensitivity_combo.setCurrentIndex(0)   # Strict
+    dlg._wait_for_scan()
+    assert dlg._pairs == []
+
+    dlg.sensitivity_combo.setCurrentIndex(2)   # Loose
+    dlg._wait_for_scan()
+    assert len(dlg._pairs) == 1
+    dlg.deleteLater()
+
+
+def test_thin_pool_warns_when_a_side_has_fewer_than_50_cards():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    text = dlg.summary_label.text()
+    assert "Cards this add-on manages has only 3 cards; pick a deck to compare " \
+           "against" in text
+    assert "Everything else has only 3 cards; pick a deck to compare against" in text
+    dlg.deleteLater()
 
 
 def test_picture_only_front_is_named_not_blank():
