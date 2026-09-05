@@ -2,6 +2,7 @@
 import os
 
 import harness
+from internpearls import palette as colors_module
 
 
 def _populate(mock):
@@ -185,7 +186,7 @@ def test_exclude_decks_empty_by_default_excludes_nothing():
     assert dlg.exclude_edit.text() == ""
     fronts = {p["right"][1] for p in dlg._pairs}
     assert any("Sugammadex" in f for f in fronts)
-    assert "decks excluded" not in dlg.summary_label.text()
+    assert "Excluding" not in dlg.summary_label.text()
     dlg.deleteLater()
 
 
@@ -199,7 +200,7 @@ def test_exclude_decks_by_substring():
     dlg._wait_for_scan()
     fronts = {p["right"][1] for p in dlg._pairs}
     assert not any("Sugammadex" in f for f in fronts)
-    assert "(1 decks excluded)" in dlg.summary_label.text()
+    assert "Excluding 1 deck" in dlg.summary_label.text()
     dlg.deleteLater()
 
 
@@ -279,11 +280,11 @@ def test_collapsed_row_height_matches_content():
     harness.app().processEvents()
     row = dlg._rows_layout.itemAt(0).widget()
     fm = QFontMetrics(row.font())
-    # Three text lines' worth of height (the "ours:"/"theirs:" pair plus headroom for
-    # wrapping), plus the row's own outer margins, is generous slack for a collapsed
-    # row's real content; anything past it means the row is sizing to something other
-    # than what it actually shows.
-    limit = fm.height() * 3 + 20
+    # Four text lines' worth of height (the "ours:"/"theirs:"/"shares:" trio plus
+    # headroom for wrapping), plus the row's own outer margins, is generous slack for
+    # a collapsed row's real content; anything past it means the row is sizing to
+    # something other than what it actually shows.
+    limit = fm.height() * 4 + 20
     assert row.height() < limit, (
         f"a collapsed row is {row.height()}px tall, past {limit}px (3 text lines "
         "plus margins): it is not sizing to its own content")
@@ -302,6 +303,132 @@ def test_link_slots_accept_the_clicked_flag(monkeypatch):
     assert "3 candidates" in dlg.summary_label.text()
     dlg._toggle_fold(False)
     dlg._copy_list(False)
+
+
+def test_scroll_area_scrollbar_policy_is_fixed():
+    """Always-on vertical, always-off horizontal, so the bar can't appear and
+    disappear underfoot as word-wrapped rows reflow."""
+    from PyQt6.QtCore import Qt as _Qt
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    from PyQt6.QtWidgets import QScrollArea
+    scroll = dlg.findChild(QScrollArea)
+    assert scroll.verticalScrollBarPolicy() == _Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+    assert scroll.horizontalScrollBarPolicy() == _Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    dlg.deleteLater()
+
+
+def test_exclude_edited_does_not_rescan_on_unchanged_text():
+    """editingFinished fires on any focus loss. A second one with the same text
+    (clicking around the list after typing, say) must not trigger another rescan."""
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_with_reference_deck(mock)
+    dlg = _build_dialog(mock)
+
+    calls = []
+    real_rescan = dlg._rescan
+
+    def spy(*a):
+        calls.append(a)
+        return real_rescan(*a)
+    dlg._rescan = spy
+
+    dlg.exclude_edit.setText("Reference decks")
+    dlg._exclude_edited()
+    dlg._wait_for_scan()
+    assert len(calls) == 1
+
+    dlg._exclude_edited()   # same text again: no second rescan
+    assert len(calls) == 1
+    dlg.deleteLater()
+
+
+def test_exclusion_feedback_reports_deck_and_card_count():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_with_reference_deck(mock)
+    dlg = _build_dialog(mock)
+    dlg.exclude_edit.setText("Reference decks")
+    dlg._exclude_edited()
+    dlg._wait_for_scan()
+    text = dlg.summary_label.text()
+    assert "Excluding 1 deck (1 card)" in text
+    dlg.deleteLater()
+
+
+def test_exclusion_feedback_warns_on_unmatched_entry():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_with_reference_deck(mock)
+    dlg = _build_dialog(mock)
+    dlg.exclude_edit.setText("CC Anki")
+    dlg._exclude_edited()
+    dlg._wait_for_scan()
+    text = dlg.summary_label.text()
+    assert "No deck matches 'CC Anki'" in text
+    c = colors_module.colors()
+    assert c["warning"] in text
+    dlg.deleteLater()
+
+
+def test_exclusion_feedback_escapes_entry_text():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_with_reference_deck(mock)
+    dlg = _build_dialog(mock)
+    dlg.exclude_edit.setText("<script>")
+    dlg._exclude_edited()
+    dlg._wait_for_scan()
+    text = dlg.summary_label.text()
+    assert "<script>" not in text
+    assert "&lt;script&gt;" in text
+    dlg.deleteLater()
+
+
+def test_score_band_labels():
+    from internpearls.dupes_dialog import _band_label
+    assert _band_label(0.7) == "Likely duplicate 0.70"
+    assert _band_label(0.85) == "Likely duplicate 0.85"
+    assert _band_label(0.6) == "Similar 0.60"
+    assert _band_label(0.65) == "Similar 0.65"
+    assert _band_label(0.5) == "Weak match 0.50"
+    assert _band_label(0.55) == "Weak match 0.55"
+
+
+def test_row_shows_shares_line():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    pair = dlg._pairs[0]
+    assert pair["shares"]
+    row = dlg._rows_layout.itemAt(0).widget()
+    header = row.layout().itemAt(0).widget()
+    primary = header.layout().itemAt(2).widget()
+    assert "shares:" in primary.text()
+    dlg.deleteLater()
+
+
+def test_sensitivity_combo_defaults_to_normal_and_persists():
+    from internpearls.config import _cfg
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    assert dlg.sensitivity_combo.currentText() == "Normal"
+    assert _cfg()["dupes_threshold"] == 0.5
+
+    dlg.sensitivity_combo.setCurrentIndex(0)   # Strict
+    dlg._wait_for_scan()
+    assert _cfg()["dupes_threshold"] == 0.6
+    dlg.deleteLater()
+
+    dlg2 = _build_dialog(mock)
+    assert dlg2.sensitivity_combo.currentText() == "Strict"
+    dlg2.deleteLater()
 
 
 def test_picture_only_front_is_named_not_blank():

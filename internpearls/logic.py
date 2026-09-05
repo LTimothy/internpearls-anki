@@ -778,17 +778,111 @@ def note_fields_hash(fields):
 
 def change_notes_for(manifest_notes, guid, fields):
     """The manifest's notes describing exactly this incoming content: entries under
-    `guid` whose hash matches these field values, newest first. A hash mismatch means
-    the note was written about some other version of the card (a stale cached
-    manifest, usually), and captioning content a note does not describe is worse than
-    showing nothing."""
+    `guid` whose hash matches these field values. A hash mismatch means the note was
+    written about some other version of the card (a stale cached manifest, usually),
+    and captioning content a note does not describe is worse than showing nothing.
+
+    Feedback sorts ahead of maintainer, then newest first within each: feedback says
+    why the card was touched at all, maintainer says what this round did to it, and
+    the second only reads right once the first is in view. Newest-first alone (a plain
+    reverse of the ledger) put the maintainer line on top instead, which is why a card
+    fixed twice in one round used to read backwards.
+    """
     entries = manifest_notes.get(guid) if isinstance(manifest_notes, dict) else None
     if not isinstance(entries, list):
         return []
     h = note_fields_hash(list(fields))
-    return [e for e in reversed(entries)
-            if isinstance(e, dict) and isinstance(e.get("note"), str)
-            and e.get("note") and e.get("hash") == h]
+    filtered = [e for e in reversed(entries)
+                if isinstance(e, dict) and isinstance(e.get("note"), str)
+                and e.get("note") and e.get("hash") == h]
+    return sorted(filtered, key=lambda e: e.get("kind") != "feedback")
+
+
+def group_change_notes(details, retired):
+    """Group pending cards and retired rows that belong to the same real-world change,
+    so an update screen can show one explanation over the rows it caused instead of a
+    caption repeated on each.
+
+    `details` is a list of dicts, each carrying a `guid` and, optionally, a
+    `change_notes` list in `change_notes_for`'s own shape ({kind, note, on, hash}).
+    `retired` is a list of dicts, each carrying `superseded_by` (a list of guids) and
+    whatever else the caller wants carried through untouched (identity, reason, ...).
+
+    Two things join a set, both already in the data:
+
+    - Two cards carrying an identical (kind, note, on) entry: a deck source can stamp
+      the same recorded line on every card one piece of feedback drove, and that is one
+      change, not several. Only a card's first matching entry is used to find or start
+      its group; a second, unshared note on the same card (a feedback/maintainer
+      pairing) is left in `change_notes` for the caller to render on the card itself.
+    - A retired row naming one or more of these cards in `superseded_by`: the retired
+      card and its replacement(s) are the same change. A retired row naming several
+      cards already in different groups merges those groups into one, so a card split
+      into two survivors still reads as one change with two children.
+
+    A retired row naming no card present in this batch (retired in one update, its
+    replacement shipped in a later one) is not silently dropped: it starts a group of
+    its own, carrying no note, so it still renders alone with its own reason.
+
+    Returns [{"note": entry-or-None, "members": [row, ...]}], in the order each group
+    was first started. A group's `members` mixes `details` and `retired` entries, in
+    the order they were added; a group of one, the ordinary case, carries whatever that
+    single row already renders on its own, and it is the caller's choice what wrapping
+    (if any) a bigger group deserves. Pure: no Anki, no I/O.
+    """
+    details = [d for d in (details or []) if isinstance(d, dict) and d.get("guid")]
+    retired = [r for r in (retired or []) if isinstance(r, dict)]
+
+    order = []
+    groups = {}
+    member_group = {}
+
+    def _key(entry):
+        return (entry.get("kind"), entry.get("note"), entry.get("on"))
+
+    def _new_group(note):
+        gid = len(order)
+        order.append(gid)
+        groups[gid] = {"note": note, "members": []}
+        return gid
+
+    note_group = {}
+    for d in details:
+        gid = None
+        for e in d.get("change_notes") or []:
+            if not isinstance(e, dict):
+                continue
+            k = _key(e)
+            if k in note_group:
+                gid = note_group[k]
+                break
+        if gid is None:
+            first = next((e for e in (d.get("change_notes") or [])
+                         if isinstance(e, dict)), None)
+            gid = _new_group(first)
+            if first is not None:
+                note_group[_key(first)] = gid
+        groups[gid]["members"].append(d)
+        member_group[d["guid"]] = gid
+
+    for r in retired:
+        sup = [g for g in (r.get("superseded_by") or []) if g in member_group]
+        gids = list(dict.fromkeys(member_group[g] for g in sup))
+        if not gids:
+            gid = _new_group(None)
+        else:
+            gid = gids[0]
+            for other in gids[1:]:
+                groups[gid]["note"] = groups[gid]["note"] or groups[other]["note"]
+                groups[gid]["members"].extend(groups[other]["members"])
+                for m in groups[other]["members"]:
+                    mg = m.get("guid") if isinstance(m, dict) else None
+                    if mg:
+                        member_group[mg] = gid
+                groups[other]["members"] = None   # merged away, dropped below
+        groups[gid]["members"].append(r)
+
+    return [groups[g] for g in order if groups[g]["members"] is not None]
 
 
 SOURCE_LABEL_MAX = 120
