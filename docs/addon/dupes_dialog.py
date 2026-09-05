@@ -15,8 +15,9 @@ import threading
 import time
 
 from aqt import mw
-from aqt.qt import (QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
-                    QPushButton, QScrollArea, Qt, QTimer, QVBoxLayout, QWidget)
+from aqt.qt import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame,
+                    QHBoxLayout, QLabel, QPushButton, QScrollArea, Qt, QTimer,
+                    QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic
 from .collection import note_rows, suspend_notes
@@ -25,14 +26,25 @@ from .dupes import find_candidates, pair_key
 from .logic import plain_text
 from .palette import colors
 from .ui import _safe, copy_to_clipboard, hint_label, link_button, title_label
+from .widgets import CARET_GAP, CARET_W
 
 # This dialog's own chip vocabulary. Unlike widgets.CHIPS, a candidate's label carries
 # its own score (CANDIDATE 0.77), so it can't be one of a fixed finite set of labels the
-# way every other screen's chips are; the column width below is measured over each
-# list's own current labels instead of a cached, name-keyed set.
+# way every other screen's chips are. The column is still measured the way
+# widgets.chip_column_width measures one, just against this dialog's own fixed set of
+# exemplar labels rather than CHIPS: the score is always rendered to two decimal places
+# (dupes.find_candidates), so "CANDIDATE 0.00" is exactly as wide as any real score this
+# window can show, and the set never has to be recomputed against whatever pairs happen
+# to be on screen.
 _CHIP_STYLE = ("border-radius: 3px; padding: 1px 6px; font-size: 11px; font-weight: 600;")
 _ROLES = {"candidate": "new", "duplicate": "accept", "overlaps": "updated",
          "suspended": "retired"}
+_CHIP_LABELS = ("CANDIDATE 0.00", "DUPLICATE", "OVERLAPS", "SUSPENDED")
+
+# chip_column_width()'s answer, measured once: not computed at import, since these
+# modules load before a QApplication exists and font metrics before that point are
+# meaningless (see widgets._CHIP_W).
+_CHIP_W = {}
 
 _HINT = ("Compares two scopes of your collection by the words each card actually uses, "
         "so a paraphrase counts even when the wording doesn't match.")
@@ -59,16 +71,27 @@ def _chip_label(pair):
     return f"CANDIDATE {pair['score']:.2f}", "candidate"
 
 
-def _measure_chip_width(pairs):
-    widest = 0
-    labels = {"SUSPENDED", "DUPLICATE", "OVERLAPS"}
-    labels |= {f"CANDIDATE {p['score']:.2f}" for p in pairs}
-    for label in labels:
-        probe = QLabel(label)
-        probe.setStyleSheet(_CHIP_STYLE)
-        probe.ensurePolished()
-        widest = max(widest, probe.sizeHint().width())
-    return widest or 1
+def _chip_column_width():
+    """The width of this dialog's chip column, measured against the widest label it can
+    ever show (see `_CHIP_LABELS`) the same way widgets.chip_column_width measures one:
+    every pill in the column widens to match, so the column reads as one edge rather
+    than a different right edge per row."""
+    if "w" not in _CHIP_W:
+        widest = 0
+        for label in _CHIP_LABELS:
+            probe = QLabel(label)
+            probe.setStyleSheet(_CHIP_STYLE)
+            probe.ensurePolished()
+            widest = max(widest, probe.sizeHint().width())
+        _CHIP_W["w"] = widest or 1
+    return _CHIP_W["w"]
+
+
+def _row_text_indent():
+    """How far a row's primary text sits from the row's own left edge: the caret
+    column, then the chip column and its gap. Same arithmetic as
+    widgets.row_text_indent, for this dialog's one leading chip column."""
+    return CARET_W + CARET_GAP + _chip_column_width() + CARET_GAP
 
 
 def _row_rule():
@@ -96,7 +119,11 @@ class _DuplicateScanDialog(QDialog):
         super().__init__(mw)
         self._scope_tag = scope_tag
         self.setWindowTitle(f"{APP_NAME}: Scan for duplicates")
-        self.setMinimumSize(640, 560)
+        # Wide enough for the per-row action links (Suspend ours/theirs, Keep both,
+        # Ignore pair) to sit beside a two-line "ours:"/"theirs:" label without
+        # squeezing it down to a many-line wrap: at 640px the four links alone claimed
+        # over half the row's width.
+        self.setMinimumSize(800, 560)
         self._pairs = []
         self._left_count = self._right_count = 0
         self._deck_names = sorted({d.name for d in mw.col.decks.all_names_and_ids()})
@@ -134,6 +161,14 @@ class _DuplicateScanDialog(QDialog):
         links_row.addStretch()
         outer.addLayout(links_row)
 
+        self.skip_cc_anki = QCheckBox("Skip CC Anki")
+        self.skip_cc_anki.setChecked(True)
+        self.skip_cc_anki.setToolTip(
+            "CC Anki is a 2,900-note reference deck you don't review, so a match "
+            "there isn't coverage.")
+        self.skip_cc_anki.toggled.connect(lambda _checked: self._rescan())
+        outer.addWidget(self.skip_cc_anki)
+
         self.summary_label = hint_label("")
         outer.addWidget(self.summary_label)
 
@@ -141,9 +176,21 @@ class _DuplicateScanDialog(QDialog):
         self._rows_layout = QVBoxLayout(self._rows_container)
         self._rows_layout.setContentsMargins(0, 0, 0, 0)
         self._rows_layout.setSpacing(0)
+        # Rows sit in their own container, separate from the stretch below it, the same
+        # split StreamingList uses: rebuilding the list only ever touches the rows
+        # layout, so the stretch never needs to be found and re-added. Without it, a
+        # short list has nothing to consume the scroll area's leftover height, so
+        # QScrollArea's widgetResizable stretches the rows themselves to fill it
+        # instead, one row at a time, wider than their own content.
+        rows_body = QWidget()
+        rows_outer = QVBoxLayout(rows_body)
+        rows_outer.setContentsMargins(0, 0, 0, 0)
+        rows_outer.setSpacing(0)
+        rows_outer.addWidget(self._rows_container)
+        rows_outer.addStretch()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setWidget(self._rows_container)
+        scroll.setWidget(rows_body)
         outer.addWidget(scroll, 1)
 
         outer.addWidget(link_button("Copy list", self._copy_list, align_left=True))
@@ -165,9 +212,13 @@ class _DuplicateScanDialog(QDialog):
     def _right_rows(self):
         if self.right_combo.currentIndex() == 0:
             left_ids = {r[0] for r in self._left_rows()}
-            return [r for r in note_rows(mw.col) if r[0] not in left_ids]
-        deck = self._deck_names[self.right_combo.currentIndex() - 1]
-        return note_rows(mw.col, deck_name=deck)
+            rows = [r for r in note_rows(mw.col) if r[0] not in left_ids]
+        else:
+            deck = self._deck_names[self.right_combo.currentIndex() - 1]
+            rows = note_rows(mw.col, deck_name=deck)
+        if self.skip_cc_anki.isChecked():
+            rows = [r for r in rows if "cc anki" not in r[2].lower()]
+        return rows
 
     # ------------------------------------------------------------------ scan
     @_safe
@@ -230,6 +281,8 @@ class _DuplicateScanDialog(QDialog):
     def _summary_text(self):
         text = (f"{self._left_count} scanned against {self._right_count}, "
                f"{len(self._pairs)} candidates")
+        if self.skip_cc_anki.isChecked():
+            text += " (CC Anki skipped)"
         same = sum(1 for p in self._pairs if p["judged"] == "same")
         if same:
             text += f", {same} judged the same"
@@ -280,15 +333,15 @@ class _DuplicateScanDialog(QDialog):
         header = QWidget()
         hl = QHBoxLayout(header)
         hl.setContentsMargins(0, 0, 0, 0)
-        hl.setSpacing(6)
+        hl.setSpacing(CARET_GAP)
 
         caret = QPushButton("▸")
         caret.setFlat(True)
-        caret.setFixedWidth(18)
+        caret.setFixedWidth(CARET_W)
         hl.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
 
         label, role = _chip_label(pair)
-        width = _measure_chip_width(self._pairs)
+        width = _chip_column_width()
         chip_cell = QWidget()
         chip_cell.setFixedWidth(width)
         cl = QHBoxLayout(chip_cell)
@@ -305,12 +358,41 @@ class _DuplicateScanDialog(QDialog):
         primary.setWordWrap(True)
         primary.setTextFormat(Qt.TextFormat.RichText)
         hl.addWidget(primary, 1)
-        outer.addWidget(header)
 
         body = QWidget()
         body.setVisible(False)
+
+        # Trailing action links, at the right of the header rather than tucked inside
+        # the expanded body: a collapsed row used to hide every action it offers. Two
+        # short rows rather than one long one: four links wide enough to name each
+        # action in full (Suspend ours/theirs, Keep both, Ignore pair) don't fit beside
+        # a two-line "ours:"/"theirs:" label at this dialog's own floor width without
+        # squeezing that label down to single-word wrapping. Top aligned, so the block
+        # sits level with the chip and the "ours:" line.
+        trailing = QWidget()
+        tv = QVBoxLayout(trailing)
+        tv.setContentsMargins(0, 0, 0, 0)
+        tv.setSpacing(2)
+        top_links = QWidget()
+        tl1 = QHBoxLayout(top_links)
+        tl1.setContentsMargins(0, 0, 0, 0)
+        tl1.setSpacing(CARET_GAP)
+        tl1.addWidget(link_button("Suspend ours", lambda: self._suspend(pair, "left")))
+        tl1.addWidget(link_button("Suspend theirs", lambda: self._suspend(pair, "right")))
+        tv.addWidget(top_links)
+        bottom_links = QWidget()
+        tl2 = QHBoxLayout(bottom_links)
+        tl2.setContentsMargins(0, 0, 0, 0)
+        tl2.setSpacing(CARET_GAP)
+        tl2.addWidget(link_button("Keep both", lambda: self._keep_both(caret, body)))
+        tl2.addWidget(link_button("Ignore pair", lambda: self._ignore(pair)))
+        tv.addWidget(bottom_links)
+        hl.addWidget(trailing, 0, Qt.AlignmentFlag.AlignTop)
+
+        outer.addWidget(header)
+
         blay = QVBoxLayout(body)
-        blay.setContentsMargins(24, 0, 0, 0)
+        blay.setContentsMargins(_row_text_indent(), 0, 0, 0)
         ours_answer = QLabel(f"<b>ours answer:</b> {_esc(left_back)}")
         ours_answer.setWordWrap(True)
         theirs_answer = QLabel(f"<b>theirs answer:</b> {_esc(right_back)}")
@@ -319,16 +401,6 @@ class _DuplicateScanDialog(QDialog):
         blay.addWidget(theirs_answer)
         if pair.get("note"):
             blay.addWidget(hint_label(pair["note"]))
-
-        links = QWidget()
-        ll = QHBoxLayout(links)
-        ll.setContentsMargins(0, 4, 0, 0)
-        ll.addWidget(link_button("Suspend ours", lambda: self._suspend(pair, "left")))
-        ll.addWidget(link_button("Suspend theirs", lambda: self._suspend(pair, "right")))
-        ll.addWidget(link_button("Keep both", lambda: self._keep_both(caret, body)))
-        ll.addWidget(link_button("Ignore pair", lambda: self._ignore(pair)))
-        ll.addStretch()
-        blay.addWidget(links)
         outer.addWidget(body)
 
         def _toggle():

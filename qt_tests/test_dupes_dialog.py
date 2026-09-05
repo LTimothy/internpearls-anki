@@ -38,6 +38,20 @@ def _build_dialog(mock):
     return dlg
 
 
+def _populate_with_cc_anki(mock):
+    """The base three pairs, plus a fourth candidate whose other side sits in the CC
+    Anki reference deck: the note the learner doesn't review, so a match there isn't
+    coverage (see the "Skip CC Anki" toggle)."""
+    _populate(mock)
+    col = mock.mw.col
+    col.add_note("g7", ["Sugammadex reverses rocuronium blockade by encapsulation",
+                        "Selectively binds rocuronium and vecuronium"],
+                 ["InternPearls"], deck="Intern Custom")
+    col.add_note("g8", ["Sugammadex reverses rocuronium blockade through encapsulation",
+                        "Chelates rocuronium and vecuronium molecules"],
+                 ["Other"], deck="CC Anki")
+
+
 def test_duplicate_scan_finds_three_candidates():
     mock, _ = harness.bootstrap()
     harness.app()
@@ -63,7 +77,7 @@ def test_duplicate_scan_renders_light_and_dark(tmp_path):
                          ("dark", "dupes-scan-dark.png")):
         harness.apply_theme(theme)
         dlg = _build_dialog(mock)
-        dlg.resize(640, 560)
+        dlg.resize(800, 560)
         dlg.show()
         harness.app().processEvents()
         png = os.path.join(out_dir, fname)
@@ -160,4 +174,87 @@ def test_judge_with_ai_updates_chips_and_folds_different(monkeypatch):
     # a "different" pair sits under the fold, not among the shown rows
     shown = [p for p in dlg._pairs if p["judged"] != "different"]
     assert len(shown) == 2
+    dlg.deleteLater()
+
+
+def test_skip_cc_anki_excludes_reference_deck_by_default():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_with_cc_anki(mock)
+    dlg = _build_dialog(mock)
+    assert dlg.skip_cc_anki.isChecked()
+    fronts = {p["right"][1] for p in dlg._pairs}
+    assert not any("Sugammadex" in f for f in fronts)
+    assert "(CC Anki skipped)" in dlg.summary_label.text()
+    dlg.deleteLater()
+
+
+def test_skip_cc_anki_toggle_off_includes_reference_deck():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_with_cc_anki(mock)
+    dlg = _build_dialog(mock)
+    dlg.skip_cc_anki.setChecked(False)
+    dlg._wait_for_scan()
+    fronts = {p["right"][1] for p in dlg._pairs}
+    assert any("Sugammadex" in f for f in fronts)
+    assert "(CC Anki skipped)" not in dlg.summary_label.text()
+    dlg.deleteLater()
+
+
+def test_row_actions_are_visible_while_collapsed():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    row = dlg._rows_layout.itemAt(0).widget()
+    header = row.layout().itemAt(0).widget()
+    body = row.layout().itemAt(1).widget()
+    assert not body.isVisible()
+    labels = {w.text() for w in header.findChildren(type(dlg.judge_btn))}
+    assert {"Suspend ours", "Suspend theirs", "Keep both", "Ignore pair"} <= labels
+    dlg.deleteLater()
+
+
+def test_ours_label_starts_at_row_text_indent():
+    from internpearls import dupes_dialog
+    mock, q = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    dlg.resize(800, 560)
+    dlg.show()
+    harness.app().processEvents()
+    row = dlg._rows_layout.itemAt(0).widget()
+    header = row.layout().itemAt(0).widget()
+    primary = header.layout().itemAt(2).widget()
+    x = primary.mapTo(row, q.QPoint(0, 0)).x()
+    assert x == dupes_dialog._row_text_indent(), (
+        f"the ours: label starts at x={x}, not this window's own row_text_indent "
+        f"({dupes_dialog._row_text_indent()}): the chip column and the body indent "
+        "have drifted apart")
+    dlg.close()
+    dlg.deleteLater()
+
+
+def test_collapsed_row_height_matches_content():
+    from PyQt6.QtGui import QFontMetrics
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    dlg.resize(800, 560)
+    dlg.show()
+    harness.app().processEvents()
+    row = dlg._rows_layout.itemAt(0).widget()
+    fm = QFontMetrics(row.font())
+    # Three text lines' worth of height (the "ours:"/"theirs:" pair plus headroom for
+    # wrapping), plus the row's own outer margins, is generous slack for a collapsed
+    # row's real content; anything past it means the row is sizing to something other
+    # than what it actually shows.
+    limit = fm.height() * 3 + 20
+    assert row.height() < limit, (
+        f"a collapsed row is {row.height()}px tall, past {limit}px (3 text lines "
+        "plus margins): it is not sizing to its own content")
+    dlg.close()
     dlg.deleteLater()
