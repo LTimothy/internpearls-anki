@@ -2126,6 +2126,84 @@ def test_change_notes_for_drops_non_string_notes():
     assert [e["note"] for e in logic.change_notes_for(notes, "g1", fields)] == ["ok"]
 
 
+def test_change_notes_for_orders_feedback_before_maintainer():
+    """Newest-first alone put a later maintainer fix above the feedback line explaining
+    why the card was touched at all; feedback now sorts first regardless of date."""
+    fields = ["F"]
+    h = logic.note_fields_hash(fields)
+    notes = {"g1": [{"kind": "feedback", "note": "her words", "hash": h},
+                    {"kind": "maintainer", "note": "the fix", "hash": h}]}
+    got = logic.change_notes_for(notes, "g1", fields)
+    assert [e["kind"] for e in got] == ["feedback", "maintainer"]
+
+
+def test_change_notes_for_keeps_newest_first_within_a_kind():
+    fields = ["F"]
+    h = logic.note_fields_hash(fields)
+    notes = {"g1": [{"kind": "feedback", "note": "older", "hash": h},
+                    {"kind": "feedback", "note": "newer", "hash": h}]}
+    got = logic.change_notes_for(notes, "g1", fields)
+    assert [e["note"] for e in got] == ["newer", "older"]
+
+
+# ---------------------------------------------------------------- group_change_notes
+def test_group_change_notes_groups_cards_sharing_one_note():
+    note = {"kind": "feedback", "note": "make it a table", "on": "2026-01-01"}
+    details = [{"guid": "g1", "change_notes": [note]},
+              {"guid": "g2", "change_notes": [note]}]
+    groups = logic.group_change_notes(details, [])
+    assert len(groups) == 1
+    assert groups[0]["note"] == note
+    assert [m["guid"] for m in groups[0]["members"]] == ["g1", "g2"]
+
+
+def test_group_change_notes_joins_a_retired_row_to_its_replacement():
+    note = {"kind": "maintainer", "note": "split the table", "on": "2026-01-01"}
+    details = [{"guid": "new1", "change_notes": [note]}]
+    retired = [{"guid": "old-guid", "identity": "old front", "reason": "split",
+               "superseded_by": ["new1"]}]
+    groups = logic.group_change_notes(details, retired)
+    assert len(groups) == 1
+    assert groups[0]["note"] == note
+    assert [m.get("identity", m.get("guid")) for m in groups[0]["members"]] == \
+        ["new1", "old front"]
+
+
+def test_group_change_notes_merges_a_split_into_one_group():
+    """One retired card naming two survivors in `superseded_by`: both survivors' own
+    groups fold into one, even though they carry different notes of their own."""
+    note_a = {"kind": "feedback", "note": "keep the mechanism card", "on": "d1"}
+    note_b = {"kind": "maintainer", "note": "the dosing moved here", "on": "d2"}
+    details = [{"guid": "new1", "change_notes": [note_a]},
+              {"guid": "new2", "change_notes": [note_b]}]
+    retired = [{"guid": "old-guid", "identity": "old front", "reason": "split",
+               "superseded_by": ["new1", "new2"]}]
+    groups = logic.group_change_notes(details, retired)
+    assert len(groups) == 1
+    ids = [m.get("identity", m.get("guid")) for m in groups[0]["members"]]
+    assert set(ids) == {"new1", "new2", "old front"}
+
+
+def test_group_change_notes_a_retired_row_with_no_replacement_here_stands_alone():
+    """Retired in this update, replaced in a later one: nothing here names it, so it
+    gets a group of its own rather than being dropped."""
+    retired = [{"guid": "old-guid", "identity": "old front", "reason": "split",
+               "superseded_by": ["not-in-this-batch"]}]
+    groups = logic.group_change_notes([], retired)
+    assert len(groups) == 1
+    assert groups[0]["note"] is None
+    assert groups[0]["members"] == retired
+
+
+def test_group_change_notes_a_singleton_card_is_its_own_group():
+    details = [{"guid": "g1", "change_notes": [{"kind": "feedback", "note": "n",
+                                                "on": "d"}]},
+              {"guid": "g2", "change_notes": []}]
+    groups = logic.group_change_notes(details, [])
+    assert len(groups) == 2
+    assert [g["members"][0]["guid"] for g in groups] == ["g1", "g2"]
+
+
 # ---------------------------------------------------------------- source_label_for
 def test_source_label_for_returns_the_decks_own_string():
     assert logic.source_label_for({"g1": "[T10Q2]"}, "g1") == "[T10Q2]"
