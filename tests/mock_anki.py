@@ -445,7 +445,8 @@ class MockCollection:
         # Anki exposes suspend via col.sched and tag edits via col.tags; the add-on's
         # archive path (Reconcile) uses set_deck + these two. All are incremental (no
         # schema bump), which is exactly what the reconcile feature relies on.
-        self.sched = types.SimpleNamespace(suspend_cards=self._suspend_cards)
+        self.sched = types.SimpleNamespace(suspend_cards=self._suspend_cards,
+                                          unsuspend_cards=self._unsuspend_cards)
         self.tags = types.SimpleNamespace(bulk_add=self._tags_bulk_add)
 
     # === undo: add_custom_undo_entry / merge_undo_entries / undo ===
@@ -521,7 +522,7 @@ class MockCollection:
             id=cid, nid=note.id, did=did, queue=0, reps=0, ord=0,
             type=0, due=0, ivl=0, factor=0, lapses=0,
             memory_state=None, desired_retention=None, decay=None,
-            last_review_time=None)
+            last_review_time=None, odid=0)
         note._card_ids.append(cid)
         self._generate_cloze_cards(note)
         # Real Anki gives every add its own undo entry; merge_undo_entries is what
@@ -546,7 +547,7 @@ class MockCollection:
             id=cid, nid=note.id, did=did, queue=0, reps=0, ord=0,
             type=0, due=0, ivl=0, factor=0, lapses=0,
             memory_state=None, desired_retention=None, decay=None,
-            last_review_time=None)
+            last_review_time=None, odid=0)
         note._card_ids.append(cid)
         return note
 
@@ -562,6 +563,19 @@ class MockCollection:
         for cid in cids:
             self._cards[cid].queue = -1   # -1 is Anki's suspended queue
 
+    def _unsuspend_cards(self, cids):
+        for cid in cids:
+            self._cards[cid].queue = 0
+
+    def file_in_filtered_deck(self, nid, filtered_deck, home_deck):
+        """Test helper: put a note's card physically in `filtered_deck` with its
+        home deck recorded via `odid`, the way a real filtered deck does."""
+        did = self.decks.id(filtered_deck)
+        odid = self.decks.id(home_deck)
+        for cid in self._notes[nid]._card_ids:
+            self._cards[cid].did = did
+            self._cards[cid].odid = odid
+
     def _tags_bulk_add(self, nids, tag):
         for nid in nids:
             note = self._notes[nid]
@@ -572,7 +586,23 @@ class MockCollection:
     # === surface the add-on calls ===
     def find_notes(self, search):
         # The add-on searches '"tag:X" OR "tag:X::*"', optionally with a trailing
-        # ' -"tag:Y"' exclusion (see collection._her_notes_summary). Parse both.
+        # ' -"tag:Y"' exclusion (see collection._her_notes_summary); a bare
+        # 'deck:"X"' (collection.note_rows, by-deck scope); or "" for every note
+        # (collection.note_rows with neither tag nor deck given).
+        if search == "":
+            return list(self._notes.keys())
+        if 'deck:"' in search:
+            deck = search.split('deck:"', 1)[1].split('"', 1)[0]
+            out = []
+            for nid, n in self._notes.items():
+                if not n._card_ids:
+                    continue
+                card = self._cards[n._card_ids[0]]
+                did = getattr(card, "odid", 0) or card.did
+                name = self.decks.name(did) or ""
+                if name == deck or name.startswith(deck + "::"):
+                    out.append(nid)
+            return out
         exclude = None
         if ' -"tag:' in search:
             search, excl_part = search.split(' -"tag:', 1)
@@ -651,7 +681,7 @@ class MockCollection:
                 id=cid, nid=note.id, did=first.did, queue=0, reps=0, ord=i,
                 type=0, due=0, ivl=0, factor=0, lapses=0,
                 memory_state=None, desired_retention=None, decay=None,
-                last_review_time=None)
+                last_review_time=None, odid=getattr(first, "odid", 0))
             note._card_ids.append(cid)
 
     def update_card(self, card):
