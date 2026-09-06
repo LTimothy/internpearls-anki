@@ -169,6 +169,12 @@ class _DuplicateScanDialog(QDialog):
         self._pairs = []
         self._left_count = self._right_count = 0
         self._deck_names = sorted({d.name for d in mw.col.decks.all_names_and_ids()})
+        # Every note in the collection, read once per dialog. Changing the sensitivity
+        # or the exclusions re-derives both sides from this instead of re-reading the
+        # collection; only the Rescan link (and reopening) reads it again.
+        self._rows_cache = None
+        self._deck_root = _cfg()["export_deck"].split("::")[0]
+        self._right_fixed = ["Everything else", f"Other cards under {self._deck_root}"]
         self._fold_open = False
         self._any_excluded = False
         self._left_dropped = 0
@@ -186,7 +192,8 @@ class _DuplicateScanDialog(QDialog):
         for name in self._deck_names:
             self.left_combo.addItem(name)
         self.right_combo = QComboBox()
-        self.right_combo.addItem("Everything else")
+        for label in self._right_fixed:
+            self.right_combo.addItem(label)
         for name in self._deck_names:
             self.right_combo.addItem(name)
         scope_row.addWidget(self.left_combo, 1)
@@ -195,7 +202,7 @@ class _DuplicateScanDialog(QDialog):
         outer.addLayout(scope_row)
 
         links_row = QHBoxLayout()
-        links_row.addWidget(link_button("Rescan", self._rescan))
+        links_row.addWidget(link_button("Rescan", self._rescan_fresh))
         cfg = _cfg()
         links_row.addWidget(QLabel("Sensitivity:"))
         self.sensitivity_combo = QComboBox()
@@ -312,9 +319,31 @@ class _DuplicateScanDialog(QDialog):
         then exclude it a second time as a "their" card that happens to share its
         deck name."""
         if self.left_combo.currentIndex() == 0:
-            return note_rows(mw.col, scope_tag=self._scope_tag)
+            return self._scoped_rows(scope_tag=self._scope_tag)
         deck = self._deck_names[self.left_combo.currentIndex() - 1]
-        return note_rows(mw.col, deck_name=deck)
+        return self._scoped_rows(deck_name=deck)
+
+    def _all_rows(self):
+        if self._rows_cache is None:
+            self._rows_cache = note_rows(mw.col)
+        return self._rows_cache
+
+    def _scoped_rows(self, scope_tag=None, deck_name=None):
+        """The cached rows narrowed to one tag or one deck tree: the same selection
+        `note_rows(col, scope_tag=...)` or `note_rows(col, deck_name=...)` makes, but
+        from the rows already read rather than a second pass over the collection.
+        `deck:"X"` matches X's subdecks and cards currently sitting in a filtered
+        deck under X, which is what makes a deck tree a usable comparison pool."""
+        if scope_tag:
+            search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'
+        else:
+            search = f'deck:"{deck_name}"'
+        ids = set(mw.col.find_notes(search))
+        return [r for r in self._all_rows() if r[0] in ids]
+
+    def _rescan_fresh(self):
+        self._rows_cache = None
+        self._rescan()
 
     def _left_rows(self):
         rows = self._raw_left_rows()
@@ -323,12 +352,15 @@ class _DuplicateScanDialog(QDialog):
         return filtered
 
     def _right_rows(self):
-        if self.right_combo.currentIndex() == 0:
+        index = self.right_combo.currentIndex()
+        if index < len(self._right_fixed):
             left_ids = {r[0] for r in self._raw_left_rows()}
-            rows = [r for r in note_rows(mw.col) if r[0] not in left_ids]
+            pool = (self._all_rows() if index == 0
+                    else self._scoped_rows(deck_name=self._deck_root))
+            rows = [r for r in pool if r[0] not in left_ids]
         else:
-            deck = self._deck_names[self.right_combo.currentIndex() - 1]
-            rows = note_rows(mw.col, deck_name=deck)
+            deck = self._deck_names[index - len(self._right_fixed)]
+            rows = self._scoped_rows(deck_name=deck)
         filtered = self._apply_exclusions(rows)
         self._right_dropped = len(rows) - len(filtered)
         return filtered
@@ -423,9 +455,11 @@ class _DuplicateScanDialog(QDialog):
         return info, warn
 
     def _side_label(self, combo, default):
-        if combo.currentIndex() == 0:
-            return default
-        return self._deck_names[combo.currentIndex() - 1]
+        fixed = self._right_fixed if combo is self.right_combo else [default]
+        index = combo.currentIndex()
+        if index < len(fixed):
+            return fixed[index]
+        return self._deck_names[index - len(fixed)]
 
     def _thin_pool_notes(self):
         """A plain line per side scanned with fewer than 50 cards, naming the side and

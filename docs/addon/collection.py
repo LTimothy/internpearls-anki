@@ -1399,12 +1399,46 @@ def note_rows(col, scope_tag=None, deck_name=None):
         search = f'deck:"{deck_name}"'
     else:
         search = ""
+    nids = None if search == "" else set(col.find_notes(search))
+    if getattr(col.db, "all", None):
+        return _note_rows_sql(col, nids)
     rows = []
-    for nid in col.find_notes(search):
+    for nid in (col.find_notes("") if nids is None else sorted(nids)):
         note = col.get_note(nid)
         text = " ".join(note.fields[:2])
         rows.append((nid, text, _home_deck_name(col, note), note.note_type()["name"]))
     return rows
+
+
+def _note_rows_sql(col, nids):
+    """`note_rows` in one query. The per-note path costs a get_note, a card_ids and a
+    get_card round trip for every note in the collection, which on a real collection
+    (thousands of notes) is seconds of frozen UI before the scan itself, which takes
+    a tenth of a second. One join over notes and cards gives the same tuples; the
+    `group by` keeps one card per note, the way the slow path read `card_ids()[0]`."""
+    deck_names = {d.id: d.name for d in col.decks.all_names_and_ids()}
+    model_names = {}
+    rows = []
+    for nid, flds, mid, did, odid in col.db.all(
+            "select n.id, n.flds, n.mid, c.did, c.odid from notes n "
+            "join cards c on c.nid = n.id group by n.id order by n.id"):
+        if nids is not None and nid not in nids:
+            continue
+        if mid not in model_names:
+            model_names[mid] = _model_name(col, nid, mid)
+        text = " ".join(flds.split("\x1f")[:2])
+        rows.append((nid, text, deck_names.get(odid or did) or "", model_names[mid]))
+    return rows
+
+
+def _model_name(col, nid, mid):
+    try:
+        model = col.models.get(mid)
+        if model:
+            return model["name"]
+    except Exception:
+        pass
+    return col.get_note(nid).note_type()["name"]
 
 
 def suspend_notes(col, note_ids):
