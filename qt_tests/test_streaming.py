@@ -96,16 +96,26 @@ def test_a_list_shorter_than_its_viewport_builds_every_row_and_stops():
     dlg.close()
 
 
-def test_idle_prefetch_builds_the_backlog_while_the_reader_waits():
+def test_idle_prefetch_builds_the_backlog_hidden_and_reveals_it_on_scroll():
     """Once the viewport is filled, the rest of the list keeps building a few rows at
-    a time on the idle timer, so reaching the boundary later finds its rows already
-    made. The batch-on-demand behaviour above still holds for the first paint."""
+    a time on the idle timer, but those rows stay hidden so the content height (and
+    the scrollbar) does not move while the reader is still. Scrolling reveals the
+    prebuilt rows instead of building them."""
     import time
     app, dlg, lst = _open(220)
-    assert lst.shown() < lst.total()
-    deadline = time.monotonic() + 8
-    while lst.shown() < lst.total() and time.monotonic() < deadline:
+    shown = lst.shown()
+    height = lst.widget().sizeHint().height()
+    deadline = time.monotonic() + 3
+    while lst.built() < shown + 6 and time.monotonic() < deadline:
         app.processEvents()
         time.sleep(0.01)
-    assert lst.shown() == lst.total(), f"idle prefetch stalled at {lst.shown()}"
+    assert lst.built() >= shown + 6, f"idle prefetch stalled at {lst.built()}"
+    assert lst.shown() == shown, "prefetch must not reveal rows on its own"
+    assert lst.widget().sizeHint().height() == height, "hidden rows moved the content height"
+    built_before = lst.built()
+    bar = lst.verticalScrollBar()
+    bar.setValue(bar.maximum())
+    app.processEvents()
+    assert lst.shown() > shown
+    assert lst.built() >= built_before
     dlg.close()
