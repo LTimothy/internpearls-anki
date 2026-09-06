@@ -57,3 +57,23 @@ def test_add_dupes_ignored_persists(anki):
     assert _cfg()["dupes_ignored"] == ["1:2"]
     add_dupes_ignored("3:4")
     assert _cfg()["dupes_ignored"] == ["1:2", "3:4"]
+
+
+def test_note_rows_sql_path_matches_the_per_note_path(anki):
+    """The one-query loader and the per-note loader read the same tuples, so a
+    collection whose db lacks `all` (the fallback) and a real one agree."""
+    from internpearls import collection
+    col = anki.mw.col
+    col.add_note("g1", ["Front one", "Back one"], ["InternPearls"], deck="Intern Custom")
+    col.add_note("g2", ["Front two", "Back two"], ["Other"], deck="Ankisthesia")
+    fast = collection.note_rows(col)
+    assert len(fast) == 2 and fast[0][1] == "Front one Back one"
+    nids = {r[0] for r in fast}
+    slow = []
+    for nid in sorted(nids):
+        note = col.get_note(nid)
+        slow.append((nid, " ".join(note.fields[:2]),
+                     collection._home_deck_name(col, note), note.note_type()["name"]))
+    assert fast == slow
+    assert collection.note_rows(col, scope_tag="InternPearls") == [fast[0]]
+    assert collection.note_rows(col, deck_name="Ankisthesia") == [fast[1]]

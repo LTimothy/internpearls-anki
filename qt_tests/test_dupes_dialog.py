@@ -522,3 +522,50 @@ def test_picture_only_front_is_named_not_blank():
     front, back = dupes_dialog._note_texts(nid)
     assert "landmarks.png" in front
     assert back == "The interscalene groove"
+
+
+def test_right_side_offers_the_other_cards_under_the_deck_root():
+    """Jessica's collection keeps two filtered decks of other people's cards under the
+    Intern Pearls deck. The second right-hand option compares our cards against just
+    those, ignoring the rest of her collection."""
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    col = mock.mw.col
+    col.add_note("g9", ["Fenoldopam is a selective dopamine one receptor agonist drug",
+                        "Renal vasodilator"],
+                 ["Other"], deck="Intern Pearls::Intern goodies")
+    dlg = _build_dialog(mock)
+    assert dlg.right_combo.itemText(1) == "Other cards under Intern Pearls"
+    assert dlg._right_count == 4          # everything else: g2, g4, g6, g9
+    dlg.right_combo.setCurrentIndex(1)
+    dlg._rescan()
+    dlg._wait_for_scan()
+    assert dlg._right_count == 1          # only g9 sits under the root
+    assert {p["right"][0] for p in dlg._pairs} == {col.find_notes('deck:"Intern Pearls"')[0]}
+    dlg.close()
+
+
+def test_sensitivity_and_exclusion_changes_reuse_the_cached_rows(monkeypatch):
+    """Reading the collection is the slow part of a scan, so it happens once per
+    dialog; only Rescan reads it again."""
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    from internpearls import dupes_dialog
+    calls = []
+    real = dupes_dialog.note_rows
+    monkeypatch.setattr(dupes_dialog, "note_rows",
+                        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    dlg = _build_dialog(mock)
+    assert len(calls) == 1
+    dlg.sensitivity_combo.setCurrentIndex(0)
+    dlg._wait_for_scan()
+    dlg.exclude_edit.setText("Reference")
+    dlg._exclude_edited()
+    dlg._wait_for_scan()
+    assert len(calls) == 1
+    dlg._rescan_fresh()
+    dlg._wait_for_scan()
+    assert len(calls) == 2
+    dlg.close()
