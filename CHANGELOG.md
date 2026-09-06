@@ -3,6 +3,14 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.66.1
+
+The idle prefetch in Update my cards was too eager: it built rows at about 200 a
+second, and each one grew the list, so the scrollbar kept shifting and the screen
+stuttered. Prefetched rows now stay hidden until scrolling reveals them, so the
+content height only changes when the reader scrolls, and the prefetch runs three
+rows every 150 ms and pauses while she is scrolling.
+
 ## v0.66.0
 
 Scan for duplicates no longer freezes Anki while it reads the collection. It used

@@ -11,6 +11,8 @@ May import config, logic, palette and ui. Must NOT import sync, dialogs or revie
 that's the boundary that keeps this module out of the same import cycle review.py was
 built to dodge.
 """
+import time
+
 from aqt.qt import (QHBoxLayout, QLabel, QPushButton, QScrollArea, Qt, QTimer,
                      QVBoxLayout, QWidget)
 
@@ -578,28 +580,43 @@ class StreamingList(QScrollArea):
         self.setWidgetResizable(True)
         self.setWidget(body)
 
+        self._prebuilt = []
+        self._last_scroll = 0.0
         self.verticalScrollBar().valueChanged.connect(self._maybe_extend)
         self._extend()
 
         # Idle prefetch. Building a 50-row batch at the moment the reader scrolls to
         # the boundary is a visible hitch, so once the viewport is filled the backlog
-        # is built a few rows at a time on a short timer while she reads. Each chunk
-        # is small enough that input stays responsive, and the delay keeps a single
-        # event-loop pass from cascading through the whole list.
+        # is built a few rows at a time on a timer while she reads. Prefetched rows
+        # stay hidden until the scroll path reveals them: a hidden row adds nothing
+        # to the layout, so the content height (and with it the scrollbar) only moves
+        # when she scrolls, not on every tick. The pace is deliberately slow, and a
+        # tick is skipped while she is scrolling, so building never competes with
+        # reading; revealing an already-built row is cheap.
         self._idle = QTimer(self)
         self._idle.setSingleShot(True)
         self._idle.setInterval(self.IDLE_DELAY_MS)
         self._idle.timeout.connect(self._idle_extend)
         self._idle.start()
 
-    IDLE_CHUNK = 8
-    IDLE_DELAY_MS = 40
+    IDLE_CHUNK = 3
+    IDLE_DELAY_MS = 150
+    SCROLL_QUIET_S = 0.4
+
+    def built(self):
+        """Rows constructed so far, shown or waiting hidden."""
+        return self._shown + len(self._prebuilt)
 
     def _idle_extend(self):
-        if self._shown >= self.total():
+        if self.built() >= self.total():
             return
-        if self.isVisible():
-            self._extend(self.IDLE_CHUNK)
+        if self.isVisible() and time.monotonic() - self._last_scroll > self.SCROLL_QUIET_S:
+            end = min(self.built() + self.IDLE_CHUNK, self.total())
+            for item in self._items[self.built():end]:
+                row = self._build_row(item)
+                row.setVisible(False)
+                self._rows_layout.addWidget(row)
+                self._prebuilt.append(row)
         self._idle.start()
 
     def shown(self):
@@ -609,6 +626,7 @@ class StreamingList(QScrollArea):
         return len(self._items)
 
     def _maybe_extend(self, _value=None):
+        self._last_scroll = time.monotonic()
         bar = self.verticalScrollBar()
         if bar.maximum() - bar.value() <= self.viewport().height():
             self._extend()
@@ -645,8 +663,11 @@ class StreamingList(QScrollArea):
             return
         end = min(self._shown + (count or self._batch), self.total())
         for item in self._items[self._shown:end]:
-            row = self._build_row(item)
-            self._rows_layout.addWidget(row)
+            if self._prebuilt:
+                row = self._prebuilt.pop(0)
+            else:
+                row = self._build_row(item)
+                self._rows_layout.addWidget(row)
             # A row appended to an already-visible list is only shown on Qt's next
             # layout pass, and a hidden item contributes nothing to its layout's
             # sizeHint. Showing it here is what lets _fill_viewport below measure the
