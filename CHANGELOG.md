@@ -3,6 +3,19 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.66.0
+
+Scan for duplicates no longer freezes Anki while it reads the collection. It used
+to fetch every note, its card list and that card one call at a time, three round
+trips per note across the whole collection, and did so again on every sensitivity
+or exclusion change; it now reads the collection in one query, once per dialog,
+and only the Rescan link reads it again. A second right-hand scope, "Other cards
+under Intern Pearls", compares the add-on's cards against just the other cards
+in that deck tree, which is where a learner's filtered decks of imported cards
+sit, instead of the whole collection. Update my cards keeps building its list a
+few rows at a time while the reader is idle, so scrolling to the end of what was
+built no longer stalls on the next batch.
+
 ## v0.65.1
 
 Four fixes to Scan for duplicates from a real run against a small collection.
