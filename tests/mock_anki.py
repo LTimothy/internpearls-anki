@@ -349,6 +349,19 @@ class _Db:
                 return n.id
         return None
 
+    def all(self, query, *_args):
+        """The one join collection._note_rows_sql runs: (nid, flds, mid, did, odid)
+        per note with at least one card, first card standing in for `group by`."""
+        assert "from notes n join cards c" in query, query
+        rows = []
+        for n in sorted(self._col._notes.values(), key=lambda n: n.id):
+            if not n._card_ids:
+                continue
+            card = self._col._cards[n._card_ids[0]]
+            rows.append((n.id, FS.join(n.fields), n.model["id"], card.did,
+                         getattr(card, "odid", 0) or 0))
+        return rows
+
 
 def _read_apkg(path):
     """(notes, models_by_mid, deck_by_nid) from a real or mock .apkg. Every

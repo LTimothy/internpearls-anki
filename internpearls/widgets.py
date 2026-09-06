@@ -11,8 +11,8 @@ May import config, logic, palette and ui. Must NOT import sync, dialogs or revie
 that's the boundary that keeps this module out of the same import cycle review.py was
 built to dodge.
 """
-from aqt.qt import (QHBoxLayout, QLabel, QPushButton, QScrollArea, Qt, QVBoxLayout,
-                     QWidget)
+from aqt.qt import (QHBoxLayout, QLabel, QPushButton, QScrollArea, Qt, QTimer,
+                     QVBoxLayout, QWidget)
 
 from .palette import colors
 from .ui import section_label
@@ -581,6 +581,27 @@ class StreamingList(QScrollArea):
         self.verticalScrollBar().valueChanged.connect(self._maybe_extend)
         self._extend()
 
+        # Idle prefetch. Building a 50-row batch at the moment the reader scrolls to
+        # the boundary is a visible hitch, so once the viewport is filled the backlog
+        # is built a few rows at a time on a short timer while she reads. Each chunk
+        # is small enough that input stays responsive, and the delay keeps a single
+        # event-loop pass from cascading through the whole list.
+        self._idle = QTimer(self)
+        self._idle.setSingleShot(True)
+        self._idle.setInterval(self.IDLE_DELAY_MS)
+        self._idle.timeout.connect(self._idle_extend)
+        self._idle.start()
+
+    IDLE_CHUNK = 8
+    IDLE_DELAY_MS = 40
+
+    def _idle_extend(self):
+        if self._shown >= self.total():
+            return
+        if self.isVisible():
+            self._extend(self.IDLE_CHUNK)
+        self._idle.start()
+
     def shown(self):
         return self._shown
 
@@ -617,12 +638,12 @@ class StreamingList(QScrollArea):
                and self._rows_container.sizeHint().height() <= self.viewport().height()):
             self._extend()
 
-    def _extend(self):
-        """Build the next `batch` rows and append them, or do nothing once every item
-        has already been built."""
+    def _extend(self, count=None):
+        """Build the next `batch` rows (or `count` of them) and append them, or do
+        nothing once every item has already been built."""
         if self._shown >= self.total():
             return
-        end = min(self._shown + self._batch, self.total())
+        end = min(self._shown + (count or self._batch), self.total())
         for item in self._items[self._shown:end]:
             row = self._build_row(item)
             self._rows_layout.addWidget(row)

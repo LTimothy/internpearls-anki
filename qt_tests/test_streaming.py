@@ -94,3 +94,18 @@ def test_a_list_shorter_than_its_viewport_builds_every_row_and_stops():
     app.processEvents()
     assert lst.shown() == 6 and lst.shown() == lst.total()
     dlg.close()
+
+
+def test_idle_prefetch_builds_the_backlog_while_the_reader_waits():
+    """Once the viewport is filled, the rest of the list keeps building a few rows at
+    a time on the idle timer, so reaching the boundary later finds its rows already
+    made. The batch-on-demand behaviour above still holds for the first paint."""
+    import time
+    app, dlg, lst = _open(220)
+    assert lst.shown() < lst.total()
+    deadline = time.monotonic() + 8
+    while lst.shown() < lst.total() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert lst.shown() == lst.total(), f"idle prefetch stalled at {lst.shown()}"
+    dlg.close()
