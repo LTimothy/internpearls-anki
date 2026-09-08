@@ -1873,3 +1873,52 @@ def test_resolve_one_image_file_accepts_a_real_file_in_scratch(tmp_path):
     res = ai_dialog._resolve_one_image({"source": "file:ok.svg"}, str(tmp_path))
     assert res["state"] == "ok"
     assert res["bytes"] == b"<svg>ok</svg>"
+
+
+def test_attached_image_refuses_a_symlink_pointing_out_of_scratch(tmp_path):
+    """In thorough mode the assistant can write inside the scratch folder, so
+    an image it names there may be a symlink to anything on disk. Both
+    scratch-backed sources refuse one: the attached: branch used to open
+    whatever the name resolved to and hand the bytes straight to card media."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    secret = tmp_path / "id_rsa"
+    secret.write_bytes(b"PRIVATE KEY")
+    (scratch / "figure1.png").symlink_to(secret)
+    (scratch / "drawing.svg").symlink_to(secret)
+
+    attached = ai_dialog._resolve_one_image(
+        {"source": "attached:figure1.png"}, str(scratch))
+    assert attached["state"] == "error" and "symlink" in attached["error"]
+    saved = ai_dialog._resolve_one_image(
+        {"source": "file:drawing.svg"}, str(scratch))
+    assert saved["state"] == "error" and "symlink" in saved["error"]
+
+
+def test_attached_image_refuses_a_name_that_is_not_a_bare_basename(tmp_path):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (tmp_path / "id_rsa").write_bytes(b"PRIVATE KEY")
+    res = ai_dialog._resolve_one_image(
+        {"source": "attached:../id_rsa"}, str(scratch))
+    assert res["state"] == "error" and "invalid" in res["error"]
+
+
+def test_attached_image_reads_a_real_file_sitting_in_scratch(tmp_path):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (scratch / "photo.png").write_bytes(b"\x89PNG the real attachment")
+    res = ai_dialog._resolve_one_image(
+        {"source": "attached:photo.png"}, str(scratch))
+    assert res["state"] == "ok"
+    assert res["bytes"] == b"\x89PNG the real attachment"
+    assert res["name"] == "photo.png"
+
+
+def test_saved_image_must_still_be_an_svg(tmp_path):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (scratch / "drawing.png").write_bytes(b"\x89PNG")
+    res = ai_dialog._resolve_one_image(
+        {"source": "file:drawing.png"}, str(scratch))
+    assert res["state"] == "error" and ".svg" in res["error"]

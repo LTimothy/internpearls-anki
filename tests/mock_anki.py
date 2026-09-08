@@ -611,15 +611,30 @@ class MockCollection:
         if search == "":
             return list(self._notes.keys())
         if 'deck:"' in search:
-            deck = search.split('deck:"', 1)[1].split('"', 1)[0]
+            # A deck: term is a wildcard pattern in Anki, not a literal name:
+            # an unescaped "_" matches any single character and "*" any run,
+            # and a backslash escapes either (which is what
+            # collection.deck_search relies on). Matched the same way here, or
+            # a name the add-on forgot to escape would look exact in tests and
+            # behave as a wildcard against a real collection.
+            rest, pattern, esc = search.split('deck:"', 1)[1], "", False
+            for ch in rest:
+                if esc:
+                    pattern, esc = pattern + re.escape(ch), False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    break
+                else:
+                    pattern += {"_": ".", "*": ".*"}.get(ch, re.escape(ch))
+            deck_re = re.compile(f"{pattern}(::.*)?$")
             out = []
             for nid, n in self._notes.items():
                 if not n._card_ids:
                     continue
                 card = self._cards[n._card_ids[0]]
                 did = getattr(card, "odid", 0) or card.did
-                name = self.decks.name(did) or ""
-                if name == deck or name.startswith(deck + "::"):
+                if deck_re.match(self.decks.name(did) or ""):
                     out.append(nid)
             return out
         exclude = None
