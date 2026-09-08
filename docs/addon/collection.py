@@ -1384,6 +1384,18 @@ def _home_deck_name(col, note):
     return col.decks.name(did) or ""
 
 
+def deck_search(deck_name):
+    """`deck:"..."` for one deck name, with the characters Anki's search parser
+    would otherwise read as syntax escaped. An underscore matches any single
+    character there and an asterisk any run, so an unescaped `Step_2 Pearls`
+    also selects `Step 2 Pearls`, and a deck name may legally contain a quote,
+    which would end the term early and make the whole query unparseable."""
+    escaped = deck_name
+    for ch in ("\\", '"', "*", "_"):
+        escaped = escaped.replace(ch, "\\" + ch)
+    return f'deck:"{escaped}"'
+
+
 def note_rows(col, scope_tag=None, deck_name=None):
     """`[(note_id, text, deck_name, note_type)]` for the notes selected by `scope_tag`
     or by `deck_name` (mutually exclusive; neither given returns every note in the
@@ -1396,7 +1408,7 @@ def note_rows(col, scope_tag=None, deck_name=None):
     if scope_tag:
         search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'
     elif deck_name:
-        search = f'deck:"{deck_name}"'
+        search = deck_search(deck_name)
     else:
         search = ""
     nids = None if search == "" else set(col.find_notes(search))

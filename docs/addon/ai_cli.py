@@ -675,20 +675,19 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
     needles = _redact_needles(prompt, redact_texts)
     start = time.monotonic()
     try:
+        # utf-8 explicitly, not the locale codec text=True would otherwise
+        # pick: a Windows install decodes cp1252, and a prompt in this add-on's
+        # own house style carries characters (SpO2's subscript, the greater-or-
+        # equal sign) that codec cannot encode. errors="replace" covers the
+        # other direction, where one odd byte from the CLI would otherwise take
+        # down the reader thread mid-run.
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, cwd=cwd,
+                                encoding="utf-8", errors="replace",
                                 start_new_session=True)
     except OSError as e:
         raise GenerationError(f"could not start the assistant: {e}") from e
-    try:
-        # stdin is closed either way: a backend that takes the prompt in argv
-        # (agy) must not be left holding an open pipe it will never read.
-        if prompt_via_stdin:
-            proc.stdin.write(prompt)
-        proc.stdin.close()
-    except OSError:
-        pass
     result, tokens, rate_limits, error_msg = None, 0, None, None
     # codex can report usage on a non-terminal event (token_count) and carry
     # none at all on the terminal result of a short run; remember whatever
@@ -703,15 +702,47 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
     agy_deltas = []
 
     lines = []
+    err_lines = []
     done = threading.Event()
 
+    # Each of the child's three pipes gets its own thread, all started before
+    # the poll loop below. A prompt bigger than the pipe buffer blocks the
+    # write until the child drains it, and a child that fills its own stderr
+    # buffer stops writing stdout; doing either inline would wedge the run
+    # somewhere the cancel, idle and cap rules below cannot reach it.
     def _reader():
-        for line in proc.stdout:
-            lines.append(line)
-        done.set()
+        try:
+            for line in proc.stdout:
+                lines.append(line)
+        finally:
+            # Unconditional: a reader that died without this could never let
+            # the loop below see the run finish, and a complete reply would be
+            # thrown away as though the assistant had gone quiet.
+            done.set()
+
+    def _err_reader():
+        try:
+            for line in proc.stderr:
+                err_lines.append(line)
+        except Exception:
+            pass
+
+    def _writer():
+        # stdin is closed either way: a backend that takes the prompt in argv
+        # (agy) must not be left holding an open pipe it will never read.
+        try:
+            if prompt_via_stdin:
+                proc.stdin.write(prompt)
+            proc.stdin.close()
+        except Exception:
+            pass
 
     t = threading.Thread(target=_reader, daemon=True)
     t.start()
+    t_err = threading.Thread(target=_err_reader, daemon=True)
+    t_in = threading.Thread(target=_writer, daemon=True)
+    for helper in (t_err, t_in):
+        helper.start()
     seen = 0
     err_text = ""
     last_line_at = start
@@ -770,9 +801,10 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                     f"the assistant ran for over {format_duration(timeout)} "
                     f"and was stopped")
             time.sleep(0.05)
-        # stderr is read here, before the finally block below closes it, so
-        # a failure message survives the cleanup.
-        err_text = (proc.stderr.read() or "").strip()
+        # The stderr thread is drained here, before the finally block below
+        # closes the pipe, so a failure message survives the cleanup.
+        t_err.join(timeout=2)
+        err_text = "".join(err_lines).strip()
     except BaseException:
         # Cancel, timeout, a bad event shape, or a broken on_event callback
         # can all land here with the child still running. Kill it before the
@@ -792,6 +824,10 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
         except Exception:
             pass
         t.join(timeout=2)
+        # Before the pipes are closed below: closing stdin under the writer
+        # thread would raise inside it rather than here.
+        for helper in (t_err, t_in):
+            helper.join(timeout=2)
         if t.is_alive():
             warnings.warn("ai_cli: reader thread outlived cleanup; a pipe "
                           "may be leaking", ResourceWarning)
