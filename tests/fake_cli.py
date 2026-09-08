@@ -66,6 +66,9 @@
 #                   the Verify online phase), then an agent_response
 #                   text_delta, then the result: proves a delta after a
 #                   non-Working phase resets the chip to Working first
+#   noisy_stderr    fills stderr far past its pipe buffer BEFORE reading
+#                   stdin, then answers as "ok": a caller that drains neither
+#                   pipe alongside the run deadlocks against this
 #   agy_empty_reply  agy-style: two tool steps refused (ACTIVE then ERROR
 #                   "permission check failed"), no agent_response delta at
 #                   all, then a SUCCESS result with an empty response: the
@@ -86,6 +89,14 @@ if "--help" in sys.argv:
     print("--sandbox  --model  --effort  --disable-slash-commands  -p, --print"
          "  --restricted  --permission-mode")
     sys.exit(0)
+
+if mode == "noisy_stderr":
+    # Deliberately before the stdin read below, and far past the 64KB a pipe
+    # buffers: a caller reading stderr only after the child exits blocks this
+    # process here, and it never gets to the prompt.
+    sys.stderr.write("x" * 400_000)
+    sys.stderr.flush()
+    mode = "ok"
 
 prompt = sys.stdin.read()
 # "Study Deck - Basic" (not the bare "Basic" note type) so a flow test can carry

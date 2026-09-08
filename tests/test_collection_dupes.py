@@ -77,3 +77,25 @@ def test_note_rows_sql_path_matches_the_per_note_path(anki):
     assert fast == slow
     assert collection.note_rows(col, scope_tag="InternPearls") == [fast[0]]
     assert collection.note_rows(col, deck_name="Ankisthesia") == [fast[1]]
+
+
+def test_deck_search_escapes_anki_search_syntax():
+    """`_` and `*` are wildcards inside a `deck:` term and a deck name may legally
+    contain a quote, so all three (and the backslash that escapes them) are escaped."""
+    from internpearls.collection import deck_search
+    assert deck_search("Step_2 Pearls") == r'deck:"Step\_2 Pearls"'
+    assert deck_search("Cards *starred*") == r'deck:"Cards \*starred\*"'
+    assert deck_search('The "good" deck') == r'deck:"The \"good\" deck"'
+    assert deck_search("back\\slash") == r'deck:"back\\slash"'
+    assert deck_search("Intern Pearls::Intern Custom") == 'deck:"Intern Pearls::Intern Custom"'
+
+
+def test_note_rows_by_deck_does_not_wildcard_an_underscore(anki):
+    """An unescaped `Step_2 Pearls` also selects `Step 2 Pearls`, which would put
+    cards from a deck the learner never chose into a duplicate-scan pool."""
+    anki.col.add_note("g1", ["Front one", "Back one"], ["InternPearls"],
+                      deck="Step_2 Pearls")
+    anki.col.add_note("g2", ["Front two", "Back two"], ["InternPearls"],
+                      deck="Step 2 Pearls")
+    rows = note_rows(anki.col, deck_name="Step_2 Pearls")
+    assert [r[2] for r in rows] == ["Step_2 Pearls"]

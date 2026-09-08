@@ -1099,3 +1099,98 @@ def test_review_verdicts_render_in_light_and_dark(tmp_path):
             assert os.path.exists(png)
     finally:
         harness.apply_theme("light")
+
+
+def test_escape_during_image_resolution_goes_back_instead_of_blocking_the_cards(
+        monkeypatch, tmp_path):
+    """Cancelling the image phase used to poison the draft rather than abort
+    it: only the cancel flag was set, so the worker ran on marking every image
+    it hadn't reached as a failure, and those committed as real ones. The
+    cards carrying them all blocked on the review page, and image_data is
+    only ever populated once, so they could never resolve again."""
+    import time
+    import mock_anki
+    mock, _ = harness.bootstrap()
+    app = harness.app()
+    from internpearls import ai_dialog as ad
+    mock.mw.col = mock_anki.MockCollection()   # a fresh collection per test
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+
+    def _slow_fetch(url):
+        time.sleep(0.2)
+        return b"\x89PNG", "png"
+    monkeypatch.setattr(ad, "fetch_card_image", _slow_fetch)
+
+    cards = [{"note_type": "Study Deck - Basic",
+             "fields": {"Front": f"q{i}", "Back": "a"}, "tags": [],
+             "images": [{"source": f"url:https://example.com/{i}.png",
+                         "alt": "", "attribution": ""}],
+             "rationale": "r"} for i in range(4)]
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
+              cancel=None, timeout=None, model=None, effort=None, log_path=None,
+              redact_texts=(): {"text": json.dumps(cards), "tokens": 15,
+                                          "duration_s": 1.0})
+
+    dlg = ad._GenerateDialog()
+    dlg.source_box.setPlainText("Regional block landmarks and needle depths")
+    dlg._start_generation()
+    end = time.time() + 15
+    while dlg._worker.is_alive() and time.time() < end:
+        time.sleep(0.02)
+    dlg._timer.stop()
+    dlg._gen_done = True
+    dlg._finish_generation()          # the CLI phase hands off to the images
+    app.processEvents()
+    assert dlg.stack.currentWidget() is dlg.progress_page
+
+    from aqt.qt import QEvent, QKeyEvent, Qt
+    dlg.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape,
+                                Qt.KeyboardModifier.NoModifier))
+    assert dlg._img_cancel_flag.is_set()
+    end = time.time() + 15
+    while dlg._img_worker.is_alive() and time.time() < end:
+        time.sleep(0.02)
+    dlg._poll_image_worker()
+    app.processEvents()
+
+    assert dlg.stack.currentWidget() is dlg.input_page
+    assert dlg.session.image_data == {}
+    dlg.deleteLater()
+
+
+def test_connection_test_result_is_dropped_when_the_backend_changed(monkeypatch):
+    """The Setup link stays live during a test, so the preferred backend can
+    change before the CLI answers. The kind under test used to be re-read at
+    that point, which discarded the wrong one: the real kind stayed in
+    _testing_kinds and its Test link was a silent no-op for the rest of the
+    session, and the verdict was written under another backend's name."""
+    harness.bootstrap()
+    harness.app()
+    from internpearls import ai_dialog as ad
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    captured = {}
+    monkeypatch.setattr(ad, "run_connection_test_async",
+                        lambda *a, **kw: captured.update(kw))
+
+    dlg = ad._GenerateDialog()
+    dlg.session.backend, dlg.session.cli_path = "claude", "/bin/echo"
+    dlg._test_backend_connection()
+    assert dlg._testing_kinds == {"claude"}
+
+    dlg.session.backend = "codex"        # the user picked another one meanwhile
+    assert captured["is_live"]() is False
+    captured["on_done"]()
+    assert dlg._testing_kinds == set()   # claude is testable again
+    dlg.deleteLater()

@@ -20,7 +20,7 @@ from aqt.qt import (QComboBox, QDialog, QDialogButtonBox, QFrame,
                     QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic
-from .collection import note_rows, suspend_notes
+from .collection import deck_search, note_rows, suspend_notes
 from .config import (APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks,
                      set_dupes_threshold)
 from .dupes import find_candidates, pair_key
@@ -337,7 +337,7 @@ class _DuplicateScanDialog(QDialog):
         if scope_tag:
             search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'
         else:
-            search = f'deck:"{deck_name}"'
+            search = deck_search(deck_name)
         ids = set(mw.col.find_notes(search))
         return [r for r in self._all_rows() if r[0] in ids]
 
@@ -354,13 +354,18 @@ class _DuplicateScanDialog(QDialog):
     def _right_rows(self):
         index = self.right_combo.currentIndex()
         if index < len(self._right_fixed):
-            left_ids = {r[0] for r in self._raw_left_rows()}
             pool = (self._all_rows() if index == 0
                     else self._scoped_rows(deck_name=self._deck_root))
-            rows = [r for r in pool if r[0] not in left_ids]
         else:
-            deck = self._deck_names[index - len(self._right_fixed)]
-            rows = self._scoped_rows(deck_name=deck)
+            pool = self._scoped_rows(
+                deck_name=self._deck_names[index - len(self._right_fixed)])
+        # Whichever scope is on the right, notes already on the left come out
+        # of it: a note scored against itself is a perfect match on every
+        # token, so picking one deck on both sides would otherwise fill the
+        # list with self-pairs, and both Suspend links on such a row point at
+        # the same note.
+        left_ids = {r[0] for r in self._raw_left_rows()}
+        rows = [r for r in pool if r[0] not in left_ids]
         filtered = self._apply_exclusions(rows)
         self._right_dropped = len(rows) - len(filtered)
         return filtered
@@ -380,15 +385,31 @@ class _DuplicateScanDialog(QDialog):
         self._t0 = time.monotonic()
         threshold, min_shared = self._current_level()
         self._min_shared = min_shared
+        # Sensitivity and the exclude field stay live during a scan, so this
+        # can be called while an earlier one is still running. The sequence
+        # number retires that scan's results, and its timer is stopped here:
+        # left ticking it would stop the new scan's timer instead of its own
+        # and then rebuild the list ten times a second, wiping the verdicts
+        # and suspensions the reader had already recorded on these rows.
+        self._scan_seq = getattr(self, "_scan_seq", 0) + 1
+        seq = self._scan_seq
 
         def work():
             try:
-                self._scan_result = find_candidates(left_rows, right_rows,
-                                                    threshold=threshold, top=3,
-                                                    min_shared=min_shared)
+                found = find_candidates(left_rows, right_rows,
+                                        threshold=threshold, top=3,
+                                        min_shared=min_shared)
             except Exception as e:
-                self._scan_error = e
+                if seq == self._scan_seq:
+                    self._scan_error = e
+                return
+            if seq == self._scan_seq:
+                self._scan_result = found
 
+        old_timer = getattr(self, "_timer", None)
+        if old_timer is not None:
+            old_timer.stop()
+            old_timer.deleteLater()
         self._worker = threading.Thread(target=work, daemon=True)
         self._worker.start()
         self._timer = QTimer(self)
