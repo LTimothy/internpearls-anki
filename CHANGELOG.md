@@ -3,6 +3,30 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.66.2
+
+Eight fixes from a review of the whole add-on.
+
+In Scan for duplicates, changing Sensitivity or the Exclude decks field while a
+scan was still running used to leave the earlier scan polling: the list rebuilt
+about ten times a second and lost the judgements and suspensions already
+recorded on those rows. Choosing the same deck on both sides compared every card
+with itself at a perfect score, and both Suspend links on such a row pointed at
+the same card. A deck whose name contains an underscore or an asterisk is now
+searched for by name; Anki reads both as wildcards, so a deck called
+"Step_2 Pearls" was also pulling in cards from "Step 2 Pearls".
+
+In Generate cards with AI, cancelling while images are still resolving now takes
+you back where you were. It used to let the run finish and mark every image it
+had not reached as failed, which blocked those cards on the review page with no
+way to resolve them again. Test connection keeps working after switching
+assistants while a test is in flight. A run no longer stalls when the prompt is
+long or the assistant writes a lot of diagnostics, and a prompt carrying
+characters like a subscript two or a greater-or-equal sign now reaches the
+assistant on Windows instead of leaving the run stuck. An image the assistant
+names in its own scratch folder is read only if it really sits there, so a link
+pointing elsewhere on the computer cannot be pulled onto a card.
+
 ## v0.66.1
 
 The idle prefetch in Update my cards was too eager: it built rows at about 200 a
