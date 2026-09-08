@@ -219,6 +219,38 @@ def _url_host(url):
         return url
 
 
+def _scratch_image(scratch, name, kind, ext=None):
+    """Read one image the assistant named out of the scratch folder.
+
+    Both scratch-backed sources go through here, so neither can be hardened
+    without the other. `name` must be a bare basename inside scratch, not a
+    path elsewhere, and the basename check alone doesn't stop a symlink
+    dropped in scratch from pointing outside it: a symlink is refused
+    outright, and the resolved path still has to land under scratch. Returns
+    the same {"state": ...} shape _resolve_one_image hands its caller.
+    """
+    def bad(what):
+        return {"state": "error", "kind": kind, "error": f"{what}: {name!r}"}
+    if not name or os.path.basename(name) != name:
+        return bad(f"invalid {kind} image name")
+    if ext and not name.lower().endswith(ext):
+        return bad(f"{kind} image must be {ext}")
+    path = os.path.join(scratch, name)
+    if os.path.islink(path):
+        return bad(f"{kind} image must not be a symlink")
+    real_scratch = os.path.realpath(scratch)
+    real_path = os.path.realpath(path)
+    if real_path != real_scratch and not real_path.startswith(
+            real_scratch + os.sep):
+        return bad(f"{kind} image escapes scratch folder")
+    if not os.path.isfile(real_path):
+        return bad(f"{kind} image not found in scratch")
+    with open(real_path, "rb") as fh:
+        data = fh.read()
+    return {"state": "ok", "kind": kind, "bytes": data, "name": name,
+            "path": path}
+
+
 def _resolve_one_image(im, scratch):
     """Resolve one card image reference to bytes, off the UI thread. Never
     raises: every failure (a bad URL, a network error, a missing attachment)
@@ -244,44 +276,15 @@ def _resolve_one_image(im, scratch):
             return {"state": "ok", "kind": "url", "bytes": data, "ext": ext,
                     "host": _url_host(url)}
         if kind == "attached":
-            name = src.split(":", 1)[1]
-            path = os.path.join(scratch, name)
-            with open(path, "rb") as fh:
-                data = fh.read()
-            return {"state": "ok", "kind": "attached", "bytes": data,
-                    "name": name, "path": path}
+            # A file the user themselves attached, which the add-on wrote into
+            # scratch under this name.
+            return _scratch_image(scratch, src.split(":", 1)[1], kind)
         if kind == "file":
             # A file the assistant saved in the scratch folder while it had
-            # write tools (thorough mode only). name must be a bare basename
-            # inside scratch, not a path elsewhere, and must be an .svg file:
-            # nothing else is trusted to render safely on a card. The
-            # basename check alone doesn't stop a symlink dropped in scratch
-            # from pointing outside it, so also reject a symlink outright and
-            # require the resolved path to actually stay under scratch.
-            name = src.split(":", 1)[1]
-            if os.path.basename(name) != name or not name:
-                return {"state": "error", "kind": kind,
-                        "error": f"invalid file image name: {name!r}"}
-            if not name.lower().endswith(".svg"):
-                return {"state": "error", "kind": kind,
-                        "error": f"file image must be .svg: {name!r}"}
-            path = os.path.join(scratch, name)
-            if os.path.islink(path):
-                return {"state": "error", "kind": kind,
-                        "error": f"file image must not be a symlink: {name!r}"}
-            real_scratch = os.path.realpath(scratch)
-            real_path = os.path.realpath(path)
-            if real_path != real_scratch and not real_path.startswith(
-                    real_scratch + os.sep):
-                return {"state": "error", "kind": kind,
-                        "error": f"file image escapes scratch folder: {name!r}"}
-            if not os.path.isfile(real_path):
-                return {"state": "error", "kind": kind,
-                        "error": f"file image not found in scratch: {name!r}"}
-            with open(real_path, "rb") as fh:
-                data = fh.read()
-            return {"state": "ok", "kind": "file", "bytes": data,
-                    "name": name, "path": path}
+            # write tools (thorough mode only), which must be an .svg file:
+            # nothing else is trusted to render safely on a card.
+            return _scratch_image(scratch, src.split(":", 1)[1], kind,
+                                  ext=".svg")
         return {"state": "error", "kind": kind,
                 "error": f"unrecognized image source: {src!r}"}
     except Exception as e:
@@ -1350,19 +1353,26 @@ class _GenerateDialog(QDialog):
 
     def _test_backend_connection(self):
         s = self.session
-        if not s.backend or not s.cli_path or s.backend in self._testing_kinds:
+        kind, path = s.backend, s.cli_path
+        if not kind or not path or kind in self._testing_kinds:
             return
-        self._testing_kinds.add(s.backend)
+        self._testing_kinds.add(kind)
         self.backend_test_btn.setEnabled(False)
 
         def _done():
-            self._testing_kinds.discard(s.backend)
+            self._testing_kinds.discard(kind)
             self.backend_test_btn.setEnabled(True)
         self.backend_test_status.setText("Testing connection…")
-        # Same off-thread runner the AI Backends window uses; the wizard has one
-        # backend in play at a time, so it needs no liveness predicate.
-        run_connection_test_async(self, s.backend, s.cli_path,
-                                  self.backend_test_status.setText, on_done=_done)
+        # Same off-thread runner the AI Backends window uses. The Setup link
+        # stays live during a test, so the preferred backend can change while
+        # this one is still in flight: the kind under test is the one captured
+        # here, not whatever the session holds by the time the result lands,
+        # and a result for a backend no longer on show is dropped rather than
+        # written under another one's name.
+        run_connection_test_async(self, kind, path,
+                                  self.backend_test_status.setText,
+                                  on_done=_done,
+                                  is_live=lambda: self.session.backend == kind)
 
     def _attach(self):
         from aqt.qt import QFileDialog
@@ -1700,8 +1710,20 @@ class _GenerateDialog(QDialog):
                 time.sleep(0.05)
             self._img_timer.stop()
             self._img_done = True
+            if self._img_cancel_flag.is_set():
+                self._abandon_image_phase()
+                break
             self.session.image_data = self._img_results
             self._apply_review_state()
+
+    def _abandon_image_phase(self):
+        """Cancelling during image resolution goes back the way cancelling the
+        CLI phase does, rather than committing what the worker filled in. The
+        worker marks every image it didn't get to as a failure, and those read
+        on the review page as real ones: the cards carrying them all block, and
+        session.image_data is only ever populated once, so a draft that took
+        this path could never resolve those images again."""
+        self._return_to_input_or_review()
 
     def _cancel_generation(self):
         if hasattr(self, "_cancel_flag"):
@@ -1939,6 +1961,9 @@ class _GenerateDialog(QDialog):
             return
         self._img_timer.stop()
         self._img_done = True
+        if self._img_cancel_flag.is_set():
+            self._abandon_image_phase()
+            return
         self.session.image_data = self._img_results
         self._apply_review_state()
 

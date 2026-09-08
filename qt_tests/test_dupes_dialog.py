@@ -569,3 +569,55 @@ def test_sensitivity_and_exclusion_changes_reuse_the_cached_rows(monkeypatch):
     dlg._wait_for_scan()
     assert len(calls) == 2
     dlg.close()
+
+
+def test_the_same_deck_on_both_sides_never_pairs_a_note_with_itself():
+    """A deck named on the right used to skip the subtraction the fixed scopes
+    do, so choosing one deck on both sides scored every note against itself at
+    a perfect 1.00, and both Suspend links on such a row pointed at one note."""
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    deck = "Ankisthesia"
+    dlg.left_combo.setCurrentIndex(dlg._deck_names.index(deck) + 1)
+    dlg.right_combo.setCurrentIndex(
+        len(dlg._right_fixed) + dlg._deck_names.index(deck))
+    dlg._rescan()
+    dlg._wait_for_scan()
+    assert dlg._left_count == 3
+    assert dlg._right_count == 0
+    assert dlg._pairs == []
+    dlg.deleteLater()
+
+
+def test_a_rescan_retires_the_scan_it_replaces(monkeypatch):
+    """Sensitivity and the exclude field stay live while a scan runs, so a
+    second scan can start on top of a first. The first used to keep its timer,
+    which then stopped the live scan's timer instead of its own and rebuilt the
+    list ten times a second, wiping the verdicts and suspensions already
+    recorded on those rows."""
+    import threading
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    from internpearls import dupes_dialog
+    dlg = _build_dialog(mock)
+
+    release = threading.Event()
+    monkeypatch.setattr(dupes_dialog, "find_candidates",
+                        lambda *a, **k: (release.wait(15), "STALE")[1])
+    dlg._rescan()
+    stale_timer, stale_worker = dlg._timer, dlg._worker
+
+    monkeypatch.setattr(dupes_dialog, "find_candidates", lambda *a, **k: [])
+    dlg._rescan()
+    assert dlg._timer is not stale_timer
+    assert not stale_timer.isActive()
+
+    release.set()
+    stale_worker.join(timeout=15)
+    assert dlg._scan_result != "STALE"
+    dlg._wait_for_scan()
+    assert dlg._pairs == []
+    dlg.deleteLater()

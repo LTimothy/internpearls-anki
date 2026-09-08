@@ -1262,3 +1262,35 @@ def test_configured_default_reads_single_quoted_value_with_a_comment(tmp_path):
     cfg = tmp_path / "config.toml"
     cfg.write_text("model = 'gpt-5.1-codex' # the fast one\n")
     assert ai_cli.configured_default(str(cfg)) == ("gpt-5.1-codex", "")
+
+
+def test_a_chatty_child_and_an_oversized_prompt_both_keep_running():
+    """Neither pipe may be left unread while the run is in flight. A prompt
+    bigger than the stdin buffer blocks the write until the child drains it,
+    and a child that fills its own stderr buffer stops writing stdout: either
+    one alone wedges the run somewhere the cancel, idle and cap rules can no
+    longer reach, so it hangs until the cap rather than failing."""
+    prompt = "PROMPT " + "x" * 200_000
+    res = ai_cli._run_argv(FAKE + ["noisy_stderr"], "claude", prompt, timeout=20)
+    assert json.loads(res["text"])[0]["fields"]["Front"] == "q"
+
+
+def test_child_pipes_are_utf8_rather_than_the_locale_codec(monkeypatch, tmp_path):
+    """text=True alone decodes with the locale codec, which is cp1252 on a
+    Windows install: a prompt in this add-on's own house style carries
+    characters that codec cannot encode, and the write raises where nothing
+    can kill the child."""
+    import subprocess
+    seen = {}
+    real = subprocess.Popen
+    monkeypatch.setattr(ai_cli.subprocess, "Popen",
+                        lambda argv, **kw: (seen.update(kw), real(argv, **kw))[1])
+    record = tmp_path / "record.json"
+    monkeypatch.setenv("FAKE_CLI_RECORD", str(record))
+    prompt = "SpO₂ ≥ 94% and the µg/kg dose"
+    # The recorder answers in agy's shape whatever the mode says, so the run
+    # is read as agy here; what it proves is how the prompt arrived.
+    ai_cli._run_argv(FAKE + ["ok"], "agy", prompt)
+    assert seen["encoding"] == "utf-8"
+    assert seen["errors"] == "replace"
+    assert json.loads(record.read_text())["stdin"] == prompt
