@@ -94,9 +94,10 @@ def test_failed_replacement_does_not_retire_only_copy(anki, tmp_path, monkeypatc
     def fail(path):
         raise RuntimeError('import failed')
     monkeypatch.setattr(collection, '_import_apkg', fail)
-    _update(anki)
+    trees = _update(anki)
     old = anki.col.note_by_guid('old')
     assert anki.col.get_card(old.card_ids()[0]).queue != -1
+    assert 'replacements have not been imported' in str(trees)
 
 
 def test_singleton_backups_cannot_overwrite_each_other(anki, tmp_path, monkeypatch):

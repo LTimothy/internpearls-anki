@@ -21,7 +21,7 @@ from aqt import mw
 from aqt.utils import getFile
 
 from .ai_logic import is_generated_guid
-from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
+from .collection import (NoteTypeFieldsRequired, _apply_deck, _apply_template_changes, _capture_shipped,
                          _check_protected_conversion,
                          _ensure_notetypes, change_note_types, fork_note_identities,
                          missing_notetype_targets, notetype_changes,
@@ -678,7 +678,8 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                                   if missing else frozenset())
             in_place, as_new, wrote = _apply_deck(
                 src, aliases, her, declined,
-                expected_conflicting_rids=expected_conflicts)
+                expected_conflicting_rids=expected_conflicts,
+                allow_field_additions=not defer_template_changes)
             if conversion_undo is not None:
                 mw.col.merge_undo_entries(conversion_undo)
                 conversion_undo = None
@@ -725,7 +726,11 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 mw.col.merge_undo_entries(conversion_undo)
                 mw.col.undo()
                 her = _her_front_to_guid(cfg["scope_tag"])
-            results.append(f"✗ <b>{short}</b>: {e}")
+            if isinstance(e, NoteTypeFieldsRequired):
+                deferred.append(d["name"])
+                results.append(f"• <b>{short}</b>: {e}")
+            else:
+                results.append(f"✗ <b>{short}</b>: {e}")
     # Merged into whatever is on disk now, not written back wholesale: a caller's own
     # view of installed.json is taken before the fetch phase, which can be minutes old
     # by the time a multi-deck run gets here, and saving that as-is would revert any
@@ -2203,8 +2208,8 @@ def update_decks():
         mw.reset()
         _refresh_reconcile_action_label(len(waiting))
         if waiting:
-            results.append(f"• {plural(len(waiting), 'retired card')} left active: "
-                           "replacement cards are not available yet.")
+            results.append(f"• Kept {plural(len(waiting), 'older card')} in review "
+                           "because their replacements have not been imported.")
 
     result_lines = list(results)
     if n_archived:

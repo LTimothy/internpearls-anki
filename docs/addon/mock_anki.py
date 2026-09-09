@@ -300,7 +300,21 @@ class _Models:
                     n._resize(n.fields)
 
     def update_dict(self, model):
-        pass   # dicts are mutated in place
+        old = next(m for m in self._models if m['id'] == model['id'])
+        if old is not model:
+            names = [f['name'] for f in model['flds']]
+            col = getattr(self, '_col', None)
+            if col is not None:
+                if names != [f['name'] for f in old['flds']]:
+                    col.scm += 1
+                for note in col._notes.values():
+                    if note.model['id'] == model['id']:
+                        values = dict(zip(note.keys(), note.fields))
+                        note.model = model
+                        note._resize([values.get(name, '') for name in names])
+            self._models[self._models.index(old)] = model
+        for index, field in enumerate(model['flds']):
+            field['ord'] = index
 
 
 class _Decks:
