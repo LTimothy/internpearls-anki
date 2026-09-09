@@ -109,7 +109,8 @@ def build_index(rows):
                 doc_norm=doc_norm, doc_weight_sum=doc_weight_sum)
 
 
-def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2):
+def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
+                    ignored=()):
     """For each row on the left, the best `top` rows on the right at cosine
     similarity >= `threshold`, as `[(score, left_row, right_row, shares)]` sorted by
     score descending (ties broken by left row order, then right row order). `shares`
@@ -128,7 +129,8 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2):
     Builds one `Index` over `right_rows` and queries it once per left row, walking
     only the postings lists for tokens the query actually has (an inverted index),
     so the cost tracks how many terms actually overlap rather than the size of the
-    right pool.
+    right pool. Pair keys in `ignored` are removed before the per-left `top` limit,
+    so later candidates replenish ignored results instead of being hidden by them.
     """
     index = build_index(right_rows)
     out = []
@@ -138,8 +140,13 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2):
         tf = {}
         for tok in tokens:
             tf[tok] = tf.get(tok, 0) + 1
-        query = {tok: count * index.idf[tok] for tok, count in tf.items()
-                if tok in index.idf}
+        # A token absent from the searched pool has document frequency zero, not no
+        # weight. Keeping that defined IDF in the query vector makes unmatched query
+        # vocabulary count against both cosine similarity and the shorter-side
+        # evidence share instead of disappearing from both denominators.
+        unseen_idf = math.log((len(right_rows) + 1) / 0.5) + 1.0
+        query = {tok: count * index.idf.get(tok, unseen_idf)
+                 for tok, count in tf.items()}
         if not query:
             continue
         q_norm = math.sqrt(sum(w * w for w in query.values())) or 1.0
@@ -155,6 +162,8 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2):
                 doc_contrib.setdefault(ri, {})[tok] = dw
         ranked = []
         for ri, dot in scores.items():
+            if pair_key(left[0], right_rows[ri][0]) in ignored:
+                continue
             cosine = dot / (q_norm * index.doc_norm[ri])
             if cosine < threshold:
                 continue

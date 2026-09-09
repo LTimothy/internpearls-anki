@@ -10,13 +10,14 @@ import hashlib
 import os
 import re
 import tempfile
+import uuid
 
 from aqt import mw
 from aqt.utils import getFile, getSaveFile
 
 from . import ai_logic
 from .config import (DECK_BACKUPS_KEEP, INSTALLED, TARGET_FIELDS, _USER_FILES, _cfg,
-                     _load_json, _save_json)
+                     _collection_state_path, _load_json, _save_json)
 from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
                     changed_templates, declined_drop, empty_cards_dialog_rows,
                     fields_to_carry_over, manifest_decks_for, model_shape,
@@ -108,7 +109,8 @@ def _backup_collection():
 
 
 def _deck_backup_folder():
-    folder = os.path.join(_USER_FILES, "deck_backups")
+    state = _collection_state_path(os.path.join(_USER_FILES, "installed.json"))
+    folder = os.path.join(os.path.dirname(state), "deck_backups")
     os.makedirs(folder, exist_ok=True)
     return folder
 
@@ -204,12 +206,8 @@ def _backup_deck(deck_name, label=None):
     backup's path on success, None if it failed (e.g. the deck doesn't exist in this
     collection yet, which is normal on someone's very first sync).
 
-    `label` distinguishes two backups taken in the same second, which only happens when
-    one run touches decks under more than one root and each root needs its own file
-    (see _pre_sync_backup_or_confirm_skip). It is sanitized and hashed for the
-    filesystem first (see _backup_label), since a deck name is free text and routinely
-    holds a "/" or a ":". Left off, the filename is exactly what it has always been, so
-    the ordinary single-deck backup is unchanged.
+    Every backup carries its full deck identity (sanitized and hashed) and a unique
+    suffix. Even two manual runs in the same second cannot overwrite each other.
 
     Pruning keeps DECK_BACKUPS_KEEP per label rather than per folder. Ten unlabelled
     backups plus one run over three roots is fourteen files, and a folder-wide prune
@@ -218,8 +216,8 @@ def _backup_deck(deck_name, label=None):
     needed.
     """
     folder = _deck_backup_folder()
-    stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
-    label = _backup_label(label)
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S") + "-" + uuid.uuid4().hex[:12]
+    label = _backup_label(label or deck_name)
     suffix = f" {label}" if label else ""
     path = os.path.join(folder, f"{_BACKUP_PREFIX}{stamp}{suffix}.apkg")
     try:
@@ -229,6 +227,9 @@ def _backup_deck(deck_name, label=None):
     backups = sorted((f for f in os.listdir(folder)
                       if f.startswith(_BACKUP_PREFIX) and f.endswith(".apkg")
                       and _in_backup_group(_label_of_backup(f), label)),
+                     key=lambda f: (f == os.path.basename(path),
+                                    f[len(_BACKUP_PREFIX):len(_BACKUP_PREFIX) + 17],
+                                    os.stat(os.path.join(folder, f)).st_mtime_ns),
                      reverse=True)
     for old in backups[DECK_BACKUPS_KEEP:]:
         try:
@@ -283,8 +284,7 @@ def _pre_sync_backup_or_confirm_skip(deck_name, decks=None, scope_tag=None):
     targets = [d for d in _backup_targets(deck_name, decks)
                if mw.col.decks.id_for_name(d) is not None]
     if targets:
-        many = len(targets) > 1
-        saved = {d: _backup_deck(d, d.split("::")[-1] if many else None)
+        saved = {d: _backup_deck(d, d)
                  for d in targets}
         failed = [d for d, path in saved.items() if not path]
         if not failed:
@@ -330,8 +330,7 @@ def _pre_sync_backup_or_skip_silently(deck_name, decks=None):
                if mw.col.decks.id_for_name(d) is not None]
     if not targets:
         return True   # nothing to back up yet, e.g. this deck's very first sync
-    many = len(targets) > 1
-    saved = [_backup_deck(d, d.split("::")[-1] if many else None) for d in targets]
+    saved = [_backup_deck(d, d) for d in targets]
     return all(saved)
 
 
@@ -475,6 +474,9 @@ def _import_apkg(path, with_scheduling=False):
     # and AnkiWeb stays incremental. Trade-off: template/CSS changes in a rebuilt deck no
     # longer propagate to existing note types automatically — run Advanced → Fix note
     # types (or accept one full sync) if a card template itself needs updating.
+    # Both sync and backup restoration intentionally replace older source content.
+    # IF_NEWER silently skips notes edited locally (including our own conversion).
+    opts.update_notes = 1  # ImportAnkiPackageUpdateCondition.ALWAYS
     for attr, val in (("with_scheduling", with_scheduling), ("merge_notetypes", False)):
         try:
             setattr(opts, attr, val)
@@ -484,12 +486,27 @@ def _import_apkg(path, with_scheduling=False):
         ImportAnkiPackageRequest(package_path=path, options=opts))
 
 
+class _NoteIdentity(dict):
+    """Unambiguous front matches plus the complete scoped GUID membership."""
+    def __init__(self):
+        super().__init__()
+        self.guids = set()
+
+
 def _her_front_to_guid(scope_tag):
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
-    out = {}
+    out = _NoteIdentity()
+    ambiguous = set()
     for nid in mw.col.find_notes(search):
         note = mw.col.get_note(nid)
-        out.setdefault(note.fields[0], note.guid)
+        out.guids.add(note.guid)
+        front = note.fields[0]
+        if front in out and out[front] != note.guid:
+            ambiguous.add(front)
+        else:
+            out[front] = note.guid
+    for front in ambiguous:
+        out.pop(front, None)
     return out
 
 
@@ -925,6 +942,57 @@ def change_note_types(changes):
     return done
 
 
+def _check_protected_conversion(changes, protected):
+    """Refuse a conversion that would discard a nonempty protected field."""
+    protected = {str(name).casefold() for name in protected}
+    for change in changes:
+        old = mw.col.models.by_name(change["old"])
+        new = mw.col.models.by_name(change["new"])
+        if not old or not new:
+            continue
+        kept = set(_field_map(old, new))
+        nid = mw.col.db.scalar("select id from notes where guid = ?", change["guid"])
+        if not nid:
+            continue
+        note = mw.col.get_note(nid)
+        for i, field in enumerate(old["flds"]):
+            if (i not in kept and field["name"].casefold() in protected
+                    and note[field["name"]].strip()):
+                raise ValueError(f"Cannot convert this deck: protected field {field['name']} "
+                                 "has content but no destination in the new note type.")
+
+
+def fork_note_identities(changes):
+    """Make explicitly kept old-format notes local and free their source GUIDs.
+
+    Only the GUID changes. The note id, fields, cards, and scheduling remain attached
+    to the learner's existing note. The generated identity is deliberately outside
+    source matching, so the incoming note can keep its canonical GUID and receive
+    future source updates without repeatedly duplicating it.
+
+    Returns the old GUIDs that were replaced. The caller removes those identities from
+    its preservation snapshot: after the fork, that GUID belongs to the new source
+    note and must not inherit fields saved from the learner's local copy.
+    """
+    forked = set()
+    for change in changes:
+        old_guid = change["guid"]
+        if old_guid in forked:
+            continue
+        nid = mw.col.db.scalar("select id from notes where guid = ?", old_guid)
+        if not nid:
+            continue
+        note = mw.col.get_note(nid)
+        while True:
+            local_guid = ai_logic.generated_guid()
+            if not mw.col.db.scalar("select id from notes where guid = ?", local_guid):
+                break
+        note.guid = local_guid
+        mw.col.update_note(note)
+        forked.add(old_guid)
+    return forked
+
+
 def missing_notetype_targets(changes):
     """The note types `changes` would convert onto that this collection doesn't have.
 
@@ -968,7 +1036,8 @@ def notetype_changes(src, her, aliases, scope_tag, declined):
     return plan_notetype_changes(by_her, _her_note_types(scope_tag), TARGET_FIELDS)
 
 
-def _apply_deck(src, aliases, her, declined=frozenset()):
+def _apply_deck(src, aliases, her, declined=frozenset(),
+                expected_conflicting_rids=frozenset()):
     """Import one deck, returning (in_place, as_new, touched) where `touched` is the
     guids this import wrote in her collection: the remapped guid where a note matched
     one of hers, the .apkg's own otherwise. _capture_shipped needs exactly that set.
@@ -978,6 +1047,13 @@ def _apply_deck(src, aliases, her, declined=frozenset()):
     lands and a kept-back card's collection copy is never overwritten. Dropped notes
     are excluded from the counts and from `touched`."""
     remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
+    # Anki matches GUIDs globally, not just within our scope. Fail this deck before
+    # import rather than silently writing an excluded note that was not backed up.
+    scoped = set(getattr(her, "guids", her.values()))
+    for _rid, _fields, guid in apkg_notes(src):
+        if guid not in scoped and mw.col.db.scalar("select id from notes where guid = ?", guid):
+            raise ValueError("This package matches a note outside the managed scope; "
+                             "no cards from this deck were imported.")
     drop, touched, in_place, as_new = declined_drop(src, remap, her, declined,
                                                      in_place, as_new)
     # A unique name in the system temp directory, rather than a fixed one derived from
@@ -988,9 +1064,32 @@ def _apply_deck(src, aliases, her, declined=frozenset()):
     # leave a file in if the import raises before the cleanup below.
     fd, out = tempfile.mkstemp(suffix=".sync.apkg")
     os.close(fd)
-    write_personalized(src, remap, out, drop=drop)
     try:
-        _import_apkg(out)
+        write_personalized(src, remap, out, drop=drop)
+        result = _import_apkg(out)
+        log = getattr(result, "log", None)
+        if log is not None:
+            conflicts = list(getattr(log, "conflicting", ()))
+            conflict_rids = {
+                row.id.nid for row in conflicts
+                if getattr(getattr(row, "id", None), "nid", None) is not None
+            }
+            expected_conflicting_rids = set(expected_conflicting_rids)
+            expected_conflicts = (len(conflict_rids) == len(conflicts)
+                                  and conflict_rids <= expected_conflicting_rids)
+            rejected = sum(len(getattr(log, key, ())) for key in
+                           ("missing_notetype", "missing_deck", "empty_first_field"))
+            if conflicts and not expected_conflicts:
+                rejected += len(conflicts)
+            if rejected:
+                raise RuntimeError(f"Anki rejected {rejected} notes; this deck was not installed.")
+            # Use backend outcomes, not the preview's predictions, for preservation
+            # baselines. Unchanged duplicates must not capture personal text as shipped.
+            touched = set()
+            for row in list(log.new) + list(log.updated):
+                touched.add(mw.col.get_note(row.id.nid).guid)
+            as_new = len(log.new)
+            in_place = len(log.updated) + len(log.duplicate) + len(conflicts)
     finally:
         try:
             os.remove(out)

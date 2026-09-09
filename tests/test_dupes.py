@@ -100,20 +100,16 @@ def test_find_candidates_rejects_single_shared_word_in_tiny_pool():
     """A tiny comparison pool collapses IDF weights, so one rare shared word alone
     can carry a pair past a low threshold with nothing else in common. The evidence
     floor (at least two shared informative tokens) drops it regardless of score."""
-    left = [(1, "Phenylephrine bolus dose is one hundred micrograms intravenously "
-                "for hypotension", "Ours", "Basic")]
-    right = [(2, "The patient chart mentions phenylephrine allergy documented "
-                 "yesterday afternoon clearly", "Theirs", "Basic")]
+    left = [(1, "phenylephrine bolus", "Ours", "Basic")]
+    right = [(2, "phenylephrine allergy", "Theirs", "Basic")]
     assert find_candidates(left, right, threshold=0.1, top=3, min_shared=2) == []
 
 
 def test_find_candidates_min_shared_zero_disables_the_evidence_floor():
     """Loose sensitivity (min_shared=0) is the raw cosine threshold, same as before
     the evidence floor existed: a single shared rare word is enough."""
-    left = [(1, "Phenylephrine bolus dose is one hundred micrograms intravenously "
-                "for hypotension", "Ours", "Basic")]
-    right = [(2, "The patient chart mentions phenylephrine allergy documented "
-                 "yesterday afternoon clearly", "Theirs", "Basic")]
+    left = [(1, "phenylephrine bolus", "Ours", "Basic")]
+    right = [(2, "phenylephrine allergy", "Theirs", "Basic")]
     results = find_candidates(left, right, threshold=0.1, top=3, min_shared=0)
     assert results
     assert results[0][3] == ["phenylephrine"]
@@ -152,6 +148,19 @@ def test_find_candidates_accepts_pair_that_clears_both_evidence_checks():
     results = find_candidates(left, right, threshold=0.3, top=3, min_shared=2)
     assert results
     assert results[0][0] > 0.3
+
+
+def test_find_candidates_query_only_vocabulary_counts_in_small_and_large_pools():
+    """Words found only on the query side must still dilute a mostly-disjoint pair.
+    The result must not depend on whether the searched pool is tiny or substantial."""
+    left = [(1, "orchid amber banana cherry date fig grape", "Ours", "Basic")]
+    target = (2, "orchid amber orchid amber orchid amber orchid", "Theirs", "Basic")
+    filler = [(i + 3, f"unrelatedtoken{i} separateword{i}", "Theirs", "Basic")
+              for i in range(99)]
+
+    assert find_candidates(left, [target], threshold=0.6, min_shared=2) == []
+    assert find_candidates(left, [target, *filler], threshold=0.6,
+                           min_shared=2) == []
 
 
 def test_find_candidates_image_names_do_not_match_across_picture_only_fronts():

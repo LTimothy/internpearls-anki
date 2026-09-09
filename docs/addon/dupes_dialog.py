@@ -10,6 +10,7 @@ the same way: one CLI call on a background thread, a busy line with elapsed time
 than the AI wizard's own activity feed, since reusing that feed's session-driven state
 machine here would be a rewrite of this screen for a single optional button.
 """
+import shutil
 import tempfile
 import threading
 import time
@@ -20,7 +21,7 @@ from aqt.qt import (QComboBox, QDialog, QDialogButtonBox, QFrame,
                     QTimer, QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic
-from .collection import deck_search, note_rows, suspend_notes
+from .collection import deck_search, note_rows, suspend_notes, unsuspend_notes
 from .config import (APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks,
                      set_dupes_threshold)
 from .dupes import find_candidates, pair_key
@@ -33,21 +34,21 @@ from .widgets import CARET_GAP, CARET_W
 # its own band and score ("Similar 0.64"), so it can't be one of a fixed finite set of
 # labels the way every other screen's chips are. The column is still measured the way
 # widgets.chip_column_width measures one, just against this dialog's own fixed set of
-# exemplar labels rather than CHIPS: "Likely duplicate 0.00" is the widest a real band
-# label can render (the score is always two decimal places, see `_band_label`), so the
-# set never has to be recomputed against whatever pairs happen to be on screen.
+# exemplar labels rather than CHIPS: "Likely duplicate 0.00" is the widest one-line
+# label. Longer partial-suspension states wrap within that same column instead of
+# making every ordinary candidate row narrower.
 _CHIP_STYLE = ("border-radius: 3px; padding: 1px 6px; font-size: 11px; font-weight: 600;")
 _ROLES = {"candidate": "new", "duplicate": "accept", "overlaps": "updated",
          "suspended": "retired"}
-_CHIP_LABELS = ("Likely duplicate 0.00", "DUPLICATE", "OVERLAPS", "SUSPENDED")
+_CHIP_LABELS = ("Likely duplicate 0.00", "DUPLICATE", "OVERLAPS",
+                "OURS SUSPENDED", "THEIRS SUSPENDED", "BOTH SUSPENDED")
 
 # The Sensitivity combo: label, cosine threshold, and evidence floor (dupes.
 # find_candidates' `min_shared`) it sets. Order matches the combo's own item order, so
-# an index round-trips straight into this list. Strict is the full evidence gate (see
-# find_candidates); Normal asks for one shared token fewer; Loose is 0, which disables
-# the gate entirely and falls back to the raw cosine threshold, same as before this
-# gate existed.
-_SENSITIVITY_LEVELS = (("Strict", 0.6, 2), ("Normal", 0.5, 1), ("Loose", 0.4, 0))
+# an index round-trips straight into this list. Strict and Normal both apply the full
+# evidence gate (see find_candidates), with different cosine thresholds; Loose is 0,
+# which disables the gate entirely and falls back to the raw cosine threshold.
+_SENSITIVITY_LEVELS = (("Strict", 0.6, 2), ("Normal", 0.5, 2), ("Loose", 0.4, 0))
 
 # chip_column_width()'s answer, measured once: not computed at import, since these
 # modules load before a QApplication exists and font metrics before that point are
@@ -91,14 +92,31 @@ def _pill(text, kind):
     c = colors()
     role = _ROLES[kind]
     lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lbl.setWordWrap(True)
     lbl.setStyleSheet(f"background-color: {c[f'{role}_bg']}; color: {c[f'{role}_fg']};"
                       f" {_CHIP_STYLE}")
     return lbl
 
 
 def _chip_label(pair, min_shared=None):
-    if pair.get("suspended"):
-        return "SUSPENDED", "suspended"
+    suspended = pair.get("suspended") or set()
+    partly = pair.get("partly_suspended") or set()
+    if "left" in partly and "right" in suspended:
+        return "OURS PARTLY; THEIRS SUSPENDED", "suspended"
+    if "left" in suspended and "right" in partly:
+        return "OURS SUSPENDED; THEIRS PARTLY", "suspended"
+    if "left" in partly and "right" in partly:
+        return "BOTH PARTLY SUSPENDED", "suspended"
+    if "left" in partly:
+        return "OURS PARTLY SUSPENDED", "suspended"
+    if "right" in partly:
+        return "THEIRS PARTLY SUSPENDED", "suspended"
+    if "left" in suspended and "right" in suspended:
+        return "BOTH SUSPENDED", "suspended"
+    if "left" in suspended:
+        return "OURS SUSPENDED", "suspended"
+    if "right" in suspended:
+        return "THEIRS SUSPENDED", "suspended"
     judged = pair.get("judged")
     if judged == "same":
         return "DUPLICATE", "duplicate"
@@ -179,8 +197,12 @@ class _DuplicateScanDialog(QDialog):
         self._any_excluded = False
         self._left_dropped = 0
         self._right_dropped = 0
-        self._min_shared = 1
+        self._min_shared = 2
         self._last_scanned_exclude_text = None
+        self._judge_seq = 0
+        self._judge_worker = None
+        self._judge_timer = None
+        self._judge_cancel = None
 
         outer = QVBoxLayout(self)
         outer.addWidget(title_label("Scan for duplicates"))
@@ -188,14 +210,18 @@ class _DuplicateScanDialog(QDialog):
 
         scope_row = QHBoxLayout()
         self.left_combo = QComboBox()
+        self.left_combo.setAccessibleName("Cards to scan for duplicates")
         self.left_combo.addItem("Cards this add-on manages")
         for name in self._deck_names:
             self.left_combo.addItem(name)
         self.right_combo = QComboBox()
+        self.right_combo.setAccessibleName("Cards to compare for duplicates")
         for label in self._right_fixed:
             self.right_combo.addItem(label)
         for name in self._deck_names:
             self.right_combo.addItem(name)
+        self.left_combo.currentIndexChanged.connect(self._rescan)
+        self.right_combo.currentIndexChanged.connect(self._rescan)
         scope_row.addWidget(self.left_combo, 1)
         scope_row.addWidget(QLabel("vs."))
         scope_row.addWidget(self.right_combo, 1)
@@ -373,18 +399,26 @@ class _DuplicateScanDialog(QDialog):
     # ------------------------------------------------------------------ scan
     @_safe
     def _rescan(self, *_):
+        self._retire_judge()
         self._any_excluded = False
         self._last_scanned_exclude_text = self.exclude_edit.text()
         left_rows = self._left_rows()
         right_rows = self._right_rows()
         self._left_count, self._right_count = len(left_rows), len(right_rows)
         self._fold_open = False
+        # Scope, sensitivity, and exclusion changes invalidate the old rows at once.
+        # Leaving them mounted until the worker returns lets actions target a scope
+        # the controls no longer describe.
+        self._pairs = []
+        self._rebuild_list()
+        self.judge_btn.setEnabled(False)
         self.summary_label.setText("Scanning...")
         self._scan_result = None
         self._scan_error = None
         self._t0 = time.monotonic()
         threshold, min_shared = self._current_level()
         self._min_shared = min_shared
+        ignored = set(_cfg()["dupes_ignored"])
         # Sensitivity and the exclude field stay live during a scan, so this
         # can be called while an earlier one is still running. The sequence
         # number retires that scan's results, and its timer is stopped here:
@@ -398,7 +432,7 @@ class _DuplicateScanDialog(QDialog):
             try:
                 found = find_candidates(left_rows, right_rows,
                                         threshold=threshold, top=3,
-                                        min_shared=min_shared)
+                                        min_shared=min_shared, ignored=ignored)
             except Exception as e:
                 if seq == self._scan_seq:
                     self._scan_error = e
@@ -430,13 +464,33 @@ class _DuplicateScanDialog(QDialog):
             return
         ignored = set(_cfg()["dupes_ignored"])
         self._pairs = []
+        suspension_cache = {}
+
+        def suspension_count(nid):
+            if nid not in suspension_cache:
+                note = mw.col.get_note(nid)
+                card_ids = note.card_ids()
+                suspension_cache[nid] = (
+                    sum(mw.col.get_card(cid).queue == -1 for cid in card_ids),
+                    len(card_ids))
+            return suspension_cache[nid]
+
         for score, left, right, shares in self._scan_result:
             key = pair_key(left[0], right[0])
             if key in ignored:
                 continue
+            counts = {side: suspension_count(row[0])
+                      for side, row in (("left", left), ("right", right))}
+            suspended = {side for side, (count, total) in counts.items()
+                         if total and count == total}
+            partly_suspended = {side for side, (count, total) in counts.items()
+                                if 0 < count < total}
             self._pairs.append({"score": score, "left": left, "right": right,
                                "key": key, "judged": None, "note": "",
-                               "suspended": set(), "shares": shares})
+                               "suspended": suspended,
+                               "partly_suspended": partly_suspended,
+                               "suspension_counts": counts, "shares": shares})
+        self.judge_btn.setEnabled(bool(self._judge_backend and self._pairs))
         self._rebuild_list()
 
     def _wait_for_scan(self, timeout=15):
@@ -561,6 +615,10 @@ class _DuplicateScanDialog(QDialog):
         caret = QPushButton("▸")
         caret.setFlat(True)
         caret.setFixedWidth(CARET_W)
+        pair_name = f"duplicate pair: ours {left_front}; theirs {right_front}"
+        expand_name = f"Expand {pair_name}"
+        collapse_name = f"Collapse {pair_name}"
+        caret.setAccessibleName(expand_name)
         hl.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
 
         label, role = _chip_label(pair, self._min_shared)
@@ -605,14 +663,37 @@ class _DuplicateScanDialog(QDialog):
         tl1 = QHBoxLayout(top_links)
         tl1.setContentsMargins(0, 0, 0, 0)
         tl1.setSpacing(CARET_GAP)
-        tl1.addWidget(link_button("Suspend ours", lambda: self._suspend(pair, "left")))
-        tl1.addWidget(link_button("Suspend theirs", lambda: self._suspend(pair, "right")))
+        partly_suspended = pair.get("partly_suspended") or set()
+        left_suspended = "left" in pair["suspended"] or "left" in partly_suspended
+        right_suspended = "right" in pair["suspended"] or "right" in partly_suspended
+        left_text = "Unsuspend ours" if left_suspended else "Suspend ours"
+        right_text = "Unsuspend theirs" if right_suspended else "Suspend theirs"
+        left_action = self._unsuspend if left_suspended else self._suspend
+        right_action = self._unsuspend if right_suspended else self._suspend
+
+        def suspension_button(side, text, action, possessive):
+            count, total = pair.get("suspension_counts", {}).get(side, (0, 1))
+            if action == self._unsuspend:
+                description = (f"Unsuspend all {possessive} cards — "
+                               f"{count} of {total} currently suspended")
+            else:
+                description = f"Suspend all {total} cards on {possessive} note"
+            button = link_button(text, lambda: action(pair, side),
+                                 tooltip_text=description)
+            button.setAccessibleName(description)
+            return button
+
+        tl1.addWidget(suspension_button(
+            "left", left_text, left_action, "our"))
+        tl1.addWidget(suspension_button(
+            "right", right_text, right_action, "their"))
         tv.addWidget(top_links)
         bottom_links = QWidget()
         tl2 = QHBoxLayout(bottom_links)
         tl2.setContentsMargins(0, 0, 0, 0)
         tl2.setSpacing(CARET_GAP)
-        tl2.addWidget(link_button("Keep both", lambda: self._keep_both(caret, body)))
+        tl2.addWidget(link_button(
+            "Keep both", lambda: self._keep_both(caret, body, expand_name)))
         tl2.addWidget(link_button("Ignore pair", lambda: self._ignore(pair)))
         tv.addWidget(bottom_links)
         hl.addWidget(trailing, 0, Qt.AlignmentFlag.AlignTop)
@@ -635,18 +716,32 @@ class _DuplicateScanDialog(QDialog):
             expanded = not body.isVisible()
             body.setVisible(expanded)
             caret.setText("▾" if expanded else "▸")
+            caret.setAccessibleName(collapse_name if expanded else expand_name)
         caret.clicked.connect(_toggle)
 
         return row
 
-    def _keep_both(self, caret, body):
+    def _keep_both(self, caret, body, accessible_name):
         body.setVisible(False)
         caret.setText("▸")
+        caret.setAccessibleName(accessible_name)
 
     def _suspend(self, pair, side):
         row = pair["left"] if side == "left" else pair["right"]
         suspend_notes(mw.col, [row[0]])
+        total = len(mw.col.get_note(row[0]).card_ids())
         pair["suspended"].add(side)
+        pair.setdefault("partly_suspended", set()).discard(side)
+        pair.setdefault("suspension_counts", {})[side] = (total, total)
+        self._rebuild_list()
+
+    def _unsuspend(self, pair, side):
+        row = pair["left"] if side == "left" else pair["right"]
+        unsuspend_notes(mw.col, [row[0]])
+        pair["suspended"].discard(side)
+        pair.setdefault("partly_suspended", set()).discard(side)
+        total = len(mw.col.get_note(row[0]).card_ids())
+        pair.setdefault("suspension_counts", {})[side] = (0, total)
         self._rebuild_list()
 
     def _ignore(self, pair):
@@ -668,6 +763,9 @@ class _DuplicateScanDialog(QDialog):
     def _judge_with_ai(self, *_):
         if not self._judge_backend or not self._pairs:
             return
+        self._cancel_judge()
+        self._judge_seq += 1
+        seq = self._judge_seq
         cfg = _cfg()
         kind = self._judge_backend
         path = ai_cli.detect_backends(cfg)["backends"][kind]["path"]
@@ -685,33 +783,80 @@ class _DuplicateScanDialog(QDialog):
         self._judge_result = None
         self._judge_error = None
         self._judge_t0 = time.monotonic()
+        cancel = threading.Event()
+        self._judge_cancel = cancel
 
         def work():
+            result = None
+            error = None
             try:
-                self._judge_result = ai_cli.run_generation(
+                result = ai_cli.run_generation(
                     kind, path, prompt, "thorough", scratch,
+                    cancel=cancel.is_set,
                     model=cfg["ai_model"].get(kind, ""),
                     effort=cfg["ai_effort"].get(kind, ""))
             except Exception as e:
-                self._judge_error = e
+                error = e
+            finally:
+                shutil.rmtree(scratch, ignore_errors=True)
+            if seq == self._judge_seq:
+                self._judge_result = result
+                self._judge_error = error
 
-        self._judge_worker = threading.Thread(target=work, daemon=True)
-        self._judge_worker.start()
+        worker = threading.Thread(target=work, daemon=True)
+        self._judge_worker = worker
+        worker.start()
         self.judge_btn.setEnabled(False)
         self.summary_label.setText("Judging with AI...")
-        self._judge_timer = QTimer(self)
-        self._judge_timer.timeout.connect(self._poll_judge)
-        self._judge_timer.start(200)
+        timer = QTimer(self)
+        self._judge_timer = timer
+        timer.timeout.connect(lambda: self._poll_judge(seq, worker, timer))
+        timer.start(200)
 
-    def _poll_judge(self):
-        if self._judge_worker.is_alive():
+    def _cancel_judge(self):
+        cancel = getattr(self, "_judge_cancel", None)
+        worker = getattr(self, "_judge_worker", None)
+        if cancel is not None and worker is not None and worker.is_alive():
+            cancel.set()
+        timer = getattr(self, "_judge_timer", None)
+        if timer is not None:
+            timer.stop()
+
+    def _retire_judge(self):
+        self._judge_seq += 1
+        self._cancel_judge()
+        self._judge_result = None
+        self._judge_error = None
+
+    def accept(self):
+        self._retire_judge()
+        super().accept()
+
+    def reject(self):
+        self._retire_judge()
+        super().reject()
+
+    def closeEvent(self, event):
+        self._retire_judge()
+        super().closeEvent(event)
+
+    def _poll_judge(self, seq=None, worker=None, timer=None):
+        seq = self._judge_seq if seq is None else seq
+        worker = self._judge_worker if worker is None else worker
+        timer = self._judge_timer if timer is None else timer
+        if seq != self._judge_seq:
+            timer.stop()
+            return
+        if worker.is_alive():
             elapsed = int(time.monotonic() - self._judge_t0)
             self.summary_label.setText(f"Judging with AI... {elapsed}s elapsed")
             return
-        self._judge_timer.stop()
-        self._finish_judge()
+        timer.stop()
+        self._finish_judge(seq)
 
-    def _finish_judge(self):
+    def _finish_judge(self, seq=None):
+        if seq is not None and seq != self._judge_seq:
+            return
         self.judge_btn.setEnabled(bool(self._judge_backend))
         if self._judge_error or not self._judge_result:
             self._rebuild_list()
@@ -728,11 +873,14 @@ class _DuplicateScanDialog(QDialog):
     def _wait_for_judge(self, timeout=15):
         """Test helper: run the judging call to completion synchronously, without a
         live QTimer, the same shape `_wait_for_scan` uses."""
+        seq = self._judge_seq
+        worker = self._judge_worker
+        timer = self._judge_timer
         end = time.time() + timeout
-        while self._judge_worker.is_alive() and time.time() < end:
+        while worker.is_alive() and time.time() < end:
             time.sleep(0.02)
-        self._judge_timer.stop()
-        self._finish_judge()
+        timer.stop()
+        self._finish_judge(seq)
 
 
 @_safe

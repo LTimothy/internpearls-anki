@@ -152,6 +152,15 @@ def _lines_height(edit, lines):
               + edit.frameWidth() * 2) + 4
 
 
+def _field_label(text, editor, top_margin=6):
+    """A visible field label plus the native accessibility association Qt uses."""
+    label = section_label(text, top_margin=top_margin)
+    if hasattr(label, "setBuddy"):
+        label.setBuddy(editor)
+    editor.setAccessibleName(text)
+    return label
+
+
 class _EditCardDialog(QDialog):
     """Edit card: every field on one card, plus its tags, in one dialog rather than
     the old prompt-per-field chain (one modal per field, no way to touch tags at all,
@@ -161,23 +170,38 @@ class _EditCardDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Edit card")
         lay = QVBoxLayout(self)
-        lay.addWidget(muted_label(html.escape(card["note_type"])))
+
+        content = QWidget()
+        content_lay = QVBoxLayout(content)
+        content_lay.setContentsMargins(0, 0, 0, 0)
+        content_lay.addWidget(muted_label(html.escape(card["note_type"])))
         self._field_edits = {}
+        self._field_labels = {}
         for name in FIELD_MAP[card["note_type"]]:
-            lay.addWidget(section_label(name, top_margin=6))
             edit = QPlainTextEdit(card["fields"].get(name, ""))
             edit.setFixedHeight(_lines_height(
                 edit, _EDIT_FIELD_LINES.get(name, _EDIT_FIELD_LINES_DEFAULT)))
-            lay.addWidget(edit)
+            label = _field_label(name, edit)
+            content_lay.addWidget(label)
+            content_lay.addWidget(edit)
             self._field_edits[name] = edit
-        lay.addWidget(section_label("Tags", top_margin=6))
+            self._field_labels[name] = label
         self.tags_edit = QLineEdit(", ".join(card.get("tags") or []))
-        lay.addWidget(self.tags_edit)
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
-                              | QDialogButtonBox.StandardButton.Cancel)
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        self.tags_label = _field_label("Tags", self.tags_edit)
+        content_lay.addWidget(self.tags_label)
+        content_lay.addWidget(self.tags_edit)
+        content_lay.addStretch()
+
+        self.edit_scroll = QScrollArea()
+        self.edit_scroll.setWidgetResizable(True)
+        self.edit_scroll.setWidget(content)
+        lay.addWidget(self.edit_scroll, 1)
+
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                           | QDialogButtonBox.StandardButton.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        lay.addWidget(self.button_box)
         self.setFixedWidth(640)
 
     def fields(self):
@@ -906,8 +930,12 @@ class _GenerateDialog(QDialog):
         """
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.addWidget(title_label("Generate cards"))
-        lay.addWidget(_wrapped_hint(
+
+        content = QWidget()
+        content_lay = QVBoxLayout(content)
+        content_lay.setContentsMargins(0, 0, 0, 0)
+        content_lay.addWidget(title_label("Generate cards"))
+        content_lay.addWidget(_wrapped_hint(
             "Paste what you are studying. The assistant reads it under the deck's "
             "own authoring rules, decides how many cards it deserves, and shows "
             "you every draft before anything is added."))
@@ -916,32 +944,49 @@ class _GenerateDialog(QDialog):
         self.source_box.setPlaceholderText(
             "Paste lecture notes, an article excerpt, or a topic outline")
         self.source_box.textChanged.connect(self._source_changed)
-        lay.addWidget(self.source_box, 1)
+        self.source_label = _field_label("Source material", self.source_box)
+        content_lay.addWidget(self.source_label)
+        content_lay.addWidget(self.source_box, 1)
 
-        # Attach, what is attached, and how much material there is: one line,
-        # with the character count pushed to the right edge, since it is the
-        # number a reader compares against the soft limit rather than reads
-        # inline with the filenames.
+        # Attachment actions and source length stay on one line. The removable
+        # file rows sit directly underneath so a long filename can wrap without
+        # widening the dialog or hiding the action that excludes it from a run.
         self.attach_btn = QPushButton("Attach images or PDFs")
         self.attach_btn.clicked.connect(lambda: self._guard(self._attach))
-        self.attach_label = hint_label("No files attached")
+        self.attach_cancel_btn = link_button(
+            "Cancel attaching", on_click=lambda: self._guard(self._cancel_attachments))
+        self.attach_cancel_btn.setAccessibleName("Cancel attachment extraction")
+        self.attach_cancel_btn.setVisible(False)
+        self.attach_status = hint_label("")
+        self.attach_status.setVisible(False)
         self.char_label = hint_label("0 characters")
         attach_row = QHBoxLayout()
         attach_row.addWidget(self.attach_btn)
-        attach_row.addWidget(self.attach_label)
+        attach_row.addWidget(self.attach_cancel_btn)
+        attach_row.addWidget(self.attach_status)
         attach_row.addStretch()
         attach_row.addWidget(self.char_label)
-        lay.addLayout(attach_row)
+        content_lay.addLayout(attach_row)
 
-        lay.addWidget(section_rule())
+        self.attachments_box = QWidget()
+        self.attachments_lay = QVBoxLayout(self.attachments_box)
+        self.attachments_lay.setContentsMargins(0, 0, 0, 0)
+        self.attachments_lay.setSpacing(2)
+        self._attachment_remove_buttons = {}
+        self._refresh_attachment_list()
+        content_lay.addWidget(self.attachments_box)
+
+        content_lay.addWidget(section_rule())
         # One line, not a box: a focus note is a phrase, and a multi-line box
         # invited a second copy of the source material into it.
         self.instructions_box = QLineEdit()
         self.instructions_box.setPlaceholderText(
             'Focus (optional), e.g. "emphasize dosing"')
-        lay.addWidget(self.instructions_box)
+        self.focus_label = _field_label("Focus (optional)", self.instructions_box)
+        content_lay.addWidget(self.focus_label)
+        content_lay.addWidget(self.instructions_box)
 
-        lay.addWidget(section_rule())
+        content_lay.addWidget(section_rule())
         self.backend_row = _InfoRow(
             "notsetup", "<b>Backend</b>", "",
             links=(("Test", lambda: self._guard(self._test_backend_connection)),
@@ -953,16 +998,17 @@ class _GenerateDialog(QDialog):
         # poll that knows nothing about the rest of the row.
         self.backend_test_status = _wrapped_hint("Not tested yet")
         self.backend_row.body_lay.addWidget(self.backend_test_status)
-        lay.addWidget(self.backend_row)
+        content_lay.addWidget(self.backend_row)
 
         self.depth_row = _InfoRow(
             "auto", "<b>Cards and depth</b>", "",
             links=(("Advanced", lambda: self._guard(self._toggle_advanced)),))
         self.advanced_link = self.depth_row.links["Advanced"]
-        lay.addWidget(self.depth_row)
+        self.advanced_link.setAccessibleName("Show advanced generation options")
+        content_lay.addWidget(self.depth_row)
 
         self.deck_row = _InfoRow("deck", "<b>Deck</b>", "")
-        lay.addWidget(self.deck_row)
+        content_lay.addWidget(self.deck_row)
 
         # The trailing link's own initial label already matches whether
         # there's anything to edit yet; _refresh_skills_row keeps it in sync
@@ -974,18 +1020,25 @@ class _GenerateDialog(QDialog):
                    (rules_label, lambda: self._guard(self._edit_user_skill))))
         self.skills_link = self.skills_row.links["View"]
         self.rules_link = self.skills_row.links[rules_label]
-        lay.addWidget(self.skills_row)
+        content_lay.addWidget(self.skills_row)
 
         self.advanced_rule = section_rule()
-        lay.addWidget(self.advanced_rule)
-        lay.addWidget(self._build_advanced())
+        content_lay.addWidget(self.advanced_rule)
+        content_lay.addWidget(self._build_advanced())
         # Collapsed by default, same as the panel it introduces: two rules
         # stacking at the bottom (this one, then the one above the button box)
         # is only right while there is something of Advanced's own between
         # them to separate.
         self.advanced_rule.setVisible(False)
 
-        lay.addStretch()
+        content_lay.addStretch()
+        self.input_scroll = QScrollArea()
+        self.input_scroll.setWidgetResizable(True)
+        self.input_scroll.setWidget(content)
+        lay.addWidget(self.input_scroll, 1)
+
+        # The primary actions never enter the scroll area: even at enlarged
+        # fonts and short screen heights, Cancel and Generate remain reachable.
         lay.addWidget(section_rule())
         bb = QDialogButtonBox()
         bb.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
@@ -1004,7 +1057,7 @@ class _GenerateDialog(QDialog):
         self._refresh_skills_row()
         return page
 
-    def _advanced_label(self, text, col_w):
+    def _advanced_label(self, text, col_w, buddy=None):
         """A label in the Advanced grid's own column, sized so the widest label
         in this grid ("Exact number of cards") fits without overflowing into
         the field beside it, the way ai_setup._SettingsPanel's own fixed
@@ -1014,6 +1067,10 @@ class _GenerateDialog(QDialog):
         lbl = QLabel(text)
         lbl.setMinimumWidth(col_w)
         lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        if buddy is not None:
+            if hasattr(lbl, "setBuddy"):
+                lbl.setBuddy(buddy)
+            buddy.setAccessibleName(text)
         return lbl
 
     def _build_advanced(self):
@@ -1063,7 +1120,9 @@ class _GenerateDialog(QDialog):
         count_lay.addWidget(self.count_spin)
         count_lay.addWidget(hint_label(
             f"blank lets the assistant decide, up to {ai_logic.AUTO_COUNT_CEILING}"), 1)
-        grid.addWidget(self._advanced_label(_LABEL_COUNT, col_w), 0, 0)
+        self.count_label = self._advanced_label(
+            _LABEL_COUNT, col_w, self.count_spin)
+        grid.addWidget(self.count_label, 0, 0)
         grid.addWidget(count_box, 0, 1)
 
         # The radio carries only the short, stable name; the per-backend
@@ -1073,6 +1132,8 @@ class _GenerateDialog(QDialog):
         # dialog's minimum width on every page.
         self.thorough_radio = QRadioButton("Thorough")
         self.quick_radio = QRadioButton("Quick draft")
+        self.thorough_radio.setAccessibleName("Depth: Thorough")
+        self.quick_radio.setAccessibleName("Depth: Quick draft")
         for radio in (self.thorough_radio, self.quick_radio):
             radio.setStyleSheet("font-weight: 600;")
         depth = cfg["ai_default_depth"]
@@ -1091,7 +1152,9 @@ class _GenerateDialog(QDialog):
         depth_lay.addWidget(self.thorough_radio)
         depth_lay.addWidget(self.quick_radio)
         depth_lay.addStretch()
-        grid.addWidget(self._advanced_label(_LABEL_DEPTH, col_w), 1, 0)
+        self.depth_label = self._advanced_label(
+            _LABEL_DEPTH, col_w, self.thorough_radio)
+        grid.addWidget(self.depth_label, 1, 0)
         grid.addWidget(depth_box, 1, 1)
 
         self.thorough_hint = _wrapped_hint("")
@@ -1141,7 +1204,9 @@ class _GenerateDialog(QDialog):
             box.toggled.connect(lambda _c: self._guard(self._refresh_deck_row))
             self.type_boxes[name] = box
             types_lay.addWidget(box)
-        grid.addWidget(self._advanced_label(_LABEL_TYPES, col_w), 3, 0,
+        self.types_label = self._advanced_label(
+            _LABEL_TYPES, col_w, next(iter(self.type_boxes.values())))
+        grid.addWidget(self.types_label, 3, 0,
                       Qt.AlignmentFlag.AlignTop)
         grid.addWidget(types_box, 3, 1)
 
@@ -1151,7 +1216,9 @@ class _GenerateDialog(QDialog):
         self.deck_combo.currentTextChanged.connect(
             lambda _t: self._guard(self._refresh_deck_row))
         deck_slot = field_slot(self.deck_combo)
-        grid.addWidget(self._advanced_label(_LABEL_DECK, col_w), 4, 0)
+        self.deck_label = self._advanced_label(
+            _LABEL_DECK, col_w, self.deck_combo)
+        grid.addWidget(self.deck_label, 4, 0)
         grid.addWidget(deck_slot, 4, 1)
 
         # Line every field's drawn left edge up on one x, the way ai_setup's own
@@ -1183,6 +1250,9 @@ class _GenerateDialog(QDialog):
         self.advanced_panel.setVisible(shown)
         self.advanced_rule.setVisible(shown)
         self.advanced_link.setText("Hide advanced" if shown else "Advanced")
+        self.advanced_link.setAccessibleName(
+            "Hide advanced generation options" if shown
+            else "Show advanced generation options")
 
     def _depth_chosen(self):
         """A depth the learner picked outranks the one the material implies, for
@@ -1299,15 +1369,130 @@ class _GenerateDialog(QDialog):
             f"{', '.join(parts)}. Sent in that order on every run.")
         self.rules_link.setText("Edit my rules" if has_rules else "Add my rules")
 
+    def _attachment_in_progress(self):
+        return (hasattr(self, "_attach_worker")
+                and not getattr(self, "_attach_done", True))
+
+    def _refresh_generate_enabled(self):
+        has_material = bool(self.source_box.toPlainText().strip()
+                            or self.session.attachments)
+        self.generate_btn.setEnabled(
+            has_material and bool(self.session.backend)
+            and not self._attachment_in_progress())
+
+    def _refresh_attachment_list(self):
+        """Render current session attachments as individually removable rows."""
+        while self.attachments_lay.count():
+            item = self.attachments_lay.takeAt(0)
+            widget = item.widget() if item else None
+            if widget is not None:
+                widget.setVisible(False)
+                widget.setParent(None)
+                widget.deleteLater()
+        self._attachment_remove_buttons = {}
+        if not self.session.attachments:
+            self.attach_label = hint_label("No files attached")
+            self.attachments_lay.addWidget(self.attach_label)
+            return
+        for path, _meta in self.session.attachments:
+            name = os.path.basename(path)
+            row = QWidget()
+            row_lay = QHBoxLayout(row)
+            row_lay.setContentsMargins(0, 0, 0, 0)
+            label = hint_label(html.escape(name))
+            label.setAccessibleName(f"Attached file: {name}")
+            remove = link_button(
+                "Remove", on_click=lambda _checked=False, p=path: self._guard(
+                    self._remove_attachment, p))
+            remove.setAccessibleName(f"Remove attachment: {name}")
+            row_lay.addWidget(label, 1)
+            row_lay.addWidget(remove)
+            self.attachments_lay.addWidget(row)
+            self._attachment_remove_buttons[path] = remove
+
+    def _remove_attachment(self, path):
+        for i, (attached_path, meta) in enumerate(self.session.attachments):
+            if attached_path == path:
+                if not self._delete_attachment_outputs(meta):
+                    return
+                del self.session.attachments[i]
+                break
+        self._refresh_attachment_list()
+        self._refresh_generate_enabled()
+        self._refresh_depth_row()
+
+    def _delete_attachment_outputs(self, meta):
+        """Delete only this attachment's files from the generation scratch."""
+        scratch = self.session.scratch
+        if not scratch:
+            return True
+        removed = True
+        scratch_real = os.path.realpath(scratch)
+        for name in meta.get("images", []):
+            if os.path.basename(name) != name:
+                return False
+            path = os.path.join(scratch, name)
+            if os.path.dirname(os.path.realpath(path)) != scratch_real:
+                _warn(f"Could not remove attachment {name}: its path changed. Close the wizard to discard the session.")
+                return False
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                removed = False
+                _warn(f"Could not remove attachment {name}: {e}. It is still attached; retry removal before generating.")
+        return removed
+
+    def _commit_attachment_outputs(self, attachments):
+        """Move accepted outputs into scratch and rewrite metadata to their names.
+
+        Extraction never writes into the directory exposed to the assistant.
+        Only this UI-thread commit moves accepted files there, and each name is
+        made unique against every earlier attachment in the session.
+        """
+        if not attachments:
+            return []
+        s = self.session
+        if s.scratch is None:
+            s.scratch = tempfile.mkdtemp(prefix="ip-aigen-")
+        committed = []
+        for path, meta, output_dir in attachments:
+            moved = []
+            try:
+                for name in meta.get("images", []):
+                    if os.path.basename(name) != name:
+                        raise ValueError(f"unsafe extracted attachment name: {name}")
+                    source = os.path.join(output_dir, name)
+                    stem, ext = os.path.splitext(name)
+                    candidate, suffix = name, 2
+                    while os.path.lexists(os.path.join(s.scratch, candidate)):
+                        candidate = f"{stem}-{suffix}{ext}"
+                        suffix += 1
+                    os.replace(source, os.path.join(s.scratch, candidate))
+                    moved.append(candidate)
+            except (OSError, ValueError) as e:
+                for name in moved:
+                    try:
+                        os.remove(os.path.join(s.scratch, name))
+                    except OSError:
+                        pass
+                _warn(f"Could not attach {os.path.basename(path)}: {e}")
+                continue
+            updated = dict(meta)
+            updated["images"] = moved
+            committed.append((path, updated))
+        return committed
+
     def _source_changed(self):
         text = self.source_box.toPlainText()
         n = len(text)
         warn = "; consider splitting the material" if n > SOFT_SOURCE_LIMIT else ""
         self.char_label.setText(f"{n:,} characters{warn}")
-        # Both halves of "can this run at all": material to work from, and an
-        # assistant to work through. The button used to go live on the source
-        # alone, which offered a Generate that could only fail.
-        self.generate_btn.setEnabled(bool(text.strip()) and bool(self.session.backend))
+        # Both halves of "can this run at all": pasted or attached material to
+        # work from, and an assistant to work through. Extraction itself is not
+        # eligible material until the worker finishes and the UI thread commits it.
+        self._refresh_generate_enabled()
         self._refresh_depth_row()
 
     def _refresh_backend_row(self):
@@ -1372,40 +1557,142 @@ class _GenerateDialog(QDialog):
         run_connection_test_async(self, kind, path,
                                   self.backend_test_status.setText,
                                   on_done=_done,
-                                  is_live=lambda: self.session.backend == kind)
+                                  is_live=lambda: (self.session.backend == kind
+                                                   and self.session.cli_path == path))
 
     def _attach(self):
         from aqt.qt import QFileDialog
+        if self._attachment_in_progress():
+            return
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Attach source files", "",
             "Images and PDFs (*.png *.jpg *.jpeg *.webp *.gif *.pdf)")
+        if not paths:
+            return
         s = self.session
-        if s.scratch is None:
-            s.scratch = tempfile.mkdtemp(prefix="ip-aigen-")
-        images_undecoded = False
-        for p in paths:
-            try:
-                meta = ai_logic.extract_attachment(p, s.scratch)
-            except ValueError as e:
-                _warn(str(e))
-                continue
-            s.attachments.append((p, meta))
-            images_undecoded = images_undecoded or meta["images_undecoded"]
-        self.attach_label.setText(
-            ", ".join(os.path.basename(p) for p, _ in s.attachments)
-            or "No files attached")
+        self._attach_extract_dir = tempfile.mkdtemp(prefix="ip-aigen-extract-")
+        self._attach_cancel_flag = threading.Event()
+        self._attach_progress = deque()
+        self._attach_done = False
+        self.attach_btn.setEnabled(False)
+        self.attach_cancel_btn.setEnabled(True)
+        self.attach_cancel_btn.setVisible(True)
+        self.attach_status.setText(
+            f"Reading 1 of {len(paths)}: {os.path.basename(paths[0])}")
+        self.attach_status.setVisible(True)
+        self._refresh_generate_enabled()
+
+        extract_dir = self._attach_extract_dir
+        cancel = self._attach_cancel_flag.is_set
+        extract = ai_logic.extract_attachment
+
+        def work():
+            results, failures = [], []
+            images_undecoded = False
+            for i, path in enumerate(paths, 1):
+                if cancel():
+                    break
+                self._attach_progress.append((i, len(paths), os.path.basename(path)))
+                try:
+                    output_dir = os.path.join(extract_dir, str(i))
+                    os.makedirs(output_dir, exist_ok=False)
+                    meta = extract(path, output_dir, cancel=cancel)
+                except ValueError as e:
+                    failures.append((False, str(e)))
+                    continue
+                except Exception as e:
+                    failures.append((True, str(e)))
+                    break
+                if cancel():
+                    break
+                results.append((path, meta, output_dir))
+                images_undecoded = (
+                    images_undecoded or bool(meta.get("images_undecoded")))
+            # Plain Python state only. The timer's UI-thread poll owns every Qt
+            # update and the eventual session commit.
+            self._attach_results = results
+            self._attach_failures = failures
+            self._attach_images_undecoded = images_undecoded
+
+        self._attach_worker = threading.Thread(target=work, daemon=True)
+        self._attach_worker.start()
+        self._attach_timer = QTimer(self)
+        self._attach_timer.timeout.connect(
+            lambda: self._guard_completion(self._poll_attachment_worker))
+        self._attach_timer.start(_IMG_POLL_MS)
+
+    def _poll_attachment_worker(self):
+        if getattr(self, "_attach_done", True):
+            return
+        while self._attach_progress:
+            i, total, name = self._attach_progress.popleft()
+            self.attach_status.setText(f"Reading {i} of {total}: {name}")
+        if self._attach_worker.is_alive():
+            return
+        self._attach_timer.stop()
+        self._attach_done = True
+        cancelled = self._attach_cancel_flag.is_set()
+        if not cancelled:
+            committed = self._commit_attachment_outputs(self._attach_results)
+            self.session.attachments.extend(committed)
+            for unexpected, message in self._attach_failures:
+                _warn(f"Something went wrong: {message}" if unexpected else message)
+        shutil.rmtree(self._attach_extract_dir, ignore_errors=True)
+        self._attach_extract_dir = None
+        self.attach_btn.setEnabled(True)
+        self.attach_cancel_btn.setEnabled(False)
+        self.attach_cancel_btn.setVisible(False)
+        self.attach_status.setText("Attachment cancelled." if cancelled else "")
+        self.attach_status.setVisible(cancelled)
+        self._refresh_attachment_list()
+        self._refresh_generate_enabled()
         # An attachment is one of the two things the depth default reads, so the
-        # row has to re-answer as soon as one lands.
+        # row has to re-answer only after completed extraction is committed.
         self._refresh_depth_row()
         # Anki's own bundled Python doesn't carry Pillow, which pypdf needs to
         # decode a PDF's embedded images (its text still comes through fine):
         # say so once per session, right when it happens, rather than leaving
         # a PDF's figures silently missing with no explanation.
-        if images_undecoded and not s.pdf_image_warning_shown:
-            s.pdf_image_warning_shown = True
+        if (not cancelled and self._attach_images_undecoded
+                and not self.session.pdf_image_warning_shown):
+            self.session.pdf_image_warning_shown = True
             _warn("The text came through, but embedded images in that PDF "
                   "couldn't be read in Anki's own Python. If you want any of "
                   "its figures on a card, attach them separately as image files.")
+
+    def _cancel_attachments(self):
+        if not self._attachment_in_progress():
+            return
+        self._attach_cancel_flag.set()
+        self.attach_cancel_btn.setEnabled(False)
+        self.attach_status.setText("Cancelling attachments…")
+        self.attach_status.setVisible(True)
+
+    def _cancel_running_attachment(self):
+        """Close without racing cleanup against a still-running extractor."""
+        self._attach_done = True
+        self._attach_cancel_flag.set()
+        self._attach_timer.stop()
+        existing = getattr(self, "_cleanup_reaper", None)
+        if existing is not None and existing.is_alive():
+            return
+        worker = self._attach_worker
+        extract_dir = self._attach_extract_dir
+        session = self.session
+
+        def _reap():
+            # This is already a daemon reaper, so waiting indefinitely cannot
+            # block Qt. Extraction can be inside a non-preemptible parser call;
+            # deleting first would let that call write back into a removed dir.
+            worker.join()
+            if extract_dir:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+            if session.scratch:
+                shutil.rmtree(session.scratch, ignore_errors=True)
+                session.scratch = None
+
+        self._cleanup_reaper = threading.Thread(target=_reap, daemon=True)
+        self._cleanup_reaper.start()
 
     def _edit_user_skill(self):
         dlg = _UserSkillDialog(self)
@@ -1762,6 +2049,9 @@ class _GenerateDialog(QDialog):
             self._timer.stop()
         if hasattr(self, "_img_timer"):
             self._img_timer.stop()
+        existing = getattr(self, "_cleanup_reaper", None)
+        if existing is not None and existing.is_alive():
+            return
         workers = [w for w in (getattr(self, "_worker", None),
                                getattr(self, "_img_worker", None)) if w]
         session = self.session
@@ -1773,7 +2063,8 @@ class _GenerateDialog(QDialog):
                 shutil.rmtree(session.scratch, ignore_errors=True)
                 session.scratch = None
 
-        threading.Thread(target=_reap, daemon=True).start()
+        self._cleanup_reaper = threading.Thread(target=_reap, daemon=True)
+        self._cleanup_reaper.start()
 
     def _finish_generation(self):
         s = self.session
@@ -2167,6 +2458,9 @@ class _GenerateDialog(QDialog):
         # running the row's full width flush with the page's left edge.
         caption = muted_label(_REVIEW_NOTE_CAPTION)
         note_box = QPlainTextEdit(s.notes.get(i, ""))
+        if hasattr(caption, "setBuddy"):
+            caption.setBuddy(note_box)
+        note_box.setAccessibleName(_REVIEW_NOTE_CAPTION)
         note_box.setPlaceholderText(_REVIEW_NOTE_PLACEHOLDER)
         note_box.setFixedHeight(50)
         has_note = bool(s.notes.get(i))
@@ -2325,9 +2619,8 @@ class _GenerateDialog(QDialog):
         n_skip = len(s.cards) - n_inc
         header = f"{plural(len(s.cards), 'card')} drafted"
         if s.attachments:
-            # K = every attachment plus the pasted source itself, which is
-            # always the first source whether or not there's any text in it.
-            header += f" from {len(s.attachments) + 1} sources"
+            n_sources = len(s.attachments) + bool(s.source.strip())
+            header += f" from {plural(n_sources, 'source')}"
         header += f" · {n_inc} included, {n_skip} skipped"
         if s.verdicts:
             counts = Counter(v["verdict"] for v in s.verdicts.values())
@@ -2598,6 +2891,27 @@ class _GenerateDialog(QDialog):
             shutil.rmtree(self.session.scratch, ignore_errors=True)
             self.session.scratch = None
 
+    def _retire_for_delete(self):
+        """Stop Qt callbacks and hand live-worker cleanup to a background reaper."""
+        for _thread, timer in getattr(self, "_conn_test_refs", ()):
+            timer.stop()
+        for name in ("_attach_timer", "_timer", "_img_timer"):
+            timer = getattr(self, name, None)
+            if timer is not None:
+                timer.stop()
+
+        attach_worker = getattr(self, "_attach_worker", None)
+        if (attach_worker is not None
+                and (attach_worker.is_alive() or self._attachment_in_progress())):
+            self._cancel_running_attachment()
+            return
+        workers = [w for w in (getattr(self, "_worker", None),
+                               getattr(self, "_img_worker", None)) if w]
+        if self._generation_in_progress() or any(w.is_alive() for w in workers):
+            self._cancel_running_generation()
+            return
+        self._cleanup_scratch()
+
     def keyPressEvent(self, event):
         """On the progress page, Escape must take the same path as the
         Cancel link (see _build_progress's own comment on why that link
@@ -2630,6 +2944,10 @@ class _GenerateDialog(QDialog):
         discarding a draft. Once confirmed, though, the actual cancel is
         handed off (see _cancel_running_generation) rather than blocking this
         call on however long the subprocess takes to die."""
+        if self._attachment_in_progress():
+            self._cancel_running_attachment()
+            super().reject()
+            return
         if (self.stack.currentWidget() is self.review_page
                 and self.session.cards
                 and not _ask(
@@ -2651,4 +2969,9 @@ class _GenerateDialog(QDialog):
 
 @_safe
 def generate_cards():
-    _GenerateDialog().exec()
+    dlg = _GenerateDialog()
+    try:
+        dlg.exec()
+    finally:
+        dlg._retire_for_delete()
+        dlg.deleteLater()
