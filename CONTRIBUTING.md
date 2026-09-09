@@ -67,6 +67,9 @@ the menu and startup wiring. See "Code layout" in the README.
 
 ## Pull requests
 
+- Publish only source, tests, user documentation, and release assets. Keep local
+  notes, machine configuration, and working documents outside the tracked tree.
+  New root files or Pages content require an explicit `.gitignore` allowlist change.
 - Keep changes surgical: touch only what the fix or feature needs, and match
   the existing style even where you'd do it differently.
 - Add or update a test in `tests/test_logic.py` for any `logic.py` change.
