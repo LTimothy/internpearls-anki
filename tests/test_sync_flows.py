@@ -619,7 +619,7 @@ def test_extra_blanks_stay_new_when_the_parent_was_never_studied(anki, tmp_path)
 def test_declining_the_conversion_imports_alongside_instead(anki, tmp_path):
     """Declining is a real choice with a real consequence, and the dialog says so: the
     cards still arrive, just as separate notes, leaving her progress on the old ones."""
-    from internpearls import sync
+    from internpearls import ai_logic, sync
     anki.col.models._models.append(_cloze_model())
     her = anki.col.add_note("g1", _fields("Old Q and A front"), [TAGS], deck=DECK)
     _configure(anki, _write_source(tmp_path, {
@@ -629,7 +629,9 @@ def test_declining_the_conversion_imports_alongside_instead(anki, tmp_path):
     _sync(anki, ask=_convert(False))
 
     assert anki.col.notetype_changes == []
-    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Basic"
+    assert ai_logic.is_generated_guid(anki.col.get_note(her.id).guid)
+    assert anki.col.get_note(her.id).note_type()["name"] == "Study Deck - Basic"
+    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Cloze"
 
 
 def test_conversion_is_never_applied_by_unattended_auto_sync(anki, tmp_path):
@@ -3816,9 +3818,9 @@ def test_update_asks_once_about_conversions_before_anything_imports(anki, tmp_pa
 
 def test_update_declining_the_conversion_still_imports_without_asking_again(anki,
                                                                             tmp_path):
-    from internpearls import sync
+    from internpearls import ai_logic, sync
     anki.col.models._models.append(_cloze_model())
-    _her_card(anki, "g1", "Old Q and A front")
+    her = _her_card(anki, "g1", "Old Q and A front")
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
                _cloze_model())}))
@@ -3831,7 +3833,9 @@ def test_update_declining_the_conversion_still_imports_without_asking_again(anki
     _update(anki, ask=ask)
 
     assert sum("changed format" in t for t in asked) == 1
-    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Basic"
+    assert ai_logic.is_generated_guid(anki.col.get_note(her.id).guid)
+    assert anki.col.get_note(her.id).note_type()["name"] == "Study Deck - Basic"
+    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Cloze"
     assert anki.col.imports    # the content still imported, beside her old note
 
 
@@ -4706,7 +4710,8 @@ def test_auto_sync_downloads_through_the_session_cache(anki, tmp_path):
 
     background._auto_sync_check()
 
-    assert sync._apkg_cache.get(DECK, (None,))[0] == "v1"
+    assert any(key[1] == DECK and key[3] == "v1"
+               for key in sync._apkg_cache)
 
 
 def test_a_backup_that_keeps_failing_nags_once_per_session(anki, tmp_path, monkeypatch):

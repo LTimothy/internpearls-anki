@@ -470,7 +470,9 @@ class MockCollection:
 
     # === undo: add_custom_undo_entry / merge_undo_entries / undo ===
     def add_custom_undo_entry(self, name):
-        self._undo_entries.append({"name": name, "notes": [], "cards": []})
+        import copy
+        self._undo_entries.append({"name": name, "notes": [], "cards": [],
+                                   "snapshot": copy.deepcopy((self._notes, self._cards))})
         target = len(self._undo_entries) - 1
         self._undo_merge_open = target
         return target
@@ -487,6 +489,12 @@ class MockCollection:
         if not self._undo_entries:
             raise Exception("nothing to undo")
         entry = self._undo_entries.pop()
+        if "snapshot" in entry:
+            self._notes, self._cards = entry["snapshot"]
+            for note in self._notes.values():
+                note.model = self.models.by_name(note.model["name"]) or note.model
+            self._undo_merge_open = None
+            return types.SimpleNamespace(operation=entry["name"])
         for nid in entry["notes"]:
             note = self._notes.pop(nid, None)
             if note:

@@ -118,7 +118,9 @@ Below the rows, one settings panel covers the preferred backend only, since that
 
 These three are not equally sandboxed, and AI Backends says so in those words rather than averaging them into one reassurance. Pick the one whose restrictions you're comfortable running source material through. All three read an attached image, and each row says so.
 
-Paste or type source material (lecture notes, an article excerpt, a topic outline) into the wizard's input page, add an optional focus line (what to emphasize, e.g. "emphasize dosing"), and optionally attach images or PDFs. Below that sit four status rows, each with a chip and a link into more detail, that summarize everything else the run needs:
+Paste or type source material (lecture notes, an article excerpt, a topic outline), attach images or PDFs, or combine both. Pasted text is not required when an attachment provides the source. Each attached file has a Remove action. Reading attachments happens in the background with a Cancel action; rejected or cancelled extraction is not sent to the assistant. Each file is limited to 25 MiB; PDFs are limited to 100 pages, 500,000 extracted text characters, 50 images and 25 MiB of extracted image data. Cancellation takes effect between parser calls, so an active page or image extraction may need to finish first.
+
+Add an optional focus line (what to emphasize, e.g. "emphasize dosing"). The page scrolls, including Advanced controls, while Generate and Cancel stay visible. Below the source sit four status rows, each with a chip and a link into more detail, that summarize everything else the run needs:
 
 - **Backend** shows which assistant is preferred, its model, and its effort, or NOT SET UP with a Setup link into AI Backends when none is ready yet.
 - **Cards and depth** shows AUTO, THOROUGH, or QUICK. Left alone, the assistant itself decides how many cards to draft, one per point the source actually teaches, up to a ceiling of 40, never padding to hit a round number; depth defaults to Thorough once the pasted source reaches 1,500 characters or carries any attachment, and Quick otherwise. An Advanced link opens a disclosure with an exact-count spin box (blank means automatic) and Thorough/Quick radios, for anyone who'd rather pin either one by hand; whatever's set there applies to that run only and is never written back to your configuration.
@@ -245,9 +247,13 @@ Every sync and manual import starts with a fresh, timestamped backup, scoped to 
 
 Cards are matched by GUID, not by content, so your intervals, ease factors, and review counts carry over on every sync.
 
-Your `protected_fields` (`Notes` by default, configurable to any field name, or several) are snapshotted before import and restored after, so even if the importer overwrites them, your text comes back. Specifically: before anything runs, every note tagged under `scope_tag` has its `protected_fields` values read and saved by GUID; after the import, whatever note currently holds that GUID gets those exact values written back. It's a read-before, write-after round trip, not a merge, and it only protects notes that keep their GUID through the import. A card that imports as new (see below) has no old snapshot value to restore, since there was nothing recorded for a GUID that didn't exist before.
+Your `protected_fields` (`Notes` by default, configurable to any field name, or several) are snapshotted by GUID before import. A three-way comparison against the last shipped values preserves your edits while allowing untouched fields to receive source corrections. Without a prior baseline, existing nonempty protected values are preserved conservatively. Restoration happens before version-state writes, so a bookkeeping failure cannot skip it. A new card has no prior annotation to restore.
+
+Sync explicitly applies source content even when a local edit has a newer timestamp; backup restoration likewise applies the backup's older content. Anki's actual import results determine which fields receive a new shipped baseline. A rejected import stays pending and its deck operation is rolled back. Legacy packages containing `collection.anki21` are read and personalized using that operative database, not the compatibility placeholder beside it.
 
 Note types only gain fields; nothing is removed or renamed. If you have customized a note type, those customizations stay.
+
+An explicitly approved conversion between note types is separate from that field reconciliation. A conversion is refused if it would discard nonempty protected content without a destination field. Choosing “Import them as new” instead keeps the original note and its history as a local copy, outside future source matching, and imports the new format separately under the source identity. Later updates then match that new note without creating repeated copies. If the following import fails, the conversion or identity change is rolled back with it.
 
 Matching runs strongest-signal-first. If an incoming note's GUID already belongs to one of your cards, that's the match — no text comparison needed. Deck sources that keep GUIDs stable (an explicit per-card `id` in the deck spec, so rewording a front doesn't re-identify the card) get this for every card, which means a front can be reworded any number of times between your syncs and history still carries over, with no alias bookkeeping at all.
 
@@ -259,9 +265,13 @@ Card *appearance* is handled separately from card content. Imports here run with
 
 The field snapshot and GUID matching (though not the backup, which is always a real Anki export/backup regardless of scope) are limited to `scope_tag` (default `InternPearls`). Cards outside that tag are ignored entirely.
 
+GUID matching uses the complete set of scoped notes even when several share a front. Ambiguous front matches are not guessed. If an incoming GUID already belongs to an out-of-scope note, that deck is refused before import rather than overwriting the excluded note. Update my decks leaves a retired predecessor active until all listed replacement GUIDs are present.
+
 With the automatic backup in place, any of this is fully reversible even if you skip a manual export.
 
 The automatic deck-scoped backups also live in that `user_files/` subfolder inside the add-on's own directory, so they survive add-on updates but not an add-on *uninstall* — export anything you want to keep long-term (Advanced > Export intern pearls deck) before removing the add-on.
+
+Installed versions, shipped-field baselines, and new deck backups are separated by collection path and source identity under `user_files/collections/`. Older unscoped files remain on disk but are not trusted as another profile's current version or baseline; the next sync may therefore re-offer decks. Older backups remain in their original folder and can still be selected with the restore file picker. Backup filenames include the full deck identity and a unique suffix, so runs in the same second cannot overwrite each other.
 
 The add-on's own record of which deck versions you've already synced lives in a `user_files/` subfolder, which Anki preserves across add-on updates (everything else in the add-on's folder gets replaced fresh). Earlier versions kept this file elsewhere, so updating the add-on itself would reset it and make the next Sync treat every deck as new; that's fixed as of v0.7.0.
 

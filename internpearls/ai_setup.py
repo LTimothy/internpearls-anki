@@ -194,6 +194,8 @@ class ModelEffortControls(QWidget):
         meta = ai_cli.BACKENDS[kind]
         self.combo = QComboBox()
         self.custom = QLineEdit()
+        self.combo.setAccessibleName("Model")
+        self.custom.setAccessibleName("Model")
         self.custom.setPlaceholderText(meta["model_hint"])
         # A closed combo only for a backend with a real short alias list
         # (claude); agy and codex now also carry a default_model (agy's own,
@@ -220,6 +222,7 @@ class ModelEffortControls(QWidget):
             self.combo.hide()
             self.custom.setText(model)
         self.effort = QComboBox()
+        self.effort.setAccessibleName("Effort")
         levels = meta.get("effort_levels") or []
         # Read from the metadata rather than from the combo's own visibility:
         # the effort combo lives in the panel's grid, not inside this widget, so
@@ -325,6 +328,7 @@ class _BackendRow(QWidget):
         self.guide_link = link_button(
             "install guide",
             on_click=lambda: dlg._guard(_open_url, meta["install_url"]))
+        self.guide_link.setAccessibleName(f"Install guide: {meta['label']}")
         trail_lay.addWidget(self.guide_link)
         self.use_link = None
         if preferred == kind:
@@ -337,6 +341,8 @@ class _BackendRow(QWidget):
         self.ignore_link = link_button(
             "use again" if not info["enabled"] else "ignore",
             on_click=lambda: dlg._guard(dlg.toggle_ignored, kind))
+        self.ignore_link.setAccessibleName(
+            f"{'Use again' if not info['enabled'] else 'Ignore'}: {meta['label']}")
         trail_lay.addWidget(self.ignore_link)
         lay.addWidget(trailing, 0, Qt.AlignmentFlag.AlignTop)
 
@@ -390,15 +396,17 @@ class _SettingsPanel(QWidget):
         grid.setColumnStretch(1, 1)
 
         self.path = QLineEdit(cfg["ai_cli_path"][kind])
+        self.path.setAccessibleName("Executable path")
         self.path.setPlaceholderText("leave blank to auto-detect")
         browse = QPushButton("Browse")
+        browse.setAccessibleName(f"Browse for {meta['label']} executable")
         path_box = QWidget()
         path_lay = QHBoxLayout(path_box)
         path_lay.setContentsMargins(0, 0, 0, 0)
         path_lay.setSpacing(CARET_GAP)
         path_lay.addWidget(self.path, 1)
         path_lay.addWidget(browse)
-        grid.addWidget(self._label("Executable path"), 0, 0)
+        grid.addWidget(self._label("Executable path", self.path), 0, 0)
         grid.addWidget(path_box, 0, 1)
 
         self.model = ModelEffortControls(kind, cfg["ai_model"][kind],
@@ -408,11 +416,14 @@ class _SettingsPanel(QWidget):
         for text, field in self.model.rows():
             if text == "Effort":
                 field = self._effort_slot = field_slot(field)
-            grid.addWidget(self._label(text), row, 0)
+            buddy = (self.model.effort if text == "Effort" else
+                     self.model.combo if self.model._aliases else self.model.custom)
+            grid.addWidget(self._label(text, buddy), row, 0)
             grid.addWidget(field, row, 1)
             row += 1
 
         self.test_btn = QPushButton("Test connection")
+        self.test_btn.setAccessibleName(f"Test connection: {meta['label']}")
         self.test_status = _wrapped_hint("Not tested yet")
         self._path_box = path_box
         self._test_box = test_box = QWidget()
@@ -426,6 +437,7 @@ class _SettingsPanel(QWidget):
         self._realign()
 
         self.path.editingFinished.connect(lambda: dlg._guard(self._commit_path))
+        self.path.textChanged.connect(lambda _text: self.test_status.setText("Not tested yet"))
         browse.clicked.connect(lambda: dlg._guard(self._browse))
         self.model.changed.connect(lambda: dlg._guard(self._commit_model))
         self.model.changed.connect(lambda: dlg._guard(self._realign))
@@ -464,14 +476,17 @@ class _SettingsPanel(QWidget):
             rows.append((self._effort_slot, self.model.effort))
         align_field_column(rows)
 
-    def _label(self, text):
+    def _label(self, text, buddy):
         lbl = QLabel(text)
         lbl.setFixedWidth(LABEL_W)
         lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        if hasattr(lbl, "setBuddy"):
+            lbl.setBuddy(buddy)
         return lbl
 
-    def apply(self, info):
-        self.test_btn.setEnabled(bool(info["path"]))
+    def apply(self, info, testing=False):
+        self._path_available = bool(info["path"])
+        self.test_btn.setEnabled(self._path_available and not testing)
 
     def _commit_path(self):
         _write_map("ai_cli_path", self.kind, self.path.text().strip())
@@ -672,8 +687,8 @@ class _AIBackendsDialog(QDialog):
             _clear(self._panel_lay)
             self.panel = _SettingsPanel(preferred, cfg, self)
             self._panel_lay.addWidget(self.panel)
-        if self.preferred not in self._testing:
-            self.panel.apply(res["backends"][self.preferred])
+        self.panel.apply(res["backends"][self.preferred],
+                         testing=self.preferred in self._testing)
         self._set_overall(res)
 
     def use_backend(self, kind):
@@ -693,6 +708,7 @@ class _AIBackendsDialog(QDialog):
         self._testing.add(kind)
         self.panel.test_btn.setEnabled(False)
         self.panel.test_status.setText("Testing connection")
+        path_setting = self.panel.path.text().strip()
 
         def live():
             # A preference switch mid-test rebuilds the panel (use_backend ->
@@ -700,12 +716,19 @@ class _AIBackendsDialog(QDialog):
             # the one on screen, and may be about a different assistant. Looked
             # up by kind rather than captured, so a stale result is dropped
             # instead of written into a panel it is not about.
-            return self.panel is not None and self.panel.kind == kind
+            if (self.panel is None or self.panel.kind != kind
+                    or self.panel.path.text().strip() != path_setting):
+                return False
+            return ai_cli.find_cli(kind, path_setting) == path
 
         def done():
             # Runs whichever panel is live, so a later Test connection on this
             # backend is never left thinking one is still running.
             self._testing.discard(kind)
+            if self.panel is not None and self.panel.kind == kind:
+                self.panel.test_btn.setEnabled(self.panel._path_available)
+                if not live():
+                    self.panel.test_status.setText("Not tested yet")
 
         def status(text):
             self.panel.test_btn.setEnabled(True)
@@ -717,4 +740,12 @@ class _AIBackendsDialog(QDialog):
 @_safe
 def open_ai_backends(parent=None):
     dlg = _AIBackendsDialog(parent or mw)
-    dlg.exec()
+    try:
+        dlg.exec()
+    finally:
+        # A connection worker writes only to its private result box, so it can finish
+        # safely after this window closes. Stop its parented poll first: no completion
+        # callback may reach a widget tree that is now scheduled for deletion.
+        for _thread, timer in getattr(dlg, "_conn_test_refs", ()):
+            timer.stop()
+        dlg.deleteLater()
