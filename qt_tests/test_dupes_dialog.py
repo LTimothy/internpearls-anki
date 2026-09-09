@@ -1,7 +1,11 @@
 """Real-Qt render checks for Scan for duplicates: three candidate rows, light and dark."""
 import os
+import shutil
+import threading
+from pathlib import Path
 
 import harness
+import pytest
 from internpearls import palette as colors_module
 
 
@@ -14,7 +18,7 @@ def _populate(mock):
                         "Acts on renal dopamine receptors"],
                  ["InternPearls"], deck="Intern Custom")
     col.add_note("g2", ["Fenoldopam is a selective D1 receptor agonist drug",
-                        "Used for hypertensive emergencies"],
+                        "Acts on renal dopamine receptors in hypertensive emergencies"],
                  ["Other"], deck="Ankisthesia")
 
     col.add_note("g3", ["Ketamine induction dose one to two mg per kilogram IV",
@@ -28,7 +32,7 @@ def _populate(mock):
                         "Promotes gastric emptying"],
                  ["InternPearls"], deck="Intern Custom")
     col.add_note("g6", ["Metoclopramide increases gastroesophageal sphincter tone",
-                        "Antiemetic and prokinetic agent"],
+                        "Promotes gastric emptying as a prokinetic agent"],
                  ["Other"], deck="Ankisthesia")
 
 
@@ -106,6 +110,30 @@ def test_ignore_pair_persists_and_removes_row():
     dlg.deleteLater()
 
 
+def test_ignored_top_results_are_replenished_by_later_candidates():
+    import mock_anki
+    mock, _ = harness.bootstrap()
+    harness.app()
+    mock.mw.col = mock_anki.MockCollection()
+    mock.mw._config = {}
+    col = mock.mw.col
+    col.add_note("ours", ["alpha beta gamma", "delta"], ["InternPearls"],
+                 deck="Ours")
+    for i in range(5):
+        col.add_note(f"theirs{i}", ["alpha beta gamma", "delta"], ["Other"],
+                     deck="Other")
+
+    dlg = _build_dialog(mock)
+    assert len(dlg._pairs) == 3
+    for pair in list(dlg._pairs):
+        dlg._ignore(pair)
+    dlg._rescan()
+    dlg._wait_for_scan()
+
+    assert len(dlg._pairs) == 2
+    dlg.deleteLater()
+
+
 def test_suspend_marks_row_and_calls_scheduler():
     mock, _ = harness.bootstrap()
     harness.app()
@@ -117,6 +145,95 @@ def test_suspend_marks_row_and_calls_scheduler():
     dlg._suspend(pair, "left")
     assert mock.mw.col.get_card(cid).queue == -1
     assert "left" in pair["suspended"]
+    dlg.deleteLater()
+
+
+def test_rescan_reads_both_suspensions_and_offers_explicit_recovery():
+    from internpearls import dupes_dialog
+    mock, q = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    original = dlg._pairs[0]
+    key = original["key"]
+    left_cid = mock.mw.col.get_note(original["left"][0]).card_ids()[0]
+    right_cid = mock.mw.col.get_note(original["right"][0]).card_ids()[0]
+
+    # Simulate suspension through Anki/Browse rather than through this dialog, then
+    # rescan. The row must resolve the collection's state instead of remembering only
+    # clicks made in this dialog instance.
+    mock.mw.col.sched.suspend_cards([left_cid, right_cid])
+    dlg._rescan()
+    dlg._wait_for_scan()
+    pair = next(p for p in dlg._pairs if p["key"] == key)
+    assert pair["suspended"] == {"left", "right"}
+    assert dupes_dialog._chip_label(pair, dlg._min_shared)[0] == "BOTH SUSPENDED"
+
+    row = dlg._build_row(pair)
+    buttons = {button.text(): button for button in row.findChildren(q.QPushButton)}
+    assert {"Unsuspend ours", "Unsuspend theirs", "Keep both"} <= buttons.keys()
+    buttons["Keep both"].click()
+    assert mock.mw.col.get_card(left_cid).queue == -1
+    assert mock.mw.col.get_card(right_cid).queue == -1
+
+    buttons["Unsuspend theirs"].click()
+    assert mock.mw.col.get_card(right_cid).queue != -1
+    assert pair["suspended"] == {"left"}
+    assert dupes_dialog._chip_label(pair, dlg._min_shared)[0] == "OURS SUSPENDED"
+
+    refreshed = dlg._build_row(pair)
+    buttons = {button.text(): button for button in refreshed.findChildren(q.QPushButton)}
+    buttons["Unsuspend ours"].click()
+    assert mock.mw.col.get_card(left_cid).queue != -1
+    assert pair["suspended"] == set()
+    row.deleteLater()
+    refreshed.deleteLater()
+    dlg.deleteLater()
+
+
+def test_rescan_marks_partly_suspended_cloze_and_unsuspends_all_siblings():
+    from internpearls import dupes_dialog
+    import mock_anki
+
+    mock, q = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    original = dlg._pairs[0]
+    key = original["key"]
+    note = mock.mw.col.get_note(original["left"][0])
+
+    # A two-deletion cloze has two sibling cards. Suspending only one outside this
+    # dialog must not make the note look fully suspended, while recovery remains the
+    # deliberately note-level operation used by suspend_notes/unsuspend_notes.
+    note.model = mock_anki.make_model(
+        "Study Deck - Cloze", qfmt="{{cloze:Front}}", afmt="{{cloze:Front}}")
+    note.fields[0] = ("{{c1::Fenoldopam}} mechanism of action, selective "
+                      "{{c2::D1 receptor agonist}}")
+    mock.mw.col._generate_cloze_cards(note)
+    card_ids = note.card_ids()
+    assert len(card_ids) == 2
+    mock.mw.col.sched.suspend_cards([card_ids[0]])
+
+    dlg._rescan()
+    dlg._wait_for_scan()
+    pair = next(p for p in dlg._pairs if p["key"] == key)
+    assert pair["suspended"] == set()
+    assert pair["partly_suspended"] == {"left"}
+    assert dupes_dialog._chip_label(pair, dlg._min_shared)[0] == \
+        "OURS PARTLY SUSPENDED"
+
+    row = dlg._build_row(pair)
+    buttons = {button.text(): button for button in row.findChildren(q.QPushButton)}
+    action = buttons["Unsuspend ours"]
+    assert action.toolTip() == action.accessibleName()
+    assert "1 of 2 currently suspended" in action.accessibleName()
+    action.click()
+
+    assert all(mock.mw.col.get_card(cid).queue != -1 for cid in card_ids)
+    assert pair["suspended"] == set()
+    assert pair["partly_suspended"] == set()
+    row.deleteLater()
     dlg.deleteLater()
 
 
@@ -160,8 +277,11 @@ def test_judge_with_ai_updates_chips_and_folds_different(monkeypatch):
 
     from internpearls import ai_cli
 
+    scratch_paths = []
+
     def fake_run_generation(kind, path, prompt, mode, scratch, **kw):
         assert "note_id" not in prompt.lower()
+        scratch_paths.append(scratch)
         return {"text": reply, "tokens": 10, "rate_limits": None, "duration_s": 0.1}
     monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)
 
@@ -175,7 +295,165 @@ def test_judge_with_ai_updates_chips_and_folds_different(monkeypatch):
     # a "different" pair sits under the fold, not among the shown rows
     shown = [p for p in dlg._pairs if p["judged"] != "different"]
     assert len(shown) == 2
+    assert len(scratch_paths) == 1
+    assert not Path(scratch_paths[0]).exists()
     dlg.deleteLater()
+
+
+def test_judge_close_cancels_worker_stops_timer_and_cleans_scratch(monkeypatch):
+    from internpearls import ai_cli
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    entered = threading.Event()
+    release = threading.Event()
+    call = {}
+
+    def fake_run_generation(kind, path, prompt, mode, scratch, **kw):
+        call.update(scratch=scratch, cancel=kw.get("cancel"))
+        entered.set()
+        release.wait(5)
+        if call["cancel"] and call["cancel"]():
+            raise ai_cli.GenerationCancelled()
+        return {"text": "{}"}
+
+    monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)
+    dlg._judge_with_ai()
+    assert entered.wait(2)
+    close_button = next(button for button in dlg.findChildren(type(dlg.judge_btn))
+                        if button.text() == "Close")
+    close_button.click()
+    release.set()
+    dlg._judge_worker.join(2)
+
+    try:
+        assert call["cancel"] is not None
+        assert call["cancel"]()
+        assert not dlg._judge_timer.isActive()
+        assert not dlg._judge_worker.is_alive()
+        assert not Path(call["scratch"]).exists()
+    finally:
+        release.set()
+        dlg._judge_worker.join(2)
+        shutil.rmtree(call["scratch"], ignore_errors=True)
+        dlg.deleteLater()
+
+
+def test_judge_accept_cancels_worker_and_cleans_scratch(monkeypatch):
+    from internpearls import ai_cli
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    entered = threading.Event()
+    release = threading.Event()
+    call = {}
+
+    def fake_run_generation(kind, path, prompt, mode, scratch, **kw):
+        call.update(scratch=scratch, cancel=kw.get("cancel"))
+        entered.set()
+        release.wait(5)
+        if call["cancel"] and call["cancel"]():
+            raise ai_cli.GenerationCancelled()
+        return {"text": "{}"}
+
+    monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)
+    dlg._judge_with_ai()
+    assert entered.wait(2)
+    dlg.accept()
+    release.set()
+    dlg._judge_worker.join(2)
+
+    try:
+        assert call["cancel"] is not None
+        assert call["cancel"]()
+        assert not dlg._judge_timer.isActive()
+        assert not Path(call["scratch"]).exists()
+    finally:
+        release.set()
+        dlg._judge_worker.join(2)
+        shutil.rmtree(call["scratch"], ignore_errors=True)
+        dlg.deleteLater()
+
+
+def test_rescan_cancels_and_retires_a_late_judge_result(monkeypatch):
+    import json
+    from PyQt6.QtTest import QTest
+    from internpearls import ai_cli
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    old_pairs = list(dlg._pairs)
+    entered = threading.Event()
+    release = threading.Event()
+    call = {}
+    reply = json.dumps({"verdicts": [
+        {"pair": i, "verdict": "same", "note": "stale result"}
+        for i in range(len(old_pairs))
+    ]})
+
+    def fake_run_generation(kind, path, prompt, mode, scratch, **kw):
+        call.update(scratch=scratch, cancel=kw.get("cancel"))
+        entered.set()
+        release.wait(5)
+        # Deliberately return a result even after cancellation, to verify the dialog's
+        # own generation guard rather than relying on cooperative backend behavior.
+        return {"text": reply}
+
+    monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)
+    dlg._judge_with_ai()
+    assert entered.wait(2)
+    dlg._rescan()
+    dlg._wait_for_scan()
+    current_pairs = list(dlg._pairs)
+    summary = dlg.summary_label.text()
+    release.set()
+    dlg._judge_worker.join(2)
+    QTest.qWait(300)
+
+    try:
+        assert call["cancel"] is not None
+        assert call["cancel"]()
+        assert not dlg._judge_timer.isActive()
+        assert all(pair["judged"] is None for pair in old_pairs)
+        assert all(pair["judged"] is None for pair in current_pairs)
+        assert dlg.summary_label.text() == summary
+        assert not Path(call["scratch"]).exists()
+    finally:
+        release.set()
+        dlg._judge_worker.join(2)
+        shutil.rmtree(call["scratch"], ignore_errors=True)
+        dlg.deleteLater()
+
+
+def test_judge_error_cleans_scratch(monkeypatch):
+    from internpearls import ai_cli
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    scratch_paths = []
+
+    def fake_run_generation(kind, path, prompt, mode, scratch, **kw):
+        scratch_paths.append(scratch)
+        raise ai_cli.GenerationCancelled()
+
+    monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)
+    dlg._judge_with_ai()
+    dlg._wait_for_judge()
+
+    try:
+        assert len(scratch_paths) == 1
+        assert not Path(scratch_paths[0]).exists()
+    finally:
+        shutil.rmtree(scratch_paths[0], ignore_errors=True)
+        dlg.deleteLater()
 
 
 def test_exclude_decks_empty_by_default_excludes_nothing():
@@ -245,6 +523,51 @@ def test_row_actions_are_visible_while_collapsed():
     assert not body.isVisible()
     labels = {w.text() for w in header.findChildren(type(dlg.judge_btn))}
     assert {"Suspend ours", "Suspend theirs", "Keep both", "Ignore pair"} <= labels
+    dlg.deleteLater()
+
+
+def test_scope_controls_have_distinct_accessible_names():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+
+    left_name = dlg.left_combo.accessibleName().lower()
+    right_name = dlg.right_combo.accessibleName().lower()
+    assert "scan" in left_name
+    assert "compare" in right_name
+    assert left_name != right_name
+    dlg.deleteLater()
+
+
+def test_caret_accessible_name_identifies_pair_and_expand_state():
+    from internpearls import dupes_dialog
+    mock, q = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    dlg.show()
+    harness.app().processEvents()
+    pair = dlg._pairs[0]
+    left_front, _ = dupes_dialog._note_texts(pair["left"][0])
+    right_front, _ = dupes_dialog._note_texts(pair["right"][0])
+    row = dlg._rows_layout.itemAt(0).widget()
+    header = row.layout().itemAt(0).widget()
+    body = row.layout().itemAt(1).widget()
+    caret = header.layout().itemAt(0).widget()
+
+    assert caret.accessibleName().startswith("Expand duplicate pair:")
+    assert left_front in caret.accessibleName()
+    assert right_front in caret.accessibleName()
+    caret.click()
+    assert body.isVisible()
+    assert caret.accessibleName().startswith("Collapse duplicate pair:")
+
+    keep_both = next(button for button in row.findChildren(q.QPushButton)
+                     if button.text() == "Keep both")
+    keep_both.click()
+    assert not body.isVisible()
+    assert caret.accessibleName().startswith("Expand duplicate pair:")
     dlg.deleteLater()
 
 
@@ -390,13 +713,11 @@ def test_exclusion_feedback_escapes_entry_text():
 
 def test_score_band_labels():
     from internpearls.dupes_dialog import _band_label
-    # With an evidence floor in effect (Strict min_shared=2, Normal min_shared=1),
+    # With an evidence floor in effect (Strict and Normal both min_shared=2),
     # the band is decided by shared-token count, not the raw score: one token past
     # the floor is "Likely duplicate", right at the floor is "Possible".
     assert _band_label(0.7, shared_count=3, min_shared=2) == "Likely duplicate 0.70"
     assert _band_label(0.7, shared_count=2, min_shared=2) == "Possible 0.70"
-    assert _band_label(0.55, shared_count=2, min_shared=1) == "Likely duplicate 0.55"
-    assert _band_label(0.55, shared_count=1, min_shared=1) == "Possible 0.55"
     # Loose (min_shared falsy) has no evidence floor to grade against, so it falls
     # back to the original score-only bands.
     assert _band_label(0.7, shared_count=1, min_shared=0) == "Likely duplicate 0.70"
@@ -483,9 +804,9 @@ def test_sensitivity_strict_drops_a_single_shared_word_pair():
     mock.mw.col = mock_anki.MockCollection()
     mock.mw._config = {}
     col = mock.mw.col
-    col.add_note("w1", ["Phenylephrine bolus dose today", "For hypotension"],
+    col.add_note("w1", ["Phenylephrine phenylephrine bolus", ""],
                  ["InternPearls"], deck="Intern Custom")
-    col.add_note("w2", ["Phenylephrine allergy noted", "At intake"],
+    col.add_note("w2", ["Phenylephrine phenylephrine allergy", ""],
                  ["Other"], deck="Ankisthesia")
 
     dlg = _build_dialog(mock)
@@ -496,6 +817,22 @@ def test_sensitivity_strict_drops_a_single_shared_word_pair():
     dlg.sensitivity_combo.setCurrentIndex(2)   # Loose
     dlg._wait_for_scan()
     assert len(dlg._pairs) == 1
+    dlg.deleteLater()
+
+
+def test_sensitivity_normal_requires_two_shared_informative_words():
+    import mock_anki
+    mock, _ = harness.bootstrap()
+    harness.app()
+    mock.mw.col = mock_anki.MockCollection()
+    mock.mw._config = {}
+    col = mock.mw.col
+    col.add_note("w1", ["orchid amber", "Answer"], ["InternPearls"], deck="Ours")
+    col.add_note("w2", ["orchid cobalt", "Answer"], ["Other"], deck="Theirs")
+
+    dlg = _build_dialog(mock)
+    assert dlg.sensitivity_combo.currentText() == "Normal"
+    assert dlg._pairs == []
     dlg.deleteLater()
 
 
@@ -532,18 +869,67 @@ def test_right_side_offers_the_other_cards_under_the_deck_root():
     harness.app()
     _populate(mock)
     col = mock.mw.col
-    col.add_note("g9", ["Fenoldopam is a selective dopamine one receptor agonist drug",
-                        "Renal vasodilator"],
+    col.add_note("g9", ["Fenoldopam mechanism of action, selective D1 receptor agonist",
+                        "Acts on renal dopamine receptors"],
                  ["Other"], deck="Intern Pearls::Intern goodies")
     dlg = _build_dialog(mock)
     assert dlg.right_combo.itemText(1) == "Other cards under Intern Pearls"
     assert dlg._right_count == 4          # everything else: g2, g4, g6, g9
     dlg.right_combo.setCurrentIndex(1)
-    dlg._rescan()
     dlg._wait_for_scan()
     assert dlg._right_count == 1          # only g9 sits under the root
     assert {p["right"][0] for p in dlg._pairs} == {col.find_notes('deck:"Intern Pearls"')[0]}
     dlg.close()
+
+
+@pytest.mark.parametrize("changed_side", ["left", "right"])
+def test_scope_change_immediately_invalidates_actions_and_rescans(monkeypatch,
+                                                                  changed_side):
+    import mock_anki
+    from internpearls import dupes_dialog
+    mock, _ = harness.bootstrap()
+    harness.app()
+    mock.mw.col = mock_anki.MockCollection()
+    mock.mw._config = {}
+    col = mock.mw.col
+    col.add_note("ours", ["alpha beta gamma", "delta"], ["InternPearls"],
+                 deck="Ours")
+    col.add_note("theirs", ["alpha beta gamma", "delta"], ["Other"],
+                 deck="Reference A")
+    col.add_note("third", ["unrelated astronomy constellation", "nebula"],
+                 ["Other"], deck="Reference B")
+    dlg = _build_dialog(mock)
+    assert len(dlg._pairs) == 1
+    old_seq = dlg._scan_seq
+
+    entered = threading.Event()
+    release = threading.Event()
+    real_find = dupes_dialog.find_candidates
+
+    def gated_find(*args, **kwargs):
+        entered.set()
+        release.wait(5)
+        return real_find(*args, **kwargs)
+
+    monkeypatch.setattr(dupes_dialog, "find_candidates", gated_find)
+    deck_index = dlg._deck_names.index("Reference B")
+    if changed_side == "left":
+        dlg.left_combo.setCurrentIndex(deck_index + 1)
+    else:
+        dlg.right_combo.setCurrentIndex(len(dlg._right_fixed) + deck_index)
+
+    try:
+        assert entered.wait(2)
+        assert dlg._scan_seq == old_seq + 1
+        assert dlg._pairs == []
+        assert dlg.summary_label.text().startswith("Scanning")
+        release.set()
+        dlg._wait_for_scan()
+        assert dlg._pairs == []
+    finally:
+        release.set()
+        dlg._worker.join(2)
+        dlg.deleteLater()
 
 
 def test_sensitivity_and_exclusion_changes_reuse_the_cached_rows(monkeypatch):

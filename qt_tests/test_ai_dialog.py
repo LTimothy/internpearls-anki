@@ -5,9 +5,42 @@ renders its actual card rows, not just an empty stack page: that's the one
 page whose layout depends on session state built up by the earlier pages.
 """
 import json
+import os
+import threading
+import time
 
 import harness
 from internpearls import ai_cli, ai_dialog
+
+
+def _wait_for_attachment_worker(dlg, timeout=2):
+    app = harness.app()
+    deadline = time.monotonic() + timeout
+    while dlg._attach_worker.is_alive() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.001)
+    dlg._attach_worker.join(timeout=0.1)
+    assert not dlg._attach_worker.is_alive()
+    dlg._poll_attachment_worker()
+    app.processEvents()
+
+
+def test_generate_wrapper_releases_the_native_dialog(monkeypatch):
+    from PyQt6 import sip
+    from aqt.qt import QCoreApplication, QEvent
+    harness.bootstrap()
+    app = harness.app()
+    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
+    captured = []
+    def finish(dialog):
+        captured.append(dialog)
+        return 0
+    monkeypatch.setattr(ai_dialog._GenerateDialog, "exec", finish)
+    ai_dialog.generate_cards()
+    assert len(captured) == 1
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    assert sip.isdeleted(captured[0])
 
 
 def test_wizard_renders_all_pages(monkeypatch):
@@ -404,6 +437,7 @@ def test_attach_warns_once_when_a_pdfs_images_cant_be_decoded(monkeypatch, tmp_p
     images_undecoded rather than looking identical to "no images". The
     wizard must tell the user, once per session, not stay quiet about it."""
     harness.bootstrap()
+    harness.app()
     from aqt.qt import QFileDialog
     from internpearls import ai_logic
 
@@ -422,17 +456,97 @@ def test_attach_warns_once_when_a_pdfs_images_cant_be_decoded(monkeypatch, tmp_p
                         lambda *a, **k: next(calls))
     monkeypatch.setattr(
         ai_logic, "extract_attachment",
-        lambda p, dest: {"text": "some text", "images": [], "images_undecoded": True})
+        lambda p, dest, cancel=None: {
+            "text": "some text", "images": [], "images_undecoded": True})
     warnings = []
     monkeypatch.setattr(ai_dialog, "_warn", lambda text, **kw: warnings.append(text))
 
     dlg = ai_dialog._GenerateDialog()
     dlg._attach()
+    _wait_for_attachment_worker(dlg)
     assert len(warnings) == 1
     assert "images" in warnings[0] and "Anki" in warnings[0]
 
     dlg._attach()   # a second attached PDF hitting the same limitation stays quiet
+    _wait_for_attachment_worker(dlg)
     assert len(warnings) == 1
+
+
+def test_attachment_only_input_enables_generate_and_can_be_removed(
+        monkeypatch, tmp_path):
+    _, q = harness.bootstrap()
+    harness.app()
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    path = str(tmp_path / "lecture.png")
+    monkeypatch.setattr(q.QFileDialog, "getOpenFileNames",
+                        lambda *args, **kwargs: ([path], ""))
+    def extract(source, dest, **kwargs):
+        open(os.path.join(dest, "lecture.png"), "wb").write(b"image")
+        return {"text": "", "images": ["lecture.png"],
+                "images_undecoded": False}
+
+    monkeypatch.setattr(ai_dialog.ai_logic, "extract_attachment", extract)
+
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    harness.app().processEvents()
+    assert not dlg.attach_status.isVisible()
+    dlg._attach()
+    _wait_for_attachment_worker(dlg)
+
+    assert dlg.generate_btn.isEnabled()
+    remove = dlg._attachment_remove_buttons[path]
+    assert remove.accessibleName() == "Remove attachment: lecture.png"
+    remove.click()
+    harness.app().processEvents()
+    assert dlg.session.attachments == []
+    assert not dlg.generate_btn.isEnabled()
+
+
+def test_attachment_worker_keeps_qt_on_gui_thread_and_cancel_discards_result(
+        monkeypatch, tmp_path):
+    _, q = harness.bootstrap()
+    app = harness.app()
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    path = str(tmp_path / "slow.pdf")
+    monkeypatch.setattr(q.QFileDialog, "getOpenFileNames",
+                        lambda *args, **kwargs: ([path], ""))
+    started = threading.Event()
+    threads = []
+
+    def extract(source, dest, cancel=None):
+        threads.append(threading.get_ident())
+        started.set()
+        deadline = time.monotonic() + 2
+        while not (cancel and cancel()) and time.monotonic() < deadline:
+            time.sleep(0.001)
+        return {"text": "discard me", "images": [], "images_undecoded": False}
+
+    monkeypatch.setattr(ai_dialog.ai_logic, "extract_attachment", extract)
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    app.processEvents()
+    gui_thread = threading.get_ident()
+
+    dlg._attach()
+    assert started.wait(timeout=1)
+    app.processEvents()  # the dialog remains responsive while extraction is gated
+    assert dlg.attach_cancel_btn.isVisible()
+    assert threads == [dlg._attach_worker.ident]
+    assert threads[0] != gui_thread
+
+    dlg.attach_cancel_btn.click()
+    _wait_for_attachment_worker(dlg)
+    assert dlg.session.attachments == []
+    assert dlg.attach_btn.isEnabled()
 
 
 def test_view_skills_extra_button_toggles_and_leaves_dialog_open(monkeypatch):
@@ -803,6 +917,38 @@ def test_input_page_fits_the_reference_screen_with_advanced_open(shot):
     assert height <= 891 - 80, f"the input page's minimum is {height}px tall"
 
 
+def test_advanced_input_stays_resizable_with_large_font_and_footer_visible(
+        monkeypatch):
+    _, q = harness.bootstrap()
+    app = harness.app()
+    original_font = app.font()
+    enlarged = q.QFont(original_font)
+    enlarged.setPointSizeF(original_font.pointSizeF() * 1.3)
+    app.setFont(enlarged)
+    try:
+        monkeypatch.setattr(ai_cli, "find_cli",
+                            lambda kind, override="": "/bin/echo"
+                            if kind == "claude" else None)
+        monkeypatch.setattr(ai_cli, "probe",
+                            lambda kind, path: {"ok": True, "detail": "v1"})
+        dlg = ai_dialog._GenerateDialog()
+        dlg.source_box.setPlainText("Synthetic study material. " * 100)
+        dlg.show()
+        app.processEvents()
+        dlg._toggle_advanced()
+        dlg.resize(720, 620)
+        for _ in range(3):
+            app.processEvents()
+
+        footer_bottom = dlg.generate_btn.mapTo(
+            dlg, q.QPoint(0, dlg.generate_btn.height())).y()
+        assert dlg.height() <= 620
+        assert footer_bottom <= dlg.contentsRect().bottom()
+        assert dlg.input_scroll.verticalScrollBar().maximum() > 0
+    finally:
+        app.setFont(original_font)
+
+
 def test_progress_page_activity_feed_renders_its_lines(shot):
     dlg = shot("ai-progress").dialog
     text = dlg.activity_feed.toPlainText()
@@ -939,6 +1085,62 @@ def test_edit_card_dialog_field_heights_differ_by_field():
 def test_edit_card_dialog_opens_at_640_wide():
     dlg, _ = _edit_card_dialog()
     assert dlg.width() == 640
+
+
+def test_edit_card_stays_resizable_with_large_font_and_buttons_visible():
+    _, q = harness.bootstrap()
+    app = harness.app()
+    original_font = app.font()
+    enlarged = q.QFont(original_font)
+    enlarged.setPointSizeF(original_font.pointSizeF() * 1.3)
+    app.setFont(enlarged)
+    try:
+        dlg, _ = _edit_card_dialog()
+        dlg.show()
+        dlg.resize(640, 500)
+        for _ in range(3):
+            app.processEvents()
+
+        ok = dlg.button_box.button(q.QDialogButtonBox.StandardButton.Ok)
+        footer_bottom = ok.mapTo(dlg, q.QPoint(0, ok.height())).y()
+        assert dlg.height() <= 500
+        assert footer_bottom <= dlg.contentsRect().bottom()
+        assert dlg.edit_scroll.verticalScrollBar().maximum() > 0
+    finally:
+        app.setFont(original_font)
+
+
+def test_wizard_and_edit_fields_have_labels_and_carets_have_stateful_names():
+    _, q = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available()
+    dlg = ai_dialog._GenerateDialog()
+
+    assert dlg.source_label.buddy() is dlg.source_box
+    assert dlg.focus_label.buddy() is dlg.instructions_box
+    assert dlg.count_label.buddy() is dlg.count_spin
+    assert dlg.deck_label.buddy() is dlg.deck_combo
+    assert dlg.source_box.accessibleName() == "Source material"
+    assert dlg.instructions_box.accessibleName() == "Focus (optional)"
+
+    cards = harness._ai_synthetic_cards(1)
+    dlg.session.cards = cards
+    dlg.session.included = [True]
+    dlg.session.checks = [[]]
+    dlg._rebuild_review()
+    row = dlg.cards_lay.itemAt(0).widget()
+    caret = next(button for button in row.findChildren(q.QPushButton)
+                 if button.text() == ai_dialog._CARET_CLOSED)
+    assert caret.accessibleName().startswith("Show card:")
+    caret.click()
+    assert caret.accessibleName().startswith("Hide card:")
+
+    edit, _ = _edit_card_dialog()
+    for name, editor in edit._field_edits.items():
+        assert edit._field_labels[name].buddy() is editor
+        assert editor.accessibleName() == name
+    assert edit.tags_label.buddy() is edit.tags_edit
+    assert edit.tags_edit.accessibleName() == "Tags"
 
 
 def test_edit_card_dialog_escape_rejects():

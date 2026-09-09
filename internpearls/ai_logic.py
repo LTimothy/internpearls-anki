@@ -928,6 +928,11 @@ def active_skills(deck_skill, user_skill=""):
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+MAX_PDF_PAGES = 100
+MAX_EXTRACTED_TEXT_CHARS = 500_000
+MAX_PDF_IMAGES = 50
+MAX_EXTRACTED_IMAGE_BYTES = 25 * 1024 * 1024
 _VENDOR_DIR = os.path.join(os.path.dirname(__file__), "vendor")
 _SAFE_STEM_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
@@ -940,16 +945,87 @@ def _pypdf():
     if _VENDOR_DIR not in sys.path:
         sys.path.insert(0, _VENDOR_DIR)
     import pypdf
+    version = str(getattr(pypdf, "__version__", "unknown"))
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:\.post\d+)?", version)
+    compatible_version = bool(
+        match and tuple(int(part) for part in match.groups()[:3]) >= (6, 18, 0))
+    if not compatible_version or not callable(getattr(pypdf, "apply_configuration", None)):
+        raise RuntimeError(
+            f"loaded pypdf {version} is incompatible; pypdf 6.18.0 or newer is required")
     return pypdf
 
 
-def extract_attachment(path, dest_dir):
+def _extract_pdf_pages(pages, dest_dir, base, stem, cancel=None):
+    if len(pages) > MAX_PDF_PAGES:
+        raise ValueError(f"PDF {base} exceeds the {MAX_PDF_PAGES} page limit")
+
+    texts, images = [], []
+    text_chars = 0
+    image_count = 0
+    image_bytes = 0
+    images_undecoded = False
+    for pnum, page in enumerate(pages, 1):
+        if cancel is not None and cancel():
+            raise ValueError("Attachment extraction cancelled")
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            text = ""
+        if text.strip():
+            text_chars += len(text) + bool(texts)
+            if text_chars > MAX_EXTRACTED_TEXT_CHARS:
+                raise ValueError(
+                    f"PDF {base} exceeds the {MAX_EXTRACTED_TEXT_CHARS:,} character text limit")
+            texts.append(text)
+        if images_undecoded:
+            continue   # already learned Pillow's unavailable this run; it won't be for the next page either
+        try:
+            page_images = page.images
+            count = len(page_images)
+        except Exception:
+            continue   # this page's image list itself didn't parse; its text still made it in above
+        image_count += count
+        if image_count > MAX_PDF_IMAGES:
+            raise ValueError(f"PDF {base} exceeds the {MAX_PDF_IMAGES} embedded image limit")
+        for inum in range(count):
+            if cancel is not None and cancel():
+                raise ValueError("Attachment extraction cancelled")
+            try:
+                img = page_images[inum]
+                data = img.data
+            except ImportError:
+                # pypdf needs Pillow only to decode an image, not to list its
+                # id: this is the "present but undecodable" case, not "no images"
+                images_undecoded = True
+                break
+            except Exception:
+                continue   # this one image didn't decode; the rest of the page still can
+            # pypdf's own docs warn img.name "can contain arbitrary
+            # characters" (it's read from the PDF's internal resource
+            # naming) - sanitize before it becomes a filename extension
+            raw_ext = os.path.splitext(img.name)[1].lstrip(".").lower()
+            img_ext = "." + raw_ext if re.fullmatch(r"[a-z0-9]{1,5}", raw_ext) else ".png"
+            name = f"{stem}-p{pnum}-img{inum}{img_ext}"
+            image_bytes += len(data)
+            if image_bytes > MAX_EXTRACTED_IMAGE_BYTES:
+                raise ValueError(f"PDF {base} exceeds the 25 MiB aggregate image limit")
+            with open(os.path.join(dest_dir, name), "wb") as fh:
+                fh.write(data)
+            images.append(name)
+
+    return {"text": "\n".join(texts), "images": images,
+            "images_undecoded": images_undecoded}
+
+
+def extract_attachment(path, dest_dir, cancel=None):
     """Extract source material from one attached file. Images are copied into
     dest_dir as-is; a PDF's text is returned and its embedded images are
     written into dest_dir under collision-safe names. A page that fails to
     extract text is skipped rather than failing the whole document. Raises
-    ValueError for an unsupported extension, or a PDF that can't be parsed at
-    all (encrypted, corrupt, or not really a PDF).
+    ValueError for cancellation, an exceeded resource limit, an unsupported
+    extension, or a PDF that can't be parsed at all (encrypted, corrupt, or
+    not really a PDF). If supplied, cancel is checked before PDF parsing and
+    before each page and embedded image.
 
     The returned dict's "images_undecoded" is True when the PDF has embedded
     images this environment could not decode: in practice, pypdf needs
@@ -961,6 +1037,10 @@ def extract_attachment(path, dest_dir):
     decode them here" without needing Pillow to answer the question."""
     ext = os.path.splitext(path)[1].lower()
     base = os.path.basename(path)
+    if cancel is not None and cancel():
+        raise ValueError("Attachment extraction cancelled")
+    if os.path.getsize(path) > MAX_ATTACHMENT_BYTES:
+        raise ValueError(f"attachment {base} exceeds the 25 MiB file limit")
     # stem sanitized so a hostile filename can't traverse dest_dir or collide
     # with another attachment's output; same scheme used for PDF-embedded images below
     stem = _SAFE_STEM_RE.sub("_", os.path.splitext(base)[0]) or "attachment"
@@ -979,47 +1059,22 @@ def extract_attachment(path, dest_dir):
 
     try:
         pypdf = _pypdf()
-        reader = pypdf.PdfReader(path)
-        pages = reader.pages
     except Exception as e:
         raise ValueError(f"could not read PDF {base}: {e}") from e
-
-    texts, images = [], []
-    images_undecoded = False
-    for pnum, page in enumerate(pages, 1):
+    with pypdf.apply_configuration(
+            maximum_declared_stream_length=MAX_ATTACHMENT_BYTES,
+            array_based_stream_maximum_output_length=MAX_EXTRACTED_IMAGE_BYTES,
+            jbig2_maximum_output_length=MAX_EXTRACTED_IMAGE_BYTES,
+            lzw_maximum_output_length=MAX_EXTRACTED_IMAGE_BYTES,
+            run_length_maximum_output_length=MAX_EXTRACTED_IMAGE_BYTES,
+            zlib_maximum_output_length=MAX_EXTRACTED_IMAGE_BYTES,
+            image_maximum_buffer_size=MAX_EXTRACTED_IMAGE_BYTES):
         try:
-            texts.append(page.extract_text() or "")
-        except Exception:
-            pass
-        if images_undecoded:
-            continue   # already learned Pillow's unavailable this run; it won't be for the next page either
-        try:
-            page_images = page.images
-            count = len(page_images)
-        except Exception:
-            continue   # this page's image list itself didn't parse; its text still made it in above
-        for inum in range(count):
-            try:
-                img = page_images[inum]
-            except ImportError:
-                # pypdf needs Pillow only to decode an image, not to list its
-                # id: this is the "present but undecodable" case, not "no images"
-                images_undecoded = True
-                break
-            except Exception:
-                continue   # this one image didn't decode; the rest of the page still can
-            # pypdf's own docs warn img.name "can contain arbitrary
-            # characters" (it's read from the PDF's internal resource
-            # naming) - sanitize before it becomes a filename extension
-            raw_ext = os.path.splitext(img.name)[1].lstrip(".").lower()
-            img_ext = "." + raw_ext if re.fullmatch(r"[a-z0-9]{1,5}", raw_ext) else ".png"
-            name = f"{stem}-p{pnum}-img{inum}{img_ext}"
-            with open(os.path.join(dest_dir, name), "wb") as fh:
-                fh.write(img.data)
-            images.append(name)
-
-    return {"text": "\n".join(t for t in texts if t.strip()), "images": images,
-            "images_undecoded": images_undecoded}
+            reader = pypdf.PdfReader(path)
+            pages = reader.pages
+        except Exception as e:
+            raise ValueError(f"could not read PDF {base}: {e}") from e
+        return _extract_pdf_pages(pages, dest_dir, base, stem, cancel=cancel)
 
 
 def _svg_attrs(tag_text):

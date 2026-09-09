@@ -46,6 +46,22 @@ def _make_mock_apkg(path, notes, models=None):
     os.remove(db_path)
 
 
+def _make_dual_legacy_apkg(path, anki21_notes, anki2_notes):
+    """Write both legacy collection members, with .anki21 as the operative one."""
+    anki21_apkg = str(path) + ".anki21.apkg"
+    anki2_apkg = str(path) + ".anki2.apkg"
+    _make_mock_apkg(anki21_apkg, anki21_notes)
+    _make_mock_apkg(anki2_apkg, anki2_notes)
+    with zipfile.ZipFile(anki21_apkg) as z:
+        anki21 = z.read("collection.anki2")
+    with zipfile.ZipFile(anki2_apkg) as z:
+        anki2 = z.read("collection.anki2")
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("collection.anki21", anki21)
+        z.writestr("collection.anki2", anki2)
+    return str(path)
+
+
 def test_plural_keeps_the_bare_noun_for_one():
     assert logic.plural(1, "card") == "1 card"
     assert logic.plural(1, "retired card") == "1 retired card"
@@ -537,6 +553,22 @@ def test_remap_cards_guid_match_wins_over_front_match(tmp_path):
     her = {"Front of A": "guid-a", "Front of B": "guid-b"}
     remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her, aliases={})
     assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
+
+
+def test_remap_cards_uses_complete_guids_when_ambiguous_fronts_are_excluded(tmp_path):
+    class HerCards(dict):
+        pass
+
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "guid-b", "Shared front")])
+    her = HerCards()
+    her.guids = {"guid-a", "guid-b"}
+
+    remap, in_place, as_new, new_notes, matched = logic.remap_cards(
+        apkg, her, aliases={})
+
+    assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
+    assert matched == [(1, "guid-b", "guid-b")]
 
 
 def test_remap_cards_new_notes_length_always_matches_as_new(tmp_path):
@@ -1115,6 +1147,20 @@ def test_write_personalized_rewrites_only_remapped_guids(tmp_path):
     assert rows[2] == ("Front 2", "original-guid-2")  # untouched
 
 
+def test_write_personalized_rewrites_anki21_instead_of_anki2(tmp_path):
+    src = _make_dual_legacy_apkg(
+        tmp_path / "src.apkg",
+        [(1, "operative-guid", "Operative front")],
+        [(2, "fallback-guid", "Fallback front")],
+    )
+    out = str(tmp_path / "out.apkg")
+
+    logic.write_personalized(src, {1: "rewritten-guid"}, out)
+
+    assert logic.apkg_notes(out) == [
+        (1, ["Operative front", "back text"], "rewritten-guid")]
+
+
 def test_write_personalized_preserves_media_and_manifest(tmp_path):
     # A real .apkg carries a "media" manifest and numbered media blobs alongside
     # collection.anki2. write_personalized repackages the whole zip, so those must
@@ -1634,6 +1680,17 @@ def test_manifest_scope_suggestion_ignores_missing_or_junk_values():
 
 
 # ------------------------------------------------------------------- apkg_deck_names
+def test_apkg_notes_prefers_anki21_over_anki2(tmp_path):
+    apkg = _make_dual_legacy_apkg(
+        tmp_path / "dual.apkg",
+        [(1, "operative-guid", "Operative front")],
+        [(2, "fallback-guid", "Fallback front")],
+    )
+
+    assert logic.apkg_notes(apkg) == [
+        (1, ["Operative front", "back text"], "operative-guid")]
+
+
 def _legacy_apkg(path, deck_names, with_col=True):
     """An old-format .apkg: deck names live in col.decks as a JSON blob.
 

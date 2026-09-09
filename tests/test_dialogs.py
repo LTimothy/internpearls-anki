@@ -911,6 +911,35 @@ def test_offer_again_on_an_entry_missing_a_deck_saves_without_invalidating(
 
 
 # --------------------------------------------------------------------- settings
+def test_settings_interval_range_preserves_the_supported_weekly_limit(anki):
+    """Opening and saving Settings must preserve both documented interval limits;
+    in particular, a weekly value cannot be silently shortened to one day by Qt."""
+    from internpearls import config, dialogs
+
+    weekly = dialogs._SettingsDialog(
+        None, True, config.AUTO_SYNC_INTERVAL_CEILING_MIN, True, False)
+    spin = find(weekly.node(), t="spin")
+    assert spin["min"] == config.AUTO_SYNC_INTERVAL_FLOOR_MIN
+    assert spin["max"] == config.AUTO_SYNC_INTERVAL_CEILING_MIN
+    assert weekly.values()["auto_sync_interval_minutes"] == \
+        config.AUTO_SYNC_INTERVAL_CEILING_MIN
+
+    minimum = dialogs._SettingsDialog(
+        None, True, config.AUTO_SYNC_INTERVAL_FLOOR_MIN, True, False)
+    assert minimum.values()["auto_sync_interval_minutes"] == \
+        config.AUTO_SYNC_INTERVAL_FLOOR_MIN
+
+
+def test_settings_spin_controls_have_accessible_names(anki):
+    from internpearls import dialogs
+
+    settings = dialogs._SettingsDialog(None, True, 15, True, False)
+    assert settings._interval_spin._accessible == "Check every"
+
+    dimming = dialogs._NightModeDimmingDialog(None, True, 30, "images")
+    assert dimming._percent_spin._accessible == "Dim by"
+
+
 def test_settings_saves_all_four_values(anki):
     from internpearls import dialogs
 

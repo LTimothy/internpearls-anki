@@ -4,6 +4,7 @@ Everything here is either a constant, a path, or a thin read/write over Anki's a
 config and our own JSON state files. No dialogs, no network, no collection access.
 """
 import json
+import hashlib
 import os
 import tempfile
 
@@ -11,7 +12,7 @@ from aqt import mw
 
 from .logic import clamp_night_mode_dim_percent
 
-ADDON_VERSION = "0.66.2"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.67.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # own notes); when it does, an add-on release that understands the new shape must bump
@@ -219,6 +220,24 @@ def _cfg():
     }
 
 
+def _collection_state_path(path):
+    """Never trust another collection/source's installed versions or baselines.
+
+    Legacy unscoped files are left intact, not adopted: their owner is unknown.
+    The first scoped sync conservatively preserves annotations without a baseline.
+    """
+    if os.path.basename(path) not in ("installed.json", "shipped_fields.json"):
+        return path
+    collection_path = getattr(getattr(mw, "col", None), "path", None)
+    if not isinstance(collection_path, str) or not collection_path:
+        return path
+    conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
+    source = (conf.get("github_decks_repo", ""), conf.get("github_ref", "main"),
+              conf.get("decks_dir", ""), conf.get("scope_tag", "InternPearls"))
+    key = hashlib.sha256(json.dumps((os.path.realpath(collection_path), source)).encode()).hexdigest()[:24]
+    return os.path.join(os.path.dirname(path), "collections", key, os.path.basename(path))
+
+
 def _load_json(path, default, strict=False):
     """Read a JSON file, falling back to `default` when it isn't there.
 
@@ -228,6 +247,7 @@ def _load_json(path, default, strict=False):
     under strict. It is off by default, so every existing caller behaves exactly as it
     did: a missing or unreadable installed.json still reads as "nothing installed yet".
     """
+    path = _collection_state_path(path)
     try:
         with open(path, encoding="utf8") as fh:
             return json.load(fh)
@@ -253,6 +273,7 @@ def _save_json(path, data):
     if it's missing, which would turn a single absent directory into a crash on every
     state write this add-on makes.
     """
+    path = _collection_state_path(path)
     dirname = os.path.dirname(path) or "."
     os.makedirs(dirname, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".tmp")

@@ -60,4 +60,5 @@ def test_image_tag_uses_the_rasterized_thumbnail_for_an_svg(tmp_path):
         '<rect width="50" height="50" fill="green"/></svg>', encoding="utf8")
     tag = review._image_tag(str(svg))
     assert tag is not None
-    assert str(svg) + ".png" in tag
+    assert review._svg_thumbnail_path(str(svg)) in tag
+    assert not svg.with_name(svg.name + ".png").exists()

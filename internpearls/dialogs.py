@@ -12,7 +12,8 @@ from aqt.qt import (QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QFileDia
 from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
 from .collection import installed_matching_collection, invalidate_installed
 from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
-                     AUTO_SYNC_INTERVAL_FLOOR_MIN, EXAMPLE_DECK_NAME, EXAMPLE_REPO,
+                     AUTO_SYNC_INTERVAL_CEILING_MIN, AUTO_SYNC_INTERVAL_FLOOR_MIN,
+                     EXAMPLE_DECK_NAME, EXAMPLE_REPO,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED,
                      NIGHT_MODE_DIM_PERCENT_CEILING, NIGHT_MODE_DIM_PERCENT_FLOOR,
                      STATE, _cfg, _load_json, load_declined, save_declined)
@@ -27,6 +28,15 @@ from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _safe, _warn,
 from .widgets import chip_cell
 
 
+def _field_label(text, field, *, section=False, top_margin=0):
+    """A visible field label that also names and focuses its editor."""
+    label = (section_label(text, top_margin=top_margin) if section else QLabel(text))
+    field.setAccessibleName(text)
+    if hasattr(label, "setBuddy"):
+        label.setBuddy(field)
+    return label
+
+
 def _github_source_form(repo_default, token_default):
     """One form for both GitHub fields, returning (repo, token, ok). The repo and its
     (optional) token are one decision, so they belong in one dialog: the previous two
@@ -37,13 +47,13 @@ def _github_source_form(repo_default, token_default):
     dlg.setMinimumWidth(420)
     lay = QVBoxLayout(dlg)
     lay.setSpacing(6)
-    lay.addWidget(section_label("Repo"))
     repo_edit = QLineEdit(repo_default)
     repo_edit.setPlaceholderText("owner/name")
+    lay.addWidget(_field_label("Repo", repo_edit, section=True))
     lay.addWidget(repo_edit)
-    lay.addWidget(section_label("Access token", top_margin=8))
     token_edit = QLineEdit(token_default)
     token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+    lay.addWidget(_field_label("Access token", token_edit, section=True, top_margin=8))
     lay.addWidget(token_edit)
     lay.addWidget(hint_label(
         "Leave blank for a public repo. A private one needs a read-only token; "
@@ -522,9 +532,9 @@ class _DeckManagerDialog(QDialog):
             clear_row.addStretch()
             outer.addLayout(clear_row)
 
-        outer.addWidget(section_label("Preserved fields"))
         self._pf_edit = QLineEdit(", ".join(protected))
         self._pf_edit.setPlaceholderText("Notes")
+        outer.addWidget(_field_label("Preserved fields", self._pf_edit, section=True))
         outer.addWidget(self._pf_edit)
         outer.addWidget(hint_label(
             "Comma-separated fields holding your own annotations. Sync "
@@ -908,9 +918,10 @@ class _SettingsDialog(QDialog):
         outer.addWidget(self._auto_sync_cb)
 
         interval_row = QHBoxLayout()
-        interval_row.addWidget(QLabel("Check every"))
         self._interval_spin = QSpinBox()
-        self._interval_spin.setRange(AUTO_SYNC_INTERVAL_FLOOR_MIN, 1440)
+        interval_row.addWidget(_field_label("Check every", self._interval_spin))
+        self._interval_spin.setRange(AUTO_SYNC_INTERVAL_FLOOR_MIN,
+                                     AUTO_SYNC_INTERVAL_CEILING_MIN)
         self._interval_spin.setValue(interval_minutes)
         self._interval_spin.setSuffix(" min")
         # Nothing checks on an interval while auto-sync is off, so the control that sets
@@ -1197,8 +1208,8 @@ class _NightModeDimmingDialog(QDialog):
         self._refresh_scope_hint()
 
         percent_row = QHBoxLayout()
-        percent_row.addWidget(QLabel("Dim by"))
         self._percent_spin = QSpinBox()
+        percent_row.addWidget(_field_label("Dim by", self._percent_spin))
         self._percent_spin.setRange(NIGHT_MODE_DIM_PERCENT_FLOOR,
                                     NIGHT_MODE_DIM_PERCENT_CEILING)
         self._percent_spin.setValue(percent)

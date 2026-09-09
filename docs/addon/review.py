@@ -11,6 +11,7 @@ comparison from a picture she already has, but it writes nothing there or anywhe
 and touches no network. That's still why the dialog has no Cancel.
 """
 import datetime
+import hashlib
 import html
 import os
 import tempfile
@@ -103,6 +104,21 @@ _CARET_OPEN = "▾"
 # is scaled down to it; a smaller one is left alone rather than blown up.
 _IMAGE_MAX_W = 540
 
+# Kept alive for as long as this module is loaded because a QLabel reads the path in
+# the returned HTML after `_svg_thumbnail` itself has returned. A flat hash of the
+# absolute source path makes one stable, collision-free thumbnail per collection-media
+# file without deep directory trees or writes beside the source.
+_SVG_THUMBNAIL_DIR = None
+
+
+def _svg_thumbnail_path(svg_path):
+    global _SVG_THUMBNAIL_DIR
+    if _SVG_THUMBNAIL_DIR is None:
+        _SVG_THUMBNAIL_DIR = tempfile.TemporaryDirectory(prefix="internpearls-svg-")
+    absolute = os.path.abspath(svg_path)
+    name = hashlib.sha256(os.fsencode(absolute)).hexdigest() + ".png"
+    return os.path.join(_SVG_THUMBNAIL_DIR.name, name)
+
 
 def _svg_thumbnail(svg_path):
     """Rasterize a drawn SVG to a PNG thumbnail, its background painted white by the
@@ -112,9 +128,10 @@ def _svg_thumbnail(svg_path):
     in one corner with the drawing spilling past it (svg_to_media normalizes the
     file itself for the same reason, but this covers a file that predates that fix).
 
-    Returns the PNG's path, or None if PyQt6.QtSvg isn't available or the file
-    doesn't parse as SVG; the caller falls back to the plain QImage(local_path) path
-    either way.
+    Returns a PNG path under the add-on's private temporary directory, or None if
+    PyQt6.QtSvg isn't available or the file doesn't parse as SVG; the caller falls
+    back to the plain QImage(local_path) path either way. Collection media is read
+    only: a same-named sibling is never created or replaced.
     """
     try:
         from PyQt6.QtCore import Qt as _Qt
@@ -135,7 +152,7 @@ def _svg_thumbnail(svg_path):
     painter = QPainter(image)
     renderer.render(painter)
     painter.end()
-    png_path = svg_path + ".png"
+    png_path = _svg_thumbnail_path(svg_path)
     return png_path if image.save(png_path, "PNG") else None
 
 
@@ -993,6 +1010,9 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     caption = muted_label("")
     caption.setVisible(False)
     box = QPlainTextEdit(flags.get(guid, ""))
+    box.setAccessibleName(f"Feedback note: {card_label}")
+    if hasattr(caption, "setBuddy"):
+        caption.setBuddy(box)
     box.setPlaceholderText(_FEEDBACK_PLACEHOLDER)
     box.setFixedHeight(50)
     # A note already written is what opens this, not a decline the reader made in some
@@ -1006,6 +1026,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     never_note = hint_label("won't be offered again")
     never_note.setVisible(False)
     add_note = link_button("Add note")
+    add_note.setAccessibleName(f"Add note: {card_label}")
     add_note.setVisible(False)
 
     def _reveal_box(_checked=False):

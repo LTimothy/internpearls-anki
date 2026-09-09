@@ -3,6 +3,29 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.67.0
+
+Audit remediation: imports now read the operative legacy package database, honor
+complete GUID identity, refuse out-of-scope GUID conflicts, and use Anki's actual
+import outcomes. Failed imports roll back their conversions; conversions cannot
+discard nonempty protected fields. Annotation restoration precedes bookkeeping.
+Installed versions, shipped baselines and backup retention are isolated by
+collection and source, with collision-resistant backup names. Failed replacement
+imports leave predecessors active.
+
+Duplicate scanning invalidates changed scopes, replenishes ignored candidates,
+counts unmatched vocabulary, and applies Normal's documented evidence floor.
+Suspension status identifies the side and offers recovery. Dialog and connection
+test lifecycle fixes prevent stale status and retained windows; SVG previews no
+longer write into collection media. The generation wizard supports short screens
+and removable, attachment-only input. PDF parsing uses the patched bundled reader
+with input and extraction limits.
+
+Choosing “Import them as new” for a format change now keeps the original note
+and its review history as a local copy, while the new-format note receives future
+source updates. PDF extraction runs in the background; cancellation takes effect
+between parser calls. Restart Anki after updating.
+
 ## v0.66.2
 
 Eight fixes from a review of the whole add-on.

@@ -359,6 +359,102 @@ def test_connection_not_signed_in_shows_readable_message(anki, monkeypatch):
     assert "traceback" not in text and "run `claude login`" not in text  # not raw stderr
 
 
+def test_connection_result_is_dropped_after_the_executable_path_changes(
+        anki, monkeypatch):
+    """A successful reply belongs to the executable that answered it. Editing the
+    path while that call is in flight must leave the new path untested, then make a
+    fresh test available once the old worker finishes."""
+    import threading
+
+    from internpearls import ai_cli, ai_setup
+    release = threading.Event()
+    tested = []
+
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": (override or "/synthetic/old-cli")
+        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+
+    def blocking_test_connection(kind, path):
+        tested.append(path)
+        release.wait(timeout=15)
+        return {"state": "working", "detail": "old executable answered"}
+
+    monkeypatch.setattr(ai_cli, "test_connection", blocking_test_connection)
+    anki.mw._config = {"ai_backend": "claude",
+                       "ai_cli_path": {"claude": "/synthetic/old-cli"}}
+    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg._test("claude")
+
+    dlg.panel.path.setText("/synthetic/new-cli")
+    dlg.panel._commit_path()
+    release.set()
+    _drain_conn_test(dlg)
+
+    assert tested == ["/synthetic/old-cli"]
+    assert dlg.panel.path.text() == "/synthetic/new-cli"
+    assert dlg.panel.test_status.text() == "Not tested yet"
+    assert dlg.panel.test_btn.isEnabled()
+
+
+def test_connection_result_is_dropped_when_auto_detection_resolves_elsewhere(
+        anki, monkeypatch):
+    """A blank override is still bound to the executable auto-detection resolved.
+    If PATH resolution changes during the call, the old executable's answer cannot
+    describe the newly resolved one."""
+    import threading
+
+    from internpearls import ai_cli, ai_setup
+    release = threading.Event()
+    resolved = ["/synthetic/old-cli"]
+    tested = []
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": (override or resolved[0])
+        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+
+    def blocking_test_connection(kind, path):
+        tested.append(path)
+        release.wait(timeout=15)
+        return {"state": "working", "detail": "old executable answered"}
+
+    monkeypatch.setattr(ai_cli, "test_connection", blocking_test_connection)
+    anki.mw._config = {"ai_backend": "claude",
+                       "ai_cli_path": {"claude": ""}}
+    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg._test("claude")
+
+    resolved[0] = "/synthetic/new-cli"
+    release.set()
+    _drain_conn_test(dlg)
+
+    assert tested == ["/synthetic/old-cli"]
+    assert dlg.panel.path.text() == ""
+    assert dlg.panel.test_status.text() == "Not tested yet"
+    assert dlg.panel.test_btn.isEnabled()
+
+
+def test_backend_controls_have_contextual_accessible_names(anki, monkeypatch):
+    """Repeated links and compact form controls must identify both their purpose
+    and backend without relying on nearby visual text."""
+    from internpearls import ai_setup
+    _all_found(monkeypatch)
+    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    panel = dlg.panel
+
+    assert panel.path._accessible == "Executable path"
+    assert panel.model.combo._accessible == "Model"
+    assert panel.model.custom._accessible == "Model"
+    assert panel.model.effort._accessible == "Effort"
+    assert panel.test_btn._accessible == "Test connection: Claude Code"
+    assert dlg.rows["claude"].guide_link._accessible == "Install guide: Claude Code"
+    assert dlg.rows["claude"].ignore_link._accessible == "Ignore: Claude Code"
+
+
 def test_row_chip_reads_as_one_of_the_readmes_three_states(anki, monkeypatch):
     # I7: the row must say which of the README's three states detection landed
     # in, and say it as its own chip rather than rendering --version's raw

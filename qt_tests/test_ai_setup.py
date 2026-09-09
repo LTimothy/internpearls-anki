@@ -2,7 +2,8 @@
 settings panel's own grid, and the height budget that replaced the scroll area
 (see qt_tests/test_ai_dialog.py, which kept only the wizard's own pages)."""
 import harness
-from aqt.qt import QApplication, QPoint, QPushButton
+from aqt.qt import (QApplication, QCoreApplication, QEvent, QLabel, QPoint,
+                    QPushButton, QWidget)
 from internpearls import ai_cli, ai_setup
 
 
@@ -473,3 +474,68 @@ def test_ai_backends_rows_show_the_v0_60_default_and_setting_wording(
     png = os.path.join(out_dir, "ai-backends-v0.60.0-wording.png")
     dlg.grab().toImage().save(png, "PNG")
     assert os.path.exists(png)
+
+
+def test_settings_labels_name_and_focus_their_controls(monkeypatch):
+    dlg = _dialog(monkeypatch)
+    panel = dlg.panel
+    labels = {label.text(): label for label in panel.findChildren(QLabel)}
+
+    assert labels["Executable path"].buddy() is panel.path
+    assert panel.path.accessibleName() == "Executable path"
+    assert labels["Model"].buddy() is panel.model.combo
+    assert panel.model.combo.accessibleName() == "Model"
+    assert panel.model.custom.accessibleName() == "Model"
+    assert labels["Effort"].buddy() is panel.model.effort
+    assert panel.model.effort.accessibleName() == "Effort"
+    assert panel.test_btn.accessibleName() == "Test connection: Claude Code"
+
+    for kind, row in dlg.rows.items():
+        backend = ai_cli.BACKENDS[kind]["label"]
+        assert row.guide_link.accessibleName() == f"Install guide: {backend}"
+        assert row.ignore_link.accessibleName() in (
+            f"Ignore: {backend}", f"Use again: {backend}")
+
+
+def test_closed_backends_dialog_is_disposed_while_its_worker_finishes(
+        monkeypatch):
+    """Closing the modal stops its Qt poll and releases the parent-owned widget
+    tree; the daemon worker may finish independently without keeping that tree alive."""
+    import threading
+
+    harness.bootstrap()
+    app = harness.app()
+    owner = QWidget()
+    release = threading.Event()
+    captured = {}
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": (override or "/synthetic/cli")
+        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+
+    def blocking_test_connection(kind, path):
+        release.wait(timeout=15)
+        return {"state": "working", "detail": "finished after close"}
+
+    def exec_then_close(self):
+        self._test("claude")
+        captured["thread"], captured["timer"] = self._conn_test_refs[-1]
+        self.reject()
+        return 0
+
+    monkeypatch.setattr(ai_cli, "test_connection", blocking_test_connection)
+    monkeypatch.setattr(ai_setup._AIBackendsDialog, "exec", exec_then_close)
+    try:
+        ai_setup.open_ai_backends(owner)
+        assert captured["thread"].is_alive()
+        assert not captured["timer"].isActive()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        app.processEvents()
+        assert owner.findChildren(ai_setup._AIBackendsDialog) == []
+    finally:
+        release.set()
+        captured["thread"].join(timeout=15)
+
+    assert not captured["thread"].is_alive()

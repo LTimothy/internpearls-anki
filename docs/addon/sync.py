@@ -22,7 +22,8 @@ from aqt.utils import getFile
 
 from .ai_logic import is_generated_guid
 from .collection import (_apply_deck, _apply_template_changes, _capture_shipped,
-                         _ensure_notetypes, change_note_types,
+                         _check_protected_conversion,
+                         _ensure_notetypes, change_note_types, fork_note_identities,
                          missing_notetype_targets, notetype_changes,
                          seed_converted_siblings,
                          _her_front_to_guid, _her_guid_to_deck, _her_guid_to_fields,
@@ -229,8 +230,10 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
         def fetch(d, on_chunk=None):
             data = _gh_raw(cfg["gh_repo"], d["apkg"], cfg["gh_token"], cfg["gh_ref"],
                            timeout=download_timeout, on_chunk=on_chunk)
-            return _write_scratch(d["apkg"], data, d.get("version"))
+            return _write_scratch(f"{cfg['gh_repo']}@{cfg['gh_ref']}/{d['apkg']}",
+                                  data, d.get("version"))
 
+        fetch.source_key = ("github", cfg["gh_repo"], cfg["gh_ref"])
         return manifest, fetch, "GitHub"
 
     if cfg["decks_dir"]:
@@ -256,6 +259,7 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
         def fetch(d, on_chunk=None):
             return os.path.join(folder, d["apkg"])
 
+        fetch.source_key = ("folder", os.path.realpath(folder))
         return manifest, fetch, "local folder"
 
     return None, None, None
@@ -477,7 +481,7 @@ def _collision_items(collisions):
     return items
 
 
-def _offer_notetype_changes(changes):
+def _offer_notetype_changes(changes, protected=None, on_import_as_new=None):
     """Ask before converting the learner's notes to the note type an update ships.
 
     Declining is a real choice with a real consequence, and it says so: the cards still
@@ -488,16 +492,45 @@ def _offer_notetype_changes(changes):
     """
     if not changes:
         return []
-    return change_note_types(changes) if _ask(
+    accepted = _ask(
         f"<b>{plural(len(changes), 'card')}</b> in this update changed format (a "
         "question and answer became a fill-in-the-blank).<br><br>Move your existing "
         "cards to the new format? They keep their review history and stay one card "
         "each. Anki treats this as a schema change, so your next AnkiWeb sync will be "
         "a one-time full sync, choose \"Upload to AnkiWeb\" when asked.<br><br>"
-        "Choosing to import them as new still imports them, as separate new cards "
-        "beside the ones you have, leaving your progress on the old versions.",
+        "Choosing to import them as new makes your existing cards local copies: "
+        "they keep their current format, fields, note IDs, and review history, but "
+        "stop receiving updates from this source. The new-format cards import "
+        "separately and receive future source updates.",
         yes_label="Move my cards across", no_label="Import them as new"
-    ) else []
+    )
+    if not accepted:
+        if on_import_as_new is not None:
+            on_import_as_new(changes)
+        return []
+    if protected is not None:
+        _check_protected_conversion(changes, protected)
+    return change_note_types(changes)
+
+
+def _planned_notetype_row_ids(src, her, aliases, changes):
+    """Package row ids whose matched local notes are in a conversion plan."""
+    planned_guids = {change["guid"] for change in changes}
+    remap, _kept, _new, _new_notes, _matched = remap_cards(src, her, aliases)
+    return {rid for rid, _fields, guid in apkg_notes(src)
+            if remap.get(rid, guid) in planned_guids}
+
+
+def _fork_import_as_new(changes, scope_tag):
+    """Fork local identities; the caller commits snapshot removal after import."""
+    forked_guids = fork_note_identities(changes)
+    return _her_front_to_guid(scope_tag), forked_guids
+
+
+def _restore_prior_touches_before_fork(changes, snap, baseline, touched):
+    """Restore personal fields an earlier deck overwrote before making a local copy."""
+    planned_guids = {change["guid"] for change in changes} & touched
+    return _restore(snap, baseline, planned_guids)
 
 
 def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
@@ -550,6 +583,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     aliases = manifest.get("front_aliases", {})   # from the (private) manifest, not config
     _ensure_notetypes()
     snap = _snapshot(cfg["protected"], cfg["scope_tag"])
+    baseline = _load_json(SHIPPED, {})
     her = _her_front_to_guid(cfg["scope_tag"])
     reg = load_declined()
     declined = declined_guids(reg)
@@ -560,13 +594,19 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     # caller has to hand its own snapshot of it in or take a half-updated one back.
     applied = {}
     converted = 0
+    prefork_restored = 0
+    prefork_collisions = []
     cancelled = False
     for i, d in enumerate(todo, 1):
+        conversion_undo = None
+        forked_guids = set()
+        deck_prefork_restored = 0
+        deck_prefork_collisions = []
         short = d["name"].split("::")[-1]
-        if on_progress and not on_progress(i, len(todo), short):
-            cancelled = True
-            break
         try:
+            if on_progress and not on_progress(i, len(todo), short):
+                cancelled = True
+                break
             src = fetch(d)
             tpl = _template_changes(src)
             # A note-type conversion is the same class of thing as a template change:
@@ -605,23 +645,55 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # next run finds it pending and moves her cards across for real.
             missing = ([] if convert_notetypes is False
                        else missing_notetype_targets(nt))
+            conversion_undo = mw.col.add_custom_undo_entry("Intern Pearls deck update")
             # Before the import, not after: once the note is on the right type, the
             # import matches it by GUID and updates it in place, which is the whole
             # point. Afterwards it would be converting a duplicate.
             if missing:
                 changed_nids = []
             elif convert_notetypes is None:
-                changed_nids = _offer_notetype_changes(nt)
+                forked = []
+                changed_nids = _offer_notetype_changes(
+                    nt, cfg["protected"],
+                    on_import_as_new=lambda changes: forked.extend(changes))
+                if forked:
+                    deck_prefork_restored, deck_prefork_collisions = (
+                        _restore_prior_touches_before_fork(
+                            forked, snap, baseline, touched))
+                    her, forked_guids = _fork_import_as_new(
+                        forked, cfg["scope_tag"])
             else:
-                changed_nids = change_note_types(nt) if (nt and convert_notetypes) else []
+                if nt and convert_notetypes:
+                    _check_protected_conversion(nt, cfg["protected"])
+                    changed_nids = change_note_types(nt)
+                else:
+                    changed_nids = []
+                    if nt:
+                        deck_prefork_restored, deck_prefork_collisions = (
+                            _restore_prior_touches_before_fork(
+                                nt, snap, baseline, touched))
+                        her, forked_guids = _fork_import_as_new(
+                            nt, cfg["scope_tag"])
+            expected_conflicts = (_planned_notetype_row_ids(src, her, aliases, nt)
+                                  if missing else frozenset())
+            in_place, as_new, wrote = _apply_deck(
+                src, aliases, her, declined,
+                expected_conflicting_rids=expected_conflicts)
+            if conversion_undo is not None:
+                mw.col.merge_undo_entries(conversion_undo)
+                conversion_undo = None
+            for guid in forked_guids:
+                snap.pop(guid, None)
+            prefork_restored += deck_prefork_restored
+            prefork_collisions.extend(deck_prefork_collisions)
             converted += len(changed_nids)
-            in_place, as_new, wrote = _apply_deck(src, aliases, her, declined)
             # Recorded the moment the import returns, before anything else in this
             # iteration can raise. `touched` is what _restore and _capture_shipped work
             # from, so a deck missing from it has its protected fields left as the
             # import overwrote them: the learner's annotations, gone for good. Every
             # later step here is best-effort by comparison.
             touched |= wrote
+            her = _her_front_to_guid(cfg["scope_tag"])
             seen[d["name"]] = {g for _, _f, g in apkg_notes(src)}
             # After the import, not before: the extra cloze cards only exist once the
             # cloze markup has actually landed on the note.
@@ -647,19 +719,29 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             cancelled = True
             break
         except Exception as e:
+            if conversion_undo is not None:
+                # Conversion and package import are undoable backend operations.
+                # Roll back this deck's group, never an unrelated prior action.
+                mw.col.merge_undo_entries(conversion_undo)
+                mw.col.undo()
+                her = _her_front_to_guid(cfg["scope_tag"])
             results.append(f"✗ <b>{short}</b>: {e}")
     # Merged into whatever is on disk now, not written back wholesale: a caller's own
     # view of installed.json is taken before the fetch phase, which can be minutes old
     # by the time a multi-deck run gets here, and saving that as-is would revert any
     # version another sync recorded in the meantime.
-    _save_json(INSTALLED, {**_load_json(INSTALLED, {}), **applied})
     # Read what the source shipped BEFORE restoring her annotations over it: after
     # _restore, hers is what the note holds, and recording that as the baseline would
     # make her own edit indistinguishable from the source's own value next time.
-    shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched)
-    restored, collisions = _restore(snap, _load_json(SHIPPED, {}), touched)
+    try:
+        shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched)
+    finally:
+        restored, collisions = _restore(snap, baseline, touched)
+    restored += prefork_restored
+    collisions = prefork_collisions + collisions
     if shipped:
         _save_json(SHIPPED, {**_load_json(SHIPPED, {}), **shipped})
+    _save_json(INSTALLED, {**_load_json(INSTALLED, {}), **applied})
     # Registry housekeeping runs last, and inside its own guard. Everything above is
     # what keeps her annotations: the import has already overwritten the protected
     # fields by this point, and only _restore puts them back. Between the two, anything
@@ -1247,24 +1329,24 @@ def clean_up_duplicates():
           "it out of the Retired deck." + backup_line)
 
 
-# A session-lived cache of preview downloads, keyed by deck name to (version, path).
+# A session-lived cache keyed by source, deck, package path and version.
 # Opening Update my decks, looking at the preview, and cancelling used to re-download
 # every pending deck's .apkg the next time it opened: pure repeated network cost for an
 # unchanged deck, and (since v0.26.1 made the preview a real per-deck download) the main
 # reason a "just checking" habit runs into sporadic GitHub hiccups more often. The
-# version is a content hash, so a cached entry can only ever satisfy a deck whose content
-# is byte-for-byte what it was: a real push changes the version, misses the cache, and
+# source promises to change the version when content changes: a new version misses the cache and
 # re-downloads. Cleared on Anki restart (it's only in memory), and the cached temp file
 # is re-fetched if it's been swept from the tempdir since.
 _apkg_cache = {}
 
 
 def _cached_fetch(fetch, d, on_chunk=None):
-    hit = _apkg_cache.get(d["name"])
-    if hit and hit[0] == d.get("version") and os.path.exists(hit[1]):
-        return hit[1]
+    key = (getattr(fetch, "source_key", fetch), d["name"], d.get("apkg"), d.get("version"))
+    hit = _apkg_cache.get(key)
+    if hit and os.path.exists(hit):
+        return hit
     path = fetch(d, on_chunk=on_chunk)
-    _apkg_cache[d["name"]] = (d.get("version"), path)
+    _apkg_cache[key] = path
     return path
 
 
@@ -2109,13 +2191,20 @@ def update_decks():
         # put in `fresh`: the merge below carries its scheduling forward and archives
         # it, so archiving it again here would write it twice and count it twice.
         merged_guids = {p["guid"] for p in stranded}
-        fresh = [r for r in fresh if r["guid"] not in merged_guids]
+        waiting = [r for r in fresh if r["guid"] in her
+                   and not all(g in her for g in r.get("superseded_by", []))]
+        fresh = [r for r in fresh if r["guid"] not in merged_guids
+                 and r["guid"] in her
+                 and all(g in her for g in r.get("superseded_by", []))]
         carried = carry_over_protected_fields(fresh, her, cfg["protected"])
         n_merged = _merge_stranded(stranded, her, cfg["protected"], retired_deck, tag)
         n_archived = archive_notes([her[r["guid"]] for r in fresh], retired_deck, tag)
         n_moved = apply_deck_moves(moves, her)
         mw.reset()
-        _refresh_reconcile_action_label(0)   # this run just handled everything found
+        _refresh_reconcile_action_label(len(waiting))
+        if waiting:
+            results.append(f"• {plural(len(waiting), 'retired card')} left active: "
+                           "replacement cards are not available yet.")
 
     result_lines = list(results)
     if n_archived:
@@ -2233,25 +2322,33 @@ def import_single():
     # first survives whatever the conversion's own field map does. Nothing is asked
     # when the target type is absent, since there would be nothing to convert onto and
     # the import is what creates it.
-    changed_nids = [] if missing else _offer_notetype_changes(nt)
-    # Written into this session's own scratch directory rather than beside the file the
-    # learner picked: that path is hers, may not be writable, and a fixed derived name
-    # in a shared folder is the same predictable-target problem the downloads had.
-    fd, out = tempfile.mkstemp(suffix=".sync.apkg", dir=_scratch())
-    os.close(fd)
-    write_personalized(src, remap, out, drop=drop)
+    undo = mw.col.add_custom_undo_entry("Intern Pearls deck import")
     try:
-        _import_apkg(out)
-    finally:
+        forked = []
+        changed_nids = ([] if missing else _offer_notetype_changes(
+            nt, cfg["protected"],
+            on_import_as_new=lambda changes: forked.extend(changes)))
+        forked_guids = set()
+        if forked:
+            her, forked_guids = _fork_import_as_new(forked, cfg["scope_tag"])
+        expected_conflicts = (_planned_notetype_row_ids(src, her, aliases, nt)
+                              if missing else frozenset())
+        in_place, as_new, touched = _apply_deck(
+            src, aliases, her, declined,
+            expected_conflicting_rids=expected_conflicts)
+        for guid in forked_guids:
+            snap.pop(guid, None)
+        # Restore before any later bookkeeping or presentation can fail.
         try:
-            os.remove(out)
-        except OSError:
-            pass
-    # After the import, not before: the extra cloze cards only exist once the cloze
-    # markup has actually landed on the note.
-    seed_converted_siblings(changed_nids)
-    shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched)
-    restored, _ = _restore(snap, _load_json(SHIPPED, {}), touched)
+            shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched)
+        finally:
+            restored, _ = _restore(snap, _load_json(SHIPPED, {}), touched)
+        seed_converted_siblings(changed_nids)
+        mw.col.merge_undo_entries(undo)
+    except Exception:
+        mw.col.merge_undo_entries(undo)
+        mw.col.undo()
+        raise
     if shipped:
         _save_json(SHIPPED, {**_load_json(SHIPPED, {}), **shipped})
     mw.reset()

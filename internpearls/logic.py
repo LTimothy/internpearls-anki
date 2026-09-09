@@ -467,6 +467,9 @@ def _apkg_db(path):
     an import that matches nothing, imports every card as new, and leaves the
     protected-field restore with no matched note to restore onto.
 
+    Older exports can likewise carry an operative collection.anki21 beside a
+    collection.anki2 compatibility copy, so .anki21 wins on that legacy path.
+
     zstandard is not stdlib and Anki does not ship it, so on a modern package the
     decode is impossible here and the reader stops with NEWER_APKG_ERROR: a loud
     "re-export this file" beats a silent empty result.
@@ -474,7 +477,12 @@ def _apkg_db(path):
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         newer = "collection.anki21b" in names
-        member = "collection.anki21b" if newer else "collection.anki2"
+        if newer:
+            member = "collection.anki21b"
+        elif "collection.anki21" in names:
+            member = "collection.anki21"
+        else:
+            member = "collection.anki2"
         if member not in names:
             raise RuntimeError("Unexpected .apkg format (no collection found).")
         with tempfile.TemporaryDirectory() as d:
@@ -948,11 +956,12 @@ def declined_drop(src, remap, her, declined, in_place, as_new):
     Shared by collection._apply_deck and sync.import_single, so a decline filters
     identically whichever path a deck lands in the collection through."""
     drop, touched = set(), set()
+    her_guids = set(getattr(her, "guids", her.values()))
     for rid, _f, guid in apkg_notes(src):
         final = remap.get(rid, guid)
         if final in declined or guid in declined:
             drop.add(rid)
-            if remap.pop(rid, None) is not None or guid in her.values():
+            if remap.pop(rid, None) is not None or guid in her_guids:
                 in_place -= 1
             else:
                 as_new -= 1
@@ -968,20 +977,24 @@ def write_personalized(src, remap, out, drop=frozenset()):
     `drop` is a set of note ids to remove entirely, notes and their cards rows both;
     a drop always wins over a remap for the same id.
 
-    Legacy format only, and it refuses a newer one rather than doing nothing quietly.
-    Anki reads a modern package's collection.anki21b, so rewriting the collection.anki2
-    stub beside it would apply no guid at all while every caller went on reporting the
-    matched counts remap_cards computed: every front-matched card would import as a
-    duplicate and the learner's history would stay on the copy she already had. Writing
-    the anki21b back needs zstd compression, which nothing here has, so the honest answer
-    is the re-export instruction.
+    Legacy format only, preferring collection.anki21 over its collection.anki2
+    compatibility copy. It refuses a newer format rather than doing nothing quietly.
+    Anki reads a modern package's collection.anki21b, so rewriting a legacy member beside
+    it would apply no guid at all while every caller went on reporting the matched counts
+    remap_cards computed: every front-matched card would import as a duplicate and the
+    learner's history would stay on the copy she already had. Writing the anki21b back
+    needs zstd compression, which nothing here has, so the honest answer is the re-export
+    instruction.
     """
     with tempfile.TemporaryDirectory() as d:
         with zipfile.ZipFile(src) as z:
-            if "collection.anki21b" in z.namelist():
+            names = z.namelist()
+            if "collection.anki21b" in names:
                 raise RuntimeError(NEWER_APKG_ERROR)
             z.extractall(d)
-        con = sqlite3.connect(os.path.join(d, "collection.anki2"))
+        member = ("collection.anki21" if "collection.anki21" in names
+                  else "collection.anki2")
+        con = sqlite3.connect(os.path.join(d, member))
         drop = set(drop)
         if drop:
             marks = ",".join("?" * len(drop))
@@ -1031,7 +1044,7 @@ def remap_cards(src, her, aliases):
     about which cards are about to appear or change.
     """
     remap, in_place, new_notes, matched = {}, 0, [], []
-    her_guids = set(her.values())
+    her_guids = set(getattr(her, "guids", her.values()))
     for rid, fields, apkg_guid in apkg_notes(src):
         if apkg_guid in her_guids:
             in_place += 1
