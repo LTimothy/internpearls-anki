@@ -4425,9 +4425,9 @@ def test_a_sync_writes_its_personalized_copy_outside_the_source_folder(anki, tmp
     written = []
     real_write = collection.write_personalized
 
-    def watch(src, remap, out, drop=frozenset()):
+    def watch(src, remap, out, drop=frozenset(), **kwargs):
         written.append(out)
-        return real_write(src, remap, out, drop=drop)
+        return real_write(src, remap, out, drop=drop, **kwargs)
 
     monkeypatch.setattr(collection, "write_personalized", watch)
 

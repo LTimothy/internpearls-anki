@@ -970,12 +970,14 @@ def declined_drop(src, remap, her, declined, in_place, as_new):
     return drop, touched, in_place, as_new
 
 
-def write_personalized(src, remap, out, drop=frozenset()):
+def write_personalized(src, remap, out, drop=frozenset(), prepare_notetypes=None):
     """Copy the .apkg at `src` to `out`, rewriting note GUIDs per `remap` and dropping declined notes.
 
     `remap` is {note_id: new_guid}. Notes not in `remap` are left untouched.
     `drop` is a set of note ids to remove entirely, notes and their cards rows both;
     a drop always wins over a remap for the same id.
+    `prepare_notetypes`, when provided, receives the scratch SQLite connection
+    after those edits, before commit. It never receives the original archive.
 
     Legacy format only, preferring collection.anki21 over its collection.anki2
     compatibility copy. It refuses a newer format rather than doing nothing quietly.
@@ -994,22 +996,23 @@ def write_personalized(src, remap, out, drop=frozenset()):
             z.extractall(d)
         member = ("collection.anki21" if "collection.anki21" in names
                   else "collection.anki2")
-        con = sqlite3.connect(os.path.join(d, member))
-        drop = set(drop)
-        if drop:
-            marks = ",".join("?" * len(drop))
-            con.execute(f"delete from notes where id in ({marks})", tuple(drop))
-            has_cards = con.execute(
-                "select 1 from sqlite_master where type='table' and name='cards'"
-            ).fetchone()
-            if has_cards:
-                con.execute(f"delete from cards where nid in ({marks})", tuple(drop))
-        for rid, g in remap.items():
-            if rid in drop:
-                continue
-            con.execute("update notes set guid=? where id=?", (g, rid))
-        con.commit()
-        con.close()
+        with contextlib.closing(sqlite3.connect(os.path.join(d, member))) as con:
+            drop = set(drop)
+            if drop:
+                marks = ",".join("?" * len(drop))
+                con.execute(f"delete from notes where id in ({marks})", tuple(drop))
+                has_cards = con.execute(
+                    "select 1 from sqlite_master where type='table' and name='cards'"
+                ).fetchone()
+                if has_cards:
+                    con.execute(f"delete from cards where nid in ({marks})", tuple(drop))
+            for rid, g in remap.items():
+                if rid in drop:
+                    continue
+                con.execute("update notes set guid=? where id=?", (g, rid))
+            if prepare_notetypes is not None:
+                prepare_notetypes(con)
+            con.commit()
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
             for root, _, files in os.walk(d):
                 for f in files:
