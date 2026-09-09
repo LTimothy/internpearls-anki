@@ -5,3 +5,31 @@ __pycache__/
 .venv-qt/
 internpearls/user_files/
 
+# Only the distributable project belongs at the repository root.
+/*
+!/.gitignore
+!/.github/
+!/CHANGELOG.md
+!/CONTRIBUTING.md
+!/LICENSE
+!/README.md
+!/build.sh
+!/conftest.py
+!/docs/
+!/internpearls/
+!/internpearls.ankiaddon
+!/pytest.ini
+!/qt_tests/
+!/tests/
+!/tools/
+!/version.json
+
+# Only the live demo is published from docs/.
+/docs/*
+!/docs/.nojekyll
+!/docs/index.html
+!/docs/demo_harness.py
+!/docs/addon/
+
+/.github/*
+!/.github/workflows/
