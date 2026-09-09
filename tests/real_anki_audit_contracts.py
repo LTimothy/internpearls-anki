@@ -191,5 +191,118 @@ def run():
             p.close()
 
 
+def run_legacy_notetype_contract():
+    """Same-family imports keep existing identities and reconcile added fields."""
+    with tempfile.TemporaryDirectory(prefix='ip-legacy-types-') as tmp:
+        root = Path(tmp)
+        publisher = Collection(str(root / 'publisher.anki2'))
+        reader = Collection(str(root / 'reader.anki2'))
+        try:
+            incoming = model(publisher, 'Basic')
+            publisher.models.add_field(incoming, publisher.models.new_field('Source'))
+            publisher.models.update_dict(incoming)
+            old = model(reader, 'Basic')
+            old['name'] += '++'
+            reader.models.add_field(old, reader.models.new_field('Personal extra'))
+            reader.models.update_dict(old)
+            other = model(reader, 'Basic')
+            model_count = len(reader.models.all())
+            originals = {}
+            for guid, target in [('legacy-one', old), ('legacy-two', other)]:
+                note = reader.new_note(target)
+                note.guid, note['Front'], note['Back'] = guid, guid, 'old answer'
+                note['Notes'], note.tags = 'my annotation', ['InternPearls']
+                if target['id'] == old['id']:
+                    note['Personal extra'] = 'keep this too'
+                reader.add_note(note, reader.decks.id('Synthetic'))
+                card = note.cards()[0]
+                card.reps, card.ivl, card.queue, card.type = 17, 40, 2, 2
+                reader.update_card(card)
+                originals[guid] = (note.id, target['id'], card.id)
+                exported = publisher.new_note(incoming)
+                exported.guid, exported['Front'] = guid, guid
+                exported['Back'], exported['Source'] = 'new answer', 'Reference A'
+                exported.tags = ['InternPearls']
+                publisher.add_note(exported, publisher.decks.id('Synthetic'))
+            world.mw.col = publisher
+            path = str(root / 'source.apkg')
+            addon._export_deck_to(path, 'Synthetic')
+            world.mw.col = reader
+            world.mw.reset = lambda: None
+            for mod in (config, sync, addon):
+                mod.INSTALLED = str(root / 'installed.json')
+            sync.SHIPPED = str(root / 'shipped.json')
+            config.DECLINED = str(root / 'declined.json')
+            cfg = config._cfg()
+            manifest = {'decks': [{'name': 'Synthetic', 'version': 'v2'}]}
+            schema = reader.db.scalar('select scm from col')
+            deferred = sync._run_sync(cfg, manifest, lambda d: path, manifest['decks'],
+                                      defer_template_changes=True)
+            assert deferred[3] == ['Synthetic'], deferred
+            assert reader.db.scalar('select scm from col') == schema
+            assert all('Source' not in reader.get_note(nid).keys()
+                       for nid, _, _ in originals.values())
+            real_import = addon._import_apkg
+            def fail_import(_path):
+                raise RuntimeError('Synthetic import failure')
+            addon._import_apkg = fail_import
+            try:
+                failed = sync._run_sync(cfg, manifest, lambda d: path, manifest['decks'])
+                assert any('✗' in line for line in failed[0]), failed[0]
+                for nid, mid, cid in originals.values():
+                    note = reader.get_note(nid)
+                    assert 'Source' not in note.keys()
+                    assert note['Back'] == 'old answer'
+                    assert reader.get_card(cid).reps == 17
+            finally:
+                addon._import_apkg = real_import
+            for iteration in range(2):
+                outcome = sync._run_sync(cfg, manifest, lambda d: path, manifest['decks'])
+                assert not any('✗' in line for line in outcome[0]), outcome[0]
+                assert reader.db.scalar('select count(*) from notes') == 2
+                assert len(reader.models.all()) == model_count
+                if iteration == 0:
+                    reconciled_schema = reader.db.scalar('select scm from col')
+                else:
+                    assert reader.db.scalar('select scm from col') == reconciled_schema
+                for guid, (nid, mid, cid) in originals.items():
+                    note = reader.get_note(nid)
+                    assert note.guid == guid and note.note_type()['id'] == mid
+                    assert note['Back'] == 'new answer', (outcome[0], note.fields, cfg['protected'])
+                    assert note['Source'] == 'Reference A'
+                    assert note['Notes'] == 'my annotation'
+                    if mid == old['id']:
+                        assert note['Personal extra'] == 'keep this too'
+                    card = reader.get_card(cid)
+                    assert (card.reps, card.ivl, card.queue, card.type) == (17, 40, 2, 2)
+            print('PASS legacy field additions and distinct same-family IDs preserve notes and scheduling')
+            # A later package without Source must not erase previously shipped
+            # references or fail because the collection now has the extra field.
+            incoming = publisher.models.by_name(incoming['name'])
+            publisher.models.remove_field(incoming, incoming['flds'][-1])
+            publisher.models.update_dict(incoming)
+            exported = publisher.new_note(incoming)
+            exported.guid, exported['Front'] = 'brand-new', 'New question'
+            exported.tags = ['InternPearls']
+            publisher.add_note(exported, publisher.decks.id('Synthetic'))
+            world.mw.col = publisher
+            older_shape = str(root / 'without-source.apkg')
+            addon._export_deck_to(older_shape, 'Synthetic')
+            world.mw.col = reader
+            outcome = sync._run_sync(cfg, manifest, lambda d: older_shape, manifest['decks'])
+            assert not any('✗' in line for line in outcome[0]), outcome[0]
+            assert reader.db.scalar('select count(*) from notes') == 3
+            for nid, mid, cid in originals.values():
+                note = reader.get_note(nid)
+                assert note['Source'] == 'Reference A'
+                assert note['Notes'] == 'my annotation'
+                assert reader.get_card(cid).reps == 17
+            print('PASS mixed package schemas retain Source and import genuinely new notes')
+        finally:
+            reader.close()
+            publisher.close()
+
+
 if __name__ == '__main__':
+    run_legacy_notetype_contract()
     run()

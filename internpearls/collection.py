@@ -5,8 +5,10 @@ fields snapshot/restore round trip, .apkg import/export, and the Advanced menu a
 that are thin user-facing wrappers over those helpers. The sync flows in sync.py
 compose these; nothing here fetches from the network.
 """
+import copy
 import datetime
 import hashlib
+import json
 import os
 import re
 import tempfile
@@ -1036,8 +1038,95 @@ def notetype_changes(src, her, aliases, scope_tag, declined):
     return plan_notetype_changes(by_her, _her_note_types(scope_tag), TARGET_FIELDS)
 
 
+class NoteTypeFieldsRequired(RuntimeError):
+    """An unattended import needs a one-time field addition."""
+
+
+def _prepare_import_notetypes(con, allow_field_additions=True):
+    """Align managed package notes with their existing model IDs and field names.
+
+    Only the disposable package is rewritten. Missing fields are appended to the
+    collection's model, never removed or reordered; templates stay local. A GUID
+    match can belong to any legacy '+' variant, not just the canonical type.
+    """
+    row = con.execute("select models from col").fetchone()
+    incoming = json.loads(row[0])
+    mm = mw.col.models
+    existing = {m['id']: copy.deepcopy(m) for m in mm.all()}
+    by_name = {m['name']: m for m in existing.values()}
+    plans = []
+    changed = set()
+    for rid, guid, mid, fields in con.execute("select id, guid, mid, flds from notes"):
+        source = incoming[str(mid)]
+        family = source['name'].rstrip('+')
+        if family not in TARGET_FIELDS:
+            continue
+        nid = mw.col.db.scalar("select id from notes where guid = ?", guid)
+        local = mw.col.get_note(nid) if nid else None
+        if local is not None and getattr(local, 'mod', None) is not None:
+            # Anki skips equal modification timestamps even with ALWAYS. Changing
+            # only this scratch timestamp lets same-second source edits update too.
+            con.execute("update notes set mod=mod-1 where id=? and mod=?",
+                        (rid, local.mod))
+        target = local.note_type() if local else existing.get(mid, by_name.get(family))
+        if target is None:
+            continue
+        if target['name'].rstrip('+') != family:
+            # Different-family conversions require the existing consent flow.
+            continue
+        if (source.get('type', 0) != target.get('type', 0)
+                or len(source['tmpls']) != len(target['tmpls'])):
+            raise ValueError("The existing note type has incompatible card templates; "
+                             "this deck was not installed.")
+        names = [f['name'] for f in source['flds']]
+        values = fields.split('\x1f')
+        if len(names) != len(values) or len(set(names)) != len(names):
+            raise ValueError("The package has inconsistent note fields.")
+        plans.append((rid, target['id'], dict(zip(names, values)),
+                      {name: local[name] for name in local.keys()} if local else {}))
+        target = existing[target['id']]
+        for name in names:
+            if name not in {f['name'] for f in target['flds']}:
+                target['flds'].append(mm.new_field(name))
+                changed.add(target['id'])
+    if changed and not allow_field_additions:
+        raise NoteTypeFieldsRequired(
+            "New note-type fields are needed; run Update my decks manually.")
+    targets = {mid for _, mid, _, _ in plans}
+    planned_rows = {rid for rid, _, _, _ in plans}
+    untouched = list(con.execute("select id, mid from notes"))
+    relocated = {}
+    next_mid = max(set(existing) | {int(mid) for mid in incoming}, default=0) + 1
+    for rid, mid in untouched:
+        if rid in planned_rows or mid not in targets:
+            continue
+        # A different-family row awaiting consent still needs its original
+        # schema, even when another row reuses that model ID for a local variant.
+        if mid not in relocated:
+            relocated[mid] = next_mid
+            original = copy.deepcopy(incoming[str(mid)])
+            original['id'] = next_mid
+            incoming[str(next_mid)] = original
+            next_mid += 1
+        con.execute("update notes set mid=? where id=?", (relocated[mid], rid))
+    for mid in targets:
+        target = existing[mid]
+        if mid in changed:
+            (mm.update_dict if hasattr(mm, 'update_dict') else mm.save)(target)
+            target = existing[mid] = mm.by_name(target['name'])
+        incoming[str(mid)] = target
+    for rid, mid, values, personal in plans:
+        fields = [values.get(f['name'], personal.get(f['name'], ''))
+                  for f in existing[mid]['flds']]
+        con.execute("update notes set mid=?, flds=? where id=?",
+                    (mid, '\x1f'.join(fields), rid))
+    used = {str(mid) for (mid,) in con.execute("select distinct mid from notes")}
+    con.execute("update col set models=?",
+                (json.dumps({mid: model for mid, model in incoming.items() if mid in used}),))
+
+
 def _apply_deck(src, aliases, her, declined=frozenset(),
-                expected_conflicting_rids=frozenset()):
+                expected_conflicting_rids=frozenset(), allow_field_additions=True):
     """Import one deck, returning (in_place, as_new, touched) where `touched` is the
     guids this import wrote in her collection: the remapped guid where a note matched
     one of hers, the .apkg's own otherwise. _capture_shipped needs exactly that set.
@@ -1065,7 +1154,9 @@ def _apply_deck(src, aliases, her, declined=frozenset(),
     fd, out = tempfile.mkstemp(suffix=".sync.apkg")
     os.close(fd)
     try:
-        write_personalized(src, remap, out, drop=drop)
+        write_personalized(src, remap, out, drop=drop,
+                           prepare_notetypes=lambda con: _prepare_import_notetypes(
+                               con, allow_field_additions=allow_field_additions))
         result = _import_apkg(out)
         log = getattr(result, "log", None)
         if log is not None:
@@ -1082,7 +1173,15 @@ def _apply_deck(src, aliases, her, declined=frozenset(),
             if conflicts and not expected_conflicts:
                 rejected += len(conflicts)
             if rejected:
-                raise RuntimeError(f"Anki rejected {rejected} notes; this deck was not installed.")
+                reasons = [("note-type conflicts", len(conflicts)
+                            if not expected_conflicts else 0)]
+                reasons.extend((label, len(getattr(log, key, ()))) for key, label in
+                               (("missing_notetype", "missing note types"),
+                                ("missing_deck", "missing decks"),
+                                ("empty_first_field", "empty first fields")))
+                detail = ", ".join(f"{count} {label}" for label, count in reasons if count)
+                raise RuntimeError(f"Anki rejected {rejected} notes ({detail}); "
+                                   "this deck was not installed.")
             # Use backend outcomes, not the preview's predictions, for preservation
             # baselines. Unchanged duplicates must not capture personal text as shipped.
             touched = set()

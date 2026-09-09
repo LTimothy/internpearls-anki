@@ -3,6 +3,22 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.67.1
+
+Fix deck updates rejected because older note types have different internal IDs or
+lack newer fields such as Source. Imports now align fields by name while keeping
+existing notes, review history, personal fields, and card templates. Packages with
+and without newer fields can be imported into the same collection without losing
+previously imported references. Failed imports roll back field additions, and
+background updates defer required field additions to a manual update.
+
+Import errors now identify the rejection reason. The update summary also explains
+that older cards stay in review until their replacements have been imported.
+
+Restart Anki after updating, then run **Update my decks** again. A one-time field
+addition may require a full AnkiWeb sync; repeated deck updates do not add fields
+again.
+
 ## v0.67.0
 
 Audit remediation: imports now read the operative legacy package database, honor
