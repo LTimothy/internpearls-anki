@@ -15,6 +15,29 @@ SCOPE = "InternPearls"
 TAGS = f"{SCOPE}::Pharm"
 
 
+def test_pending_update_cards_sort_by_optional_source_within_each_deck(anki, tmp_path):
+    from internpearls import sync
+
+    src = str(tmp_path / "source.apkg")
+    make_apkg(src, [(g, [g, "Answer", "Explanation"], TAGS)
+                    for g in ("untagged", "ten", "two", "one")])
+    todo = [{"name": "First"}, {"name": "Second"}]
+    preview = {d["name"]: (0, 0, [(1, "untagged", "untagged"),
+                                  (2, "ten", "ten"), (4, "one", "one")],
+                           {3: {}}) for d in todo}
+    items, failed, _, _ = sync._gather_pending_items(
+        todo, preview, {d["name"]: src for d in todo},
+        note_sources={"ten": "[T10Q10]", "two": "[T10Q02]", "one": "[T10Q01]"})
+
+    assert failed == []
+    assert [(item[1], item[2]["guid"], item[2]["kind"])
+            for item in items if item[0] == "card"] == [
+        ("First", "one", "new"), ("First", "two", "changed"),
+        ("First", "ten", "new"), ("First", "untagged", "new"),
+        ("Second", "one", "new"), ("Second", "two", "changed"),
+        ("Second", "ten", "new"), ("Second", "untagged", "new")]
+
+
 def drive(anki, fn, respond):
     """Run `fn` to completion via the same snapshot-and-replay Runner test_dialogs.py
     uses — needed here too now that reconcile_decks() confirms through a custom

@@ -3,17 +3,26 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.68.0
+
+Cards with optional source labels now sort naturally within each deck on **Update my decks**: `T10Q01`, `T10Q02`, then `T10Q10`. Numeric ordering also works without zero-padding. Unlabelled cards follow in their existing order.
+
+Shared change-note groups stay together, ordered by their earliest source label, with labelled cards sorted inside each group. Cards without source labels keep the existing ordering when no labels are present.
+
+The v0.67.0 changelog below has also been expanded to describe the individual fixes shipped earlier, rather than compressing them into a few paragraphs.
+
+Restart Anki after updating.
+
 ## v0.67.1
 
-Fix deck updates rejected because older note types have different internal IDs or
-lack newer fields such as Source. Imports now align fields by name while keeping
-existing notes, review history, personal fields, and card templates. Packages with
-and without newer fields can be imported into the same collection without losing
-previously imported references. Failed imports roll back field additions, and
-background updates defer required field additions to a manual update.
+Fix deck updates rejected because older note types have different internal IDs or lack newer fields such as Source.
 
-Import errors now identify the rejection reason. The update summary also explains
-that older cards stay in review until their replacements have been imported.
+- Match legacy note types and align their fields by name while preserving existing notes, review history, personal fields, and card templates.
+- Add missing incoming fields during a manual update. Packages with and without newer fields can then be imported into the same collection without losing previously imported references.
+- Roll back field additions if the import fails.
+- Defer background updates that require field additions to a manual update.
+- Show the specific rejection reason when an import fails.
+- Explain in the update summary that older cards stay in review until their replacements have been imported.
 
 Restart Anki after updating, then run **Update my decks** again. A one-time field
 addition may require a full AnkiWeb sync; repeated deck updates do not add fields
@@ -21,26 +30,46 @@ again.
 
 ## v0.67.0
 
-Audit remediation: imports now read the operative legacy package database, honor
-complete GUID identity, refuse out-of-scope GUID conflicts, and use Anki's actual
-import outcomes. Failed imports roll back their conversions; conversions cannot
-discard nonempty protected fields. Annotation restoration precedes bookkeeping.
-Installed versions, shipped baselines and backup retention are isolated by
-collection and source, with collision-resistant backup names. Failed replacement
-imports leave predecessors active.
+### Deck updates and review-history protection
 
-Duplicate scanning invalidates changed scopes, replenishes ignored candidates,
-counts unmatched vocabulary, and applies Normal's documented evidence floor.
-Suspension status identifies the side and offers recovery. Dialog and connection
-test lifecycle fixes prevent stale status and retained windows; SVG previews no
-longer write into collection media. The generation wizard supports short screens
-and removable, attachment-only input. PDF parsing uses the patched bundled reader
-with input and extraction limits.
+- Read and personalize the database Anki actually imports when a package contains both legacy database formats, so previewed changes match the imported content.
+- Preserve GUID matching even when multiple cards have the same front text. Skipped cards with duplicate fronts no longer produce incorrect preview counts.
+- Refuse imports that would overwrite a matching GUID outside the configured deck scope, including single-deck imports.
+- Explicitly apply source updates to older notes, and check Anki's actual import result. Rejected or partial imports stay pending rather than being reported as successful.
+- Roll back note-type conversions and local identity changes when an import fails, preserving the original answer and review history.
+- Block format conversions that would discard nonempty protected fields, including protected field names written with different capitalization.
+- Make **Import them as new** preserve the original note and its review history as a local copy; the new-format note receives future source updates. This also works for cards matched by a renamed front.
+- Restore personal annotations before saving update bookkeeping, and still restore them if a progress callback or bookkeeping step fails.
+- Keep predecessor cards active when their replacement fails to import, so the only available copy is not retired.
+- Isolate installed versions and shipped baselines by collection and source. Switching profiles or sources no longer reuses another collection's update state or a stale downloaded package.
+- Prevent backup filename collisions and keep backup retention separate across profiles, including backups created at the same clock time.
 
-Choosing “Import them as new” for a format change now keeps the original note
-and its review history as a local copy, while the new-format note receives future
-source updates. PDF extraction runs in the background; cancellation takes effect
-between parser calls. Restart Anki after updating.
+### Scan for duplicates
+
+- Invalidate the old results immediately when a deck scope changes and disable actions until the new scan is ready.
+- Refill the result list after top candidates are ignored, so later candidates remain discoverable.
+- Count vocabulary unique to the queried card when calculating similarity, reducing inflated matches from a small shared fragment.
+- Require Normal sensitivity's documented minimum of two shared informative words.
+- Identify which side of a pair is suspended, recognize partly suspended cloze notes, and offer explicit recovery for their cards.
+- Cancel pending AI judgments and discard late results after a rescan or dialog close; stop polling and clean up temporary files on success, cancellation, or error.
+
+### Generate cards with AI and PDF attachments
+
+- Allow generation from attachments alone, without requiring typed text; count only the sources actually provided.
+- Let attachments be removed and omit removed material from generation. Failed removal no longer claims success, and attachments with matching filenames no longer overwrite one another.
+- Extract PDFs in the background to keep the dialog responsive. Cancellation stops between parser calls and discards unfinished results; closing waits for an in-progress parser call before cleaning up temporary files.
+- Update the bundled PDF reader and enforce limits on input size, pages, extracted text, image count, image bytes, and parser memory. Reject an incompatible preloaded reader before parsing.
+- Discard stale connection-test results when the configured executable or auto-detected executable changes.
+- Dispose of closed generation and assistant-setup dialogs, and stop their timers, even when background work is finishing.
+
+### Dialogs, previews, and settings
+
+- Keep the generation wizard and card editor resizable and their action buttons reachable on short screens and with larger fonts.
+- Add descriptive accessible names and label-to-control focus behavior across settings, assistant setup, duplicate review, and card feedback; expansion controls identify their current state.
+- Preserve the supported weekly auto-sync interval when opening and saving Settings.
+- Render SVG previews in temporary storage without writing into collection media, and avoid preview filename collisions.
+
+Restart Anki after updating.
 
 ## v0.66.2
 
