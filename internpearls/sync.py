@@ -39,7 +39,7 @@ from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_
                      _load_json, _save_json, load_declined, load_deck_skill,
                      save_declined, save_deck_skill)
 from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes_for,
-                    source_label_for, group_change_notes,
+                    source_label_for, group_change_notes, sort_source_groups,
                     declined_drop, declined_guids,
                     decks_to_update, feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
@@ -1514,7 +1514,7 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
         moved_raw = [r for r in extra_rows if r.get("row_kind") == "moved"]
         retired_ids = {id(r) for r in retired_raw}
         rows = []
-        for group in group_change_notes(details, retired_raw):
+        for group in sort_source_groups(group_change_notes(details, retired_raw)):
             members, note = group["members"], group["note"]
             header = len(members) > 1 and note is not None
             if header:
