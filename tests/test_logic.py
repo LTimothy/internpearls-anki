@@ -2262,6 +2262,32 @@ def test_group_change_notes_a_singleton_card_is_its_own_group():
 
 
 # ---------------------------------------------------------------- source_label_for
+def test_sort_source_groups_numeric_order_and_stable_untagged_tail():
+    labels = ["", "[T10Q10]", "[T10Q02]", "[T2Q1]", "[T10Q2]", ""]
+    groups = [{"note": None, "members": [{"guid": str(i), "card_source": label}]}
+              for i, label in enumerate(labels)]
+    result = logic.sort_source_groups(groups)
+    assert [g["members"][0]["guid"] for g in result] == ["3", "2", "4", "1", "0", "5"]
+    assert [g["members"][0]["guid"] for g in groups] == ["0", "1", "2", "3", "4", "5"]
+
+
+def test_sort_source_groups_preserves_groups_and_sorts_their_members():
+    note = {"kind": "maintainer", "note": "Clarified", "on": "2026-09-09"}
+    groups = [
+        {"note": None, "members": [{"guid": "middle", "card_source": "[T10Q5]"}]},
+        {"note": note, "members": [
+            {"guid": "last", "card_source": "[T10Q10]"},
+            {"guid": "first", "card_source": "[T10Q01]"},
+            {"identity": "Retired", "superseded_by": ["first"]}]},
+    ]
+    result = logic.sort_source_groups(groups)
+    assert result[0]["note"] == note
+    assert [m.get("guid", m.get("identity")) for m in result[0]["members"]] == [
+        "first", "last", "Retired"]
+    assert result[1]["members"][0]["guid"] == "middle"
+    assert groups[1]["members"][0]["guid"] == "last"
+
+
 def test_source_label_for_returns_the_decks_own_string():
     assert logic.source_label_for({"g1": "[T10Q2]"}, "g1") == "[T10Q2]"
     assert logic.source_label_for({"g1": " [T10Q2] [T4Q11] "}, "g1") == "[T10Q2] [T4Q11]"

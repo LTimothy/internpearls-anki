@@ -896,13 +896,32 @@ def group_change_notes(details, retired):
 SOURCE_LABEL_MAX = 120
 
 
+def sort_source_groups(groups):
+    """Order update groups and their members naturally by optional source label.
+
+    Keep groups intact, ordered by their earliest label. Equal labels and unlabelled
+    rows retain their relative order, with unlabelled rows last. Labels remain opaque
+    text except that digit runs compare numerically, so T10Q2 precedes T10Q10.
+    Return new lists without changing the input groups or member dictionaries.
+    """
+    def key(member):
+        label = member.get("card_source", "").strip().casefold()
+        return (not bool(label), tuple(
+            (1, int(part)) if part.isdecimal() else (0, part)
+            for part in re.split(r"(\d+)", label)))
+
+    ordered = [dict(group, members=sorted(group["members"], key=key))
+               for group in groups]
+    return sorted(ordered, key=lambda group: key(group["members"][0]))
+
+
 def source_label_for(manifest_sources, guid):
     """A deck source's own short label for where a card came from, e.g. `[T10Q2]`, or
     "" when it ships none.
 
     Opaque on purpose. The string is built by whoever publishes the deck, out of
-    whatever a card's provenance means for that deck, and nothing here parses it or
-    assumes a shape. Unlike a change note it carries no claim about why the card
+    whatever a card's provenance means for that deck, without assuming a bank-specific
+    shape. Display sorting compares digit runs numerically. Unlike a change note it carries no claim about why the card
     changed, so it needs no hash gate: it is derived from the same build as the
     content it sits next to.
 
