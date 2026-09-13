@@ -665,10 +665,19 @@ def _changes_heading():
 
 def _change_note_html(note):
     """The row's account of why this card changed. Feedback is shown verbatim in
-    quotes; the add-on cannot know which learner sent it, so the suffix says "from
+    quotes. A stale-hash feedback entry is explicitly labelled as earlier context;
+    the add-on cannot know which learner sent it, so current feedback says "from
     feedback", never "your feedback"."""
     text = html.escape(note.get("note", ""))
     if note.get("kind") == "feedback":
+        if note.get("historical"):
+            when = html.escape(str(note.get("on") or ""))
+            suffix = "earlier feedback"
+            if when:
+                suffix += f" &middot; {when}"
+            return (f"<i>&ldquo;{text}&rdquo;</i>&nbsp;&nbsp;"
+                    f"<span style='color:{colors()['dim']}; font-size:11px'>"
+                    f"&middot; {suffix}</span>")
         return (f"<i>&ldquo;{text}&rdquo;</i>&nbsp;&nbsp;"
                 f"<span style='color:{colors()['dim']}; font-size:11px'>"
                 f"&middot; from feedback</span>")
@@ -1547,7 +1556,8 @@ def show_result(title, items):
 NOTHING_CHANGED = "Update cancelled, nothing was changed."
 
 
-def show_result_with_feedback(title, items, entries, nothing_note=""):
+def show_result_with_feedback(title, items, entries, nothing_note="",
+                              standing_declines=None):
     """The end of a run, as one dialog instead of two.
 
     A completion summary and a feedback digest used to arrive as separate boxes, back
@@ -1565,6 +1575,9 @@ def show_result_with_feedback(title, items, entries, nothing_note=""):
     alone, and a digest with no summary (she backed out of the update but still wrote
     notes) is the digest on its own.
 
+    `standing_declines` is the current sparse decline registry to append to any digest;
+    it does not make a digest appear when the run has no entries of its own.
+
     `nothing_note` is the one sentence to show when there is neither: a run that
     stopped with nothing to summarize and nothing flagged used to return in silence,
     so cancelling after clicking Update looked exactly like the click having done
@@ -1578,7 +1591,8 @@ def show_result_with_feedback(title, items, entries, nothing_note=""):
         elif nothing_note:
             _info(nothing_note)
         return
-    offer_feedback_digest(None, entries, title=title, items=items)
+    offer_feedback_digest(None, entries, title=title, items=items,
+                          standing_declines=standing_declines)
 
 
 def _digest_heading(entries):
@@ -1597,7 +1611,7 @@ def _digest_heading(entries):
     return ", ".join(parts) or plural(len(entries), "card")
 
 
-def offer_feedback_digest(parent, entries, title=None, items=()):
+def offer_feedback_digest(parent, entries, title=None, items=(), standing_declines=None):
     """Put the flagged-card summary on the clipboard and show it.
 
     Shown as well as copied, for two reasons: she sees exactly what's being sent before
@@ -1609,13 +1623,16 @@ def offer_feedback_digest(parent, entries, title=None, items=()):
     recovery if something else lands on the clipboard before she gets to paste.
 
     `title`/`items` are the end-of-run summary, drawn by _summary_block in the same
-    title/row vocabulary the confirmation this dialog follows already uses. Left at
+    title/row vocabulary the confirmation this dialog follows already uses. The optional
+    `standing_declines` registry makes the copied payload a current-state handoff rather
+    than only this run's delta. Left at
     their defaults for a bare digest with no summary at all (she backed out of the
     update but still flagged a card), which is why the whole block is skipped when
     `title` is empty rather than rendered with a blank heading.
     """
     text = build_feedback_digest(entries, version=ADDON_VERSION,
-                                 date=datetime.date.today().isoformat())
+                                 date=datetime.date.today().isoformat(),
+                                 standing_declines=standing_declines)
     if not text:
         return
     copied = copy_to_clipboard(text)

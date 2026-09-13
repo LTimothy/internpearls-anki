@@ -3,6 +3,26 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.70.0
+
+Every card-feedback digest now ends with a snapshot of the learner's current standing
+declines, grouped as Never imported, Kept yours with updates disabled, Skipped for now,
+and Kept yours. Each row carries the card, deck, decision date, and GUID, so one pasted
+digest communicates both what changed in that run and which earlier choices remain in
+force. Content hashes remain internal.
+
+Restart Anki after updating.
+
+## v0.69.0
+
+Earlier learner feedback now stays visible when a card is revised again. The current
+request and maintainer explanation still appear first; older comments follow as dated
+“earlier feedback,” so a repeated Skip or Keep yours decision no longer hides the
+context that led to prior versions. Implementation notes remain tied to the exact card
+version they describe.
+
+Restart Anki after updating.
+
 ## v0.68.0
 
 Cards with optional source labels now sort naturally within each deck on **Update my decks**: `T10Q01`, `T10Q02`, then `T10Q10`. Numeric ordering also works without zero-padding. Unlabelled cards follow in their existing order.
