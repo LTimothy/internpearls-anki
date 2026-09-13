@@ -1881,7 +1881,8 @@ def update_decks():
         a second time.
         """
         entries = feedback_entries(flags, new_index, run_decisions)
-        show_result_with_feedback(title, items, entries, nothing_note=nothing_note)
+        show_result_with_feedback(title, items, entries, nothing_note=nothing_note,
+                                  standing_declines=reg)
         if entries:
             clear_saved_feedback()
 

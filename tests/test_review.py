@@ -274,6 +274,17 @@ def test_change_note_line_renders_feedback_and_maintainer():
     assert "split out" in html_mn and "from feedback" not in html_mn
 
 
+def test_change_note_line_names_earlier_feedback_and_when_it_was_given():
+    html_fb = review._change_note_html({
+        "kind": "feedback", "note": "keep the old table",
+        "on": "2026-09-01", "historical": True,
+    })
+
+    assert "earlier feedback" in html_fb
+    assert "2026-09-01" in html_fb
+    assert "from feedback" not in html_fb
+
+
 def test_a_change_note_renders_in_the_row_and_absence_renders_nothing():
     """A detail carrying `change_notes` puts the note's text in the row; a detail
     without the key renders no such label at all."""

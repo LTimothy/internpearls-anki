@@ -1088,6 +1088,47 @@ def test_build_feedback_digest_is_plain_text_not_html():
     assert "SpO 2 <94%" in text
 
 
+def test_build_feedback_digest_carries_the_full_current_decline_snapshot():
+    """Removing an older standing decline from the export would make a single digest
+    look like the learner had accepted that card, even though the registry still blocks
+    it. The snapshot must describe current state, not only this run's decisions."""
+    text = logic.build_feedback_digest([
+        {"deck": "IP::TrueLearn", "front": "New card", "guid": "new-guid",
+         "note": "too broad", "decision": "skipped"},
+    ], standing_declines={
+        "old-never": {"state": "never", "front": "Old rejected card",
+                      "deck": "IP::TrueLearn", "decided": "2026-08-01", "hash": "h1"},
+        "old-keep": {"state": "keep", "front": "Old local wording",
+                     "deck": "IP::Physiology", "decided": "2026-08-02", "hash": "h2"},
+        "old-frozen": {"state": "frozen", "front": "Updates disabled",
+                       "deck": "IP::Regional", "decided": "2026-08-03", "hash": "h3"},
+        "new-guid": {"state": "skip", "front": "New card",
+                     "deck": "IP::TrueLearn", "decided": "2026-09-13", "hash": "h4"},
+    })
+
+    assert "Current standing declines (4)" in text
+    assert "Never imported (1)" in text and "Old rejected card" in text
+    assert "Kept yours (1)" in text and "Old local wording" in text
+    assert "Kept yours, no more updates (1)" in text and "Updates disabled" in text
+    assert "Skipped for now (1)" in text and "New card" in text
+    assert "decided: 2026-08-01" in text
+    assert "hash:" not in text, "content hashes are implementation detail, not learner state"
+
+
+def test_decline_snapshot_degrades_malformed_registry_entries_instead_of_dropping_them():
+    """Registry membership suppresses a card even when a hand-edited value is malformed,
+    so silently omitting that GUID would make the export disagree with sync behavior."""
+    text = logic.build_feedback_digest([
+        {"deck": "IP::A", "front": "Flagged", "guid": "g", "note": "note"},
+    ], standing_declines={
+        "mystery-guid": "broken",
+        "odd-guid": {"state": ["skip"], "front": 42, "deck": 7},
+    })
+
+    assert "Other (2)" in text
+    assert "mystery-guid" in text and "odd-guid" in text
+
+
 # ------------------------------------------------------------- apkg_models / templates
 _BASIC_MODEL = {
     "name": "Study Deck - Basic",
@@ -2158,8 +2199,19 @@ def test_change_notes_for_matches_hash():
     assert [e["note"] for e in got] == ["newer", "older"]
 
 
-def test_change_notes_for_drops_stale_hash():
-    notes = {"g1": [{"kind": "feedback", "note": "old", "hash": "0" * 16}]}
+def test_change_notes_for_keeps_stale_feedback_as_history():
+    notes = {"g1": [{"kind": "feedback", "note": "old request",
+                     "on": "2026-09-01", "hash": "0" * 16}]}
+
+    assert logic.change_notes_for(notes, "g1", ["Front", "Back"]) == [
+        {"kind": "feedback", "note": "old request", "on": "2026-09-01",
+         "hash": "0" * 16, "historical": True},
+    ]
+
+
+def test_change_notes_for_still_drops_stale_maintainer_notes():
+    notes = {"g1": [{"kind": "maintainer", "note": "old implementation",
+                     "on": "2026-09-01", "hash": "0" * 16}]}
     assert logic.change_notes_for(notes, "g1", ["Front", "Back"]) == []
 
 
@@ -2192,6 +2244,24 @@ def test_change_notes_for_orders_feedback_before_maintainer():
                     {"kind": "maintainer", "note": "the fix", "hash": h}]}
     got = logic.change_notes_for(notes, "g1", fields)
     assert [e["kind"] for e in got] == ["feedback", "maintainer"]
+
+
+def test_change_notes_for_orders_current_reason_before_earlier_feedback():
+    fields = ["F"]
+    h = logic.note_fields_hash(fields)
+    notes = {"g1": [
+        {"kind": "feedback", "note": "earlier", "on": "2026-09-01",
+         "hash": "0" * 16},
+        {"kind": "maintainer", "note": "the current fix", "on": "2026-09-10",
+         "hash": h},
+        {"kind": "feedback", "note": "current request", "on": "2026-09-10",
+         "hash": h},
+    ]}
+
+    got = logic.change_notes_for(notes, "g1", fields)
+
+    assert [e["note"] for e in got] == ["current request", "the current fix", "earlier"]
+    assert got[-1]["historical"] is True
 
 
 def test_change_notes_for_keeps_newest_first_within_a_kind():
