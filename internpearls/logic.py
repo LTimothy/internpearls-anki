@@ -785,25 +785,37 @@ def note_fields_hash(fields):
 
 
 def change_notes_for(manifest_notes, guid, fields):
-    """The manifest's notes describing exactly this incoming content: entries under
-    `guid` whose hash matches these field values. A hash mismatch means the note was
-    written about some other version of the card (a stale cached manifest, usually),
-    and captioning content a note does not describe is worse than showing nothing.
+    """Return current change context plus durable learner-feedback history.
 
-    Feedback sorts ahead of maintainer, then newest first within each: feedback says
-    why the card was touched at all, maintainer says what this round did to it, and
-    the second only reads right once the first is in view. Newest-first alone (a plain
-    reverse of the ledger) put the maintainer line on top instead, which is why a card
-    fixed twice in one round used to read backwards.
+    A matching hash describes this exact incoming card. A stale learner-feedback hash
+    is still useful context when the same GUID is revised again, so it is returned with
+    ``historical=True`` for an explicit "earlier feedback" label. A stale maintainer
+    note is omitted because it describes an implementation that no longer ships.
+
+    Current feedback sorts ahead of current maintainer context, followed by historical
+    feedback. Entries remain newest-first within each group.
     """
     entries = manifest_notes.get(guid) if isinstance(manifest_notes, dict) else None
     if not isinstance(entries, list):
         return []
     h = note_fields_hash(list(fields))
-    filtered = [e for e in reversed(entries)
-                if isinstance(e, dict) and isinstance(e.get("note"), str)
-                and e.get("note") and e.get("hash") == h]
-    return sorted(filtered, key=lambda e: e.get("kind") != "feedback")
+    filtered = []
+    for entry in reversed(entries):
+        if (not isinstance(entry, dict)
+                or not isinstance(entry.get("note"), str)
+                or not entry.get("note")):
+            continue
+        if entry.get("hash") == h:
+            filtered.append(entry)
+        elif entry.get("kind") == "feedback":
+            filtered.append({**entry, "historical": True})
+
+    def display_group(entry):
+        if entry.get("historical"):
+            return 2
+        return 0 if entry.get("kind") == "feedback" else 1
+
+    return sorted(filtered, key=display_group)
 
 
 def group_change_notes(details, retired):
@@ -1538,7 +1550,47 @@ def field_preview_html(value, image_html=None):
     return text
 
 
-def build_feedback_digest(entries, version="", date=""):
+_DECLINE_SNAPSHOT_GROUPS = (
+    ("never", "Never imported"),
+    ("frozen", "Kept yours, no more updates"),
+    ("skip", "Skipped for now"),
+    ("keep", "Kept yours"),
+)
+
+
+def _decline_snapshot_lines(registry):
+    """Render the current sparse decline registry for a feedback digest."""
+    registry = registry if isinstance(registry, dict) else {}
+    known = {state for state, _label in _DECLINE_SNAPSHOT_GROUPS}
+    grouped = {state: [] for state in known}
+    grouped[None] = []
+    for guid, raw in registry.items():
+        entry = raw if isinstance(raw, dict) else {}
+        state = entry.get("state")
+        state = state if isinstance(state, str) and state in known else None
+        grouped[state].append((str(guid), entry))
+
+    lines = ["", f"Current standing declines ({len(registry)})"]
+    for state, label in _DECLINE_SNAPSHOT_GROUPS + ((None, "Other"),):
+        items = grouped[state]
+        if not items:
+            continue
+        lines.append(f"  {label} ({len(items)})")
+        for guid, entry in sorted(
+                items, key=lambda item: (str(item[1].get("deck", "")),
+                                         str(item[1].get("front", "")), item[0])):
+            front = entry.get("front")
+            display_front = front if isinstance(front, str) and front else guid
+            lines.append(f'    "{plain_text(display_front)}"')
+            if entry.get("deck"):
+                lines.append(f'    deck: {str(entry["deck"]).split("::")[-1]}')
+            if entry.get("decided"):
+                lines.append(f'    decided: {entry["decided"]}')
+            lines.append(f"    guid {guid}")
+    return lines
+
+
+def build_feedback_digest(entries, version="", date="", standing_declines=None):
     """Render flagged-card feedback as plain text, ready to paste into a message.
 
     `entries` is a list of {"deck", "front", "guid", "note"}, grouped here by deck in
@@ -1551,6 +1603,10 @@ def build_feedback_digest(entries, version="", date=""):
     memory: it names the exact spec note, so the fix doesn't start with hunting for
     which card she meant. Fronts are stored as HTML, so they go through plain_text on
     the way out.
+
+    `standing_declines`, when supplied, is the current declined-card registry. It is
+    rendered after the run's entries as a complete state snapshot; content hashes stay
+    out because they are sync bookkeeping rather than a learner decision.
 
     Returns "" for no entries, so a caller can treat empty as "nothing to send" without
     a separate check.
@@ -1578,6 +1634,8 @@ def build_feedback_digest(entries, version="", date=""):
             if e.get("note"):
                 lines.append(f'  > {plain_text(e.get("note"))}')
             lines.append("")
+    if standing_declines is not None:
+        lines.extend(_decline_snapshot_lines(standing_declines))
     return "\n".join(lines).rstrip() + "\n"
 
 

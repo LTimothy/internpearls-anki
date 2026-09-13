@@ -2055,14 +2055,14 @@ def _card_detail(items, guid):
 
 
 def test_change_notes_attach_to_changed_rows(anki, tmp_path, monkeypatch):
-    """A manifest note whose hash matches the incoming content attaches to that
-    changed card's detail; a stale-hash note for the same guid does not."""
+    """Current change context and earlier learner feedback both reach the row."""
     from internpearls.logic import note_fields_hash
     anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
     new_fields = _fields("Front one", back="the new answer")
     matching = {"kind": "changed", "note": "rewrote the answer for accuracy",
                "hash": note_fields_hash(new_fields)}
-    stale = {"kind": "changed", "note": "an earlier, since-superseded note",
+    stale = {"kind": "feedback", "note": "an earlier learner request",
+            "on": "2026-09-01",
             "hash": note_fields_hash(_fields("Front one", back="a different answer"))}
     folder = _write_source(
         tmp_path, {DECK: ("v2", [("g1", new_fields, TAGS)], None)},
@@ -2074,7 +2074,10 @@ def test_change_notes_attach_to_changed_rows(anki, tmp_path, monkeypatch):
 
     detail = _card_detail(captured[0], "g1")
     assert detail["kind"] == "changed"
-    assert detail["change_notes"] == [matching]
+    assert detail["change_notes"] == [
+        matching,
+        {**stale, "historical": True},
+    ]
 
 
 def test_change_notes_on_new_rows_only_for_installed_decks(anki, tmp_path, monkeypatch):
@@ -3106,6 +3109,30 @@ def test_feedback_from_an_interrupted_run_comes_back_in_the_next_one(anki, tmp_p
 
     assert any("wrong dose" in c for c in anki.gui.clipboard)
     assert any("An earlier card" in c for c in anki.gui.clipboard)
+
+
+def test_feedback_digest_includes_declines_still_active_from_earlier_runs(anki, tmp_path):
+    """The clipboard payload is the deck author's state handoff. Reporting only the
+    current run's delta loses an older Never/Skip/Keep choice when this is the only
+    digest the author receives."""
+    from internpearls import config
+    config.save_declined({
+        "older-guid": {"state": "never", "front": "An older rejected card",
+                       "deck": "Intern Pearls::Elsewhere", "decided": "2026-08-01",
+                       "hash": "older-hash"}})
+
+    def on_screen(tree, seen, decide):
+        box = next(n for n in _walk(tree) if n.get("t") == "textarea")
+        return {"events": [{"id": box["id"], "value": "new note"},
+                           {"id": _find(tree, t="button", label=decide)["id"],
+                            "click": True}]}
+
+    _feedback_run(anki, tmp_path, on_screen)
+
+    digest = next(c for c in anki.gui.clipboard if "new note" in c)
+    assert "Current standing declines (1)" in digest
+    assert "An older rejected card" in digest
+    assert "Never imported (1)" in digest
 
 
 def test_saved_feedback_is_cleared_once_the_digest_has_been_shown(anki, tmp_path):
@@ -5444,11 +5471,9 @@ def test_actively_reclicking_skip_refreshes_the_stale_hash(anki, tmp_path):
     assert anki.gui.clipboard == []   # re-confirming an unchanged state isn't a decision
 
 
-def test_digest_reports_only_the_state_that_changed_this_run(anki, tmp_path):
-    """The this-run-only filter, exercised through the real flow rather than
-    logic.feedback_entries directly: a decline already on record when the dialog
-    opened, left untouched, must not read as newly decided; one chosen this run
-    must."""
+def test_digest_labels_only_the_state_changed_this_run_as_a_new_decision(anki, tmp_path):
+    """An older decline belongs in the current-state snapshot, but must not read as a
+    second decision made during this run."""
     from internpearls import config, sync
     deck = _source_with_two_new_cards(anki, tmp_path)
     config.save_declined({
@@ -5460,7 +5485,8 @@ def test_digest_reports_only_the_state_that_changed_this_run(anki, tmp_path):
     digest = anki.gui.clipboard[-1]
     assert digest.count("decision: skipped") == 1
     assert "front b" in digest
-    assert "front a" not in digest
+    assert "front a" in digest
+    assert "Current standing declines (2)" in digest
 
 
 def test_flipping_a_predeclined_row_back_to_import_undeclines_it(anki, tmp_path):
