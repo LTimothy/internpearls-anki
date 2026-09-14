@@ -1450,7 +1450,9 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
 
     `registry` is config.load_declined()'s own {guid: entry}. A card previously
     declined "never" is dropped from the list entirely and counted in `hidden` instead
-    of shown; one declined "skip"/"keep" is kept but tagged `detail["declined_state"]`
+    of shown. An unchanged revision previously declined "keep" is omitted without
+    counting it as Never; it remains available from Manage decks. Other "skip"/"keep"
+    rows are kept but tagged `detail["declined_state"]`
     (its own badge, see review._card_row) and, when the incoming fields hash differs
     from what was declined, `detail["changed_since_decline"]` too.
 
@@ -1554,6 +1556,13 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
                 state = entry.get("state") if isinstance(entry, dict) else None
                 if state in ("never", "frozen"):
                     hidden += 1
+                    continue
+                # Keep applies to the revision already reviewed, not every unrelated
+                # update to its deck. Preserve import protection, but don't ask the
+                # same question again until this note's source fields change.
+                if (state == "keep" and entry.get("hash")
+                        and entry["hash"] == note_fields_hash(
+                            [v for _, v in detail["fields"]])):
                     continue
                 if state:
                     detail["declined_state"] = state
