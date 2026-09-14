@@ -827,7 +827,8 @@ _BACK_FROM_DECLINE = ("offered again the next time this deck changes, or any tim
                       "Manage decks → Declined cards")
 _DECLINE_CAPTION = {
     "skip": f"Set aside. It's {_BACK_FROM_DECLINE}.",
-    "keep": f"Your card stays as it is. The change is {_BACK_FROM_DECLINE}.",
+    "keep": ("Your card stays as it is. A change is offered again only when this "
+             "card's source content changes, or any time from Manage decks → Declined cards."),
     # No "offered again" clause on purpose: unlike the two above, this one is not a
     # not-this-time. Manage decks → Declined cards is the only way back, and saying so
     # is what keeps it from reading as the same soft decision with a different label.

@@ -6059,3 +6059,55 @@ def test_update_preview_hides_a_frozen_card_the_way_it_hides_a_never(anki, tmp_p
     assert "front a" not in texts
     assert "1 card hidden" in texts
     assert "front b" in texts
+
+
+def test_pending_keep_only_returns_after_that_note_changes(anki, tmp_path):
+    """An unrelated deck update must not repeat the exact revision already kept out."""
+    from internpearls import logic, sync
+    src = str(tmp_path / 'kept.apkg')
+    fields = ['Revised front', 'Answer', 'Explanation']
+    make_apkg(src, [('kept', fields, TAGS)])
+    preview = {'Deck': (1, 0, [], {1: {'Front': 'Local front'}})}
+    entry = {'state': 'keep', 'hash': logic.note_fields_hash(fields)}
+
+    def gather(registry):
+        return sync._gather_pending_items(
+            [{'name': 'Deck'}], preview, {'Deck': src}, registry=registry)
+
+    items, failed, _, hidden = gather({'kept': entry})
+    assert items == []
+    assert failed == []
+    assert hidden == 0  # this is not a Never decision
+    assert entry == {'state': 'keep', 'hash': logic.note_fields_hash(fields)}
+
+    for state, saved_hash in [('keep', 'older-revision'), ('keep', ''),
+                              ('skip', logic.note_fields_hash(fields))]:
+        items, _, _, _ = gather({'kept': {'state': state, 'hash': saved_hash}})
+        detail = next(item[2] for item in items if item[0] == 'card')
+        assert detail['declined_state'] == state
+        assert bool(detail.get('changed_since_decline')) == (saved_hash == 'older-revision')
+
+    items, _, _, _ = gather({})  # Offer again clears the standing decline
+    assert any(item[0] == 'card' for item in items)
+
+
+def test_hidden_unchanged_keep_stays_protected_during_update(anki, tmp_path):
+    from internpearls import config, logic
+    original = _fields('Local wording', back='Local answer', notes='Private mnemonic')
+    incoming = _fields('Previously declined revision', back='Source answer')
+    anki.col.add_note('kept-guid', original, [TAGS])
+    folder = _write_source(tmp_path, {
+        DECK: ('v2', [('kept-guid', incoming, TAGS),
+                      ('new-guid', _fields('Unrelated addition'), TAGS)], None)})
+    _configure(anki, folder)
+    registry = {'kept-guid': {'state': 'keep', 'front': 'Local wording',
+                             'deck': DECK, 'decided': '2026-08-01',
+                             'hash': logic.note_fields_hash(incoming)}}
+    config.save_declined(registry)
+
+    trees = _update(anki)
+
+    assert 'Previously declined revision' not in '\n'.join(_all_text(t) for t in trees)
+    assert anki.col.note_by_guid('kept-guid').fields == original
+    assert anki.col.note_by_guid('new-guid').fields[0] == 'Unrelated addition'
+    assert config.load_declined() == registry

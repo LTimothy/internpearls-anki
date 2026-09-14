@@ -3,6 +3,16 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.71.0
+
+Keep yours now remembers the exact revision you declined. Updates to other cards in
+that deck no longer offer the same change again. A kept card returns only when its own
+source content changes, still defaulted to Keep yours; Manage decks → Declined cards
+can offer it again at any time. Existing content and review history stay protected.
+Skip and Never retain their existing behavior.
+
+Restart Anki after updating.
+
 ## v0.70.0
 
 Every card-feedback digest now ends with a snapshot of the learner's current standing
