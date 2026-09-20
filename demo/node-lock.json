@@ -1,0 +1,20 @@
+{
+  "version": "22.14.0",
+  "archives": {
+    "darwin-arm64": {
+      "url": "https://nodejs.org/dist/v22.14.0/node-v22.14.0-darwin-arm64.tar.gz",
+      "sha256": "e9404633bc02a5162c5c573b1e2490f5fb44648345d64a958b17e325729a5e42",
+      "length": 47035396
+    },
+    "darwin-x64": {
+      "url": "https://nodejs.org/dist/v22.14.0/node-v22.14.0-darwin-x64.tar.gz",
+      "sha256": "6698587713ab565a94a360e091df9f6d91c8fadda6d00f0cf6526e9b40bed250",
+      "length": 48656392
+    },
+    "linux-x64": {
+      "url": "https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.gz",
+      "sha256": "9d942932535988091034dc94cc5f42b6dc8784d6366df3a36c4c9ccb3996f0c2",
+      "length": 54108748
+    }
+  }
+}
