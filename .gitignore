@@ -8,21 +8,31 @@ internpearls/user_files/
 # Only the distributable project belongs at the repository root.
 /*
 !/.gitignore
+!/.nvmrc
 !/.github/
 !/CHANGELOG.md
 !/CONTRIBUTING.md
 !/LICENSE
 !/README.md
+!/browser_tests/
 !/build.sh
 !/conftest.py
+!/demo/
 !/docs/
 !/internpearls/
 !/internpearls.ankiaddon
+!/package-lock.json
+!/package.json
 !/pytest.ini
 !/qt_tests/
 !/tests/
 !/tools/
 !/version.json
+
+/.demo-tools/
+/node_modules/
+/test-results/
+/playwright-report/
 
 # Only the live demo is published from docs/.
 /docs/*
