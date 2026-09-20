@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "test:demo-contract": ".demo-tools/node/bin/node node_modules/@playwright/test/cli.js test --config browser_tests/playwright.config.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.51.1"
+  }
+}
