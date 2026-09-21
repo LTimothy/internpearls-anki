@@ -2164,6 +2164,32 @@ def test_a_predeclined_card_past_the_first_streaming_batch_still_reaches_decisio
         "a predeclined card past the first StreamingList batch never reached decisions")
 
 
+def test_scroll_actions_cross_four_streaming_batches_without_losing_a_decision(anki):
+    """The browser scroll action must drive StreamingList itself, while an earlier
+    production decision remains in the same replayed state."""
+    from internpearls import review
+    details = [_new_card_detail(guid=f"guid-{i}") for i in range(230)]
+    items = [("card", "Example Deck", detail) for detail in details]
+    flags, new_index, decisions = {}, {}, {}
+    body, boxes, flush = review.build_update_body(
+        items, {}, flags, new_index, decisions, "", lambda: "", "")
+    streaming = next(widget for widget in _walk_widgets(body)
+                     if callable(getattr(widget, "shown", None))
+                     and callable(getattr(widget, "total", None)))
+    first = _find_decision_cell(body)
+    first.buttons["skip"].click()
+    shown = [streaming.shown()]
+
+    for offset in range(1, 5):
+        mock_anki.apply_actions({"actions": [{
+            "type": "scroll", "id": streaming.wid, "offset": offset,
+        }]})
+        shown.append(streaming.shown())
+
+    assert shown == [50, 100, 150, 200, 230]
+    assert decisions == {"guid-0": "skip"}
+
+
 def test_import_row_offers_a_quiet_add_note_that_reveals_the_box(anki):
     """An Import/Apply row is not declined, so its box starts hidden, but a small "Add
     note" affordance, at the end of the row's expanded body, can still reveal it

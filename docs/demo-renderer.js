@@ -77,7 +77,9 @@ function renderButton(node, context) {
   element.textContent = node.text;
   element.type = "button";
   element.dataset.role = node.role;
-  element.setAttribute("aria-pressed", String(Boolean(node.checked)));
+  if (node.checkable) {
+    element.setAttribute("aria-pressed", String(Boolean(node.checked)));
+  }
   if (node.default) element.dataset.default = "true";
   if (node.escape) element.dataset.escape = "true";
   element.onclick = () => activate(context, node);
@@ -124,6 +126,18 @@ function renderCombo(node, context) {
   registerInput(context, select, (control) => ({
     type: "select-option", id: node.id, option_id: control.value,
   }));
+  select.onkeydown = (event) => {
+    if (!["ArrowDown", "ArrowUp"].includes(event.key)
+        || event.altKey || event.ctrlKey || event.metaKey) return;
+    event.preventDefault();
+    const control = event.currentTarget;
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    const next = Math.max(0, Math.min(control.options.length - 1,
+      control.selectedIndex + direction));
+    if (next === control.selectedIndex) return;
+    control.selectedIndex = next;
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+  };
   if (node.editable) {
     const editor = document.createElement("input");
     editor.type = "text";
@@ -148,9 +162,14 @@ function renderForm(node, context) {
     const labelNode = nodeById(context, row.label_id);
     const fieldNode = nodeById(context, row.field_id);
     const label = document.createElement("label");
-    label.htmlFor = fieldNode.id;
     label.appendChild(renderWidget(labelNode, context));
     const field = renderWidget(fieldNode, context);
+    const control = field.matches("button, input, select, textarea")
+      ? field : field.querySelector("button, input, select, textarea");
+    if (control) {
+      if (control !== field) control.id = `${fieldNode.id}--control`;
+      label.htmlFor = control.id || fieldNode.id;
+    }
     element.append(label, field);
   }
   return element;
@@ -225,7 +244,9 @@ function renderScroll(node, context) {
   const ids = node.row_ids?.length ? node.row_ids : node.children;
   element.appendChild(renderChildren(node, context, ids));
   if (typeof context.scroll === "function") {
-    element.onscroll = (event) => context.scroll(node.id, event.currentTarget.scrollTop);
+    element.onscroll = (event) => context.scroll(
+      node.id, Math.max(0, Math.round(event.currentTarget.scrollTop)),
+    );
   }
   return element;
 }
@@ -304,6 +325,7 @@ function applyCommonState(element, node, context) {
   element.id = node.id;
   element.dataset.wid = node.id;
   element.hidden = !node.effective_visible;
+  if (!node.effective_visible) element.style.display = "none";
   element.setAttribute("aria-hidden", String(!node.effective_visible));
   element.setAttribute("aria-disabled", String(!node.effective_enabled));
   const controls = element.matches("button, input, select, textarea")
@@ -313,11 +335,14 @@ function applyCommonState(element, node, context) {
     control.disabled = !node.effective_enabled;
     if ("readOnly" in control) control.readOnly = Boolean(node.readonly);
   }
-  if (node.accessible_name) element.setAttribute("aria-label", node.accessible_name);
-  if (node.accessible_description) {
-    element.setAttribute("aria-description", node.accessible_description);
+  const accessibilityTargets = controls.length ? controls : [element];
+  for (const target of accessibilityTargets) {
+    if (node.accessible_name) target.setAttribute("aria-label", node.accessible_name);
+    if (node.accessible_description) {
+      target.setAttribute("aria-description", node.accessible_description);
+    }
+    if (node.tooltip) target.title = node.tooltip;
   }
-  if (node.tooltip) element.title = node.tooltip;
   for (const role of node.style_roles) element.classList.add(`demo-role-${role}`);
   if (node.actions?.includes("key") && typeof context.key === "function") {
     element.onkeydown = (event) => {
