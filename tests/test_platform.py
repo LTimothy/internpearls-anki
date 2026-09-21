@@ -68,14 +68,19 @@ def test_work_waits_for_start_and_delivers_events_then_result_on_timer(anki):
     handle.start()
     assert ran.wait(timeout=1)
     handle.join(timeout=1)
-    assert delivered == []
-
-    anki.qt_timers[-1].fire()
     assert delivered == [
         ("event", {"type": "progress", "value": 1}),
         ("result", {"answer": 5}),
     ]
     assert handle.task_id
+
+
+def test_work_handle_exposes_only_the_platform_work_contract(anki):
+    handle = NativePlatform().start_work(
+        _request(), lambda _context: None, lambda _result: None,
+        lambda _error: None)
+
+    assert not hasattr(handle, "native_timer")
 
 
 def test_work_delivers_errors_on_timer(anki):
@@ -92,9 +97,6 @@ def test_work_delivers_errors_on_timer(anki):
     )
     handle.start()
     handle.join(timeout=1)
-
-    assert delivered == []
-    anki.qt_timers[-1].fire()
     assert delivered == [("error", "broken")]
 
 

@@ -22,6 +22,9 @@ def _wait_for_attachment_worker(dlg, timeout=2):
         time.sleep(0.001)
     dlg._attach_worker.join(timeout=0.1)
     assert not dlg._attach_worker.is_alive()
+    for _ in range(10):
+        app.processEvents()
+        time.sleep(0.005)
     fire = getattr(dlg._attach_timer, "fire", None)
     if fire is not None:
         fire()

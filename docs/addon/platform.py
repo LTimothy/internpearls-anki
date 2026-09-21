@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import count
 from typing import Any, Callable, ContextManager, Mapping, Optional, Protocol
 
 from aqt.qt import QTimer
@@ -22,6 +23,30 @@ class WorkRequest:
     operation_ordinal: int
     attempt: int
     inputs: Mapping[str, Any]
+
+
+_OWNER_IDS = count(1)
+
+
+def platform_owner_id(owner):
+    """Return the stable, session-scoped identity for one platform owner."""
+    owner_id = getattr(owner, "_platform_owner_id", None)
+    if owner_id is None:
+        owner_id = next(_OWNER_IDS)
+        setattr(owner, "_platform_owner_id", owner_id)
+        setattr(owner, "_platform_operation_ordinal", 0)
+    return owner_id
+
+
+def new_work_request(owner, kind, action, *, attempt=1, inputs=None):
+    """Create a deterministic request identity scoped to one UI owner."""
+    owner_id = platform_owner_id(owner)
+    ordinal = getattr(owner, "_platform_operation_ordinal") + 1
+    setattr(owner, "_platform_operation_ordinal", ordinal)
+    metadata = {"action": action}
+    if inputs:
+        metadata.update(inputs)
+    return WorkRequest(kind, owner_id, ordinal, attempt, metadata)
 
 
 class WorkContext(Protocol):
@@ -117,6 +142,9 @@ class _NativeTimerHandle:
     def is_active(self):
         return self._active
 
+    def isActive(self):
+        return self.is_active()
+
     def fire(self):
         """Drive a timer once in the lightweight Anki test harness."""
         fire = getattr(self._timer, "fire", None)
@@ -124,6 +152,14 @@ class _NativeTimerHandle:
             fire()
         else:
             self._timer.timeout.emit()
+
+    @property
+    def started(self):
+        return getattr(self._timer, "started", None)
+
+    @property
+    def timeout(self):
+        return self._timer.timeout
 
 
 class _NativeWorkContext:
@@ -154,7 +190,7 @@ class _NativeWorkContext:
 
 
 class _NativeWorkHandle:
-    _POLL_MS = 20
+    _POLL_MS = 0
 
     def __init__(self, native, request, compute, on_result, on_error, on_event):
         self.task_id = (f"{request.kind}:{request.owner_id}:"
@@ -176,10 +212,6 @@ class _NativeWorkHandle:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._timer_handle = native.create_timer(
             request.owner_id, self._deliver, self._POLL_MS)
-
-    @property
-    def native_timer(self):
-        return self._timer_handle._timer
 
     @property
     def cancel_event(self):
@@ -230,6 +262,14 @@ class _NativeWorkHandle:
     def join(self, timeout=None):
         if self._started:
             self._thread.join(timeout)
+        if not self._thread.is_alive():
+            fire = getattr(self._timer_handle._timer, "fire", None)
+            if fire is not None:
+                fire()
+        if not self._thread.is_alive():
+            fire = getattr(self._timer_handle._timer, "fire", None)
+            if fire is not None:
+                fire()
 
     def cancel(self):
         self._cancelled.set()

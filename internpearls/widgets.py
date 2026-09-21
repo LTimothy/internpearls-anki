@@ -15,7 +15,7 @@ from aqt.qt import (QHBoxLayout, QLabel, QPushButton, QScrollArea, Qt,
                      QVBoxLayout, QWidget)
 
 from .palette import colors
-from .platform import platform
+from .platform import new_work_request, platform, platform_owner_id
 from .ui import section_label
 
 # The chip labels. Their colours come from the palette, so only the wording lives here.
@@ -593,7 +593,8 @@ class StreamingList(QScrollArea):
         # tick is skipped while she is scrolling, so building never competes with
         # reading; revealing an already-built row is cheap.
         self._idle = platform().create_timer(
-            id(self), self._idle_extend, self.IDLE_DELAY_MS, single_shot=True)
+            platform_owner_id(self), self._idle_extend, self.IDLE_DELAY_MS,
+            single_shot=True)
         self._idle.start()
 
     IDLE_CHUNK = 3
@@ -610,11 +611,21 @@ class StreamingList(QScrollArea):
         if (self.isVisible()
                 and platform().monotonic() - self._last_scroll > self.SCROLL_QUIET_S):
             end = min(self.built() + self.IDLE_CHUNK, self.total())
-            for item in self._items[self.built():end]:
-                row = self._build_row(item)
-                row.setVisible(False)
-                self._rows_layout.addWidget(row)
-                self._prebuilt.append(row)
+            items = list(self._items[self.built():end])
+
+            def build(items):
+                for item in items:
+                    row = self._build_row(item)
+                    row.setVisible(False)
+                    self._rows_layout.addWidget(row)
+                    self._prebuilt.append(row)
+
+            request = new_work_request(
+                self, "list-prefetch", "streaming-list.prefetch",
+                inputs={"count": len(items), "start": self.built()})
+            handle = platform().start_work(
+                request, lambda _context: items, build, lambda _error: None)
+            handle.start()
         self._idle.start()
 
     def shown(self):
