@@ -2463,6 +2463,30 @@ def test_demo_actions_reject_unknown_and_unavailable_targets(anki):
             })
 
 
+def test_legacy_value_events_keep_fixture_semantics_while_actions_reject_hidden(anki):
+    from aqt.qt import QPlainTextEdit, QVBoxLayout, QWidget
+
+    root = QWidget()
+    layout = QVBoxLayout(root)
+    field = QPlainTextEdit()
+    layout.addWidget(field)
+    field.hide()
+
+    with pytest.raises(mock_anki.ProtocolError, match="effectively hidden"):
+        mock_anki.apply_actions(
+            {"actions": [{
+                "type": "edit-text", "id": field.wid, "value": "strict",
+                "selection_start": 0, "selection_end": 0, "composing": False,
+            }]}
+        )
+
+    mock_anki._apply_events(
+        {"events": [{"id": field.wid, "value": "legacy"}]}
+    )
+
+    assert field.toPlainText() == "legacy"
+
+
 def test_demo_actions_enforce_type_and_membership_rules(anki):
     from aqt.qt import QComboBox, QLabel, QPushButton
     from tests.demo_contract_generated import ACTION_KINDS
