@@ -103,3 +103,53 @@ def test_actions_match_mock_signal_order_and_final_values():
 
     root.close()
     scene["dialog"].close()
+
+
+def test_real_streaming_list_is_a_scroll_action_target_across_four_batches():
+    """Replay must recognize the production subclass, not only the fake base class."""
+    app = harness.app()
+    from aqt.qt import QDialog, QVBoxLayout, QWidget
+    from internpearls.widgets import StreamingList, decision_cell
+
+    decisions = {}
+
+    def build(index):
+        return decision_cell(
+            [("import", f"Import {index + 1}"), ("skip", f"Skip {index + 1}")],
+            "import",
+            lambda state, item=index: decisions.__setitem__(item, state),
+        )
+
+    dialog = QDialog()
+    layout = QVBoxLayout(dialog)
+    streaming = StreamingList(build, list(range(230)), batch=50)
+    layout.addWidget(streaming)
+    dialog.resize(640, 420)
+    dialog.show()
+    for _ in range(10):
+        app.processEvents()
+        if streaming.verticalScrollBar().maximum() > 0:
+            break
+    assert streaming.shown() == 50
+
+    first = next(widget for widget in streaming.widget().findChildren(QWidget)
+                 if hasattr(widget, "buttons"))
+    first.buttons["skip"].click()
+    assert decisions == {0: "skip"}
+
+    streaming.wid = "real-streaming-list"
+    mock_anki._widgets[streaming.wid] = streaming
+    assert mock_anki._actions_for(streaming) == ["scroll"]
+    shown = [streaming.shown()]
+    for _ in range(4):
+        mock_anki.apply_actions({"actions": [{
+            "type": "scroll",
+            "id": streaming.wid,
+            "offset": streaming.verticalScrollBar().maximum(),
+        }]})
+        app.processEvents()
+        shown.append(streaming.shown())
+
+    assert shown == [50, 100, 150, 200, 230]
+    assert decisions == {0: "skip"}
+    dialog.close()
