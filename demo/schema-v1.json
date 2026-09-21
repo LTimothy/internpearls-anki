@@ -71,12 +71,31 @@
     "close": ["id"]
   },
   "error_codes": [
+    "unsupported-protocol",
+    "unknown-node-kind",
+    "missing-required-field",
+    "unknown-enum-value",
+    "unknown-widget-id",
+    "hidden-target",
+    "disabled-target",
+    "invalid-option-id",
+    "invalid-link-id",
     "stale-epoch",
     "stale-sequence",
     "stale-render-revision",
     "invalid-envelope",
     "invalid-action",
-    "action-not-allowed"
+    "action-not-allowed",
+    "scheduler-limit",
+    "journal-limit"
+  ],
+  "semantic_rules": [
+    "action-target-id-matches-node-id",
+    "action-type-permitted-by-node",
+    "option-id-present-on-combo",
+    "link-action-id-present-on-label",
+    "target-effectively-visible",
+    "target-effectively-enabled"
   ],
   "required_fields": {
     "node": [
@@ -153,6 +172,14 @@
     "text": {
       "type": "string",
       "maxLength": 1048576
+    },
+    "node_common_field_name": {
+      "enum": [
+        "id", "kind", "parent_id", "children", "visible", "effective_visible",
+        "enabled", "effective_enabled", "accessible_name",
+        "accessible_description", "tooltip", "focus_policy", "readonly",
+        "style_roles", "actions"
+      ]
     },
     "alignment": {
       "enum": ["start", "center", "end", "justify"]
@@ -480,7 +507,13 @@
             "code": {"enum": ["ready", "working", "error", "cancelled"]}
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"enum": ["stale", "contract-error"]}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/error"}}}
+        }
+      ]
     },
     "error": {
       "type": "object",
@@ -489,14 +522,27 @@
       "properties": {
         "code": {
           "enum": [
+            "unsupported-protocol",
+            "unknown-node-kind",
+            "missing-required-field",
+            "unknown-enum-value",
+            "unknown-widget-id",
+            "hidden-target",
+            "disabled-target",
+            "invalid-option-id",
+            "invalid-link-id",
             "stale-epoch",
             "stale-sequence",
             "stale-render-revision",
             "invalid-envelope",
             "invalid-action",
-            "action-not-allowed"
+            "action-not-allowed",
+            "scheduler-limit",
+            "journal-limit"
           ]
-        }
+        },
+        "kind": {"$ref": "#/$defs/identifier"},
+        "id": {"$ref": "#/$defs/identifier"}
       }
     },
     "node": {
@@ -507,7 +553,7 @@
         "id": {"$ref": "#/$defs/identifier"},
         "kind": {"enum": ["box", "button", "buttons", "check", "col", "combo", "form", "frame", "grid", "hline", "label", "line", "radio", "row", "scroll", "spacer", "spin", "stack", "textarea"]},
         "parent_id": {"type": ["string", "null"], "maxLength": 1024},
-        "children": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "children": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
         "visible": {"type": "boolean"},
         "effective_visible": {"type": "boolean"},
         "enabled": {"type": "boolean"},
@@ -525,13 +571,13 @@
         "alignment": {"$ref": "#/$defs/alignment"},
         "strike": {"type": "boolean"},
         "selectable": {"type": "boolean"},
-        "link_actions": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "link_actions": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
         "checkable": {"type": "boolean"},
         "checked": {"type": "boolean"},
         "role": {"enum": ["accept", "reject", "destructive", "help", "apply", "reset", "yes", "no", "close", "other"]},
         "default": {"type": "boolean"},
         "escape": {"type": "boolean"},
-        "button_ids": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "button_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
         "standard_roles": {"type": "array", "items": {"type": "string", "maxLength": 64}},
         "group_id": {"type": ["string", "null"], "maxLength": 1024},
         "exclusive": {"type": "boolean"},
@@ -559,36 +605,36 @@
         "column_minimums": {"type": "array", "items": {"$ref": "#/$defs/nonnegative_integer"}},
         "column_stretches": {"type": "array", "items": {"$ref": "#/$defs/nonnegative_integer"}},
         "rows": {"type": "array", "items": {"$ref": "#/$defs/form_row"}},
-        "pages": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "pages": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
         "current_page": {"type": ["string", "null"], "maxLength": 1024},
         "offset": {"$ref": "#/$defs/nonnegative_integer"},
         "extent": {"$ref": "#/$defs/nonnegative_integer"},
         "shown_count": {"$ref": "#/$defs/nonnegative_integer"},
         "total_count": {"$ref": "#/$defs/nonnegative_integer"},
-        "row_ids": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "row_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
         "orientation": {"$ref": "#/$defs/orientation"},
         "size_policy": {"$ref": "#/$defs/size_policy"}
       },
       "allOf": [
-        {"if": {"properties": {"kind": {"const": "label"}}}, "then": {"required": ["format", "text", "wrap", "alignment", "strike", "selectable", "link_actions"]}},
-        {"if": {"properties": {"kind": {"const": "button"}}}, "then": {"required": ["text", "checkable", "checked", "role", "default", "escape"]}},
-        {"if": {"properties": {"kind": {"const": "buttons"}}}, "then": {"required": ["button_ids", "standard_roles"]}},
-        {"if": {"properties": {"kind": {"const": "check"}}}, "then": {"required": ["text", "checked", "group_id", "exclusive"]}},
-        {"if": {"properties": {"kind": {"const": "radio"}}}, "then": {"required": ["text", "checked", "group_id", "exclusive"]}},
-        {"if": {"properties": {"kind": {"const": "line"}}}, "then": {"required": ["value", "placeholder", "selection_start", "selection_end", "password", "max_length", "max_blocks"]}},
-        {"if": {"properties": {"kind": {"const": "textarea"}}}, "then": {"required": ["value", "placeholder", "selection_start", "selection_end", "password", "max_length", "max_blocks"]}},
-        {"if": {"properties": {"kind": {"const": "combo"}}}, "then": {"required": ["options", "current_index", "current_text", "editable", "editor_value"]}},
-        {"if": {"properties": {"kind": {"const": "spin"}}}, "then": {"required": ["value", "minimum", "maximum", "step", "suffix", "special_value_text"]}},
-        {"if": {"properties": {"kind": {"const": "row"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"]}},
-        {"if": {"properties": {"kind": {"const": "col"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"]}},
-        {"if": {"properties": {"kind": {"const": "box"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"]}},
-        {"if": {"properties": {"kind": {"const": "frame"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"]}},
-        {"if": {"properties": {"kind": {"const": "grid"}}}, "then": {"required": ["cells", "column_minimums", "column_stretches"]}},
-        {"if": {"properties": {"kind": {"const": "form"}}}, "then": {"required": ["rows"]}},
-        {"if": {"properties": {"kind": {"const": "stack"}}}, "then": {"required": ["pages", "current_page"]}},
-        {"if": {"properties": {"kind": {"const": "scroll"}}}, "then": {"required": ["offset", "extent", "shown_count", "total_count", "row_ids"]}},
-        {"if": {"properties": {"kind": {"const": "spacer"}}}, "then": {"required": ["orientation", "size_policy"]}},
-        {"if": {"properties": {"kind": {"const": "hline"}}}, "then": {"required": ["orientation", "size_policy"]}}
+        {"if": {"properties": {"kind": {"const": "label"}}}, "then": {"required": ["format", "text", "wrap", "alignment", "strike", "selectable", "link_actions"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["format", "text", "wrap", "alignment", "strike", "selectable", "link_actions"]}]}}},
+        {"if": {"properties": {"kind": {"const": "button"}}}, "then": {"required": ["text", "checkable", "checked", "role", "default", "escape"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["text", "checkable", "checked", "role", "default", "escape"]}]}}},
+        {"if": {"properties": {"kind": {"const": "buttons"}}}, "then": {"required": ["button_ids", "standard_roles"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["button_ids", "standard_roles"]}]}}},
+        {"if": {"properties": {"kind": {"const": "check"}}}, "then": {"required": ["text", "checked", "group_id", "exclusive"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["text", "checked", "group_id", "exclusive"]}]}}},
+        {"if": {"properties": {"kind": {"const": "radio"}}}, "then": {"required": ["text", "checked", "group_id", "exclusive"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["text", "checked", "group_id", "exclusive"]}]}}},
+        {"if": {"properties": {"kind": {"const": "line"}}}, "then": {"required": ["value", "placeholder", "selection_start", "selection_end", "password", "max_length", "max_blocks"], "properties": {"value": {"type": "string", "maxLength": 1048576}}, "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["value", "placeholder", "selection_start", "selection_end", "password", "max_length", "max_blocks"]}]}}},
+        {"if": {"properties": {"kind": {"const": "textarea"}}}, "then": {"required": ["value", "placeholder", "selection_start", "selection_end", "password", "max_length", "max_blocks"], "properties": {"value": {"type": "string", "maxLength": 1048576}}, "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["value", "placeholder", "selection_start", "selection_end", "password", "max_length", "max_blocks"]}]}}},
+        {"if": {"properties": {"kind": {"const": "combo"}}}, "then": {"required": ["options", "current_index", "current_text", "editable", "editor_value"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["options", "current_index", "current_text", "editable", "editor_value"]}]}}},
+        {"if": {"properties": {"kind": {"const": "spin"}}}, "then": {"required": ["value", "minimum", "maximum", "step", "suffix", "special_value_text"], "properties": {"value": {"type": "number", "minimum": -2147483648, "maximum": 2147483647}}, "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["value", "minimum", "maximum", "step", "suffix", "special_value_text"]}]}}},
+        {"if": {"properties": {"kind": {"const": "row"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["margins", "gap", "stretches", "alignment"]}]}}},
+        {"if": {"properties": {"kind": {"const": "col"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["margins", "gap", "stretches", "alignment"]}]}}},
+        {"if": {"properties": {"kind": {"const": "box"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["margins", "gap", "stretches", "alignment"]}]}}},
+        {"if": {"properties": {"kind": {"const": "frame"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["margins", "gap", "stretches", "alignment"]}]}}},
+        {"if": {"properties": {"kind": {"const": "grid"}}}, "then": {"required": ["cells", "column_minimums", "column_stretches"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["cells", "column_minimums", "column_stretches"]}]}}},
+        {"if": {"properties": {"kind": {"const": "form"}}}, "then": {"required": ["rows"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["rows"]}]}}},
+        {"if": {"properties": {"kind": {"const": "stack"}}}, "then": {"required": ["pages", "current_page"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["pages", "current_page"]}]}}},
+        {"if": {"properties": {"kind": {"const": "scroll"}}}, "then": {"required": ["offset", "extent", "shown_count", "total_count", "row_ids"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["offset", "extent", "shown_count", "total_count", "row_ids"]}]}}},
+        {"if": {"properties": {"kind": {"const": "spacer"}}}, "then": {"required": ["orientation", "size_policy"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["orientation", "size_policy"]}]}}},
+        {"if": {"properties": {"kind": {"const": "hline"}}}, "then": {"required": ["orientation", "size_policy"], "propertyNames": {"anyOf": [{"$ref": "#/$defs/node_common_field_name"}, {"enum": ["orientation", "size_policy"]}]}}}
       ]
     }
   }

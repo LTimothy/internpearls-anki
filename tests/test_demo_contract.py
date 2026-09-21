@@ -63,6 +63,20 @@ def test_schema_maps_every_node_kind_to_its_exact_fields():
     }
     assert set(by_kind) == set(SCHEMA["node_kinds"])
     assert by_kind == NODE_FIELDS
+    common = set(SCHEMA["required_fields"]["node"])
+    assert set(SCHEMA["$defs"]["node_common_field_name"]["enum"]) == common
+    for branch in branches:
+        node_kind = branch["if"]["properties"]["kind"]["const"]
+        allowed = branch["then"]["propertyNames"]["anyOf"]
+        assert allowed[0] == {"$ref": "#/$defs/node_common_field_name"}
+        assert allowed[1]["enum"] == NODE_FIELDS[node_kind]
+    specialised = {
+        branch["if"]["properties"]["kind"]["const"]: branch["then"]
+        for branch in branches
+    }
+    assert specialised["line"]["properties"]["value"]["type"] == "string"
+    assert specialised["textarea"]["properties"]["value"]["type"] == "string"
+    assert specialised["spin"]["properties"]["value"]["type"] == "number"
 
 
 def test_action_schemas_have_exact_payloads_and_reject_extra_keys():
@@ -93,6 +107,36 @@ def test_response_envelope_matches_replay_shape():
     assert properties["pending"]["type"] == "array"
     assert properties["safe_status"]["required"] == ["code"]
     assert properties["safe_status"]["additionalProperties"] is False
+    assert SCHEMA["$defs"]["response"]["allOf"] == [{
+        "if": {"properties": {"status": {"enum": ["stale", "contract-error"]}}},
+        "then": {"properties": {"payload": {"$ref": "#/$defs/error"}}},
+    }]
+
+
+def test_error_codes_are_fixed_and_include_renderer_contract_failures():
+    codes = SCHEMA["error_codes"]
+    assert SCHEMA["$defs"]["error"]["properties"]["code"]["enum"] == codes
+    assert "unknown-node-kind" in codes
+    assert "unknown-widget-id" in codes
+    assert SCHEMA["$defs"]["error"]["additionalProperties"] is False
+    assert set(SCHEMA["$defs"]["error"]["properties"]) == {"code", "kind", "id"}
+
+
+def test_semantic_action_checks_are_named_for_the_runtime_validator():
+    assert SCHEMA["semantic_rules"] == [
+        "action-target-id-matches-node-id",
+        "action-type-permitted-by-node",
+        "option-id-present-on-combo",
+        "link-action-id-present-on-label",
+        "target-effectively-visible",
+        "target-effectively-enabled",
+    ]
+
+
+def test_stable_id_arrays_reject_duplicates():
+    properties = SCHEMA["$defs"]["node"]["properties"]
+    for name in ("children", "link_actions", "button_ids", "pages", "row_ids"):
+        assert properties[name]["uniqueItems"] is True
 
 
 def test_contract_bounds_numbers_and_closes_enums():
