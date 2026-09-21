@@ -35,7 +35,7 @@ INTERVALS = ["2.3 mo", "11 d", "27 d", "6 d", "3.1 mo", "16 d", "9 d", "1.2 mo"]
 SEED_NOTES = {0: "mnemonic: A for A", 4: "ask Dr. P about IV dosing"}
 
 RUNNER = mock_anki.Runner(MOCK, paths=[config.INSTALLED, config.STATE,
-                                       collection._USER_FILES])
+                                       collection._USER_FILES, SOURCE])
 
 
 def _install_demo_net():
@@ -300,6 +300,8 @@ def maintainer(op):
     """Edit the real source .apkg + manifest, exactly like a maintainer pushing
     to the deck repo. GUIDs are never touched — which is precisely why the
     reworded card keeps its history when the add-on syncs it."""
+    if RUNNER.protocol_active:
+        raise mock_anki.ProtocolError("protocol flow active")
     fs = mock_anki.FS
     decks = _decks()
     deck = decks[min(1, len(decks) - 1)]
@@ -364,6 +366,9 @@ def maintainer(op):
     else:
         raise ValueError(op)
 
-    _edit_apkg(path, edit)
-    _bump(deck["name"])
+    def apply():
+        _edit_apkg(path, edit)
+        _bump(deck["name"])
+
+    RUNNER.maintain_fixture(apply)
     return json.dumps({"label": label, "deck": deck["name"].split("::")[-1]})

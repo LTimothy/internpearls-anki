@@ -77,14 +77,18 @@ class Index:
         self.doc_weight_sum = doc_weight_sum
 
 
-def build_index(rows):
+def build_index(rows, checkpoint=None):
     """Build an `Index` over `rows`, each `(note_id, text, deck_name, note_type)`.
 
     IDF is computed over this pool alone: a query against it re-uses these weights,
     since a token's rarity in the pool being searched is what should decide how much
     it counts.
     """
-    doc_tokens = [tokenize(normalise(text)) for _, text, _, _ in rows]
+    doc_tokens = []
+    for index, (_, text, _, _) in enumerate(rows):
+        if checkpoint is not None and index % 25 == 0:
+            checkpoint(f"duplicate-index:right:batch:{index // 25 + 1}")
+        doc_tokens.append(tokenize(normalise(text)))
     n = len(rows)
     df = {}
     for tokens in doc_tokens:
@@ -132,11 +136,11 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
     right pool. Pair keys in `ignored` are removed before the per-left `top` limit,
     so later candidates replenish ignored results instead of being hidden by them.
     """
-    index = build_index(right_rows)
+    index = build_index(right_rows, checkpoint=checkpoint)
     out = []
     for li, left in enumerate(left_rows):
         if checkpoint is not None and li % 25 == 0:
-            checkpoint(f"duplicate-index:batch:{li // 25 + 1}")
+            checkpoint(f"duplicate-index:left:batch:{li // 25 + 1}")
         _, text, _, _ = left
         tokens = tokenize(normalise(text))
         tf = {}
