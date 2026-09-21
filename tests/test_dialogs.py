@@ -11,6 +11,7 @@ import json
 
 import mock_anki
 import pytest
+from demo_contract_cases import contract_action_table
 from mock_anki import make_apkg
 
 
@@ -2241,23 +2242,6 @@ def _build_contract_action_scene():
     }
 
 
-def _contract_action_table(scene):
-    return [
-        {"type": "activate", "id": scene["button"].wid},
-        {"type": "toggle", "id": scene["radio_b"].wid, "checked": True},
-        {"type": "select-option", "id": scene["combo"].wid,
-         "option_id": "option-second"},
-        {"type": "edit-text", "id": scene["line"].wid, "value": "x",
-         "selection_start": 1, "selection_end": 1, "composing": False},
-        {"type": "finish-edit", "id": scene["line"].wid},
-        {"type": "activate-link", "id": scene["link"].wid,
-         "action_id": "details"},
-        {"type": "scroll", "id": scene["scroll"].wid, "offset": 7},
-        {"type": "key", "id": scene["dialog"].wid, "key": "Escape",
-         "modifiers": []},
-    ]
-
-
 def _observe_contract_scene(scene):
     events = []
     scene["button"].clicked.connect(
@@ -2395,12 +2379,44 @@ def test_demo_serializer_preserves_layout_state_and_stable_ids(anki):
     assert nodes[explicit_b.wid]["group_id"] == explicit_group.wid
 
 
+def test_demo_serializer_keeps_explicit_plain_label_text_plain(anki):
+    from aqt.qt import QLabel, Qt
+
+    label = QLabel("<b>plain</b>")
+    label.setTextFormat(Qt.TextFormat.PlainText)
+
+    tree = mock_anki.serialize_widget(label)
+
+    assert tree["nodes"][0]["format"] == "plain"
+    assert tree["nodes"][0]["text"] == "<b>plain</b>"
+
+
+def test_demo_serializer_preserves_streaming_scroll_counts(anki):
+    from aqt.qt import QScrollArea
+
+    class ProgressScroll(QScrollArea):
+        def shown(self):
+            return 2
+
+        def total(self):
+            return 5
+
+    scroll = ProgressScroll()
+    scroll.verticalScrollBar().setMaximum(10)
+
+    tree = mock_anki.serialize_widget(scroll)
+
+    assert tree["nodes"][0]["shown_count"] == 2
+    assert tree["nodes"][0]["total_count"] == 5
+
+
 def test_demo_actions_match_qt_signal_order_and_values(anki):
     scene = _build_contract_action_scene()
     events = _observe_contract_scene(scene)
+    ids = {name: widget.wid for name, widget in scene.items()}
 
     assert mock_anki.apply_actions(
-        {"actions": _contract_action_table(scene)}) is None
+        {"actions": contract_action_table(ids)}) is None
 
     assert events == [
         ("button", True, True),

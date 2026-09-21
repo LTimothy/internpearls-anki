@@ -1987,8 +1987,9 @@ def _layout_fields(layout):
 def _specific_fields(widget, kind):
     if kind == "label":
         text = widget.text()
-        rich = getattr(widget, "_format", None) == 1 or bool(
-            re.search(r"<[A-Za-z][^>]*>", text))
+        explicit_format = getattr(widget, "_format", None)
+        rich = (explicit_format == 1 if explicit_format is not None else bool(
+            re.search(r"<[A-Za-z][^>]*>", text)))
         return {"format": "rich" if rich else "plain", "text": text,
                 "wrap": getattr(widget, "_wrap", False),
                 "alignment": _alignment(getattr(widget, "_alignment", None)),
@@ -2068,8 +2069,12 @@ def _specific_fields(widget, kind):
     if kind == "scroll":
         bar = widget.verticalScrollBar()
         children = _children(widget)
+        shown = (widget.shown() if callable(getattr(widget, "shown", None))
+                 else len(children))
+        total = (widget.total() if callable(getattr(widget, "total", None))
+                 else len(children))
         return {"offset": bar.value(), "extent": bar.maximum(),
-                "shown_count": len(children), "total_count": len(children),
+                "shown_count": shown, "total_count": total,
                 "row_ids": [child.wid for child in children]}
     if kind in ("spacer", "hline"):
         return {"orientation": "horizontal", "size_policy": "preferred"}
@@ -2629,6 +2634,7 @@ def install():
             AlignCenter = 0x84
 
         class TextFormat:
+            PlainText = 0
             RichText = 1
 
         class WindowModality:
