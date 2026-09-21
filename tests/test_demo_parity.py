@@ -12,6 +12,8 @@ Card content isn't duplicated either: the demo downloads the example deck
 repo's real manifest and .apkg files at load.
 """
 import os
+import subprocess
+import sys
 
 HERE = os.path.dirname(__file__)
 ADDON = os.path.join(HERE, "..", "internpearls")
@@ -40,3 +42,13 @@ def test_docs_addon_mirror_is_current():
     assert not stale, ("the live demo's mirrored source is out of date — run "
                        "./build.sh to refresh docs/addon/:\n  " +
                        "\n  ".join(stale))
+
+
+def test_demo_contract_generated_files_are_current():
+    result = subprocess.run(
+        [sys.executable, "tools/generate_demo_contract.py", "--check"],
+        cwd=os.path.join(HERE, ".."),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
