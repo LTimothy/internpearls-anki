@@ -34,3 +34,183 @@ test("publishes the generated demo contract registries", async ({ page }) => {
     node_kinds: schema.node_fields,
   });
 });
+
+test("renders every generated node kind and rejects unknown kinds", async ({ page }) => {
+  await page.goto("/browser_tests/contract-page.html");
+  const result = await page.evaluate(async () => {
+    const contract = await import("/docs/demo-contract.js");
+    const renderer = await import("/docs/demo-renderer.js");
+    const common = {
+      parent_id: null, children: [], visible: true, effective_visible: true,
+      enabled: true, effective_enabled: true, accessible_name: "",
+      accessible_description: "", tooltip: "", focus_policy: "none",
+      readonly: false, style_roles: [], actions: [],
+    };
+    const fields = {
+      box: { margins: {}, gap: 0, stretches: [], alignment: "start" },
+      button: { text: "Button", checkable: false, checked: false, role: "other",
+                default: false, escape: false },
+      buttons: { button_ids: [], standard_roles: [] },
+      check: { text: "Check", checked: false, group_id: null, exclusive: false },
+      col: { margins: {}, gap: 0, stretches: [], alignment: "start" },
+      combo: { options: [], current_index: -1, current_text: "", editable: false,
+               editor_value: "" },
+      form: { rows: [] },
+      frame: { margins: {}, gap: 0, stretches: [], alignment: "start" },
+      grid: { cells: [], column_minimums: [], column_stretches: [] },
+      hline: { orientation: "horizontal", size_policy: "preferred" },
+      label: { format: "plain", text: "Label", wrap: false, alignment: "start",
+               strike: false, selectable: false, link_actions: [] },
+      line: { value: "", placeholder: "", selection_start: 0, selection_end: 0,
+              password: false, max_length: 10, max_blocks: 0 },
+      radio: { text: "Radio", checked: false, group_id: "group", exclusive: true },
+      row: { margins: {}, gap: 0, stretches: [], alignment: "start" },
+      scroll: { offset: 0, extent: 0, shown_count: 0, total_count: 0, row_ids: [] },
+      spacer: { orientation: "horizontal", size_policy: "preferred" },
+      spin: { value: 1, minimum: 0, maximum: 2, step: 1, suffix: "",
+              special_value_text: "" },
+      stack: { pages: [], current_page: null },
+      textarea: { value: "", placeholder: "", selection_start: 0, selection_end: 0,
+                  password: false, max_length: 10, max_blocks: 0 },
+    };
+    const rendered = contract.NODE_KINDS.map((kind, index) => {
+      const node = { ...common, ...fields[kind], id: `node-${index}`, kind };
+      return renderer.renderWidget(node, { nodes: new Map([[node.id, node]]) }).tagName;
+    });
+    let error;
+    try {
+      renderer.renderWidget({ ...common, id: "bad", kind: "unknown" }, {});
+    } catch (caught) {
+      error = { name: caught.name, code: caught.code, kind: caught.details.kind };
+    }
+    return {
+      rendered,
+      rendererKinds: Object.keys(renderer.RENDERERS),
+      error,
+    };
+  });
+  expect(result.rendererKinds).toEqual(NODE_KINDS);
+  expect(result.rendered).toHaveLength(NODE_KINDS.length);
+  expect(result.error).toEqual({
+    name: "DemoContractError", code: "unknown-node-kind", kind: "unknown",
+  });
+});
+
+test("preserves grid form stack state and plain text semantics", async ({ page }) => {
+  await page.goto("/browser_tests/contract-page.html");
+  const result = await page.evaluate(async () => {
+    const { renderWidget } = await import("/docs/demo-renderer.js");
+    const common = {
+      parent_id: null, children: [], visible: true, effective_visible: true,
+      enabled: true, effective_enabled: true, accessible_name: "",
+      accessible_description: "", tooltip: "", focus_policy: "none",
+      readonly: false, style_roles: [], actions: [],
+    };
+    const label = { ...common, id: "label", kind: "label", format: "plain",
+      text: "<b>plain</b>", wrap: false, alignment: "start", strike: false,
+      selectable: false, link_actions: [] };
+    const field = { ...common, id: "field", kind: "line", value: "value",
+      placeholder: "", selection_start: 0, selection_end: 0, password: false,
+      max_length: 20, max_blocks: 0 };
+    const first = { ...common, id: "first", kind: "label", format: "plain",
+      text: "first", wrap: false, alignment: "start", strike: false,
+      selectable: false, link_actions: [] };
+    const second = { ...first, id: "second", text: "second" };
+    const nodes = new Map([label, field, first, second].map((node) => [node.id, node]));
+    const context = { nodes };
+    const grid = renderWidget({ ...common, id: "grid", kind: "grid",
+      children: ["label"], cells: [{ id: "label", row: 2, column: 3,
+        row_span: 2, column_span: 4, alignment: "center" }],
+      column_minimums: [0, 0, 0, 80], column_stretches: [0, 0, 0, 2] }, context);
+    const form = renderWidget({ ...common, id: "form", kind: "form",
+      children: ["label", "field"], rows: [{ label_id: "label", field_id: "field" }] },
+      context);
+    const stack = renderWidget({ ...common, id: "stack", kind: "stack",
+      children: ["first", "second"], pages: ["first", "second"],
+      current_page: "second" }, context);
+    const disabled = renderWidget({ ...field, id: "disabled",
+      effective_visible: false, effective_enabled: false,
+      accessible_name: "Named field", accessible_description: "Field help",
+      tooltip: "A tip", readonly: true, style_roles: ["muted"] }, context);
+    return {
+      gridPlacement: grid.firstElementChild.style.gridArea,
+      plainText: grid.firstElementChild.textContent,
+      plainHtml: grid.firstElementChild.innerHTML,
+      formAssociation: form.querySelector("label").htmlFor,
+      fieldId: form.querySelector("input").id,
+      stackText: stack.textContent,
+      commonState: {
+        hidden: disabled.hidden,
+        disabled: disabled.disabled,
+        readonly: disabled.readOnly,
+        label: disabled.getAttribute("aria-label"),
+        description: disabled.getAttribute("aria-description"),
+        tooltip: disabled.title,
+        muted: disabled.classList.contains("demo-role-muted"),
+      },
+    };
+  });
+  expect(result).toEqual({
+    gridPlacement: "3 / 4 / span 2 / span 4",
+    plainText: "<b>plain</b>",
+    plainHtml: "&lt;b&gt;plain&lt;/b&gt;",
+    formAssociation: "field",
+    fieldId: "field",
+    stackText: "second",
+    commonState: {
+      hidden: true,
+      disabled: true,
+      readonly: true,
+      label: "Named field",
+      description: "Field help",
+      tooltip: "A tip",
+      muted: true,
+    },
+  });
+});
+
+test("emits normalized Escape and scroll actions", async ({ page }) => {
+  await page.goto("/browser_tests/contract-page.html");
+  const actions = await page.evaluate(async () => {
+    const { renderWidget, renderWidgetTree } = await import("/docs/demo-renderer.js");
+    const common = {
+      parent_id: null, children: [], visible: true, effective_visible: true,
+      enabled: true, effective_enabled: true, accessible_name: "",
+      accessible_description: "", tooltip: "", focus_policy: "none",
+      readonly: false, style_roles: [], actions: [],
+    };
+    const emitted = [];
+    const scrollContent = { ...common, id: "scroll-content", kind: "label",
+      format: "plain", text: "content", wrap: false, alignment: "start",
+      strike: false, selectable: false, link_actions: [] };
+    const scrollNode = { ...common, id: "scroll", kind: "scroll", offset: 0,
+      extent: 10, shown_count: 1, total_count: 1, row_ids: [scrollContent.id],
+      children: [scrollContent.id] };
+    const scroll = renderWidget(scrollNode, {
+      nodes: new Map([[scrollNode.id, scrollNode], [scrollContent.id, scrollContent]]),
+      scroll: (id, offset) => emitted.push({ type: "scroll", id, offset }),
+    });
+    scroll.style.height = "10px";
+    scroll.style.overflow = "auto";
+    scroll.firstElementChild.style.height = "30px";
+    document.body.appendChild(scroll);
+    if (scroll.scrollHeight <= scroll.clientHeight) {
+      throw new Error("scroll fixture is not scrollable");
+    }
+    scroll.scrollTop = 7;
+    scroll.dispatchEvent(new Event("scroll"));
+
+    const root = { ...common, id: "dialog", kind: "box",
+      margins: {}, gap: 0, stretches: [], alignment: "start",
+      actions: ["key", "close"] };
+    const tree = renderWidgetTree({ root_id: root.id, nodes: [root] }, {
+      key: (id, key, modifiers) => emitted.push({ type: "key", id, key, modifiers }),
+    });
+    tree.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    return emitted;
+  });
+  expect(actions).toEqual([
+    { type: "scroll", id: "scroll", offset: 7 },
+    { type: "key", id: "dialog", key: "Escape", modifiers: [] },
+  ]);
+});
