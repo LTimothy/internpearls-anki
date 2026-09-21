@@ -735,6 +735,36 @@ test("discards a queued action when the acknowledged tree changes", async ({ pag
   expect(await page.evaluate(() => window.__secondClick)).toBeNull();
 });
 
+test("does not rebind an edit-bound activation when its target meaning changes", async ({ page }) => {
+  await openFixture(page, ["feed"]);
+  await page.evaluate(() => window.demo.runFlow("sample"));
+  await page.evaluate(() => {
+    const original = window.__runnerEnvelope;
+    window.__runnerEnvelope = (message) => {
+      const response = original(message);
+      const proceed = response.payload.contract_tree.nodes.find((node) => node.id === "proceed");
+      proceed.text = "Changed action";
+      return response;
+    };
+    window.__treeChange = window.demo.dispatch([]);
+  });
+  await page.locator("#field").fill("Pending value");
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  expect(await page.evaluate(() => window.__fixtureWorkers[0].messages.length)).toBe(3);
+  await page.evaluate(() => window.__fixtureWorkers[0].respond(2));
+  await page.evaluate(() => window.__treeChange);
+  await expect.poll(() => page.evaluate(() => window.__fixtureWorkers[0].messages.length))
+    .toBe(4);
+  const retried = await page.evaluate(() =>
+    window.__fixtureWorkers[0].messages[3].payload.envelope.actions);
+  expect(retried).toContainEqual(expect.objectContaining({
+    type: "edit-text", id: "field", value: "Pending value",
+  }));
+  expect(retried).toContainEqual({ type: "finish-edit", id: "field" });
+  expect(retried).not.toContainEqual({ type: "activate", id: "proceed" });
+});
+
 test("updates a stable rich link listener when its action changes", async ({ page }) => {
   await openFixture(page);
   await page.evaluate(() => window.demo.runFlow("sample"));

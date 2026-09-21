@@ -257,6 +257,66 @@ test("real Settings spin input keeps focus after edit acknowledgement", async ({
   });
 });
 
+test("real Settings saves the final spin edit queued behind an acknowledgement", async ({ page }) => {
+  await openRealDemo(page);
+  const settingsId = await menuActionId(page, /^Settings$/);
+  expect(settingsId).toEqual(expect.any(String));
+  await page.evaluate((id) => window.demo.runFlow(id), settingsId);
+  const checkbox = page.getByRole("checkbox", {
+    name: "Sync decks automatically when updates are available",
+  });
+  const spin = page.locator("#dbody input[type=number]").first();
+  const save = page.getByRole("button", { name: "Save", exact: true });
+  await expect(spin).toBeVisible();
+  if (!await checkbox.isChecked()) {
+    const responseCount = await page.evaluate(() =>
+      window.__realWorkers[0].responses.filter((message) => message.type === "feed").length);
+    await checkbox.check();
+    await expect.poll(() => page.evaluate(() =>
+      window.__realWorkers[0].responses.filter((message) => message.type === "feed").length), {
+      timeout: 120000,
+    }).toBe(responseCount + 1);
+  }
+  await expect(spin).toBeEnabled();
+  const feedStart = await page.evaluate(() =>
+    window.__realWorkers[0].posts.filter((message) => message.type === "feed").length);
+  const saveId = await save.getAttribute("id");
+
+  await page.evaluate(() => { window.__holdNextFeed = true; });
+  await spin.fill("10");
+  await expect.poll(() => page.evaluate(() =>
+    window.__realWorkers[0].held?.payload.envelope.actions.some((action) =>
+      action.type === "edit-text" && action.value === "10") || false)).toBe(true);
+  await spin.fill("11");
+  await page.waitForTimeout(150);
+  await expect(spin).toHaveValue("11");
+  await save.click();
+  await page.evaluate(() => window.__realWorkers[0].releaseHeld());
+
+  await expect(page.locator("#dbody")).toContainText("Settings saved", { timeout: 10000 });
+  const result = await page.evaluate(({ feedStart, saveId }) => {
+    const requests = window.__realWorkers[0].posts.filter((message) =>
+      message.type === "feed").slice(feedStart);
+    const responses = window.__realWorkers[0].responses.filter((message) =>
+      message.type === "feed");
+    return {
+      actions: requests.flatMap((message) => message.payload.envelope.actions),
+      savedInterval: responses.at(-1).payload.config.interval,
+      saveId,
+    };
+  }, { feedStart, saveId });
+  expect(result.actions).toContainEqual(expect.objectContaining({
+    type: "edit-text", value: "10",
+  }));
+  expect(result.actions).toContainEqual(expect.objectContaining({
+    type: "edit-text", value: "11",
+  }));
+  expect(result.actions).toContainEqual({ type: "activate", id: result.saveId });
+  expect(result.savedInterval).toBe(11);
+  await page.getByRole("button", { name: "OK" }).click();
+  await expect(page.locator("#overlay")).not.toHaveClass(/show/);
+});
+
 test("real editable Enter finishes without a contract error", async ({ page }) => {
   await openRealDemo(page);
   const flowId = await menuActionId(page, /^Manage /);
@@ -285,6 +345,47 @@ test("real editable Enter finishes without a contract error", async ({ page }) =
   expect(result.actions.map((action) => action.type)).toEqual(["edit-text", "finish-edit"]);
   expect(result.actions.some((action) => action.type === "key")).toBe(false);
   expect(result.status).not.toBe("contract-error");
+});
+
+test("real Manage keeps a newer edit unfinished after an older finish acknowledgement", async ({ page }) => {
+  await openRealDemo(page);
+  const flowId = await menuActionId(page, /^Manage /);
+  expect(flowId).toEqual(expect.any(String));
+  await page.evaluate((id) => window.demo.runFlow(id), flowId);
+  const field = page.locator("#dbody input[type=text]").first();
+  await expect(field).toBeVisible();
+  const feedStart = await page.evaluate(() =>
+    window.__realWorkers[0].posts.filter((message) => message.type === "feed").length);
+
+  await page.evaluate(() => { window.__holdNextFeed = true; });
+  await field.fill("First");
+  await field.press("Enter");
+  await expect.poll(() => page.evaluate(() => Boolean(window.__realWorkers[0].held))).toBe(true);
+  await field.fill("Second");
+  await page.waitForTimeout(150);
+  await page.evaluate(() => window.__realWorkers[0].releaseHeld());
+  await expect.poll(() => page.evaluate((start) =>
+    window.__realWorkers[0].responses.filter((message) => message.type === "feed").length >= start + 2,
+  feedStart), { timeout: 120000 }).toBe(true);
+
+  await page.getByRole("button", { name: "Cancel" }).focus();
+  await expect.poll(() => page.evaluate((start) =>
+    window.__realWorkers[0].posts.filter((message) => message.type === "feed").length >= start + 3,
+  feedStart), { timeout: 10000 }).toBe(true);
+  const requests = await page.evaluate((start) =>
+    window.__realWorkers[0].posts.filter((message) => message.type === "feed")
+      .slice(start).map((message) => message.payload.envelope.actions), feedStart);
+  expect(requests[0]).toEqual([
+    expect.objectContaining({ type: "edit-text", value: "First" }),
+    expect.objectContaining({ type: "finish-edit" }),
+  ]);
+  expect(requests[1]).toEqual([
+    expect.objectContaining({ type: "edit-text", value: "Second" }),
+  ]);
+  expect(requests[2]).toEqual([
+    expect.objectContaining({ type: "finish-edit" }),
+  ]);
+  expect(requests.slice(1).flat().filter((action) => action.type === "finish-edit")).toHaveLength(1);
 });
 
 test("real Backup flow redacts virtual runtime paths", async ({ page }) => {

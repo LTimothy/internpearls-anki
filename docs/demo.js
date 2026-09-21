@@ -35,11 +35,11 @@ let stopped = false;
 let currentRootId = null;
 let editVersion = 0;
 let retryEditScheduled = false;
-let retryFinish = false;
+let retryFinishes = [];
 let retryActions = [];
 const pendingEdits = new Map();
-const unfinishedEdits = new Set();
-const finishingEdits = new Set();
+const unfinishedEdits = new Map();
+const finishingEdits = new Map();
 const composing = new Set();
 const compositionQueue = [];
 
@@ -90,14 +90,47 @@ function transactionHasEdits(transaction) {
   return Boolean(transaction?.edits.length || transaction?.finishes.length);
 }
 
+function nodeSemanticSignature(id) {
+  const node = currentNodes.get(id);
+  if (!node) return null;
+  const semantic = jsonClone(node);
+  for (const name of [
+    "checked", "current_index", "current_text", "editor_value", "offset",
+    "selection_end", "selection_start", "shown_count", "value",
+  ]) delete semantic[name];
+  return JSON.stringify(semantic);
+}
+
+function captureActionRecords(actions, authority) {
+  return actions.map((action) => {
+    const hasTarget = action !== null && typeof action === "object"
+      && Object.prototype.hasOwnProperty.call(action, "id");
+    return {
+      action: jsonClone(action),
+      authority: { ...authority },
+      hasTarget,
+      target: hasTarget ? nodeSemanticSignature(action.id) : null,
+    };
+  });
+}
+
+function actionRecordIsCurrent(record) {
+  if (record.authority.epoch !== epoch || sequence < record.authority.sequence
+      || revision < record.authority.revision) return false;
+  if (!record.hasTarget) return true;
+  return record.target !== null && record.target === nodeSemanticSignature(record.action.id);
+}
+
 function commitEditTransaction(transaction) {
   if (!transaction) return;
   for (const edit of transaction.edits) {
     if (pendingEdits.get(edit.id)?.version === edit.version) pendingEdits.delete(edit.id);
   }
-  for (const id of transaction.finishes) {
-    finishingEdits.delete(id);
-    unfinishedEdits.delete(id);
+  for (const finish of transaction.finishes) {
+    if (finishingEdits.get(finish.id) === finish.version) finishingEdits.delete(finish.id);
+    if (unfinishedEdits.get(finish.id)?.version === finish.version) {
+      unfinishedEdits.delete(finish.id);
+    }
   }
 }
 
@@ -107,24 +140,30 @@ function rollbackEditTransaction(transaction) {
     const pending = pendingEdits.get(edit.id);
     if (pending?.version === edit.version) pending.queued = false;
   }
-  for (const id of transaction.finishes) finishingEdits.delete(id);
+  for (const finish of transaction.finishes) {
+    if (finishingEdits.get(finish.id) === finish.version) finishingEdits.delete(finish.id);
+  }
 }
 
-function schedulePendingEditRetry(finish, actions) {
-  retryFinish = retryFinish || finish;
+function schedulePendingEditRetry(finishes, actions) {
+  retryFinishes.push(...finishes);
   retryActions.push(...actions);
   if (retryEditScheduled) return;
   retryEditScheduled = true;
   queueMicrotask(() => {
     retryEditScheduled = false;
-    const shouldFinish = retryFinish;
+    const finishesToRetry = retryFinishes;
     const actionsToRetry = retryActions;
-    retryFinish = false;
+    retryFinishes = [];
     retryActions = [];
     if (stopped || recovering) return;
-    const batch = takePendingEdits(shouldFinish);
+    const batch = takePendingEdits(finishesToRetry);
     if (batch.actions.length || actionsToRetry.length) {
-      queueActions(actionsToRetry, { flush: false, batch }).catch(reportFailure);
+      queueActions(actionsToRetry.map((record) => record.action), {
+        flush: false,
+        batch,
+        retryRecords: actionsToRetry,
+      }).catch(reportFailure);
     }
   });
 }
@@ -179,8 +218,10 @@ function pumpQueue() {
       recoverFromCancel(entry.cancelActions).then(entry.resolve, entry.reject);
       return;
     }
-    if (transactionHasEdits(entry.transaction)) {
-      schedulePendingEditRetry(Boolean(entry.transaction.finishes.length), entry.retryActions);
+    const replayableActions = entry.priority === "automatic"
+      ? [] : entry.retryActions.filter(actionRecordIsCurrent);
+    if (transactionHasEdits(entry.transaction) || replayableActions.length) {
+      schedulePendingEditRetry(entry.transaction?.finishes || [], replayableActions);
     }
     entry.resolve(null);
     pumpQueue();
@@ -332,6 +373,7 @@ function queueActions(actions, options = {}) {
   const ordered = [...batch.actions, ...actions];
   const authority = { epoch, sequence, revision };
   const envelope = makeEnvelope(ordered);
+  const retryRecords = options.retryRecords || captureActionRecords(actions, authority);
   const cancelActions = ordered.filter(isCancelAction);
   const cancel = cancelActions.length > 0;
   if (cancel) startCancelWatchdog(cancelActions);
@@ -340,7 +382,7 @@ function queueActions(actions, options = {}) {
     authority,
     transaction: batch.transaction,
     cancelActions,
-    retryActions: jsonClone(actions),
+    retryActions: retryRecords,
     handle(payload) {
       if (cancel) clearCancelWatchdog();
       applyCommandPayload(payload);
@@ -484,11 +526,14 @@ function showPayload(payload) {
 
 function rememberEdit(id, element, action) {
   clearAutomaticAdvance();
-  unfinishedEdits.add(id);
+  const version = editVersion += 1;
+  const edit = { id, version, signature: nodeSemanticSignature(id) };
+  unfinishedEdits.set(id, edit);
   pendingEdits.set(id, {
     element,
     action,
-    version: editVersion += 1,
+    version,
+    signature: edit.signature,
     queued: false,
   });
 }
@@ -505,6 +550,12 @@ function scheduleEdit(id, element, action) {
   }, EDIT_DEBOUNCE_MS);
 }
 
+function discardEditVersion(id, version) {
+  if (pendingEdits.get(id)?.version === version) pendingEdits.delete(id);
+  if (unfinishedEdits.get(id)?.version === version) unfinishedEdits.delete(id);
+  if (finishingEdits.get(id) === version) finishingEdits.delete(id);
+}
+
 function takePendingEdits(finish) {
   if (editTimer !== null) clearTimeout(editTimer);
   if (blurTimer !== null) clearTimeout(blurTimer);
@@ -513,18 +564,35 @@ function takePendingEdits(finish) {
   const batch = emptyEditBatch();
   for (const [id, pending] of pendingEdits) {
     if (pending.queued || composing.has(pending.element)) continue;
+    if (pending.signature === null || pending.signature !== nodeSemanticSignature(id)) {
+      discardEditVersion(id, pending.version);
+      continue;
+    }
     batch.actions.push(pending.action(pending.element));
-    batch.transaction.edits.push({ id, version: pending.version });
+    batch.transaction.edits.push({
+      id,
+      version: pending.version,
+      signature: pending.signature,
+    });
     pending.queued = true;
   }
-  if (finish) {
-    for (const id of unfinishedEdits) {
-      if (!finishingEdits.has(id)
-          && currentNodes.get(id)?.actions.includes("finish-edit")) {
-        batch.actions.push({ type: "finish-edit", id });
-        batch.transaction.finishes.push(id);
-        finishingEdits.add(id);
-      }
+  const finishes = finish === true ? [...unfinishedEdits.values()] : (finish || []);
+  const seen = new Set();
+  for (const requested of finishes) {
+    const current = unfinishedEdits.get(requested.id);
+    const key = `${requested.id}:${requested.version}`;
+    if (seen.has(key) || current?.version !== requested.version) continue;
+    seen.add(key);
+    if (requested.signature === null
+        || requested.signature !== nodeSemanticSignature(requested.id)) {
+      discardEditVersion(requested.id, requested.version);
+      continue;
+    }
+    if (finishingEdits.get(requested.id) !== requested.version
+        && currentNodes.get(requested.id)?.actions.includes("finish-edit")) {
+      batch.actions.push({ type: "finish-edit", id: requested.id });
+      batch.transaction.finishes.push({ ...requested });
+      finishingEdits.set(requested.id, requested.version);
     }
   }
   return batch;
