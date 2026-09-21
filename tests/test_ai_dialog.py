@@ -38,7 +38,8 @@ class _RecordingPlatform:
     def owner_id(self, owner):
         return self._allocator.owner_id(owner)
 
-    def start_work(self, request, compute, on_result, on_error, on_event=None):
+    def start_work(self, request, compute, on_result, on_error, on_event=None,
+                   scratch_path=None):
         self.requests.append(request)
         return _UnstartedWork()
 

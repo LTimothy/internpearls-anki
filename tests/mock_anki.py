@@ -848,6 +848,7 @@ class Gui:
         self.clipboard = []      # every text copy_to_clipboard() put on the clipboard
         self.answers = []        # non-interactive askUser script
         self.file_picks = []     # non-interactive getFile/getSaveFile script
+        self.uploads = {}        # transient upload name -> staged virtual path
         self.interactive = False
         self.interactions = []   # interactive-mode response script (the replay)
         self.cursor = 0
@@ -890,7 +891,23 @@ class Gui:
             return False
         if not self.interactive:
             return self.answers.pop(0) if self.answers else True
-        return bool(self.next_interaction(payload).get("answer"))
+        dialog = QDialog()
+        layout = QVBoxLayout(dialog)
+        answer = [None]
+        labels = buttons or ("Yes", "No")
+        for label, value in zip(labels, (True, False)):
+            button = QPushButton(label)
+            button.clicked.connect(lambda _checked=False, value=value:
+                                   answer.__setitem__(0, value))
+            layout.addWidget(button)
+        payload["id"] = dialog.wid
+        payload["contract_tree"] = serialize_widget(dialog)
+        while answer[0] is None:
+            response = self.next_interaction(payload)
+            if "actions" not in response:
+                return bool(response.get("answer"))
+            apply_actions(response)
+        return answer[0]
 
     def info(self, text, **kw):
         self.infos.append(text)
@@ -905,9 +922,25 @@ class Gui:
     def prompt(self, text, **kw):
         if not self.interactive:
             return ("", False)
-        resp = self.next_interaction({"kind": "prompt", "text": text,
-                                      "default": kw.get("default", "")})
-        return (resp.get("text", ""), bool(resp.get("ok")))
+        dialog = QDialog()
+        layout = QVBoxLayout(dialog)
+        field = QLineEdit(kw.get("default", ""))
+        layout.addWidget(field)
+        accepted = [None]
+        for label, value in (("OK", True), ("Cancel", False)):
+            button = QPushButton(label)
+            button.clicked.connect(lambda _checked=False, value=value:
+                                   accepted.__setitem__(0, value))
+            layout.addWidget(button)
+        payload = {"kind": "prompt", "id": dialog.wid, "text": text,
+                   "default": kw.get("default", ""),
+                   "contract_tree": serialize_widget(dialog)}
+        while accepted[0] is None:
+            response = self.next_interaction(payload)
+            if "actions" not in response:
+                return (response.get("text", ""), bool(response.get("ok")))
+            apply_actions(response)
+        return (field.text(), accepted[0])
 
     def pick_file(self, payload):
         if self.file_picks:
@@ -916,6 +949,38 @@ class Gui:
             return None
         resp = self.next_interaction(payload)
         return resp.get("path")
+
+    def pick_files(self, payload):
+        if self.file_picks:
+            value = self.file_picks.pop(0)
+            return list(value) if isinstance(value, (list, tuple)) else [value]
+        if not self.interactive:
+            return []
+        picker = QWidget()
+        selected = [None]
+        accept = list(payload.get("accept", ()))
+
+        def validate(action):
+            names = [item["name"] for item in action["files"]]
+            if action["accept"] != accept or len(names) != len(set(names)):
+                raise ProtocolError("invalid action field: files")
+            if any(name not in self.uploads for name in names):
+                raise ProtocolError("invalid action field: files")
+
+        def choose(action):
+            selected[0] = [self.uploads[item["name"]]
+                           for item in action["files"]]
+
+        picker._validate_file_selection = validate
+        picker._select_files = choose
+        frontier = dict(payload, id=picker.wid, accept=accept,
+                        contract_tree=serialize_widget(picker))
+        while selected[0] is None:
+            response = self.next_interaction(frontier)
+            if "actions" not in response:
+                return list(response.get("paths", ()))
+            apply_actions(response)
+        return selected[0]
 
 
 # ============================== Qt widget layer ==============================
@@ -1071,6 +1136,9 @@ class QWidget:
         pass
 
     def setMinimumHeight(self, v):
+        pass
+
+    def setMinimumSize(self, w, h):
         pass
 
     def setMaximumWidth(self, v):
@@ -1787,6 +1855,12 @@ class QScrollArea(QWidget):
     def setWidgetResizable(self, v):
         pass
 
+    def setVerticalScrollBarPolicy(self, policy):
+        pass
+
+    def setHorizontalScrollBarPolicy(self, policy):
+        pass
+
     def setWidget(self, w):
         self._widget = w
         w._parent_widget = self
@@ -1907,6 +1981,10 @@ def _link_actions(widget):
 
 
 def _actions_for(widget):
+    if callable(getattr(widget, "_select_files", None)):
+        return ["select-files"]
+    if isinstance(widget, QDialog):
+        return ["key", "close"]
     name = _class_name(widget)
     if name == "QPushButton":
         return ["activate"]
@@ -2190,7 +2268,8 @@ def _validate_action(action):
     if action_type == "key":
         if not isinstance(action["key"], str) or not isinstance(action["modifiers"], list):
             raise ProtocolError("invalid action field: key")
-        if (len(set(action["modifiers"])) != len(action["modifiers"])
+        if (any(not isinstance(value, str) for value in action["modifiers"])
+                or len(set(action["modifiers"])) != len(action["modifiers"])
                 or any(value not in {"alt", "control", "meta", "shift"}
                        for value in action["modifiers"])):
             raise ProtocolError("invalid action field: modifiers")
@@ -2224,6 +2303,42 @@ def _combo_options(widget):
     return options
 
 
+def _validated_action_target(action, *, legacy_events=False, allowed_ids=None):
+    _validate_action(action)
+    if action["type"] == "advance":
+        return None
+    widget_id = action.get("id")
+    if allowed_ids is not None and widget_id not in allowed_ids:
+        raise ProtocolError(f"unknown widget id: {widget_id}")
+    widget = _widgets.get(widget_id)
+    if widget is None:
+        raise ProtocolError(f"unknown widget id: {widget_id}")
+    visible, enabled = _effective_state(widget)
+    if not visible and not legacy_events:
+        raise ProtocolError("widget is effectively hidden")
+    if not enabled and not legacy_events:
+        raise ProtocolError("widget is effectively disabled")
+    if action["type"] not in _actions_for(widget):
+        raise ProtocolError(
+            f"action not permitted for widget: {action['type']}")
+    if action["type"] == "select-option":
+        if action["option_id"] not in dict(_combo_options(widget)):
+            raise ProtocolError(f"unknown combo option: {action['option_id']}")
+    elif action["type"] == "edit-text":
+        if (action["selection_start"] > action["selection_end"]
+                or action["selection_end"] > len(action["value"])):
+            raise ProtocolError("invalid action field: selection")
+    elif action["type"] == "activate-link":
+        if action["action_id"] not in _link_actions(widget):
+            raise ProtocolError(f"unknown link action: {action['action_id']}")
+    elif action["type"] == "key":
+        if action["key"] != "Escape" or action["modifiers"]:
+            raise ProtocolError("action not permitted for key")
+    elif action["type"] == "select-files":
+        widget._validate_file_selection(action)
+    return widget
+
+
 def apply_actions(envelope, *, _legacy_events=False):
     """Validate and apply normalized user actions in request order.
 
@@ -2233,7 +2348,7 @@ def apply_actions(envelope, *, _legacy_events=False):
     if not isinstance(envelope, dict) or not isinstance(envelope.get("actions"), list):
         raise ProtocolError("invalid action envelope")
     for action in envelope["actions"]:
-        _validate_action(action)
+        widget = _validated_action_target(action, legacy_events=_legacy_events)
         action_type = action["type"]
         if action_type == "advance":
             from internpearls.platform import platform
@@ -2241,18 +2356,6 @@ def apply_actions(envelope, *, _legacy_events=False):
             if advance is not None:
                 advance(action["elapsed_ms"], action["checkpoint_credits"])
             continue
-        widget_id = action.get("id")
-        widget = _widgets.get(widget_id)
-        if widget is None:
-            raise ProtocolError(f"unknown widget id: {widget_id}")
-        visible, enabled = _effective_state(widget)
-        if not visible and not _legacy_events:
-            raise ProtocolError("widget is effectively hidden")
-        if not enabled and not _legacy_events:
-            raise ProtocolError("widget is effectively disabled")
-        if action_type not in _actions_for(widget):
-            raise ProtocolError(
-                f"action not permitted for widget: {action_type}")
 
         if action_type == "activate":
             widget.click()
@@ -2295,6 +2398,8 @@ def apply_actions(envelope, *, _legacy_events=False):
             widget.verticalScrollBar().setValue(action["offset"])
         elif action_type == "close":
             widget.reject()
+        elif action_type == "select-files":
+            widget._select_files(action)
 
 
 def _legacy_value_action(event):
@@ -2598,6 +2703,10 @@ class Runner:
         self._batches = []
         self._responses = {}
         self._baseline_clock_ms = 0
+        self._protocol_complete = False
+        self._frontier_ids = set()
+        self._protocol_active = False
+        self._fixture_revision = 0
 
     @property
     def journal(self):
@@ -2618,7 +2727,8 @@ class Runner:
     def _take(self):
         return {"col": copy.deepcopy(self.mock.mw.col),
                 "config": copy.deepcopy(self.mock.mw._config),
-                "files": self._files()}
+                "files": self._files(),
+                "fixture_revision": self._fixture_revision}
 
     def _restore_files(self, snapshot):
         snapshot = snapshot or {}
@@ -2634,6 +2744,22 @@ class Runner:
         self.mock.mw.col = copy.deepcopy(self._snap["col"])
         self.mock.mw._config = copy.deepcopy(self._snap["config"])
         self._restore_files(self._snap["files"])
+        self._fixture_revision = self._snap["fixture_revision"]
+
+    @property
+    def protocol_active(self):
+        return self._protocol_active
+
+    @property
+    def fixture_revision(self):
+        return self._fixture_revision
+
+    def maintain_fixture(self, callback):
+        if self._protocol_active:
+            raise ProtocolError("protocol flow active")
+        result = callback()
+        self._fixture_revision += 1
+        return result
 
     @staticmethod
     def _protocol_error(code, epoch, sequence, revision,
@@ -2657,8 +2783,11 @@ class Runner:
         self._batches = []
         self._responses = {}
         self._baseline_clock_ms = 0
+        self._protocol_complete = False
+        self._frontier_ids = set()
         self.mock.gui.interactions = []
         self.mock.gui.interactive = True
+        self._protocol_active = True
         return self._go_protocol(0)
 
     def _validate_request(self, envelope):
@@ -2683,8 +2812,12 @@ class Runner:
 
     def feed_protocol(self, envelope):
         error = self._validate_request(envelope)
-        sequence = (envelope.get("sequence", self._sequence)
-                    if isinstance(envelope, dict) else self._sequence)
+        supplied_sequence = (envelope.get("sequence")
+                             if isinstance(envelope, dict) else None)
+        sequence = (supplied_sequence
+                    if isinstance(supplied_sequence, int)
+                    and not isinstance(supplied_sequence, bool)
+                    else self._sequence)
         if error:
             return self._protocol_error(
                 error, self._epoch, sequence, self._render_revision)
@@ -2694,6 +2827,10 @@ class Runner:
                 self._render_revision, "stale")
         if envelope["sequence"] in self._responses:
             return copy.deepcopy(self._responses[envelope["sequence"]])
+        if self._protocol_complete:
+            return self._protocol_error(
+                "stale-sequence", self._epoch, envelope["sequence"],
+                self._render_revision, "stale")
         if envelope["sequence"] != self._sequence + 1:
             return self._protocol_error(
                 "stale-sequence", self._epoch, envelope["sequence"],
@@ -2703,7 +2840,6 @@ class Runner:
                 "stale-render-revision", self._epoch, envelope["sequence"],
                 self._render_revision, "stale")
         actions = [copy.deepcopy(action) for action in envelope["actions"]]
-        actions.sort(key=lambda action: action["type"] == "advance")
         advances = sum(record["type"] == "advance" for record in self._journal)
         new_advances = sum(action["type"] == "advance" for action in actions)
         if (len(self._journal) + len(actions) > 10000
@@ -2711,10 +2847,29 @@ class Runner:
             return self._protocol_error(
                 "journal-limit", self._epoch, envelope["sequence"],
                 self._render_revision)
+        try:
+            for action in actions:
+                _validated_action_target(action, allowed_ids=self._frontier_ids)
+        except ProtocolError as error:
+            return self._protocol_error(
+                self._protocol_error_code(error), self._epoch,
+                envelope["sequence"], self._render_revision)
         self._journal.extend(actions)
         self._batches.append(actions)
+        previous_sequence = self._sequence
+        previous_frontier_ids = set(self._frontier_ids)
         self._sequence = envelope["sequence"]
-        return self._go_protocol(self._sequence)
+        response = self._go_protocol(self._sequence)
+        if response["status"] == "contract-error":
+            if actions:
+                del self._journal[-len(actions):]
+            self._batches.pop()
+            self._sequence = previous_sequence
+            self._frontier_ids = previous_frontier_ids
+            self._responses.pop(envelope["sequence"], None)
+            self._protocol_active = True
+            self._restore()
+        return response
 
     def _go_protocol(self, sequence):
         from demo.replay import ReplayError, ReplayPlatform
@@ -2736,21 +2891,12 @@ class Runner:
             except ReplayError as error:
                 status, payload = "contract-error", {"code": error.code}
             except ProtocolError as error:
-                message = str(error)
-                mappings = (
-                    ("unknown widget id", "unknown-widget-id"),
-                    ("effectively hidden", "hidden-target"),
-                    ("effectively disabled", "disabled-target"),
-                    ("unknown combo option", "invalid-option-id"),
-                    ("unknown link action", "invalid-link-id"),
-                    ("action not permitted", "action-not-allowed"),
-                    ("unknown node kind", "unknown-node-kind"),
-                )
-                code = next((code for fragment, code in mappings
-                             if fragment in message), "invalid-action")
-                status, payload = "contract-error", {"code": code}
+                status = "contract-error"
+                payload = {"code": self._protocol_error_code(error)}
         self._render_revision += 1
         pending = replay.pending()
+        if status == "done" and pending:
+            status, payload = "need", {"kind": "work"}
         safe_code = "working" if pending else (
             "error" if status in {"error", "contract-error"} else "ready")
         response = {
@@ -2759,13 +2905,35 @@ class Runner:
             "payload": payload, "pending": pending,
             "safe_status": {"code": safe_code},
         }
+        tree = payload.get("contract_tree") if isinstance(payload, dict) else None
+        self._frontier_ids = ({node["id"] for node in tree.get("nodes", [])}
+                              if isinstance(tree, dict) else set())
         self._responses[sequence] = copy.deepcopy(response)
         if status == "done":
             self._snap = self._take()
             self._baseline_clock_ms = replay.now_ms
             self._journal = []
             self._batches = []
+            self._protocol_complete = True
+            self._protocol_active = False
+        elif status == "contract-error" and not pending:
+            self._protocol_active = False
         return response
+
+    @staticmethod
+    def _protocol_error_code(error):
+        message = str(error)
+        mappings = (
+            ("unknown widget id", "unknown-widget-id"),
+            ("effectively hidden", "hidden-target"),
+            ("effectively disabled", "disabled-target"),
+            ("unknown combo option", "invalid-option-id"),
+            ("unknown link action", "invalid-link-id"),
+            ("action not permitted", "action-not-allowed"),
+            ("unknown node kind", "unknown-node-kind"),
+        )
+        return next((code for fragment, code in mappings
+                     if fragment in message), "invalid-action")
 
     def start(self, fn):
         self._fn = fn
@@ -2837,6 +3005,10 @@ def install():
         class WindowModality:
             WindowModal = 1
 
+        class ScrollBarPolicy:
+            ScrollBarAlwaysOff = 1
+            ScrollBarAlwaysOn = 2
+
     class _QFileDialog:
         """The native directory picker configure_source opens for a local folder.
 
@@ -2858,6 +3030,14 @@ def install():
             monkeypatches this directly rather than scripting a real file picker."""
             text, ok = gui.prompt(caption, default=directory)
             return (text, filter) if ok else ("", "")
+
+        @staticmethod
+        def getOpenFileNames(parent=None, caption="", directory="", filter="", *a, **k):
+            accept = [f".{extension.lower()}" for extension in
+                      re.findall(r"\*\.([A-Za-z0-9]+)", filter)]
+            paths = gui.pick_files({"kind": "files", "title": caption,
+                                    "accept": accept, "multiple": True})
+            return paths, filter
 
     class _QUrl:
         """The address a link carries. Qt wraps a string in one of these before

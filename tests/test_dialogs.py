@@ -24,7 +24,9 @@ def test_dialog_frontier_settles_current_replay_work(anki):
     label = QLabel("waiting")
     QVBoxLayout(dialog).addWidget(label)
     replay = ReplayPlatform(epoch=3)
-    request = WorkRequest("fixture", 1, 1, 1, {"action": "test"}, epoch=3)
+    request = WorkRequest(
+        "background-fetch", 1, 1, 1,
+        {"action": "background.fetch"}, epoch=3)
     with use_platform(replay):
         handle = replay.start_work(
             request, lambda _context: "ready", label.setText, pytest.fail)

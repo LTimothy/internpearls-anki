@@ -1,6 +1,7 @@
 """Platform boundary for background work, timers, clocks, and scratch space."""
 from __future__ import annotations
 
+import os
 import re
 import tempfile
 import threading
@@ -122,7 +123,8 @@ class Platform(Protocol):
 
     def start_work(self, request: WorkRequest, compute: Callable,
                    on_result: Callable, on_error: Callable,
-                   on_event: Optional[Callable] = None) -> WorkHandle:
+                   on_event: Optional[Callable] = None,
+                   scratch_path: Optional[str] = None) -> WorkHandle:
         raise NotImplementedError
 
     def create_timer(self, owner_id: int, callback: Callable[[], None],
@@ -136,6 +138,10 @@ class Platform(Protocol):
         raise NotImplementedError
 
     def allocate_scratch(self, owner_id: int, purpose: str) -> str:
+        raise NotImplementedError
+
+    def allocate_temporary_file(self, owner_id: int, purpose: str,
+                                suffix: str) -> str:
         raise NotImplementedError
 
 
@@ -191,12 +197,13 @@ class _NativeTimerHandle:
 
 
 class _NativeWorkContext:
-    def __init__(self, native, request, cancelled, events):
+    def __init__(self, native, request, cancelled, events, scratch_path=None):
         self._native = native
         self._request = request
         self._cancelled = cancelled
         self._events = events
-        self._scratch = request.inputs.get("scratch")
+        self._scratch = (scratch_path if scratch_path is not None
+                         else request.inputs.get("scratch"))
 
     def cancelled(self):
         return self._cancelled.is_set()
@@ -220,14 +227,15 @@ class _NativeWorkContext:
 class _NativeWorkHandle:
     _POLL_MS = 20
 
-    def __init__(self, native, request, compute, on_result, on_error, on_event):
+    def __init__(self, native, request, compute, on_result, on_error, on_event,
+                 scratch_path=None):
         self.task_id = (f"{request.epoch}:{request.owner_id}:"
                         f"{request.operation_ordinal}:{request.attempt}")
         self.request = request
         self._cancelled = threading.Event()
         self._events = deque()
         self._context = _NativeWorkContext(
-            native, request, self._cancelled, self._events)
+            native, request, self._cancelled, self._events, scratch_path)
         self._compute = compute
         self._on_result = on_result
         self._on_error = on_error
@@ -374,9 +382,10 @@ class NativePlatform:
         self._operations[operation_key] = ordinal
         return owner_id, ordinal
 
-    def start_work(self, request, compute, on_result, on_error, on_event=None):
+    def start_work(self, request, compute, on_result, on_error, on_event=None,
+                   scratch_path=None):
         return _NativeWorkHandle(
-            self, request, compute, on_result, on_error, on_event)
+            self, request, compute, on_result, on_error, on_event, scratch_path)
 
     def create_timer(self, owner_id, callback, interval_ms, single_shot=False):
         return _NativeTimerHandle(callback, interval_ms, single_shot)
@@ -390,6 +399,11 @@ class NativePlatform:
     def allocate_scratch(self, owner_id, purpose):
         safe_purpose = re.sub(r"[^a-zA-Z0-9_-]+", "-", purpose).strip("-")
         return tempfile.mkdtemp(prefix=f"ip-{safe_purpose or 'work'}-")
+
+    def allocate_temporary_file(self, owner_id, purpose, suffix):
+        fd, path = tempfile.mkstemp(suffix=suffix)
+        os.close(fd)
+        return path
 
 
 _NATIVE_PLATFORM = NativePlatform()
