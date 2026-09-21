@@ -2,6 +2,7 @@
 
 import harness
 import mock_anki
+from demo_contract_cases import contract_action_table
 
 
 IDS = {
@@ -14,23 +15,6 @@ IDS = {
     "scroll": "contract-scroll",
     "dialog": "contract-dialog",
 }
-
-
-def _actions():
-    return [
-        {"type": "activate", "id": IDS["button"]},
-        {"type": "toggle", "id": IDS["radio_b"], "checked": True},
-        {"type": "select-option", "id": IDS["combo"],
-         "option_id": "option-second"},
-        {"type": "edit-text", "id": IDS["line"], "value": "x",
-         "selection_start": 1, "selection_end": 1, "composing": False},
-        {"type": "finish-edit", "id": IDS["line"]},
-        {"type": "activate-link", "id": IDS["link"],
-         "action_id": "details"},
-        {"type": "scroll", "id": IDS["scroll"], "offset": 7},
-        {"type": "key", "id": IDS["dialog"], "key": "Escape",
-         "modifiers": []},
-    ]
 
 
 def _scene():
@@ -94,7 +78,7 @@ def test_actions_match_mock_signal_order_and_final_values():
     scene["dialog"].rejected.connect(
         lambda: events.append(("escape",)))
 
-    mock_anki.apply_actions({"actions": _actions()})
+    mock_anki.apply_actions({"actions": contract_action_table(IDS)})
     app.processEvents()
 
     assert events == [

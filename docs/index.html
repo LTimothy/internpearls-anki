@@ -365,13 +365,20 @@ import { renderWidgetTree } from "./demo-renderer.js";
     return new Promise((resolve) => {
       const ctx = {
         inputs: [],
+        scrollActions: [],
         registerInput(element, action) {
           ctx.inputs.push({ element, action });
         },
         currentActions() {
-          return ctx.inputs
+          return [
+            ...ctx.inputs
             .filter(({ element }) => !element.disabled && !element.readOnly)
-            .map(({ action }) => action());
+            .map(({ action }) => action()),
+            ...ctx.scrollActions,
+          ];
+        },
+        scroll(id, offset) {
+          ctx.scrollActions.push({ type: "scroll", id, offset });
         },
         activate(wid) {
           const actions = ctx.currentActions();
