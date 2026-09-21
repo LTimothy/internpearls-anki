@@ -4,7 +4,79 @@ point into this)."""
 import os
 import sys
 
+from internpearls.platform import NativePlatform, use_platform, wait_for_mock_work
+
 FAKE = os.path.join(os.path.dirname(__file__), "fake_cli.py")
+
+
+class _RecordingTimer:
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def is_active(self):
+        return False
+
+
+class _RecordingWork:
+    task_id = "test-work"
+
+    def start(self):
+        pass
+
+    def is_alive(self):
+        return False
+
+    def join(self, timeout=None):
+        pass
+
+    def cancel(self):
+        pass
+
+
+class _RecordingPlatform:
+    def __init__(self):
+        self.requests = []
+        self._allocator = NativePlatform()
+
+    def allocate_work_identity(self, owner, kind, action, attempt):
+        return self._allocator.allocate_work_identity(owner, kind, action, attempt)
+
+    def owner_id(self, owner):
+        return self._allocator.owner_id(owner)
+
+    def start_work(self, request, compute, on_result, on_error, on_event=None):
+        self.requests.append(request)
+        return _RecordingWork()
+
+    def create_timer(self, owner_id, callback, interval_ms, single_shot=False):
+        return _RecordingTimer()
+
+    def monotonic(self):
+        return 0.0
+
+    def wall_now(self):
+        raise AssertionError("not used")
+
+    def allocate_scratch(self, owner_id, purpose):
+        raise AssertionError("not used")
+
+
+def test_connection_test_starts_typed_platform_work_with_safe_metadata(anki, tmp_path):
+    from internpearls import ai_setup
+
+    owner = type("Owner", (), {})()
+    native = _RecordingPlatform()
+    with use_platform(native):
+        ai_setup.run_connection_test_async(
+            owner, "claude", str(tmp_path / "cli"), lambda _status: None)
+
+    request = native.requests[-1]
+    assert (request.kind, request.inputs) == (
+        "connection", {"action": "ai.connection", "backend": "claude",
+                       "path_configured": True})
 
 
 def _none_found(monkeypatch):
@@ -232,6 +304,7 @@ def _drain_conn_test(dlg, timeout=15):
     no live event loop) to run the completion callback."""
     t, timer = dlg._conn_test_refs[-1]
     t.join(timeout=timeout)
+    wait_for_mock_work(t)
     timer.fire()
 
 
@@ -334,6 +407,7 @@ def test_switching_preference_mid_test_does_not_write_to_the_old_panel(anki, mon
     release.set()
     t, timer = dlg._conn_test_refs[-1]
     t.join(timeout=15)
+    wait_for_mock_work(t)
     timer.fire()      # must not raise, and must not touch the new (codex) panel
 
     assert "claude" not in dlg._testing            # thread result still consumed

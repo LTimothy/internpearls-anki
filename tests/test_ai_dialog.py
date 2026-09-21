@@ -5,7 +5,7 @@ import threading
 import time
 
 from internpearls import ai_cli, ai_dialog, ai_logic
-from internpearls.platform import use_platform
+from internpearls.platform import NativePlatform, use_platform, wait_for_mock_work
 from aqt.qt import QFileDialog
 
 
@@ -21,6 +21,7 @@ def _ready_dialog(monkeypatch):
 def _finish_attachment_worker(dlg):
     dlg._attach_worker.join(timeout=2)
     assert not dlg._attach_worker.is_alive()
+    wait_for_mock_work(dlg._attach_worker)
     dlg._attach_timer.fire()
 
 
@@ -28,6 +29,13 @@ class _RecordingPlatform:
     """Platform boundary recorder used to prove a caller submits typed work."""
     def __init__(self):
         self.requests = []
+        self._allocator = NativePlatform()
+
+    def allocate_work_identity(self, owner, kind, action, attempt):
+        return self._allocator.allocate_work_identity(owner, kind, action, attempt)
+
+    def owner_id(self, owner):
+        return self._allocator.owner_id(owner)
 
     def start_work(self, request, compute, on_result, on_error, on_event=None):
         self.requests.append(request)
@@ -78,8 +86,40 @@ def test_generation_starts_typed_platform_work(anki, monkeypatch):
     with use_platform(native):
         dlg._start_generation()
 
-    assert [(request.kind, request.inputs["action"])
-            for request in native.requests] == [("assistant", "ai.generate")]
+    request = native.requests[-1]
+    assert (request.kind, request.inputs) == (
+        "assistant", {"action": "ai.generate", "check": False,
+                      "revision": False})
+
+
+def test_attachment_starts_typed_platform_work_with_safe_metadata(
+        anki, monkeypatch, tmp_path):
+    attachment_path = str(tmp_path / "attachment.pdf")
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames",
+                        lambda *args, **kwargs: ([attachment_path], ""), raising=False)
+    native = _RecordingPlatform()
+    dlg = _ready_dialog(monkeypatch)
+
+    with use_platform(native):
+        dlg._attach()
+
+    request = native.requests[-1]
+    assert (request.kind, request.inputs) == (
+        "attachment", {"action": "ai.attach", "attachment_count": 1})
+
+
+def test_image_resolution_starts_typed_platform_work_with_safe_metadata(
+        anki, monkeypatch):
+    image_name = "image.png"
+    native = _RecordingPlatform()
+    dlg = _ready_dialog(monkeypatch)
+
+    with use_platform(native):
+        dlg._run_image_resolution([{"images": [image_name]}])
+
+    request = native.requests[-1]
+    assert (request.kind, request.inputs) == (
+        "image", {"action": "ai.image", "card_count": 1, "image_count": 1})
 
 
 def test_attachment_only_input_enables_generate_and_removal_disables_it(
