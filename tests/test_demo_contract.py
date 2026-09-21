@@ -274,6 +274,78 @@ for message_type, payload in invalid:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_worker_python_boundary_rejects_adversarial_nested_types_safely():
+    result = _run_harness_validation_probe("""
+def feed(action):
+    return {"type": "feed", "payload": {"envelope": {
+        "protocol": 1,
+        "epoch": 1,
+        "sequence": 1,
+        "render_revision": 1,
+        "actions": [action],
+    }}}
+
+invalid_messages = [
+    {"type": "state", "payload": {"action": ["read"]}},
+    {"type": "maintainer", "payload": {"operation": ["fix"]}},
+    feed({"type": ["activate"], "id": "button"}),
+    feed({"type": "key", "id": "root", "key": "Escape",
+          "modifiers": [["shift"]]}),
+]
+for message in invalid_messages:
+    try:
+        harness.validate_worker_message(message)
+    except Exception as error:
+        assert type(error) is ValueError
+        assert str(error) == "invalid-message"
+    else:
+        raise AssertionError("adversarial worker message accepted")
+
+card = {
+    "guid": "card-1", "front": "Front", "back": "Back", "notes": "",
+    "cloze": False, "interval": None,
+}
+state = {
+    "state": {"decks": [{"name": "Sample", "cards": [card]}], "version": "1.0"},
+    "config": {"auto_sync": False, "interval": 1},
+    "tooltips": [],
+}
+response = {
+    "protocol": 1, "epoch": 1, "sequence": 1, "render_revision": 1,
+    "status": "need", "payload": {"kind": "work"}, "pending": [],
+    "safe_status": {"code": "working"},
+}
+invalid_results = [
+    ("state", {**state, "state": {"decks": [
+        {"name": "Sample", "cards": [["card"]]},
+    ], "version": "1.0"}}),
+    ("state", {**state, "state": {"decks": [
+        {"name": "Sample", "cards": [{**card, "guid": ["card-1"]}]},
+    ], "version": "1.0"}}),
+    ("state", {**state, "state": {"decks": [
+        {"name": "Sample", "cards": [{**card, "cloze": [False]}]},
+    ], "version": "1.0"}}),
+    ("state", {**state, "state": {"decks": [
+        {"name": "Sample", "cards": [{**card, "interval": ["2 d"]}]},
+    ], "version": "1.0"}}),
+    ("state", {**state, "state": {"decks": [
+        {"name": "Sample", "cards": [{**card, "extra": True}]},
+    ], "version": "1.0"}}),
+    ("feed", {**state, "response": {**response, "status": ["need"]}}),
+    ("menu", {"menu": [{"t": ["action"], "id": "item", "label": "Item"}]}),
+]
+for message_type, payload in invalid_results:
+    try:
+        harness.validate_worker_result(message_type, payload)
+    except Exception as error:
+        assert type(error) is ValueError
+        assert str(error) == "invalid-message"
+    else:
+        raise AssertionError("adversarial worker result accepted")
+""")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_worker_start_and_feed_preserve_tooltips():
     result = _run_harness_validation_probe("""
 import json

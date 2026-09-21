@@ -18,6 +18,7 @@ comes out of the add-on's own code at runtime.
 import json
 import math
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -63,10 +64,21 @@ RUNNER_ERROR_CODES = {
     "stale-render-revision", "invalid-envelope", "invalid-action",
     "action-not-allowed", "scheduler-limit", "journal-limit",
 }
+RUNTIME_PATH = re.compile(r"/(?:app|source)/[^<>'\"\r\n]+")
 
 
 def _invalid_message():
     raise ValueError("invalid-message")
+
+
+def _redact_runtime_paths(value):
+    if isinstance(value, str):
+        return RUNTIME_PATH.sub("the demo workspace", value)
+    if isinstance(value, list):
+        return [_redact_runtime_paths(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_runtime_paths(item) for key, item in value.items()}
+    return value
 
 
 def _exact_fields(value, fields):
@@ -84,7 +96,8 @@ def _nonempty_string(value, maximum=10000):
 
 
 def _validate_action(action):
-    if not isinstance(action, dict) or action.get("type") not in ACTION_FIELDS:
+    if (not isinstance(action, dict) or not isinstance(action.get("type"), str)
+            or action["type"] not in ACTION_FIELDS):
         _invalid_message()
     _exact_fields(action, ACTION_FIELDS[action["type"]])
     for name in ("id", "option_id", "action_id"):
@@ -104,9 +117,10 @@ def _validate_action(action):
     if action["type"] == "key":
         modifiers = action["modifiers"]
         if (not _nonempty_string(action["key"], 64) or not isinstance(modifiers, list)
-                or len(modifiers) != len(set(modifiers))
-                or any(item not in {"alt", "control", "meta", "shift"}
-                       for item in modifiers)):
+                or any(not isinstance(item, str)
+                       or item not in {"alt", "control", "meta", "shift"}
+                       for item in modifiers)
+                or len(modifiers) != len(set(modifiers))):
             _invalid_message()
     if action["type"] == "select-files":
         if (not isinstance(action["accept"], list)
@@ -176,7 +190,10 @@ def _validate_runner_response(response):
             or not all(_nonnegative_integer(response[name])
             for name in ("epoch", "sequence", "render_revision"))):
         _invalid_message()
-    if response["status"] not in {"need", "done", "error", "stale", "contract-error"}:
+    if (not isinstance(response["status"], str)
+            or response["status"] not in {
+                "need", "done", "error", "stale", "contract-error",
+            }):
         _invalid_message()
     pending = response["pending"]
     if not isinstance(pending, list):
@@ -193,7 +210,8 @@ def _validate_runner_response(response):
         _invalid_message()
     if response["status"] in {"error", "stale", "contract-error"}:
         error = response["payload"]
-        if (not isinstance(error, dict) or error.get("code") not in RUNNER_ERROR_CODES
+        if (not isinstance(error, dict) or not isinstance(error.get("code"), str)
+                or error["code"] not in RUNNER_ERROR_CODES
                 or not set(error).issubset({"code", "kind", "id"})):
             _invalid_message()
     elif not isinstance(response["payload"], dict):
@@ -208,6 +226,14 @@ def _validate_state(state):
         _exact_fields(deck, {"name", "cards"})
         if not isinstance(deck["name"], str) or not isinstance(deck["cards"], list):
             _invalid_message()
+        for card in deck["cards"]:
+            _exact_fields(card, {"guid", "front", "back", "notes", "cloze", "interval"})
+            if (any(not isinstance(card[name], str)
+                    for name in ("guid", "front", "back", "notes"))
+                    or not isinstance(card["cloze"], bool)
+                    or (card["interval"] is not None
+                        and not isinstance(card["interval"], str))):
+                _invalid_message()
 
 
 def _validate_config(config):
@@ -220,7 +246,8 @@ def _validate_menu(menu):
     if not isinstance(menu, list):
         _invalid_message()
     for item in menu:
-        if not isinstance(item, dict) or item.get("t") not in {"action", "item", "menu", "sep"}:
+        if (not isinstance(item, dict) or not isinstance(item.get("t"), str)
+                or item["t"] not in {"action", "item", "menu", "sep"}):
             _invalid_message()
         if item["t"] == "sep":
             _exact_fields(item, {"t"})
@@ -236,7 +263,7 @@ def _validate_menu(menu):
 
 
 def validate_worker_result(message_type, result):
-    if not isinstance(result, dict):
+    if not isinstance(message_type, str) or not isinstance(result, dict):
         _invalid_message()
     if message_type == "menu":
         _exact_fields(result, {"menu"})
@@ -292,7 +319,7 @@ def _validate_worker_payload(message_type, payload):
         _validate_runner_request(payload["envelope"])
     elif message_type == "state":
         action = payload.get("action")
-        if action in {"read", "auto-sync"}:
+        if isinstance(action, str) and action in {"read", "auto-sync"}:
             _exact_fields(payload, {"action"})
         elif action == "set-note":
             _exact_fields(payload, {"action", "guid", "text"})
@@ -307,7 +334,8 @@ def _validate_worker_payload(message_type, payload):
             _invalid_message()
     elif message_type == "maintainer":
         _exact_fields(payload, {"operation"})
-        if payload["operation"] not in {"fix", "reword", "add", "restyle"}:
+        if (not isinstance(payload["operation"], str)
+                or payload["operation"] not in {"fix", "reword", "add", "restyle"}):
             _invalid_message()
     elif message_type == "set-theme":
         _exact_fields(payload, {"dark"})
@@ -319,7 +347,8 @@ def _validate_worker_payload(message_type, payload):
             _invalid_message()
         for entry in payload["recovery"]:
             if (not isinstance(entry, dict) or set(entry) != {"type", "payload", "result"}
-                    or entry.get("type") in {"boot", "reset"}):
+                    or not isinstance(entry.get("type"), str)
+                    or entry["type"] in {"boot", "reset"}):
                 _invalid_message()
             validate_worker_message({"type": entry["type"], "payload": entry["payload"]})
             validate_worker_result(entry["type"], entry["result"])
@@ -637,6 +666,7 @@ def handle_worker_message(message_json):
     else:
         _invalid_message()
 
+    result = _redact_runtime_paths(result)
     validate_worker_result(message_type, result)
     _validate_json_value(result)
     return json.dumps(result, allow_nan=False, separators=(",", ":"))
