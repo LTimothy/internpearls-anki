@@ -8,6 +8,30 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 
 
+_CHECKPOINT_STAGES = {
+    "assistant": (
+        re.compile(r"assistant:event:[1-9][0-9]*"),
+        re.compile(r"assistant:result"),
+        re.compile(r"duplicate-judge:(start|complete)"),
+    ),
+    "attachment": (
+        re.compile(r"attachment:file:[1-9][0-9]*:(start|complete)"),
+        re.compile(r"attachment:parse"),
+        re.compile(r"attachment:page:[1-9][0-9]*"),
+        re.compile(r"attachment:image:[1-9][0-9]*:[1-9][0-9]*"),
+    ),
+    "background-fetch": (re.compile(r"background-fetch:(start|complete)"),),
+    "connection": (re.compile(r"connection:(start|complete)"),),
+    "duplicate-index": (
+        re.compile(r"duplicate-index:(left|right):batch:[1-9][0-9]*"),
+    ),
+    "image": (
+        re.compile(r"image:[1-9][0-9]*:[1-9][0-9]*:(resolve|publish)"),
+    ),
+    "list-prefetch": (re.compile(r"list-prefetch:(start|complete)"),),
+}
+
+
 class WorkSuspended(BaseException):
     """Private control flow used to stop work at a replay checkpoint."""
 
@@ -35,11 +59,13 @@ class _ReplayWorkContext:
         return self._handle._cancelled
 
     def checkpoint(self, stage):
+        self._handle._platform._validate_checkpoint(
+            self._handle.request.kind, stage)
         self._checkpoint_ordinal += 1
         self._handle._stage = str(stage)
         if self._handle._cancelled:
             raise WorkSuspended(stage, self._checkpoint_ordinal)
-        if self._checkpoint_ordinal > self._handle._platform.checkpoint_credits:
+        if self._checkpoint_ordinal > self._handle._checkpoint_credits:
             raise WorkSuspended(stage, self._checkpoint_ordinal)
 
     def emit(self, event):
@@ -71,9 +97,11 @@ class _ReplayWorkHandle:
         self._started = False
         self._alive = False
         self._cancelled = False
+        self._cancellation_acknowledged = False
         self._stage = "queued"
         self._run_events = []
         self._delivered_event_ordinals = set()
+        self._checkpoint_credits = 0
 
     def _prepare_overlay(self):
         if self._scratch is None:
@@ -111,6 +139,23 @@ class _ReplayWorkHandle:
             shutil.rmtree(backup, ignore_errors=True)
         self._overlay = None
 
+    def _published_value(self, value, overlay):
+        if isinstance(value, str):
+            if value == overlay:
+                return self._scratch
+            prefix = overlay + os.sep
+            if value.startswith(prefix):
+                return self._scratch + value[len(overlay):]
+            return value
+        if isinstance(value, list):
+            return [self._published_value(item, overlay) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._published_value(item, overlay) for item in value)
+        if isinstance(value, dict):
+            return {key: self._published_value(item, overlay)
+                    for key, item in value.items()}
+        return value
+
     def _queue_events(self):
         if self._on_event is None:
             return
@@ -124,7 +169,10 @@ class _ReplayWorkHandle:
         if self._cancelled:
             self._discard_overlay()
             return
+        overlay = self._overlay
         self._publish_overlay()
+        if overlay is not None:
+            result = self._published_value(result, overlay)
         self._on_result(result)
 
     def _run(self):
@@ -146,6 +194,12 @@ class _ReplayWorkHandle:
             self._platform._restore_external_overlay(external)
             self._queue_events()
             return
+        except ReplayError:
+            self._alive = False
+            self._stage = "error"
+            self._discard_overlay()
+            self._platform._restore_external_overlay(external)
+            raise
         except Exception as error:
             self._alive = False
             self._stage = "error"
@@ -179,10 +233,14 @@ class _ReplayWorkHandle:
 
     def cancel(self):
         self._cancelled = True
+        self._cancellation_acknowledged = True
         self._alive = False
         self._stage = "cancelled"
         self._discard_overlay()
         self._platform._remove_deliveries(self)
+
+    def cancellation_acknowledged(self):
+        return self._cancellation_acknowledged
 
 
 class _ReplayTimerHandle:
@@ -198,8 +256,10 @@ class _ReplayTimerHandle:
         self._active = False
         self._due_ms = None
         self._started_advance = None
+        self._start_ordinal = 0
 
     def start(self):
+        self._start_ordinal += 1
         self._active = True
         self._due_ms = self._platform.now_ms + self._interval_ms
         self._started_advance = self._platform._advance_ordinal
@@ -218,10 +278,12 @@ class _ReplayTimerHandle:
 
     def _fire(self):
         previous_due = self._due_ms
+        previous_start = self._start_ordinal
         if self._single_shot:
             self._active = False
         self._callback()
-        if self._active:
+        if (self._active and not self._single_shot
+                and self._start_ordinal == previous_start):
             self._due_ms = previous_due + self._interval_ms
             self._started_advance = -1
 
@@ -231,11 +293,12 @@ class ReplayPlatform:
 
     MAX_TIMER_DELIVERIES = 1000
     _WALL_ORIGIN = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    reconstructing = True
 
     def __init__(self, epoch=1, checkpoint_credits=0, now_ms=0,
                  scratch_root=None, take_overlay=None, restore_overlay=None):
         self.epoch = int(epoch)
-        self.checkpoint_credits = int(checkpoint_credits)
+        int(checkpoint_credits)
         self.now_ms = int(now_ms)
         self._take_overlay = take_overlay
         self._restore_overlay = restore_overlay
@@ -248,6 +311,7 @@ class ReplayPlatform:
         self._timer_ordinal = 0
         self._advance_ordinal = 0
         self._scratch_ordinals = {}
+        self._token_ordinal = 0
         self._unclaimed_scratch = {}
         self._scratch_root = scratch_root or os.path.join(
             os.path.abspath(os.getenv("TMPDIR", "/tmp")),
@@ -285,12 +349,22 @@ class ReplayPlatform:
         available = self._unclaimed_scratch.get(owner_id, [])
         return available.pop() if available else None
 
-    def start_work(self, request, compute, on_result, on_error, on_event=None):
+    def start_work(self, request, compute, on_result, on_error, on_event=None,
+                   scratch_path=None):
+        if request.kind not in _CHECKPOINT_STAGES:
+            raise ReplayError("invalid-action")
         handle = _ReplayWorkHandle(
             self, request, compute, on_result, on_error, on_event,
-            self._claim_scratch(request.owner_id))
+            scratch_path or self._claim_scratch(request.owner_id))
         self._handles.append(handle)
         return handle
+
+    @staticmethod
+    def _validate_checkpoint(kind, stage):
+        if (not isinstance(stage, str)
+                or not any(pattern.fullmatch(stage)
+                           for pattern in _CHECKPOINT_STAGES.get(kind, ()))):
+            raise ReplayError("invalid-action")
 
     def create_timer(self, owner_id, callback, interval_ms, single_shot=False):
         if not isinstance(interval_ms, int) or interval_ms < 0:
@@ -307,6 +381,10 @@ class ReplayPlatform:
 
     def wall_now(self):
         return self._WALL_ORIGIN + timedelta(milliseconds=self.now_ms)
+
+    def deterministic_token(self):
+        self._token_ordinal += 1
+        return f"{self._token_ordinal:020x}"
 
     @staticmethod
     def _safe_purpose(purpose):
@@ -325,6 +403,13 @@ class ReplayPlatform:
 
     def allocate_scratch(self, owner_id, purpose):
         return self._allocate_scratch(owner_id, purpose, claim=True)
+
+    def allocate_temporary_file(self, owner_id, purpose, suffix):
+        folder = self._allocate_scratch(owner_id, purpose, claim=False)
+        path = os.path.join(folder, "temporary" + suffix)
+        with open(path, "xb"):
+            pass
+        return path
 
     def _take_external_overlay(self):
         scratch = {}
@@ -387,9 +472,14 @@ class ReplayPlatform:
             raise ReplayError("invalid-action")
         self._advance_ordinal += 1
         self.now_ms += elapsed_ms
-        self.checkpoint_credits += checkpoint_credits
-        for handle in list(self._handles):
-            if handle._started and handle._alive and not handle._cancelled:
+        eligible = [
+            handle for handle in self._handles
+            if handle._started and handle._alive and not handle._cancelled
+        ]
+        for handle in eligible:
+            handle._checkpoint_credits += checkpoint_credits
+        for handle in eligible:
+            if handle._alive and not handle._cancelled:
                 handle._run()
         changed = self.settle_frontier()
         deliveries = 0

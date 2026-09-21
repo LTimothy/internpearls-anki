@@ -55,7 +55,8 @@ def anki(tmp_path, monkeypatch):
     for lst in (_mock.gui.infos, _mock.gui.warnings, _mock.gui.tooltips,
                 _mock.gui.asks, _mock.gui.answers, _mock.gui.file_picks,
                 _mock.gui.ask_buttons, _mock.gui.ask_defaults,
-                _mock.gui.interactions, _mock.gui.payloads, _mock.gui.clipboard):
+                _mock.gui.interactions, _mock.gui.payloads, _mock.gui.clipboard,
+                _mock.gui.uploads):
         lst.clear()
     mock_anki.reset_run()
 

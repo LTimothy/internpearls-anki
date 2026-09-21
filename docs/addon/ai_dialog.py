@@ -1537,7 +1537,8 @@ class _GenerateDialog(QDialog):
         self.quick_hint.setText(meta["modes"]["quick"])
         reg = load_ai_usage()
         self.usage_row.setText(ai_logic.usage_line(
-            reg, s.backend, now=time.time(), free_tier=(s.backend == "agy")))
+            reg, s.backend, now=platform().wall_now().timestamp(),
+            free_tier=(s.backend == "agy")))
 
     def _test_backend_connection(self):
         s = self.session
@@ -1596,6 +1597,7 @@ class _GenerateDialog(QDialog):
         def work(context):
             results, failures = [], []
             images_undecoded = False
+            private_extract_dir = context.scratch
             for i, path in enumerate(paths, 1):
                 context.checkpoint(f"attachment:file:{i}:start")
                 if context.cancelled():
@@ -1603,7 +1605,7 @@ class _GenerateDialog(QDialog):
                 context.emit({"index": i, "total": len(paths),
                               "name": os.path.basename(path)})
                 try:
-                    output_dir = os.path.join(extract_dir, str(i))
+                    output_dir = os.path.join(private_extract_dir, str(i))
                     os.makedirs(output_dir, exist_ok=False)
                     kwargs = {"cancel": context.cancelled}
                     if "checkpoint" in inspect.signature(extract).parameters:
@@ -1642,7 +1644,8 @@ class _GenerateDialog(QDialog):
             self, "attachment", "ai.attach",
             inputs={"attachment_count": len(paths)})
         self._attach_worker = platform().start_work(
-            request, work, on_result, on_error, on_event)
+            request, work, on_result, on_error, on_event,
+            scratch_path=extract_dir)
         self._attach_timer = platform().create_timer(
             platform_owner_id(self), lambda: self._guard_completion(self._poll_attachment_worker),
             _IMG_POLL_MS)
@@ -2033,6 +2036,14 @@ class _GenerateDialog(QDialog):
         if self._worker.is_alive():
             return
         if not self._worker_ready:
+            acknowledged = getattr(
+                self._worker, "cancellation_acknowledged", lambda: False)()
+            if acknowledged:
+                if self._timer is not None:
+                    self._timer.stop()
+                self._gen_done = True
+                self._return_to_input_or_review()
+                return
             QApplication.processEvents()
             if not self._worker_ready:
                 return
@@ -2212,7 +2223,7 @@ class _GenerateDialog(QDialog):
             return
         s.tokens_last_run = res["tokens"]
         reg = ai_logic.record_usage(load_ai_usage(), s.backend, res["tokens"],
-                                    now=time.time())
+                                    now=platform().wall_now().timestamp())
         reg = ai_logic.record_duration(reg, s.backend, s.mode, res["duration_s"])
         save_ai_usage(reg)
         s.verdicts = {}   # a new draft/revision makes any prior check stale
@@ -2271,7 +2282,7 @@ class _GenerateDialog(QDialog):
             return
         s.tokens_last_run = res["tokens"]
         reg = ai_logic.record_usage(load_ai_usage(), s.backend, res["tokens"],
-                                    now=time.time())
+                                    now=platform().wall_now().timestamp())
         reg = ai_logic.record_duration(reg, s.backend, s.mode, res["duration_s"])
         save_ai_usage(reg)
         s.verdicts = verdicts
@@ -2303,6 +2314,7 @@ class _GenerateDialog(QDialog):
 
         def work(context):
             results = {}
+            private_scratch = context.scratch
             for i, card in enumerate(cards):
                 per = []
                 for image_index, im in enumerate(card["images"]):
@@ -2312,7 +2324,7 @@ class _GenerateDialog(QDialog):
                         per.append({"state": "error", "kind": "cancelled",
                                    "error": "cancelled"})
                         continue
-                    res = _resolve_one_image(im, s.scratch)
+                    res = _resolve_one_image(im, private_scratch)
                     if res["state"] == "ok" and res["kind"] != "attached":
                         # attached: images already live in scratch under
                         # their own name (res["path"] is set for that kind
@@ -2320,7 +2332,8 @@ class _GenerateDialog(QDialog):
                         # memory, so a thumbnail needs its own file to hand
                         # Qt's QImage a path to load.
                         ext = res["ext"] if res["kind"] == "url" else "svg"
-                        thumb = os.path.join(s.scratch, f"_thumb-{i}-{len(per)}.{ext}")
+                        thumb = os.path.join(
+                            private_scratch, f"_thumb-{i}-{len(per)}.{ext}")
                         try:
                             with open(thumb, "wb") as fh:
                                 fh.write(res["bytes"])
@@ -2345,7 +2358,8 @@ class _GenerateDialog(QDialog):
             self, "image", "ai.image",
             inputs={"card_count": len(cards),
                     "image_count": sum(len(card["images"]) for card in cards)})
-        self._img_worker = platform().start_work(request, work, on_result, on_error)
+        self._img_worker = platform().start_work(
+            request, work, on_result, on_error, scratch_path=s.scratch)
         self._img_timer = platform().create_timer(
             platform_owner_id(self), lambda: self._guard_completion(self._poll_image_worker),
             _IMG_POLL_MS)
@@ -3090,8 +3104,11 @@ class _GenerateDialog(QDialog):
 @_safe
 def generate_cards():
     dlg = _GenerateDialog()
+    finished = False
     try:
         dlg.exec()
+        finished = True
     finally:
-        dlg._retire_for_delete()
-        dlg.deleteLater()
+        if finished or not getattr(platform(), "reconstructing", False):
+            dlg._retire_for_delete()
+            dlg.deleteLater()

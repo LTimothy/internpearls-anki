@@ -25,6 +25,7 @@ from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
                     fields_to_carry_over, manifest_decks_for, model_shape,
                     note_display_label, plan_notetype_changes, plural, remap_cards,
                     select_empty_cards, write_personalized)
+from .platform import platform, platform_owner_id
 from .review import _CONFIRM_HEIGHT, append_rows, build_list_body, show_result
 from .ui import _ask, _ask_with_widget, _info, _manual_flow, _safe, _warn
 
@@ -218,7 +219,13 @@ def _backup_deck(deck_name, label=None):
     needed.
     """
     folder = _deck_backup_folder()
-    stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S") + "-" + uuid.uuid4().hex[:12]
+    deterministic_token = getattr(platform(), "deterministic_token", None)
+    if deterministic_token is None:
+        stamp = (datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S") + "-"
+                 + uuid.uuid4().hex[:12])
+    else:
+        stamp = (platform().wall_now().strftime("%Y-%m-%d-%H%M%S") + "-"
+                 + deterministic_token()[-12:])
     label = _backup_label(label or deck_name)
     suffix = f" {label}" if label else ""
     path = os.path.join(folder, f"{_BACKUP_PREFIX}{stamp}{suffix}.apkg")
@@ -1151,8 +1158,8 @@ def _apply_deck(src, aliases, her, declined=frozenset(),
     # one beside `src` itself. For a local-folder source `src` is the learner's own
     # configured folder, which may be a read-only share, and is hers rather than ours to
     # leave a file in if the import raises before the cleanup below.
-    fd, out = tempfile.mkstemp(suffix=".sync.apkg")
-    os.close(fd)
+    out = platform().allocate_temporary_file(
+        platform_owner_id(mw), "sync-import", ".sync.apkg")
     try:
         write_personalized(src, remap, out, drop=drop,
                            prepare_notetypes=lambda con: _prepare_import_notetypes(
