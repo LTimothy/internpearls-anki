@@ -96,6 +96,45 @@ test("renders every generated node kind and rejects unknown kinds", async ({ pag
   });
 });
 
+test("rejects inherited renderer prototype keys", async ({ page }) => {
+  await page.goto("/browser_tests/contract-page.html");
+  const error = await page.evaluate(async () => {
+    const { renderWidget } = await import("/docs/demo-renderer.js");
+    try {
+      renderWidget({ id: "bad", kind: "constructor" }, {});
+    } catch (caught) {
+      return { name: caught.name, code: caught.code, kind: caught.details.kind };
+    }
+    return null;
+  });
+  expect(error).toEqual({
+    name: "DemoContractError", code: "unknown-node-kind", kind: "constructor",
+  });
+});
+
+test("renders explicitly plain HTML-looking labels as text", async ({ page }) => {
+  await page.goto("/browser_tests/contract-page.html");
+  const result = await page.evaluate(async () => {
+    const { renderWidget } = await import("/docs/demo-renderer.js");
+    const label = renderWidget({
+      id: "plain", kind: "label", format: "plain", text: "<b>plain</b>",
+      effective_visible: true, effective_enabled: true, style_roles: [],
+      actions: [], link_actions: [],
+    });
+    return { text: label.textContent, html: label.innerHTML };
+  });
+  expect(result).toEqual({ text: "<b>plain</b>", html: "&lt;b&gt;plain&lt;/b&gt;" });
+});
+
+test("the live demo dialog context collects scroll actions", async ({ page }) => {
+  const response = await page.request.get("/docs/index.html");
+  expect(response.ok()).toBeTruthy();
+  const source = await response.text();
+  expect(source).toContain("scrollActions: []");
+  expect(source).toContain("scroll(id, offset)");
+  expect(source).toContain("...ctx.scrollActions");
+});
+
 test("preserves grid form stack state and plain text semantics", async ({ page }) => {
   await page.goto("/browser_tests/contract-page.html");
   const result = await page.evaluate(async () => {

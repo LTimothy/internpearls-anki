@@ -330,10 +330,11 @@ function applyCommonState(element, node, context) {
 }
 
 export function renderWidget(node, context = {}) {
-  const renderer = RENDERERS[node?.kind];
-  if (!renderer) {
+  const kind = node?.kind;
+  if (!Object.prototype.hasOwnProperty.call(RENDERERS, kind)) {
     throw new DemoContractError("unknown-node-kind", { kind: node?.kind });
   }
+  const renderer = RENDERERS[kind];
   return applyCommonState(renderer(node, context), node, context);
 }
 
