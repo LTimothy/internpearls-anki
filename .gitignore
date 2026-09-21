@@ -39,6 +39,7 @@ internpearls/user_files/
 !/docs/.nojekyll
 !/docs/index.html
 !/docs/demo-contract.js
+!/docs/demo-renderer.js
 !/docs/demo-protocol.js
 !/docs/demo-worker.js
 !/docs/demo.js

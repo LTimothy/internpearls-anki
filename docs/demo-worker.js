@@ -108,7 +108,7 @@ function isAccepted(type, payload, result) {
   if (type === "start" || type === "maintainer" || type === "set-theme") return true;
   if (type === "state") return ["set-note", "auto-sync"].includes(payload.action);
   if (type === "feed") {
-    return !["stale", "contract-error"].includes(result.response.status);
+    return result.response.status !== "stale";
   }
   return false;
 }
@@ -116,7 +116,7 @@ function isAccepted(type, payload, result) {
 function runCommand(type, payload, record = true) {
   const result = callHarness(type, payload);
   if (record && isAccepted(type, payload, result)) {
-    recovery.push(jsonClone({ type, payload }));
+    recovery.push(jsonClone({ type, payload, result }));
   }
   return result;
 }
@@ -125,7 +125,12 @@ function replayAndCancel(payload) {
   recovery = [];
   let result = null;
   for (const entry of payload.recovery) {
-    result = runCommand(entry.type, entry.payload, true);
+    result = runCommand(entry.type, entry.payload, false);
+    if (JSON.stringify(result) !== JSON.stringify(entry.result)
+        || result.response?.status === "stale") {
+      throw new Error("replay-failed");
+    }
+    recovery.push(jsonClone(entry));
   }
   result = runCommand("feed", payload.cancel, true);
   return result;

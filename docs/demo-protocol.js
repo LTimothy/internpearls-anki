@@ -1,3 +1,5 @@
+import { ACTION_KINDS, NODE_KINDS, REQUIRED_FIELDS } from "./demo-contract.js";
+
 export const DEMO_PROTOCOL_VERSION = 1;
 export const BOOT_WATCHDOG_MS = 120000;
 export const REQUEST_WATCHDOG_MS = 10000;
@@ -17,6 +19,11 @@ export const MESSAGE_TYPES = Object.freeze([
 ]);
 
 const MESSAGE_TYPE_SET = new Set(MESSAGE_TYPES);
+const ACTION_KIND_SET = new Set(ACTION_KINDS);
+const NODE_KIND_SET = new Set(NODE_KINDS);
+const PUBLIC_ERROR_CODES = new Set([
+  "invalid-message", "stale-request", "boot-failed", "protocol-failed",
+]);
 const INTEGER_MAX = 2147483647;
 
 export class DemoProtocolError extends Error {
@@ -49,6 +56,15 @@ function boundedInteger(value, minimum = 0) {
   return Number.isInteger(value) && value >= minimum && value <= INTEGER_MAX;
 }
 
+function nonemptyString(value, maximum = 10000) {
+  if (typeof value !== "string" || !value.length || value.length > maximum) fail();
+}
+
+function stringArray(value, unique = false) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) fail();
+  if (unique && new Set(value).size !== value.length) fail();
+}
+
 export function validateJsonValue(value, depth = 0, ancestors = new Set()) {
   if (depth > 64) fail();
   if (value === null || typeof value === "string" || typeof value === "boolean") {
@@ -75,6 +91,37 @@ export function validateJsonValue(value, depth = 0, ancestors = new Set()) {
   return value;
 }
 
+function validateAction(action) {
+  if (!isPlainObject(action) || !ACTION_KIND_SET.has(action.type)) fail();
+  exactKeys(action, REQUIRED_FIELDS.actions[action.type]);
+  if ("id" in action) nonemptyString(action.id, 255);
+  if ("action_id" in action) nonemptyString(action.action_id, 255);
+  if ("option_id" in action) nonemptyString(action.option_id, 255);
+  if ("checked" in action && typeof action.checked !== "boolean") fail();
+  if ("value" in action && typeof action.value !== "string" && action.type !== "edit-text") fail();
+  if (action.type === "edit-text") {
+    if (typeof action.value !== "string" || typeof action.composing !== "boolean"
+        || !boundedInteger(action.selection_start) || !boundedInteger(action.selection_end)) fail();
+  }
+  for (const name of ["elapsed_ms", "checkpoint_credits", "offset"]) {
+    if (name in action && !boundedInteger(action[name])) fail();
+  }
+  if (action.type === "key") {
+    nonemptyString(action.key, 64);
+    stringArray(action.modifiers, true);
+    if (action.modifiers.some((item) => !["alt", "control", "meta", "shift"].includes(item))) fail();
+  }
+  if (action.type === "select-files") {
+    stringArray(action.accept);
+    if (!Array.isArray(action.files)) fail();
+    for (const file of action.files) {
+      exactKeys(file, ["name", "size", "type"]);
+      nonemptyString(file.name, 255);
+      if (!boundedInteger(file.size) || typeof file.type !== "string") fail();
+    }
+  }
+}
+
 function validateRunnerRequest(envelope) {
   exactKeys(envelope, ["protocol", "epoch", "sequence", "render_revision", "actions"]);
   if (envelope.protocol !== DEMO_PROTOCOL_VERSION) fail();
@@ -82,7 +129,59 @@ function validateRunnerRequest(envelope) {
     if (!boundedInteger(envelope[name])) fail();
   }
   if (!Array.isArray(envelope.actions)) fail();
-  validateJsonValue(envelope.actions);
+  for (const action of envelope.actions) validateAction(action);
+}
+
+function validateErrorPayload(payload) {
+  if (!isPlainObject(payload) || typeof payload.code !== "string") fail();
+  const allowed = new Set(["code", "kind", "id"]);
+  if (Object.keys(payload).some((key) => !allowed.has(key))) fail();
+  if (![
+    "unsupported-protocol", "unknown-node-kind", "missing-required-field",
+    "unknown-enum-value", "unknown-widget-id", "hidden-target", "disabled-target",
+    "invalid-option-id", "invalid-link-id", "stale-epoch", "stale-sequence",
+    "stale-render-revision", "invalid-envelope", "invalid-action",
+    "action-not-allowed", "scheduler-limit", "journal-limit",
+  ].includes(payload.code)) fail();
+  if ("kind" in payload && typeof payload.kind !== "string") fail();
+  if ("id" in payload && typeof payload.id !== "string") fail();
+}
+
+function validateContractTree(tree) {
+  exactKeys(tree, ["root_id", "nodes"]);
+  nonemptyString(tree.root_id, 255);
+  if (!Array.isArray(tree.nodes) || !tree.nodes.length) fail();
+  const ids = new Set();
+  for (const node of tree.nodes) {
+    if (!isPlainObject(node) || !NODE_KIND_SET.has(node.kind)) fail();
+    exactKeys(node, [...REQUIRED_FIELDS.node, ...REQUIRED_FIELDS.node_kinds[node.kind]]);
+    nonemptyString(node.id, 255);
+    if (ids.has(node.id)) fail();
+    ids.add(node.id);
+    if (node.parent_id !== null && typeof node.parent_id !== "string") fail();
+    stringArray(node.children, true);
+    stringArray(node.style_roles, true);
+    stringArray(node.actions, true);
+    if (node.actions.some((action) => !ACTION_KIND_SET.has(action))) fail();
+    for (const name of ["visible", "effective_visible", "enabled", "effective_enabled", "readonly"]) {
+      if (typeof node[name] !== "boolean") fail();
+    }
+    for (const name of ["accessible_name", "accessible_description", "tooltip", "focus_policy"]) {
+      if (typeof node[name] !== "string") fail();
+    }
+  }
+  if (!ids.has(tree.root_id)) fail();
+}
+
+function validatePending(pending) {
+  if (!Array.isArray(pending)) fail();
+  for (const item of pending) {
+    exactKeys(item, ["task_id", "kind", "stage"]);
+    if (!Array.isArray(item.task_id) || item.task_id.length !== 4
+        || item.task_id.some((part) => !boundedInteger(part))) fail();
+    nonemptyString(item.kind, 255);
+    nonemptyString(item.stage, 1000);
+  }
 }
 
 function validateRunnerResponse(envelope) {
@@ -97,11 +196,16 @@ function validateRunnerResponse(envelope) {
   if (!["need", "done", "error", "stale", "contract-error"].includes(envelope.status)) {
     fail();
   }
-  if (!Array.isArray(envelope.pending)) fail();
+  validatePending(envelope.pending);
   exactKeys(envelope.safe_status, ["code"]);
-  if (typeof envelope.safe_status.code !== "string") fail();
-  validateJsonValue(envelope.payload);
-  validateJsonValue(envelope.pending);
+  nonemptyString(envelope.safe_status.code, 255);
+  if (["error", "stale", "contract-error"].includes(envelope.status)) {
+    validateErrorPayload(envelope.payload);
+  } else if (!isPlainObject(envelope.payload)) {
+    fail();
+  } else if (envelope.payload.contract_tree) {
+    validateContractTree(envelope.payload.contract_tree);
+  }
 }
 
 function validatePayload(type, payload) {
@@ -151,9 +255,10 @@ function validatePayload(type, payload) {
 }
 
 function validateRecoveryEntry(entry) {
-  exactKeys(entry, ["type", "payload"]);
+  exactKeys(entry, ["type", "payload", "result"]);
   if (!MESSAGE_TYPE_SET.has(entry.type) || ["boot", "reset"].includes(entry.type)) fail();
   validatePayload(entry.type, entry.payload);
+  validateResponsePayload(entry.type, entry.result);
   return entry;
 }
 
@@ -187,7 +292,55 @@ function validateResponsePayload(type, payload) {
   } else {
     fail();
   }
+  if ("state" in payload) validateState(payload.state);
+  if ("config" in payload) validateConfig(payload.config);
+  if ("tooltips" in payload) stringArray(payload.tooltips);
+  if ("menu" in payload) validateMenu(payload.menu);
+  if ("files" in payload) stringArray(payload.files);
+  if (type === "maintainer") {
+    nonemptyString(payload.label);
+    nonemptyString(payload.deck);
+  }
   validateJsonValue(payload);
+}
+
+function validateMenu(menu) {
+  if (!Array.isArray(menu)) fail();
+  for (const item of menu) {
+    if (!isPlainObject(item) || !["action", "item", "menu", "sep"].includes(item.t)) fail();
+    if (item.t === "sep") exactKeys(item, ["t"]);
+    else if (item.t === "action" || item.t === "item") {
+      exactKeys(item, ["t", "id", "label"]);
+      nonemptyString(item.id, 255);
+      nonemptyString(item.label);
+    } else {
+      exactKeys(item, ["t", "label", "items"]);
+      nonemptyString(item.label);
+      validateMenu(item.items);
+    }
+  }
+}
+
+function validateConfig(config) {
+  exactKeys(config, ["auto_sync", "interval"]);
+  if (typeof config.auto_sync !== "boolean" || !boundedInteger(config.interval)) fail();
+}
+
+function validateState(state) {
+  exactKeys(state, ["decks", "version"]);
+  if (!Array.isArray(state.decks) || typeof state.version !== "string") fail();
+  for (const deck of state.decks) {
+    exactKeys(deck, ["name", "cards"]);
+    if (typeof deck.name !== "string" || !Array.isArray(deck.cards)) fail();
+    for (const card of deck.cards) {
+      if (!isPlainObject(card)) fail();
+      for (const name of ["guid", "front", "back", "notes"]) {
+        if (typeof card[name] !== "string") fail();
+      }
+      if (typeof card.cloze !== "boolean"
+          || (card.interval !== null && typeof card.interval !== "string")) fail();
+    }
+  }
 }
 
 export function validateWorkerMessage(message) {
@@ -203,7 +356,7 @@ export function validateWorkerMessage(message) {
     validateResponsePayload(message.type, message.payload);
   } else {
     exactKeys(message.error, ["code"]);
-    if (typeof message.error.code !== "string" || !message.error.code) fail();
+    if (!PUBLIC_ERROR_CODES.has(message.error.code)) fail();
     if (!isPlainObject(message.payload) || Object.keys(message.payload).length) fail();
   }
   validateJsonValue(message);
