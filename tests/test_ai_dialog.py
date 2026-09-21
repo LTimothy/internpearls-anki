@@ -39,6 +39,20 @@ class _RecordingPlatform:
     def monotonic(self):
         return time.monotonic()
 
+    def create_timer(self, owner_id, callback, interval_ms, single_shot=False):
+        return _RecordingTimer()
+
+
+class _RecordingTimer:
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def is_active(self):
+        return False
+
 
 class _UnstartedWork:
     task_id = "test-work"

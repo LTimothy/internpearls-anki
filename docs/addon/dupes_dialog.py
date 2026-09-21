@@ -15,7 +15,7 @@ import threading
 import time
 
 from aqt import mw
-from aqt.qt import (QComboBox, QDialog, QDialogButtonBox, QFrame,
+from aqt.qt import (QApplication, QComboBox, QDialog, QDialogButtonBox, QFrame,
                     QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, Qt,
                     QTimer, QVBoxLayout, QWidget)
 
@@ -26,7 +26,7 @@ from .config import (APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks
 from .dupes import find_candidates, pair_key
 from .logic import field_preview_text, plain_text
 from .palette import colors
-from .platform import WorkRequest, platform
+from .platform import new_work_request, platform, platform_owner_id
 from .ui import _safe, copy_to_clipboard, hint_label, link_button, section_label, title_label
 from .widgets import CARET_GAP, CARET_W
 
@@ -415,6 +415,7 @@ class _DuplicateScanDialog(QDialog):
         self.summary_label.setText("Scanning...")
         self._scan_result = None
         self._scan_error = None
+        self._scan_ready = False
         self._t0 = platform().monotonic()
         threshold, min_shared = self._current_level()
         self._min_shared = min_shared
@@ -435,11 +436,13 @@ class _DuplicateScanDialog(QDialog):
         def on_result(found):
             if seq == self._scan_seq:
                 self._scan_result = found
+                self._scan_ready = True
                 self._poll_scan()
 
         def on_error(error):
             if seq == self._scan_seq:
                 self._scan_error = error
+                self._scan_ready = True
                 self._poll_scan()
 
         old_timer = getattr(self, "_timer", None)
@@ -447,15 +450,17 @@ class _DuplicateScanDialog(QDialog):
             old_timer.stop()
             if hasattr(old_timer, "deleteLater"):
                 old_timer.deleteLater()
-        request = WorkRequest(
-            kind="duplicate-index", owner_id=id(self), operation_ordinal=seq,
-            attempt=1, inputs={"action": "dupes.scan"})
+        request = new_work_request(
+            self, "duplicate-index", "dupes.scan",
+            inputs={"left_count": len(left_rows), "right_count": len(right_rows)})
         self._worker = platform().start_work(request, work, on_result, on_error)
-        self._timer = getattr(self._worker, "native_timer", None)
+        self._timer = platform().create_timer(
+            platform_owner_id(self), self._poll_scan, 100)
         self._worker.start()
+        self._timer.start()
 
     def _poll_scan(self):
-        if self._worker.is_alive():
+        if self._worker.is_alive() or not self._scan_ready:
             elapsed = int(platform().monotonic() - self._t0)
             self.summary_label.setText(f"Scanning... {elapsed}s elapsed")
             return
@@ -503,6 +508,10 @@ class _DuplicateScanDialog(QDialog):
         end = time.time() + timeout
         while self._worker.is_alive() and time.time() < end:
             time.sleep(0.02)
+        self._worker.join(0)
+        while not self._scan_ready and time.time() < end:
+            QApplication.processEvents()
+            time.sleep(0.005)
         fire = getattr(self._timer, "fire", None)
         if fire is not None:
             fire()
@@ -784,11 +793,12 @@ class _DuplicateScanDialog(QDialog):
             payload.append({"ours": {"front": left_front, "back": left_back},
                            "theirs": {"front": right_front, "back": right_back}})
         prompt = ai_logic.build_dupes_judge_prompt(payload)
-        scratch = platform().allocate_scratch(id(self), "dupejudge")
+        scratch = platform().allocate_scratch(platform_owner_id(self), "dupejudge")
         self._judge_pairs = judged_pairs
         self._judge_scratch = scratch
         self._judge_result = None
         self._judge_error = None
+        self._judge_ready = False
         self._judge_t0 = platform().monotonic()
         cancel = threading.Event()
         self._judge_cancel = cancel
@@ -806,20 +816,23 @@ class _DuplicateScanDialog(QDialog):
         def on_result(result):
             if seq == self._judge_seq:
                 self._judge_result = result
+                self._judge_ready = True
                 self._poll_judge(seq, self._judge_worker, self._judge_timer)
 
         def on_error(error):
             if seq == self._judge_seq:
                 self._judge_error = error
+                self._judge_ready = True
                 self._poll_judge(seq, self._judge_worker, self._judge_timer)
 
-        request = WorkRequest(
-            kind="assistant", owner_id=id(self), operation_ordinal=seq, attempt=1,
-            inputs={"action": "dupes.judge", "scratch": scratch})
+        request = new_work_request(
+            self, "assistant", "dupes.judge", inputs={"pair_count": len(payload)})
         self._judge_worker = platform().start_work(
             request, work, on_result, on_error)
-        self._judge_timer = getattr(self._judge_worker, "native_timer", None)
+        self._judge_timer = platform().create_timer(
+            platform_owner_id(self), lambda: self._poll_judge(seq), 200)
         self._judge_worker.start()
+        self._judge_timer.start()
         self.judge_btn.setEnabled(False)
         self.summary_label.setText("Judging with AI...")
 
@@ -858,7 +871,7 @@ class _DuplicateScanDialog(QDialog):
         if seq != self._judge_seq:
             timer.stop()
             return
-        if worker.is_alive():
+        if worker.is_alive() or not self._judge_ready:
             elapsed = int(platform().monotonic() - self._judge_t0)
             self.summary_label.setText(f"Judging with AI... {elapsed}s elapsed")
             return
@@ -890,6 +903,10 @@ class _DuplicateScanDialog(QDialog):
         end = time.time() + timeout
         while worker.is_alive() and time.time() < end:
             time.sleep(0.02)
+        worker.join(0)
+        while not self._judge_ready and time.time() < end:
+            QApplication.processEvents()
+            time.sleep(0.005)
         fire = getattr(timer, "fire", None)
         if fire is not None:
             fire()

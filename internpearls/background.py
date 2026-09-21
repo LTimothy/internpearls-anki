@@ -37,7 +37,7 @@ from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_CEILING_MIN,
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
                     decks_to_update, manifest_needs_newer_addon, plural)
 from .net import _BG_TIMEOUT, _DOWNLOAD_TIMEOUT
-from .platform import WorkRequest, platform
+from .platform import new_work_request, platform
 from .sync import (_cached_fetch, _content_backup_decks, _fetch_manifest, _is_local,
                    _reconcile_pending, _refresh_reconcile_action_label, _run_sync)
 from .ui import _bg_safe, manual_sync_in_progress
@@ -61,9 +61,7 @@ def _run_in_background(work, on_done):
         except Exception:
             print(traceback.format_exc())
 
-    request = WorkRequest(
-        kind="background-fetch", owner_id=id(mw), operation_ordinal=1, attempt=1,
-        inputs={"action": "background.fetch"})
+    request = new_work_request(mw, "background-fetch", "background.fetch")
     handle = platform().start_work(
         request, lambda _context: work(),
         lambda result: _safe_on_done(result, None),
@@ -72,11 +70,7 @@ def _run_in_background(work, on_done):
     # The bundled mock Qt timer advances only when its explicit test hook is
     # fired. Preserve the pre-seam synchronous mock behavior without changing
     # real Anki, where QTimer has no such hook and delivers on its event loop.
-    timer = getattr(handle, "native_timer", None)
-    fire = getattr(timer, "fire", None)
-    if fire is not None:
-        handle.join()
-        fire()
+    handle.join(0)
     return handle
 
 
