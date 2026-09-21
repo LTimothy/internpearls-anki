@@ -32,8 +32,14 @@ let blurTimer = null;
 let autoSyncTimer = null;
 let recovering = false;
 let stopped = false;
+let currentRootId = null;
+let editVersion = 0;
+let retryEditScheduled = false;
+let retryFinish = false;
+let retryActions = [];
 const pendingEdits = new Map();
 const unfinishedEdits = new Set();
+const finishingEdits = new Set();
 const composing = new Set();
 const compositionQueue = [];
 
@@ -76,6 +82,53 @@ function insertQueue(entry) {
   else queue.splice(automaticIndex, 0, entry);
 }
 
+function emptyEditBatch() {
+  return { actions: [], transaction: { edits: [], finishes: [] } };
+}
+
+function transactionHasEdits(transaction) {
+  return Boolean(transaction?.edits.length || transaction?.finishes.length);
+}
+
+function commitEditTransaction(transaction) {
+  if (!transaction) return;
+  for (const edit of transaction.edits) {
+    if (pendingEdits.get(edit.id)?.version === edit.version) pendingEdits.delete(edit.id);
+  }
+  for (const id of transaction.finishes) {
+    finishingEdits.delete(id);
+    unfinishedEdits.delete(id);
+  }
+}
+
+function rollbackEditTransaction(transaction) {
+  if (!transaction) return;
+  for (const edit of transaction.edits) {
+    const pending = pendingEdits.get(edit.id);
+    if (pending?.version === edit.version) pending.queued = false;
+  }
+  for (const id of transaction.finishes) finishingEdits.delete(id);
+}
+
+function schedulePendingEditRetry(finish, actions) {
+  retryFinish = retryFinish || finish;
+  retryActions.push(...actions);
+  if (retryEditScheduled) return;
+  retryEditScheduled = true;
+  queueMicrotask(() => {
+    retryEditScheduled = false;
+    const shouldFinish = retryFinish;
+    const actionsToRetry = retryActions;
+    retryFinish = false;
+    retryActions = [];
+    if (stopped || recovering) return;
+    const batch = takePendingEdits(shouldFinish);
+    if (batch.actions.length || actionsToRetry.length) {
+      queueActions(actionsToRetry, { flush: false, batch }).catch(reportFailure);
+    }
+  });
+}
+
 function enqueueCommand(type, payload, options = {}) {
   return new Promise((resolve, reject) => {
     if (stopped) {
@@ -88,6 +141,9 @@ function enqueueCommand(type, payload, options = {}) {
       priority: options.priority || "user",
       handle: options.handle || null,
       authority: options.authority || null,
+      transaction: options.transaction || null,
+      cancelActions: options.cancelActions || null,
+      retryActions: options.retryActions || [],
       resolve,
       reject,
     });
@@ -102,6 +158,7 @@ function request(type, payload) {
 function requestTimedOut(entry) {
   if (inFlight !== entry) return;
   inFlight = null;
+  rollbackEditTransaction(entry.transaction);
   stopped = true;
   if (worker) worker.terminate();
   worker = null;
@@ -117,7 +174,14 @@ function pumpQueue() {
   if (entry.authority && (entry.authority.epoch !== epoch
       || entry.authority.sequence !== sequence
       || entry.authority.revision !== revision)) {
-    if (entry.priority === "cancel") clearCancelWatchdog();
+    rollbackEditTransaction(entry.transaction);
+    if (entry.priority === "cancel" && entry.cancelActions?.length) {
+      recoverFromCancel(entry.cancelActions).then(entry.resolve, entry.reject);
+      return;
+    }
+    if (transactionHasEdits(entry.transaction)) {
+      schedulePendingEditRetry(Boolean(entry.transaction.finishes.length), entry.retryActions);
+    }
     entry.resolve(null);
     pumpQueue();
     return;
@@ -134,6 +198,7 @@ function pumpQueue() {
     });
     requestId = nextRequestId;
   } catch (error) {
+    rollbackEditTransaction(entry.transaction);
     if (entry.priority === "cancel") clearCancelWatchdog();
     entry.reject(error);
     pumpQueue();
@@ -161,10 +226,12 @@ function handleWorkerMessage(generation, raw) {
   clearTimeout(entry.watchdog);
   inFlight = null;
   if (!message.ok) {
+    rollbackEditTransaction(entry.transaction);
     entry.reject(new DemoProtocolError(message.error.code));
   } else {
     lastSafeResponse = jsonClone(message);
     try {
+      commitEditTransaction(entry.transaction);
       if (entry.handle) entry.handle(message.payload, message);
       entry.resolve(jsonClone(message.payload));
     } catch (error) {
@@ -215,10 +282,14 @@ function startCancelWatchdog(actions) {
 function settleEntriesForRecovery() {
   if (inFlight) {
     clearTimeout(inFlight.watchdog);
+    rollbackEditTransaction(inFlight.transaction);
     inFlight.resolve(null);
     inFlight = null;
   }
-  for (const entry of queue) entry.resolve(null);
+  for (const entry of queue) {
+    rollbackEditTransaction(entry.transaction);
+    entry.resolve(null);
+  }
   queue = [];
 }
 
@@ -256,15 +327,20 @@ function queueActions(actions, options = {}) {
       waitForComposition: false,
     }));
   }
-  const flushed = options.flush === false ? [] : takePendingEdits(true);
-  const ordered = [...flushed, ...actions];
+  const batch = options.batch || (options.flush === false
+    ? emptyEditBatch() : takePendingEdits(true));
+  const ordered = [...batch.actions, ...actions];
   const authority = { epoch, sequence, revision };
   const envelope = makeEnvelope(ordered);
-  const cancel = ordered.some(isCancelAction);
-  if (cancel) startCancelWatchdog(ordered);
+  const cancelActions = ordered.filter(isCancelAction);
+  const cancel = cancelActions.length > 0;
+  if (cancel) startCancelWatchdog(cancelActions);
   return enqueueCommand("feed", { envelope }, {
     priority: cancel ? "cancel" : (options.priority || "user"),
     authority,
+    transaction: batch.transaction,
+    cancelActions,
+    retryActions: jsonClone(actions),
     handle(payload) {
       if (cancel) clearCancelWatchdog();
       applyCommandPayload(payload);
@@ -310,8 +386,10 @@ function beginFlow(menuId) {
   sequence = 0;
   revision = 0;
   currentNodes = new Map();
+  currentRootId = null;
   pendingEdits.clear();
   unfinishedEdits.clear();
+  finishingEdits.clear();
   paintBusy("Working...");
   return enqueueCommand("start", { menu_id: String(menuId), epoch }, {
     priority: "user",
@@ -326,9 +404,9 @@ function runFlow(menuId) {
   if (!ready) return Promise.resolve(null);
   clearAutomaticAdvance();
   if (composing.size) return deferUntilCompositionEnds(() => runFlow(menuId));
-  const edits = takePendingEdits(true);
-  if (edits.length && currentNodes.size) {
-    return queueActions(edits, { flush: false }).then(() => beginFlow(menuId));
+  const batch = takePendingEdits(true);
+  if (batch.actions.length && currentNodes.size) {
+    return queueActions([], { flush: false, batch }).then(() => beginFlow(menuId));
   }
   return beginFlow(menuId);
 }
@@ -355,8 +433,10 @@ function applyRunnerResponse(response) {
     clearAutomaticAdvance();
     $("overlay").classList.remove("show");
     currentNodes = new Map();
+    currentRootId = null;
     pendingEdits.clear();
     unfinishedEdits.clear();
+    finishingEdits.clear();
     return;
   }
   if (response.status === "error") {
@@ -402,15 +482,26 @@ function showPayload(payload) {
   showSimplePayload({ text: "This action is not available in the browser demo." });
 }
 
-function scheduleEdit(id, element, action) {
+function rememberEdit(id, element, action) {
   clearAutomaticAdvance();
   unfinishedEdits.add(id);
-  pendingEdits.set(id, { element, action });
+  pendingEdits.set(id, {
+    element,
+    action,
+    version: editVersion += 1,
+    queued: false,
+  });
+}
+
+function scheduleEdit(id, element, action) {
+  rememberEdit(id, element, action);
   if (editTimer !== null) clearTimeout(editTimer);
   editTimer = setTimeout(() => {
     editTimer = null;
-    const actions = takePendingEdits(false);
-    if (actions.length) queueActions(actions, { flush: false }).catch(reportFailure);
+    const batch = takePendingEdits(false);
+    if (batch.actions.length) {
+      queueActions([], { flush: false, batch }).catch(reportFailure);
+    }
   }, EDIT_DEBOUNCE_MS);
 }
 
@@ -419,23 +510,24 @@ function takePendingEdits(finish) {
   if (blurTimer !== null) clearTimeout(blurTimer);
   editTimer = null;
   blurTimer = null;
-  const edits = [];
-  const ids = [];
+  const batch = emptyEditBatch();
   for (const [id, pending] of pendingEdits) {
-    if (composing.has(pending.element)) continue;
-    edits.push(pending.action(pending.element));
-    ids.push(id);
+    if (pending.queued || composing.has(pending.element)) continue;
+    batch.actions.push(pending.action(pending.element));
+    batch.transaction.edits.push({ id, version: pending.version });
+    pending.queued = true;
   }
-  for (const id of ids) pendingEdits.delete(id);
   if (finish) {
     for (const id of unfinishedEdits) {
-      if (currentNodes.get(id)?.actions.includes("finish-edit")) {
-        edits.push({ type: "finish-edit", id });
+      if (!finishingEdits.has(id)
+          && currentNodes.get(id)?.actions.includes("finish-edit")) {
+        batch.actions.push({ type: "finish-edit", id });
+        batch.transaction.finishes.push(id);
+        finishingEdits.add(id);
       }
     }
-    unfinishedEdits.clear();
   }
-  return edits;
+  return batch;
 }
 
 function deferUntilCompositionEnds(callback) {
@@ -486,22 +578,28 @@ function registerInput(element, action) {
       control.demoComposing = true;
       composing.add(control);
     }
-    unfinishedEdits.add(id);
-    pendingEdits.set(id, { element: control, action: control.demoAction });
-    if (!control.demoComposing && !composing.has(control)) {
-      scheduleEdit(id, control, control.demoAction);
-    }
+    if (control.demoComposing || composing.has(control)) {
+      rememberEdit(id, control, control.demoAction);
+    } else scheduleEdit(id, control, control.demoAction);
   };
   element.onblur = (event) => {
     const control = event.currentTarget;
-    if (!pendingEdits.has(id) || composing.has(control)) return;
+    if ((!pendingEdits.has(id) && !unfinishedEdits.has(id)) || composing.has(control)) return;
     if (blurTimer !== null) clearTimeout(blurTimer);
     blurTimer = setTimeout(() => {
       blurTimer = null;
-      const actions = takePendingEdits(true);
-      if (actions.length) queueActions(actions, { flush: false }).catch(reportFailure);
+      const batch = takePendingEdits(true);
+      if (batch.actions.length) {
+        queueActions([], { flush: false, batch }).catch(reportFailure);
+      }
     }, 0);
   };
+}
+
+function isEditableControl(element) {
+  if (element instanceof HTMLTextAreaElement) return !element.readOnly && !element.disabled;
+  if (!(element instanceof HTMLInputElement) || element.readOnly || element.disabled) return false;
+  return !["button", "checkbox", "file", "radio", "reset", "submit"].includes(element.type);
 }
 
 function dialogContext() {
@@ -537,10 +635,22 @@ function dialogContext() {
       queueActions([{ type: "activate-link", id, action_id: actionId }])
         .catch(reportFailure);
     },
-    key(id, key, modifiers) {
+    key(id, key, modifiers, target) {
+      clearAutomaticAdvance();
+      if (["Alt", "Control", "Meta", "Shift"].includes(key)) return false;
+      if (key === "Tab") return false;
+      const editable = isEditableControl(target);
+      if (key === "Enter" && editable) {
+        queueActions([]).catch(reportFailure);
+        return true;
+      }
+      if (key === "Enter") return false;
+      if (editable && id === currentRootId && key !== "Escape") return false;
+      if (key === "Escape" && id !== currentRootId) return false;
       if (key.length === 1 && !modifiers.length) return;
       queueActions([{ type: "key", id, key, modifiers: modifiers.map((value) =>
         value.toLowerCase()) }]).catch(reportFailure);
+      return true;
     },
   };
   return ctx;
@@ -672,6 +782,7 @@ function stablePatch(host, nextRoot) {
 
 function renderDialogTree(payload) {
   const tree = payload.contract_tree;
+  currentRootId = tree.root_id;
   currentNodes = new Map(tree.nodes.map((node) => [node.id, node]));
   const rendered = renderWidgetTree(tree, dialogContext());
   $("dtitle").textContent = payload.title || "Intern Pearls";
