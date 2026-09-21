@@ -11,6 +11,7 @@ import time
 
 import harness
 from internpearls import ai_cli, ai_dialog
+from internpearls.platform import NativePlatform
 
 
 def _wait_for_attachment_worker(dlg, timeout=2):
@@ -21,7 +22,11 @@ def _wait_for_attachment_worker(dlg, timeout=2):
         time.sleep(0.001)
     dlg._attach_worker.join(timeout=0.1)
     assert not dlg._attach_worker.is_alive()
-    dlg._poll_attachment_worker()
+    fire = getattr(dlg._attach_timer, "fire", None)
+    if fire is not None:
+        fire()
+    else:
+        dlg._attach_timer.timeout.emit()
     app.processEvents()
 
 
@@ -1346,9 +1351,7 @@ def test_escape_during_image_resolution_goes_back_instead_of_blocking_the_cards(
     end = time.time() + 15
     while dlg._worker.is_alive() and time.time() < end:
         time.sleep(0.02)
-    dlg._timer.stop()
-    dlg._gen_done = True
-    dlg._finish_generation()          # the CLI phase hands off to the images
+    dlg._timer.timeout.emit()          # the CLI phase hands off to the images
     app.processEvents()
     assert dlg.stack.currentWidget() is dlg.progress_page
 
