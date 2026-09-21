@@ -180,13 +180,15 @@
   </div>
   <div class="menubar">
     <span>File</span><span>Edit</span><span>Tools</span>
-    <span class="ip" id="ipMenuBtn">Intern Pearls
+    <span class="ip" id="ipMenuBtn" role="button" tabindex="0"
+          aria-haspopup="menu" aria-expanded="false">Intern Pearls
       <div class="menu" id="ipMenu"><div class="item" style="color:var(--muted)">loading…</div></div>
     </span>
     <span>Help</span>
   </div>
   <div class="deckarea" id="deckarea">
-    <div class="bootline" id="bootline">Booting the add-on's Python in your browser…</div>
+    <div class="bootline" id="bootline" role="status" aria-live="polite"
+         aria-atomic="true">Booting the add-on's Python in your browser…</div>
   </div>
 </div>
 
@@ -209,13 +211,14 @@
 
 <!-- ======================= dialogs / toast ======================= -->
 <div class="overlay" id="overlay">
-  <div class="dialog">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dtitle"
+       tabindex="-1">
     <div class="dtitle" id="dtitle">Intern Pearls</div>
     <div class="dbody" id="dbody"></div>
     <div class="dbtns" id="dbtns"></div>
   </div>
 </div>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- ======================= explainer ======================= -->
 <div class="explain">

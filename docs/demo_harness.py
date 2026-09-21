@@ -30,8 +30,10 @@ import mock_anki
 MOCK = mock_anki.install()
 
 import internpearls                     # noqa: E402  (real __init__: builds the menu)
-from internpearls import background, collection, config, net, palette, sync  # noqa: E402
-from internpearls.platform import new_work_request, platform, work_checkpoint  # noqa: E402
+from internpearls import background, collection, config, logic, net, palette, sync  # noqa: E402
+from demo.replay import ReplayPlatform  # noqa: E402
+from internpearls.platform import (new_work_request, platform, use_platform,
+                                  work_checkpoint)  # noqa: E402
 
 SOURCE = os.environ.get("DEMO_SOURCE", "/source")   # env override for local smoke tests
 INTERVALS = ["2.3 mo", "11 d", "27 d", "6 d", "3.1 mo", "16 d", "9 d", "1.2 mo"]
@@ -335,7 +337,9 @@ def _validate_worker_payload(message_type, payload):
     elif message_type == "maintainer":
         _exact_fields(payload, {"operation"})
         if (not isinstance(payload["operation"], str)
-                or payload["operation"] not in {"fix", "reword", "add", "restyle"}):
+                or payload["operation"] not in {
+                    "fix", "reword", "add", "restyle", "history", "bulk", "auto",
+                }):
             _invalid_message()
     elif message_type == "set-theme":
         _exact_fields(payload, {"dark"})
@@ -379,7 +383,12 @@ def _install_demo_net():
       trick for binary-safe text responses.
     """
     example = f"https://api.github.com/repos/{config.EXAMPLE_REPO}/contents/"
+    addon_version = (f"https://api.github.com/repos/{config.ANKI_REPO}/contents/"
+                     "version.json")
     real_get = net._http_get
+
+    def _fixed_addon_version():
+        return json.dumps({"version": config.ADDON_VERSION}).encode("utf8")
 
     def _read(path):
         with open(os.path.join(SOURCE, path), "rb") as fh:
@@ -424,6 +433,8 @@ def _install_demo_net():
         def _local_get(url, token=None, accept=None, timeout=None, on_chunk=None):
             if url.startswith(example):
                 return _from_source(url)
+            if url.startswith(addon_version):
+                return _fixed_addon_version()
             return real_get(url, token=token, accept=accept, on_chunk=on_chunk)
 
         net._http_get = _local_get
@@ -432,6 +443,8 @@ def _install_demo_net():
     def _http_get(url, token=None, accept=None, timeout=None, on_chunk=None):
         if url.startswith(example):
             return _from_source(url)
+        if url.startswith(addon_version):
+            return _fixed_addon_version()
         req = XMLHttpRequest.new()
         req.open("GET", url, False)
         req.overrideMimeType("text/plain; charset=x-user-defined")
@@ -609,7 +622,12 @@ def flow_tooltips():
 def auto_sync_tick():
     MOCK.gui.tooltips.clear()
     mock_anki.reset_run()
-    background._auto_sync_check()
+    replay = ReplayPlatform(epoch=RUNNER.fixture_revision + 1)
+    with use_platform(replay):
+        background._auto_sync_check()
+        replay.advance(0, 100)
+        if replay.pending():
+            raise RuntimeError("background work did not settle")
     return json.dumps(list(MOCK.gui.tooltips))
 
 
@@ -700,6 +718,22 @@ def _bump(deck_name):
         json.dump(manifest, fh)
 
 
+def _bump_in_manifest(manifest, deck_name):
+    for deck in manifest["decks"]:
+        if deck["name"] != deck_name:
+            continue
+        base = deck["version"].split("+")[0]
+        number = int(deck["version"].split("+")[1]) + 1 \
+            if "+" in deck["version"] else 1
+        deck["version"] = f"{base}+{number}"
+
+
+def _write_manifest(manifest):
+    path = os.path.join(SOURCE, "manifest.json")
+    with open(path, "w", encoding="utf8") as fh:
+        json.dump(manifest, fh)
+
+
 def _decks():
     manifest = json.load(open(os.path.join(SOURCE, "manifest.json"),
                               encoding="utf8"))
@@ -780,6 +814,138 @@ def maintainer(op):
                             "\n/* v2 look: bigger font, night-mode colors */")
             con.execute("update col set models=?", (json.dumps(models),))
         label = "restyled the card template (bigger font, night-mode colors)"
+
+    elif op == "history":
+        deck = decks[0]
+        path = os.path.join(SOURCE, deck["apkg"])
+        history = {}
+
+        def edit(con):
+            rows = list(con.execute("select id, guid, flds from notes order by id"))
+            first_basic = next(row for row in rows
+                               if "{{c" not in row[2].split(fs)[0])
+            ordered = [first_basic] + [row for row in rows if row != first_basic]
+            if len(ordered) < 4:
+                raise RuntimeError("history fixture needs four notes")
+            changed = ordered[:2]
+            for index, (nid, guid, flds) in enumerate(changed, 1):
+                parts = flds.split(fs)
+                suffix = f" Coordinated revision {index}."
+                if not parts[1].endswith(suffix):
+                    parts[1] += suffix
+                con.execute("update notes set flds=? where id=?", (fs.join(parts), nid))
+                history.setdefault("changed", {})[guid] = parts
+            retired_nid, retired_guid, retired_flds = ordered[2]
+            moved_nid, moved_guid, moved_flds = ordered[3]
+            moved_did = con.execute(
+                "select did from cards where nid=? order by id limit 1",
+                (moved_nid,)).fetchone()[0]
+            decks_json = con.execute("select decks from col").fetchone()[0]
+            moved_from = json.loads(decks_json)[str(moved_did)]["name"]
+            con.execute("delete from cards where nid=?", (retired_nid,))
+            con.execute("delete from notes where id=?", (retired_nid,))
+            history["retired"] = (retired_guid, retired_flds.split(fs)[0])
+            history["moved"] = (moved_guid, moved_flds.split(fs)[0], moved_from)
+
+        def apply_history():
+            _edit_apkg(path, edit)
+            manifest = json.load(open(os.path.join(SOURCE, "manifest.json"),
+                                      encoding="utf8"))
+            manifest["schema"] = max(2, manifest.get("schema", 1))
+            note = "coordinated revision across two cards"
+            change_notes = manifest.setdefault("change_notes", {})
+            for guid, fields in history["changed"].items():
+                change_notes[guid] = [{
+                    "kind": "maintainer", "note": note,
+                    "hash": logic.note_fields_hash(fields),
+                }]
+            retired_guid, retired_front = history["retired"]
+            manifest.setdefault("retired", {}).setdefault(deck["name"], {})[
+                retired_guid] = {
+                    "identity": retired_front,
+                    "reason": "split into a focused replacement",
+                    "superseded_by": list(history["changed"]),
+                }
+            moved_guid, moved_front, moved_from = history["moved"]
+            manifest.setdefault("deck_moves", {})[moved_guid] = {
+                "from": moved_from, "to": deck["name"] + " Review",
+                "front": moved_front,
+            }
+            for item in manifest["decks"]:
+                if item["name"] == deck["name"]:
+                    item["cards"] = max(0, item.get("cards", 1) - 1)
+            _bump_in_manifest(manifest, deck["name"])
+            _write_manifest(manifest)
+
+        RUNNER.maintain_fixture(apply_history)
+        return json.dumps({"label": "published a grouped card-history update",
+                           "deck": deck["name"].split("::")[-1]})
+
+    elif op == "bulk":
+        added = {"count": 0}
+
+        def edit(con):
+            note_columns = [column[1] for column in con.execute(
+                "pragma table_info(notes)")]
+            note_row = list(con.execute(
+                "select * from notes order by id limit 1").fetchone())
+            card_columns = [column[1] for column in con.execute(
+                "pragma table_info(cards)")]
+            card_row = list(con.execute(
+                "select * from cards order by id limit 1").fetchone())
+            next_note_id = con.execute("select max(id) from notes").fetchone()[0] + 1
+            next_card_id = con.execute("select max(id) from cards").fetchone()[0] + 1
+            for index in range(1, 181):
+                guid = f"demo-bulk-{index:03d}"
+                if con.execute("select 1 from notes where guid=?", (guid,)).fetchone():
+                    continue
+                note_fields = dict(zip(note_columns, note_row))
+                parts = note_fields["flds"].split(fs)
+                parts[0] = f"Bulk card {index:03d}"
+                parts[1] = f"Example answer {index:03d}."
+                for field_index in range(2, len(parts)):
+                    parts[field_index] = ""
+                note_fields.update(id=next_note_id, guid=guid,
+                                   flds=fs.join(parts), sfld=parts[0])
+                con.execute("insert into notes values (%s)" %
+                            ",".join("?" * len(note_columns)),
+                            [note_fields[column] for column in note_columns])
+                card_fields = dict(zip(card_columns, card_row))
+                card_fields.update(id=next_card_id, nid=next_note_id)
+                con.execute("insert into cards values (%s)" %
+                            ",".join("?" * len(card_columns)),
+                            [card_fields[column] for column in card_columns])
+                next_note_id += 1
+                next_card_id += 1
+                added["count"] += 1
+
+        def apply_bulk():
+            _edit_apkg(path, edit)
+            manifest = json.load(open(os.path.join(SOURCE, "manifest.json"),
+                                      encoding="utf8"))
+            for item in manifest["decks"]:
+                if item["name"] == deck["name"]:
+                    item["cards"] = item.get("cards", 0) + added["count"]
+            _bump_in_manifest(manifest, deck["name"])
+            _write_manifest(manifest)
+
+        RUNNER.maintain_fixture(apply_bulk)
+        return json.dumps({"label": "added a large review batch",
+                           "deck": deck["name"].split("::")[-1]})
+
+    elif op == "auto":
+        deck = decks[0]
+        path = os.path.join(SOURCE, deck["apkg"])
+
+        def edit(con):
+            nid, flds = _first_basic_note(con)
+            parts = flds.split(fs)
+            suffix = " Automatic sync revision."
+            if not parts[1].endswith(suffix):
+                parts[1] += suffix
+            con.execute("update notes set flds=? where id=?", (fs.join(parts), nid))
+
+        label = "published an automatic sync revision"
 
     else:
         raise ValueError(op)

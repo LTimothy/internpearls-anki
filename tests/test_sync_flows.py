@@ -2210,6 +2210,54 @@ def test_retired_row_joins_the_group_of_its_replacement(anki, tmp_path, monkeypa
     assert kinds == ["group_note", "card", "retired"]
 
 
+def test_one_update_preserves_keep_history_and_groups_retirement_with_moves(
+        anki, tmp_path, monkeypatch):
+    """The parity fixture's combined history is one production update, not a set of
+    disconnected browser-only examples."""
+    from internpearls import config
+    from internpearls.logic import note_fields_hash
+    old_one = _fields("Front one", back="old answer one")
+    old_two = _fields("Front two", back="old answer two")
+    new_one = _fields("Front one", back="new answer one")
+    new_two = _fields("Front two", back="new answer two")
+    for guid, fields in (("g1", old_one), ("g2", old_two),
+                         ("old1", _fields("Retired front"))):
+        anki.col.add_note(guid, fields, TAGS.split())
+    _her_card(anki, "moved1", "Moved front", deck=DECK)
+    shared = "coordinated revision across two cards"
+    folder = _write_source(
+        tmp_path,
+        {DECK: ("v2", [("g1", new_one, TAGS), ("g2", new_two, TAGS)], None)},
+        retired={DECK: {"old1": {
+            "identity": "Retired front", "reason": "split",
+            "superseded_by": ["g1", "g2"],
+        }}},
+        deck_moves={"moved1": {"from": DECK, "to": NEW_DECK,
+                                "front": "Moved front"}},
+        change_notes={
+            "g1": [{"kind": "maintainer", "note": shared,
+                    "hash": note_fields_hash(new_one)}],
+            "g2": [{"kind": "maintainer", "note": shared,
+                    "hash": note_fields_hash(new_two)}],
+        })
+    _configure(anki, folder)
+    config.save_declined({"g1": {
+        "state": "keep", "front": "Front one", "deck": DECK,
+        "decided": "2026-09-01", "hash": "earlier-revision",
+    }})
+    captured = _capture_update_items(monkeypatch)
+
+    _update(anki, accept=False)
+
+    items = captured[0]
+    group = next(item for item in items if item[0] == "group_note")
+    assert group[1]["note"] == shared
+    assert _card_detail(items, "g1")["changed_since_decline"] is True
+    assert [item[0] for item in items if item[0] in {
+        "group_note", "card", "retired", "moved",
+    }] == ["group_note", "card", "card", "retired", "moved"]
+
+
 def test_review_box_starts_empty_with_nothing_summarized(anki, tmp_path):
     """Default: the confirmation previews the incoming cards inline, with a cloze
     note's deletions filled in rather than blanked. A row's feedback box is
