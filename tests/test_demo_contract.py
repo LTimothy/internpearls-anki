@@ -108,7 +108,7 @@ def test_response_envelope_matches_replay_shape():
     assert properties["safe_status"]["required"] == ["code"]
     assert properties["safe_status"]["additionalProperties"] is False
     assert SCHEMA["$defs"]["response"]["allOf"] == [{
-        "if": {"properties": {"status": {"enum": ["stale", "contract-error"]}}},
+        "if": {"properties": {"status": {"enum": ["error", "stale", "contract-error"]}}},
         "then": {"properties": {"payload": {"$ref": "#/$defs/error"}}},
     }]
 
@@ -130,6 +130,9 @@ def test_semantic_action_checks_are_named_for_the_runtime_validator():
         "link-action-id-present-on-label",
         "target-effectively-visible",
         "target-effectively-enabled",
+        "tree-node-ids-unique",
+        "combo-option-ids-unique",
+        "grid-cell-ids-unique",
     ]
 
 
