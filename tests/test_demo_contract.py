@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import mock_anki
 from tests import demo_contract_generated as generated
 
 
@@ -168,6 +169,17 @@ def test_dispatch_requires_action_to_be_listed_on_target_node():
         assert branch["properties"]["node"]["properties"]["actions"]["contains"] == {
             "const": action_kind
         }
+
+
+def test_dialog_button_box_exposes_default_and_escape_semantics():
+    box = mock_anki.QDialogButtonBox()
+    box.addButton("Save", mock_anki.QDialogButtonBox.ButtonRole.AcceptRole)
+    box.addButton("Cancel", mock_anki.QDialogButtonBox.ButtonRole.RejectRole)
+    tree = mock_anki.serialize_widget(box)
+    buttons = {node["text"]: node for node in tree["nodes"]
+               if node["kind"] == "button"}
+    assert buttons["Save"]["default"] is True
+    assert buttons["Cancel"]["escape"] is True
 
 
 def test_worker_python_boundary_rejects_unknown_message_types():

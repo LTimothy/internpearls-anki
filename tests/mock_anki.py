@@ -1966,9 +1966,11 @@ class QDialogButtonBox(QWidget):
     def addButton(self, arg, role=None):
         if arg == QDialogButtonBox.StandardButton.Ok:
             btn = QPushButton("OK")
+            role = QDialogButtonBox.ButtonRole.AcceptRole
             btn.clicked.connect(self.accepted.emit)
         elif arg == QDialogButtonBox.StandardButton.Cancel:
             btn = QPushButton("Cancel")
+            role = QDialogButtonBox.ButtonRole.RejectRole
             btn.clicked.connect(self.rejected.emit)
         else:
             btn = QPushButton(str(arg))
@@ -1980,6 +1982,11 @@ class QDialogButtonBox(QWidget):
                 btn.clicked.connect(self.accepted.emit)
             elif role == QDialogButtonBox.ButtonRole.RejectRole:
                 btn.clicked.connect(self.rejected.emit)
+        btn._dialog_role = role
+        btn._dialog_default = (
+            role == QDialogButtonBox.ButtonRole.AcceptRole
+            and not any(getattr(button, "_dialog_default", False)
+                        for button in self._buttons))
         self._buttons.append(btn)
         btn._parent_widget = self
         return btn
@@ -2073,7 +2080,7 @@ def _actions_for(widget):
         return ["edit-text"]
     if name == "QLabel" and _link_actions(widget):
         return ["activate-link"]
-    if name == "QScrollArea" or isinstance(widget, QScrollArea):
+    if any(base.__name__ == "QScrollArea" for base in type(widget).__mro__):
         return ["scroll"]
     if name == "QDialog":
         return ["key", "close"]
@@ -2150,7 +2157,10 @@ def _specific_fields(widget, kind):
     if kind == "button":
         return {"text": widget.text(), "checkable": widget._checkable,
                 "checked": widget.isChecked(), "role": "other",
-                "default": getattr(widget, "_default", False), "escape": False}
+                "default": (getattr(widget, "_default", False)
+                            or getattr(widget, "_dialog_default", False)),
+                "escape": (getattr(widget, "_dialog_role", None)
+                           == QDialogButtonBox.ButtonRole.RejectRole)}
     if kind == "buttons":
         return {"button_ids": [button.wid for button in widget._buttons],
                 "standard_roles": []}
