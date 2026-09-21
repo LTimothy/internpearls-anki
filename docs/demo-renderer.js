@@ -39,9 +39,67 @@ function activateLink(context, node, actionId) {
   }
 }
 
+// A rich label's text is Qt rich text built from deck content the worker fetched
+// from the sample source, so it reaches this page as untrusted markup. The protocol
+// only bounds its length; what may become live DOM is decided here.
+//
+// `style` is on this list deliberately: the production About dialog ships its own
+// stylesheet inside a rich label, and dropping it left that dialog unstyled. CSS
+// cannot execute, so keeping it preserves the add-on's own markup without giving up
+// what this guard is for (no script, no event handlers, no dangerous URLs). The
+// residual is that a hostile source could restyle the page, which is defacement
+// rather than code execution.
+const RICH_TAGS = new Set([
+  "a", "b", "big", "br", "caption", "code", "col", "colgroup", "dd", "div", "dl",
+  "dt", "em", "details", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i",
+  "img", "li", "ol", "p", "pre", "s", "small", "span", "strong", "style", "sub",
+  "summary", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "u", "ul",
+]);
+// Unwrapping these would spill their source into the page as visible text, so they
+// go with their contents.
+const RICH_DROP_TAGS = new Set([
+  "base", "embed", "form", "iframe", "link", "math", "meta", "noscript", "object",
+  "script", "svg", "template",
+]);
+const RICH_URL_ATTRS = new Set(["href", "src", "xlink:href"]);
+const RICH_URL_SCHEMES = new Set(["http", "https", "mailto"]);
+
+function safeRichUrl(value) {
+  const trimmed = String(value).replace(/[\x00-\x20]/g, "").toLowerCase();
+  const scheme = /^([a-z][a-z0-9+.-]*):/.exec(trimmed);
+  // No scheme at all is a relative or absolute path, which is how an extracted
+  // figure is referenced.
+  if (!scheme) return true;
+  return RICH_URL_SCHEMES.has(scheme[1]) || trimmed.startsWith("data:image/");
+}
+
+export function sanitizeRichText(markup) {
+  const template = document.createElement("template");
+  template.innerHTML = String(markup);
+  for (const element of Array.from(template.content.querySelectorAll("*"))) {
+    const tag = element.tagName.toLowerCase();
+    if (RICH_DROP_TAGS.has(tag)) {
+      element.remove();
+      continue;
+    }
+    if (!RICH_TAGS.has(tag)) {
+      element.replaceWith(...element.childNodes);
+      continue;
+    }
+    for (const name of element.getAttributeNames()) {
+      const lower = name.toLowerCase();
+      if (lower.startsWith("on")
+          || (RICH_URL_ATTRS.has(lower) && !safeRichUrl(element.getAttribute(name)))) {
+        element.removeAttribute(name);
+      }
+    }
+  }
+  return template.innerHTML;
+}
+
 function textElement(node, tagName = "div") {
   const element = document.createElement(tagName);
-  if (node.format === "rich") element.innerHTML = node.text;
+  if (node.format === "rich") element.innerHTML = sanitizeRichText(node.text);
   else element.textContent = node.text;
   return element;
 }

@@ -60,13 +60,13 @@ def _count_instruction(count):
 
 
 def generated_guid():
-    try:
-        from .platform import platform
-        deterministic = getattr(platform(), "deterministic_token", None)
-        if deterministic is not None:
-            return GUID_PREFIX + deterministic()
-    except ImportError:
-        pass
+    # platform.py keeps its own aqt import lazy, so this stays inside this
+    # module's "no aqt/anki imports" promise.
+    from .platform import platform
+
+    deterministic = getattr(platform(), "deterministic_token", None)
+    if deterministic is not None:
+        return GUID_PREFIX + deterministic()
     return GUID_PREFIX + binascii.hexlify(os.urandom(10)).decode()
 
 

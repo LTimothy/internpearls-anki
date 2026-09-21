@@ -590,3 +590,55 @@ test("Escape cancels immediately behind a held valid checkbox action", async ({ 
   }).toBe(true);
   await expect(page.locator("#overlay")).not.toHaveClass(/show/);
 });
+
+test("rich-label sanitizing removes nothing the production dialogs emit", async ({ page }) => {
+  // The guard on untrusted deck markup must not quietly strip the add-on's own
+  // formatting. Compared against a bare parser round-trip, so attribute-quote
+  // normalisation does not read as the sanitizer having removed something.
+  await openRealDemo(page);
+  const result = await page.evaluate(async () => {
+    const { sanitizeRichText } = await import("/docs/demo-renderer.js");
+    const boot = window.__realWorkers[0].responses.find((m) => m.type === "boot");
+    const flows = [];
+    const visit = (items) => {
+      for (const item of items) {
+        if (item.t === "menu") visit(item.items);
+        else if (item.t !== "sep") flows.push(item.id);
+      }
+    };
+    visit(boot.payload.menu);
+
+    const seen = [];
+    const collect = (payload) => {
+      const tree = payload?.response?.payload?.contract_tree;
+      if (!tree) return;
+      for (const node of tree.nodes) {
+        if (node.kind === "label" && node.format === "rich") seen.push(node.text);
+      }
+    };
+    let epoch = 900;
+    for (const id of flows) {
+      epoch += 1;
+      try {
+        collect(await window.demo.request("start", { menu_id: id, epoch }));
+        for (let i = 0; i < 4; i += 1) {
+          collect(await window.demo.request("feed", { envelope: {
+            protocol: 1, epoch, sequence: i + 1, render_revision: 0,
+            actions: [{ type: "advance", elapsed_ms: 200, checkpoint_credits: 1 }],
+          } }));
+        }
+      } catch (_error) { /* a flow that needs a different action is fine here */ }
+    }
+    return {
+      total: seen.length,
+      differing: seen.filter((text) => {
+        const parsed = document.createElement("template");
+        parsed.innerHTML = text;
+        return sanitizeRichText(text) !== parsed.innerHTML;
+      }).slice(0, 3),
+    };
+  });
+
+  expect(result.total).toBeGreaterThan(0);
+  expect(result.differing).toEqual([]);
+});

@@ -6,7 +6,6 @@ editing, notes, and revisions are all in-memory session state, and closing the
 dialog mid-review discards it after a confirm (see _GenerateDialog.reject).
 """
 import html
-import inspect
 import os
 import re
 import shutil
@@ -862,10 +861,16 @@ class _GenerateDialog(QDialog):
             print(traceback.format_exc())
             _warn(f"Something went wrong: {e}")
             self._gen_done, self._img_done = True, True
-            if hasattr(self, "_cancel_flag"):
-                self._cancel_flag.set()
+            # Cancellation reaches a worker through its own handle, not through a
+            # flag this dialog keeps: _img_cancel_flag below only records which way
+            # the image phase should unwind.
+            if hasattr(self, "_worker"):
+                self._worker.cancel()
             if hasattr(self, "_img_cancel_flag"):
                 self._img_cancel_flag.set()
+                self._img_ready = True
+            if hasattr(self, "_img_worker"):
+                self._img_worker.cancel()
             if hasattr(self, "_timer"):
                 self._timer.stop()
             if hasattr(self, "_img_timer"):
@@ -1607,10 +1612,8 @@ class _GenerateDialog(QDialog):
                 try:
                     output_dir = os.path.join(private_extract_dir, str(i))
                     os.makedirs(output_dir, exist_ok=False)
-                    kwargs = {"cancel": context.cancelled}
-                    if "checkpoint" in inspect.signature(extract).parameters:
-                        kwargs["checkpoint"] = context.checkpoint
-                    meta = extract(path, output_dir, **kwargs)
+                    meta = extract(path, output_dir, cancel=context.cancelled,
+                                   checkpoint=context.checkpoint)
                 except ValueError as e:
                     failures.append((False, str(e)))
                     continue
@@ -1919,7 +1922,6 @@ class _GenerateDialog(QDialog):
         self._reply_chunks = []
         self.activity_feed.clear()
         self._gen_done = False
-        self._cancel_flag = threading.Event()
         self._t0 = platform().monotonic()
         image_paths = ([os.path.join(s.scratch, n) for n in image_names]
                        if ai_cli.image_capable(s.backend) else [])
@@ -2053,9 +2055,12 @@ class _GenerateDialog(QDialog):
                 self._gen_done = True
                 self._return_to_input_or_review()
                 return
-            QApplication.processEvents()
-            if not self._worker_ready:
-                return
+            # The thread is done but the platform has not delivered its result yet.
+            # Wait for the next tick rather than pumping the event loop from inside
+            # a timer slot: processEvents() here re-enters this poll past the
+            # _gen_done guard above (running _finish_generation twice) and can land
+            # a close or Cancel mid-completion.
+            return
         if self._timer is not None:
             self._timer.stop()
         self._gen_done = True
@@ -2121,8 +2126,6 @@ class _GenerateDialog(QDialog):
         self._return_to_input_or_review()
 
     def _cancel_generation(self):
-        if hasattr(self, "_cancel_flag"):
-            self._cancel_flag.set()
         if hasattr(self, "_worker"):
             self._worker.cancel()
         if hasattr(self, "_img_cancel_flag"):
@@ -2154,8 +2157,6 @@ class _GenerateDialog(QDialog):
         directory regardless, so a wedged worker can't leak it forever."""
         self._gen_done = True
         self._img_done = True
-        if hasattr(self, "_cancel_flag"):
-            self._cancel_flag.set()
         if hasattr(self, "_worker"):
             self._worker.cancel()
         if hasattr(self, "_img_cancel_flag"):
@@ -2395,9 +2396,7 @@ class _GenerateDialog(QDialog):
         if self._img_worker.is_alive():
             return
         if not self._img_ready:
-            QApplication.processEvents()
-            if not self._img_ready:
-                return
+            return   # awaiting delivery; see _poll_worker on why not processEvents
         if self._img_timer is not None:
             self._img_timer.stop()
         self._img_done = True

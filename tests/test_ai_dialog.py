@@ -237,7 +237,7 @@ def test_attachment_extraction_runs_off_thread_and_cancel_commits_nothing(
     started = threading.Event()
     worker_thread = []
 
-    def extract(source, dest, cancel=None):
+    def extract(source, dest, cancel=None, checkpoint=None):
         worker_thread.append(threading.get_ident())
         started.set()
         deadline = time.monotonic() + 2
@@ -274,7 +274,7 @@ def test_close_waits_for_uninterruptible_extractor_before_private_cleanup(
     extract_dirs = []
     write_errors = []
 
-    def extract(source, dest, cancel=None):
+    def extract(source, dest, cancel=None, checkpoint=None):
         extract_dirs.append(dest)
         started.set()
         release.wait(timeout=2)  # models a parser call that cannot be preempted
@@ -367,7 +367,7 @@ def test_generate_cards_retires_attachment_timer_and_deletes_dialog(
     started = threading.Event()
     release = threading.Event()
 
-    def extract(source, dest, cancel=None):
+    def extract(source, dest, cancel=None, checkpoint=None):
         started.set()
         release.wait(timeout=2)
         return {"text": "", "images": [], "images_undecoded": False}
