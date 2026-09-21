@@ -11,7 +11,7 @@ from aqt.qt import (QApplication, QComboBox, QDesktopServices, QDialog,
 from . import ai_cli
 from .config import ADDON_PACKAGE, APP_NAME, _cfg
 from .palette import colors
-from .platform import WorkRequest, platform
+from .platform import new_work_request, platform, platform_owner_id
 from .ui import (_safe, hint_label, link_button, section_label, section_rule,
                  title_label)
 from .widgets import CARET_GAP, align_field_column, chip_cell, field_slot
@@ -538,20 +538,23 @@ def run_connection_test_async(owner, kind, path, on_status, on_done=None,
                       + result["detail"])
 
     def on_result(result):
+        timer.stop()
         (guard(lambda: deliver(result=result)) if guard else
          deliver(result=result))
 
     def on_error(error):
+        timer.stop()
         (guard(lambda: deliver(error=error)) if guard else deliver(error=error))
 
-    request = WorkRequest(
-        kind="connection", owner_id=id(owner), operation_ordinal=len(refs) + 1,
-        attempt=1, inputs={"action": "ai.connection"})
+    request = new_work_request(owner, "connection", "ai.connection",
+                               inputs={"backend": kind})
     handle = platform().start_work(
         request, lambda _context: ai_cli.test_connection(kind, path), on_result,
         on_error)
-    refs.append((handle, getattr(handle, "native_timer", None)))
+    timer = platform().create_timer(platform_owner_id(owner), lambda: None, _POLL_MS)
+    refs.append((handle, timer))
     handle.start()
+    timer.start()
 
 
 class _AIBackendsDialog(QDialog):

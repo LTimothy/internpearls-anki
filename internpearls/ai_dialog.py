@@ -33,7 +33,7 @@ from .config import (AI_LAST_RUN_LOG, APP_NAME, TARGET_FIELDS, _cfg,
 from .logic import cloze_filled_html, field_preview_html, note_display_label, plural
 from .net import fetch_card_image
 from .palette import colors
-from .platform import WorkRequest, platform
+from .platform import new_work_request, platform, platform_owner_id
 from .review import (_CARET_CLOSED, _CARET_OPEN, _ClickableLabel, _image_tag,
                      _preview_style, _rich_label, _separator)
 from .ui import (_ask, _ask_scrollable, _info, _safe, _warn, hint_label,
@@ -1456,7 +1456,7 @@ class _GenerateDialog(QDialog):
             return []
         s = self.session
         if s.scratch is None:
-            s.scratch = platform().allocate_scratch(id(self), "aigen")
+            s.scratch = platform().allocate_scratch(platform_owner_id(self), "aigen")
         committed = []
         for path, meta, output_dir in attachments:
             moved = []
@@ -1572,13 +1572,14 @@ class _GenerateDialog(QDialog):
             return
         s = self.session
         self._attach_extract_dir = platform().allocate_scratch(
-            id(self), "aigen-extract")
+            platform_owner_id(self), "aigen-extract")
         self._attach_cancel_flag = threading.Event()
         self._attach_progress = deque()
         self._attach_done = False
         self._attach_results = []
         self._attach_failures = []
         self._attach_images_undecoded = False
+        self._attach_ready = False
         self.attach_btn.setEnabled(False)
         self.attach_cancel_btn.setEnabled(True)
         self.attach_cancel_btn.setVisible(True)
@@ -1622,21 +1623,22 @@ class _GenerateDialog(QDialog):
         def on_result(result):
             (self._attach_results, self._attach_failures,
              self._attach_images_undecoded) = result
-            self._guard_completion(self._poll_attachment_worker)
+            self._attach_ready = True
 
         def on_error(error):
             self._attach_results = []
             self._attach_failures = [(True, str(error))]
             self._attach_images_undecoded = False
-            self._guard_completion(self._poll_attachment_worker)
+            self._attach_ready = True
 
-        request = WorkRequest(
-            kind="attachment", owner_id=id(self), operation_ordinal=1, attempt=1,
-            inputs={"action": "ai.attach", "scratch": extract_dir})
+        request = new_work_request(self, "attachment", "ai.attach")
         self._attach_worker = platform().start_work(
             request, work, on_result, on_error, on_event)
-        self._attach_timer = getattr(self._attach_worker, "native_timer", None)
+        self._attach_timer = platform().create_timer(
+            platform_owner_id(self), lambda: self._guard_completion(self._poll_attachment_worker),
+            _IMG_POLL_MS)
         self._attach_worker.start()
+        self._attach_timer.start()
 
     def _poll_attachment_worker(self):
         if getattr(self, "_attach_done", True):
@@ -1644,7 +1646,7 @@ class _GenerateDialog(QDialog):
         while self._attach_progress:
             i, total, name = self._attach_progress.popleft()
             self.attach_status.setText(f"Reading {i} of {total}: {name}")
-        if self._attach_worker.is_alive():
+        if self._attach_worker.is_alive() or not self._attach_ready:
             return
         self._attach_timer.stop()
         self._attach_done = True
@@ -1682,10 +1684,11 @@ class _GenerateDialog(QDialog):
             return
         self._attach_cancel_flag.set()
         self._attach_worker.cancel()
+        self._attach_ready = True
         if self._attach_timer is not None:
             self._attach_timer.stop()
         self._attach_timer = platform().create_timer(
-            id(self), lambda: self._guard_completion(self._poll_attachment_worker),
+            platform_owner_id(self), lambda: self._guard_completion(self._poll_attachment_worker),
             _IMG_POLL_MS)
         self._attach_timer.start()
         self.attach_cancel_btn.setEnabled(False)
@@ -1860,7 +1863,7 @@ class _GenerateDialog(QDialog):
         s.note_types = [n for n, b in self.type_boxes.items() if b.isChecked()]
         s.deck_name = self.deck_combo.currentText().strip() or s.deck_name
         if s.scratch is None:
-            s.scratch = platform().allocate_scratch(id(self), "aigen")
+            s.scratch = platform().allocate_scratch(platform_owner_id(self), "aigen")
         extra_text = "\n\n".join(a[1]["text"] for a in s.attachments if a[1]["text"])
         image_names = [name for _, meta in s.attachments for name in meta["images"]]
         user_skill_text = load_user_skill()
@@ -1891,6 +1894,7 @@ class _GenerateDialog(QDialog):
         # concurrently appended event could be silently dropped.
         self._events = deque()
         self._worker_error, self._worker_result = None, None
+        self._worker_ready = False
         self._reply_chunks = []
         self.activity_feed.clear()
         self._gen_done = False
@@ -1918,19 +1922,21 @@ class _GenerateDialog(QDialog):
 
         def on_result(result):
             self._worker_result = result
-            self._guard_completion(self._poll_worker)
+            self._worker_ready = True
 
         def on_error(error):
             self._worker_error = error
-            self._guard_completion(self._poll_worker)
+            self._worker_ready = True
 
-        request = WorkRequest(
-            kind="assistant", owner_id=id(self), operation_ordinal=1,
-            attempt=1, inputs={"action": "ai.generate", "scratch": s.scratch})
+        request = new_work_request(
+            self, "assistant", "ai.generate", attempt=2 if extra_error else 1,
+            inputs={"check": bool(check), "revision": bool(revision)})
         self._worker = platform().start_work(
             request, work, on_result, on_error, on_event)
-        self._timer = getattr(self._worker, "native_timer", None)
+        self._timer = platform().create_timer(
+            platform_owner_id(self), lambda: self._guard_completion(self._poll_worker), 200)
         self._worker.start()
+        self._timer.start()
         verb = "Checking facts with " if check else "Drafting cards with "
         self._phase_text = verb + ai_cli.BACKENDS[s.backend]["label"]
         self.progress_row.set_chip("checking" if check else "drafting")
@@ -2008,6 +2014,10 @@ class _GenerateDialog(QDialog):
         self.progress_row.set_detail(self._progress_detail_text())
         if self._worker.is_alive():
             return
+        if not self._worker_ready:
+            QApplication.processEvents()
+            if not self._worker_ready:
+                return
         if self._timer is not None:
             self._timer.stop()
         self._gen_done = True
@@ -2026,6 +2036,10 @@ class _GenerateDialog(QDialog):
         worker = self._worker
         while worker.is_alive() and time.time() < end:
             time.sleep(0.05)
+        worker.join(0)
+        while not self._worker_ready and time.time() < end:
+            QApplication.processEvents()
+            time.sleep(0.005)
         fire = getattr(self._timer, "fire", None)
         if fire is not None:
             fire()
@@ -2041,6 +2055,10 @@ class _GenerateDialog(QDialog):
               and time.time() < end):
             while self._img_worker.is_alive() and time.time() < end:
                 time.sleep(0.05)
+            self._img_worker.join(0)
+            while not self._img_ready and time.time() < end:
+                QApplication.processEvents()
+                time.sleep(0.005)
             fire = getattr(self._img_timer, "fire", None)
             if fire is not None:
                 fire()
@@ -2071,6 +2089,7 @@ class _GenerateDialog(QDialog):
             self._worker.cancel()
         if hasattr(self, "_img_cancel_flag"):
             self._img_cancel_flag.set()
+            self._img_ready = True
         if hasattr(self, "_img_worker"):
             self._img_worker.cancel()
 
@@ -2103,6 +2122,7 @@ class _GenerateDialog(QDialog):
             self._worker.cancel()
         if hasattr(self, "_img_cancel_flag"):
             self._img_cancel_flag.set()
+            self._img_ready = True
         if hasattr(self, "_img_worker"):
             self._img_worker.cancel()
         if hasattr(self, "_timer"):
@@ -2261,6 +2281,7 @@ class _GenerateDialog(QDialog):
         self._img_results = {}
         self._img_cancel_flag = threading.Event()
         self._img_done = False
+        self._img_ready = False
 
         def work(context):
             results = {}
@@ -2292,18 +2313,20 @@ class _GenerateDialog(QDialog):
 
         def on_result(result):
             self._img_results = result
-            self._guard_completion(self._poll_image_worker)
+            self._img_ready = True
 
         def on_error(error):
             self._img_results = {}
-            self._guard_completion(self._poll_image_worker)
+            self._img_ready = True
 
-        request = WorkRequest(
-            kind="image", owner_id=id(self), operation_ordinal=1, attempt=1,
-            inputs={"action": "ai.image", "scratch": s.scratch})
+        request = new_work_request(self, "image", "ai.image",
+                                   inputs={"card_count": len(cards)})
         self._img_worker = platform().start_work(request, work, on_result, on_error)
-        self._img_timer = getattr(self._img_worker, "native_timer", None)
+        self._img_timer = platform().create_timer(
+            platform_owner_id(self), lambda: self._guard_completion(self._poll_image_worker),
+            _IMG_POLL_MS)
         self._img_worker.start()
+        self._img_timer.start()
         # The row's detail (phase/elapsed) is left exactly as the CLI phase
         # last set it: this phase has no phase events of its own and the
         # elapsed clock isn't this phase's own, so redrawing it here would
@@ -2318,6 +2341,10 @@ class _GenerateDialog(QDialog):
             return
         if self._img_worker.is_alive():
             return
+        if not self._img_ready:
+            QApplication.processEvents()
+            if not self._img_ready:
+                return
         if self._img_timer is not None:
             self._img_timer.stop()
         self._img_done = True
