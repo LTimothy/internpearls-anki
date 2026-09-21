@@ -225,7 +225,7 @@ def _backup_deck(deck_name, label=None):
                  + uuid.uuid4().hex[:12])
     else:
         stamp = (platform().wall_now().strftime("%Y-%m-%d-%H%M%S") + "-"
-                 + deterministic_token()[-12:])
+                 + deterministic_token())
     label = _backup_label(label or deck_name)
     suffix = f" {label}" if label else ""
     path = os.path.join(folder, f"{_BACKUP_PREFIX}{stamp}{suffix}.apkg")

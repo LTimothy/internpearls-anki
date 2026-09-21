@@ -29,6 +29,7 @@ MOCK = mock_anki.install()
 
 import internpearls                     # noqa: E402  (real __init__: builds the menu)
 from internpearls import background, collection, config, net, palette, sync  # noqa: E402
+from internpearls.platform import new_work_request, platform, work_checkpoint  # noqa: E402
 
 SOURCE = os.environ.get("DEMO_SOURCE", "/source")   # env override for local smoke tests
 INTERVALS = ["2.3 mo", "11 d", "27 d", "6 d", "3.1 mo", "16 d", "9 d", "1.2 mo"]
@@ -52,10 +53,40 @@ def _install_demo_net():
     example = f"https://api.github.com/repos/{config.EXAMPLE_REPO}/contents/"
     real_get = net._http_get
 
-    def _from_source(url):
-        path = url[len(example):].split("?")[0]
+    def _read(path):
         with open(os.path.join(SOURCE, path), "rb") as fh:
             return fh.read()
+
+    def _from_source(url):
+        path = url[len(example):].split("?")[0]
+        if work_checkpoint("fixture-fetch:start"):
+            data = _read(path)
+            work_checkpoint("fixture-fetch:complete")
+            return data
+        if not getattr(platform(), "reconstructing", False):
+            return _read(path)
+
+        result, failure = [], []
+
+        def work(context):
+            context.checkpoint("fixture-fetch:start")
+            data = _read(path)
+            context.checkpoint("fixture-fetch:complete")
+            return data
+
+        request = new_work_request(MOCK.mw, "background-fetch", "background.fetch")
+        handle = platform().start_work(
+            request, work, result.append, failure.append)
+        handle.start()
+        while handle.is_alive():
+            response = MOCK.gui.next_interaction({"kind": "work"})
+            if "actions" in response:
+                mock_anki.apply_actions(response, allowed_ids=set())
+        if failure:
+            raise failure[0]
+        if not result:
+            raise RuntimeError("fixture read did not complete")
+        return result[0]
 
     try:
         from js import XMLHttpRequest

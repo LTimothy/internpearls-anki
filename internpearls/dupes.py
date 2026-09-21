@@ -91,15 +91,23 @@ def build_index(rows, checkpoint=None):
         doc_tokens.append(tokenize(normalise(text)))
     n = len(rows)
     df = {}
-    for tokens in doc_tokens:
+    for index, tokens in enumerate(doc_tokens):
+        if checkpoint is not None and index % 25 == 0:
+            checkpoint(f"duplicate-index:frequency:batch:{index // 25 + 1}")
         for tok in set(tokens):
             df[tok] = df.get(tok, 0) + 1
-    idf = {tok: math.log((n + 1) / (count + 0.5)) + 1.0 for tok, count in df.items()}
+    idf = {}
+    for index, (tok, count) in enumerate(df.items()):
+        if checkpoint is not None and index % 25 == 0:
+            checkpoint(f"duplicate-index:weights:batch:{index // 25 + 1}")
+        idf[tok] = math.log((n + 1) / (count + 0.5)) + 1.0
 
     postings = {}
     doc_norm = [0.0] * n
     doc_weight_sum = [0.0] * n
     for i, tokens in enumerate(doc_tokens):
+        if checkpoint is not None and i % 25 == 0:
+            checkpoint(f"duplicate-index:postings:batch:{i // 25 + 1}")
         tf = {}
         for tok in tokens:
             tf[tok] = tf.get(tok, 0) + 1

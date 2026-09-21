@@ -1721,6 +1721,15 @@ class _GenerateDialog(QDialog):
         extract_dir = self._attach_extract_dir
         session = self.session
 
+        if getattr(platform(), "reconstructing", False):
+            if extract_dir:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                self._attach_extract_dir = None
+            if session.scratch:
+                shutil.rmtree(session.scratch, ignore_errors=True)
+                session.scratch = None
+            return
+
         def _reap():
             # This is already a daemon reaper, so waiting indefinitely cannot
             # block Qt. Extraction can be inside a non-preemptible parser call;
@@ -2164,6 +2173,12 @@ class _GenerateDialog(QDialog):
         workers = [w for w in (getattr(self, "_worker", None),
                                getattr(self, "_img_worker", None)) if w]
         session = self.session
+
+        if getattr(platform(), "reconstructing", False):
+            if session.scratch:
+                shutil.rmtree(session.scratch, ignore_errors=True)
+                session.scratch = None
+            return
 
         def _reap():
             for w in workers:

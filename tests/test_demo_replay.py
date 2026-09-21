@@ -1,6 +1,8 @@
 import hashlib
 import json
 import os
+import subprocess
+import sys
 
 import mock_anki
 import pytest
@@ -37,6 +39,9 @@ def _state_digest(anki, media_root):
             path = os.path.join(root, name)
             media.append((os.path.relpath(path, media_root),
                           hashlib.sha256(open(path, "rb").read()).hexdigest()))
+    media.extend(
+        ("collection:" + name, hashlib.sha256(data).hexdigest())
+        for name, data in sorted(anki.col.media._files.items()))
     return hashlib.sha256(repr((notes, media)).encode()).hexdigest()
 
 
@@ -120,6 +125,61 @@ def test_protocol_rejects_unknown_widget_without_poisoning_next_request(anki):
     assert runner.journal == ()
     assert valid["status"] == "done"
     assert anki.mw._config["completed"] is True
+
+
+def test_rejected_batch_rolls_back_to_last_acknowledged_frontier(
+        anki, monkeypatch):
+    from internpearls import ai_cli, ai_setup
+
+    def detect(cfg):
+        configured = cfg["ai_cli_path"]
+        backends = {
+            kind: {"path": configured[kind] or None,
+                   "ok": bool(configured[kind]), "detail": "fixture",
+                   "enabled": True}
+            for kind in ai_cli.BACKENDS
+        }
+        return {"backends": backends, "chosen": "claude"}
+
+    monkeypatch.setattr(ai_cli, "detect_backends", detect)
+    runner = mock_anki.Runner(anki)
+
+    def flow():
+        dialog = ai_setup._AIBackendsDialog(anki.mw)
+        dialog.exec()
+
+    first = runner.start_protocol(flow, epoch=35)
+    line_id = next(
+        node["id"] for node in first["payload"]["contract_tree"]["nodes"]
+        if node["kind"] == "line"
+        and node["accessible_name"] == "Executable path")
+    test_id = next(
+        node["id"] for node in first["payload"]["contract_tree"]["nodes"]
+        if node["kind"] == "button" and node["text"] == "Test connection")
+    accepted = runner.feed_protocol(_protocol_request(first, 1, [
+        {"type": "edit-text", "id": line_id, "value": "/tool",
+         "selection_start": 5, "selection_end": 5, "composing": False},
+        {"type": "finish-edit", "id": line_id},
+    ]))
+    rejected = runner.feed_protocol(_protocol_request(accepted, 2, [
+        {"type": "edit-text", "id": line_id, "value": "",
+         "selection_start": 0, "selection_end": 0, "composing": False},
+        {"type": "finish-edit", "id": line_id},
+        {"type": "activate", "id": test_id},
+    ]))
+
+    assert rejected["status"] == "contract-error"
+    assert rejected["payload"] == {"code": "disabled-target"}
+    assert anki.mw._config["ai_cli_path"]["claude"] == "/tool"
+    assert mock_anki._widgets[line_id].text() == "/tool"
+    assert mock_anki._widgets[test_id].isEnabled()
+
+    done = runner.feed_protocol(_protocol_request(
+        rejected, 2, [{"type": "close",
+                       "id": accepted["payload"]["contract_tree"]["root_id"]}]))
+
+    assert done["status"] == "done"
+    assert anki.mw._config["ai_cli_path"]["claude"] == "/tool"
 
 
 def test_protocol_rejects_invalid_nested_modifiers_with_fixed_error(anki):
@@ -224,14 +284,75 @@ def test_typed_actions_answer_production_confirmation_and_prompt(anki):
     ok_id = next(
         node["id"] for node in prompt_tree["nodes"]
         if node["kind"] == "button" and node["text"] == "OK")
-    done = runner.feed_protocol(_protocol_request(prompt, 2, [
+    edited = runner.feed_protocol(_protocol_request(prompt, 2, [
         {"type": "edit-text", "id": line_id, "value": "typed",
          "selection_start": 5, "selection_end": 5, "composing": False},
+    ]))
+    edited_line = next(
+        node for node in edited["payload"]["contract_tree"]["nodes"]
+        if node["id"] == line_id)
+    done = runner.feed_protocol(_protocol_request(edited, 3, [
         {"type": "activate", "id": ok_id},
     ]))
 
+    assert edited_line["value"] == "typed"
     assert done["status"] == "done"
     assert anki.mw._config["answer"] == "typed"
+
+
+def test_typed_close_declines_production_confirmation(anki):
+    from internpearls import ui
+
+    runner = mock_anki.Runner(anki)
+
+    def flow():
+        anki.mw._config["answer"] = ui._ask(
+            "Apply the change?", yes_label="Apply", no_label="Keep")
+
+    confirmation = runner.start_protocol(flow, epoch=36)
+    done = runner.feed_protocol(_protocol_request(confirmation, 1, [
+        {"type": "close",
+         "id": confirmation["payload"]["contract_tree"]["root_id"]},
+    ]))
+
+    assert done["status"] == "done"
+    assert anki.mw._config["answer"] is False
+
+
+def test_ordered_batch_edits_source_before_generate_activation(
+        anki, monkeypatch):
+    from internpearls import ai_cli, ai_dialog
+
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda *args, **kwargs: {"text": "[]", "tokens": 0, "duration_s": 0})
+
+    runner = mock_anki.Runner(anki)
+    first = runner.start_protocol(ai_dialog.generate_cards, epoch=37)
+    nodes = first["payload"]["contract_tree"]["nodes"]
+    source_id = next(
+        node["id"] for node in nodes
+        if node["kind"] == "textarea"
+        and node["placeholder"].startswith("Paste lecture"))
+    generate = next(
+        node for node in nodes
+        if node["kind"] == "button" and node["text"] == "Generate"
+        and node["effective_visible"])
+    assert not generate["effective_enabled"]
+
+    working = runner.feed_protocol(_protocol_request(first, 1, [
+        {"type": "edit-text", "id": source_id, "value": "study source",
+         "selection_start": 12, "selection_end": 12, "composing": False},
+        {"type": "activate", "id": generate["id"]},
+    ]))
+
+    assert working["status"] == "need"
+    assert [item["kind"] for item in working["pending"]] == ["assistant"]
 
 
 def test_production_generate_replay_keeps_work_and_cancel_leaves_progress(
@@ -302,6 +423,76 @@ def test_production_generate_replay_keeps_work_and_cancel_leaves_progress(
         for node in reopened["payload"]["contract_tree"]["nodes"])
 
 
+def test_replay_active_close_uses_no_native_cleanup_threads(
+        anki, monkeypatch, tmp_path):
+    from aqt.qt import QFileDialog
+    from internpearls import ai_cli, ai_dialog
+
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda *args, **kwargs: {"text": "[]", "tokens": 0, "duration_s": 0})
+    source = tmp_path / "source.png"
+    source.write_bytes(b"image bytes")
+    replay = ReplayPlatform(epoch=38, scratch_root=str(tmp_path / "replay"))
+    started = []
+
+    class ForbiddenThread:
+        def __init__(self, *args, **kwargs):
+            started.append((args, kwargs))
+
+        def start(self):
+            raise AssertionError("replay cleanup started a native thread")
+
+    with use_platform(replay):
+        generation = ai_dialog._GenerateDialog()
+        generation.source_box.setPlainText("study source")
+        generation._start_generation()
+        monkeypatch.setattr(ai_dialog.threading, "Thread", ForbiddenThread)
+        anki.gui.answers.append(True)
+        generation.reject()
+
+        monkeypatch.setattr(
+            QFileDialog, "getOpenFileNames",
+            lambda *args, **kwargs: ([str(source)], ""), raising=False)
+        attachment = ai_dialog._GenerateDialog()
+        attachment._attach()
+        attachment.reject()
+
+    assert started == []
+    assert generation._result == 0
+    assert attachment._result == 0
+
+
+def test_returned_background_work_progresses_through_explicit_advances(anki):
+    from internpearls import background
+
+    delivered = []
+    runner = mock_anki.Runner(anki)
+
+    def flow():
+        background._run_in_background(
+            lambda: "fixture", lambda result, error: delivered.append((result, error)))
+
+    started = runner.start_protocol(flow, epoch=39)
+    at_complete = runner.feed_protocol(_protocol_request(started, 1, [
+        {"type": "advance", "elapsed_ms": 0, "checkpoint_credits": 1},
+    ]))
+    done = runner.feed_protocol(_protocol_request(at_complete, 2, [
+        {"type": "advance", "elapsed_ms": 0, "checkpoint_credits": 1},
+    ]))
+
+    assert started["pending"][0]["stage"] == "background-fetch:start"
+    assert at_complete["pending"][0]["stage"] == "background-fetch:complete"
+    assert done["status"] == "done"
+    assert done["pending"] == []
+    assert delivered == [("fixture", None)]
+
+
 def test_typed_file_selection_reaches_production_attachment_worker(
         anki, monkeypatch, tmp_path):
     from internpearls import ai_dialog
@@ -331,6 +522,50 @@ def test_typed_file_selection_reaches_production_attachment_worker(
 
     assert reading["status"] == "need"
     assert [item["kind"] for item in reading["pending"]] == ["attachment"]
+
+
+def test_typed_single_file_selection_reaches_production_connection_worker(
+        anki, monkeypatch, tmp_path):
+    from aqt.qt import QFileDialog
+    from internpearls import ai_cli, ai_setup
+
+    executable = tmp_path / "assistant"
+    executable.write_bytes(b"fixture")
+    anki.gui.uploads[executable.name] = str(executable)
+    monkeypatch.setattr(
+        ai_cli, "test_connection",
+        lambda kind, path: {"state": "working", "detail": os.path.basename(path)})
+    delivered = []
+    runner = mock_anki.Runner(anki)
+
+    def flow():
+        path, _ = QFileDialog.getOpenFileName(
+            None, "Locate assistant", "", "Programs (*.bin)")
+        if path:
+            ai_setup.run_connection_test_async(
+                anki.mw, "claude", path, delivered.append)
+
+    picker = runner.start_protocol(flow, epoch=40)
+    action = {
+        "type": "select-files",
+        "id": picker["payload"]["id"],
+        "accept": picker["payload"]["accept"],
+        "files": [{"name": executable.name,
+                   "type": "application/octet-stream",
+                   "size": executable.stat().st_size}],
+    }
+    started = runner.feed_protocol(_protocol_request(picker, 1, [action]))
+    at_complete = runner.feed_protocol(_protocol_request(started, 2, [
+        {"type": "advance", "elapsed_ms": 0, "checkpoint_credits": 1},
+    ]))
+    done = runner.feed_protocol(_protocol_request(at_complete, 3, [
+        {"type": "advance", "elapsed_ms": 0, "checkpoint_credits": 1},
+    ]))
+
+    assert picker["payload"]["kind"] == "file"
+    assert started["pending"][0]["kind"] == "connection"
+    assert done["status"] == "done"
+    assert delivered == ["Working: assistant"]
 
 
 def test_protocol_rejects_more_than_one_thousand_advances(anki):
@@ -495,7 +730,7 @@ def test_reconstruction_resets_counters_and_uses_fixed_clocks():
     assert first.wall_now().isoformat() == "2026-01-01T00:00:00.250000+00:00"
 
 
-def test_replay_generated_ids_use_reset_deterministic_counter():
+def test_replay_generated_ids_are_stable_within_epoch_and_distinct_between_epochs():
     from internpearls.ai_logic import generated_guid
 
     with use_platform(ReplayPlatform(epoch=5)):
@@ -503,10 +738,12 @@ def test_replay_generated_ids_use_reset_deterministic_counter():
         second = generated_guid()
     with use_platform(ReplayPlatform(epoch=5)):
         reconstructed = generated_guid()
+    with use_platform(ReplayPlatform(epoch=6)):
+        next_epoch = generated_guid()
 
-    assert first == "iplocal-00000000000000000001"
-    assert second == "iplocal-00000000000000000002"
     assert reconstructed == first
+    assert second != first
+    assert next_epoch != first
 
 
 def test_production_usage_display_uses_replay_wall_clock(anki, monkeypatch):
@@ -525,7 +762,7 @@ def test_production_usage_display_uses_replay_wall_clock(anki, monkeypatch):
     assert seen[-1] == replay.wall_now().timestamp()
 
 
-def test_production_backup_and_import_temp_names_reset_deterministically(
+def test_production_backup_and_import_temp_names_are_namespaced_by_epoch(
         anki, monkeypatch, tmp_path):
     from internpearls import collection
 
@@ -556,9 +793,20 @@ def test_production_backup_and_import_temp_names_reset_deterministically(
         second_temp = second_platform.allocate_temporary_file(
             1, "sync-import", ".sync.apkg")
 
+    third_platform = ReplayPlatform(
+        epoch=33, scratch_root=str(tmp_path / "scratch"))
+    with use_platform(third_platform):
+        third_backup = os.path.basename(collection._backup_deck("Fixture"))
+        third_temp = third_platform.allocate_temporary_file(
+            1, "sync-import", ".sync.apkg")
+
     assert first_backup == second_backup
     assert first_backup != next_backup
     assert first_temp == second_temp
+    assert third_backup != second_backup
+    assert third_temp != second_temp
+    assert os.path.exists(os.path.join(backup_root, second_backup))
+    assert os.path.exists(os.path.join(backup_root, third_backup))
 
 
 def test_fixture_maintenance_is_blocked_during_flow_and_enters_next_baseline(
@@ -589,6 +837,61 @@ def test_fixture_maintenance_is_blocked_during_flow_and_enters_next_baseline(
 
     assert replayed["status"] == "done"
     assert revision_file.read_text(encoding="utf8") == "two"
+
+
+def test_real_fixture_manifest_and_source_reads_suspend_until_advances(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    package = source / "fixture.apkg"
+    package.write_bytes(b"fixture package")
+    (source / "manifest.json").write_text(json.dumps({
+        "decks": [{"name": "Fixture", "version": "v1",
+                   "apkg": package.name}],
+    }), encoding="utf8")
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    environment = dict(os.environ)
+    environment["DEMO_SOURCE"] = str(source)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [os.path.join(root, "docs"), os.path.join(root, "tests"), root,
+         environment.get("PYTHONPATH", "")])
+    probe = subprocess.run(
+        [sys.executable, "-c", """
+import demo_harness as harness
+
+harness._install_demo_net()
+base = ("https://api.github.com/repos/" + harness.config.EXAMPLE_REPO
+        + "/contents/")
+
+def flow():
+    manifest = harness.net._http_get(base + "manifest.json")
+    package = harness.net._http_get(base + "fixture.apkg")
+    assert harness.json.loads(manifest)["decks"][0]["name"] == "Fixture"
+    assert package == b"fixture package"
+
+response = harness.RUNNER.start_protocol(flow, epoch=41)
+assert response["pending"][0]["stage"] == "fixture-fetch:start"
+expected = [
+    "fixture-fetch:complete", "fixture-fetch:start", "fixture-fetch:complete",
+]
+for sequence, stage in enumerate(expected, 1):
+    response = harness.RUNNER.feed_protocol({
+        "protocol": 1, "epoch": 41, "sequence": sequence,
+        "render_revision": response["render_revision"],
+        "actions": [{"type": "advance", "elapsed_ms": 0,
+                     "checkpoint_credits": 1}],
+    })
+    assert response["pending"][0]["stage"] == stage
+response = harness.RUNNER.feed_protocol({
+    "protocol": 1, "epoch": 41, "sequence": 4,
+    "render_revision": response["render_revision"],
+    "actions": [{"type": "advance", "elapsed_ms": 0,
+                 "checkpoint_credits": 1}],
+})
+assert response["status"] == "done"
+"""],
+        cwd=root, env=environment, capture_output=True, text=True)
+
+    assert probe.returncode == 0, probe.stdout + probe.stderr
 
 
 def test_timer_delivery_guard_is_fixed_at_one_thousand():
@@ -758,21 +1061,26 @@ def test_production_image_worker_discards_private_thumbnail_on_cancel(
         dialog.session.scratch = replay.allocate_scratch(
             platform_owner_id(dialog), "aigen")
         published = dialog.session.scratch
-        real_resolve = ai_dialog._resolve_one_image
-        destinations = []
+        real_open = open
+        thumbnail_writes = []
 
-        def resolve(spec, scratch):
-            destinations.append(scratch)
-            return real_resolve(spec, scratch)
+        def tracking_open(path, mode="r", *args, **kwargs):
+            if "_thumb-" in os.fspath(path) and "w" in mode:
+                thumbnail_writes.append(os.fspath(path))
+            return real_open(path, mode, *args, **kwargs)
 
-        monkeypatch.setattr(ai_dialog, "_resolve_one_image", resolve)
+        monkeypatch.setattr(ai_dialog, "open", tracking_open, raising=False)
         dialog._run_image_resolution([
-            {"images": ["svg:<svg xmlns='http://www.w3.org/2000/svg'></svg>"]},
+            {"images": [{
+                "source": "svg:<svg xmlns='http://www.w3.org/2000/svg'></svg>",
+                "alt": "", "attribution": "",
+            }]},
         ])
         replay.advance(0, 1)
 
-        assert destinations
-        assert destinations[-1] != published
+        assert thumbnail_writes
+        assert all(path.startswith(published + ".overlay" + os.sep)
+                   for path in thumbnail_writes)
         assert (not os.path.exists(published)
                 or not any(name.startswith("_thumb-")
                            for name in os.listdir(published)))
@@ -843,7 +1151,7 @@ def test_production_duplicate_rescan_ignores_obsolete_result(anki):
                           deck="Other")
         dialog._rescan_fresh()
         current = dialog._worker
-        replay.advance(0, 2)
+        replay.advance(0, 5)
 
     assert obsolete is not current
     assert not obsolete.is_alive()
@@ -855,84 +1163,82 @@ def test_production_duplicate_rescan_ignores_obsolete_result(anki):
     }
 
 
-def test_same_journal_replay_keeps_collection_and_media_digest(anki, tmp_path):
+def test_genuine_reconstruction_keeps_populated_collection_and_media_digest(
+        anki, tmp_path):
+    from internpearls import collection
+
     media = tmp_path / "media"
     media.mkdir()
     runner = mock_anki.Runner(anki, paths=[str(media)])
+    card = {
+        "note_type": "Study Deck - Basic",
+        "fields": {"Front": "Question", "Back": "Answer"},
+        "tags": [], "images": [], "rationale": "",
+        "_media_files": ["figure.svg"],
+    }
 
     def flow():
-        response = anki.gui.next_interaction({"kind": "edit"})
-        anki.mw._config["value"] = len(response["actions"])
-        anki.gui.next_interaction({"kind": "finish"})
+        collection.add_generated_notes(
+            [dict(card)], {"figure.svg": b"<svg></svg>"},
+            "Generated", "InternPearls")
+        anki.gui.next_interaction({"kind": "first"})
+        anki.gui.next_interaction({"kind": "second"})
 
     first = runner.start_protocol(flow, 11)
-    second = runner.feed_protocol(_protocol_request(first, 1))
     before = _state_digest(anki, str(media))
-    duplicate = runner.feed_protocol(_protocol_request(first, 1))
+    second = runner.feed_protocol(_protocol_request(first, 1))
     after = _state_digest(anki, str(media))
 
-    assert duplicate == second
+    assert first["status"] == "need"
+    assert second["status"] == "need"
+    assert len(anki.col._notes) == 1
+    assert anki.col.media._files == {"figure.svg": b"<svg></svg>"}
     assert before == after
 
 
-def test_repeated_frontier_edits_do_not_grant_checkpoint_credit(anki):
-    from aqt.qt import QDialog, QLineEdit, QVBoxLayout
+def test_repeated_edits_drive_production_widgets_without_work_credit(
+        anki, monkeypatch):
+    from internpearls import ai_cli, ai_dialog
 
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    generation_calls = []
+
+    def generate(*args, **kwargs):
+        generation_calls.append(args[2])
+        return {"text": "[]", "tokens": 0, "duration_s": 0}
+
+    monkeypatch.setattr(ai_cli, "run_generation", generate)
     runner = mock_anki.Runner(anki)
-    runs = []
-
-    def flow():
-        from internpearls.platform import platform
-
-        value = {"text": ""}
-        dialog = QDialog()
-        layout = QVBoxLayout(dialog)
-        input_box = QLineEdit()
-        layout.addWidget(input_box)
-
-        def compute(context):
-            runs.append("run")
-            context.checkpoint("background-fetch:start")
-            return "complete"
-
-        handle = platform().start_work(
-            _request(epoch=13), compute,
-            lambda result: value.update(result=result), pytest.fail)
-        handle.start()
-        while handle.is_alive():
-            response = anki.gui.next_interaction({
-                "kind": "edit", **value,
-                "contract_tree": mock_anki.serialize_widget(dialog),
-            })
-            edits = [action for action in response["actions"]
-                     if action["type"] == "edit-text"]
-            if edits:
-                value["text"] = edits[-1]["value"]
-            for action in response["actions"]:
-                if action["type"] == "advance":
-                    platform().advance(action["elapsed_ms"],
-                                       action["checkpoint_credits"])
-        anki.mw._config["final"] = value
-
-    first = runner.start_protocol(flow, 13)
+    first = runner.start_protocol(ai_dialog.generate_cards, 13)
     input_id = next(
         node["id"] for node in first["payload"]["contract_tree"]["nodes"]
-        if node["kind"] == "line")
+        if node["kind"] == "textarea"
+        and node["placeholder"].startswith("Paste lecture"))
     edit = {"type": "edit-text", "id": input_id, "value": "first",
             "selection_start": 5, "selection_end": 5, "composing": False}
     second = runner.feed_protocol(_protocol_request(first, 1, [edit]))
     edit["value"] = "second"
     edit["selection_start"] = edit["selection_end"] = 6
     third = runner.feed_protocol(_protocol_request(second, 2, [edit]))
+    current_source = next(
+        node for node in third["payload"]["contract_tree"]["nodes"]
+        if node["id"] == input_id)
+    generate_id = next(
+        node["id"] for node in third["payload"]["contract_tree"]["nodes"]
+        if node["kind"] == "button" and node["text"] == "Generate"
+        and node["effective_visible"])
+    assert generation_calls == []
+    working = runner.feed_protocol(_protocol_request(third, 3, [
+        {"type": "activate", "id": generate_id},
+    ]))
 
-    assert third["status"] == "need"
-    assert len(runs) == 3
-
-    advance = {"type": "advance", "elapsed_ms": 200,
-               "checkpoint_credits": 1}
-    done = runner.feed_protocol(_protocol_request(third, 3, [advance]))
-    assert done["status"] == "done"
-    assert anki.mw._config["final"] == {"text": "second", "result": "complete"}
+    assert current_source["value"] == "second"
+    assert len(generation_calls) == 1
+    assert working["pending"][0]["stage"] == "assistant:result"
 
 
 def test_one_accepted_import_is_one_logical_collection_commit(anki, tmp_path):
@@ -1053,13 +1359,17 @@ def test_pdf_extraction_checkpoints_between_pages_and_images(tmp_path):
 def test_duplicate_index_checkpoints_between_bounded_batches():
     from internpearls.dupes import find_candidates
 
-    rows = [(index, "shared alpha beta", "", "") for index in range(26)]
+    rows = [(index, f"shared alpha beta token{index}", "", "")
+            for index in range(26)]
     stages = []
     find_candidates(rows, rows, threshold=0, min_shared=0,
                     checkpoint=stages.append)
 
     assert stages == [
         "duplicate-index:right:batch:1", "duplicate-index:right:batch:2",
+        "duplicate-index:frequency:batch:1", "duplicate-index:frequency:batch:2",
+        "duplicate-index:weights:batch:1", "duplicate-index:weights:batch:2",
+        "duplicate-index:postings:batch:1", "duplicate-index:postings:batch:2",
         "duplicate-index:left:batch:1", "duplicate-index:left:batch:2",
     ]
 
@@ -1067,7 +1377,8 @@ def test_duplicate_index_checkpoints_between_bounded_batches():
 def test_production_duplicate_index_suspends_while_building_right_side():
     from internpearls.dupes import find_candidates
 
-    rows = [(index, "shared alpha beta", "", "") for index in range(26)]
+    rows = [(index, f"shared alpha beta token{index}", "", "")
+            for index in range(26)]
     platform = ReplayPlatform(epoch=31)
     request = _request(
         epoch=31, kind="duplicate-index", action="dupes.scan")
@@ -1086,3 +1397,18 @@ def test_production_duplicate_index_suspends_while_building_right_side():
         "kind": "duplicate-index",
         "stage": "duplicate-index:right:batch:1",
     }]
+
+    observed = []
+    for _ in range(7):
+        platform.advance(0, 1)
+        observed.append(platform.pending()[0]["stage"])
+
+    assert observed == [
+        "duplicate-index:right:batch:2",
+        "duplicate-index:frequency:batch:1",
+        "duplicate-index:frequency:batch:2",
+        "duplicate-index:weights:batch:1",
+        "duplicate-index:weights:batch:2",
+        "duplicate-index:postings:batch:1",
+        "duplicate-index:postings:batch:2",
+    ]

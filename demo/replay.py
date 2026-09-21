@@ -20,10 +20,15 @@ _CHECKPOINT_STAGES = {
         re.compile(r"attachment:page:[1-9][0-9]*"),
         re.compile(r"attachment:image:[1-9][0-9]*:[1-9][0-9]*"),
     ),
-    "background-fetch": (re.compile(r"background-fetch:(start|complete)"),),
+    "background-fetch": (
+        re.compile(r"background-fetch:(start|complete)"),
+        re.compile(r"fixture-fetch:(start|complete)"),
+    ),
     "connection": (re.compile(r"connection:(start|complete)"),),
     "duplicate-index": (
-        re.compile(r"duplicate-index:(left|right):batch:[1-9][0-9]*"),
+        re.compile(
+            r"duplicate-index:(left|right|frequency|weights|postings):batch:"
+            r"[1-9][0-9]*"),
     ),
     "image": (
         re.compile(r"image:[1-9][0-9]*:[1-9][0-9]*:(resolve|publish)"),
@@ -187,7 +192,9 @@ class _ReplayWorkHandle:
         context = _ReplayWorkContext(self)
         external = self._platform._take_external_overlay()
         try:
-            result = self._compute(context)
+            from internpearls.platform import use_work_context
+            with use_work_context(context):
+                result = self._compute(context)
         except WorkSuspended as suspended:
             self._stage = suspended.stage
             self._discard_overlay()
@@ -384,7 +391,7 @@ class ReplayPlatform:
 
     def deterministic_token(self):
         self._token_ordinal += 1
-        return f"{self._token_ordinal:020x}"
+        return f"{self.epoch:08x}{self._token_ordinal:012x}"
 
     @staticmethod
     def _safe_purpose(purpose):
