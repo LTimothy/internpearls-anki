@@ -16,7 +16,9 @@ from itertools import count
 from types import MappingProxyType
 from typing import Any, Callable, ContextManager, Mapping, Optional, Protocol
 
-from aqt.qt import QTimer
+# aqt is imported where a Qt timer is actually built, not at module scope: this
+# module sits under ai_logic, which promises no aqt/anki imports, and the
+# platform accessor below has to stay reachable from there.
 
 
 _WORK_CONTEXT = ContextVar("internpearls_work_context", default=None)
@@ -83,6 +85,8 @@ def new_work_request(owner, kind, action, *, attempt=1, inputs=None):
 
 def wait_for_mock_work(handle):
     """Complete native work synchronously in the lightweight Qt mock only."""
+    from aqt.qt import QTimer
+
     if hasattr(QTimer, "registry"):
         handle.join()
         deliver = getattr(handle, "_deliver_for_mock", None)
@@ -172,6 +176,8 @@ class _WorkCancelled(BaseException):
 
 class _NativeTimerHandle:
     def __init__(self, callback, interval_ms, single_shot=False, parent=None):
+        from aqt.qt import QTimer
+
         self._timer = QTimer(parent)
         self._callback = callback
         self._interval_ms = interval_ms
@@ -253,6 +259,7 @@ class _NativeWorkHandle:
         self.task_id = (f"{request.epoch}:{request.owner_id}:"
                         f"{request.operation_ordinal}:{request.attempt}")
         self.request = request
+        self._native = native
         self._cancelled = threading.Event()
         self._events = deque()
         self._context = _NativeWorkContext(
@@ -300,6 +307,7 @@ class _NativeWorkHandle:
             return
         self._timer_handle.stop()
         self._delivered = True
+        self._native._release_work(self)
         if self._cancelled.is_set():
             return
         if self._error is not None:
@@ -311,6 +319,11 @@ class _NativeWorkHandle:
         if self._started:
             return
         self._started = True
+        # Registered before the poll starts: nothing else holds this handle, so
+        # without it the handle, its timer handle and the QTimer are only a
+        # reference cycle, and a collection between the thread finishing and the
+        # next poll would destroy the timer with the result still undelivered.
+        self._native._retain_work(self)
         self._timer_handle.start()
         self._thread.start()
 
@@ -336,6 +349,13 @@ class NativePlatform:
         self._owner_ordinals = {}
         self._operations = {}
         self._next_owner_id = count(1)
+        self._live_work = []
+
+    def _retain_work(self, handle):
+        self._live_work.append(handle)
+
+    def _release_work(self, handle):
+        self._live_work = [live for live in self._live_work if live is not handle]
 
     def _clear_owner_state(self, owner_id):
         self._owner_ordinals.pop(owner_id, None)

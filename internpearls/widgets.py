@@ -7,9 +7,9 @@ imports, see its own module docstring). Nothing here touches a network or the
 collection, so this module is safe for any screen to import, including ones sync.py
 itself will eventually build.
 
-May import config, logic, palette and ui. Must NOT import sync, dialogs or review:
-that's the boundary that keeps this module out of the same import cycle review.py was
-built to dodge.
+May import config, logic, palette, platform and ui. Must NOT import sync, dialogs
+or review: that's the boundary that keeps this module out of the same import cycle
+review.py was built to dodge.
 """
 from aqt.qt import (QHBoxLayout, QLabel, QPushButton, QScrollArea, Qt,
                      QVBoxLayout, QWidget)
@@ -592,6 +592,7 @@ class StreamingList(QScrollArea):
         # when she scrolls, not on every tick. The pace is deliberately slow, and a
         # tick is skipped while she is scrolling, so building never competes with
         # reading; revealing an already-built row is cheap.
+        self._prefetching = False
         self._idle = platform().create_timer(
             platform_owner_id(self), self._idle_extend, self.IDLE_DELAY_MS,
             single_shot=True)
@@ -608,17 +609,27 @@ class StreamingList(QScrollArea):
     def _idle_extend(self):
         if self.built() >= self.total():
             return
+        # One chunk in flight at a time. A tick that beats the previous chunk's
+        # delivery would otherwise read the same unchanged built() and queue the
+        # same rows again, and every such tick left another task pending.
+        if self._prefetching:
+            self._idle.start()
+            return
         if (self.isVisible()
                 and platform().monotonic() - self._last_scroll > self.SCROLL_QUIET_S):
             end = min(self.built() + self.IDLE_CHUNK, self.total())
             items = list(self._items[self.built():end])
 
             def build(items):
+                self._prefetching = False
                 for item in items:
                     row = self._build_row(item)
                     row.setVisible(False)
                     self._rows_layout.addWidget(row)
                     self._prebuilt.append(row)
+
+            def abandon(_error):
+                self._prefetching = False
 
             request = new_work_request(
                 self, "list-prefetch", "streaming-list.prefetch",
@@ -629,9 +640,8 @@ class StreamingList(QScrollArea):
                 context.checkpoint("list-prefetch:complete")
                 return items
 
-            handle = platform().start_work(
-                request, prefetch, build, lambda _error: None)
-            handle.start()
+            self._prefetching = True
+            platform().start_work(request, prefetch, build, abandon).start()
         self._idle.start()
 
     def shown(self):

@@ -91,3 +91,23 @@ def test_streaming_prefetch_captures_safe_request_metadata(anki):
     assert (request.kind, request.inputs) == (
         "list-prefetch", {"action": "streaming-list.prefetch", "count": 1,
                            "start": 1})
+
+
+def test_streaming_prefetch_does_not_overlap_itself(anki):
+    """Only one chunk may be in flight. A tick that beats the previous chunk's
+    delivery reads the same unchanged built(), so without the guard it queued the
+    same rows again and left another task pending on every tick."""
+    from internpearls import widgets
+
+    native = _RecordingPlatform()
+    with use_platform(native):
+        listing = widgets.StreamingList(
+            lambda _item: widgets.QWidget(), list(range(20)), batch=1)
+        listing.isVisible = lambda: True
+        listing._last_scroll = -1
+        listing._idle_extend()
+        listing._idle_extend()   # a tick landing before the first chunk delivered
+        listing._idle_extend()
+
+    assert len(native.requests) == 1
+    assert native.requests[0].inputs["start"] == 1

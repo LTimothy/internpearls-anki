@@ -108,7 +108,10 @@ function isAccepted(type, payload, result) {
   if (type === "start" || type === "maintainer" || type === "set-theme") return true;
   if (type === "state") return ["set-note", "auto-sync"].includes(payload.action);
   if (type === "feed") {
-    return result.response.status !== "stale";
+    // Recorded only on a status we actually saw. A missing one is not evidence of
+    // acceptance, and this log's whole job is to replay faithfully.
+    const status = result.response?.status;
+    return typeof status === "string" && status !== "stale";
   }
   return false;
 }
@@ -122,18 +125,20 @@ function runCommand(type, payload, record = true) {
 }
 
 function replayAndCancel(payload) {
-  recovery = [];
-  let result = null;
+  // Built aside and only published once the whole prefix has verified: runCommand
+  // applies to the harness before the check, so assigning as we go would leave the
+  // log short of a command the harness has already taken.
+  const replayed = [];
   for (const entry of payload.recovery) {
-    result = runCommand(entry.type, entry.payload, false);
+    const result = runCommand(entry.type, entry.payload, false);
     if (JSON.stringify(result) !== JSON.stringify(entry.result)
         || result.response?.status === "stale") {
       throw new Error("replay-failed");
     }
-    recovery.push(jsonClone(entry));
+    replayed.push(jsonClone(entry));
   }
-  result = runCommand("feed", payload.cancel, true);
-  return result;
+  recovery = replayed;
+  return runCommand("feed", payload.cancel, true);
 }
 
 async function execute(message) {
@@ -206,5 +211,14 @@ async function processMessage(raw) {
 }
 
 self.addEventListener("message", (event) => {
-  processing = processing.then(() => processMessage(event.data));
+  // Settled both ways, so one rejection cannot leave the chain permanently
+  // rejected and silently swallow every later message.
+  const next = () => processMessage(event.data).catch(() => {
+    try {
+      self.postMessage(jsonClone(errorResponse(event.data, "protocol-failed")));
+    } catch (_error) {
+      // Nothing safe left to say; the page's request watchdog covers this.
+    }
+  });
+  processing = processing.then(next, next);
 });

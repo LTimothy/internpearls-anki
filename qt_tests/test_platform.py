@@ -55,3 +55,36 @@ def test_native_work_delivers_callbacks_on_the_gui_event_loop_thread():
                          ("error", "expected")]
     assert compute_threads and all(thread != gui_thread for thread in compute_threads)
     assert delivery_threads and all(thread == gui_thread for thread in delivery_threads)
+
+
+def test_work_result_survives_a_collection_with_no_caller_reference():
+    """The direct reproduction of the dropped-delivery bug, which only shows up
+    under real Qt: PyQt holds a bound-method slot's receiver weakly, so a handle
+    nothing else references is just a cycle once its thread exits, and a
+    collection before the next poll destroyed the QTimer with the result still
+    undelivered. The platform owning started work is what closes it."""
+    import gc
+
+    harness.bootstrap()
+    app = harness.app()
+    native = NativePlatform()
+    delivered = []
+
+    def start_and_forget():
+        handle = native.start_work(
+            _request(1), lambda _context: "value", delivered.append,
+            lambda error: delivered.append(error))
+        handle.start()
+        handle.join(timeout=2)   # the thread is done; nothing has delivered yet
+
+    start_and_forget()           # the only caller reference is gone
+    assert delivered == []
+    gc.collect()                 # a cycle collection lands in the delivery window
+
+    deadline = time.monotonic() + 5
+    while not delivered and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
+
+    assert delivered == ["value"]
+    assert native._live_work == []

@@ -29,7 +29,8 @@ Every behavior here is the minimum the add-on actually relies on:
   snapshot with the response appended. Flows are deterministic, so replay is
   exact. In non-interactive mode (pytest default), info/warn just record and
   askUser answers from the `answers` queue (True when empty).
-- QueryOp is absent on purpose, so background work runs inline and assertable.
+- There is no event loop, so platform.wait_for_mock_work settles background
+  work synchronously here and keeps it assertable.
 
 The real package __init__ wires menus and imports the Qt-heavy dialogs module;
 conftest registers the package with just its __path__ so submodules import

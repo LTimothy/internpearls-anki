@@ -466,7 +466,7 @@ def test_attach_warns_once_when_a_pdfs_images_cant_be_decoded(monkeypatch, tmp_p
                         lambda *a, **k: next(calls))
     monkeypatch.setattr(
         ai_logic, "extract_attachment",
-        lambda p, dest, cancel=None: {
+        lambda p, dest, cancel=None, checkpoint=None: {
             "text": "some text", "images": [], "images_undecoded": True})
     warnings = []
     monkeypatch.setattr(ai_dialog, "_warn", lambda text, **kw: warnings.append(text))
@@ -532,7 +532,7 @@ def test_attachment_worker_keeps_qt_on_gui_thread_and_cancel_discards_result(
     started = threading.Event()
     threads = []
 
-    def extract(source, dest, cancel=None):
+    def extract(source, dest, cancel=None, checkpoint=None):
         threads.append(threading.get_ident())
         started.set()
         deadline = time.monotonic() + 2
@@ -630,7 +630,7 @@ def test_progress_page_cancel_link_cancels_the_run(monkeypatch):
     btn = next(b for b in dlg.progress_page.findChildren(QPushButton)
               if b.text() == "Cancel")
     btn.click()
-    assert dlg._cancel_flag.is_set()
+    assert dlg._worker.cancel_event.is_set()
     assert dlg.stack.currentWidget() is dlg.progress_page   # reject() never ran
 
 
@@ -668,7 +668,7 @@ def test_progress_page_escape_cancels_the_run_without_closing(monkeypatch):
     event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape,
                       Qt.KeyboardModifier.NoModifier)
     dlg.keyPressEvent(event)
-    assert dlg._cancel_flag.is_set()
+    assert dlg._worker.cancel_event.is_set()
     # Still up, still on the progress page: reject() never ran, so no
     # confirm dialog and no close.
     assert dlg.isVisible()
@@ -1406,3 +1406,44 @@ def test_connection_test_result_is_dropped_when_the_backend_changed(monkeypatch)
     captured["on_done"]()
     assert dlg._testing_kinds == set()   # claude is testable again
     dlg.deleteLater()
+
+
+def test_generation_completes_on_live_timers_alone(monkeypatch):
+    """No test helper, no fired timer, no processEvents inside the poll: the
+    worker thread finishes, the platform's own delivery timer hands the result
+    over, and the next 200ms poll tick finishes the run. This is the path
+    _poll_worker relies on now that it no longer pumps the event loop itself."""
+    harness.bootstrap()
+    app = harness.app()
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    cards = [{"note_type": "Study Deck - Basic",
+             "fields": {"Front": "q", "Back": "a"},
+             "tags": [], "images": [], "rationale": "r"}]
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda kind, path, prompt, mode, scratch, image_paths=(), on_event=None,
+              cancel=None, timeout=None, model=None, effort=None, log_path=None,
+              redact_texts=(): {"text": json.dumps(cards), "tokens": 15,
+                                          "duration_s": 12.3})
+
+    dlg = ai_dialog._GenerateDialog()
+    dlg.show()
+    app.processEvents()
+    dlg.source_box.setPlainText("Regional block landmarks and needle depths")
+    dlg._start_generation()
+    assert dlg.stack.currentWidget() is dlg.progress_page
+
+    deadline = time.monotonic() + 15
+    while not dlg._gen_done and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
+
+    assert dlg._gen_done, "live timers never completed the generation"
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert dlg.session.cards
+    dlg._retire_for_delete()

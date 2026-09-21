@@ -334,3 +334,46 @@ test("combo arrows select an option through the production action", async ({ pag
     emitted: [{ type: "select-option", id: "combo", option_id: "second" }],
   });
 });
+
+test("a rich label keeps its formatting but cannot become script", async ({ page }) => {
+  // A rich label's text is deck content the worker fetched from the sample source,
+  // so it arrives as untrusted markup that the protocol only length-bounds.
+  await page.goto("/browser_tests/contract-page.html");
+  const result = await page.evaluate(async () => {
+    const { renderWidget } = await import("/docs/demo-renderer.js");
+    window.demoXss = 0;
+    const rich = (text) => renderWidget({
+      id: "rich", kind: "label", format: "rich", text,
+      effective_visible: true, effective_enabled: true, style_roles: [],
+      actions: [], link_actions: [],
+    }).innerHTML;
+    return {
+      kept: rich('<b>bold</b> <i>it</i> <ul><li>one</li></ul>'
+        + '<table><tr><td>cell</td></tr></table>'
+        + '<a href="https://example.test/x">link</a>'
+        + '<img src="/resolved/figure.png">'),
+      handler: rich('<img src="x" onerror="window.demoXss = 1">'),
+      script: rich('<b>kept</b><script>window.demoXss = 1;</script>'),
+      // Kept on purpose: the About dialog ships a stylesheet in a rich label.
+      style: rich('<style>a { color: #1d4ed8; }</style><a href="/x">link</a>'),
+      javascriptUrl: rich('<a href="javascript:window.demoXss = 1">go</a>'),
+      obfuscated: rich('<a href="java\tscript:window.demoXss = 1">go</a>'),
+      svg: rich('<svg><script>window.demoXss = 1;</script></svg>after'),
+    };
+  });
+
+  expect(result.kept).toContain("<b>bold</b>");
+  expect(result.kept).toContain("<li>one</li>");
+  expect(result.kept).toContain("<td>cell</td>");
+  expect(result.kept).toContain('href="https://example.test/x"');
+  expect(result.kept).toContain('src="/resolved/figure.png"');
+  expect(result.handler).not.toContain("onerror");
+  expect(result.script).toBe("<b>kept</b>");
+  expect(result.style).toContain("<style>a { color: #1d4ed8; }</style>");
+  expect(result.javascriptUrl).not.toContain("javascript:");
+  expect(result.obfuscated).not.toContain("script:");
+  expect(result.svg).toBe("after");
+  // Nothing above executed, including the img/onerror pair, which fires on its own.
+  await page.waitForTimeout(50);
+  expect(await page.evaluate(() => window.demoXss)).toBe(0);
+});

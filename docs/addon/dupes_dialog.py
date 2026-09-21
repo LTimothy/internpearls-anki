@@ -417,6 +417,7 @@ class _DuplicateScanDialog(QDialog):
         self._scan_result = None
         self._scan_error = None
         self._scan_ready = False
+        self._scan_finished = False
         self._t0 = platform().monotonic()
         threshold, min_shared = self._current_level()
         self._min_shared = min_shared
@@ -462,10 +463,16 @@ class _DuplicateScanDialog(QDialog):
         self._timer.start()
 
     def _poll_scan(self):
+        # Latched like ai_dialog's _gen_done: on_result drives this poll directly as
+        # soon as the platform delivers, so the timer tick that follows (or the one
+        # _wait_for_scan fires) must not run the finish path a second time.
+        if self._scan_finished:
+            return
         if self._worker.is_alive() or not self._scan_ready:
             elapsed = int(platform().monotonic() - self._t0)
             self.summary_label.setText(f"Scanning... {elapsed}s elapsed")
             return
+        self._scan_finished = True
         self._timer.stop()
         self._finish_scan()
 
@@ -801,6 +808,7 @@ class _DuplicateScanDialog(QDialog):
         self._judge_result = None
         self._judge_error = None
         self._judge_ready = False
+        self._judge_finished = False
         self._judge_t0 = platform().monotonic()
         cancel = threading.Event()
         self._judge_cancel = cancel
@@ -876,10 +884,13 @@ class _DuplicateScanDialog(QDialog):
         if seq != self._judge_seq:
             timer.stop()
             return
+        if self._judge_finished:
+            return
         if worker.is_alive() or not self._judge_ready:
             elapsed = int(platform().monotonic() - self._judge_t0)
             self.summary_label.setText(f"Judging with AI... {elapsed}s elapsed")
             return
+        self._judge_finished = True
         timer.stop()
         self._finish_judge(seq)
 

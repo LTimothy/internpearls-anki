@@ -108,7 +108,7 @@ class _ReplayWorkHandle:
         self._stage = "queued"
         self._run_events = []
         self._delivered_event_ordinals = set()
-        self._checkpoint_credits = 0
+        self._checkpoint_credits = replay.initial_checkpoint_credits
 
     def _prepare_overlay(self):
         if self._scratch is None:
@@ -324,7 +324,10 @@ class ReplayPlatform:
     def __init__(self, epoch=1, checkpoint_credits=0, now_ms=0,
                  scratch_root=None, take_overlay=None, restore_overlay=None):
         self.epoch = int(epoch)
-        int(checkpoint_credits)
+        # The budget every task starts with, before any advance() grants more.
+        self.initial_checkpoint_credits = int(checkpoint_credits)
+        if self.initial_checkpoint_credits < 0:
+            raise ReplayError("invalid-action")
         self.now_ms = int(now_ms)
         self._take_overlay = take_overlay
         self._restore_overlay = restore_overlay

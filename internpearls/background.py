@@ -2,11 +2,11 @@
 
 Two things run on their own: an add-on-update check once per launch, and (only if the
 user turned it on in Settings) a repeating poll that auto-syncs decks. Both dispatch
-their network work through _run_in_background, which uses Anki's QueryOp to run off
-the main thread when it's available, so a slow or dead host never freezes Anki,
-however often the poll fires. The only work that touches mw.col (backing up and
-importing, once something actually needs to change) still runs on the main thread
-inside the completion callback, same as it does for a manual Sync decks click; that
+their network work through _run_in_background, which runs it off the main thread
+behind the platform seam, so a slow or dead host never freezes Anki, however often
+the poll fires. The only work that touches mw.col (backing up and importing, once
+something actually needs to change) still runs on the main thread inside the
+completion callback, same as it does for a manual Sync decks click; that
 part is unaffected by this and isn't the part that could hang.
 """
 import tempfile
@@ -15,18 +15,6 @@ import traceback
 from aqt import mw
 from aqt.qt import QTimer
 from aqt.utils import tooltip
-
-# QueryOp is the standard way modern Anki add-ons run work off the main thread. It has
-# been part of aqt's public surface since 2.1.45 (2021), which is older than the
-# collection APIs this add-on already depends on (ImportAnkiPackageRequest, the
-# with_scheduling/wait_for_completion backend options), so it should be present on any
-# Anki build that can run this add-on at all. The import is still guarded: if it's ever
-# missing, background checks fall back to running inline rather than the whole add-on
-# failing to load.
-try:
-    from aqt.operations import QueryOp
-except Exception:
-    QueryOp = None
 
 from .ai_logic import sweep_stale_scratch
 from .collection import _pre_sync_backup_or_skip_silently, installed_matching_collection
@@ -45,15 +33,15 @@ from .updates import _addon_update_work, _refresh_update_action_label
 
 
 def _run_in_background(work, on_done):
-    """Run `work()` off the main thread when possible, then call `on_done(result, error)`
-    back on the main thread either way (`error` is None on success, `result` is None on
-    failure). `work` must not touch `mw.col` or any Qt widget, since it may run on a
-    worker thread; it should be pure computation plus network/file I/O.
+    """Run `work()` off the main thread, then call `on_done(result, error)` back on the
+    main thread either way (`error` is None on success, `result` is None on failure).
+    `work` must not touch `mw.col` or any Qt widget, since it runs on a worker thread;
+    it should be pure computation plus network/file I/O.
 
-    Uses QueryOp when available (the normal case; see the import guard near the top of
-    this file) so the caller genuinely never blocks Anki's UI, no matter how often it's
-    invoked. Falls back to calling `work()` directly, bounded by whatever timeout `work`
-    itself uses, on any Anki build old enough to lack QueryOp.
+    Dispatch goes through the platform seam, which always runs `work` on a worker
+    thread and delivers the result on the main thread, so the caller genuinely never
+    blocks Anki's UI, no matter how often it's invoked. The platform owns the handle's
+    lifetime, so callers may ignore the return value.
     """
     def _safe_on_done(result, error):
         try:
@@ -182,8 +170,9 @@ def _auto_sync_check():
     if not cfg["auto_sync_decks"] or _auto_sync_in_progress or mw.col is None:
         return
     # A manual flow owns the collection and installed.json for as long as it runs, and
-    # its dialogs run their own event loops that this poll's QueryOp callback can land
-    # inside. Skip the tick entirely; the next one picks up whatever is still pending.
+    # its dialogs run their own event loops that this poll's completion callback can
+    # land inside. Skip the tick entirely; the next one picks up whatever is still
+    # pending.
     if manual_sync_in_progress():
         return
 
@@ -206,17 +195,14 @@ def _auto_sync_check():
         raise
 
     def _fetch_work():
-        # _BG_TIMEOUT, not the interactive default: this fires unattended as often as
-        # once a minute, so a dead host must fail well inside the poll interval.
-        # The deck downloads below get _BG_TIMEOUT too on a build without QueryOp,
-        # because there they run inline on the main thread: a 60s per-read bound would
-        # freeze Anki for a minute per deck on an unattended poll, which is exactly what
-        # net.py's own tighter bound for unattended checks exists to prevent. With
-        # QueryOp present (every current Anki) they run on a worker thread, where the
-        # generous bound costs nobody anything and a big deck on a slow link finishes.
+        # _BG_TIMEOUT for the manifest, not the interactive default: this fires
+        # unattended as often as once a minute, so a dead host must fail well inside
+        # the poll interval. The deck downloads below get the generous
+        # _DOWNLOAD_TIMEOUT instead: _run_in_background always runs this on a worker
+        # thread, so a slow read costs nobody a frozen UI and a big deck on a slow
+        # link gets to finish.
         manifest, fetch, source = _fetch_manifest(
-            cfg, timeout=_BG_TIMEOUT,
-            download_timeout=_DOWNLOAD_TIMEOUT if QueryOp is not None else _BG_TIMEOUT)
+            cfg, timeout=_BG_TIMEOUT, download_timeout=_DOWNLOAD_TIMEOUT)
         if not manifest:
             return None
         if manifest_needs_newer_addon(manifest, SUPPORTED_MANIFEST_SCHEMA):
@@ -298,8 +284,9 @@ def _auto_sync_check():
         if not result["todo"]:
             return   # nothing to sync this poll
         # Re-checked immediately before applying, not only at the top of the poll: this
-        # callback arrives from a QueryOp and can land after a manual flow has started,
-        # including from inside one of its modal dialogs' event loops.
+        # callback arrives from a worker thread's delivery and can land after a
+        # manual flow has started, including from inside one of its modal dialogs'
+        # event loops.
         if manual_sync_in_progress():
             return
 

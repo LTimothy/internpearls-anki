@@ -1813,3 +1813,49 @@ def test_production_duplicate_index_suspends_while_building_right_side():
         "duplicate-index:postings:batch:1",
         "duplicate-index:postings:batch:2",
     ]
+
+
+def test_initial_checkpoint_credits_are_granted_before_any_advance():
+    """The constructor argument is the budget every task starts with. It was
+    parsed and discarded, so a caller asking for one free checkpoint silently got
+    none and suspended on the first one."""
+    platform = ReplayPlatform(checkpoint_credits=1)
+    delivered = []
+
+    def compute(context):
+        context.checkpoint("background-fetch:start")
+        context.checkpoint("background-fetch:complete")
+        return "done"
+
+    handle = platform.start_work(
+        _request(), compute, delivered.append, pytest.fail)
+    handle.start()
+
+    # One credit spends on the first checkpoint and suspends at the second.
+    assert handle.is_alive()
+    assert delivered == []
+
+    platform.advance(0, 1)
+
+    assert delivered == ["done"]
+    assert not handle.is_alive()
+
+
+def test_zero_initial_credits_still_suspend_at_the_first_checkpoint():
+    platform = ReplayPlatform()
+    delivered = []
+
+    handle = platform.start_work(
+        _request(), lambda context: context.checkpoint("background-fetch:start"),
+        delivered.append, pytest.fail)
+    handle.start()
+
+    assert handle.is_alive()
+    assert delivered == []
+
+
+def test_negative_initial_credits_are_rejected():
+    with pytest.raises(ReplayError) as error:
+        ReplayPlatform(checkpoint_credits=-1)
+
+    assert error.value.code == "invalid-action"
