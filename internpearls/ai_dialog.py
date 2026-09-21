@@ -6,6 +6,7 @@ editing, notes, and revisions are all in-memory session state, and closing the
 dialog mid-review discards it after a confirm (see _GenerateDialog.reject).
 """
 import html
+import inspect
 import os
 import re
 import shutil
@@ -1596,6 +1597,7 @@ class _GenerateDialog(QDialog):
             results, failures = [], []
             images_undecoded = False
             for i, path in enumerate(paths, 1):
+                context.checkpoint(f"attachment:file:{i}:start")
                 if context.cancelled():
                     break
                 context.emit({"index": i, "total": len(paths),
@@ -1603,7 +1605,10 @@ class _GenerateDialog(QDialog):
                 try:
                     output_dir = os.path.join(extract_dir, str(i))
                     os.makedirs(output_dir, exist_ok=False)
-                    meta = extract(path, output_dir, cancel=context.cancelled)
+                    kwargs = {"cancel": context.cancelled}
+                    if "checkpoint" in inspect.signature(extract).parameters:
+                        kwargs["checkpoint"] = context.checkpoint
+                    meta = extract(path, output_dir, **kwargs)
                 except ValueError as e:
                     failures.append((False, str(e)))
                     continue
@@ -1615,6 +1620,7 @@ class _GenerateDialog(QDialog):
                 results.append((path, meta, output_dir))
                 images_undecoded = (
                     images_undecoded or bool(meta.get("images_undecoded")))
+                context.checkpoint(f"attachment:file:{i}:complete")
             return results, failures, images_undecoded
 
         def on_event(event):
@@ -1908,9 +1914,16 @@ class _GenerateDialog(QDialog):
         gen_cfg = _cfg()
 
         def work(context):
-            return ai_cli.run_generation(
+            event_ordinal = [0]
+
+            def emit(event):
+                event_ordinal[0] += 1
+                context.checkpoint(f"assistant:event:{event_ordinal[0]}")
+                context.emit(event)
+
+            result = ai_cli.run_generation(
                 s.backend, s.cli_path, prompt, s.mode, s.scratch,
-                image_paths=image_paths, on_event=context.emit,
+                image_paths=image_paths, on_event=emit,
                 cancel=context.cancelled,
                 model=gen_cfg["ai_model"][s.backend],
                 effort=gen_cfg["ai_effort"][s.backend],
@@ -1919,6 +1932,8 @@ class _GenerateDialog(QDialog):
                 # backend sees, so it needs the same echo protection.
                 redact_texts=(s.source, extra_text, s.instructions,
                               user_skill_text))
+            context.checkpoint("assistant:result")
+            return result
 
         def on_event(event):
             self._events.append(event)
@@ -2290,7 +2305,9 @@ class _GenerateDialog(QDialog):
             results = {}
             for i, card in enumerate(cards):
                 per = []
-                for im in card["images"]:
+                for image_index, im in enumerate(card["images"]):
+                    context.checkpoint(
+                        f"image:{i + 1}:{image_index + 1}:resolve")
                     if context.cancelled():
                         per.append({"state": "error", "kind": "cancelled",
                                    "error": "cancelled"})
@@ -2310,6 +2327,8 @@ class _GenerateDialog(QDialog):
                             res["path"] = thumb
                         except OSError:
                             pass
+                    context.checkpoint(
+                        f"image:{i + 1}:{image_index + 1}:publish")
                     per.append(res)
                 results[i] = per
             return results

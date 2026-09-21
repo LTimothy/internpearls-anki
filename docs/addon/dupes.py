@@ -110,7 +110,7 @@ def build_index(rows):
 
 
 def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
-                    ignored=()):
+                    ignored=(), checkpoint=None):
     """For each row on the left, the best `top` rows on the right at cosine
     similarity >= `threshold`, as `[(score, left_row, right_row, shares)]` sorted by
     score descending (ties broken by left row order, then right row order). `shares`
@@ -135,6 +135,8 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
     index = build_index(right_rows)
     out = []
     for li, left in enumerate(left_rows):
+        if checkpoint is not None and li % 25 == 0:
+            checkpoint(f"duplicate-index:batch:{li // 25 + 1}")
         _, text, _, _ = left
         tokens = tokenize(normalise(text))
         tf = {}

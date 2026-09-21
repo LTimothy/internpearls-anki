@@ -623,8 +623,14 @@ class StreamingList(QScrollArea):
             request = new_work_request(
                 self, "list-prefetch", "streaming-list.prefetch",
                 inputs={"count": len(items), "start": self.built()})
+
+            def prefetch(context):
+                context.checkpoint("list-prefetch:start")
+                context.checkpoint("list-prefetch:complete")
+                return items
+
             handle = platform().start_work(
-                request, lambda _context: items, build, lambda _error: None)
+                request, prefetch, build, lambda _error: None)
             handle.start()
         self._idle.start()
 

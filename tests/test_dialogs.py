@@ -15,6 +15,28 @@ from demo_contract_cases import contract_action_table
 from mock_anki import make_apkg
 
 
+def test_dialog_frontier_settles_current_replay_work(anki):
+    from aqt.qt import QDialog, QLabel, QVBoxLayout
+    from demo.replay import ReplayPlatform
+    from internpearls.platform import WorkRequest, use_platform
+
+    dialog = QDialog()
+    label = QLabel("waiting")
+    QVBoxLayout(dialog).addWidget(label)
+    replay = ReplayPlatform(epoch=3)
+    request = WorkRequest("fixture", 1, 1, 1, {"action": "test"}, epoch=3)
+    with use_platform(replay):
+        handle = replay.start_work(
+            request, lambda _context: "ready", label.setText, pytest.fail)
+        handle.start()
+        with pytest.raises(mock_anki.NeedInteraction) as needed:
+            dialog.exec()
+
+    labels = [node for node in needed.value.payload["contract_tree"]["nodes"]
+              if node["kind"] == "label"]
+    assert [node["text"] for node in labels] == ["ready"]
+
+
 def drive(anki, fn, respond):
     """Run `fn` to completion via the same snapshot-and-replay Runner the demo
     driver uses, answering each surfaced dialog through `respond`."""

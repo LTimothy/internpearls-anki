@@ -61,9 +61,15 @@ def _run_in_background(work, on_done):
         except Exception:
             print(traceback.format_exc())
 
+    def platform_work(context):
+        context.checkpoint("background-fetch:start")
+        result = work()
+        context.checkpoint("background-fetch:complete")
+        return result
+
     request = new_work_request(mw, "background-fetch", "background.fetch")
     handle = platform().start_work(
-        request, lambda _context: work(),
+        request, platform_work,
         lambda result: _safe_on_done(result, None),
         lambda error: _safe_on_done(None, error))
     handle.start()

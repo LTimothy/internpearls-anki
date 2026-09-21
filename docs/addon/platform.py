@@ -139,7 +139,7 @@ class Platform(Protocol):
         raise NotImplementedError
 
 
-class _WorkCancelled(Exception):
+class _WorkCancelled(BaseException):
     pass
 
 
