@@ -5,7 +5,8 @@ import threading
 import time
 from datetime import timedelta
 
-from internpearls.platform import NativePlatform, WorkRequest, platform, use_platform
+from internpearls.platform import (NativePlatform, WorkRequest, platform,
+                                   use_platform, wait_for_mock_work)
 
 
 def _request(kind="test.work"):
@@ -81,6 +82,17 @@ def test_work_handle_exposes_only_the_platform_work_contract(anki):
         lambda _error: None)
 
     assert not hasattr(handle, "native_timer")
+
+
+def test_wait_for_mock_work_delivers_without_exposing_a_native_timer(anki):
+    delivered = []
+    handle = NativePlatform().start_work(
+        _request(), lambda _context: "done", delivered.append, delivered.append)
+
+    handle.start()
+    wait_for_mock_work(handle)
+
+    assert delivered == ["done"]
 
 
 def test_work_delivers_errors_on_timer(anki):
