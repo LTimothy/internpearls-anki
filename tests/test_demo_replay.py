@@ -355,6 +355,109 @@ def test_ordered_batch_edits_source_before_generate_activation(
     assert [item["kind"] for item in working["pending"]] == ["assistant"]
 
 
+def test_disabled_generate_validation_bypasses_production_safe_wrapper(
+        anki, monkeypatch):
+    from internpearls import ai_cli, ai_dialog
+
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda *args, **kwargs: {"text": "[]", "tokens": 0, "duration_s": 0})
+
+    runner = mock_anki.Runner(anki)
+    first = runner.start_protocol(ai_dialog.generate_cards, epoch=42)
+    nodes = first["payload"]["contract_tree"]["nodes"]
+    source_id = next(
+        node["id"] for node in nodes
+        if node["kind"] == "textarea"
+        and node["placeholder"].startswith("Paste lecture"))
+    generate = next(
+        node for node in nodes
+        if node["kind"] == "button" and node["text"] == "Generate"
+        and node["effective_visible"])
+    assert not generate["effective_enabled"]
+
+    rejected = runner.feed_protocol(_protocol_request(first, 1, [
+        {"type": "activate", "id": generate["id"]},
+    ]))
+
+    assert rejected["status"] == "contract-error"
+    assert rejected["payload"] == {"code": "disabled-target"}
+    assert anki.gui.warnings == []
+    assert runner.journal == ()
+
+    working = runner.feed_protocol(_protocol_request(rejected, 1, [
+        {"type": "edit-text", "id": source_id, "value": "study source",
+         "selection_start": 12, "selection_end": 12, "composing": False},
+        {"type": "activate", "id": generate["id"]},
+    ]))
+
+    assert working["status"] == "need"
+    assert [item["kind"] for item in working["pending"]] == ["assistant"]
+
+
+def test_nested_file_frontier_rejects_unconsumed_action_suffix(
+        anki, monkeypatch):
+    from internpearls import ai_cli, ai_dialog
+
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(
+        ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    monkeypatch.setattr(
+        ai_cli, "run_generation",
+        lambda *args, **kwargs: {"text": "[]", "tokens": 0, "duration_s": 0})
+
+    runner = mock_anki.Runner(anki)
+    first = runner.start_protocol(ai_dialog.generate_cards, epoch=43)
+    nodes = first["payload"]["contract_tree"]["nodes"]
+    attach_id = next(
+        node["id"] for node in nodes
+        if node["kind"] == "button" and node["text"] == "Attach images or PDFs")
+    generate_id = next(
+        node["id"] for node in nodes
+        if node["kind"] == "button" and node["text"] == "Generate"
+        and node["effective_visible"])
+    source_id = next(
+        node["id"] for node in nodes
+        if node["kind"] == "textarea"
+        and node["placeholder"].startswith("Paste lecture"))
+
+    rejected = runner.feed_protocol(_protocol_request(first, 1, [
+        {"type": "activate", "id": attach_id},
+        {"type": "activate", "id": generate_id},
+    ]))
+
+    assert rejected["status"] == "contract-error"
+    assert rejected["payload"] == {"code": "invalid-action"}
+    assert runner.journal == ()
+
+    picker = runner.feed_protocol(_protocol_request(rejected, 1, [
+        {"type": "activate", "id": attach_id},
+    ]))
+    cancelled = runner.feed_protocol(_protocol_request(picker, 2, [
+        {"type": "select-files", "id": picker["payload"]["id"],
+         "accept": picker["payload"]["accept"], "files": []},
+    ]))
+
+    assert cancelled["status"] == "need"
+    assert all(action.get("id") != generate_id for action in runner.journal)
+
+    working = runner.feed_protocol(_protocol_request(cancelled, 3, [
+        {"type": "edit-text", "id": source_id, "value": "study source",
+         "selection_start": 12, "selection_end": 12, "composing": False},
+        {"type": "activate", "id": generate_id},
+    ]))
+
+    assert working["status"] == "need"
+    assert [item["kind"] for item in working["pending"]] == ["assistant"]
+
+
 def test_production_generate_replay_keeps_work_and_cancel_leaves_progress(
         anki, monkeypatch):
     from internpearls import ai_cli, ai_dialog
@@ -566,6 +669,37 @@ def test_typed_single_file_selection_reaches_production_connection_worker(
     assert started["pending"][0]["kind"] == "connection"
     assert done["status"] == "done"
     assert delivered == ["Working: assistant"]
+
+
+@pytest.mark.parametrize("cancel_kind", ["empty-selection", "close"])
+def test_typed_single_file_picker_cancel_resolves_to_none(
+        anki, cancel_kind):
+    from aqt.qt import QFileDialog
+
+    runner = mock_anki.Runner(anki)
+
+    def flow():
+        path, _ = QFileDialog.getOpenFileName(
+            None, "Locate assistant", "", "Programs (*.bin)")
+        anki.mw._config["selected_file"] = path or None
+        anki.gui.next_interaction({"kind": "after-picker"})
+
+    picker = runner.start_protocol(flow, epoch=44)
+    if cancel_kind == "empty-selection":
+        action = {
+            "type": "select-files",
+            "id": picker["payload"]["id"],
+            "accept": picker["payload"]["accept"],
+            "files": [],
+        }
+    else:
+        action = {"type": "close", "id": picker["payload"]["id"]}
+
+    cancelled = runner.feed_protocol(_protocol_request(picker, 1, [action]))
+
+    assert cancelled["status"] == "need"
+    assert cancelled["payload"] == {"kind": "after-picker"}
+    assert anki.mw._config["selected_file"] is None
 
 
 def test_protocol_rejects_more_than_one_thousand_advances(anki):
@@ -888,6 +1022,86 @@ response = harness.RUNNER.feed_protocol({
                  "checkpoint_credits": 1}],
 })
 assert response["status"] == "done"
+"""],
+        cwd=root, env=environment, capture_output=True, text=True)
+
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+
+
+def test_real_package_cache_reconstructs_before_later_work(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    package = source / "fixture.apkg"
+    package.write_bytes(b"fixture package")
+    (source / "manifest.json").write_text(json.dumps({
+        "decks": [{"name": "Fixture", "version": "v1",
+                   "apkg": package.name}],
+    }), encoding="utf8")
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    environment = dict(os.environ)
+    environment["DEMO_SOURCE"] = str(source)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [os.path.join(root, "docs"), os.path.join(root, "tests"), root,
+         environment.get("PYTHONPATH", "")])
+    probe = subprocess.run(
+        [sys.executable, "-c", """
+import demo_harness as harness
+from internpearls import sync
+from internpearls.platform import new_work_request, platform
+
+harness._install_demo_net()
+cfg = sync._cfg()
+cfg["gh_repo"] = harness.config.EXAMPLE_REPO
+cfg["decks_dir"] = ""
+delivered = []
+
+def later_work(context):
+    context.checkpoint("background-fetch:start")
+    context.checkpoint("background-fetch:complete")
+    return "later"
+
+def flow():
+    manifest, fetch, _ = sync._fetch_manifest(cfg)
+    path = sync._cached_fetch(fetch, manifest["decks"][0])
+    assert open(path, "rb").read() == b"fixture package"
+    harness.MOCK.gui.next_interaction({"kind": "after-package"})
+    request = new_work_request(
+        harness.MOCK.mw, "background-fetch", "background.fetch")
+    handle = platform().start_work(
+        request, later_work, delivered.append, delivered.append)
+    handle.start()
+
+response = harness.RUNNER.start_protocol(flow, epoch=45)
+expected = [
+    "fixture-fetch:complete", "fixture-fetch:start", "fixture-fetch:complete",
+]
+for sequence, stage in enumerate(expected, 1):
+    response = harness.RUNNER.feed_protocol({
+        "protocol": 1, "epoch": 45, "sequence": sequence,
+        "render_revision": response["render_revision"],
+        "actions": [{"type": "advance", "elapsed_ms": 0,
+                     "checkpoint_credits": 1}],
+    })
+    assert response["pending"][0]["stage"] == stage
+response = harness.RUNNER.feed_protocol({
+    "protocol": 1, "epoch": 45, "sequence": 4,
+    "render_revision": response["render_revision"],
+    "actions": [{"type": "advance", "elapsed_ms": 0,
+                 "checkpoint_credits": 1}],
+})
+assert response["payload"] == {"kind": "after-package"}
+
+response = harness.RUNNER.feed_protocol({
+    "protocol": 1, "epoch": 45, "sequence": 5,
+    "render_revision": response["render_revision"],
+    "actions": [],
+})
+assert response["pending"] == [{
+    "task_id": [45, 1, 3, 1],
+    "kind": "background-fetch",
+    "stage": "background-fetch:start",
+}]
+assert delivered == []
 """],
         cwd=root, env=environment, capture_output=True, text=True)
 
