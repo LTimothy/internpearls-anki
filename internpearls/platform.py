@@ -19,6 +19,27 @@ from typing import Any, Callable, ContextManager, Mapping, Optional, Protocol
 from aqt.qt import QTimer
 
 
+_WORK_CONTEXT = ContextVar("internpearls_work_context", default=None)
+
+
+@contextmanager
+def use_work_context(context):
+    token = _WORK_CONTEXT.set(context)
+    try:
+        yield
+    finally:
+        _WORK_CONTEXT.reset(token)
+
+
+def work_checkpoint(stage):
+    """Checkpoint the active platform task and report whether one exists."""
+    context = _WORK_CONTEXT.get()
+    if context is None:
+        return False
+    context.checkpoint(stage)
+    return True
+
+
 def _freeze_metadata(value):
     if isinstance(value, Mapping):
         return MappingProxyType({key: _freeze_metadata(item)
@@ -259,7 +280,8 @@ class _NativeWorkHandle:
 
     def _run(self):
         try:
-            self._result = self._compute(self._context)
+            with use_work_context(self._context):
+                self._result = self._compute(self._context)
         except _WorkCancelled:
             self._cancelled.set()
         except Exception as error:

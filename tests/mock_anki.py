@@ -894,6 +894,7 @@ class Gui:
         dialog = QDialog()
         layout = QVBoxLayout(dialog)
         answer = [None]
+        dialog.rejected.connect(lambda: answer.__setitem__(0, False))
         labels = buttons or ("Yes", "No")
         for label, value in zip(labels, (True, False)):
             button = QPushButton(label)
@@ -901,23 +902,27 @@ class Gui:
                                    answer.__setitem__(0, value))
             layout.addWidget(button)
         payload["id"] = dialog.wid
-        payload["contract_tree"] = serialize_widget(dialog)
         while answer[0] is None:
+            payload["contract_tree"] = serialize_widget(dialog)
             response = self.next_interaction(payload)
             if "actions" not in response:
                 return bool(response.get("answer"))
-            apply_actions(response)
+            apply_actions(response, allowed_ids=_contract_ids(payload))
         return answer[0]
 
     def info(self, text, **kw):
         self.infos.append(text)
         if self.interactive:
-            self.next_interaction({"kind": "info", "text": text})
+            response = self.next_interaction({"kind": "info", "text": text})
+            if "actions" in response:
+                apply_actions(response, allowed_ids=set())
 
     def warn(self, text, **kw):
         self.warnings.append(text)
         if self.interactive:
-            self.next_interaction({"kind": "warn", "text": text})
+            response = self.next_interaction({"kind": "warn", "text": text})
+            if "actions" in response:
+                apply_actions(response, allowed_ids=set())
 
     def prompt(self, text, **kw):
         if not self.interactive:
@@ -933,13 +938,13 @@ class Gui:
                                    accepted.__setitem__(0, value))
             layout.addWidget(button)
         payload = {"kind": "prompt", "id": dialog.wid, "text": text,
-                   "default": kw.get("default", ""),
-                   "contract_tree": serialize_widget(dialog)}
+                   "default": kw.get("default", "")}
         while accepted[0] is None:
+            payload["contract_tree"] = serialize_widget(dialog)
             response = self.next_interaction(payload)
             if "actions" not in response:
                 return (response.get("text", ""), bool(response.get("ok")))
-            apply_actions(response)
+            apply_actions(response, allowed_ids=_contract_ids(payload))
         return (field.text(), accepted[0])
 
     def pick_file(self, payload):
@@ -947,8 +952,29 @@ class Gui:
             return self.file_picks.pop(0)
         if not self.interactive:
             return None
-        resp = self.next_interaction(payload)
-        return resp.get("path")
+        picker = QWidget()
+        selected = [None]
+        accept = list(payload.get("accept", ()))
+
+        def validate(action):
+            names = [item["name"] for item in action["files"]]
+            if (action["accept"] != accept or len(names) != 1
+                    or names[0] not in self.uploads):
+                raise ProtocolError("invalid action field: files")
+
+        def choose(action):
+            selected[0] = self.uploads[action["files"][0]["name"]]
+
+        picker._validate_file_selection = validate
+        picker._select_files = choose
+        frontier = dict(payload, id=picker.wid, accept=accept, multiple=False,
+                        contract_tree=serialize_widget(picker))
+        while selected[0] is None:
+            response = self.next_interaction(frontier)
+            if "actions" not in response:
+                return response.get("path")
+            apply_actions(response, allowed_ids=_contract_ids(frontier))
+        return selected[0]
 
     def pick_files(self, payload):
         if self.file_picks:
@@ -979,7 +1005,7 @@ class Gui:
             response = self.next_interaction(frontier)
             if "actions" not in response:
                 return list(response.get("paths", ()))
-            apply_actions(response)
+            apply_actions(response, allowed_ids=_contract_ids(frontier))
         return selected[0]
 
 
@@ -2237,6 +2263,12 @@ def serialize_widget(root):
     return {"root_id": root.wid, "nodes": nodes}
 
 
+def _contract_ids(payload):
+    tree = payload.get("contract_tree") if isinstance(payload, dict) else None
+    return ({node["id"] for node in tree.get("nodes", [])}
+            if isinstance(tree, dict) else set())
+
+
 def _validate_action(action):
     if not isinstance(action, dict):
         raise ProtocolError("invalid action")
@@ -2339,7 +2371,7 @@ def _validated_action_target(action, *, legacy_events=False, allowed_ids=None):
     return widget
 
 
-def apply_actions(envelope, *, _legacy_events=False):
+def apply_actions(envelope, *, _legacy_events=False, allowed_ids=None):
     """Validate and apply normalized user actions in request order.
 
     The private legacy flag is only for the old fixture event adapter. New
@@ -2348,7 +2380,8 @@ def apply_actions(envelope, *, _legacy_events=False):
     if not isinstance(envelope, dict) or not isinstance(envelope.get("actions"), list):
         raise ProtocolError("invalid action envelope")
     for action in envelope["actions"]:
-        widget = _validated_action_target(action, legacy_events=_legacy_events)
+        widget = _validated_action_target(
+            action, legacy_events=_legacy_events, allowed_ids=allowed_ids)
         action_type = action["type"]
         if action_type == "advance":
             from internpearls.platform import platform
@@ -2452,12 +2485,13 @@ class QDialog(QWidget):
 
     def exec(self):
         while self._result is None:
-            resp = _gui.next_interaction({
+            payload = {
                 "kind": "dialog", "id": self.wid, "title": self._title,
                 "tree": self.node(), "contract_tree": serialize_widget(self),
-            })
+            }
+            resp = _gui.next_interaction(payload)
             if "actions" in resp:
-                apply_actions(resp)
+                apply_actions(resp, allowed_ids=_contract_ids(payload))
             else:
                 _apply_events(resp)
         return self._result
@@ -2849,29 +2883,32 @@ class Runner:
                 self._render_revision)
         try:
             for action in actions:
-                _validated_action_target(action, allowed_ids=self._frontier_ids)
+                if (action["type"] != "advance"
+                        and action.get("id") not in self._frontier_ids):
+                    raise ProtocolError(
+                        f"unknown widget id: {action.get('id')}")
         except ProtocolError as error:
             return self._protocol_error(
                 self._protocol_error_code(error), self._epoch,
                 envelope["sequence"], self._render_revision)
-        self._journal.extend(actions)
         self._batches.append(actions)
         previous_sequence = self._sequence
-        previous_frontier_ids = set(self._frontier_ids)
         self._sequence = envelope["sequence"]
         response = self._go_protocol(self._sequence)
         if response["status"] == "contract-error":
-            if actions:
-                del self._journal[-len(actions):]
             self._batches.pop()
             self._sequence = previous_sequence
-            self._frontier_ids = previous_frontier_ids
             self._responses.pop(envelope["sequence"], None)
             self._protocol_active = True
-            self._restore()
+            rebuilt = self._go_protocol(previous_sequence, cache_response=False)
+            response["render_revision"] = rebuilt["render_revision"]
+            response["pending"] = rebuilt["pending"]
+            self._protocol_active = True
+        elif response["status"] != "done":
+            self._journal.extend(actions)
         return response
 
-    def _go_protocol(self, sequence):
+    def _go_protocol(self, sequence, *, cache_response=True):
         from demo.replay import ReplayError, ReplayPlatform
         from internpearls.platform import use_platform
 
@@ -2886,6 +2923,11 @@ class Runner:
         with use_platform(replay):
             try:
                 self._fn()
+                while replay.pending() and (
+                        self.mock.gui.cursor < len(self.mock.gui.interactions)):
+                    batch = self.mock.gui.interactions[self.mock.gui.cursor]
+                    self.mock.gui.cursor += 1
+                    apply_actions(batch, allowed_ids=set())
             except NeedInteraction as error:
                 status, payload = "need", error.payload
             except ReplayError as error:
@@ -2905,10 +2947,9 @@ class Runner:
             "payload": payload, "pending": pending,
             "safe_status": {"code": safe_code},
         }
-        tree = payload.get("contract_tree") if isinstance(payload, dict) else None
-        self._frontier_ids = ({node["id"] for node in tree.get("nodes", [])}
-                              if isinstance(tree, dict) else set())
-        self._responses[sequence] = copy.deepcopy(response)
+        self._frontier_ids = _contract_ids(payload)
+        if cache_response:
+            self._responses[sequence] = copy.deepcopy(response)
         if status == "done":
             self._snap = self._take()
             self._baseline_clock_ms = replay.now_ms
@@ -3025,11 +3066,12 @@ def install():
 
         @staticmethod
         def getOpenFileName(parent=None, caption="", directory="", filter="", *a, **k):
-            """The AI Backends window's Browse button. Same prompt-based stand-in
-            as getExistingDirectory above: a test that wants a chosen path
-            monkeypatches this directly rather than scripting a real file picker."""
-            text, ok = gui.prompt(caption, default=directory)
-            return (text, filter) if ok else ("", "")
+            accept = [f".{extension.lower()}" for extension in
+                      re.findall(r"\*\.([A-Za-z0-9]+)", filter)]
+            path = gui.pick_file({"kind": "file", "title": caption,
+                                  "dir": directory, "accept": accept,
+                                  "multiple": False})
+            return (path, filter) if path else ("", "")
 
         @staticmethod
         def getOpenFileNames(parent=None, caption="", directory="", filter="", *a, **k):
