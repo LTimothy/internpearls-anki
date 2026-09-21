@@ -40,6 +40,7 @@ class _RecordingPlatform:
     def __init__(self):
         self.requests = []
         self._allocator = NativePlatform()
+        self.epoch = self._allocator.epoch
 
     def allocate_work_identity(self, owner, kind, action, attempt):
         return self._allocator.allocate_work_identity(owner, kind, action, attempt)

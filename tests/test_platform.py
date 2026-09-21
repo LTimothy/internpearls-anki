@@ -5,6 +5,7 @@ import threading
 import time
 from datetime import timedelta
 
+import internpearls.platform as platform_module
 from internpearls.platform import (NativePlatform, WorkRequest, new_work_request,
                                    platform, platform_owner_id, use_platform,
                                    wait_for_mock_work)
@@ -82,6 +83,94 @@ def test_owner_lookup_does_not_consume_an_operation_ordinal(anki):
         request = new_work_request(owner, "assistant", "ai.generate")
 
     assert (request.owner_id, request.operation_ordinal) == (1, 1)
+
+
+def test_task_id_encodes_epoch_owner_operation_and_attempt_without_kind(anki):
+    class Owner:
+        pass
+
+    native = NativePlatform()
+    owner = Owner()
+    with use_platform(native):
+        first = new_work_request(owner, "assistant", "ai.generate")
+        retry = new_work_request(owner, "assistant", "ai.generate", attempt=2)
+    direct = WorkRequest("test.work", 17, 3, 1, {"value": 4})
+
+    first_handle = native.start_work(
+        first, lambda _context: None, lambda _result: None, lambda _error: None)
+    retry_handle = native.start_work(
+        retry, lambda _context: None, lambda _result: None, lambda _error: None)
+    direct_handle = native.start_work(
+        direct, lambda _context: None, lambda _result: None, lambda _error: None)
+
+    assert first_handle.task_id == "1:1:1:1"
+    assert retry_handle.task_id == "1:1:1:2"
+    assert direct_handle.task_id == "0:17:3:1"
+
+
+def test_nondefault_platform_epoch_appears_in_work_request_and_task_id(anki):
+    class Owner:
+        pass
+
+    native = NativePlatform(epoch=41)
+    with use_platform(native):
+        request = new_work_request(Owner(), "assistant", "ai.generate")
+    handle = native.start_work(
+        request, lambda _context: None, lambda _result: None, lambda _error: None)
+
+    assert (request.epoch, request.owner_id, request.operation_ordinal,
+            request.attempt) == (41, 1, 1, 1)
+    assert handle.task_id == "41:1:1:1"
+
+
+def test_fresh_native_platform_resets_default_identity_counters(anki):
+    class Owner:
+        pass
+
+    with use_platform(NativePlatform()):
+        first = new_work_request(Owner(), "assistant", "ai.generate")
+    with use_platform(NativePlatform()):
+        reconstructed = new_work_request(Owner(), "assistant", "ai.generate")
+
+    assert (first.epoch, first.owner_id, first.operation_ordinal) == (1, 1, 1)
+    assert (reconstructed.epoch, reconstructed.owner_id,
+            reconstructed.operation_ordinal) == (1, 1, 1)
+
+
+def test_distinct_live_owners_do_not_collide_on_a_shared_runtime_key(anki, monkeypatch):
+    class Owner:
+        pass
+
+    monkeypatch.setattr(platform_module, "id", lambda _owner: 7, raising=False)
+    native = NativePlatform()
+    first = Owner()
+    second = Owner()
+
+    assert native.owner_id(first) == 1
+    assert native.owner_id(second) == 2
+
+
+def test_released_owner_key_cannot_be_inherited_by_a_replacement(anki, monkeypatch):
+    class Owner:
+        pass
+
+    monkeypatch.setattr(platform_module, "id", lambda _owner: 7, raising=False)
+    native = NativePlatform()
+    released = Owner()
+    assert native.owner_id(released) == 1
+    del released
+
+    replacement = Owner()
+    assert native.owner_id(replacement) == 2
+
+
+def test_nonweakrefable_owners_receive_distinct_stable_ids(anki):
+    native = NativePlatform()
+    first = []
+    second = []
+
+    assert native.owner_id(first) == 1
+    assert native.owner_id(second) == 2
 
 
 def test_work_request_inputs_are_immutable(anki):

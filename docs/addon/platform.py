@@ -5,6 +5,7 @@ import re
 import tempfile
 import threading
 import time
+import weakref
 from collections import deque
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -37,6 +38,7 @@ class WorkRequest:
     operation_ordinal: int
     attempt: int
     inputs: Mapping[str, Any]
+    epoch: int = 0
 
     def __post_init__(self):
         object.__setattr__(self, "inputs", _freeze_metadata(self.inputs))
@@ -53,7 +55,8 @@ def new_work_request(owner, kind, action, *, attempt=1, inputs=None):
     metadata = {"action": action}
     if inputs:
         metadata.update(inputs)
-    return WorkRequest(kind, owner_id, ordinal, attempt, metadata)
+    return WorkRequest(kind, owner_id, ordinal, attempt, metadata,
+                       epoch=platform().epoch)
 
 
 def wait_for_mock_work(handle):
@@ -108,6 +111,8 @@ class TimerHandle(Protocol):
 
 
 class Platform(Protocol):
+    epoch: int
+
     def owner_id(self, owner) -> int:
         raise NotImplementedError
 
@@ -216,7 +221,7 @@ class _NativeWorkHandle:
     _POLL_MS = 20
 
     def __init__(self, native, request, compute, on_result, on_error, on_event):
-        self.task_id = (f"{request.kind}:{request.owner_id}:"
+        self.task_id = (f"{request.epoch}:{request.owner_id}:"
                         f"{request.operation_ordinal}:{request.attempt}")
         self.request = request
         self._cancelled = threading.Event()
@@ -294,29 +299,78 @@ class _NativeWorkHandle:
 
 
 class NativePlatform:
-    def __init__(self):
-        self._owner_ids = {}
+    def __init__(self, epoch=1):
+        self.epoch = epoch
+        self._weak_owner_ids = {}
+        self._strong_owner_ids = []
         self._owner_ordinals = {}
         self._operations = {}
         self._next_owner_id = count(1)
 
+    def _clear_owner_state(self, owner_id):
+        self._owner_ordinals.pop(owner_id, None)
+        for key in [key for key in self._operations if key[0] == owner_id]:
+            del self._operations[key]
+
+    def _release_weak_owner(self, owner_key, owner_ref, owner_id):
+        entries = self._weak_owner_ids.get(owner_key, ())
+        kept = [entry for entry in entries if entry[0] is not owner_ref]
+        if kept:
+            self._weak_owner_ids[owner_key] = kept
+        else:
+            self._weak_owner_ids.pop(owner_key, None)
+        self._clear_owner_state(owner_id)
+
+    def _next_id(self):
+        owner_id = next(self._next_owner_id)
+        self._owner_ordinals[owner_id] = 0
+        return owner_id
+
     def owner_id(self, owner):
         owner_key = id(owner)
-        owner_id = self._owner_ids.get(owner_key)
-        if owner_id is None:
-            owner_id = next(self._next_owner_id)
-            self._owner_ids[owner_key] = owner_id
-            self._owner_ordinals[owner_key] = 0
+        entries = self._weak_owner_ids.get(owner_key, ())
+        live_entries = []
+        for owner_ref, owner_id in entries:
+            target = owner_ref()
+            if target is owner:
+                return owner_id
+            if target is not None:
+                live_entries.append((owner_ref, owner_id))
+            else:
+                self._clear_owner_state(owner_id)
+        if live_entries:
+            self._weak_owner_ids[owner_key] = live_entries
+        else:
+            self._weak_owner_ids.pop(owner_key, None)
+
+        for stored_owner, owner_id in self._strong_owner_ids:
+            if stored_owner is owner:
+                return owner_id
+
+        owner_id = self._next_id()
+        try:
+            native_ref = weakref.ref(self)
+
+            def release(owner_ref):
+                native = native_ref()
+                if native is not None:
+                    native._release_weak_owner(owner_key, owner_ref, owner_id)
+
+            owner_ref = weakref.ref(owner, release)
+        except TypeError:
+            self._strong_owner_ids.append((owner, owner_id))
+        else:
+            self._weak_owner_ids.setdefault(owner_key, []).append(
+                (owner_ref, owner_id))
         return owner_id
 
     def allocate_work_identity(self, owner, kind, action, attempt):
-        owner_key = id(owner)
         owner_id = self.owner_id(owner)
-        operation_key = (owner_key, kind, action)
+        operation_key = (owner_id, kind, action)
         if attempt > 1 and operation_key in self._operations:
             return owner_id, self._operations[operation_key]
-        ordinal = self._owner_ordinals[owner_key] + 1
-        self._owner_ordinals[owner_key] = ordinal
+        ordinal = self._owner_ordinals[owner_id] + 1
+        self._owner_ordinals[owner_id] = ordinal
         self._operations[operation_key] = ordinal
         return owner_id, ordinal
 
