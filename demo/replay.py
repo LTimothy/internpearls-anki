@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sys
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
@@ -99,6 +100,7 @@ class _ReplayWorkHandle:
         self._on_event = on_event
         self._scratch = scratch
         self._overlay = None
+        self._package_cache_overlay = None
         self._started = False
         self._alive = False
         self._cancelled = False
@@ -123,6 +125,7 @@ class _ReplayWorkHandle:
         return self._overlay
 
     def _discard_overlay(self):
+        self._package_cache_overlay = None
         if self._overlay is not None:
             shutil.rmtree(self._overlay, ignore_errors=True)
             self._overlay = None
@@ -178,6 +181,18 @@ class _ReplayWorkHandle:
         self._publish_overlay()
         if overlay is not None:
             result = self._published_value(result, overlay)
+        if self._package_cache_overlay is not None:
+            before, after = self._package_cache_overlay
+            # Merge only this task's delta with entries already delivered by peers.
+            published = self._platform._package_cache()
+            for key in before.keys() - after.keys():
+                published.pop(key, None)
+            for key, value in after.items():
+                if key not in before or value != before[key]:
+                    published[key] = (self._published_value(value, overlay)
+                                      if overlay is not None else value)
+            self._platform._restore_package_cache(published)
+            self._package_cache_overlay = None
         self._on_result(result)
 
     def _run(self):
@@ -224,6 +239,10 @@ class _ReplayWorkHandle:
             return
         self._alive = False
         self._stage = "complete"
+        # Completed compute still owns a private cache until result delivery.
+        self._package_cache_overlay = (
+            external[2], self._platform._package_cache())
+        self._platform._restore_package_cache(external[2])
         self._platform._queue_delivery(self, self._complete, result)
 
     def start(self):
@@ -418,6 +437,17 @@ class ReplayPlatform:
             pass
         return path
 
+    @staticmethod
+    def _package_cache():
+        module = sys.modules.get("internpearls.sync")
+        return dict(getattr(module, "_apkg_cache", {}))
+
+    @staticmethod
+    def _restore_package_cache(snapshot):
+        module = sys.modules.get("internpearls.sync")
+        if module is not None:
+            module._apkg_cache = dict(snapshot)
+
     def _take_external_overlay(self):
         scratch = {}
         for root, _, files in os.walk(self._scratch_root):
@@ -426,10 +456,11 @@ class ReplayPlatform:
                 with open(path, "rb") as source:
                     scratch[os.path.relpath(path, self._scratch_root)] = source.read()
         external = self._take_overlay() if self._take_overlay is not None else None
-        return external, scratch
+        return external, scratch, self._package_cache()
 
     def _restore_external_overlay(self, snapshot):
-        external, scratch = snapshot
+        external, scratch, package_cache = snapshot
+        self._restore_package_cache(package_cache)
         for name in os.listdir(self._scratch_root):
             path = os.path.join(self._scratch_root, name)
             if os.path.isdir(path):

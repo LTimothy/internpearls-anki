@@ -1108,6 +1108,152 @@ assert delivered == []
     assert probe.returncode == 0, probe.stdout + probe.stderr
 
 
+@pytest.mark.parametrize("outcome", [
+    "success", "cancel-suspended", "cancel-completed", "failure",
+])
+def test_auto_sync_package_cache_is_private_until_delivery(tmp_path, outcome):
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in ("first", "second", "existing", "unrelated"):
+        (source / (name + ".apkg")).write_bytes(name.encode())
+    (source / "manifest.json").write_text(json.dumps({
+        "decks": [
+            {"name": "First", "version": "v1", "apkg": "first.apkg"},
+            {"name": "Second", "version": "v1", "apkg": "second.apkg"},
+        ],
+    }), encoding="utf8")
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    environment = dict(os.environ)
+    environment["DEMO_SOURCE"] = str(source)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [os.path.join(root, "docs"), os.path.join(root, "tests"), root,
+         environment.get("PYTHONPATH", "")])
+    probe = subprocess.run(
+        [sys.executable, "-c", """
+import os
+import sys
+from unittest.mock import patch
+
+import demo_harness as harness
+from demo.replay import ReplayPlatform
+from internpearls import background, sync
+from internpearls.platform import new_work_request, use_platform
+
+outcome = sys.argv[1]
+harness._install_demo_net()
+harness.MOCK.mw._config = {
+    "github_decks_repo": harness.config.EXAMPLE_REPO,
+    "auto_sync_decks": True,
+}
+source_key = ("github", harness.config.EXAMPLE_REPO, sync._cfg()["gh_ref"])
+original = {
+    (source_key, "Existing", "existing.apkg", "v1"):
+        os.path.join(harness.SOURCE, "existing.apkg"),
+}
+sync._apkg_cache.clear()
+sync._apkg_cache.update(original)
+replay = ReplayPlatform(scratch_root=os.path.join(harness.SOURCE, "scratch"))
+delivered, errors, handles, later = [], [], [], []
+run_background = background._run_in_background
+
+def later_work(context):
+    context.checkpoint("background-fetch:start")
+    context.checkpoint("background-fetch:complete")
+    return "later"
+
+def finish(result, error):
+    if error is not None:
+        errors.append(error)
+        return
+    delivered.append((result, dict(sync._apkg_cache)))
+    request = new_work_request(
+        harness.MOCK.mw, "background-fetch", "background.fetch")
+    handle = replay.start_work(request, later_work, later.append, errors.append)
+    handle.start()
+
+def capture(work, on_done):
+    def compute():
+        result = work()
+        if outcome == "failure":
+            raise RuntimeError("fetch failed")
+        return result
+    handles.append(run_background(compute, finish))
+
+with use_platform(replay), patch.object(background, "_run_in_background", capture):
+    background._auto_sync_check()
+    assert len(handles) == 1
+    handle = handles[0]
+    assert replay.pending()[0]["stage"] == "background-fetch:start"
+    expected = [
+        "fixture-fetch:start", "fixture-fetch:complete",
+        "fixture-fetch:start", "fixture-fetch:complete",
+        "fixture-fetch:start", "fixture-fetch:complete",
+        "background-fetch:complete",
+    ]
+    stop = 5 if outcome == "cancel-suspended" else 7
+    for credit, stage in enumerate(expected[:stop], 1):
+        replay.advance(0, 1)
+        assert sync._apkg_cache == original, (credit, sync._apkg_cache)
+        assert delivered == []
+        if outcome == "failure" and credit == 7:
+            assert not handle.is_alive()
+            assert len(errors) == 1 and str(errors[0]) == "fetch failed"
+        else:
+            assert handle.is_alive(), credit
+            assert replay.pending()[0]["stage"] == stage, credit
+            assert errors == []
+
+    if outcome in ("success", "cancel-completed"):
+        # Observe the completed computation before its queued result is delivered.
+        with patch.object(replay, "settle_frontier", return_value=False):
+            replay.advance(0, 1)
+        assert not handle.is_alive()
+        assert delivered == []
+        assert sync._apkg_cache == original
+
+    if outcome.startswith("cancel"):
+        handle.cancel()
+        assert handle.cancellation_acknowledged()
+    if outcome != "success":
+        replay.settle_frontier()
+        replay.advance(0, 1)
+        assert sync._apkg_cache == original
+        assert delivered == []
+        assert replay.pending() == []
+    else:
+        # Another task's published entry must survive this task's publication.
+        unrelated_key = (source_key, "Unrelated", "unrelated.apkg", "v1")
+        sync._apkg_cache[unrelated_key] = os.path.join(
+            harness.SOURCE, "unrelated.apkg")
+        replay.settle_frontier()
+        assert len(delivered) == 1
+        result, published = delivered[0]
+        first_key = (source_key, "First", "first.apkg", "v1")
+        second_key = (source_key, "Second", "second.apkg", "v1")
+        assert published == {
+            **original, unrelated_key: sync._apkg_cache[unrelated_key],
+            first_key: result["downloaded"]["First"],
+            second_key: result["downloaded"]["Second"],
+        }
+        assert open(published[first_key], "rb").read() == b"first"
+        assert open(published[second_key], "rb").read() == b"second"
+        assert replay.pending()[0]["stage"] == "background-fetch:start"
+        assert later == []
+        replay.advance(0, 1)
+        assert replay.pending()[0]["stage"] == "background-fetch:complete"
+        assert later == []
+        replay.advance(0, 1)
+        replay.settle_frontier()
+        assert later == ["later"]
+        assert len(delivered) == 1
+        assert sync._apkg_cache == published
+        assert errors == []
+""", outcome],
+        cwd=root, env=environment, capture_output=True, text=True)
+
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+
+
 def test_timer_delivery_guard_is_fixed_at_one_thousand():
     platform = ReplayPlatform()
     timer = platform.create_timer(1, lambda: None, 0)
