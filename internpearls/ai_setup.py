@@ -2,8 +2,6 @@
 panel for the preferred one: where the three assistants are chosen, ignored,
 pointed at, tested, and given their default model and effort. The wizard only
 shows a one-line summary and an AI Backends link that opens this."""
-import threading
-
 from aqt import mw
 from aqt.qt import (QApplication, QComboBox, QDesktopServices, QDialog,
                     QDialogButtonBox, QFileDialog, QGridLayout, QHBoxLayout,
@@ -13,6 +11,7 @@ from aqt.qt import (QApplication, QComboBox, QDesktopServices, QDialog,
 from . import ai_cli
 from .config import ADDON_PACKAGE, APP_NAME, _cfg
 from .palette import colors
+from .platform import WorkRequest, platform
 from .ui import (_safe, hint_label, link_button, section_label, section_rule,
                  title_label)
 from .widgets import CARET_GAP, align_field_column, chip_cell, field_slot
@@ -523,37 +522,36 @@ def run_connection_test_async(owner, kind, path, on_status, on_done=None,
     and dropped rather than written into a panel about a different assistant.
     `guard` wraps the poll the way a dialog wraps its own callbacks.
     """
-    box = {}
-
-    def worker():
-        try:
-            box["r"] = ai_cli.test_connection(kind, path)
-        except Exception as e:
-            box["e"] = e
-    t = threading.Thread(target=worker, daemon=True)
-    timer = QTimer(owner)
     refs = getattr(owner, "_conn_test_refs", None)
     if refs is None:
         refs = owner._conn_test_refs = []
-    refs.append((t, timer))
 
-    def poll():
-        if t.is_alive():
-            return
-        timer.stop()
+    def deliver(result=None, error=None):
         if on_done:
             on_done()
         if is_live is not None and not is_live():
             return
-        if "e" in box:
-            on_status(f"Test failed: {box['e']}")
+        if error is not None:
+            on_status(f"Test failed: {error}")
         else:
-            r = box["r"]
-            on_status(("Working: " if r["state"] == "working" else "Not working: ")
-                      + r["detail"])
-    timer.timeout.connect((lambda: guard(poll)) if guard else poll)
-    t.start()
-    timer.start(_POLL_MS)
+            on_status(("Working: " if result["state"] == "working" else "Not working: ")
+                      + result["detail"])
+
+    def on_result(result):
+        (guard(lambda: deliver(result=result)) if guard else
+         deliver(result=result))
+
+    def on_error(error):
+        (guard(lambda: deliver(error=error)) if guard else deliver(error=error))
+
+    request = WorkRequest(
+        kind="connection", owner_id=id(owner), operation_ordinal=len(refs) + 1,
+        attempt=1, inputs={"action": "ai.connection"})
+    handle = platform().start_work(
+        request, lambda _context: ai_cli.test_connection(kind, path), on_result,
+        on_error)
+    refs.append((handle, getattr(handle, "native_timer", None)))
+    handle.start()
 
 
 class _AIBackendsDialog(QDialog):

@@ -11,12 +11,11 @@ May import config, logic, palette and ui. Must NOT import sync, dialogs or revie
 that's the boundary that keeps this module out of the same import cycle review.py was
 built to dodge.
 """
-import time
-
-from aqt.qt import (QHBoxLayout, QLabel, QPushButton, QScrollArea, Qt, QTimer,
+from aqt.qt import (QHBoxLayout, QLabel, QPushButton, QScrollArea, Qt,
                      QVBoxLayout, QWidget)
 
 from .palette import colors
+from .platform import platform
 from .ui import section_label
 
 # The chip labels. Their colours come from the palette, so only the wording lives here.
@@ -593,10 +592,8 @@ class StreamingList(QScrollArea):
         # when she scrolls, not on every tick. The pace is deliberately slow, and a
         # tick is skipped while she is scrolling, so building never competes with
         # reading; revealing an already-built row is cheap.
-        self._idle = QTimer(self)
-        self._idle.setSingleShot(True)
-        self._idle.setInterval(self.IDLE_DELAY_MS)
-        self._idle.timeout.connect(self._idle_extend)
+        self._idle = platform().create_timer(
+            id(self), self._idle_extend, self.IDLE_DELAY_MS, single_shot=True)
         self._idle.start()
 
     IDLE_CHUNK = 3
@@ -610,7 +607,8 @@ class StreamingList(QScrollArea):
     def _idle_extend(self):
         if self.built() >= self.total():
             return
-        if self.isVisible() and time.monotonic() - self._last_scroll > self.SCROLL_QUIET_S:
+        if (self.isVisible()
+                and platform().monotonic() - self._last_scroll > self.SCROLL_QUIET_S):
             end = min(self.built() + self.IDLE_CHUNK, self.total())
             for item in self._items[self.built():end]:
                 row = self._build_row(item)
@@ -626,7 +624,7 @@ class StreamingList(QScrollArea):
         return len(self._items)
 
     def _maybe_extend(self, _value=None):
-        self._last_scroll = time.monotonic()
+        self._last_scroll = platform().monotonic()
         bar = self.verticalScrollBar()
         if bar.maximum() - bar.value() <= self.viewport().height():
             self._extend()

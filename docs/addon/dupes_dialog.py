@@ -11,7 +11,6 @@ than the AI wizard's own activity feed, since reusing that feed's session-driven
 machine here would be a rewrite of this screen for a single optional button.
 """
 import shutil
-import tempfile
 import threading
 import time
 
@@ -27,6 +26,7 @@ from .config import (APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks
 from .dupes import find_candidates, pair_key
 from .logic import field_preview_text, plain_text
 from .palette import colors
+from .platform import WorkRequest, platform
 from .ui import _safe, copy_to_clipboard, hint_label, link_button, section_label, title_label
 from .widgets import CARET_GAP, CARET_W
 
@@ -415,7 +415,7 @@ class _DuplicateScanDialog(QDialog):
         self.summary_label.setText("Scanning...")
         self._scan_result = None
         self._scan_error = None
-        self._t0 = time.monotonic()
+        self._t0 = platform().monotonic()
         threshold, min_shared = self._current_level()
         self._min_shared = min_shared
         ignored = set(_cfg()["dupes_ignored"])
@@ -428,31 +428,35 @@ class _DuplicateScanDialog(QDialog):
         self._scan_seq = getattr(self, "_scan_seq", 0) + 1
         seq = self._scan_seq
 
-        def work():
-            try:
-                found = find_candidates(left_rows, right_rows,
-                                        threshold=threshold, top=3,
-                                        min_shared=min_shared, ignored=ignored)
-            except Exception as e:
-                if seq == self._scan_seq:
-                    self._scan_error = e
-                return
+        def work(_context):
+            return find_candidates(left_rows, right_rows, threshold=threshold, top=3,
+                                   min_shared=min_shared, ignored=ignored)
+
+        def on_result(found):
             if seq == self._scan_seq:
                 self._scan_result = found
+                self._poll_scan()
+
+        def on_error(error):
+            if seq == self._scan_seq:
+                self._scan_error = error
+                self._poll_scan()
 
         old_timer = getattr(self, "_timer", None)
         if old_timer is not None:
             old_timer.stop()
-            old_timer.deleteLater()
-        self._worker = threading.Thread(target=work, daemon=True)
+            if hasattr(old_timer, "deleteLater"):
+                old_timer.deleteLater()
+        request = WorkRequest(
+            kind="duplicate-index", owner_id=id(self), operation_ordinal=seq,
+            attempt=1, inputs={"action": "dupes.scan"})
+        self._worker = platform().start_work(request, work, on_result, on_error)
+        self._timer = getattr(self._worker, "native_timer", None)
         self._worker.start()
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._poll_scan)
-        self._timer.start(100)
 
     def _poll_scan(self):
         if self._worker.is_alive():
-            elapsed = int(time.monotonic() - self._t0)
+            elapsed = int(platform().monotonic() - self._t0)
             self.summary_label.setText(f"Scanning... {elapsed}s elapsed")
             return
         self._timer.stop()
@@ -499,8 +503,11 @@ class _DuplicateScanDialog(QDialog):
         end = time.time() + timeout
         while self._worker.is_alive() and time.time() < end:
             time.sleep(0.02)
-        self._timer.stop()
-        self._finish_scan()
+        fire = getattr(self._timer, "fire", None)
+        if fire is not None:
+            fire()
+        else:
+            self._timer.timeout.emit()
 
     # ------------------------------------------------------------------ list
     def _exclusion_feedback(self):
@@ -777,47 +784,51 @@ class _DuplicateScanDialog(QDialog):
             payload.append({"ours": {"front": left_front, "back": left_back},
                            "theirs": {"front": right_front, "back": right_back}})
         prompt = ai_logic.build_dupes_judge_prompt(payload)
-        scratch = tempfile.mkdtemp(prefix="ip-dupejudge-")
+        scratch = platform().allocate_scratch(id(self), "dupejudge")
         self._judge_pairs = judged_pairs
         self._judge_scratch = scratch
         self._judge_result = None
         self._judge_error = None
-        self._judge_t0 = time.monotonic()
+        self._judge_t0 = platform().monotonic()
         cancel = threading.Event()
         self._judge_cancel = cancel
 
-        def work():
-            result = None
-            error = None
+        def work(context):
             try:
-                result = ai_cli.run_generation(
+                return ai_cli.run_generation(
                     kind, path, prompt, "thorough", scratch,
-                    cancel=cancel.is_set,
+                    cancel=context.cancelled,
                     model=cfg["ai_model"].get(kind, ""),
                     effort=cfg["ai_effort"].get(kind, ""))
-            except Exception as e:
-                error = e
             finally:
                 shutil.rmtree(scratch, ignore_errors=True)
+
+        def on_result(result):
             if seq == self._judge_seq:
                 self._judge_result = result
-                self._judge_error = error
+                self._poll_judge(seq, self._judge_worker, self._judge_timer)
 
-        worker = threading.Thread(target=work, daemon=True)
-        self._judge_worker = worker
-        worker.start()
+        def on_error(error):
+            if seq == self._judge_seq:
+                self._judge_error = error
+                self._poll_judge(seq, self._judge_worker, self._judge_timer)
+
+        request = WorkRequest(
+            kind="assistant", owner_id=id(self), operation_ordinal=seq, attempt=1,
+            inputs={"action": "dupes.judge", "scratch": scratch})
+        self._judge_worker = platform().start_work(
+            request, work, on_result, on_error)
+        self._judge_timer = getattr(self._judge_worker, "native_timer", None)
+        self._judge_worker.start()
         self.judge_btn.setEnabled(False)
         self.summary_label.setText("Judging with AI...")
-        timer = QTimer(self)
-        self._judge_timer = timer
-        timer.timeout.connect(lambda: self._poll_judge(seq, worker, timer))
-        timer.start(200)
 
     def _cancel_judge(self):
         cancel = getattr(self, "_judge_cancel", None)
         worker = getattr(self, "_judge_worker", None)
         if cancel is not None and worker is not None and worker.is_alive():
             cancel.set()
+            worker.cancel()
         timer = getattr(self, "_judge_timer", None)
         if timer is not None:
             timer.stop()
@@ -848,7 +859,7 @@ class _DuplicateScanDialog(QDialog):
             timer.stop()
             return
         if worker.is_alive():
-            elapsed = int(time.monotonic() - self._judge_t0)
+            elapsed = int(platform().monotonic() - self._judge_t0)
             self.summary_label.setText(f"Judging with AI... {elapsed}s elapsed")
             return
         timer.stop()
@@ -879,8 +890,11 @@ class _DuplicateScanDialog(QDialog):
         end = time.time() + timeout
         while worker.is_alive() and time.time() < end:
             time.sleep(0.02)
-        timer.stop()
-        self._finish_judge(seq)
+        fire = getattr(timer, "fire", None)
+        if fire is not None:
+            fire()
+        else:
+            timer.timeout.emit()
 
 
 @_safe

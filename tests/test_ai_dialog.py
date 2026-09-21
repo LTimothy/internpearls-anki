@@ -1,9 +1,11 @@
 """Focused regressions for AI wizard attachment behavior."""
 import os
+import tempfile
 import threading
 import time
 
 from internpearls import ai_cli, ai_dialog, ai_logic
+from internpearls.platform import use_platform
 from aqt.qt import QFileDialog
 
 
@@ -20,6 +22,50 @@ def _finish_attachment_worker(dlg):
     dlg._attach_worker.join(timeout=2)
     assert not dlg._attach_worker.is_alive()
     dlg._attach_timer.fire()
+
+
+class _RecordingPlatform:
+    """Platform boundary recorder used to prove a caller submits typed work."""
+    def __init__(self):
+        self.requests = []
+
+    def start_work(self, request, compute, on_result, on_error, on_event=None):
+        self.requests.append(request)
+        return _UnstartedWork()
+
+    def allocate_scratch(self, owner_id, purpose):
+        return tempfile.mkdtemp(prefix="test-platform-")
+
+    def monotonic(self):
+        return time.monotonic()
+
+
+class _UnstartedWork:
+    task_id = "test-work"
+
+    def start(self):
+        pass
+
+    def is_alive(self):
+        return False
+
+    def join(self, timeout=None):
+        pass
+
+    def cancel(self):
+        pass
+
+
+def test_generation_starts_typed_platform_work(anki, monkeypatch):
+    """Generation must submit its compute closure through the platform seam."""
+    native = _RecordingPlatform()
+    dlg = _ready_dialog(monkeypatch)
+
+    with use_platform(native):
+        dlg._start_generation()
+
+    assert [(request.kind, request.inputs["action"])
+            for request in native.requests] == [("assistant", "ai.generate")]
 
 
 def test_attachment_only_input_enables_generate_and_removal_disables_it(
