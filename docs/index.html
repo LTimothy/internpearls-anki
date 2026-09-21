@@ -262,7 +262,10 @@
 </footer>
 </div>
 
-<script>
+<script type="module">
+import { ACTION_KINDS, NODE_KINDS, REQUIRED_FIELDS } from "./demo-contract.js";
+import { renderWidgetTree } from "./demo-renderer.js";
+
 (function () {
   "use strict";
   const $ = (id) => document.getElementById(id);
@@ -300,145 +303,6 @@
   }
 
   const htmlDiv = (html) => { const d = document.createElement("div"); d.innerHTML = html; return d; };
-
-  // ===================== Qt widget-tree -> DOM renderer =====================
-  // How a link-style button (ui.link_button: "Change source", "Select all") is told
-  // apart from a push button, built at boot from the palette's own accent values for
-  // both themes. Hardcoding one hex here is what made this detection quietly dead:
-  // the page kept matching an accent the palette had stopped painting, so every link
-  // button in the demo rendered as a bordered push button instead.
-  let linkStyle = /(?!)/;   // matches nothing until boot fills it in
-  // The add-on's Qt stylesheets are plain CSS declarations, so they apply
-  // directly — the dialogs literally carry their own styling from dialogs.py.
-  function renderTree(node, ctx) {
-    let el;
-    switch (node.t) {
-      case "label":
-        el = document.createElement("div");
-        el.innerHTML = node.text;
-        // A "never" decision's row strikes its own primary label in real Anki
-        // (review._card_row sets QFont.setStrikeOut on it). Reads a `strike` key
-        // that mock_anki.py's QLabel.node() does not serialize yet, so this stays
-        // false/harmless until that mock is patched to expose it.
-        if (node.strike) el.style.textDecoration = "line-through";
-        break;
-      case "check": {
-        el = document.createElement("label");
-        el.style.display = "flex"; el.style.gap = "7px"; el.style.alignItems = "center";
-        const cb = document.createElement("input");
-        cb.type = "checkbox"; cb.checked = node.checked; cb.dataset.wid = node.id;
-        ctx.inputs.push(cb);
-        el.appendChild(cb);
-        el.appendChild(htmlDiv(node.label));
-        break;
-      }
-      case "line": {
-        el = document.createElement("input");
-        el.className = "dinput";
-        el.type = node.password ? "password" : "text";
-        el.value = node.value; el.placeholder = node.placeholder || "";
-        el.dataset.wid = node.id;
-        ctx.inputs.push(el);
-        break;
-      }
-      case "textarea": {
-        // The per-card feedback box on the update screen, and the end-of-run digest.
-        // Both are real QPlainTextEdits in the add-on, and mock_anki feeds a value
-        // event back into one the same way it does a QLineEdit, so an editable box
-        // joins ctx.inputs and saves what's typed on the next interaction. A
-        // read-only one has nothing to feed back, so it stays out.
-        el = document.createElement("textarea");
-        el.className = "dinput";
-        el.value = node.value;
-        el.placeholder = node.placeholder || "";
-        el.rows = Math.min(14, (node.value.match(/\n/g) || []).length + 2);
-        el.dataset.wid = node.id;
-        if (node.readonly) el.readOnly = true;
-        else ctx.inputs.push(el);
-        break;
-      }
-      case "spin": {
-        el = document.createElement("span");
-        const inp = document.createElement("input");
-        inp.className = "dinput dspin"; inp.type = "number";
-        inp.min = node.min; inp.max = node.max; inp.value = node.value;
-        inp.dataset.wid = node.id; inp.dataset.spin = "1";
-        ctx.inputs.push(inp);
-        el.appendChild(inp);
-        el.appendChild(document.createTextNode(node.suffix || ""));
-        break;
-      }
-      case "button": {
-        el = document.createElement("button");
-        el.textContent = node.label;
-        el.className = linkStyle.test(node.style || "") ? "linkbtn" : "btn";
-        el.disabled = !node.enabled;
-        if (node.tooltip) el.title = node.tooltip;
-        el.onclick = () => ctx.click(node.id);
-        break;
-      }
-      case "buttons":
-        el = document.createElement("div");
-        el.className = "qbuttons";
-        for (const c of node.children) el.appendChild(renderTree(c, ctx));
-        return el;
-      case "scroll": {
-        el = document.createElement("div");
-        el.className = "scrollbox";
-        for (const c of node.children) el.appendChild(renderTree(c, ctx));
-        // StreamingList (widgets.py) only ever builds its first batch under the
-        // mock: nothing here calls resizeEvent, and the scrollbar's own geometry
-        // is always zero, so the extend-on-scroll path it relies on in real Qt
-        // never fires. Rather than silently show a partial list as if it were
-        // complete, ask the real widget how much of itself it actually built.
-        // list_progress counts real rows, not the header/note/sep entries mixed
-        // into the widget's own item list, so this names actual remaining cards.
-        const progress = JSON.parse(H.list_progress(node.id));
-        if (progress && progress.total > progress.shown) {
-          const more = document.createElement("div");
-          more.style.cssText = "padding:8px 4px;color:var(--muted);" +
-            "font-size:12px;text-align:center";
-          more.textContent = (progress.total - progress.shown) +
-            " more cards not shown in this demo (list building is streamed in real Anki)";
-          el.appendChild(more);
-        }
-        return el;
-      }
-      case "frame":
-        el = document.createElement("div");
-        el.className = "qframe";
-        for (const c of node.children) el.appendChild(renderTree(c, ctx));
-        return el;
-      case "hline":
-        // Falls through to the style pass below rather than returning: the rule's
-        // color is carried in the node's own Qt stylesheet.
-        el = document.createElement("div");
-        el.className = "qhline";
-        break;
-      case "row": case "col": case "box": {
-        el = document.createElement("div");
-        el.className = node.t === "row" ? "hstack" : "vstack";
-        for (const c of node.children) el.appendChild(renderTree(c, ctx));
-        // A "box" node is the only shape carrying `visible` (QWidget.node() in
-        // mock_anki.py); a card row's collapsed body (review._card_row's `body`)
-        // sets it false. Hidden, not skipped: children like the feedback textarea
-        // still join ctx.inputs, so a note typed while a row was open survives it
-        // being collapsed again before Update is clicked.
-        if (node.visible === false) el.style.display = "none";
-        return el;
-      }
-      default:
-        el = document.createElement("div");
-    }
-    if (node.style) {
-      // Qt stylesheet declarations are CSS; strip selectors like "#deckRow {…}".
-      const css = node.style.includes("{")
-        ? (node.style.match(/\{([^}]*)\}/) || [, ""])[1] : node.style;
-      el.style.cssText += ";" + css;
-      if (/border/.test(css) && node.t !== "button") el.classList.add("qframe");
-    }
-    return el;
-  }
 
   // ====================== payload -> user -> response ======================
   async function showPayload(p) {
@@ -501,18 +365,28 @@
     return new Promise((resolve) => {
       const ctx = {
         inputs: [],
-        click(wid) {
-          const events = ctx.inputs.map((i) => ({
-            id: i.dataset.wid,
-            value: i.type === "checkbox" ? i.checked
-                 : i.dataset.spin ? parseInt(i.value || "0", 10) : i.value,
-          }));
-          events.push({ id: wid, click: true });
+        registerInput(element, action) {
+          ctx.inputs.push({ element, action });
+        },
+        currentActions() {
+          return ctx.inputs
+            .filter(({ element }) => !element.disabled && !element.readOnly)
+            .map(({ action }) => action());
+        },
+        activate(wid) {
+          const actions = ctx.currentActions();
+          actions.push({ type: "activate", id: wid });
           $("overlay").classList.remove("show");
-          resolve({ events });
+          resolve({ actions });
+        },
+        activateLink(wid, actionId) {
+          const actions = ctx.currentActions();
+          actions.push({ type: "activate-link", id: wid, action_id: actionId });
+          $("overlay").classList.remove("show");
+          resolve({ actions });
         },
       };
-      const body = renderTree(p.tree, ctx);
+      const body = renderWidgetTree(p.contract_tree, ctx);
       $("dtitle").textContent = p.title || "Intern Pearls";
       $("dbody").innerHTML = "";
       $("dbody").appendChild(body);
@@ -698,6 +572,13 @@
       status("Downloading the add-on's real source…");
       py.FS.mkdirTree("/app/internpearls");
       py.FS.mkdirTree("/source/decks");
+      const pythonContract = [
+        `ACTION_KINDS = tuple(${JSON.stringify(ACTION_KINDS)})`,
+        `NODE_KINDS = tuple(${JSON.stringify(NODE_KINDS)})`,
+        `REQUIRED_FIELDS = ${JSON.stringify(REQUIRED_FIELDS)}`,
+      ].join("\n");
+      py.FS.writeFile("/app/demo_contract_generated.py",
+                      new TextEncoder().encode(pythonContract));
       const files = await (await fetch("addon/files.json", { cache: "no-store" })).json();
       await Promise.all(files.map((f) => fetchInto(
         "addon/" + f,
@@ -715,8 +596,6 @@
       status("Importing the example decks through the add-on's real sync…");
       py.runPython("import sys; sys.path.insert(0, '/app')");
       H = py.pyimport("demo_harness");
-      linkStyle = new RegExp(
-        "color:\\s*(" + JSON.parse(H.accents()).join("|") + ")\\b", "i");
       // The page's own chrome follows prefers-color-scheme; the add-on's dialogs read
       // the palette as they're built, which under the mock has no Anki theme to ask.
       // So hand it this one. A flip mid-session lands on the next dialog opened and
