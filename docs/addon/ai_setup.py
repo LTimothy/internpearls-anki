@@ -546,8 +546,9 @@ def run_connection_test_async(owner, kind, path, on_status, on_done=None,
         timer.stop()
         (guard(lambda: deliver(error=error)) if guard else deliver(error=error))
 
-    request = new_work_request(owner, "connection", "ai.connection",
-                               inputs={"backend": kind})
+    request = new_work_request(
+        owner, "connection", "ai.connection",
+        inputs={"backend": kind, "path_configured": bool(path)})
     handle = platform().start_work(
         request, lambda _context: ai_cli.test_connection(kind, path), on_result,
         on_error)

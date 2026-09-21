@@ -362,6 +362,8 @@ def test_completion_timer_exception_shows_dialog_and_recovers_to_input(monkeypat
     app.processEvents()
     dlg._worker.join(timeout=15)
     assert not dlg._worker.is_alive()
+    from PyQt6.QtTest import QTest
+    QTest.qWait(30)
 
     dlg._timer.timeout.emit()   # a real Qt signal, not _finish_generation() called directly
     app.processEvents()
@@ -1354,6 +1356,8 @@ def test_escape_during_image_resolution_goes_back_instead_of_blocking_the_cards(
     end = time.time() + 15
     while dlg._worker.is_alive() and time.time() < end:
         time.sleep(0.02)
+    from PyQt6.QtTest import QTest
+    QTest.qWait(30)
     dlg._timer.timeout.emit()          # the CLI phase hands off to the images
     app.processEvents()
     assert dlg.stack.currentWidget() is dlg.progress_page

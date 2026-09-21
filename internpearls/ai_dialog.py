@@ -33,7 +33,8 @@ from .config import (AI_LAST_RUN_LOG, APP_NAME, TARGET_FIELDS, _cfg,
 from .logic import cloze_filled_html, field_preview_html, note_display_label, plural
 from .net import fetch_card_image
 from .palette import colors
-from .platform import new_work_request, platform, platform_owner_id
+from .platform import (new_work_request, platform, platform_owner_id,
+                       wait_for_mock_work)
 from .review import (_CARET_CLOSED, _CARET_OPEN, _ClickableLabel, _image_tag,
                      _preview_style, _rich_label, _separator)
 from .ui import (_ask, _ask_scrollable, _info, _safe, _warn, hint_label,
@@ -1631,7 +1632,9 @@ class _GenerateDialog(QDialog):
             self._attach_images_undecoded = False
             self._attach_ready = True
 
-        request = new_work_request(self, "attachment", "ai.attach")
+        request = new_work_request(
+            self, "attachment", "ai.attach",
+            inputs={"attachment_count": len(paths)})
         self._attach_worker = platform().start_work(
             request, work, on_result, on_error, on_event)
         self._attach_timer = platform().create_timer(
@@ -2036,7 +2039,7 @@ class _GenerateDialog(QDialog):
         worker = self._worker
         while worker.is_alive() and time.time() < end:
             time.sleep(0.05)
-        worker.join(0)
+        wait_for_mock_work(worker)
         while not self._worker_ready and time.time() < end:
             QApplication.processEvents()
             time.sleep(0.005)
@@ -2055,7 +2058,7 @@ class _GenerateDialog(QDialog):
               and time.time() < end):
             while self._img_worker.is_alive() and time.time() < end:
                 time.sleep(0.05)
-            self._img_worker.join(0)
+            wait_for_mock_work(self._img_worker)
             while not self._img_ready and time.time() < end:
                 QApplication.processEvents()
                 time.sleep(0.005)
@@ -2319,8 +2322,10 @@ class _GenerateDialog(QDialog):
             self._img_results = {}
             self._img_ready = True
 
-        request = new_work_request(self, "image", "ai.image",
-                                   inputs={"card_count": len(cards)})
+        request = new_work_request(
+            self, "image", "ai.image",
+            inputs={"card_count": len(cards),
+                    "image_count": sum(len(card["images"]) for card in cards)})
         self._img_worker = platform().start_work(request, work, on_result, on_error)
         self._img_timer = platform().create_timer(
             platform_owner_id(self), lambda: self._guard_completion(self._poll_image_worker),

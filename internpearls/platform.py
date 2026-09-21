@@ -11,9 +11,23 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import count
+from types import MappingProxyType
 from typing import Any, Callable, ContextManager, Mapping, Optional, Protocol
 
 from aqt.qt import QTimer
+
+
+def _freeze_metadata(value):
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_metadata(item)
+                                 for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_metadata(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_metadata(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_freeze_metadata(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -24,25 +38,18 @@ class WorkRequest:
     attempt: int
     inputs: Mapping[str, Any]
 
-
-_OWNER_IDS = count(1)
+    def __post_init__(self):
+        object.__setattr__(self, "inputs", _freeze_metadata(self.inputs))
 
 
 def platform_owner_id(owner):
     """Return the stable, session-scoped identity for one platform owner."""
-    owner_id = getattr(owner, "_platform_owner_id", None)
-    if owner_id is None:
-        owner_id = next(_OWNER_IDS)
-        setattr(owner, "_platform_owner_id", owner_id)
-        setattr(owner, "_platform_operation_ordinal", 0)
-    return owner_id
+    return platform().owner_id(owner)
 
 
 def new_work_request(owner, kind, action, *, attempt=1, inputs=None):
     """Create a deterministic request identity scoped to one UI owner."""
-    owner_id = platform_owner_id(owner)
-    ordinal = getattr(owner, "_platform_operation_ordinal") + 1
-    setattr(owner, "_platform_operation_ordinal", ordinal)
+    owner_id, ordinal = platform().allocate_work_identity(owner, kind, action, attempt)
     metadata = {"action": action}
     if inputs:
         metadata.update(inputs)
@@ -53,6 +60,9 @@ def wait_for_mock_work(handle):
     """Complete native work synchronously in the lightweight Qt mock only."""
     if hasattr(QTimer, "registry"):
         handle.join()
+        deliver = getattr(handle, "_deliver_for_mock", None)
+        if deliver is not None:
+            deliver()
 
 
 class WorkContext(Protocol):
@@ -98,6 +108,13 @@ class TimerHandle(Protocol):
 
 
 class Platform(Protocol):
+    def owner_id(self, owner) -> int:
+        raise NotImplementedError
+
+    def allocate_work_identity(self, owner, kind: str, action: str,
+                               attempt: int) -> tuple[int, int]:
+        raise NotImplementedError
+
     def start_work(self, request: WorkRequest, compute: Callable,
                    on_result: Callable, on_error: Callable,
                    on_event: Optional[Callable] = None) -> WorkHandle:
@@ -196,7 +213,7 @@ class _NativeWorkContext:
 
 
 class _NativeWorkHandle:
-    _POLL_MS = 0
+    _POLL_MS = 20
 
     def __init__(self, native, request, compute, on_result, on_error, on_event):
         self.task_id = (f"{request.kind}:{request.owner_id}:"
@@ -268,20 +285,41 @@ class _NativeWorkHandle:
     def join(self, timeout=None):
         if self._started:
             self._thread.join(timeout)
-        if not self._thread.is_alive():
-            fire = getattr(self._timer_handle._timer, "fire", None)
-            if fire is not None:
-                fire()
-        if not self._thread.is_alive():
-            fire = getattr(self._timer_handle._timer, "fire", None)
-            if fire is not None:
-                fire()
+
+    def _deliver_for_mock(self):
+        self._deliver()
 
     def cancel(self):
         self._cancelled.set()
 
 
 class NativePlatform:
+    def __init__(self):
+        self._owner_ids = {}
+        self._owner_ordinals = {}
+        self._operations = {}
+        self._next_owner_id = count(1)
+
+    def owner_id(self, owner):
+        owner_key = id(owner)
+        owner_id = self._owner_ids.get(owner_key)
+        if owner_id is None:
+            owner_id = next(self._next_owner_id)
+            self._owner_ids[owner_key] = owner_id
+            self._owner_ordinals[owner_key] = 0
+        return owner_id
+
+    def allocate_work_identity(self, owner, kind, action, attempt):
+        owner_key = id(owner)
+        owner_id = self.owner_id(owner)
+        operation_key = (owner_key, kind, action)
+        if attempt > 1 and operation_key in self._operations:
+            return owner_id, self._operations[operation_key]
+        ordinal = self._owner_ordinals[owner_key] + 1
+        self._owner_ordinals[owner_key] = ordinal
+        self._operations[operation_key] = ordinal
+        return owner_id, ordinal
+
     def start_work(self, request, compute, on_result, on_error, on_event=None):
         return _NativeWorkHandle(
             self, request, compute, on_result, on_error, on_event)
