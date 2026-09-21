@@ -26,8 +26,6 @@ def run_npm(arguments, *, root=ROOT, runner=None):
         return runner(command, cwd=root)
     environment = os.environ.copy()
     environment["npm_config_cache"] = str(root / ".demo-tools" / "npm-cache")
-    environment["PLAYWRIGHT_BROWSERS_PATH"] = str(
-        root / ".demo-tools" / "playwright-browsers")
     return subprocess.call(command, cwd=root, env=environment)
 
 

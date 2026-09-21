@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
+import posixpath
 import shutil
 import subprocess
 import tarfile
@@ -108,8 +109,14 @@ def _validate_members(members, expected_top):
             raise RuntimeError(f"unsafe archive path: {member.name}")
         if path.parts[0] != expected_top:
             raise RuntimeError(f"unexpected top-level directory: {path.parts[0]}")
-        if member.islnk() or member.issym():
+        if member.islnk():
             raise RuntimeError(f"link member is not allowed: {member.name}")
+        if member.issym():
+            link = PurePosixPath(member.linkname)
+            target = PurePosixPath(posixpath.normpath(str(path.parent / link)))
+            if link.is_absolute() or not target.parts or target.parts[0] != expected_top:
+                raise RuntimeError(f"link member escapes archive root: {member.name}")
+            continue
         if not member.isfile() and not member.isdir():
             raise RuntimeError(f"unsupported archive member: {member.name}")
 
