@@ -53,7 +53,7 @@ async function shipVisibleChange(page, operation, resultText) {
 }
 
 async function assertActionsReachable(page, expectOverflow,
-  selector = "#overlay .dialog", expectLastVisible = true) {
+  selector = "#overlay .dialog") {
   const surface = page.locator(selector);
   const result = await surface.evaluate((element) => {
     const buttons = Array.from(element.querySelectorAll("button:not([hidden])"))
@@ -68,7 +68,7 @@ async function assertActionsReachable(page, expectOverflow,
     };
   });
   expect(result.overflow).toBe(expectOverflow);
-  if (expectLastVisible) expect(result.lastVisible).toBe(true);
+  expect(result.lastVisible).toBe(true);
 }
 
 test("non-ai", async ({ page }) => {
@@ -81,36 +81,36 @@ test("non-ai", async ({ page }) => {
     .toBeVisible();
 
   await shipVisibleChange(page, "fix", "clarified");
-  await shipVisibleChange(page, "reword", "reworded");
-  await shipVisibleChange(page, "add", "added");
-  await shipVisibleChange(page, "restyle", "restyled");
 
   await runMenuItem(page, "Update my decks");
   let dialog = await waitForDialog(page);
   await expect(dialog).toHaveAccessibleName(/Intern Pearls/);
-  await expect(dialog).toContainText("This update also changes how some cards look");
 
   const cancelKeep = dialog.getByRole("button", { name: /^Keep yours:/ }).first();
-  const cancelSkip = dialog.getByRole("button", { name: /^Skip:/ }).first();
   await cancelKeep.click();
   await expect(cancelKeep).toHaveAttribute("aria-pressed", "true");
-  await cancelSkip.click();
-  await expect(cancelSkip).toHaveAttribute("aria-pressed", "true");
-  const feedback = dialog.locator('textarea[aria-label^="Feedback note:"]:visible')
-    .first();
-  await feedback.fill("Please clarify the generic example.");
-  await page.waitForTimeout(800);
-  await feedback.press("Escape");
+  await dialog.locator('textarea[aria-label^="Feedback note:"]:visible').first()
+    .fill("Please clarify the generic example.");
+  await expect(dialog).toContainText("1 card flagged");
+  await dialog.getByRole("button", { name: "Update", exact: true }).click();
   dialog = await waitForDialog(page);
-  await expect(dialog).toContainText("Nothing is sent automatically");
+  await expect(dialog).toContainText("Update complete", { timeout: DIALOG_TIMEOUT });
+  await expect(dialog).toContainText("Nothing is sent automatically", {
+    timeout: DIALOG_TIMEOUT,
+  });
   await expect(dialog.locator("textarea")).toHaveValue(
     /Please clarify the generic example\./,
   );
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.locator("#overlay")).not.toHaveClass(/show/);
 
+  await shipVisibleChange(page, "reword", "reworded");
+  await shipVisibleChange(page, "add", "added");
+  await shipVisibleChange(page, "restyle", "restyled");
+
   await runMenuItem(page, "Update my decks");
   dialog = await waitForDialog(page);
+  await expect(dialog).toContainText("This update also changes how some cards look");
   const acceptedKeep = dialog.getByRole("button", { name: /^Keep yours:/ }).first();
   const acceptedSkip = dialog.getByRole("button", { name: /^Skip:/ }).first();
   await acceptedKeep.click();
@@ -119,7 +119,7 @@ test("non-ai", async ({ page }) => {
   await expect(acceptedSkip).toHaveAttribute("aria-pressed", "true");
   await dialog.locator('textarea[aria-label^="Feedback note:"]:visible').first()
     .fill("Please clarify the generic example.");
-  await page.waitForTimeout(800);
+  await expect(dialog).toContainText("1 card flagged");
   const acceptedImport = dialog.getByRole("button", { name: /^Import:/ }).first();
   await acceptedImport.click();
   await expect(acceptedImport).toHaveAttribute("aria-pressed", "true");
@@ -128,10 +128,16 @@ test("non-ai", async ({ page }) => {
   });
   await look.check();
   await expect(look).toBeChecked();
+  await page.waitForFunction(() => window.demo.pendingChoices === 0, null, {
+    timeout: DIALOG_TIMEOUT,
+  });
+  await expect(look).toBeChecked();
+  await expect(dialog.locator('textarea[aria-label^="Feedback note:"]:visible').first())
+    .toHaveValue("Please clarify the generic example.");
   await dialog.getByRole("button", { name: "Update", exact: true }).click();
 
   dialog = await waitForDialog(page);
-  await expect(dialog).toContainText("Update complete");
+  await expect(dialog).toContainText("Update complete", { timeout: DIALOG_TIMEOUT });
   await expect(dialog).toContainText("Nothing is sent automatically");
   await expect(dialog.locator("textarea")).toHaveValue(
     /Please clarify the generic example\./,
@@ -160,6 +166,15 @@ test("non-ai", async ({ page }) => {
   });
   await historyLook.check();
   await expect(historyLook).toBeChecked();
+  await page.waitForFunction(() => window.demo.pendingChoices === 0, null, {
+    timeout: DIALOG_TIMEOUT,
+  });
+  await expect(historyLook).toBeChecked();
+  await historyLook.uncheck();
+  await page.waitForFunction(() => window.demo.pendingChoices === 0, null, {
+    timeout: DIALOG_TIMEOUT,
+  });
+  await expect(historyLook).not.toBeChecked();
   await dialog.getByRole("button", { name: "Update", exact: true }).click();
   dialog = await waitForDialog(page);
   await expect(dialog).toContainText("Archived");
@@ -197,13 +212,14 @@ test("non-ai", async ({ page }) => {
   if (!(await autoSync.isChecked())) {
     await autoSync.press("Space");
     await expect(autoSync).toBeChecked();
-    await page.waitForTimeout(500);
+    await page.waitForFunction(() => window.demo.pendingChoices === 0, null, {
+      timeout: DIALOG_TIMEOUT,
+    });
   }
   const interval = dialog.getByRole("spinbutton", { name: "Check every" });
+  await expect(interval).toBeEnabled();
   await interval.fill("1");
-  await interval.press("Tab");
-  await page.waitForTimeout(500);
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await interval.press("Enter");
   dialog = await waitForDialog(page);
   await expect(dialog).toContainText("Deck sync checks every 1 minute");
   await page.locator("#dbtns").getByRole("button", { name: "OK" }).click();
@@ -233,8 +249,10 @@ test("keyboard", async ({ page }) => {
   await autoSync.press("Space");
   const checked = await autoSync.isChecked();
   expect(checked).toBe(true);
+  const interval = dialog.getByRole("spinbutton", { name: "Check every" });
+  await expect(interval).toBeEnabled({ timeout: DIALOG_TIMEOUT });
   await autoSync.press("Tab");
-  await expect(dialog.getByRole("spinbutton", { name: "Check every" })).toBeFocused();
+  await expect(interval).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(autoSync).toBeFocused();
   await dialog.getByRole("button", { name: "Save", exact: true }).focus();
@@ -250,7 +268,6 @@ test("keyboard", async ({ page }) => {
   if (!(await enabled.isChecked())) {
     await enabled.press("Space");
     await expect(enabled).toBeChecked();
-    await page.waitForTimeout(500);
   }
   const firstRadio = dialog.getByRole("radio", { name: "Bright images only" });
   await expect(firstRadio).toBeEnabled();
@@ -286,14 +303,41 @@ test("keyboard", async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 500 });
   await runMenuItem(page, "Settings");
   dialog = await waitForDialog(page);
-  await assertActionsReachable(page, true, "#overlay .dialog", false);
+  const zoomSurface = page.locator("#overlay .dialog");
+  await expect.poll(() => zoomSurface.evaluate((element) =>
+    element.scrollHeight > element.clientHeight)).toBe(true);
+  await zoomSurface.hover({ position: { x: 20, y: 20 } });
+  await page.mouse.wheel(0, 2000);
+  await expect.poll(() => zoomSurface.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
   const zoomCancel = dialog.getByRole("button", { name: "Cancel", exact: true });
-  await zoomCancel.focus();
-  await expect(zoomCancel).toBeFocused();
-  await page.keyboard.press("Escape");
+  await expect(zoomCancel).toBeInViewport();
+  await zoomCancel.click({ trial: true });
+  await zoomCancel.click();
   await expect(page.locator("#overlay")).not.toHaveClass(/show/);
 
   await expect(page.locator("#toast")).toHaveAttribute("aria-live", "polite");
+  expect(failures).toEqual([]);
+});
+
+test("200 percent zoom keeps dialog actions scrollable and clickable", async ({ page }) => {
+  const failures = await openDemo(page, 800);
+  await runMenuItem(page, "Settings");
+  const dialog = await waitForDialog(page);
+  await page.setViewportSize({ width: 800, height: 500 });
+  await page.evaluate(() => { document.documentElement.style.zoom = "200%"; });
+  const surface = page.locator("#overlay .dialog");
+  await expect.poll(() => surface.evaluate((element) =>
+    element.scrollHeight > element.clientHeight)).toBe(true);
+  await surface.hover({ position: { x: 20, y: 20 } });
+  await page.mouse.wheel(0, 2000);
+  await expect.poll(() => surface.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  const cancel = dialog.getByRole("button", { name: "Cancel", exact: true });
+  await expect(cancel).toBeInViewport();
+  await cancel.click({ trial: true });
+  await cancel.click();
+  await expect(page.locator("#overlay")).not.toHaveClass(/show/);
   expect(failures).toEqual([]);
 });
 

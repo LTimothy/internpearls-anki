@@ -63,6 +63,15 @@ async function menuActionId(page, labelPattern) {
   return actions.find((item) => labelPattern.test(item.label))?.id || null;
 }
 
+async function feedResponseCount(page) {
+  return page.evaluate(() => window.__realWorkers[0].responses
+    .filter((message) => message.type === "feed").length);
+}
+
+async function waitForFeedResponses(page, count) {
+  await expect.poll(() => feedResponseCount(page), { timeout: 120000 }).toBe(count);
+}
+
 test("invalid public input keeps the real Worker request sequence coherent", async ({ page }) => {
   await openRealDemo(page);
   const result = await page.evaluate(async () => {
@@ -317,32 +326,48 @@ test("real Settings saves the final spin edit queued behind an acknowledgement",
   await expect(page.locator("#overlay")).not.toHaveClass(/show/);
 });
 
-test("real editable Enter finishes without a contract error", async ({ page }) => {
+test("real editable Enter finishes and activates the schema default", async ({ page }) => {
   await openRealDemo(page);
   const flowId = await menuActionId(page, /^Manage /);
   expect(flowId).toEqual(expect.any(String));
   await page.evaluate((id) => window.demo.runFlow(id), flowId);
   const field = page.locator("#dbody input[type=text]").first();
   await expect(field).toBeVisible();
-  const feedCount = await page.evaluate(() =>
-    window.__realWorkers[0].responses.filter((message) => message.type === "feed").length);
-  await page.clock.install();
+  const feedStart = await page.evaluate(() =>
+    window.__realWorkers[0].posts.filter((message) => message.type === "feed").length);
   await field.fill(`${await field.inputValue()} sample`);
   await field.press("Enter");
-  await expect.poll(() => page.evaluate(() =>
-    window.__realWorkers[0].responses.filter((message) => message.type === "feed").length), {
+  await expect.poll(() => page.evaluate((start) => {
+    const request = window.__realWorkers[0].posts
+      .filter((message) => message.type === "feed").slice(start)
+      .find((message) => {
+        const types = message.payload.envelope.actions.map((action) => action.type);
+        return types.includes("edit-text") && types.includes("finish-edit")
+          && types.includes("activate");
+      });
+    return Boolean(request && window.__realWorkers[0].responses.some((message) =>
+      message.type === "feed" && message.request_id === request.request_id));
+  }, feedStart), {
     timeout: 120000,
-  }).toBe(feedCount + 1);
-  const result = await page.evaluate(() => {
-    const request = window.__realWorkers[0].posts.filter((message) => message.type === "feed").at(-1);
-    const response = window.__realWorkers[0].responses.filter((message) =>
-      message.type === "feed").at(-1);
+  }).toBe(true);
+  const result = await page.evaluate((start) => {
+    const request = window.__realWorkers[0].posts
+      .filter((message) => message.type === "feed").slice(start)
+      .find((message) => {
+        const types = message.payload.envelope.actions.map((action) => action.type);
+        return types.includes("edit-text") && types.includes("finish-edit")
+          && types.includes("activate");
+      });
+    const response = window.__realWorkers[0].responses.find((message) =>
+      message.type === "feed" && message.request_id === request.request_id);
     return {
       actions: request.payload.envelope.actions,
       status: response.payload.response.status,
     };
-  });
-  expect(result.actions.map((action) => action.type)).toEqual(["edit-text", "finish-edit"]);
+  }, feedStart);
+  expect(result.actions.map((action) => action.type)).toEqual([
+    "edit-text", "finish-edit", "activate",
+  ]);
   expect(result.actions.some((action) => action.type === "key")).toBe(false);
   expect(result.status).not.toBe("contract-error");
 });
@@ -359,8 +384,9 @@ test("real Manage keeps a newer edit unfinished after an older finish acknowledg
 
   await page.evaluate(() => { window.__holdNextFeed = true; });
   await field.fill("First");
-  await field.press("Enter");
+  await page.getByRole("button", { name: "Cancel" }).focus();
   await expect.poll(() => page.evaluate(() => Boolean(window.__realWorkers[0].held))).toBe(true);
+  await field.focus();
   await field.fill("Second");
   await page.waitForTimeout(150);
   await page.evaluate(() => window.__realWorkers[0].releaseHeld());
@@ -422,4 +448,145 @@ test("real typed legacy dialogs retain picker choices Cancel and question text",
   await expect(page.locator("#dbody")).toContainText("whole collection");
   await expect(page.getByRole("button", { name: "Choose a backup" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+});
+
+test("a queued checkbox choice stays visible across an older Worker rerender", async ({ page }) => {
+  await openRealDemo(page);
+  await page.evaluate(async () => {
+    await window.demo.request("maintainer", { operation: "fix" });
+    await window.demo.request("maintainer", { operation: "restyle" });
+  });
+  const updateId = await menuActionId(page, /^Update my decks$/);
+  await page.evaluate((id) => window.demo.runFlow(id), updateId);
+  const decision = page.getByRole("button", {
+    name: /^(?:Keep yours|Skip|Import|Apply):/,
+  }).first();
+  const look = page.getByRole("checkbox", {
+    name: /Also apply the new card look/,
+  });
+  await expect(decision).toBeVisible();
+  await expect(look).toBeVisible();
+  const responses = await feedResponseCount(page);
+
+  await page.evaluate(() => { window.__holdNextFeed = true; });
+  await decision.click();
+  await expect.poll(() => page.evaluate(() => Boolean(window.__realWorkers[0].held)))
+    .toBe(true);
+  await look.check();
+  await expect(look).toBeChecked();
+  await page.evaluate(() => {
+    window.__holdNextFeed = true;
+    window.__realWorkers[0].releaseHeld();
+  });
+  await waitForFeedResponses(page, responses + 1);
+
+  await expect(look).toBeChecked();
+  await expect.poll(() => page.evaluate(() => Boolean(window.__realWorkers[0].held)))
+    .toBe(true);
+  await page.evaluate(() => window.__realWorkers[0].releaseHeld());
+  await waitForFeedResponses(page, responses + 2);
+  await expect.poll(() => page.evaluate(() => window.demo.pendingChoices)).toBe(0);
+  await expect(look).toBeChecked();
+});
+
+test("menu items activate with Enter and Space without reopening the menu", async ({ page }) => {
+  await openRealDemo(page);
+  const trigger = page.locator("#ipMenuBtn");
+
+  for (const key of ["Enter", "Space"]) {
+    await trigger.focus();
+    await trigger.press("Enter");
+    const settings = page.getByRole("button", { name: "Settings", exact: true });
+    await expect(settings).toBeVisible();
+    await settings.focus();
+    await settings.press(key);
+    await expect(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.locator("#overlay")).not.toHaveClass(/show/);
+  }
+});
+
+test("Enter in the Settings interval editor activates the schema default", async ({ page }) => {
+  await openRealDemo(page);
+  const settingsId = await menuActionId(page, /^Settings$/);
+  await page.evaluate((id) => window.demo.runFlow(id), settingsId);
+  const checkbox = page.getByRole("checkbox", {
+    name: "Sync decks automatically when updates are available",
+  });
+  if (!await checkbox.isChecked()) {
+    const count = await feedResponseCount(page);
+    await checkbox.check();
+    await waitForFeedResponses(page, count + 1);
+  }
+  const interval = page.getByRole("spinbutton", { name: "Check every" });
+  const responses = await feedResponseCount(page);
+  await interval.fill("7");
+  await interval.press("Enter");
+  await expect(page.locator("#dbody")).toContainText("Settings saved", {
+    timeout: 120000,
+  });
+  const result = await page.evaluate((start) => {
+    const requests = window.__realWorkers[0].posts
+      .filter((message) => message.type === "feed")
+      .slice(start);
+    const response = window.__realWorkers[0].responses
+      .filter((message) => message.type === "feed").at(-1);
+    return {
+      actions: requests.flatMap((message) => message.payload.envelope.actions),
+      interval: response.payload.config.interval,
+    };
+  }, responses);
+  expect(result.actions).toContainEqual(expect.objectContaining({
+    type: "edit-text", value: "7",
+  }));
+  expect(result.actions).toContainEqual(expect.objectContaining({ type: "activate" }));
+  expect(result.interval).toBe(7);
+});
+
+test("modal focus wraps, blocks the background, cancels, and returns", async ({ page }) => {
+  await openRealDemo(page);
+  const trigger = page.locator("#ipMenuBtn");
+  await trigger.focus();
+  const settingsId = await menuActionId(page, /^Settings$/);
+  await page.evaluate((id) => window.demo.runFlow(id), settingsId);
+  const dialog = page.getByRole("dialog", { name: "Settings" });
+  const first = dialog.getByRole("checkbox", {
+    name: "Sync decks automatically when updates are available",
+  });
+  const last = dialog.getByRole("button", { name: "Cancel", exact: true });
+  await first.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(last).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(first).toBeFocused();
+
+  const background = page.locator("#deckarea .noteCell").first();
+  await background.focus();
+  await expect(dialog.locator(":focus")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#overlay")).not.toHaveClass(/show/);
+  await expect(trigger).toBeFocused();
+});
+
+test("Escape cancels immediately behind a held valid checkbox action", async ({ page }) => {
+  await openRealDemo(page);
+  const settingsId = await menuActionId(page, /^Settings$/);
+  await page.evaluate((id) => window.demo.runFlow(id), settingsId);
+  const checkbox = page.getByRole("checkbox", {
+    name: "Sync decks automatically when updates are available",
+  });
+  await page.evaluate(() => { window.__holdNextFeed = true; });
+  await checkbox.press("Space");
+  await expect.poll(() => page.evaluate(() => Boolean(window.__realWorkers[0].held)))
+    .toBe(true);
+  await checkbox.press("Escape");
+  await page.evaluate(() => window.__realWorkers[0].releaseHeld());
+  await expect.poll(() => page.evaluate(() => window.__realWorkers.length), {
+    timeout: 120000,
+  }).toBe(2);
+  await expect.poll(() => page.evaluate(() =>
+    window.__realWorkers[1].responses.some((message) => message.type === "reset")), {
+    timeout: 120000,
+  }).toBe(true);
+  await expect(page.locator("#overlay")).not.toHaveClass(/show/);
 });

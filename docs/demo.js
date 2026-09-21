@@ -38,11 +38,14 @@ let retryEditScheduled = false;
 let retryFinishes = [];
 let retryActions = [];
 let dialogReturnFocus = null;
+let modalInerted = [];
 const pendingEdits = new Map();
+const pendingChoices = new Map();
 const unfinishedEdits = new Map();
 const finishingEdits = new Map();
 const composing = new Set();
 const compositionQueue = [];
+const restoredScrollOffsets = new Map();
 
 function toast(message, milliseconds = 6000) {
   const element = $("toast");
@@ -55,6 +58,53 @@ function toast(message, milliseconds = 6000) {
 function status(message) {
   const element = $("bootline");
   if (element) element.textContent = message;
+}
+
+function modalFocusables() {
+  return Array.from($("overlay").querySelectorAll(
+    "button:not([disabled]), input:not([disabled]), select:not([disabled]), "
+      + "textarea:not([disabled]), [href], [tabindex]:not([tabindex='-1'])",
+  )).filter((element) => !element.hidden && element.getClientRects().length);
+}
+
+function showModal() {
+  const overlay = $("overlay");
+  if (!overlay.classList.contains("show")) {
+    modalInerted = [];
+    let branch = overlay;
+    while (branch.parentElement) {
+      for (const sibling of branch.parentElement.children) {
+        if (sibling !== branch && sibling !== $("toast") && !sibling.inert) {
+          modalInerted.push(sibling);
+        }
+      }
+      if (branch.parentElement === document.body) break;
+      branch = branch.parentElement;
+    }
+    for (const element of modalInerted) element.inert = true;
+  }
+  overlay.classList.add("show");
+}
+
+function hideModal() {
+  $("overlay").classList.remove("show");
+  for (const element of modalInerted) element.inert = false;
+  modalInerted = [];
+}
+
+function trapModalFocus(event) {
+  if (event.key !== "Tab" || !$("overlay").classList.contains("show")) return;
+  const focusables = modalFocusables();
+  const first = focusables[0] || $("overlay").querySelector(".dialog");
+  const last = focusables.at(-1) || first;
+  const active = document.activeElement;
+  if (event.shiftKey && (active === first || !$("overlay").contains(active))) {
+    event.preventDefault();
+    last.focus({ preventScroll: true });
+  } else if (!event.shiftKey && (active === last || !$("overlay").contains(active))) {
+    event.preventDefault();
+    first.focus({ preventScroll: true });
+  }
 }
 
 function reportFailure() {
@@ -100,6 +150,42 @@ function nodeSemanticSignature(id) {
     "selection_end", "selection_start", "shown_count", "value",
   ]) delete semantic[name];
   return JSON.stringify(semantic);
+}
+
+function choiceMatchesNode(choice, node) {
+  if (!node) return false;
+  if (choice.action.type === "toggle") return node.checked === choice.action.checked;
+  if (choice.action.type === "select-option") {
+    return node.options?.[node.current_index]?.id === choice.action.option_id;
+  }
+  return false;
+}
+
+function settlePendingChoices() {
+  for (const [id, choice] of pendingChoices) {
+    const node = currentNodes.get(id);
+    if (choice.signature !== nodeSemanticSignature(id) || choiceMatchesNode(choice, node)) {
+      pendingChoices.delete(id);
+    }
+  }
+}
+
+function resetPendingChoices() {
+  for (const [id, choice] of pendingChoices) {
+    const node = currentNodes.get(id);
+    const control = document.querySelector(`[data-wid="${CSS.escape(id)}"]`);
+    if (!control || !node) continue;
+    if (choice.action.type === "toggle") control.checked = Boolean(node.checked);
+    if (choice.action.type === "select-option") control.selectedIndex = node.current_index;
+  }
+  pendingChoices.clear();
+}
+
+function hasPendingChoice(element) {
+  if (pendingChoices.has(element.dataset?.wid)) return true;
+  if (!(element instanceof HTMLInputElement) || element.type !== "radio") return false;
+  return Array.from(pendingChoices.values()).some((choice) =>
+    choice.group && choice.group === element.name);
 }
 
 function captureActionRecords(actions, authority) {
@@ -423,7 +509,7 @@ function paintBusy(label) {
   line.append(spinner, text);
   $("dbody").replaceChildren(line);
   $("dbtns").replaceChildren();
-  $("overlay").classList.add("show");
+  showModal();
   $("overlay").querySelector(".dialog").focus({ preventScroll: true });
 }
 
@@ -439,6 +525,7 @@ function beginFlow(menuId) {
   currentNodes = new Map();
   currentRootId = null;
   pendingEdits.clear();
+  pendingChoices.clear();
   unfinishedEdits.clear();
   finishingEdits.clear();
   paintBusy("Working...");
@@ -476,16 +563,18 @@ function applyRunnerResponse(response) {
   revision = response.render_revision;
   if (response.status === "stale") return;
   if (response.status === "contract-error") {
+    resetPendingChoices();
     toast("That action no longer applies to the current dialog.");
     return;
   }
   sequence = response.sequence;
   if (response.status === "done") {
     clearAutomaticAdvance();
-    $("overlay").classList.remove("show");
+    hideModal();
     currentNodes = new Map();
     currentRootId = null;
     pendingEdits.clear();
+    pendingChoices.clear();
     unfinishedEdits.clear();
     finishingEdits.clear();
     const target = dialogReturnFocus;
@@ -495,6 +584,7 @@ function applyRunnerResponse(response) {
   }
   if (response.status === "error") {
     clearAutomaticAdvance();
+    resetPendingChoices();
     toast("The demo could not finish that action.");
     return;
   }
@@ -517,7 +607,7 @@ function showSimplePayload(payload) {
   body.textContent = payload.text || "";
   $("dbody").replaceChildren(body);
   $("dbtns").replaceChildren(actionButton("OK", true, () => queueActions([])));
-  $("overlay").classList.add("show");
+  showModal();
   $("dbtns").querySelector("button")?.focus({ preventScroll: true });
 }
 
@@ -634,7 +724,18 @@ function registerInput(element, action) {
   if (element.matches("select, input[type=checkbox], input[type=radio]")) {
     element.onchange = (event) => {
       clearAutomaticAdvance();
-      queueActions([event.currentTarget.demoAction(event.currentTarget)]).catch(reportFailure);
+      const control = event.currentTarget;
+      const selected = {
+        action: control.demoAction(control),
+        signature: nodeSemanticSignature(id),
+        group: control instanceof HTMLInputElement && control.type === "radio"
+          ? control.name : "",
+      };
+      pendingChoices.set(id, selected);
+      queueActions([selected.action]).catch((error) => {
+        if (pendingChoices.get(id) === selected) resetPendingChoices();
+        reportFailure(error);
+      });
     };
     return;
   }
@@ -699,6 +800,12 @@ function dialogContext() {
       ];
     },
     scroll(id, offset) {
+      const node = currentNodes.get(id);
+      if (node && node.shown_count >= node.total_count) return;
+      if (restoredScrollOffsets.get(id) === offset) {
+        restoredScrollOffsets.delete(id);
+        return;
+      }
       const existing = ctx.scrollActions.find((item) => item.id === id);
       if (existing) existing.offset = offset;
       else ctx.scrollActions.push({ type: "scroll", id, offset });
@@ -722,7 +829,11 @@ function dialogContext() {
       if (key === "Tab") return false;
       const editable = isEditableControl(target);
       if (key === "Enter" && editable) {
-        queueActions([]).catch(reportFailure);
+        const defaultNode = Array.from(currentNodes.values()).find((node) =>
+          node.kind === "button" && node.default && node.effective_visible
+          && node.effective_enabled && node.actions.includes("activate"));
+        const actions = defaultNode ? [{ type: "activate", id: defaultNode.id }] : [];
+        queueActions(actions).catch(reportFailure);
         return true;
       }
       if (key === "Enter") return false;
@@ -772,13 +883,14 @@ function syncAttributes(current, next) {
   const active = document.activeElement;
   const id = current.dataset?.wid;
   const preserveValue = current === active || pendingEdits.has(id) || composing.has(current);
+  const preserveChoice = hasPendingChoice(current);
   if (current instanceof HTMLInputElement && next instanceof HTMLInputElement) {
     if (!preserveValue) current.value = next.value;
-    current.checked = next.checked;
+    if (!preserveChoice) current.checked = next.checked;
   } else if (current instanceof HTMLTextAreaElement && next instanceof HTMLTextAreaElement) {
     if (!preserveValue) current.value = next.value;
   } else if (current instanceof HTMLSelectElement && next instanceof HTMLSelectElement) {
-    if (!preserveValue) current.value = next.value;
+    if (!preserveValue && !preserveChoice) current.value = next.value;
   } else if (current instanceof HTMLDetailsElement && next instanceof HTMLDetailsElement) {
     current.open = next.open;
   }
@@ -827,8 +939,14 @@ function restoreDomState(state) {
   for (const [id, [left, top]] of state.scroll) {
     const element = document.getElementById(id);
     if (element) {
-      element.scrollLeft = left;
-      element.scrollTop = top;
+      if (element.scrollLeft !== left || element.scrollTop !== top) {
+        restoredScrollOffsets.set(id, top);
+        element.scrollLeft = left;
+        element.scrollTop = top;
+        setTimeout(() => {
+          if (restoredScrollOffsets.get(id) === top) restoredScrollOffsets.delete(id);
+        }, 0);
+      }
     }
   }
   if (state.focus) {
@@ -864,11 +982,12 @@ function renderDialogTree(payload) {
   const tree = payload.contract_tree;
   currentRootId = tree.root_id;
   currentNodes = new Map(tree.nodes.map((node) => [node.id, node]));
+  settlePendingChoices();
   const rendered = renderWidgetTree(tree, dialogContext());
   $("dtitle").textContent = payload.title || "Intern Pearls";
   stablePatch($("dbody"), rendered);
   $("dbtns").replaceChildren();
-  $("overlay").classList.add("show");
+  showModal();
 }
 
 const clozeFront = (text) => text.replace(/\{\{c\d+::(.*?)(::.*?)?\}\}/g, "[...]");
@@ -1018,12 +1137,27 @@ $("ipMenuBtn").addEventListener("click", (event) => {
   event.stopPropagation();
 });
 $("ipMenuBtn").addEventListener("keydown", (event) => {
+  if (event.target !== event.currentTarget) return;
   if (!["Enter", " "].includes(event.key)) return;
   event.preventDefault();
   $("ipMenuBtn").click();
 });
 document.addEventListener("click", closeMenu);
 document.addEventListener("submit", (event) => event.preventDefault(), true);
+$("overlay").addEventListener("keydown", trapModalFocus);
+$("overlay").addEventListener("focusout", () => {
+  setTimeout(() => {
+    if (!$("overlay").classList.contains("show")
+        || $("overlay").contains(document.activeElement)) return;
+    const target = modalFocusables()[0] || $("overlay").querySelector(".dialog");
+    target.focus({ preventScroll: true });
+  }, 0);
+});
+document.addEventListener("focusin", (event) => {
+  if (!$("overlay").classList.contains("show") || $("overlay").contains(event.target)) return;
+  const target = modalFocusables()[0] || $("overlay").querySelector(".dialog");
+  target.focus({ preventScroll: true });
+});
 document.addEventListener("compositionend", () => {
   composing.clear();
   drainCompositionQueue();
@@ -1044,5 +1178,9 @@ scheme.addEventListener("change", (event) => {
 
 const demo = { request, runFlow, dispatch };
 Object.defineProperty(demo, "ready", { enumerable: true, get: () => ready });
+Object.defineProperty(demo, "pendingChoices", {
+  enumerable: false,
+  get: () => pendingChoices.size,
+});
 window.demo = demo;
 boot();

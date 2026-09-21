@@ -406,6 +406,7 @@ test("ignores duplicate and stale Worker responses", async ({ page }) => {
 test("paints pending state before one-credit automatic advances", async ({ page }) => {
   await page.clock.install();
   await openFixture(page, ["feed"]);
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()));
   await page.evaluate(() => window.demo.runFlow("sample"));
   await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
   expect(await page.evaluate(() => window.__fixtureWorkers[0].messages.length)).toBe(2);
@@ -638,7 +639,7 @@ test("keeps the newest queued edit until it is acknowledged", async ({ page }) =
   await expect(field).toHaveValue("Final value");
 });
 
-test("Enter finishes an editable control without forwarding a root key", async ({ page }) => {
+test("Enter finishes an editable control and activates the schema default", async ({ page }) => {
   await page.clock.install();
   await openFixture(page, ["feed"]);
   await page.evaluate(() => window.demo.runFlow("sample"));
@@ -649,6 +650,7 @@ test("Enter finishes an editable control without forwarding a root key", async (
   expect(actions).toEqual([
     expect.objectContaining({ type: "edit-text", id: "field", value: "Entered value" }),
     { type: "finish-edit", id: "field" },
+    { type: "activate", id: "proceed" },
   ]);
 });
 
@@ -923,6 +925,7 @@ test("reorders inserts and deletes siblings without replacing survivors", async 
 test("finishes a previously delivered text edit before activation", async ({ page }) => {
   await page.clock.install();
   await openFixture(page, ["feed"]);
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()));
   await page.evaluate(() => window.demo.runFlow("sample"));
   await page.locator("#field").fill("Final value");
   await page.clock.runFor(100);
