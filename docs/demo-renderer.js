@@ -248,6 +248,7 @@ function renderSpin(node, context) {
   input.step = node.step;
   input.value = node.value;
   input.dataset.wid = node.id;
+  input.dataset.demoPart = "editor";
   wrapper.append(input, document.createTextNode(node.suffix));
   registerInput(context, input, (control) => editAction(node, control));
   return wrapper;
@@ -325,7 +326,10 @@ function applyCommonState(element, node, context) {
       if (event.ctrlKey) modifiers.push("Control");
       if (event.metaKey) modifiers.push("Meta");
       if (event.shiftKey) modifiers.push("Shift");
-      context.key(node.id, event.key, modifiers);
+      if (context.key(node.id, event.key, modifiers, event.target)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     };
   }
   return element;

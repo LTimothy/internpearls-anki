@@ -25,6 +25,11 @@ const PUBLIC_ERROR_CODES = new Set([
   "invalid-message", "stale-request", "boot-failed", "protocol-failed",
 ]);
 const INTEGER_MAX = 2147483647;
+const INTEGER_MIN = -2147483648;
+const ALIGNMENTS = new Set(["start", "center", "end", "justify"]);
+const SIZE_POLICIES = new Set([
+  "fixed", "minimum", "maximum", "preferred", "expanding", "minimum-expanding", "ignored",
+]);
 
 export class DemoProtocolError extends Error {
   constructor(code) {
@@ -63,6 +68,120 @@ function nonemptyString(value, maximum = 10000) {
 function stringArray(value, unique = false) {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) fail();
   if (unique && new Set(value).size !== value.length) fail();
+}
+
+function textValue(value) {
+  if (typeof value !== "string" || value.length > 1048576) fail();
+}
+
+function identifierArray(value, unique = false) {
+  stringArray(value, unique);
+  for (const item of value) nonemptyString(item, 1024);
+}
+
+function signedInteger(value) {
+  return Number.isInteger(value) && value >= INTEGER_MIN && value <= INTEGER_MAX;
+}
+
+function finiteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function boundedNumber(value) {
+  return finiteNumber(value) && value >= INTEGER_MIN && value <= INTEGER_MAX;
+}
+
+function validateMargins(value) {
+  exactKeys(value, ["left", "top", "right", "bottom"]);
+  for (const name of ["left", "top", "right", "bottom"]) {
+    if (!boundedInteger(value[name])) fail();
+  }
+}
+
+function validateNodeKind(node) {
+  if (node.kind === "label") {
+    if (!["plain", "rich", "markdown"].includes(node.format)) fail();
+    textValue(node.text);
+    if (typeof node.wrap !== "boolean" || !ALIGNMENTS.has(node.alignment)
+        || typeof node.strike !== "boolean" || typeof node.selectable !== "boolean") fail();
+    identifierArray(node.link_actions, true);
+  } else if (node.kind === "button") {
+    textValue(node.text);
+    if (typeof node.checkable !== "boolean" || typeof node.checked !== "boolean"
+        || !["accept", "reject", "destructive", "help", "apply", "reset", "yes", "no",
+          "close", "other"].includes(node.role)
+        || typeof node.default !== "boolean" || typeof node.escape !== "boolean") fail();
+  } else if (node.kind === "buttons") {
+    identifierArray(node.button_ids, true);
+    stringArray(node.standard_roles);
+    if (node.standard_roles.some((role) => role.length > 64)) fail();
+  } else if (node.kind === "check" || node.kind === "radio") {
+    textValue(node.text);
+    if (typeof node.checked !== "boolean"
+        || (node.group_id !== null && typeof node.group_id !== "string")
+        || (typeof node.group_id === "string" && node.group_id.length > 1024)
+        || typeof node.exclusive !== "boolean") fail();
+  } else if (node.kind === "line" || node.kind === "textarea") {
+    if (!(typeof node.value === "string" || finiteNumber(node.value))) fail();
+    textValue(node.placeholder);
+    if (!boundedInteger(node.selection_start) || !boundedInteger(node.selection_end)
+        || typeof node.password !== "boolean" || !boundedInteger(node.max_length)
+        || !boundedInteger(node.max_blocks)) fail();
+  } else if (node.kind === "combo") {
+    if (!Array.isArray(node.options) || !signedInteger(node.current_index)
+        || typeof node.editable !== "boolean") fail();
+    textValue(node.current_text);
+    textValue(node.editor_value);
+    const optionIds = new Set();
+    for (const option of node.options) {
+      exactKeys(option, ["id", "label"]);
+      nonemptyString(option.id, 1024);
+      textValue(option.label);
+      if (optionIds.has(option.id)) fail();
+      optionIds.add(option.id);
+    }
+  } else if (node.kind === "spin") {
+    if (!(typeof node.value === "string" || finiteNumber(node.value))
+        || !boundedNumber(node.minimum) || !boundedNumber(node.maximum)
+        || !boundedNumber(node.step) || node.step <= 0) fail();
+    textValue(node.suffix);
+    textValue(node.special_value_text);
+  } else if (["row", "col", "box", "frame"].includes(node.kind)) {
+    validateMargins(node.margins);
+    if (!boundedInteger(node.gap) || !Array.isArray(node.stretches)
+        || node.stretches.some((value) => !boundedInteger(value))
+        || !ALIGNMENTS.has(node.alignment)) fail();
+  } else if (node.kind === "grid") {
+    if (!Array.isArray(node.cells) || !Array.isArray(node.column_minimums)
+        || !Array.isArray(node.column_stretches)
+        || node.column_minimums.some((value) => !boundedInteger(value))
+        || node.column_stretches.some((value) => !boundedInteger(value))) fail();
+    for (const cell of node.cells) {
+      exactKeys(cell, ["id", "row", "column", "row_span", "column_span", "alignment"]);
+      nonemptyString(cell.id, 1024);
+      if (!boundedInteger(cell.row) || !boundedInteger(cell.column)
+          || !boundedInteger(cell.row_span, 1) || !boundedInteger(cell.column_span, 1)
+          || !ALIGNMENTS.has(cell.alignment)) fail();
+    }
+  } else if (node.kind === "form") {
+    if (!Array.isArray(node.rows)) fail();
+    for (const row of node.rows) {
+      exactKeys(row, ["label_id", "field_id"]);
+      nonemptyString(row.label_id, 1024);
+      nonemptyString(row.field_id, 1024);
+    }
+  } else if (node.kind === "stack") {
+    identifierArray(node.pages, true);
+    if (node.current_page !== null) nonemptyString(node.current_page, 1024);
+  } else if (node.kind === "scroll") {
+    for (const name of ["offset", "extent", "shown_count", "total_count"]) {
+      if (!boundedInteger(node[name])) fail();
+    }
+    identifierArray(node.row_ids, true);
+  } else if (node.kind === "spacer" || node.kind === "hline") {
+    if (!["horizontal", "vertical"].includes(node.orientation)
+        || !SIZE_POLICIES.has(node.size_policy)) fail();
+  }
 }
 
 export function validateJsonValue(value, depth = 0, ancestors = new Set()) {
@@ -169,6 +288,7 @@ function validateContractTree(tree) {
     for (const name of ["accessible_name", "accessible_description", "tooltip", "focus_policy"]) {
       if (typeof node[name] !== "string") fail();
     }
+    validateNodeKind(node);
   }
   if (!ids.has(tree.root_id)) fail();
 }
