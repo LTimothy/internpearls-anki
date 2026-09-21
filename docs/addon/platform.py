@@ -49,6 +49,12 @@ def new_work_request(owner, kind, action, *, attempt=1, inputs=None):
     return WorkRequest(kind, owner_id, ordinal, attempt, metadata)
 
 
+def wait_for_mock_work(handle):
+    """Complete native work synchronously in the lightweight Qt mock only."""
+    if hasattr(QTimer, "registry"):
+        handle.join()
+
+
 class WorkContext(Protocol):
     def cancelled(self) -> bool:
         raise NotImplementedError

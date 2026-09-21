@@ -37,7 +37,7 @@ from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_CEILING_MIN,
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
                     decks_to_update, manifest_needs_newer_addon, plural)
 from .net import _BG_TIMEOUT, _DOWNLOAD_TIMEOUT
-from .platform import new_work_request, platform
+from .platform import new_work_request, platform, wait_for_mock_work
 from .sync import (_cached_fetch, _content_backup_decks, _fetch_manifest, _is_local,
                    _reconcile_pending, _refresh_reconcile_action_label, _run_sync)
 from .ui import _bg_safe, manual_sync_in_progress
@@ -67,10 +67,9 @@ def _run_in_background(work, on_done):
         lambda result: _safe_on_done(result, None),
         lambda error: _safe_on_done(None, error))
     handle.start()
-    # The bundled mock Qt timer advances only when its explicit test hook is
-    # fired. Preserve the pre-seam synchronous mock behavior without changing
-    # real Anki, where QTimer has no such hook and delivers on its event loop.
-    handle.join(0)
+    # The bundled Qt mock has no event loop. Keep its historical synchronous
+    # behavior behind the platform seam while real Anki stays asynchronous.
+    wait_for_mock_work(handle)
     return handle
 
 
