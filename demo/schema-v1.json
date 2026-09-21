@@ -95,7 +95,10 @@
     "option-id-present-on-combo",
     "link-action-id-present-on-label",
     "target-effectively-visible",
-    "target-effectively-enabled"
+    "target-effectively-enabled",
+    "tree-node-ids-unique",
+    "combo-option-ids-unique",
+    "grid-cell-ids-unique"
   ],
   "required_fields": {
     "node": [
@@ -510,7 +513,7 @@
       },
       "allOf": [
         {
-          "if": {"properties": {"status": {"enum": ["stale", "contract-error"]}}},
+          "if": {"properties": {"status": {"enum": ["error", "stale", "contract-error"]}}},
           "then": {"properties": {"payload": {"$ref": "#/$defs/error"}}}
         }
       ]
