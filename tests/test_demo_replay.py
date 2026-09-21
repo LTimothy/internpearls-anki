@@ -300,6 +300,47 @@ def test_typed_actions_answer_production_confirmation_and_prompt(anki):
     assert anki.mw._config["answer"] == "typed"
 
 
+def test_typed_confirmation_tree_contains_its_question(anki):
+    from internpearls import ui
+
+    runner = mock_anki.Runner(anki)
+    response = runner.start_protocol(
+        lambda: ui._ask("Apply the generic change?", yes_label="Apply", no_label="Keep"),
+        epoch=46)
+    labels = [
+        node["text"] for node in response["payload"]["contract_tree"]["nodes"]
+        if node["kind"] == "label"
+    ]
+
+    assert labels == ["Apply the generic change?"]
+
+
+def test_typed_single_file_picker_contains_choices_and_cancel(anki, tmp_path):
+    from aqt.qt import QFileDialog
+
+    choice = tmp_path / "sample.apkg"
+    choice.write_bytes(b"generic fixture")
+    (tmp_path / "ignored.txt").write_text("generic", encoding="utf8")
+    runner = mock_anki.Runner(anki)
+
+    def flow():
+        QFileDialog.getOpenFileName(
+            None, "Choose a package", str(tmp_path), "Packages (*.apkg)")
+
+    picker = runner.start_protocol(flow, epoch=47)
+    buttons = {
+        node["text"]: node["id"]
+        for node in picker["payload"]["contract_tree"]["nodes"]
+        if node["kind"] == "button"
+    }
+
+    assert set(buttons) == {"sample.apkg", "Cancel"}
+    done = runner.feed_protocol(_protocol_request(picker, 1, [
+        {"type": "activate", "id": buttons["Cancel"]},
+    ]))
+    assert done["status"] == "done"
+
+
 def test_typed_close_declines_production_confirmation(anki):
     from internpearls import ui
 

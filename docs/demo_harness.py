@@ -43,6 +43,26 @@ WORKER_MESSAGE_TYPES = {
     "boot", "menu", "start", "feed", "state", "maintainer",
     "set-theme", "reset",
 }
+ACTION_FIELDS = {
+    "activate": {"type", "id"},
+    "toggle": {"type", "id", "checked"},
+    "select-option": {"type", "id", "option_id"},
+    "edit-text": {"type", "id", "value", "selection_start", "selection_end", "composing"},
+    "finish-edit": {"type", "id"},
+    "activate-link": {"type", "id", "action_id"},
+    "key": {"type", "id", "key", "modifiers"},
+    "scroll": {"type", "id", "offset"},
+    "select-files": {"type", "id", "accept", "files"},
+    "advance": {"type", "elapsed_ms", "checkpoint_credits"},
+    "close": {"type", "id"},
+}
+RUNNER_ERROR_CODES = {
+    "unsupported-protocol", "unknown-node-kind", "missing-required-field",
+    "unknown-enum-value", "unknown-widget-id", "hidden-target", "disabled-target",
+    "invalid-option-id", "invalid-link-id", "stale-epoch", "stale-sequence",
+    "stale-render-revision", "invalid-envelope", "invalid-action",
+    "action-not-allowed", "scheduler-limit", "journal-limit",
+}
 
 
 def _invalid_message():
@@ -57,6 +77,48 @@ def _exact_fields(value, fields):
 def _nonnegative_integer(value):
     return (not isinstance(value, bool) and isinstance(value, int)
             and 0 <= value <= 2147483647)
+
+
+def _nonempty_string(value, maximum=10000):
+    return isinstance(value, str) and 0 < len(value) <= maximum
+
+
+def _validate_action(action):
+    if not isinstance(action, dict) or action.get("type") not in ACTION_FIELDS:
+        _invalid_message()
+    _exact_fields(action, ACTION_FIELDS[action["type"]])
+    for name in ("id", "option_id", "action_id"):
+        if name in action and not _nonempty_string(action[name], 255):
+            _invalid_message()
+    if "checked" in action and not isinstance(action["checked"], bool):
+        _invalid_message()
+    if action["type"] == "edit-text":
+        if (not isinstance(action["value"], str)
+                or not _nonnegative_integer(action["selection_start"])
+                or not _nonnegative_integer(action["selection_end"])
+                or not isinstance(action["composing"], bool)):
+            _invalid_message()
+    for name in ("offset", "elapsed_ms", "checkpoint_credits"):
+        if name in action and not _nonnegative_integer(action[name]):
+            _invalid_message()
+    if action["type"] == "key":
+        modifiers = action["modifiers"]
+        if (not _nonempty_string(action["key"], 64) or not isinstance(modifiers, list)
+                or len(modifiers) != len(set(modifiers))
+                or any(item not in {"alt", "control", "meta", "shift"}
+                       for item in modifiers)):
+            _invalid_message()
+    if action["type"] == "select-files":
+        if (not isinstance(action["accept"], list)
+                or any(not isinstance(item, str) for item in action["accept"])
+                or not isinstance(action["files"], list)):
+            _invalid_message()
+        for item in action["files"]:
+            _exact_fields(item, {"name", "size", "type"})
+            if (not _nonempty_string(item["name"], 255)
+                    or not _nonnegative_integer(item["size"])
+                    or not isinstance(item["type"], str)):
+                _invalid_message()
 
 
 def _validate_json_value(value, depth=0, ancestors=None):
@@ -94,14 +156,118 @@ def _validate_runner_request(envelope):
     _exact_fields(envelope, {
         "protocol", "epoch", "sequence", "render_revision", "actions",
     })
-    if envelope["protocol"] != 1:
+    if isinstance(envelope["protocol"], bool) or envelope["protocol"] != 1:
         _invalid_message()
     if not all(_nonnegative_integer(envelope[name]) for name in (
             "epoch", "sequence", "render_revision")):
         _invalid_message()
     if not isinstance(envelope["actions"], list):
         _invalid_message()
-    _validate_json_value(envelope["actions"])
+    for action in envelope["actions"]:
+        _validate_action(action)
+
+
+def _validate_runner_response(response):
+    _exact_fields(response, {
+        "protocol", "epoch", "sequence", "render_revision", "status",
+        "payload", "pending", "safe_status",
+    })
+    if (isinstance(response["protocol"], bool) or response["protocol"] != 1
+            or not all(_nonnegative_integer(response[name])
+            for name in ("epoch", "sequence", "render_revision"))):
+        _invalid_message()
+    if response["status"] not in {"need", "done", "error", "stale", "contract-error"}:
+        _invalid_message()
+    pending = response["pending"]
+    if not isinstance(pending, list):
+        _invalid_message()
+    for item in pending:
+        _exact_fields(item, {"task_id", "kind", "stage"})
+        if (not isinstance(item["task_id"], list) or len(item["task_id"]) != 4
+                or not all(_nonnegative_integer(part) for part in item["task_id"])
+                or not _nonempty_string(item["kind"], 255)
+                or not _nonempty_string(item["stage"])):
+            _invalid_message()
+    _exact_fields(response["safe_status"], {"code"})
+    if not _nonempty_string(response["safe_status"]["code"], 255):
+        _invalid_message()
+    if response["status"] in {"error", "stale", "contract-error"}:
+        error = response["payload"]
+        if (not isinstance(error, dict) or error.get("code") not in RUNNER_ERROR_CODES
+                or not set(error).issubset({"code", "kind", "id"})):
+            _invalid_message()
+    elif not isinstance(response["payload"], dict):
+        _invalid_message()
+
+
+def _validate_state(state):
+    _exact_fields(state, {"decks", "version"})
+    if not isinstance(state["decks"], list) or not isinstance(state["version"], str):
+        _invalid_message()
+    for deck in state["decks"]:
+        _exact_fields(deck, {"name", "cards"})
+        if not isinstance(deck["name"], str) or not isinstance(deck["cards"], list):
+            _invalid_message()
+
+
+def _validate_config(config):
+    _exact_fields(config, {"auto_sync", "interval"})
+    if not isinstance(config["auto_sync"], bool) or not _nonnegative_integer(config["interval"]):
+        _invalid_message()
+
+
+def _validate_menu(menu):
+    if not isinstance(menu, list):
+        _invalid_message()
+    for item in menu:
+        if not isinstance(item, dict) or item.get("t") not in {"action", "item", "menu", "sep"}:
+            _invalid_message()
+        if item["t"] == "sep":
+            _exact_fields(item, {"t"})
+        elif item["t"] in {"action", "item"}:
+            _exact_fields(item, {"t", "id", "label"})
+            if not _nonempty_string(item["id"], 255) or not _nonempty_string(item["label"]):
+                _invalid_message()
+        else:
+            _exact_fields(item, {"t", "label", "items"})
+            if not _nonempty_string(item["label"]):
+                _invalid_message()
+            _validate_menu(item["items"])
+
+
+def validate_worker_result(message_type, result):
+    if not isinstance(result, dict):
+        _invalid_message()
+    if message_type == "menu":
+        _exact_fields(result, {"menu"})
+        _validate_menu(result["menu"])
+    elif message_type in {"start", "feed", "reset"}:
+        _exact_fields(result, {"state", "config", "tooltips", "response"})
+        _validate_runner_response(result["response"])
+    elif message_type == "state":
+        if set(result) == {"files"}:
+            if not isinstance(result["files"], list) or any(
+                    not isinstance(item, str) for item in result["files"]):
+                _invalid_message()
+            return result
+        _exact_fields(result, {"state", "config", "tooltips"})
+    elif message_type == "maintainer":
+        _exact_fields(result, {"label", "deck"})
+        if not _nonempty_string(result["label"]) or not _nonempty_string(result["deck"]):
+            _invalid_message()
+        return result
+    elif message_type == "set-theme":
+        _exact_fields(result, set())
+        return result
+    else:
+        _invalid_message()
+    if "state" in result:
+        _validate_state(result["state"])
+        _validate_config(result["config"])
+        if not isinstance(result["tooltips"], list) or any(
+                not isinstance(item, str) for item in result["tooltips"]):
+            _invalid_message()
+    return result
 
 
 def _validate_worker_payload(message_type, payload):
@@ -152,9 +318,11 @@ def _validate_worker_payload(message_type, payload):
         if not isinstance(payload["recovery"], list):
             _invalid_message()
         for entry in payload["recovery"]:
-            if not isinstance(entry, dict) or entry.get("type") in {"boot", "reset"}:
+            if (not isinstance(entry, dict) or set(entry) != {"type", "payload", "result"}
+                    or entry.get("type") in {"boot", "reset"}):
                 _invalid_message()
-            validate_worker_message(entry)
+            validate_worker_message({"type": entry["type"], "payload": entry["payload"]})
+            validate_worker_result(entry["type"], entry["result"])
         _validate_worker_payload("feed", payload["cancel"])
     else:
         _invalid_message()
@@ -441,12 +609,12 @@ def handle_worker_message(message_json):
         result = {"menu": json.loads(menu())}
     elif message_type == "start":
         response = json.loads(start_protocol(payload["menu_id"], payload["epoch"]))
-        result = _worker_state([])
+        result = _worker_state()
         result["response"] = response
     elif message_type == "feed":
         response = json.loads(feed_protocol(
             json.dumps(payload["envelope"], allow_nan=False)))
-        result = _worker_state([])
+        result = _worker_state()
         result["response"] = response
     elif message_type == "state":
         action = payload["action"]
@@ -469,6 +637,7 @@ def handle_worker_message(message_json):
     else:
         _invalid_message()
 
+    validate_worker_result(message_type, result)
     _validate_json_value(result)
     return json.dumps(result, allow_nan=False, separators=(",", ":"))
 

@@ -212,6 +212,96 @@ for message in [feed(object()), feed({1, 2}), feed(float("nan")), feed({1: "valu
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_worker_python_boundary_rejects_malformed_typed_actions():
+    result = _run_harness_validation_probe("""
+def feed(action, **changes):
+    envelope = {
+        "protocol": 1,
+        "epoch": 1,
+        "sequence": 1,
+        "render_revision": 1,
+        "actions": [action],
+    }
+    envelope.update(changes)
+    return {"type": "feed", "payload": {"envelope": envelope}}
+
+invalid = [
+    feed({"type": "unknown"}),
+    feed({"type": "activate", "id": "button", "extra": True}),
+    feed({"type": "edit-text", "id": "field", "value": "x",
+          "selection_start": True, "selection_end": 1, "composing": False}),
+    feed({"type": "activate", "id": "button"}, protocol=True),
+    feed({"type": "activate", "id": "button"}, sequence=False),
+]
+for message in invalid:
+    try:
+        harness.validate_worker_message(message)
+    except ValueError as error:
+        assert str(error) == "invalid-message"
+    else:
+        raise AssertionError("malformed typed action accepted")
+""")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_worker_python_boundary_rejects_malformed_results():
+    result = _run_harness_validation_probe("""
+valid_state = {
+    "state": {"decks": [{"name": "Sample", "cards": []}], "version": "1.0"},
+    "config": {"auto_sync": False, "interval": 1},
+    "tooltips": [],
+}
+invalid = [
+    ("menu", {"menu": {}}),
+    ("state", {**valid_state, "config": {"auto_sync": "no", "interval": 1}}),
+    ("state", {**valid_state, "tooltips": [4]}),
+    ("state", {**valid_state, "state": {"decks": "bad", "version": "1.0"}}),
+    ("feed", {**valid_state, "response": {
+        "protocol": 1, "epoch": 1, "sequence": 1, "render_revision": 1,
+        "status": "need", "payload": {"kind": "work"},
+        "pending": [{"task_id": [1, 1, 1], "kind": "work", "stage": "start"}],
+        "safe_status": {"code": "working"},
+    }}),
+]
+for message_type, payload in invalid:
+    try:
+        harness.validate_worker_result(message_type, payload)
+    except ValueError as error:
+        assert str(error) == "invalid-message"
+    else:
+        raise AssertionError("malformed worker result accepted")
+""")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_worker_start_and_feed_preserve_tooltips():
+    result = _run_harness_validation_probe("""
+import json
+
+response = {
+    "protocol": 1, "epoch": 1, "sequence": 0, "render_revision": 1,
+    "status": "done", "payload": {}, "pending": [],
+    "safe_status": {"code": "ready"},
+}
+harness.start_protocol = lambda menu_id, epoch: json.dumps(response)
+harness.feed_protocol = lambda envelope: json.dumps({**response, "sequence": 1})
+harness.MOCK.gui.tooltips[:] = ["Generic notice"]
+started = json.loads(harness.handle_worker_message(json.dumps({
+    "type": "start", "payload": {"menu_id": "sample", "epoch": 1},
+})))
+assert started["tooltips"] == ["Generic notice"]
+harness.MOCK.gui.tooltips[:] = ["Second notice"]
+fed = json.loads(harness.handle_worker_message(json.dumps({
+    "type": "feed", "payload": {"envelope": {
+        "protocol": 1, "epoch": 1, "sequence": 1,
+        "render_revision": 1, "actions": [],
+    }},
+})))
+assert fed["tooltips"] == ["Second notice"]
+""")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def _run_harness_validation_probe(body):
     environment = dict(os.environ)
     environment["PYTHONPATH"] = os.pathsep.join([

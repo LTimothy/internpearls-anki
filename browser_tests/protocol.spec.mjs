@@ -189,9 +189,14 @@ async function installFixtureWorker(page, delayedTypes = []) {
       respond(index, overrides = {}) {
         const message = this.messages[index];
         if (!message || this.terminated) return;
+        const payload = this.responsePayload(message);
         if (["start", "feed", "maintainer", "set-theme", "state"].includes(message.type)) {
           if (message.type !== "feed" || overrides.record !== false) {
-            this.recovery.push({ type: message.type, payload: structuredClone(message.payload) });
+            this.recovery.push({
+              type: message.type,
+              payload: structuredClone(message.payload),
+              result: structuredClone(payload),
+            });
           }
         }
         const response = {
@@ -199,7 +204,7 @@ async function installFixtureWorker(page, delayedTypes = []) {
           request_id: message.request_id,
           type: message.type,
           ok: true,
-          payload: this.responsePayload(message),
+          payload,
           error: null,
           recovery: structuredClone(this.recovery),
           ...overrides,
@@ -564,4 +569,290 @@ test("flushes debounced edits before actions and waits for composition end", asy
     return event.defaultPrevented;
   });
   expect(submitPrevented).toBe(true);
+});
+
+test("does not consume a request id for an invalid public request", async ({ page }) => {
+  await openFixture(page);
+  const result = await page.evaluate(async () => {
+    let invalidCode = null;
+    try {
+      await window.demo.request("state", { action: "unsupported" });
+    } catch (error) {
+      invalidCode = error.code;
+    }
+    await window.demo.request("menu", {});
+    return {
+      invalidCode,
+      requests: window.__fixtureWorkers[0].messages.map((message) => ({
+        requestId: message.request_id,
+        type: message.type,
+      })),
+    };
+  });
+  expect(result).toEqual({
+    invalidCode: "invalid-message",
+    requests: [
+      { requestId: 1, type: "boot" },
+      { requestId: 2, type: "menu" },
+    ],
+  });
+});
+
+test("discards a queued action when the acknowledged tree changes", async ({ page }) => {
+  await openFixture(page, ["feed"]);
+  await page.evaluate(() => window.demo.runFlow("sample"));
+  await page.evaluate(() => {
+    const original = window.__runnerEnvelope;
+    window.__runnerEnvelope = (message) => {
+      const response = original(message);
+      const proceed = response.payload.contract_tree.nodes.find((node) => node.id === "proceed");
+      proceed.text = "Changed action";
+      return response;
+    };
+    window.__firstClick = window.demo.dispatch([{ type: "activate", id: "proceed" }]);
+    window.__secondClick = window.demo.dispatch([{ type: "activate", id: "proceed" }]);
+  });
+  expect(await page.evaluate(() => window.__fixtureWorkers[0].messages.length)).toBe(3);
+  await page.evaluate(() => window.__fixtureWorkers[0].respond(2));
+  await page.evaluate(() => window.__firstClick);
+  await expect.poll(() => page.evaluate(() => window.__fixtureWorkers[0].messages.length))
+    .toBe(3);
+  expect(await page.evaluate(() => window.__secondClick)).toBeNull();
+});
+
+test("updates a stable rich link listener when its action changes", async ({ page }) => {
+  await openFixture(page);
+  await page.evaluate(() => window.demo.runFlow("sample"));
+  await page.evaluate(async () => {
+    const original = window.__runnerEnvelope;
+    let actionId = "first-action";
+    window.__runnerEnvelope = (message) => {
+      const response = original(message);
+      const details = response.payload.contract_tree.nodes.find((node) => node.id === "details");
+      details.text = `<a href="${actionId}">Open</a>`;
+      details.link_actions = [actionId];
+      details.actions = ["activate-link"];
+      return response;
+    };
+    await window.demo.dispatch([]);
+    actionId = "second-action";
+    await window.demo.dispatch([]);
+  });
+  await page.locator("#details a").dispatchEvent("click");
+  const action = await page.evaluate(() => {
+    const messages = window.__fixtureWorkers[0].messages;
+    return messages[messages.length - 1].payload.envelope.actions[0];
+  });
+  expect(action).toEqual({
+    type: "activate-link",
+    id: "details",
+    action_id: "second-action",
+  });
+});
+
+test("preserves editable combo focus and selection across a stable patch", async ({ page }) => {
+  await openFixture(page);
+  await page.evaluate(() => window.demo.runFlow("sample"));
+  await page.evaluate(async () => {
+    const original = window.__runnerEnvelope;
+    window.__runnerEnvelope = (message) => {
+      const response = original(message);
+      const field = response.payload.contract_tree.nodes.find((node) => node.id === "field");
+      for (const key of [
+        "value", "placeholder", "selection_start", "selection_end", "password",
+        "max_length", "max_blocks",
+      ]) delete field[key];
+      Object.assign(field, {
+        kind: "combo",
+        options: [{ id: "one", label: "One" }],
+        current_index: 0,
+        current_text: "One",
+        editable: true,
+        editor_value: "Editable",
+        actions: ["select-option", "edit-text"],
+      });
+      return response;
+    };
+    await window.demo.dispatch([]);
+    const editor = document.querySelector("#field input");
+    editor.focus();
+    editor.setSelectionRange(2, 6);
+    window.__comboEditor = editor;
+    await window.demo.dispatch([]);
+  });
+  const state = await page.evaluate(() => {
+    const editor = document.querySelector("#field input");
+    return {
+      same: editor === window.__comboEditor,
+      focused: document.activeElement === editor,
+      selection: [editor.selectionStart, editor.selectionEnd],
+    };
+  });
+  expect(state).toEqual({ same: true, focused: true, selection: [2, 6] });
+});
+
+test("installs current Escape handling when busy content becomes a dialog root", async ({ page }) => {
+  await openFixture(page, ["feed"]);
+  await page.evaluate(() => window.demo.runFlow("sample"));
+  await page.locator("#root").dispatchEvent("keydown", { key: "Escape" });
+  const last = await page.evaluate(() => window.__fixtureWorkers[0].messages.at(-1));
+  expect(last.type).toBe("feed");
+  expect(last.payload.envelope.actions).toEqual([{
+    type: "key", id: "root", key: "Escape", modifiers: [],
+  }]);
+});
+
+test("reorders inserts and deletes siblings without replacing survivors", async ({ page }) => {
+  await openFixture(page);
+  await page.evaluate(() => window.demo.runFlow("sample"));
+  await page.evaluate(async () => {
+    window.__survivors = {
+      field: document.querySelector("#field"),
+      cancel: document.querySelector("#cancel"),
+    };
+    const original = window.__runnerEnvelope;
+    window.__runnerEnvelope = (message) => {
+      const response = original(message);
+      const tree = response.payload.contract_tree;
+      const root = tree.nodes.find((node) => node.id === tree.root_id);
+      root.children = ["cancel", "inserted", "field", "scroll", "proceed"];
+      tree.nodes = tree.nodes.filter((node) => node.id !== "details");
+      tree.nodes.push({
+        ...tree.nodes.find((node) => node.id === "field"),
+        id: "inserted",
+        value: "Inserted",
+      });
+      return response;
+    };
+    await window.demo.dispatch([]);
+  });
+  const state = await page.evaluate(() => ({
+    order: Array.from(document.querySelector("#root").children, (node) => node.id),
+    sameField: document.querySelector("#field") === window.__survivors.field,
+    sameCancel: document.querySelector("#cancel") === window.__survivors.cancel,
+    deleted: document.querySelector("#details") === null,
+  }));
+  expect(state).toEqual({
+    order: ["cancel", "inserted", "field", "scroll", "proceed"],
+    sameField: true,
+    sameCancel: true,
+    deleted: true,
+  });
+});
+
+test("finishes a previously delivered text edit before activation", async ({ page }) => {
+  await page.clock.install();
+  await openFixture(page, ["feed"]);
+  await page.evaluate(() => window.demo.runFlow("sample"));
+  await page.locator("#field").fill("Final value");
+  await page.clock.runFor(100);
+  let feed = await page.evaluate(() => window.__fixtureWorkers[0].messages[2]);
+  expect(feed.payload.envelope.actions.map((action) => action.type)).toEqual(["edit-text"]);
+  await page.evaluate(() => window.__fixtureWorkers[0].respond(2));
+  await page.locator("#proceed").dispatchEvent("click");
+  feed = await page.evaluate(() => window.__fixtureWorkers[0].messages[3]);
+  expect(feed.payload.envelope.actions).toEqual([
+    { type: "finish-edit", id: "field" },
+    { type: "activate", id: "proceed" },
+  ]);
+});
+
+test("does not finish a spin edit whose contract forbids finish-edit", async ({ page }) => {
+  await openFixture(page, ["feed"]);
+  await page.evaluate(() => {
+    const original = window.__runnerEnvelope;
+    window.__runnerEnvelope = (message) => {
+      const response = original(message);
+      const field = response.payload.contract_tree.nodes.find((node) => node.id === "field");
+      for (const key of [
+        "value", "placeholder", "selection_start", "selection_end", "password",
+        "max_length", "max_blocks",
+      ]) delete field[key];
+      Object.assign(field, {
+        kind: "spin", value: 1, minimum: 0, maximum: 5, step: 1,
+        suffix: "", special_value_text: "", actions: ["edit-text"],
+      });
+      return response;
+    };
+  });
+  await page.evaluate(() => window.demo.runFlow("sample"));
+  await page.locator("#field input").fill("2");
+  await page.locator("#proceed").dispatchEvent("click");
+  const actions = await page.evaluate(() =>
+    window.__fixtureWorkers[0].messages[2].payload.envelope.actions);
+  expect(actions.map((action) => action.type)).toEqual(["edit-text", "activate"]);
+});
+
+test("enters a terminal state after a protocol timeout", async ({ page }) => {
+  await page.clock.install();
+  await openFixture(page, ["menu"]);
+  await page.evaluate(() => {
+    window.__timedOut = window.demo.request("menu", {}).catch((error) => error.code);
+  });
+  await page.clock.runFor(10000);
+  expect(await page.evaluate(() => window.__timedOut)).toBe("request-timeout");
+  const nextCode = await page.evaluate(() =>
+    window.demo.request("state", { action: "read" }).catch((error) => error.code));
+  const state = await page.evaluate(() => ({
+    terminated: window.__fixtureWorkers[0].terminated,
+    messages: window.__fixtureWorkers[0].messages.map((message) => message.type),
+  }));
+  expect(nextCode).toBe("protocol-stopped");
+  expect(state).toEqual({ terminated: true, messages: ["boot", "menu"] });
+});
+
+test("rejects malformed nested protocol shapes with fixed errors", async ({ page }) => {
+  await page.goto("/browser_tests/contract-page.html");
+  const result = await page.evaluate(async () => {
+    const protocol = await import("/docs/demo-protocol.js");
+    const request = {
+      protocol: 1,
+      request_id: 1,
+      type: "feed",
+      payload: { envelope: {
+        protocol: 1, epoch: 1, sequence: 1, render_revision: 1, actions: [],
+      } },
+    };
+    const state = {
+      state: { decks: [{ name: "Sample", cards: [] }], version: "1.0" },
+      config: { auto_sync: false, interval: 1 },
+      tooltips: [],
+    };
+    const worker = {
+      protocol: 1,
+      request_id: 1,
+      type: "boot",
+      ok: true,
+      payload: { ...state, menu: [] },
+      error: null,
+      recovery: [],
+    };
+    const malformed = [
+      { ...request, protocol: true },
+      { ...request, payload: { envelope: {
+        ...request.payload.envelope,
+        actions: [{ type: "unknown" }],
+      } } },
+      { ...request, payload: { envelope: {
+        ...request.payload.envelope,
+        actions: [{ type: "edit-text", id: "field", value: "x",
+          selection_start: true, selection_end: 1, composing: false }],
+      } } },
+      { ...worker, payload: { ...worker.payload, menu: {} } },
+      { ...worker, payload: { ...worker.payload, config: { auto_sync: "no", interval: 1 } } },
+      { ...worker, payload: { ...worker.payload, tooltips: [4] } },
+      { ...worker, payload: { ...worker.payload, state: { decks: "bad", version: "1.0" } } },
+      { ...worker, ok: false, payload: {}, error: { code: "/runtime/private/path" } },
+    ];
+    return malformed.map((message, index) => {
+      try {
+        if (index < 3) protocol.validatePageMessage(message);
+        else protocol.validateWorkerMessage(message);
+        return "accepted";
+      } catch (error) {
+        return `${error.name}:${error.code}`;
+      }
+    });
+  });
+  expect(result).toEqual(Array(8).fill("DemoProtocolError:invalid-message"));
 });

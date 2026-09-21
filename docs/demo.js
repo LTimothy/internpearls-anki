@@ -31,7 +31,9 @@ let editTimer = null;
 let blurTimer = null;
 let autoSyncTimer = null;
 let recovering = false;
+let stopped = false;
 const pendingEdits = new Map();
+const unfinishedEdits = new Set();
 const composing = new Set();
 const compositionQueue = [];
 
@@ -76,11 +78,16 @@ function insertQueue(entry) {
 
 function enqueueCommand(type, payload, options = {}) {
   return new Promise((resolve, reject) => {
+    if (stopped) {
+      reject(new DemoProtocolError("protocol-stopped"));
+      return;
+    }
     insertQueue({
       type,
       payload,
       priority: options.priority || "user",
       handle: options.handle || null,
+      authority: options.authority || null,
       resolve,
       reject,
     });
@@ -95,6 +102,11 @@ function request(type, payload) {
 function requestTimedOut(entry) {
   if (inFlight !== entry) return;
   inFlight = null;
+  stopped = true;
+  if (worker) worker.terminate();
+  worker = null;
+  for (const queued of queue) queued.reject(new DemoProtocolError("protocol-stopped"));
+  queue = [];
   entry.reject(new DemoProtocolError("request-timeout"));
   reportFailure();
 }
@@ -102,16 +114,27 @@ function requestTimedOut(entry) {
 function pumpQueue() {
   if (!worker || inFlight || !queue.length) return;
   const entry = queue.shift();
+  if (entry.authority && (entry.authority.epoch !== epoch
+      || entry.authority.sequence !== sequence
+      || entry.authority.revision !== revision)) {
+    if (entry.priority === "cancel") clearCancelWatchdog();
+    entry.resolve(null);
+    pumpQueue();
+    return;
+  }
   let payload;
   try {
     payload = typeof entry.payload === "function" ? entry.payload() : entry.payload;
+    const nextRequestId = requestId + 1;
     entry.message = validatePageMessage({
       protocol: DEMO_PROTOCOL_VERSION,
-      request_id: ++requestId,
+      request_id: nextRequestId,
       type: entry.type,
       payload: jsonClone(payload),
     });
+    requestId = nextRequestId;
   } catch (error) {
+    if (entry.priority === "cancel") clearCancelWatchdog();
     entry.reject(error);
     pumpQueue();
     return;
@@ -170,7 +193,10 @@ function makeEnvelope(actions) {
 }
 
 function isCancelAction(action) {
+  if (!action || typeof action !== "object") return false;
   if (action.type === "close") return true;
+  if (action.type === "key" && action.key === "Escape"
+      && Array.isArray(action.modifiers) && !action.modifiers.length) return true;
   if (action.type !== "activate") return false;
   const node = currentNodes.get(action.id);
   return node?.kind === "button" && node.text.trim().toLowerCase() === "cancel";
@@ -232,10 +258,13 @@ function queueActions(actions, options = {}) {
   }
   const flushed = options.flush === false ? [] : takePendingEdits(true);
   const ordered = [...flushed, ...actions];
+  const authority = { epoch, sequence, revision };
+  const envelope = makeEnvelope(ordered);
   const cancel = ordered.some(isCancelAction);
   if (cancel) startCancelWatchdog(ordered);
-  return enqueueCommand("feed", () => ({ envelope: makeEnvelope(ordered) }), {
+  return enqueueCommand("feed", { envelope }, {
     priority: cancel ? "cancel" : (options.priority || "user"),
+    authority,
     handle(payload) {
       if (cancel) clearCancelWatchdog();
       applyCommandPayload(payload);
@@ -281,6 +310,8 @@ function beginFlow(menuId) {
   sequence = 0;
   revision = 0;
   currentNodes = new Map();
+  pendingEdits.clear();
+  unfinishedEdits.clear();
   paintBusy("Working...");
   return enqueueCommand("start", { menu_id: String(menuId), epoch }, {
     priority: "user",
@@ -324,6 +355,8 @@ function applyRunnerResponse(response) {
     clearAutomaticAdvance();
     $("overlay").classList.remove("show");
     currentNodes = new Map();
+    pendingEdits.clear();
+    unfinishedEdits.clear();
     return;
   }
   if (response.status === "error") {
@@ -371,6 +404,7 @@ function showPayload(payload) {
 
 function scheduleEdit(id, element, action) {
   clearAutomaticAdvance();
+  unfinishedEdits.add(id);
   pendingEdits.set(id, { element, action });
   if (editTimer !== null) clearTimeout(editTimer);
   editTimer = setTimeout(() => {
@@ -389,12 +423,17 @@ function takePendingEdits(finish) {
   const ids = [];
   for (const [id, pending] of pendingEdits) {
     if (composing.has(pending.element)) continue;
-    edits.push(pending.action());
+    edits.push(pending.action(pending.element));
     ids.push(id);
   }
   for (const id of ids) pendingEdits.delete(id);
   if (finish) {
-    for (const id of ids) edits.push({ type: "finish-edit", id });
+    for (const id of unfinishedEdits) {
+      if (currentNodes.get(id)?.actions.includes("finish-edit")) {
+        edits.push({ type: "finish-edit", id });
+      }
+    }
+    unfinishedEdits.clear();
   }
   return edits;
 }
@@ -408,44 +447,61 @@ function deferUntilCompositionEnds(callback) {
 function drainCompositionQueue() {
   if (composing.size) return;
   for (const entry of compositionQueue.splice(0)) {
-    Promise.resolve().then(entry.callback).then(entry.resolve, entry.reject);
+    try {
+      Promise.resolve(entry.callback()).then(entry.resolve, entry.reject);
+    } catch (error) {
+      entry.reject(error);
+    }
   }
 }
 
 function registerInput(element, action) {
   const id = element.dataset.wid;
+  element.demoAction = action;
   if (element.matches("select, input[type=checkbox], input[type=radio]")) {
-    element.addEventListener("change", () => {
+    element.onchange = (event) => {
       clearAutomaticAdvance();
-      queueActions([action()]).catch(reportFailure);
-    });
+      queueActions([event.currentTarget.demoAction(event.currentTarget)]).catch(reportFailure);
+    };
     return;
   }
-  element.addEventListener("compositionstart", () => {
-    composing.add(element);
+  element.oncompositionstart = (event) => {
+    event.currentTarget.demoComposing = true;
+    composing.add(event.currentTarget);
     clearAutomaticAdvance();
     if (editTimer !== null) clearTimeout(editTimer);
     editTimer = null;
-  });
-  element.addEventListener("compositionend", () => {
-    composing.delete(element);
-    scheduleEdit(id, element, action);
+  };
+  element.oncompositionend = (event) => {
+    const control = event.currentTarget;
+    control.demoComposing = false;
+    composing.clear();
+    scheduleEdit(id, control, control.demoAction);
     drainCompositionQueue();
-  });
-  element.addEventListener("input", () => {
+  };
+  element.oninput = (event) => {
+    const control = event.currentTarget;
     clearAutomaticAdvance();
-    pendingEdits.set(id, { element, action });
-    if (!composing.has(element)) scheduleEdit(id, element, action);
-  });
-  element.addEventListener("blur", () => {
-    if (!pendingEdits.has(id) || composing.has(element)) return;
+    if (event.isComposing) {
+      control.demoComposing = true;
+      composing.add(control);
+    }
+    unfinishedEdits.add(id);
+    pendingEdits.set(id, { element: control, action: control.demoAction });
+    if (!control.demoComposing && !composing.has(control)) {
+      scheduleEdit(id, control, control.demoAction);
+    }
+  };
+  element.onblur = (event) => {
+    const control = event.currentTarget;
+    if (!pendingEdits.has(id) || composing.has(control)) return;
     if (blurTimer !== null) clearTimeout(blurTimer);
     blurTimer = setTimeout(() => {
       blurTimer = null;
       const actions = takePendingEdits(true);
       if (actions.length) queueActions(actions, { flush: false }).catch(reportFailure);
     }, 0);
-  });
+  };
 }
 
 function dialogContext() {
@@ -459,7 +515,7 @@ function dialogContext() {
     currentActions() {
       return [
         ...ctx.inputs.filter(({ element }) => !element.disabled && !element.readOnly)
-          .map(({ action }) => action()),
+          .map(({ element }) => element.demoAction(element)),
         ...ctx.scrollActions,
       ];
     },
@@ -500,13 +556,10 @@ function stateKey(element, selector) {
 function captureDomState() {
   const active = document.activeElement;
   const focusOwner = active?.closest?.("[data-wid]") || null;
-  const controls = focusOwner
-    ? Array.from(focusOwner.querySelectorAll("input, textarea, select, button, [tabindex]"))
-    : [];
   return {
     focus: focusOwner ? {
       id: focusOwner.dataset.wid,
-      index: active === focusOwner ? -1 : controls.indexOf(active),
+      part: active.dataset?.demoPart || "",
       start: typeof active.selectionStart === "number" ? active.selectionStart : null,
       end: typeof active.selectionEnd === "number" ? active.selectionEnd : null,
     } : null,
@@ -539,6 +592,10 @@ function syncAttributes(current, next) {
   } else if (current instanceof HTMLDetailsElement && next instanceof HTMLDetailsElement) {
     current.open = next.open;
   }
+  for (const name of [
+    "onclick", "onchange", "oninput", "onblur", "oncompositionstart",
+    "oncompositionend", "onkeydown", "onscroll", "demoAction",
+  ]) current[name] = next[name] || null;
 }
 
 function patchNode(current, next, oldById, used) {
@@ -585,11 +642,10 @@ function restoreDomState(state) {
     }
   }
   if (state.focus) {
-    const owner = document.querySelector(`[data-wid="${CSS.escape(state.focus.id)}"]`);
-    const controls = owner
-      ? Array.from(owner.querySelectorAll("input, textarea, select, button, [tabindex]"))
-      : [];
-    const target = state.focus.index === -1 ? owner : controls[state.focus.index];
+    const selector = `[data-wid="${CSS.escape(state.focus.id)}"]`
+      + (state.focus.part
+        ? `[data-demo-part="${CSS.escape(state.focus.part)}"]` : "");
+    const target = document.querySelector(selector);
     if (target) {
       target.focus({ preventScroll: true });
       if (state.focus.start !== null && typeof target.setSelectionRange === "function") {
@@ -769,6 +825,10 @@ $("ipMenuBtn").addEventListener("click", (event) => {
 });
 document.addEventListener("click", closeMenu);
 document.addEventListener("submit", (event) => event.preventDefault(), true);
+document.addEventListener("compositionend", () => {
+  composing.clear();
+  drainCompositionQueue();
+});
 
 document.querySelectorAll("[data-ship]").forEach((button) => {
   button.addEventListener("click", () => request("maintainer", {

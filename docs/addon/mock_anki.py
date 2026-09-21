@@ -893,6 +893,7 @@ class Gui:
             return self.answers.pop(0) if self.answers else True
         dialog = QDialog()
         layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(text))
         answer = [None]
         dialog.rejected.connect(lambda: answer.__setitem__(0, False))
         labels = buttons or ("Yes", "No")
@@ -929,6 +930,7 @@ class Gui:
             return ("", False)
         dialog = QDialog()
         layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(text))
         field = QLineEdit(kw.get("default", ""))
         layout.addWidget(field)
         accepted = [None]
@@ -954,9 +956,37 @@ class Gui:
             return None
         pending = object()
         picker = QDialog()
+        layout = QVBoxLayout(picker)
         selected = [pending]
         picker.rejected.connect(lambda: selected.__setitem__(0, None))
         accept = list(payload.get("accept", ()))
+
+        fallback = os.environ.get("DEMO_SOURCE", "/source")
+        folder = payload.get("dir") or fallback
+
+        def matching_files(root_folder):
+            if not os.path.isdir(root_folder):
+                return []
+            return [os.path.join(root, name)
+                    for root, _, names in os.walk(root_folder)
+                    for name in names
+                    if not accept or any(name.lower().endswith(extension.lower())
+                                         for extension in accept)]
+
+        choices = matching_files(folder)
+        if not choices and folder != fallback:
+            folder = fallback
+            choices = matching_files(folder)
+        if choices:
+            for path in sorted(choices):
+                name = os.path.relpath(path, folder)
+                button = QPushButton(name)
+                button.clicked.connect(
+                    lambda _checked=False, path=path: selected.__setitem__(0, path))
+                layout.addWidget(button)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(picker.reject)
+        layout.addWidget(cancel)
 
         def validate(action):
             names = [item["name"] for item in action["files"]]
@@ -3339,7 +3369,9 @@ def install():
     aqt_utils.getText = gui.prompt
     aqt_utils.tooltip = lambda text, **kw: gui.tooltips.append(text)
     aqt_utils.getFile = lambda parent, title, cb=None, filter="", dir=None, key=None: \
-        gui.pick_file({"kind": "file", "title": title, "dir": dir or ""})
+        gui.pick_file({"kind": "file", "title": title, "dir": dir or "",
+                       "accept": [f".{extension.lower()}" for extension in
+                                  re.findall(r"\*\.([A-Za-z0-9]+)", filter)]})
     aqt_utils.getSaveFile = lambda parent, title, key, name, ext, fname="": \
         gui.pick_file({"kind": "savefile", "title": title, "fname": fname})
     aqt_utils.openLink = lambda url: None
