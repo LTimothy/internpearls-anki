@@ -7,6 +7,7 @@ import time
 import pytest
 
 from internpearls import ai_cli, ai_dialog, ai_logic, config
+from internpearls.platform import wait_for_mock_work
 
 FAKE = os.path.join(os.path.dirname(__file__), "fake_cli.py")
 
@@ -187,6 +188,7 @@ def _drain_conn_test(dlg, timeout=15):
     live event loop) to run the completion callback."""
     t, timer = dlg._conn_test_refs[-1]
     t.join(timeout=timeout)
+    wait_for_mock_work(t)
     timer.fire()
 
 
@@ -337,6 +339,7 @@ def test_progress_row_reflects_a_live_phase_event(anki, monkeypatch):
     dlg._start_generation()
     dlg._worker.join(timeout=15)
     assert not dlg._worker.is_alive()
+    wait_for_mock_work(dlg._worker)
     dlg._timer.fire()   # the real wiring: timeout -> _guard_completion(_poll_worker)
     assert dlg._phase_text == "Verify online"
     assert dlg.progress_row.chip_kind == "verifying"
@@ -358,6 +361,7 @@ def test_progress_feed_and_detail_show_activity_and_deltas(anki, monkeypatch):
     dlg._start_generation()
     dlg._worker.join(timeout=15)
     assert not dlg._worker.is_alive()
+    wait_for_mock_work(dlg._worker)
     dlg._timer.fire()
     feed_text = dlg.activity_feed.toPlainText()
     assert "Read notes.pdf" in feed_text
@@ -411,6 +415,7 @@ def test_completion_exception_reaches_dialog_and_recovers_to_input(anki, monkeyp
     dlg._start_generation()
     dlg._worker.join(timeout=15)
     assert not dlg._worker.is_alive()
+    wait_for_mock_work(dlg._worker)
 
     dlg._timer.fire()   # the real wiring: timeout -> _guard_completion(_poll_worker)
 

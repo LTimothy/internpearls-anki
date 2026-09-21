@@ -26,7 +26,8 @@ from .config import (APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks
 from .dupes import find_candidates, pair_key
 from .logic import field_preview_text, plain_text
 from .palette import colors
-from .platform import new_work_request, platform, platform_owner_id
+from .platform import (new_work_request, platform, platform_owner_id,
+                       wait_for_mock_work)
 from .ui import _safe, copy_to_clipboard, hint_label, link_button, section_label, title_label
 from .widgets import CARET_GAP, CARET_W
 
@@ -508,7 +509,7 @@ class _DuplicateScanDialog(QDialog):
         end = time.time() + timeout
         while self._worker.is_alive() and time.time() < end:
             time.sleep(0.02)
-        self._worker.join(0)
+        wait_for_mock_work(self._worker)
         while not self._scan_ready and time.time() < end:
             QApplication.processEvents()
             time.sleep(0.005)
@@ -903,7 +904,7 @@ class _DuplicateScanDialog(QDialog):
         end = time.time() + timeout
         while worker.is_alive() and time.time() < end:
             time.sleep(0.02)
-        worker.join(0)
+        wait_for_mock_work(worker)
         while not self._judge_ready and time.time() < end:
             QApplication.processEvents()
             time.sleep(0.005)
