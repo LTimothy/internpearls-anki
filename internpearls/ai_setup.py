@@ -549,8 +549,15 @@ def run_connection_test_async(owner, kind, path, on_status, on_done=None,
     request = new_work_request(
         owner, "connection", "ai.connection",
         inputs={"backend": kind, "path_configured": bool(path)})
+
+    def work(context):
+        context.checkpoint("connection:start")
+        result = ai_cli.test_connection(kind, path)
+        context.checkpoint("connection:complete")
+        return result
+
     handle = platform().start_work(
-        request, lambda _context: ai_cli.test_connection(kind, path), on_result,
+        request, work, on_result,
         on_error)
     timer = platform().create_timer(platform_owner_id(owner), lambda: None, _POLL_MS)
     refs.append((handle, timer))
