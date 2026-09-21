@@ -1,5 +1,8 @@
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 from tests import demo_contract_generated as generated
 
@@ -165,3 +168,60 @@ def test_dispatch_requires_action_to_be_listed_on_target_node():
         assert branch["properties"]["node"]["properties"]["actions"]["contains"] == {
             "const": action_kind
         }
+
+
+def test_worker_python_boundary_rejects_unknown_message_types():
+    result = _run_harness_validation_probe("""
+valid = harness.validate_worker_message({"type": "state", "payload": {"action": "read"}})
+assert valid == {"type": "state", "payload": {"action": "read"}}
+invalid = [
+    {"type": "unknown", "payload": {}},
+    {"type": 4, "payload": {}},
+    {"type": "feed", "payload": {"envelope": {"actions": []}}},
+]
+for message in invalid:
+    try:
+        harness.validate_worker_message(message)
+    except ValueError as error:
+        assert str(error) == "invalid-message"
+    else:
+        raise AssertionError("invalid message type accepted")
+""")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_worker_python_boundary_rejects_non_json_payloads():
+    result = _run_harness_validation_probe("""
+def feed(value):
+    return {"type": "feed", "payload": {"envelope": {
+        "protocol": 1,
+        "epoch": 1,
+        "sequence": 1,
+        "render_revision": 0,
+        "actions": [value],
+    }}}
+
+for message in [feed(object()), feed({1, 2}), feed(float("nan")), feed({1: "value"})]:
+    try:
+        harness.validate_worker_message(message)
+    except ValueError as error:
+        assert str(error) == "invalid-message"
+    else:
+        raise AssertionError("non-JSON payload accepted")
+""")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _run_harness_validation_probe(body):
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join([
+        str(ROOT / "docs"), str(ROOT / "tests"), str(ROOT),
+        environment.get("PYTHONPATH", ""),
+    ])
+    return subprocess.run(
+        [sys.executable, "-c", "import demo_harness as harness\n" + body],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )

@@ -20,6 +20,7 @@ mkdir -p ../docs/addon
 rm -f ../docs/addon/*.py
 cp ./*.py ../docs/addon/
 cp ../tests/mock_anki.py ../docs/addon/mock_anki.py
+cp ../demo/replay.py ../docs/addon/demo_replay.py
 (cd ../docs/addon && ls ./*.py | sed 's|^\./||' | \
   python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))' \
   > files.json)

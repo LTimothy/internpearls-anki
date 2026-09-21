@@ -16,6 +16,7 @@ Everything the user sees — dialog layout, wording, counts, versions, behavior 
 comes out of the add-on's own code at runtime.
 """
 import json
+import math
 import os
 import sqlite3
 import sys
@@ -33,10 +34,140 @@ from internpearls.platform import new_work_request, platform, work_checkpoint  #
 
 SOURCE = os.environ.get("DEMO_SOURCE", "/source")   # env override for local smoke tests
 INTERVALS = ["2.3 mo", "11 d", "27 d", "6 d", "3.1 mo", "16 d", "9 d", "1.2 mo"]
-SEED_NOTES = {0: "mnemonic: A for A", 4: "ask Dr. P about IV dosing"}
+SEED_NOTES = {0: "mnemonic: A for A", 4: "review the dosing example"}
 
 RUNNER = mock_anki.Runner(MOCK, paths=[config.INSTALLED, config.STATE,
                                        collection._USER_FILES, SOURCE])
+
+WORKER_MESSAGE_TYPES = {
+    "boot", "menu", "start", "feed", "state", "maintainer",
+    "set-theme", "reset",
+}
+
+
+def _invalid_message():
+    raise ValueError("invalid-message")
+
+
+def _exact_fields(value, fields):
+    if not isinstance(value, dict) or set(value) != set(fields):
+        _invalid_message()
+
+
+def _nonnegative_integer(value):
+    return (not isinstance(value, bool) and isinstance(value, int)
+            and 0 <= value <= 2147483647)
+
+
+def _validate_json_value(value, depth=0, ancestors=None):
+    if depth > 64:
+        _invalid_message()
+    if value is None or isinstance(value, (str, bool)):
+        return
+    if isinstance(value, int):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            _invalid_message()
+        return
+    if not isinstance(value, (list, dict)):
+        _invalid_message()
+    if len(value) > 10000:
+        _invalid_message()
+    ancestors = set() if ancestors is None else ancestors
+    marker = id(value)
+    if marker in ancestors:
+        _invalid_message()
+    ancestors.add(marker)
+    if isinstance(value, list):
+        for item in value:
+            _validate_json_value(item, depth + 1, ancestors)
+    else:
+        for key, item in value.items():
+            if not isinstance(key, str):
+                _invalid_message()
+            _validate_json_value(item, depth + 1, ancestors)
+    ancestors.remove(marker)
+
+
+def _validate_runner_request(envelope):
+    _exact_fields(envelope, {
+        "protocol", "epoch", "sequence", "render_revision", "actions",
+    })
+    if envelope["protocol"] != 1:
+        _invalid_message()
+    if not all(_nonnegative_integer(envelope[name]) for name in (
+            "epoch", "sequence", "render_revision")):
+        _invalid_message()
+    if not isinstance(envelope["actions"], list):
+        _invalid_message()
+    _validate_json_value(envelope["actions"])
+
+
+def _validate_worker_payload(message_type, payload):
+    if not isinstance(payload, dict):
+        _invalid_message()
+    if message_type == "boot":
+        if set(payload) not in (set(), {"dark"}):
+            _invalid_message()
+        if "dark" in payload and not isinstance(payload["dark"], bool):
+            _invalid_message()
+    elif message_type == "menu":
+        _exact_fields(payload, set())
+    elif message_type == "start":
+        _exact_fields(payload, {"menu_id", "epoch"})
+        if (not isinstance(payload["menu_id"], str) or not payload["menu_id"]
+                or isinstance(payload["epoch"], bool)
+                or not isinstance(payload["epoch"], int)
+                or not 0 <= payload["epoch"] <= 2147483647):
+            _invalid_message()
+    elif message_type == "feed":
+        _exact_fields(payload, {"envelope"})
+        _validate_runner_request(payload["envelope"])
+    elif message_type == "state":
+        action = payload.get("action")
+        if action in {"read", "auto-sync"}:
+            _exact_fields(payload, {"action"})
+        elif action == "set-note":
+            _exact_fields(payload, {"action", "guid", "text"})
+            if (not isinstance(payload["guid"], str) or not payload["guid"]
+                    or not isinstance(payload["text"], str)):
+                _invalid_message()
+        elif action == "list-files":
+            _exact_fields(payload, {"action", "folder"})
+            if not isinstance(payload["folder"], str):
+                _invalid_message()
+        else:
+            _invalid_message()
+    elif message_type == "maintainer":
+        _exact_fields(payload, {"operation"})
+        if payload["operation"] not in {"fix", "reword", "add", "restyle"}:
+            _invalid_message()
+    elif message_type == "set-theme":
+        _exact_fields(payload, {"dark"})
+        if not isinstance(payload["dark"], bool):
+            _invalid_message()
+    elif message_type == "reset":
+        _exact_fields(payload, {"recovery", "cancel"})
+        if not isinstance(payload["recovery"], list):
+            _invalid_message()
+        for entry in payload["recovery"]:
+            if not isinstance(entry, dict) or entry.get("type") in {"boot", "reset"}:
+                _invalid_message()
+            validate_worker_message(entry)
+        _validate_worker_payload("feed", payload["cancel"])
+    else:
+        _invalid_message()
+    _validate_json_value(payload)
+
+
+def validate_worker_message(message):
+    _exact_fields(message, {"type", "payload"})
+    message_type = message["type"]
+    if not isinstance(message_type, str) or message_type not in WORKER_MESSAGE_TYPES:
+        _invalid_message()
+    _validate_worker_payload(message_type, message["payload"])
+    return message
 
 
 def _install_demo_net():
@@ -283,6 +414,63 @@ def auto_sync_tick():
     mock_anki.reset_run()
     background._auto_sync_check()
     return json.dumps(list(MOCK.gui.tooltips))
+
+
+def _worker_state(tooltips=None):
+    return {
+        "state": json.loads(collection_state()),
+        "config": json.loads(get_config()),
+        "tooltips": (list(MOCK.gui.tooltips) if tooltips is None
+                     else list(tooltips)),
+    }
+
+
+def handle_worker_message(message_json):
+    """Validate and dispatch one JSON-only request from the browser Worker."""
+    if not isinstance(message_json, str):
+        _invalid_message()
+    try:
+        message = json.loads(message_json)
+    except (TypeError, ValueError):
+        _invalid_message()
+    validate_worker_message(message)
+    message_type = message["type"]
+    payload = message["payload"]
+
+    if message_type == "menu":
+        result = {"menu": json.loads(menu())}
+    elif message_type == "start":
+        response = json.loads(start_protocol(payload["menu_id"], payload["epoch"]))
+        result = _worker_state([])
+        result["response"] = response
+    elif message_type == "feed":
+        response = json.loads(feed_protocol(
+            json.dumps(payload["envelope"], allow_nan=False)))
+        result = _worker_state([])
+        result["response"] = response
+    elif message_type == "state":
+        action = payload["action"]
+        if action == "read":
+            result = _worker_state([])
+        elif action == "set-note":
+            set_note(payload["guid"], payload["text"])
+            result = _worker_state([])
+        elif action == "auto-sync":
+            tips = json.loads(auto_sync_tick())
+            result = _worker_state(tips)
+        else:
+            result = {"files": [os.path.basename(path) for path in
+                                json.loads(list_files(payload["folder"]))]}
+    elif message_type == "maintainer":
+        result = json.loads(maintainer(payload["operation"]))
+    elif message_type == "set-theme":
+        set_dark(payload["dark"])
+        result = {}
+    else:
+        _invalid_message()
+
+    _validate_json_value(result)
+    return json.dumps(result, allow_nan=False, separators=(",", ":"))
 
 
 # --------------------------------------------------------------- maintainer
