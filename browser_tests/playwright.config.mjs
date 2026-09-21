@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
-  testDir: ".",
+  testDir: "../browser_tests",
   workers: 1,
   retries: 0,
   use: {
@@ -11,7 +11,7 @@ export default defineConfig({
     screenshot: "off",
   },
   webServer: {
-    command: "python3 -m http.server 4173 --directory .",
+    command: "python3 -m http.server 4173 --bind 127.0.0.1 --directory .",
     cwd: process.cwd(),
     url: "http://127.0.0.1:4173",
     reuseExistingServer: false,

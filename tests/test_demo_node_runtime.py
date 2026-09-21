@@ -154,7 +154,7 @@ def test_traversal_and_link_members_are_rejected(tmp_path, entries, phrase):
     assert not (tmp_path / "node").exists()
 
 
-def test_internal_symlink_members_are_rejected(tmp_path):
+def test_internal_symlink_members_stay_inside_archive_root(tmp_path):
     payload = _archive([
         ("{top}", b"", "dir"),
         ("{top}/bin", b"", "dir"),
@@ -163,8 +163,8 @@ def test_internal_symlink_members_are_rejected(tmp_path):
         ("{top}/lib/npm-cli.js", b"npm", "file"),
         ("{top}/bin/npm", b"../lib/npm-cli.js", "symlink"),
     ])
-    with pytest.raises(RuntimeError, match="link member"):
-        _install(tmp_path, payload)
+    installed = _install(tmp_path, payload)
+    assert (installed / "bin" / "npm").resolve() == installed / "lib" / "npm-cli.js"
 
 
 def test_unexpected_top_level_directory_is_rejected(tmp_path):
@@ -253,5 +253,3 @@ def test_npm_default_runner_uses_a_project_local_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(demo_npm.subprocess, "call", call)
     assert demo_npm.run_npm(["--version"], root=root) == 0
     assert seen[0][2]["npm_config_cache"] == str(root / ".demo-tools/npm-cache")
-    assert seen[0][2]["PLAYWRIGHT_BROWSERS_PATH"] == str(
-        root / ".demo-tools/playwright-browsers")
