@@ -955,7 +955,7 @@ def _pypdf():
     return pypdf
 
 
-def _extract_pdf_pages(pages, dest_dir, base, stem, cancel=None):
+def _extract_pdf_pages(pages, dest_dir, base, stem, cancel=None, checkpoint=None):
     if len(pages) > MAX_PDF_PAGES:
         raise ValueError(f"PDF {base} exceeds the {MAX_PDF_PAGES} page limit")
 
@@ -965,6 +965,8 @@ def _extract_pdf_pages(pages, dest_dir, base, stem, cancel=None):
     image_bytes = 0
     images_undecoded = False
     for pnum, page in enumerate(pages, 1):
+        if checkpoint is not None:
+            checkpoint(f"attachment:page:{pnum}")
         if cancel is not None and cancel():
             raise ValueError("Attachment extraction cancelled")
         try:
@@ -988,6 +990,8 @@ def _extract_pdf_pages(pages, dest_dir, base, stem, cancel=None):
         if image_count > MAX_PDF_IMAGES:
             raise ValueError(f"PDF {base} exceeds the {MAX_PDF_IMAGES} embedded image limit")
         for inum in range(count):
+            if checkpoint is not None:
+                checkpoint(f"attachment:image:{pnum}:{inum + 1}")
             if cancel is not None and cancel():
                 raise ValueError("Attachment extraction cancelled")
             try:
@@ -1017,7 +1021,7 @@ def _extract_pdf_pages(pages, dest_dir, base, stem, cancel=None):
             "images_undecoded": images_undecoded}
 
 
-def extract_attachment(path, dest_dir, cancel=None):
+def extract_attachment(path, dest_dir, cancel=None, checkpoint=None):
     """Extract source material from one attached file. Images are copied into
     dest_dir as-is; a PDF's text is returned and its embedded images are
     written into dest_dir under collision-safe names. A page that fails to
@@ -1057,6 +1061,8 @@ def extract_attachment(path, dest_dir, cancel=None):
     if ext != ".pdf":
         raise ValueError(f"unsupported attachment type: {ext}")
 
+    if checkpoint is not None:
+        checkpoint("attachment:parse")
     try:
         pypdf = _pypdf()
     except Exception as e:
@@ -1074,7 +1080,8 @@ def extract_attachment(path, dest_dir, cancel=None):
             pages = reader.pages
         except Exception as e:
             raise ValueError(f"could not read PDF {base}: {e}") from e
-        return _extract_pdf_pages(pages, dest_dir, base, stem, cancel=cancel)
+        return _extract_pdf_pages(
+            pages, dest_dir, base, stem, cancel=cancel, checkpoint=checkpoint)
 
 
 def _svg_attrs(tag_text):

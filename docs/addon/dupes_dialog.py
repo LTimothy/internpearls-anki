@@ -430,9 +430,10 @@ class _DuplicateScanDialog(QDialog):
         self._scan_seq = getattr(self, "_scan_seq", 0) + 1
         seq = self._scan_seq
 
-        def work(_context):
+        def work(context):
             return find_candidates(left_rows, right_rows, threshold=threshold, top=3,
-                                   min_shared=min_shared, ignored=ignored)
+                                   min_shared=min_shared, ignored=ignored,
+                                   checkpoint=context.checkpoint)
 
         def on_result(found):
             if seq == self._scan_seq:
@@ -806,11 +807,14 @@ class _DuplicateScanDialog(QDialog):
 
         def work(context):
             try:
-                return ai_cli.run_generation(
+                context.checkpoint("duplicate-judge:start")
+                result = ai_cli.run_generation(
                     kind, path, prompt, "thorough", scratch,
                     cancel=context.cancelled,
                     model=cfg["ai_model"].get(kind, ""),
                     effort=cfg["ai_effort"].get(kind, ""))
+                context.checkpoint("duplicate-judge:complete")
+                return result
             finally:
                 shutil.rmtree(scratch, ignore_errors=True)
 

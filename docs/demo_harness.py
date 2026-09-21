@@ -234,6 +234,15 @@ def feed(response_json):
     return json.dumps(RUNNER.feed(json.loads(response_json)))
 
 
+def start_protocol(wid, epoch):
+    return json.dumps(RUNNER.start_protocol(
+        lambda: mock_anki.trigger_action(wid), int(epoch)))
+
+
+def feed_protocol(envelope_json):
+    return json.dumps(RUNNER.feed_protocol(json.loads(envelope_json)))
+
+
 def flow_tooltips():
     return json.dumps(list(MOCK.gui.tooltips))
 

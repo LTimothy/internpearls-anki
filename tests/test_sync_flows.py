@@ -48,6 +48,19 @@ def drive(anki, fn, respond):
     runner.drive(fn, respond)
 
 
+def test_legacy_runner_adapters_keep_the_original_response_shape(anki):
+    runner = mock_anki.Runner(anki)
+
+    def flow():
+        anki.gui.next_interaction({"kind": "legacy"})
+
+    first = runner.start(flow)
+    done = runner.feed({})
+
+    assert first == {"status": "need", "payload": {"kind": "legacy"}}
+    assert done == {"status": "done"}
+
+
 def _walk(node, out=None):
     out = out if out is not None else []
     out.append(node)

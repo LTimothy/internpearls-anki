@@ -859,6 +859,13 @@ class Gui:
             resp = self.interactions[self.cursor]
             self.cursor += 1
             return resp
+        try:
+            from internpearls.platform import platform
+            settle = getattr(platform(), "settle_frontier", None)
+            if settle is not None and settle():
+                return {"actions": []}
+        except ImportError:
+            pass
         raise NeedInteraction(payload)
 
     def ask(self, text, buttons=None, **kw):
@@ -2165,6 +2172,45 @@ def _validate_action(action):
     extra = sorted(set(action) - required)
     if extra:
         raise ProtocolError(f"unexpected action field: {extra[0]}")
+    for name in required - {"type"}:
+        value = action[name]
+        if name in {"id", "option_id", "action_id", "value"}:
+            maximum = 1048576 if name == "value" else 1024
+            if (not isinstance(value, str) or len(value) > maximum
+                    or (name != "value" and not value)):
+                raise ProtocolError(f"invalid action field: {name}")
+        elif name in {"elapsed_ms", "checkpoint_credits", "selection_start",
+                      "selection_end", "offset"}:
+            if (isinstance(value, bool) or not isinstance(value, int)
+                    or not 0 <= value <= 2147483647):
+                raise ProtocolError(f"invalid action field: {name}")
+        elif name in {"checked", "composing"}:
+            if not isinstance(value, bool):
+                raise ProtocolError(f"invalid action field: {name}")
+    if action_type == "key":
+        if not isinstance(action["key"], str) or not isinstance(action["modifiers"], list):
+            raise ProtocolError("invalid action field: key")
+        if (len(set(action["modifiers"])) != len(action["modifiers"])
+                or any(value not in {"alt", "control", "meta", "shift"}
+                       for value in action["modifiers"])):
+            raise ProtocolError("invalid action field: modifiers")
+    if action_type == "select-files":
+        if (not isinstance(action["accept"], list)
+                or any(not isinstance(value, str) or len(value) > 255
+                       for value in action["accept"])
+                or not isinstance(action["files"], list)):
+            raise ProtocolError("invalid action field: files")
+        for item in action["files"]:
+            if (not isinstance(item, dict)
+                    or set(item) != {"name", "type", "size"}
+                    or not isinstance(item["name"], str)
+                    or len(item["name"]) > 1048576
+                    or not isinstance(item["type"], str)
+                    or len(item["type"]) > 255
+                    or isinstance(item["size"], bool)
+                    or not isinstance(item["size"], int)
+                    or not 0 <= item["size"] <= 2147483647):
+                raise ProtocolError("invalid action field: files")
 
 
 def _combo_options(widget):
@@ -2190,6 +2236,10 @@ def apply_actions(envelope, *, _legacy_events=False):
         _validate_action(action)
         action_type = action["type"]
         if action_type == "advance":
+            from internpearls.platform import platform
+            advance = getattr(platform(), "advance", None)
+            if advance is not None:
+                advance(action["elapsed_ms"], action["checkpoint_credits"])
             continue
         widget_id = action.get("id")
         widget = _widgets.get(widget_id)
@@ -2541,6 +2591,17 @@ class Runner:
         self.paths = list(paths)
         self._fn = None
         self._snap = None
+        self._epoch = 0
+        self._sequence = 0
+        self._render_revision = 0
+        self._journal = []
+        self._batches = []
+        self._responses = {}
+        self._baseline_clock_ms = 0
+
+    @property
+    def journal(self):
+        return tuple(copy.deepcopy(self._journal))
 
     def _files(self):
         out = {}
@@ -2556,19 +2617,155 @@ class Runner:
 
     def _take(self):
         return {"col": copy.deepcopy(self.mock.mw.col),
-                "config": dict(self.mock.mw._config),
+                "config": copy.deepcopy(self.mock.mw._config),
                 "files": self._files()}
 
-    def _restore(self):
-        self.mock.mw.col = copy.deepcopy(self._snap["col"])
-        self.mock.mw._config = dict(self._snap["config"])
+    def _restore_files(self, snapshot):
+        snapshot = snapshot or {}
         for p in list(self._files()):
-            if p not in self._snap["files"]:
+            if p not in snapshot:
                 os.remove(p)
-        for p, data in self._snap["files"].items():
+        for p, data in snapshot.items():
             os.makedirs(os.path.dirname(p), exist_ok=True)
             with open(p, "wb") as fh:
                 fh.write(data)
+
+    def _restore(self):
+        self.mock.mw.col = copy.deepcopy(self._snap["col"])
+        self.mock.mw._config = copy.deepcopy(self._snap["config"])
+        self._restore_files(self._snap["files"])
+
+    @staticmethod
+    def _protocol_error(code, epoch, sequence, revision,
+                        status="contract-error"):
+        return {
+            "protocol": 1, "epoch": epoch, "sequence": sequence,
+            "render_revision": revision, "status": status,
+            "payload": {"code": code}, "pending": [],
+            "safe_status": {"code": "error"},
+        }
+
+    def start_protocol(self, fn, epoch):
+        if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
+            return self._protocol_error("invalid-envelope", 0, 0, 0)
+        self._fn = fn
+        self._snap = self._take()
+        self._epoch = epoch
+        self._sequence = 0
+        self._render_revision = 0
+        self._journal = []
+        self._batches = []
+        self._responses = {}
+        self._baseline_clock_ms = 0
+        self.mock.gui.interactions = []
+        self.mock.gui.interactive = True
+        return self._go_protocol(0)
+
+    def _validate_request(self, envelope):
+        fields = {"protocol", "epoch", "sequence", "render_revision", "actions"}
+        if not isinstance(envelope, dict) or set(envelope) != fields:
+            return "invalid-envelope"
+        if envelope["protocol"] != 1:
+            return "unsupported-protocol"
+        for field in ("epoch", "sequence", "render_revision"):
+            value = envelope[field]
+            if (isinstance(value, bool) or not isinstance(value, int)
+                    or not 0 <= value <= 2147483647):
+                return "invalid-envelope"
+        if not isinstance(envelope["actions"], list):
+            return "invalid-envelope"
+        try:
+            for action in envelope["actions"]:
+                _validate_action(action)
+        except ProtocolError:
+            return "invalid-action"
+        return None
+
+    def feed_protocol(self, envelope):
+        error = self._validate_request(envelope)
+        sequence = (envelope.get("sequence", self._sequence)
+                    if isinstance(envelope, dict) else self._sequence)
+        if error:
+            return self._protocol_error(
+                error, self._epoch, sequence, self._render_revision)
+        if envelope["epoch"] != self._epoch:
+            return self._protocol_error(
+                "stale-epoch", self._epoch, envelope["sequence"],
+                self._render_revision, "stale")
+        if envelope["sequence"] in self._responses:
+            return copy.deepcopy(self._responses[envelope["sequence"]])
+        if envelope["sequence"] != self._sequence + 1:
+            return self._protocol_error(
+                "stale-sequence", self._epoch, envelope["sequence"],
+                self._render_revision, "stale")
+        if envelope["render_revision"] != self._render_revision:
+            return self._protocol_error(
+                "stale-render-revision", self._epoch, envelope["sequence"],
+                self._render_revision, "stale")
+        actions = [copy.deepcopy(action) for action in envelope["actions"]]
+        actions.sort(key=lambda action: action["type"] == "advance")
+        advances = sum(record["type"] == "advance" for record in self._journal)
+        new_advances = sum(action["type"] == "advance" for action in actions)
+        if (len(self._journal) + len(actions) > 10000
+                or advances + new_advances > 1000):
+            return self._protocol_error(
+                "journal-limit", self._epoch, envelope["sequence"],
+                self._render_revision)
+        self._journal.extend(actions)
+        self._batches.append(actions)
+        self._sequence = envelope["sequence"]
+        return self._go_protocol(self._sequence)
+
+    def _go_protocol(self, sequence):
+        from demo.replay import ReplayError, ReplayPlatform
+        from internpearls.platform import use_platform
+
+        self._restore()
+        reset_run()
+        self.mock.gui.interactions = [
+            {"actions": copy.deepcopy(batch)} for batch in self._batches]
+        replay = ReplayPlatform(
+            epoch=self._epoch, now_ms=self._baseline_clock_ms,
+            take_overlay=self._files, restore_overlay=self._restore_files)
+        status, payload = "done", {}
+        with use_platform(replay):
+            try:
+                self._fn()
+            except NeedInteraction as error:
+                status, payload = "need", error.payload
+            except ReplayError as error:
+                status, payload = "contract-error", {"code": error.code}
+            except ProtocolError as error:
+                message = str(error)
+                mappings = (
+                    ("unknown widget id", "unknown-widget-id"),
+                    ("effectively hidden", "hidden-target"),
+                    ("effectively disabled", "disabled-target"),
+                    ("unknown combo option", "invalid-option-id"),
+                    ("unknown link action", "invalid-link-id"),
+                    ("action not permitted", "action-not-allowed"),
+                    ("unknown node kind", "unknown-node-kind"),
+                )
+                code = next((code for fragment, code in mappings
+                             if fragment in message), "invalid-action")
+                status, payload = "contract-error", {"code": code}
+        self._render_revision += 1
+        pending = replay.pending()
+        safe_code = "working" if pending else (
+            "error" if status in {"error", "contract-error"} else "ready")
+        response = {
+            "protocol": 1, "epoch": self._epoch, "sequence": sequence,
+            "render_revision": self._render_revision, "status": status,
+            "payload": payload, "pending": pending,
+            "safe_status": {"code": safe_code},
+        }
+        self._responses[sequence] = copy.deepcopy(response)
+        if status == "done":
+            self._snap = self._take()
+            self._baseline_clock_ms = replay.now_ms
+            self._journal = []
+            self._batches = []
+        return response
 
     def start(self, fn):
         self._fn = fn
