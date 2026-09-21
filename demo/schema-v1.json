@@ -1,0 +1,595 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:demo-contract:v1",
+  "schema_version": 1,
+  "node_kinds": [
+    "box",
+    "button",
+    "buttons",
+    "check",
+    "col",
+    "combo",
+    "form",
+    "frame",
+    "grid",
+    "hline",
+    "label",
+    "line",
+    "radio",
+    "row",
+    "scroll",
+    "spacer",
+    "spin",
+    "stack",
+    "textarea"
+  ],
+  "action_kinds": [
+    "activate",
+    "toggle",
+    "select-option",
+    "edit-text",
+    "finish-edit",
+    "activate-link",
+    "key",
+    "scroll",
+    "select-files",
+    "advance",
+    "close"
+  ],
+  "node_fields": {
+    "label": ["format", "text", "wrap", "alignment", "strike", "selectable", "link_actions"],
+    "button": ["text", "checkable", "checked", "role", "default", "escape"],
+    "buttons": ["button_ids", "standard_roles"],
+    "check": ["text", "checked", "group_id", "exclusive"],
+    "radio": ["text", "checked", "group_id", "exclusive"],
+    "line": ["value", "placeholder", "selection_start", "selection_end", "password", "max_length", "max_blocks"],
+    "textarea": ["value", "placeholder", "selection_start", "selection_end", "password", "max_length", "max_blocks"],
+    "combo": ["options", "current_index", "current_text", "editable", "editor_value"],
+    "spin": ["value", "minimum", "maximum", "step", "suffix", "special_value_text"],
+    "row": ["margins", "gap", "stretches", "alignment"],
+    "col": ["margins", "gap", "stretches", "alignment"],
+    "box": ["margins", "gap", "stretches", "alignment"],
+    "frame": ["margins", "gap", "stretches", "alignment"],
+    "grid": ["cells", "column_minimums", "column_stretches"],
+    "form": ["rows"],
+    "stack": ["pages", "current_page"],
+    "scroll": ["offset", "extent", "shown_count", "total_count", "row_ids"],
+    "spacer": ["orientation", "size_policy"],
+    "hline": ["orientation", "size_policy"]
+  },
+  "action_fields": {
+    "activate": ["id"],
+    "toggle": ["id", "checked"],
+    "select-option": ["id", "option_id"],
+    "edit-text": ["id", "value", "selection_start", "selection_end", "composing"],
+    "finish-edit": ["id"],
+    "activate-link": ["id", "action_id"],
+    "key": ["id", "key", "modifiers"],
+    "scroll": ["id", "offset"],
+    "select-files": ["id", "accept", "files"],
+    "advance": ["elapsed_ms", "checkpoint_credits"],
+    "close": ["id"]
+  },
+  "error_codes": [
+    "stale-epoch",
+    "stale-sequence",
+    "stale-render-revision",
+    "invalid-envelope",
+    "invalid-action",
+    "action-not-allowed"
+  ],
+  "required_fields": {
+    "node": [
+      "id",
+      "kind",
+      "parent_id",
+      "children",
+      "visible",
+      "effective_visible",
+      "enabled",
+      "effective_enabled",
+      "accessible_name",
+      "accessible_description",
+      "tooltip",
+      "focus_policy",
+      "readonly",
+      "style_roles",
+      "actions"
+    ],
+    "request": [
+      "protocol",
+      "epoch",
+      "sequence",
+      "render_revision",
+      "actions"
+    ],
+    "response": [
+      "protocol",
+      "epoch",
+      "sequence",
+      "render_revision",
+      "status",
+      "payload",
+      "pending",
+      "safe_status"
+    ],
+    "actions": {
+      "activate": ["type", "id"],
+      "toggle": ["type", "id", "checked"],
+      "select-option": ["type", "id", "option_id"],
+      "edit-text": [
+        "type",
+        "id",
+        "value",
+        "selection_start",
+        "selection_end",
+        "composing"
+      ],
+      "finish-edit": ["type", "id"],
+      "activate-link": ["type", "id", "action_id"],
+      "key": ["type", "id", "key", "modifiers"],
+      "scroll": ["type", "id", "offset"],
+      "select-files": ["type", "id", "accept", "files"],
+      "advance": ["type", "elapsed_ms", "checkpoint_credits"],
+      "close": ["type", "id"]
+    }
+  },
+  "$defs": {
+    "bounded_integer": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "nonnegative_integer": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "text": {
+      "type": "string",
+      "maxLength": 1048576
+    },
+    "alignment": {
+      "enum": ["start", "center", "end", "justify"]
+    },
+    "orientation": {
+      "enum": ["horizontal", "vertical"]
+    },
+    "size_policy": {
+      "enum": [
+        "fixed",
+        "minimum",
+        "maximum",
+        "preferred",
+        "expanding",
+        "minimum-expanding",
+        "ignored"
+      ]
+    },
+    "margins": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "top", "right", "bottom"],
+      "properties": {
+        "left": {"$ref": "#/$defs/nonnegative_integer"},
+        "top": {"$ref": "#/$defs/nonnegative_integer"},
+        "right": {"$ref": "#/$defs/nonnegative_integer"},
+        "bottom": {"$ref": "#/$defs/nonnegative_integer"}
+      }
+    },
+    "combo_option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "label": {"$ref": "#/$defs/text"}
+      }
+    },
+    "grid_cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "row", "column", "row_span", "column_span", "alignment"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "row": {"$ref": "#/$defs/nonnegative_integer"},
+        "column": {"$ref": "#/$defs/nonnegative_integer"},
+        "row_span": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "column_span": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "alignment": {"$ref": "#/$defs/alignment"}
+      }
+    },
+    "form_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label_id", "field_id"],
+      "properties": {
+        "label_id": {"$ref": "#/$defs/identifier"},
+        "field_id": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "size"],
+      "properties": {
+        "name": {"$ref": "#/$defs/text"},
+        "type": {"type": "string", "maxLength": 255},
+        "size": {"$ref": "#/$defs/nonnegative_integer"}
+      }
+    },
+    "action": {
+      "oneOf": [
+        {"$ref": "#/$defs/action_activate"},
+        {"$ref": "#/$defs/action_toggle"},
+        {"$ref": "#/$defs/action_select_option"},
+        {"$ref": "#/$defs/action_edit_text"},
+        {"$ref": "#/$defs/action_finish_edit"},
+        {"$ref": "#/$defs/action_activate_link"},
+        {"$ref": "#/$defs/action_key"},
+        {"$ref": "#/$defs/action_scroll"},
+        {"$ref": "#/$defs/action_select_files"},
+        {"$ref": "#/$defs/action_advance"},
+        {"$ref": "#/$defs/action_close"}
+      ]
+    },
+    "action_activate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"const": "activate"},
+        "id": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "action_toggle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "checked"],
+      "properties": {
+        "type": {"const": "toggle"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "checked": {"type": "boolean"}
+      }
+    },
+    "action_select_option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "option_id"],
+      "properties": {
+        "type": {"const": "select-option"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "option_id": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "action_edit_text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "value", "selection_start", "selection_end", "composing"],
+      "properties": {
+        "type": {"const": "edit-text"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "value": {"$ref": "#/$defs/text"},
+        "selection_start": {"$ref": "#/$defs/nonnegative_integer"},
+        "selection_end": {"$ref": "#/$defs/nonnegative_integer"},
+        "composing": {"type": "boolean"}
+      }
+    },
+    "action_finish_edit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"const": "finish-edit"},
+        "id": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "action_activate_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "action_id"],
+      "properties": {
+        "type": {"const": "activate-link"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "action_id": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "action_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "key", "modifiers"],
+      "properties": {
+        "type": {"const": "key"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "key": {"type": "string", "minLength": 1, "maxLength": 64},
+        "modifiers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["alt", "control", "meta", "shift"]}
+        }
+      }
+    },
+    "action_scroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "offset"],
+      "properties": {
+        "type": {"const": "scroll"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "offset": {"$ref": "#/$defs/nonnegative_integer"}
+      }
+    },
+    "action_select_files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "accept", "files"],
+      "properties": {
+        "type": {"const": "select-files"},
+        "id": {"$ref": "#/$defs/identifier"},
+        "accept": {"type": "array", "items": {"type": "string", "maxLength": 255}},
+        "files": {"type": "array", "items": {"$ref": "#/$defs/file"}}
+      }
+    },
+    "action_advance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "elapsed_ms", "checkpoint_credits"],
+      "properties": {
+        "type": {"const": "advance"},
+        "elapsed_ms": {"$ref": "#/$defs/nonnegative_integer"},
+        "checkpoint_credits": {"$ref": "#/$defs/nonnegative_integer"}
+      }
+    },
+    "action_close": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"const": "close"},
+        "id": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "action_dispatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node", "action"],
+      "properties": {
+        "node": {"$ref": "#/$defs/node"},
+        "action": {"$ref": "#/$defs/action"}
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "node": {"properties": {"actions": {"contains": {"const": "activate"}}}},
+            "action": {"$ref": "#/$defs/action_activate"}
+          }
+        },
+        {
+          "properties": {
+            "node": {"properties": {"actions": {"contains": {"const": "toggle"}}}},
+            "action": {"$ref": "#/$defs/action_toggle"}
+          }
+        },
+        {
+          "properties": {
+            "node": {"properties": {"actions": {"contains": {"const": "select-option"}}}},
+            "action": {"$ref": "#/$defs/action_select_option"}
+          }
+        },
+        {
+          "properties": {
+            "node": {"properties": {"actions": {"contains": {"const": "edit-text"}}}},
+            "action": {"$ref": "#/$defs/action_edit_text"}
+          }
+        },
+        {
+          "properties": {
+            "node": {"properties": {"actions": {"contains": {"const": "finish-edit"}}}},
+            "action": {"$ref": "#/$defs/action_finish_edit"}
+          }
+        },
+        {
+          "properties": {
+            "node": {"properties": {"actions": {"contains": {"const": "activate-link"}}}},
+            "action": {"$ref": "#/$defs/action_activate_link"}
+          }
+        },
+        {
+          "properties": {
+            "node": {"properties": {"actions": {"contains": {"const": "key"}}}},
+            "action": {"$ref": "#/$defs/action_key"}
+          }
+        },
+        {
+          "properties": {
+            "node": {"properties": {"actions": {"contains": {"const": "scroll"}}}},
+            "action": {"$ref": "#/$defs/action_scroll"}
+          }
+        },
+        {
+          "properties": {
+            "node": {"properties": {"actions": {"contains": {"const": "select-files"}}}},
+            "action": {"$ref": "#/$defs/action_select_files"}
+          }
+        },
+        {
+          "properties": {
+            "node": {"properties": {"actions": {"contains": {"const": "advance"}}}},
+            "action": {"$ref": "#/$defs/action_advance"}
+          }
+        },
+        {
+          "properties": {
+            "node": {"properties": {"actions": {"contains": {"const": "close"}}}},
+            "action": {"$ref": "#/$defs/action_close"}
+          }
+        }
+      ]
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "epoch", "sequence", "render_revision", "actions"],
+      "properties": {
+        "protocol": {"const": 1},
+        "epoch": {"$ref": "#/$defs/nonnegative_integer"},
+        "sequence": {"$ref": "#/$defs/nonnegative_integer"},
+        "render_revision": {"$ref": "#/$defs/nonnegative_integer"},
+        "actions": {"type": "array", "items": {"$ref": "#/$defs/action"}}
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "epoch", "sequence", "render_revision", "status", "payload", "pending", "safe_status"],
+      "properties": {
+        "protocol": {"const": 1},
+        "epoch": {"$ref": "#/$defs/nonnegative_integer"},
+        "sequence": {"$ref": "#/$defs/nonnegative_integer"},
+        "render_revision": {"$ref": "#/$defs/nonnegative_integer"},
+        "status": {"enum": ["need", "done", "error", "stale", "contract-error"]},
+        "payload": {"type": "object"},
+        "pending": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["task_id", "kind", "stage"],
+            "properties": {
+              "task_id": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 4,
+                "items": {"$ref": "#/$defs/nonnegative_integer"}
+              },
+              "kind": {"$ref": "#/$defs/identifier"},
+              "stage": {"$ref": "#/$defs/identifier"}
+            }
+          }
+        },
+        "safe_status": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code"],
+          "properties": {
+            "code": {"enum": ["ready", "working", "error", "cancelled"]}
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "properties": {
+        "code": {
+          "enum": [
+            "stale-epoch",
+            "stale-sequence",
+            "stale-render-revision",
+            "invalid-envelope",
+            "invalid-action",
+            "action-not-allowed"
+          ]
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "parent_id", "children", "visible", "effective_visible", "enabled", "effective_enabled", "accessible_name", "accessible_description", "tooltip", "focus_policy", "readonly", "style_roles", "actions"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "kind": {"enum": ["box", "button", "buttons", "check", "col", "combo", "form", "frame", "grid", "hline", "label", "line", "radio", "row", "scroll", "spacer", "spin", "stack", "textarea"]},
+        "parent_id": {"type": ["string", "null"], "maxLength": 1024},
+        "children": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "visible": {"type": "boolean"},
+        "effective_visible": {"type": "boolean"},
+        "enabled": {"type": "boolean"},
+        "effective_enabled": {"type": "boolean"},
+        "accessible_name": {"$ref": "#/$defs/text"},
+        "accessible_description": {"$ref": "#/$defs/text"},
+        "tooltip": {"$ref": "#/$defs/text"},
+        "focus_policy": {"enum": ["none", "click", "tab", "strong"]},
+        "readonly": {"type": "boolean"},
+        "style_roles": {"type": "array", "uniqueItems": true, "items": {"enum": ["primary", "secondary", "danger", "warning", "success", "muted", "heading", "monospace"]}},
+        "actions": {"type": "array", "uniqueItems": true, "items": {"enum": ["activate", "toggle", "select-option", "edit-text", "finish-edit", "activate-link", "key", "scroll", "select-files", "advance", "close"]}},
+        "format": {"enum": ["plain", "rich", "markdown"]},
+        "text": {"$ref": "#/$defs/text"},
+        "wrap": {"type": "boolean"},
+        "alignment": {"$ref": "#/$defs/alignment"},
+        "strike": {"type": "boolean"},
+        "selectable": {"type": "boolean"},
+        "link_actions": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "checkable": {"type": "boolean"},
+        "checked": {"type": "boolean"},
+        "role": {"enum": ["accept", "reject", "destructive", "help", "apply", "reset", "yes", "no", "close", "other"]},
+        "default": {"type": "boolean"},
+        "escape": {"type": "boolean"},
+        "button_ids": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "standard_roles": {"type": "array", "items": {"type": "string", "maxLength": 64}},
+        "group_id": {"type": ["string", "null"], "maxLength": 1024},
+        "exclusive": {"type": "boolean"},
+        "value": {"type": ["string", "number"]},
+        "placeholder": {"$ref": "#/$defs/text"},
+        "selection_start": {"$ref": "#/$defs/nonnegative_integer"},
+        "selection_end": {"$ref": "#/$defs/nonnegative_integer"},
+        "password": {"type": "boolean"},
+        "max_length": {"$ref": "#/$defs/nonnegative_integer"},
+        "max_blocks": {"$ref": "#/$defs/nonnegative_integer"},
+        "options": {"type": "array", "items": {"$ref": "#/$defs/combo_option"}},
+        "current_index": {"$ref": "#/$defs/bounded_integer"},
+        "current_text": {"$ref": "#/$defs/text"},
+        "editable": {"type": "boolean"},
+        "editor_value": {"$ref": "#/$defs/text"},
+        "minimum": {"type": "number", "minimum": -2147483648, "maximum": 2147483647},
+        "maximum": {"type": "number", "minimum": -2147483648, "maximum": 2147483647},
+        "step": {"type": "number", "exclusiveMinimum": 0, "maximum": 2147483647},
+        "suffix": {"$ref": "#/$defs/text"},
+        "special_value_text": {"$ref": "#/$defs/text"},
+        "margins": {"$ref": "#/$defs/margins"},
+        "gap": {"$ref": "#/$defs/nonnegative_integer"},
+        "stretches": {"type": "array", "items": {"$ref": "#/$defs/nonnegative_integer"}},
+        "cells": {"type": "array", "items": {"$ref": "#/$defs/grid_cell"}},
+        "column_minimums": {"type": "array", "items": {"$ref": "#/$defs/nonnegative_integer"}},
+        "column_stretches": {"type": "array", "items": {"$ref": "#/$defs/nonnegative_integer"}},
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/form_row"}},
+        "pages": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "current_page": {"type": ["string", "null"], "maxLength": 1024},
+        "offset": {"$ref": "#/$defs/nonnegative_integer"},
+        "extent": {"$ref": "#/$defs/nonnegative_integer"},
+        "shown_count": {"$ref": "#/$defs/nonnegative_integer"},
+        "total_count": {"$ref": "#/$defs/nonnegative_integer"},
+        "row_ids": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "orientation": {"$ref": "#/$defs/orientation"},
+        "size_policy": {"$ref": "#/$defs/size_policy"}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "label"}}}, "then": {"required": ["format", "text", "wrap", "alignment", "strike", "selectable", "link_actions"]}},
+        {"if": {"properties": {"kind": {"const": "button"}}}, "then": {"required": ["text", "checkable", "checked", "role", "default", "escape"]}},
+        {"if": {"properties": {"kind": {"const": "buttons"}}}, "then": {"required": ["button_ids", "standard_roles"]}},
+        {"if": {"properties": {"kind": {"const": "check"}}}, "then": {"required": ["text", "checked", "group_id", "exclusive"]}},
+        {"if": {"properties": {"kind": {"const": "radio"}}}, "then": {"required": ["text", "checked", "group_id", "exclusive"]}},
+        {"if": {"properties": {"kind": {"const": "line"}}}, "then": {"required": ["value", "placeholder", "selection_start", "selection_end", "password", "max_length", "max_blocks"]}},
+        {"if": {"properties": {"kind": {"const": "textarea"}}}, "then": {"required": ["value", "placeholder", "selection_start", "selection_end", "password", "max_length", "max_blocks"]}},
+        {"if": {"properties": {"kind": {"const": "combo"}}}, "then": {"required": ["options", "current_index", "current_text", "editable", "editor_value"]}},
+        {"if": {"properties": {"kind": {"const": "spin"}}}, "then": {"required": ["value", "minimum", "maximum", "step", "suffix", "special_value_text"]}},
+        {"if": {"properties": {"kind": {"const": "row"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"]}},
+        {"if": {"properties": {"kind": {"const": "col"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"]}},
+        {"if": {"properties": {"kind": {"const": "box"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"]}},
+        {"if": {"properties": {"kind": {"const": "frame"}}}, "then": {"required": ["margins", "gap", "stretches", "alignment"]}},
+        {"if": {"properties": {"kind": {"const": "grid"}}}, "then": {"required": ["cells", "column_minimums", "column_stretches"]}},
+        {"if": {"properties": {"kind": {"const": "form"}}}, "then": {"required": ["rows"]}},
+        {"if": {"properties": {"kind": {"const": "stack"}}}, "then": {"required": ["pages", "current_page"]}},
+        {"if": {"properties": {"kind": {"const": "scroll"}}}, "then": {"required": ["offset", "extent", "shown_count", "total_count", "row_ids"]}},
+        {"if": {"properties": {"kind": {"const": "spacer"}}}, "then": {"required": ["orientation", "size_policy"]}},
+        {"if": {"properties": {"kind": {"const": "hline"}}}, "then": {"required": ["orientation", "size_policy"]}}
+      ]
+    }
+  }
+}
