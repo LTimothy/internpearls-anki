@@ -29,6 +29,8 @@ def test_docs_addon_mirror_is_current():
     expected = {f: _read(os.path.join(ADDON, f))
                 for f in os.listdir(ADDON) if f.endswith(".py")}
     expected["mock_anki.py"] = _read(os.path.join(HERE, "mock_anki.py"))
+    expected["demo_replay.py"] = _read(os.path.join(
+        HERE, "..", "demo", "replay.py"))
     stale = []
     for name, want in sorted(expected.items()):
         mirrored = os.path.join(DOCS_ADDON, name)

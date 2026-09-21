@@ -127,7 +127,7 @@ test("renders explicitly plain HTML-looking labels as text", async ({ page }) =>
 });
 
 test("the live demo dialog context collects scroll actions", async ({ page }) => {
-  const response = await page.request.get("/docs/index.html");
+  const response = await page.request.get("/docs/demo.js");
   expect(response.ok()).toBeTruthy();
   const source = await response.text();
   expect(source).toContain("scrollActions: []");
