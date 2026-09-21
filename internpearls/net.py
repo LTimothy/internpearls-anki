@@ -25,10 +25,9 @@ _DOWNLOAD_TIMEOUT = 60   # seconds; per-read bound for pulling a deck once we're
 # so loosening this one doesn't slow either of those.
 # A tighter bound for the two checks that run on their own, unprompted: the deck-sync
 # poll and the add-on-update check. These can fire as often as once a minute, so a slow
-# or dead host has to fail well before the interactive bound would. Background
-# checks that use QueryOp (see background._run_in_background) run this off the main
-# thread anyway, so the timeout mostly matters for the fallback path on an Anki build
-# without QueryOp.
+# or dead host has to fail well before the interactive bound would. These checks run
+# off the main thread (see background._run_in_background), so this bound is about how
+# long an unattended poll may hold its own slot open, not about a frozen UI.
 _BG_TIMEOUT = 3          # seconds; fail-fast bound for unattended background checks
 
 # How much of a download is read per `on_chunk` call. Small enough that a slow link

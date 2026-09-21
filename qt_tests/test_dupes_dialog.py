@@ -1007,3 +1007,23 @@ def test_a_rescan_retires_the_scan_it_replaces(monkeypatch):
     dlg._wait_for_scan()
     assert dlg._pairs == []
     dlg.deleteLater()
+
+
+def test_scan_completion_runs_once_across_delivery_and_timer():
+    """on_result drives the poll as soon as the platform delivers, so the timer
+    tick that follows must find the cycle already closed. Without a latch the scan
+    finished twice, re-reading every note and rebuilding the list on top of itself."""
+    from internpearls import dupes_dialog
+
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = dupes_dialog._DuplicateScanDialog("InternPearls")
+    finishes = []
+    real_finish = dlg._finish_scan
+    dlg._finish_scan = lambda: (finishes.append("finish"), real_finish())[1]
+
+    dlg._wait_for_scan()
+    dlg._poll_scan()   # a stray tick behind the one _wait_for_scan already fired
+
+    assert finishes == ["finish"]

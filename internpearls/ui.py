@@ -37,8 +37,8 @@ from .palette import colors
 # import, restore, delete, or reconcile note types. The unattended auto-sync poll
 # checks it and skips its tick rather than interleaving, since both write the
 # collection and both persist installed.json, and the poll's apply half lands from a
-# QueryOp callback, which can fire while one of these flows is sitting inside a modal
-# dialog's own event loop.
+# worker thread's completion callback, which can fire while one of these flows is
+# sitting inside a modal dialog's own event loop.
 #
 # It lives here rather than in sync.py or collection.py because both of those need it
 # and sync.py imports collection.py, so a flag in either would be a circular import.

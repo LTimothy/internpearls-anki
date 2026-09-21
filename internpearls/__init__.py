@@ -23,7 +23,7 @@ This file is only the menu and startup wiring. The work lives in focused modules
 - collection.py  everything that touches mw.col: backups, snapshot/restore, imports
 - sync.py        the sync flows (Sync decks, Import single deck, source resolution)
 - updates.py     add-on self-update (version fetch, download, manual check)
-- background.py  QueryOp dispatch, the startup update check, the auto-sync poll
+- background.py  worker dispatch, the startup update check, the auto-sync poll
 - dialogs.py     Manage decks, Settings, Night mode dimming, About, source configuration
 """
 from aqt import gui_hooks, mw

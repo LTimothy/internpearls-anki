@@ -361,3 +361,40 @@ def test_native_work_poll_interval_is_bounded_and_nonzero(anki):
 
     assert 0 < anki.qt_timers[-1].interval <= 100
     assert not handle.is_alive()
+
+
+def test_the_platform_owns_started_work_until_it_is_delivered(anki):
+    """No call site holds a work handle, so the platform has to: otherwise the
+    handle, its timer handle and the QTimer are only a reference cycle once the
+    thread exits, and a collection before the next poll destroys the timer with
+    the result still undelivered. This mock cannot show that collection (its
+    QTimer stand-in keeps a registry of every timer ever built), so it pins the
+    ownership itself; qt_tests/test_platform.py reproduces the dropped delivery
+    under real Qt."""
+    native = NativePlatform()
+    delivered = []
+    handle = native.start_work(_request(), lambda _context: "value",
+                               delivered.append, lambda _error: None)
+
+    assert native._live_work == []   # not yet started, nothing to keep alive
+    handle.start()
+    assert native._live_work == [handle]
+
+    handle.join(timeout=1)
+    assert native._live_work == [handle]   # still owed a delivery
+    handle._deliver_for_mock()
+
+    assert delivered == ["value"]
+    assert native._live_work == []
+
+
+def test_cancelled_work_is_released_once_its_thread_finishes(anki):
+    native = NativePlatform()
+    handle = native.start_work(_request(), lambda _context: "value",
+                               lambda _result: None, lambda _error: None)
+    handle.start()
+    handle.cancel()
+    handle.join(timeout=1)
+    handle._deliver_for_mock()
+
+    assert native._live_work == []

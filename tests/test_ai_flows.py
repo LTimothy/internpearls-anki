@@ -1181,7 +1181,7 @@ def test_close_mid_generation_asks_and_declining_keeps_it_running(anki, monkeypa
     assert dlg._result is None
     assert dlg.stack.currentWidget() is dlg.progress_page
     assert dlg._worker.is_alive()
-    assert not dlg._cancel_flag.is_set()
+    assert not dlg._worker.cancel_event.is_set()
     dlg._cancel_generation()   # clean up: actually cancel so the test doesn't leak a thread
     dlg._wait_for_worker(timeout=15)
 
@@ -1927,3 +1927,53 @@ def test_saved_image_must_still_be_an_svg(tmp_path):
     res = ai_dialog._resolve_one_image(
         {"source": "file:drawing.png"}, str(scratch))
     assert res["state"] == "error" and ".svg" in res["error"]
+
+
+def test_completion_guard_cancels_the_live_worker(anki, monkeypatch):
+    """_guard_completion's recovery has to reach the running assistant, not just
+    latch the dialog. It used to set a dialog-owned Event the worker no longer
+    read, so an exception on the completion path left the CLI running with no
+    timer and no Cancel button able to stop it."""
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="slow")
+    dlg._start_generation()
+    worker = dlg._worker
+    assert not worker.cancel_event.is_set()
+
+    def boom():
+        raise RuntimeError("completion blew up")
+
+    dlg._guard_completion(boom)
+
+    assert worker.cancel_event.is_set()
+    assert dlg._gen_done and dlg._img_done
+    dlg._wait_for_worker(timeout=15)
+
+
+def test_poll_worker_waits_for_delivery_instead_of_pumping_events(anki, monkeypatch):
+    """A tick that lands after the thread exits but before the platform delivers
+    must simply return. Pumping the event loop from inside the timer slot re-enters
+    this poll past its own _gen_done guard and finishes the generation twice."""
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._worker.join(timeout=15)
+    assert not dlg._worker.is_alive()
+    assert not dlg._worker_ready   # nothing has delivered yet
+
+    finishes = []
+    pumped = []
+    monkeypatch.setattr(dlg, "_finish_generation",
+                        lambda: finishes.append("finish"))
+    monkeypatch.setattr(ai_dialog.QApplication, "processEvents",
+                        staticmethod(lambda *a, **k: pumped.append("pump")))
+
+    dlg._timer.fire()
+    assert pumped == []   # the slot must not re-enter itself through the loop
+    assert finishes == []
+    assert not dlg._gen_done
+
+    wait_for_mock_work(dlg._worker)   # the platform delivers
+    dlg._timer.fire()
+    dlg._timer.fire()                 # a second, stray tick
+
+    assert finishes == ["finish"]
+    assert pumped == []
