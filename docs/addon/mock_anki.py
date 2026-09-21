@@ -985,6 +985,11 @@ class pyqtSignal:
 
 
 class QWidget:
+    # Keep ownership available to effective-state checks without exposing an
+    # upward link to structural walkers that inspect vars(widget). The mock's
+    # serialized tree remains layout-owned, as it is in the browser contract.
+    __slots__ = ("_parent_widget", "__dict__")
+
     def __init__(self, *a, **k):
         self.wid = _new_wid(self)
         self._parent_widget = next(
@@ -2168,8 +2173,12 @@ def _combo_options(widget):
     return options
 
 
-def apply_actions(envelope):
-    """Validate and apply normalized user actions in request order."""
+def apply_actions(envelope, *, _legacy_events=False):
+    """Validate and apply normalized user actions in request order.
+
+    The private legacy flag is only for the old fixture event adapter. New
+    protocol actions always enforce effective visibility and enabled state.
+    """
     if not isinstance(envelope, dict) or not isinstance(envelope.get("actions"), list):
         raise ProtocolError("invalid action envelope")
     for action in envelope["actions"]:
@@ -2182,9 +2191,9 @@ def apply_actions(envelope):
         if widget is None:
             raise ProtocolError(f"unknown widget id: {widget_id}")
         visible, enabled = _effective_state(widget)
-        if not visible:
+        if not visible and not _legacy_events:
             raise ProtocolError("widget is effectively hidden")
-        if not enabled:
+        if not enabled and not _legacy_events:
             raise ProtocolError("widget is effectively disabled")
         if action_type not in _actions_for(widget):
             raise ProtocolError(
@@ -2255,7 +2264,7 @@ def _apply_events(response):
             actions.append(_legacy_value_action(event))
         if event.get("click"):
             actions.append({"type": "activate", "id": event["id"]})
-    apply_actions({"actions": actions})
+    apply_actions({"actions": actions}, _legacy_events=True)
 
 
 class QDialog(QWidget):
