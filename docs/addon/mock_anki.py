@@ -65,7 +65,7 @@ _persistent = {}
 _persistent_seq = [0]
 
 
-class ProtocolError(ValueError):
+class ProtocolError(BaseException):
     """A request or widget tree violates the generated demo contract."""
 
 
@@ -952,24 +952,27 @@ class Gui:
             return self.file_picks.pop(0)
         if not self.interactive:
             return None
-        picker = QWidget()
-        selected = [None]
+        pending = object()
+        picker = QDialog()
+        selected = [pending]
+        picker.rejected.connect(lambda: selected.__setitem__(0, None))
         accept = list(payload.get("accept", ()))
 
         def validate(action):
             names = [item["name"] for item in action["files"]]
-            if (action["accept"] != accept or len(names) != 1
-                    or names[0] not in self.uploads):
+            if (action["accept"] != accept or len(names) > 1
+                    or any(name not in self.uploads for name in names)):
                 raise ProtocolError("invalid action field: files")
 
         def choose(action):
-            selected[0] = self.uploads[action["files"][0]["name"]]
+            selected[0] = (self.uploads[action["files"][0]["name"]]
+                           if action["files"] else None)
 
         picker._validate_file_selection = validate
         picker._select_files = choose
         frontier = dict(payload, id=picker.wid, accept=accept, multiple=False,
                         contract_tree=serialize_widget(picker))
-        while selected[0] is None:
+        while selected[0] is pending:
             response = self.next_interaction(frontier)
             if "actions" not in response:
                 return response.get("path")
@@ -2008,7 +2011,10 @@ def _link_actions(widget):
 
 def _actions_for(widget):
     if callable(getattr(widget, "_select_files", None)):
-        return ["select-files"]
+        actions = ["select-files"]
+        if isinstance(widget, QDialog):
+            actions.extend(["key", "close"])
+        return actions
     if isinstance(widget, QDialog):
         return ["key", "close"]
     name = _class_name(widget)
@@ -2379,60 +2385,68 @@ def apply_actions(envelope, *, _legacy_events=False, allowed_ids=None):
     """
     if not isinstance(envelope, dict) or not isinstance(envelope.get("actions"), list):
         raise ProtocolError("invalid action envelope")
-    for action in envelope["actions"]:
+    actions = envelope["actions"]
+    for index, action in enumerate(actions):
         widget = _validated_action_target(
             action, legacy_events=_legacy_events, allowed_ids=allowed_ids)
         action_type = action["type"]
-        if action_type == "advance":
-            from internpearls.platform import platform
-            advance = getattr(platform(), "advance", None)
-            if advance is not None:
-                advance(action["elapsed_ms"], action["checkpoint_credits"])
-            continue
+        try:
+            if action_type == "advance":
+                from internpearls.platform import platform
+                advance = getattr(platform(), "advance", None)
+                if advance is not None:
+                    advance(action["elapsed_ms"], action["checkpoint_credits"])
+                continue
 
-        if action_type == "activate":
-            widget.click()
-        elif action_type == "toggle":
-            widget.setChecked(action["checked"])
-        elif action_type == "select-option":
-            option = dict(_combo_options(widget)).get(action["option_id"])
-            if option is None:
-                raise ProtocolError(f"unknown combo option: {action['option_id']}")
-            widget.setCurrentIndex(option)
-        elif action_type == "edit-text":
-            value = action["value"]
-            if _class_name(widget) == "QLineEdit":
-                if hasattr(widget, "_user_edit"):
-                    widget._user_edit(value, action["selection_start"],
-                                      action["selection_end"])
+            if action_type == "activate":
+                widget.click()
+            elif action_type == "toggle":
+                widget.setChecked(action["checked"])
+            elif action_type == "select-option":
+                option = dict(_combo_options(widget)).get(action["option_id"])
+                if option is None:
+                    raise ProtocolError(
+                        f"unknown combo option: {action['option_id']}")
+                widget.setCurrentIndex(option)
+            elif action_type == "edit-text":
+                value = action["value"]
+                if _class_name(widget) == "QLineEdit":
+                    if hasattr(widget, "_user_edit"):
+                        widget._user_edit(value, action["selection_start"],
+                                          action["selection_end"])
+                    else:
+                        widget.textEdited.emit(value)
+                        widget.setText(value)
+                        widget.setSelection(
+                            action["selection_start"],
+                            action["selection_end"] - action["selection_start"])
+                elif _class_name(widget) == "QPlainTextEdit":
+                    widget.setPlainText(value)
+                elif _class_name(widget) == "QComboBox":
+                    widget.setEditText(value)
                 else:
-                    widget.textEdited.emit(value)
-                    widget.setText(value)
-                    widget.setSelection(
-                        action["selection_start"],
-                        action["selection_end"] - action["selection_start"])
-            elif _class_name(widget) == "QPlainTextEdit":
-                widget.setPlainText(value)
-            elif _class_name(widget) == "QComboBox":
-                widget.setEditText(value)
-            else:
-                widget.setValue(int(value))
-        elif action_type == "finish-edit":
-            widget.editingFinished.emit()
-        elif action_type == "activate-link":
-            if action["action_id"] not in _link_actions(widget):
-                raise ProtocolError(f"unknown link action: {action['action_id']}")
-            widget.linkActivated.emit(action["action_id"])
-        elif action_type == "key":
-            if action["key"] != "Escape" or action["modifiers"]:
-                raise ProtocolError("action not permitted for key")
-            widget.reject()
-        elif action_type == "scroll":
-            widget.verticalScrollBar().setValue(action["offset"])
-        elif action_type == "close":
-            widget.reject()
-        elif action_type == "select-files":
-            widget._select_files(action)
+                    widget.setValue(int(value))
+            elif action_type == "finish-edit":
+                widget.editingFinished.emit()
+            elif action_type == "activate-link":
+                if action["action_id"] not in _link_actions(widget):
+                    raise ProtocolError(
+                        f"unknown link action: {action['action_id']}")
+                widget.linkActivated.emit(action["action_id"])
+            elif action_type == "key":
+                if action["key"] != "Escape" or action["modifiers"]:
+                    raise ProtocolError("action not permitted for key")
+                widget.reject()
+            elif action_type == "scroll":
+                widget.verticalScrollBar().setValue(action["offset"])
+            elif action_type == "close":
+                widget.reject()
+            elif action_type == "select-files":
+                widget._select_files(action)
+        except NeedInteraction:
+            if index + 1 < len(actions):
+                raise ProtocolError("unconsumed action suffix")
+            raise
 
 
 def _legacy_value_action(event):
@@ -2762,7 +2776,13 @@ class Runner:
         return {"col": copy.deepcopy(self.mock.mw.col),
                 "config": copy.deepcopy(self.mock.mw._config),
                 "files": self._files(),
+                "package_cache": self._package_cache(),
                 "fixture_revision": self._fixture_revision}
+
+    @staticmethod
+    def _package_cache():
+        module = sys.modules.get("internpearls.sync")
+        return copy.deepcopy(getattr(module, "_apkg_cache", {}))
 
     def _restore_files(self, snapshot):
         snapshot = snapshot or {}
@@ -2778,6 +2798,11 @@ class Runner:
         self.mock.mw.col = copy.deepcopy(self._snap["col"])
         self.mock.mw._config = copy.deepcopy(self._snap["config"])
         self._restore_files(self._snap["files"])
+        module = sys.modules.get("internpearls.sync")
+        if module is not None:
+            module._apkg_cache.clear()
+            module._apkg_cache.update(
+                copy.deepcopy(self._snap["package_cache"]))
         self._fixture_revision = self._snap["fixture_revision"]
 
     @property
