@@ -80,7 +80,7 @@ function renderButton(node, context) {
   element.setAttribute("aria-pressed", String(Boolean(node.checked)));
   if (node.default) element.dataset.default = "true";
   if (node.escape) element.dataset.escape = "true";
-  element.addEventListener("click", () => activate(context, node));
+  element.onclick = () => activate(context, node);
   return element;
 }
 
@@ -101,8 +101,8 @@ function renderToggle(node, context, type) {
   input.dataset.wid = node.id;
   if (type === "radio" && node.group_id) input.name = node.group_id;
   wrapper.append(input, document.createTextNode(node.text));
-  registerInput(context, input, () => ({
-    type: "toggle", id: node.id, checked: input.checked,
+  registerInput(context, input, (control) => ({
+    type: "toggle", id: node.id, checked: control.checked,
   }));
   return wrapper;
 }
@@ -112,6 +112,7 @@ function renderCombo(node, context) {
   wrapper.className = "demo-combo";
   const select = document.createElement("select");
   select.dataset.wid = node.id;
+  select.dataset.demoPart = "select";
   for (const option of node.options) {
     const item = document.createElement("option");
     item.value = option.id;
@@ -120,19 +121,20 @@ function renderCombo(node, context) {
   }
   select.selectedIndex = node.current_index;
   wrapper.appendChild(select);
-  registerInput(context, select, () => ({
-    type: "select-option", id: node.id, option_id: select.value,
+  registerInput(context, select, (control) => ({
+    type: "select-option", id: node.id, option_id: control.value,
   }));
   if (node.editable) {
     const editor = document.createElement("input");
     editor.type = "text";
     editor.value = node.editor_value;
     editor.dataset.wid = node.id;
+    editor.dataset.demoPart = "editor";
     wrapper.appendChild(editor);
-    registerInput(context, editor, () => ({
-      type: "edit-text", id: node.id, value: editor.value,
-      selection_start: editor.selectionStart || 0,
-      selection_end: editor.selectionEnd || 0,
+    registerInput(context, editor, (control) => ({
+      type: "edit-text", id: node.id, value: control.value,
+      selection_start: control.selectionStart || 0,
+      selection_end: control.selectionEnd || 0,
       composing: false,
     }));
   }
@@ -183,14 +185,14 @@ function renderLabel(node, context) {
   if (node.strike) element.style.textDecoration = "line-through";
   if (node.selectable) element.style.userSelect = "text";
   if (node.format === "rich" && node.link_actions.length) {
-    for (const link of element.querySelectorAll("a[href]")) {
+    element.onclick = (event) => {
+      const link = event.target.closest("a[href]");
+      if (!link) return;
       const actionId = link.getAttribute("href");
-      if (!node.link_actions.includes(actionId)) continue;
-      link.addEventListener("click", (event) => {
-        event.preventDefault();
-        activateLink(context, node, actionId);
-      });
-    }
+      if (!node.link_actions.includes(actionId)) return;
+      event.preventDefault();
+      activateLink(context, node, actionId);
+    };
   }
   return element;
 }
@@ -212,7 +214,7 @@ function renderLine(node, context) {
   element.placeholder = node.placeholder;
   element.maxLength = node.max_length;
   element.dataset.wid = node.id;
-  if (!node.readonly) registerInput(context, element, () => editAction(node, element));
+  if (!node.readonly) registerInput(context, element, (control) => editAction(node, control));
   return element;
 }
 
@@ -223,7 +225,7 @@ function renderScroll(node, context) {
   const ids = node.row_ids?.length ? node.row_ids : node.children;
   element.appendChild(renderChildren(node, context, ids));
   if (typeof context.scroll === "function") {
-    element.addEventListener("scroll", () => context.scroll(node.id, element.scrollTop));
+    element.onscroll = (event) => context.scroll(node.id, event.currentTarget.scrollTop);
   }
   return element;
 }
@@ -247,7 +249,7 @@ function renderSpin(node, context) {
   input.value = node.value;
   input.dataset.wid = node.id;
   wrapper.append(input, document.createTextNode(node.suffix));
-  registerInput(context, input, () => editAction(node, input));
+  registerInput(context, input, (control) => editAction(node, control));
   return wrapper;
 }
 
@@ -267,7 +269,7 @@ function renderTextarea(node, context) {
   element.placeholder = node.placeholder;
   element.dataset.wid = node.id;
   if (node.max_length) element.maxLength = node.max_length;
-  if (!node.readonly) registerInput(context, element, () => editAction(node, element));
+  if (!node.readonly) registerInput(context, element, (control) => editAction(node, control));
   return element;
 }
 
@@ -317,14 +319,14 @@ function applyCommonState(element, node, context) {
   if (node.tooltip) element.title = node.tooltip;
   for (const role of node.style_roles) element.classList.add(`demo-role-${role}`);
   if (node.actions?.includes("key") && typeof context.key === "function") {
-    element.addEventListener("keydown", (event) => {
+    element.onkeydown = (event) => {
       const modifiers = [];
       if (event.altKey) modifiers.push("Alt");
       if (event.ctrlKey) modifiers.push("Control");
       if (event.metaKey) modifiers.push("Meta");
       if (event.shiftKey) modifiers.push("Shift");
       context.key(node.id, event.key, modifiers);
-    });
+    };
   }
   return element;
 }
