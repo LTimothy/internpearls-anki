@@ -10,6 +10,7 @@ deterministic, so the replay is exact.
 import json
 
 import mock_anki
+import pytest
 from mock_anki import make_apkg
 
 
@@ -112,6 +113,11 @@ def test_manage_decks_exclude_and_save(anki, tmp_path):
 
     def respond(p):
         if p["kind"] == "dialog":
+            contract_tree = p["contract_tree"]
+            contract_nodes = _contract_nodes(contract_tree)
+            assert contract_tree["root_id"] in contract_nodes
+            assert all(node["kind"] in mock_anki.NODE_KINDS
+                       for node in contract_nodes.values())
             row = find(p["tree"], t="check")
             assert row and "Pharm" in row["label"] and row["checked"]
             assert find(p["tree"], t="label", text=widgets.CHIPS["new"]), \
@@ -1065,11 +1071,14 @@ def test_night_mode_dimming_saves_scope(anki):
 
     def respond(p):
         if p["kind"] == "dialog":
+            enabled = find(p["tree"], t="check",
+                           label="Dim in Night Mode")
             content = find(p["tree"], t="radio",
                           label="Everything on cards and deck screens")
             assert content is not None
             save = find(p["tree"], t="button", label="Save")
-            return {"events": [{"id": content["id"], "value": True},
+            return {"events": [{"id": enabled["id"], "value": True},
+                               {"id": content["id"], "value": True},
                                {"id": save["id"], "click": True}]}
         return {}
 
@@ -2178,3 +2187,352 @@ def test_declined_dialog_names_a_frozen_card_for_what_it_is(anki):
     texts = _all_text(_snapshot_declined_dialog(anki))
     assert "Kept yours, no more updates" in texts and "front a" in texts
     assert "Never imported" not in texts
+
+
+# --------------------------------------------------------- demo widget contract
+def _contract_nodes(tree):
+    return {node["id"]: node for node in tree["nodes"]}
+
+
+def _build_contract_action_scene():
+    from aqt.qt import (QComboBox, QDialog, QLabel, QLineEdit, QPushButton,
+                        QRadioButton, QScrollArea, QVBoxLayout, QWidget)
+
+    root = QWidget()
+    layout = QVBoxLayout(root)
+
+    button = QPushButton("Toggle")
+    button.setCheckable(True)
+    layout.addWidget(button)
+
+    radio_a = QRadioButton("First")
+    radio_b = QRadioButton("Second")
+    layout.addWidget(radio_a)
+    layout.addWidget(radio_b)
+    radio_a.setChecked(True)
+
+    combo = QComboBox()
+    combo.addItem("First", "option-first")
+    combo.addItem("Second", "option-second")
+    layout.addWidget(combo)
+
+    line = QLineEdit()
+    layout.addWidget(line)
+
+    link = QLabel('<a href="details">Details</a>')
+    link.setOpenExternalLinks(False)
+    layout.addWidget(link)
+
+    scroll = QScrollArea()
+    scroll.verticalScrollBar().setMaximum(10)
+    layout.addWidget(scroll)
+
+    dialog = QDialog()
+    return {
+        "root": root,
+        "button": button,
+        "radio_a": radio_a,
+        "radio_b": radio_b,
+        "combo": combo,
+        "line": line,
+        "link": link,
+        "scroll": scroll,
+        "dialog": dialog,
+    }
+
+
+def _contract_action_table(scene):
+    return [
+        {"type": "activate", "id": scene["button"].wid},
+        {"type": "toggle", "id": scene["radio_b"].wid, "checked": True},
+        {"type": "select-option", "id": scene["combo"].wid,
+         "option_id": "option-second"},
+        {"type": "edit-text", "id": scene["line"].wid, "value": "x",
+         "selection_start": 1, "selection_end": 1, "composing": False},
+        {"type": "finish-edit", "id": scene["line"].wid},
+        {"type": "activate-link", "id": scene["link"].wid,
+         "action_id": "details"},
+        {"type": "scroll", "id": scene["scroll"].wid, "offset": 7},
+        {"type": "key", "id": scene["dialog"].wid, "key": "Escape",
+         "modifiers": []},
+    ]
+
+
+def _observe_contract_scene(scene):
+    events = []
+    scene["button"].clicked.connect(
+        lambda checked: events.append(
+            ("button", checked, scene["button"].isChecked())))
+    scene["radio_a"].toggled.connect(
+        lambda checked: events.append(("radio-a", checked)))
+    scene["radio_b"].toggled.connect(
+        lambda checked: events.append(("radio-b", checked)))
+    scene["combo"].currentIndexChanged.connect(
+        lambda index: events.append(("combo-index", index)))
+    scene["combo"].currentTextChanged.connect(
+        lambda text: events.append(("combo-text", text)))
+    scene["line"].textEdited.connect(
+        lambda text: events.append(("edited", text)))
+    scene["line"].textChanged.connect(
+        lambda text: events.append(("changed", text)))
+    scene["line"].editingFinished.connect(
+        lambda: events.append(("finished",)))
+    scene["link"].linkActivated.connect(
+        lambda action_id: events.append(("link", action_id)))
+    scene["scroll"].verticalScrollBar().valueChanged.connect(
+        lambda offset: events.append(("scroll", offset)))
+    scene["dialog"].rejected.connect(
+        lambda: events.append(("escape",)))
+    return events
+
+
+def test_demo_serializer_preserves_layout_state_and_stable_ids(anki):
+    from aqt.qt import (QButtonGroup, QComboBox, QFormLayout, QGridLayout,
+                        QLabel, QLineEdit, QRadioButton, QStackedWidget, Qt,
+                        QVBoxLayout, QWidget)
+
+    root = QWidget()
+    outer = QVBoxLayout(root)
+
+    grid = QGridLayout()
+    grid_value = QLabel("Grid value")
+    grid.addWidget(grid_value, 2, 3, 2, 4, Qt.AlignmentFlag.AlignCenter)
+    grid.setColumnMinimumWidth(3, 80)
+    grid.setColumnStretch(3, 2)
+    outer.addLayout(grid)
+
+    form = QFormLayout()
+    form_field = QLineEdit()
+    form.addRow("Name", form_field)
+    outer.addLayout(form)
+
+    stack = QStackedWidget()
+    first_page = QWidget()
+    second_page = QWidget()
+    stack.addWidget(first_page)
+    stack.addWidget(second_page)
+    stack.setCurrentWidget(second_page)
+    outer.addWidget(stack)
+
+    state_parent = QWidget()
+    state_layout = QVBoxLayout(state_parent)
+    state_child = QLineEdit()
+    state_layout.addWidget(state_child)
+    state_parent.setEnabled(False)
+    state_parent.hide()
+    outer.addWidget(state_parent)
+
+    combo = QComboBox()
+    combo.addItem("First", "option-first")
+    combo.addItem("Second", "option-second")
+    outer.addWidget(combo)
+
+    implicit_parent = QWidget()
+    implicit_layout = QVBoxLayout(implicit_parent)
+    implicit_left = QVBoxLayout()
+    implicit_right = QVBoxLayout()
+    implicit_a = QRadioButton("Implicit A")
+    implicit_b = QRadioButton("Implicit B")
+    implicit_left.addWidget(implicit_a)
+    implicit_right.addWidget(implicit_b)
+    implicit_layout.addLayout(implicit_left)
+    implicit_layout.addLayout(implicit_right)
+    implicit_a.setChecked(True)
+    implicit_b.setChecked(True)
+    outer.addWidget(implicit_parent)
+
+    explicit_a = QRadioButton("Explicit A")
+    explicit_b = QRadioButton("Explicit B")
+    explicit_group = QButtonGroup(root)
+    explicit_group.addButton(explicit_a)
+    explicit_group.addButton(explicit_b)
+    outer.addWidget(explicit_a)
+    outer.addWidget(explicit_b)
+
+    tree = mock_anki.serialize_widget(root)
+    nodes = _contract_nodes(tree)
+
+    assert tree["root_id"] == root.wid
+    assert nodes[grid.wid]["cells"] == [{
+        "id": grid_value.wid,
+        "row": 2,
+        "column": 3,
+        "row_span": 2,
+        "column_span": 4,
+        "alignment": "center",
+    }]
+    assert nodes[grid.wid]["column_minimums"] == [0, 0, 0, 80]
+    assert nodes[grid.wid]["column_stretches"] == [0, 0, 0, 2]
+
+    form_label = next(node for node in nodes.values()
+                      if node["kind"] == "label" and node["text"] == "Name")
+    assert nodes[form.wid]["rows"] == [{
+        "label_id": form_label["id"],
+        "field_id": form_field.wid,
+    }]
+    assert nodes[stack.wid]["pages"] == [first_page.wid, second_page.wid]
+    assert nodes[stack.wid]["current_page"] == second_page.wid
+    assert first_page.wid in nodes and second_page.wid in nodes
+    assert nodes[first_page.wid]["effective_visible"] is False
+    assert nodes[second_page.wid]["effective_visible"] is True
+
+    assert nodes[state_child.wid]["visible"] is True
+    assert nodes[state_child.wid]["enabled"] is True
+    assert nodes[state_child.wid]["effective_visible"] is False
+    assert nodes[state_child.wid]["effective_enabled"] is False
+    assert nodes[combo.wid]["options"] == [
+        {"id": "option-first", "label": "First"},
+        {"id": "option-second", "label": "Second"},
+    ]
+    assert all(node.get("role") != "action" for node in nodes.values())
+
+    assert nodes[implicit_a.wid]["exclusive"] is True
+    assert nodes[implicit_a.wid]["group_id"] == nodes[implicit_b.wid]["group_id"]
+    assert implicit_a.isChecked() is False
+    assert implicit_b.isChecked() is True
+    assert nodes[explicit_a.wid]["exclusive"] is True
+    assert nodes[explicit_a.wid]["group_id"] == explicit_group.wid
+    assert nodes[explicit_b.wid]["group_id"] == explicit_group.wid
+
+
+def test_demo_actions_match_qt_signal_order_and_values(anki):
+    scene = _build_contract_action_scene()
+    events = _observe_contract_scene(scene)
+
+    assert mock_anki.apply_actions(
+        {"actions": _contract_action_table(scene)}) is None
+
+    assert events == [
+        ("button", True, True),
+        ("radio-a", False),
+        ("radio-b", True),
+        ("combo-index", 1),
+        ("combo-text", "Second"),
+        ("edited", "x"),
+        ("changed", "x"),
+        ("finished",),
+        ("link", "details"),
+        ("scroll", 7),
+        ("escape",),
+    ]
+    assert scene["button"].isChecked() is True
+    assert scene["radio_a"].isChecked() is False
+    assert scene["radio_b"].isChecked() is True
+    assert scene["combo"].currentData() == "option-second"
+    assert scene["line"].text() == "x"
+    assert scene["scroll"].verticalScrollBar().value() == 7
+    assert scene["dialog"]._result == 0
+
+
+def test_demo_actions_reject_unknown_and_unavailable_targets(anki):
+    from aqt.qt import QPushButton, QStackedWidget, QVBoxLayout, QWidget
+
+    with pytest.raises(mock_anki.ProtocolError, match="unknown widget id: missing"):
+        mock_anki.apply_actions(
+            {"actions": [{"type": "activate", "id": "missing"}]})
+
+    root = QWidget()
+    layout = QVBoxLayout(root)
+    disabled = QPushButton("Disabled")
+    disabled.setEnabled(False)
+    hidden_parent = QWidget()
+    hidden_layout = QVBoxLayout(hidden_parent)
+    hidden = QPushButton("Hidden")
+    hidden_layout.addWidget(hidden)
+    hidden_parent.hide()
+    stack = QStackedWidget()
+    inactive_page = QWidget()
+    inactive_layout = QVBoxLayout(inactive_page)
+    inactive = QPushButton("Inactive")
+    inactive_layout.addWidget(inactive)
+    active_page = QWidget()
+    stack.addWidget(inactive_page)
+    stack.addWidget(active_page)
+    stack.setCurrentWidget(active_page)
+    layout.addWidget(disabled)
+    layout.addWidget(hidden_parent)
+    layout.addWidget(stack)
+
+    for widget, message in (
+            (disabled, "widget is effectively disabled"),
+            (hidden, "widget is effectively hidden"),
+            (inactive, "widget is effectively hidden")):
+        with pytest.raises(mock_anki.ProtocolError, match=message):
+            mock_anki.apply_actions({
+                "actions": [{"type": "activate", "id": widget.wid}],
+            })
+
+
+def test_demo_actions_enforce_type_and_membership_rules(anki):
+    from aqt.qt import QComboBox, QLabel, QPushButton
+    from tests.demo_contract_generated import ACTION_KINDS
+
+    button = QPushButton("Button")
+    with pytest.raises(mock_anki.ProtocolError, match="unknown action type"):
+        mock_anki.apply_actions({
+            "actions": [{"type": "not-an-action", "id": button.wid}],
+        })
+    with pytest.raises(mock_anki.ProtocolError, match="action not permitted"):
+        mock_anki.apply_actions({
+            "actions": [{"type": "finish-edit", "id": button.wid}],
+        })
+
+    combo = QComboBox()
+    combo.addItem("First", "option-first")
+    with pytest.raises(mock_anki.ProtocolError, match="unknown combo option"):
+        mock_anki.apply_actions({"actions": [{
+            "type": "select-option", "id": combo.wid,
+            "option_id": "option-missing",
+        }]})
+
+    label = QLabel('<a href="details">Details</a>')
+    with pytest.raises(mock_anki.ProtocolError, match="unknown link action"):
+        mock_anki.apply_actions({"actions": [{
+            "type": "activate-link", "id": label.wid,
+            "action_id": "missing",
+        }]})
+
+    assert tuple(ACTION_KINDS) == mock_anki.ACTION_KINDS
+
+
+def test_demo_serializer_rejects_duplicate_tree_option_and_grid_ids(anki):
+    from aqt.qt import QComboBox, QGridLayout, QLabel, QVBoxLayout, QWidget
+
+    root = QWidget()
+    layout = QVBoxLayout(root)
+    first = QLabel("First")
+    second = QLabel("Second")
+    second.wid = first.wid
+    layout.addWidget(first)
+    layout.addWidget(second)
+    with pytest.raises(mock_anki.ProtocolError, match="duplicate tree node id"):
+        mock_anki.serialize_widget(root)
+
+    combo = QComboBox()
+    combo.addItem("First", "duplicate")
+    combo.addItem("Second", "duplicate")
+    with pytest.raises(mock_anki.ProtocolError, match="duplicate combo option id"):
+        mock_anki.serialize_widget(combo)
+
+    grid = QGridLayout()
+    repeated = QLabel("Repeated")
+    grid.addWidget(repeated, 0, 0)
+    grid.addWidget(repeated, 1, 0)
+    with pytest.raises(mock_anki.ProtocolError, match="duplicate grid cell id"):
+        mock_anki.serialize_widget(grid)
+
+
+def test_legacy_events_use_strict_actions_and_real_button_click(anki):
+    from aqt.qt import QPushButton
+
+    button = QPushButton("Toggle")
+    button.setCheckable(True)
+    observed = []
+    button.clicked.connect(
+        lambda checked: observed.append((checked, button.isChecked())))
+
+    mock_anki._apply_events({
+        "events": [{"id": button.wid, "click": True}],
+    })
+
+    assert observed == [(True, True)]

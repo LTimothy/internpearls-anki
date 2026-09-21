@@ -39,6 +39,7 @@ what it builds.
 """
 import copy
 import importlib
+import inspect
 import json
 import os
 import re
@@ -47,6 +48,8 @@ import sys
 import tempfile
 import types
 import zipfile
+
+from demo_contract_generated import ACTION_KINDS, NODE_KINDS, REQUIRED_FIELDS
 
 FS = "\x1f"
 
@@ -60,6 +63,10 @@ _widget_seq = [0]
 # replay) can't orphan them.
 _persistent = {}
 _persistent_seq = [0]
+
+
+class ProtocolError(ValueError):
+    """A request or widget tree violates the generated demo contract."""
 
 
 def reset_run():
@@ -942,9 +949,15 @@ class Signal:
 
     def emit(self, *a):
         # Passed through rather than dropped: real Qt hands a slot the signal's own
-        # arguments, and a slot that takes one (QCheckBox.toggled -> setEnabled) needs it.
+        # arguments when accepted, while permitting a zero-argument slot to ignore
+        # trailing signal values.
         for fn in list(self._slots):
-            fn(*a)
+            try:
+                inspect.signature(fn).bind(*a)
+            except (TypeError, ValueError):
+                fn()
+            else:
+                fn(*a)
 
 
 class pyqtSignal:
@@ -974,8 +987,11 @@ class pyqtSignal:
 class QWidget:
     def __init__(self, *a, **k):
         self.wid = _new_wid(self)
+        self._parent_widget = next(
+            (value for value in a if isinstance(value, QWidget)), None)
         self._style = ""
         self._layout = None
+        self._implicit_radios = []
         self._tooltip = ""
         self._accessible = ""
         self._enabled = True
@@ -994,14 +1010,14 @@ class QWidget:
         return self._layout
 
     def setObjectName(self, n):
-        pass
+        self._object_name = n
 
     def setParent(self, parent):
         """Qt's reparenting, used to detach a widget the moment it is replaced
         rather than when deleteLater eventually runs. There is no parent chain
         here (see node()), and a widget already taken out of its layout is out of
         everything this mock walks, so this only has to exist."""
-        pass
+        self._parent_widget = parent if isinstance(parent, QWidget) else None
 
     def setToolTip(self, t):
         self._tooltip = t
@@ -1123,6 +1139,9 @@ class QLabel(QWidget):
     def __init__(self, text="", *a, **k):
         super().__init__()
         self._text = text
+        self._format = None
+        self._alignment = None
+        self._wrap = False
         self.linkActivated = Signal()
 
     def text(self):
@@ -1132,13 +1151,16 @@ class QLabel(QWidget):
         self._text = t
 
     def setTextFormat(self, f):
-        pass
+        self._format = f
 
     def setAlignment(self, a):
-        pass
+        self._alignment = a
 
     def setOpenExternalLinks(self, v):
         pass
+
+    def setWordWrap(self, v):
+        self._wrap = bool(v)
 
     def node(self):
         return {"t": "label", "id": self.wid, "text": self._text,
@@ -1152,6 +1174,7 @@ class QPushButton(QWidget):
         self.clicked = Signal()
         self._checkable = False
         self._checked = False
+        self._default = False
 
     def setFlat(self, v):
         pass
@@ -1222,18 +1245,23 @@ class QCheckBox(QWidget):
 
 
 class QRadioButton(QWidget):
-    """No auto-exclusive grouping: nothing here drives one, and no test yet needs
-    clicking one radio to uncheck its sibling."""
-
     def __init__(self, label="", *a, **k):
         super().__init__()
         self._label = label
         self._checked = False
+        self._implicit_group = None
+        self._button_group = None
         self.toggled = Signal()
 
     def setChecked(self, v):
         v = bool(v)
         if v != self._checked:
+            if v:
+                group = (self._button_group._buttons if self._button_group is not None
+                         else self._implicit_group or [])
+                for other in list(group):
+                    if other is not self and other.isChecked():
+                        other.setChecked(False)
             self._checked = v
             self.toggled.emit(v)
 
@@ -1263,6 +1291,10 @@ class QButtonGroup(QWidget):
 
     def addButton(self, button):
         self._buttons.append(button)
+        button._button_group = self
+        parent = getattr(button, "_parent_widget", None)
+        if parent is not None and button in parent._implicit_radios:
+            parent._implicit_radios.remove(button)
         button.toggled.connect(lambda checked, b=button: self._on_toggled(b, checked))
 
     def _on_toggled(self, button, checked):
@@ -1346,6 +1378,7 @@ class QStackedWidget(QWidget):
 
     def addWidget(self, w):
         self._pages.append(w)
+        w._parent_widget = self
         if self._current is None:
             self._current = w
         return len(self._pages) - 1
@@ -1373,6 +1406,8 @@ class QLineEdit(QWidget):
         self._text = text
         self._placeholder = ""
         self._password = False
+        self._selection_start = 0
+        self._selection_end = 0
         # Real QLineEdit emits this on a programmatic setText as well as on typing,
         # which is what a validation message wired to clear itself as the field is
         # edited rides on.
@@ -1388,6 +1423,13 @@ class QLineEdit(QWidget):
     def setText(self, t):
         self._text = t
         self.textChanged.emit(t)
+
+    def _user_edit(self, text, selection_start, selection_end):
+        self._text = text
+        self._selection_start = selection_start
+        self._selection_end = selection_end
+        self.textEdited.emit(text)
+        self.textChanged.emit(text)
 
     def text(self):
         return self._text
@@ -1514,6 +1556,8 @@ class _Layout:
     def __init__(self, parent=None):
         self.wid = _new_wid(self)
         self._children = []
+        self._owner = parent if isinstance(parent, QWidget) else None
+        self._spacing = 0
         # (left, top, right, bottom), recorded rather than dropped: a row's own indent
         # is a layout margin, and a suite with no geometry has nothing else to read it
         # from (review._card_row indents an expanded body by exactly this).
@@ -1523,9 +1567,11 @@ class _Layout:
 
     def addWidget(self, w, *a):
         self._children.append(w)
+        self._adopt(w)
 
     def insertWidget(self, i, w, *a):
         self._children.insert(i, w)
+        self._adopt(w)
 
     def count(self):
         return len(self._children)
@@ -1549,6 +1595,25 @@ class _Layout:
 
     def addLayout(self, l):
         self._children.append(l)
+        l._set_owner(self._owner)
+
+    def _set_owner(self, owner):
+        self._owner = owner
+        for child in self._children:
+            if isinstance(child, _Layout):
+                child._set_owner(owner)
+            else:
+                self._adopt(child)
+
+    def _adopt(self, widget):
+        widget._parent_widget = self._owner
+        if (isinstance(widget, QRadioButton) and widget._button_group is None
+                and self._owner is not None):
+            radios = self._owner._implicit_radios
+            if widget not in radios:
+                radios.append(widget)
+            for radio in radios:
+                radio._implicit_group = radios
 
     def addStretch(self, *a):
         pass
@@ -1557,7 +1622,7 @@ class _Layout:
         pass
 
     def setSpacing(self, v):
-        pass
+        self._spacing = v
 
     def setContentsMargins(self, *a):
         self._margins = tuple(a) if len(a) == 4 else self._margins
@@ -1594,6 +1659,10 @@ class QHBoxLayout(_Layout):
 class QFormLayout(_Layout):
     kind = "form"
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rows = []
+
     def addRow(self, label, field):
         """Real QFormLayout takes a label (str or QLabel) and a field widget per
         row, in two aligned columns. The mock doesn't model columns, just the
@@ -1602,6 +1671,9 @@ class QFormLayout(_Layout):
             label = QLabel(label)
         self._children.append(label)
         self._children.append(field)
+        self._rows.append((label, field))
+        self._adopt(label)
+        self._adopt(field)
 
 
 class QGridLayout(_Layout):
@@ -1611,6 +1683,19 @@ class QGridLayout(_Layout):
     alignment is qt_tests/'s to measure."""
     kind = "grid"
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._placements = []
+        self._column_minimums = {}
+        self._column_stretches = {}
+
+    def addWidget(self, widget, row, column, row_span=1, column_span=1,
+                  alignment=None):
+        self._children.append(widget)
+        self._placements.append(
+            (widget, row, column, row_span, column_span, alignment))
+        self._adopt(widget)
+
     def setHorizontalSpacing(self, v):
         pass
 
@@ -1618,10 +1703,10 @@ class QGridLayout(_Layout):
         pass
 
     def setColumnMinimumWidth(self, col, width):
-        pass
+        self._column_minimums[col] = width
 
     def setColumnStretch(self, col, stretch):
-        pass
+        self._column_stretches[col] = stretch
 
 
 class QFrame(QWidget):
@@ -1692,6 +1777,7 @@ class QScrollArea(QWidget):
 
     def setWidget(self, w):
         self._widget = w
+        w._parent_widget = self
 
     def verticalScrollBar(self):
         return self._vbar
@@ -1745,6 +1831,7 @@ class QDialogButtonBox(QWidget):
             elif role == QDialogButtonBox.ButtonRole.RejectRole:
                 btn.clicked.connect(self.rejected.emit)
         self._buttons.append(btn)
+        btn._parent_widget = self
         return btn
 
     def node(self):
@@ -1752,23 +1839,423 @@ class QDialogButtonBox(QWidget):
                 "children": [b.node() for b in self._buttons]}
 
 
-def _apply_events(events):
-    """Replay one recorded user interaction into the live widget tree."""
-    for ev in events.get("events", []):
-        w = _widgets.get(ev.get("id"))
-        if w is None:
+def _class_name(widget):
+    return type(widget).__name__
+
+
+def _alignment(value):
+    if value is None:
+        return "start"
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        numeric = 0
+    if numeric & 0x84 == 0x84:
+        return "center"
+    if numeric & 0x02:
+        return "end"
+    if numeric & 0x08:
+        return "justify"
+    return "start"
+
+
+def _local_visible(widget):
+    if hasattr(widget, "_visible"):
+        return bool(widget._visible)
+    return bool(widget.isVisible()) if hasattr(widget, "isVisible") else True
+
+
+def _local_enabled(widget):
+    if hasattr(widget, "_enabled"):
+        return bool(widget._enabled)
+    return bool(widget.isEnabled()) if hasattr(widget, "isEnabled") else True
+
+
+def _effective_state(widget):
+    visible = _local_visible(widget)
+    enabled = _local_enabled(widget)
+    child = widget
+    parent = getattr(widget, "_parent_widget", None)
+    while parent is not None:
+        if isinstance(parent, QStackedWidget) and child is not parent._current:
+            visible = False
+        visible = visible and _local_visible(parent)
+        enabled = enabled and _local_enabled(parent)
+        child = parent
+        parent = getattr(parent, "_parent_widget", None)
+    if not hasattr(widget, "_visible"):
+        visible = bool(widget.isVisible()) if hasattr(widget, "isVisible") else visible
+        enabled = bool(widget.isEnabled()) if hasattr(widget, "isEnabled") else enabled
+    return visible, enabled
+
+
+def _link_actions(widget):
+    text = widget.text() if hasattr(widget, "text") else ""
+    return re.findall(r"href=[\"']([^\"']+)[\"']", text)
+
+
+def _actions_for(widget):
+    name = _class_name(widget)
+    if name == "QPushButton":
+        return ["activate"]
+    if name in ("QCheckBox", "QRadioButton"):
+        return ["toggle"]
+    if name == "QComboBox":
+        actions = ["select-option"]
+        editable = getattr(widget, "_editable", None)
+        if editable is None and hasattr(widget, "isEditable"):
+            editable = widget.isEditable()
+        if editable:
+            actions.append("edit-text")
+        return actions
+    if name == "QLineEdit":
+        return ["edit-text", "finish-edit"]
+    if name == "QPlainTextEdit":
+        return ["edit-text"]
+    if name == "QSpinBox":
+        return ["edit-text"]
+    if name == "QLabel" and _link_actions(widget):
+        return ["activate-link"]
+    if name == "QScrollArea":
+        return ["scroll"]
+    if name == "QDialog":
+        return ["key", "close"]
+    return []
+
+
+def _node(widget, kind, **fields):
+    """Build one normalized contract node with common state in one place."""
+    if kind not in NODE_KINDS:
+        raise ProtocolError(f"unknown node kind: {kind}")
+    effective_visible = fields.pop("effective_visible", None)
+    effective_enabled = fields.pop("effective_enabled", None)
+    if effective_visible is None or effective_enabled is None:
+        current_visible, current_enabled = _effective_state(widget)
+        if effective_visible is None:
+            effective_visible = current_visible
+        if effective_enabled is None:
+            effective_enabled = current_enabled
+    node = {
+        "id": widget.wid,
+        "kind": kind,
+        "parent_id": fields.pop("parent_id", None),
+        "children": fields.pop("children", []),
+        "visible": fields.pop("visible", _local_visible(widget)),
+        "effective_visible": effective_visible,
+        "enabled": fields.pop("enabled", _local_enabled(widget)),
+        "effective_enabled": effective_enabled,
+        "accessible_name": getattr(widget, "_accessible", ""),
+        "accessible_description": getattr(widget, "_accessible_description", ""),
+        "tooltip": getattr(widget, "_tooltip", ""),
+        "focus_policy": getattr(widget, "_focus_policy", "none"),
+        "readonly": bool(getattr(widget, "_readonly", False)),
+        "style_roles": list(getattr(widget, "_style_roles", [])),
+        "actions": _actions_for(widget),
+    }
+    node.update(fields)
+    return node
+
+
+def _children(widget):
+    if isinstance(widget, QStackedWidget):
+        return list(widget._pages)
+    if isinstance(widget, QScrollArea):
+        return [widget._widget] if widget._widget is not None else []
+    if isinstance(widget, QDialogButtonBox):
+        return list(widget._buttons)
+    if isinstance(widget, _Layout):
+        return list(widget._children)
+    layout = getattr(widget, "_layout", None)
+    return [layout] if layout is not None else []
+
+
+def _layout_fields(layout):
+    left, top, right, bottom = layout._margins
+    return {
+        "margins": {"left": left, "top": top, "right": right, "bottom": bottom},
+        "gap": layout._spacing,
+        "stretches": [],
+        "alignment": "start",
+    }
+
+
+def _specific_fields(widget, kind):
+    if kind == "label":
+        text = widget.text()
+        rich = getattr(widget, "_format", None) == 1 or bool(
+            re.search(r"<[A-Za-z][^>]*>", text))
+        return {"format": "rich" if rich else "plain", "text": text,
+                "wrap": getattr(widget, "_wrap", False),
+                "alignment": _alignment(getattr(widget, "_alignment", None)),
+                "strike": widget.font().strikeOut(), "selectable": False,
+                "link_actions": _link_actions(widget)}
+    if kind == "button":
+        return {"text": widget.text(), "checkable": widget._checkable,
+                "checked": widget.isChecked(), "role": "other",
+                "default": getattr(widget, "_default", False), "escape": False}
+    if kind == "buttons":
+        return {"button_ids": [button.wid for button in widget._buttons],
+                "standard_roles": []}
+    if kind in ("check", "radio"):
+        group = getattr(widget, "_button_group", None)
+        implicit = getattr(widget, "_implicit_group", None)
+        group_id = group.wid if group is not None else (
+            getattr(widget, "_parent_widget", None).wid
+            if implicit and getattr(widget, "_parent_widget", None) is not None
+            else None)
+        return {"text": widget.text() if hasattr(widget, "text") else widget._label,
+                "checked": widget.isChecked(), "group_id": group_id,
+                "exclusive": bool(group is not None or implicit)}
+    if kind in ("line", "textarea"):
+        value = widget.text() if kind == "line" else widget.toPlainText()
+        return {"value": value, "placeholder": getattr(widget, "_placeholder", ""),
+                "selection_start": getattr(widget, "_selection_start", 0),
+                "selection_end": getattr(widget, "_selection_end", 0),
+                "password": getattr(widget, "_password", False),
+                "max_length": 1048576,
+                "max_blocks": getattr(widget, "_max_block_count", 0)}
+    if kind == "combo":
+        options = []
+        for index, label in enumerate(widget._items):
+            option_id = widget._data[index]
+            if option_id is None:
+                option_id = f"{widget.wid}:option:{index}"
+            options.append({"id": str(option_id), "label": label})
+        ids = [option["id"] for option in options]
+        if len(ids) != len(set(ids)):
+            raise ProtocolError("duplicate combo option id")
+        return {"options": options, "current_index": widget.currentIndex(),
+                "current_text": widget.currentText(), "editable": widget._editable,
+                "editor_value": widget.currentText() if widget._editable else ""}
+    if kind == "spin":
+        return {"value": widget._value, "minimum": widget._min,
+                "maximum": widget._max, "step": 1, "suffix": widget._suffix,
+                "special_value_text": widget._special}
+    if kind in ("row", "col", "box", "frame"):
+        if isinstance(widget, _Layout):
+            return _layout_fields(widget)
+        return {"margins": {"left": 0, "top": 0, "right": 0, "bottom": 0},
+                "gap": 0, "stretches": [], "alignment": "start"}
+    if kind == "grid":
+        cells = [{"id": child.wid, "row": row, "column": column,
+                  "row_span": row_span, "column_span": column_span,
+                  "alignment": _alignment(alignment)}
+                 for child, row, column, row_span, column_span, alignment
+                 in widget._placements]
+        ids = [cell["id"] for cell in cells]
+        if len(ids) != len(set(ids)):
+            raise ProtocolError("duplicate grid cell id")
+        max_column = max(
+            [cell["column"] for cell in cells]
+            + list(widget._column_minimums) + list(widget._column_stretches),
+            default=-1)
+        return {"cells": cells,
+                "column_minimums": [widget._column_minimums.get(i, 0)
+                                    for i in range(max_column + 1)],
+                "column_stretches": [widget._column_stretches.get(i, 0)
+                                     for i in range(max_column + 1)]}
+    if kind == "form":
+        return {"rows": [{"label_id": label.wid, "field_id": field.wid}
+                         for label, field in widget._rows]}
+    if kind == "stack":
+        return {"pages": [page.wid for page in widget._pages],
+                "current_page": widget._current.wid if widget._current else None}
+    if kind == "scroll":
+        bar = widget.verticalScrollBar()
+        children = _children(widget)
+        return {"offset": bar.value(), "extent": bar.maximum(),
+                "shown_count": len(children), "total_count": len(children),
+                "row_ids": [child.wid for child in children]}
+    if kind in ("spacer", "hline"):
+        return {"orientation": "horizontal", "size_policy": "preferred"}
+    raise ProtocolError(f"unknown node kind: {kind}")
+
+
+def _kind(widget):
+    if isinstance(widget, QGridLayout):
+        return "grid"
+    if isinstance(widget, QFormLayout):
+        return "form"
+    if isinstance(widget, _Layout):
+        return widget.kind
+    if isinstance(widget, QLabel):
+        return "label"
+    if isinstance(widget, QPushButton):
+        return "button"
+    if isinstance(widget, QCheckBox):
+        return "check"
+    if isinstance(widget, QRadioButton):
+        return "radio"
+    if isinstance(widget, QComboBox):
+        return "combo"
+    if isinstance(widget, QStackedWidget):
+        return "stack"
+    if isinstance(widget, QLineEdit):
+        return "line"
+    if isinstance(widget, QPlainTextEdit):
+        return "textarea"
+    if isinstance(widget, QSpinBox):
+        return "spin"
+    if isinstance(widget, QScrollArea):
+        return "scroll"
+    if isinstance(widget, QDialogButtonBox):
+        return "buttons"
+    if isinstance(widget, QFrame) and widget._shape == QFrame.Shape.HLine:
+        return "hline"
+    if isinstance(widget, QFrame):
+        return "frame"
+    if isinstance(widget, QWidget):
+        return "box"
+    raise ProtocolError(f"unknown node kind: {_class_name(widget)}")
+
+
+def serialize_widget(root):
+    """Serialize every reachable widget and layout into one normalized tree."""
+    nodes = []
+    seen = set()
+
+    def visit(widget, parent_id=None, parent_visible=True, parent_enabled=True,
+              stack_visible=True):
+        kind = _kind(widget)
+        if kind == "grid":
+            _specific_fields(widget, kind)
+        if widget.wid in seen:
+            raise ProtocolError("duplicate tree node id")
+        seen.add(widget.wid)
+        local_visible = _local_visible(widget)
+        local_enabled = _local_enabled(widget)
+        effective_visible = parent_visible and local_visible and stack_visible
+        effective_enabled = parent_enabled and local_enabled
+        children = _children(widget)
+        node = _node(
+            widget, kind, parent_id=parent_id,
+            children=[child.wid for child in children],
+            effective_visible=effective_visible,
+            effective_enabled=effective_enabled,
+            **_specific_fields(widget, kind))
+        nodes.append(node)
+        for child in children:
+            selected = not isinstance(widget, QStackedWidget) or child is widget._current
+            visit(child, widget.wid, effective_visible, effective_enabled, selected)
+
+    visit(root)
+    return {"root_id": root.wid, "nodes": nodes}
+
+
+def _validate_action(action):
+    if not isinstance(action, dict):
+        raise ProtocolError("invalid action")
+    action_type = action.get("type")
+    if action_type not in ACTION_KINDS:
+        raise ProtocolError(f"unknown action type: {action_type}")
+    required = set(REQUIRED_FIELDS["actions"][action_type])
+    missing = sorted(required - set(action))
+    if missing:
+        raise ProtocolError(f"missing action field: {missing[0]}")
+    extra = sorted(set(action) - required)
+    if extra:
+        raise ProtocolError(f"unexpected action field: {extra[0]}")
+
+
+def _combo_options(widget):
+    options = []
+    count = len(widget._items) if hasattr(widget, "_items") else widget.count()
+    for index in range(count):
+        data = widget._data[index] if hasattr(widget, "_data") else widget.itemData(index)
+        if data is None:
+            data = f"{widget.wid}:option:{index}"
+        options.append((str(data), index))
+    return options
+
+
+def apply_actions(envelope):
+    """Validate and apply normalized user actions in request order."""
+    if not isinstance(envelope, dict) or not isinstance(envelope.get("actions"), list):
+        raise ProtocolError("invalid action envelope")
+    for action in envelope["actions"]:
+        _validate_action(action)
+        action_type = action["type"]
+        if action_type == "advance":
             continue
-        if "value" in ev:
-            if isinstance(w, (QCheckBox, QRadioButton)):
-                w.setChecked(ev["value"])
-            elif isinstance(w, QLineEdit):
-                w.setText(str(ev["value"]))
-            elif isinstance(w, QPlainTextEdit):
-                w.setPlainText(str(ev["value"]))
-            elif isinstance(w, QSpinBox):
-                w.setValue(ev["value"])
-        if ev.get("click"):
-            w.clicked.emit()
+        widget_id = action.get("id")
+        widget = _widgets.get(widget_id)
+        if widget is None:
+            raise ProtocolError(f"unknown widget id: {widget_id}")
+        visible, enabled = _effective_state(widget)
+        if not visible:
+            raise ProtocolError("widget is effectively hidden")
+        if not enabled:
+            raise ProtocolError("widget is effectively disabled")
+        if action_type not in _actions_for(widget):
+            raise ProtocolError(
+                f"action not permitted for widget: {action_type}")
+
+        if action_type == "activate":
+            widget.click()
+        elif action_type == "toggle":
+            widget.setChecked(action["checked"])
+        elif action_type == "select-option":
+            option = dict(_combo_options(widget)).get(action["option_id"])
+            if option is None:
+                raise ProtocolError(f"unknown combo option: {action['option_id']}")
+            widget.setCurrentIndex(option)
+        elif action_type == "edit-text":
+            value = action["value"]
+            if _class_name(widget) == "QLineEdit":
+                if hasattr(widget, "_user_edit"):
+                    widget._user_edit(value, action["selection_start"],
+                                      action["selection_end"])
+                else:
+                    widget.textEdited.emit(value)
+                    widget.setText(value)
+                    widget.setSelection(
+                        action["selection_start"],
+                        action["selection_end"] - action["selection_start"])
+            elif _class_name(widget) == "QPlainTextEdit":
+                widget.setPlainText(value)
+            elif _class_name(widget) == "QComboBox":
+                widget.setEditText(value)
+            else:
+                widget.setValue(int(value))
+        elif action_type == "finish-edit":
+            widget.editingFinished.emit()
+        elif action_type == "activate-link":
+            if action["action_id"] not in _link_actions(widget):
+                raise ProtocolError(f"unknown link action: {action['action_id']}")
+            widget.linkActivated.emit(action["action_id"])
+        elif action_type == "key":
+            if action["key"] != "Escape" or action["modifiers"]:
+                raise ProtocolError("action not permitted for key")
+            widget.reject()
+        elif action_type == "scroll":
+            widget.verticalScrollBar().setValue(action["offset"])
+        elif action_type == "close":
+            widget.reject()
+
+
+def _legacy_value_action(event):
+    widget = _widgets.get(event.get("id"))
+    if widget is None:
+        return {"type": "edit-text", "id": event.get("id"),
+                "value": str(event["value"]), "selection_start": 0,
+                "selection_end": 0, "composing": False}
+    if isinstance(widget, (QCheckBox, QRadioButton)):
+        return {"type": "toggle", "id": event["id"],
+                "checked": bool(event["value"])}
+    value = str(event["value"])
+    return {"type": "edit-text", "id": event["id"], "value": value,
+            "selection_start": len(value), "selection_end": len(value),
+            "composing": False}
+
+
+def _apply_events(response):
+    actions = []
+    for event in response.get("events", []):
+        if "value" in event:
+            actions.append(_legacy_value_action(event))
+        if event.get("click"):
+            actions.append({"type": "activate", "id": event["id"]})
+    apply_actions({"actions": actions})
 
 
 class QDialog(QWidget):
@@ -1780,22 +2267,30 @@ class QDialog(QWidget):
         super().__init__()
         self._title = ""
         self._result = None
+        self.accepted = Signal()
+        self.rejected = Signal()
 
     def setWindowTitle(self, t):
         self._title = t
 
     def accept(self):
         self._result = 1
+        self.accepted.emit()
 
     def reject(self):
         self._result = 0
+        self.rejected.emit()
 
     def exec(self):
         while self._result is None:
-            resp = _gui.next_interaction({"kind": "dialog", "id": self.wid,
-                                          "title": self._title,
-                                          "tree": self.node()})
-            _apply_events(resp)
+            resp = _gui.next_interaction({
+                "kind": "dialog", "id": self.wid, "title": self._title,
+                "tree": self.node(), "contract_tree": serialize_widget(self),
+            })
+            if "actions" in resp:
+                apply_actions(resp)
+            else:
+                _apply_events(resp)
         return self._result
 
 
