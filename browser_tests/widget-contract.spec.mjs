@@ -253,3 +253,84 @@ test("emits normalized Escape and scroll actions", async ({ page }) => {
     { type: "key", id: "dialog", key: "Escape", modifiers: [] },
   ]);
 });
+
+test("puts schema accessibility on the interactive control", async ({ page }) => {
+  await page.goto("/browser_tests/contract-page.html");
+  const result = await page.evaluate(async () => {
+    const { renderWidget } = await import("/docs/demo-renderer.js");
+    const common = {
+      parent_id: null, children: [], visible: true, effective_visible: true,
+      enabled: true, effective_enabled: true, accessible_name: "",
+      accessible_description: "", tooltip: "", focus_policy: "strong",
+      readonly: false, style_roles: [], actions: [],
+    };
+    const combo = renderWidget({
+      ...common, id: "combo", kind: "combo",
+      accessible_name: "Choose a sample", accessible_description: "Two choices",
+      tooltip: "Choose one", actions: ["select-option"],
+      options: [{ id: "first", label: "First" }, { id: "second", label: "Second" }],
+      current_index: 0, current_text: "First", editable: false, editor_value: "",
+    });
+    const spin = renderWidget({
+      ...common, id: "spin", kind: "spin", accessible_name: "Check every",
+      value: 5, minimum: 1, maximum: 10, step: 1, suffix: " min",
+      special_value_text: "", actions: ["edit-text"],
+    });
+    const plain = renderWidget({
+      ...common, id: "plain", kind: "button", text: "Continue",
+      checkable: false, checked: false, role: "accept", default: true, escape: false,
+      actions: ["activate"],
+    });
+    const pressed = renderWidget({
+      ...common, id: "pressed", kind: "button", text: "Keep",
+      checkable: true, checked: true, role: "other", default: false, escape: false,
+      actions: ["activate"],
+    });
+    return {
+      combo: {
+        name: combo.querySelector("select").getAttribute("aria-label"),
+        description: combo.querySelector("select").getAttribute("aria-description"),
+        tooltip: combo.querySelector("select").title,
+      },
+      spinName: spin.querySelector("input").getAttribute("aria-label"),
+      plainPressed: plain.getAttribute("aria-pressed"),
+      togglePressed: pressed.getAttribute("aria-pressed"),
+    };
+  });
+  expect(result).toEqual({
+    combo: { name: "Choose a sample", description: "Two choices", tooltip: "Choose one" },
+    spinName: "Check every",
+    plainPressed: null,
+    togglePressed: "true",
+  });
+});
+
+test("combo arrows select an option through the production action", async ({ page }) => {
+  await page.goto("/browser_tests/contract-page.html");
+  const result = await page.evaluate(async () => {
+    const { renderWidget } = await import("/docs/demo-renderer.js");
+    const emitted = [];
+    const combo = renderWidget({
+      id: "combo", kind: "combo", parent_id: null, children: [], visible: true,
+      effective_visible: true, enabled: true, effective_enabled: true,
+      accessible_name: "Choose", accessible_description: "", tooltip: "",
+      focus_policy: "strong", readonly: false, style_roles: [],
+      actions: ["select-option"],
+      options: [{ id: "first", label: "First" }, { id: "second", label: "Second" }],
+      current_index: 0, current_text: "First", editable: false, editor_value: "",
+    }, {
+      registerInput(element, action) {
+        element.onchange = () => emitted.push(action(element));
+      },
+    });
+    const select = combo.querySelector("select");
+    select.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "ArrowDown", bubbles: true, cancelable: true,
+    }));
+    return { value: select.value, emitted };
+  });
+  expect(result).toEqual({
+    value: "second",
+    emitted: [{ type: "select-option", id: "combo", option_id: "second" }],
+  });
+});

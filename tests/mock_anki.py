@@ -759,7 +759,12 @@ class MockCollection:
     def _register_models(self, models_by_mid):
         for m in models_by_mid.values():
             if not self.models.by_name(m["name"]):
-                self.models._models.append(json.loads(json.dumps(m)))
+                model = json.loads(json.dumps(m))
+                try:
+                    model["id"] = int(model["id"])
+                except (KeyError, TypeError, ValueError):
+                    pass
+                self.models._models.append(model)
 
     def import_anki_package(self, request):
         """Anki's importer, reduced to what the add-on depends on: match by GUID;
@@ -2068,7 +2073,7 @@ def _actions_for(widget):
         return ["edit-text"]
     if name == "QLabel" and _link_actions(widget):
         return ["activate-link"]
-    if name == "QScrollArea":
+    if name == "QScrollArea" or isinstance(widget, QScrollArea):
         return ["scroll"]
     if name == "QDialog":
         return ["key", "close"]

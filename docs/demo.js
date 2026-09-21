@@ -37,6 +37,7 @@ let editVersion = 0;
 let retryEditScheduled = false;
 let retryFinishes = [];
 let retryActions = [];
+let dialogReturnFocus = null;
 const pendingEdits = new Map();
 const unfinishedEdits = new Map();
 const finishingEdits = new Map();
@@ -412,6 +413,9 @@ function paintBusy(label) {
   $("dtitle").textContent = "Intern Pearls";
   const line = document.createElement("div");
   line.className = "busyline";
+  line.setAttribute("role", "status");
+  line.setAttribute("aria-live", "polite");
+  line.setAttribute("aria-atomic", "true");
   const spinner = document.createElement("span");
   spinner.className = "spinner";
   const text = document.createElement("span");
@@ -420,9 +424,14 @@ function paintBusy(label) {
   $("dbody").replaceChildren(line);
   $("dbtns").replaceChildren();
   $("overlay").classList.add("show");
+  $("overlay").querySelector(".dialog").focus({ preventScroll: true });
 }
 
 function beginFlow(menuId) {
+  const active = document.activeElement;
+  if (active && !$("overlay").contains(active)) {
+    dialogReturnFocus = active.closest?.("#ipMenu") ? $("ipMenuBtn") : active;
+  }
   clearAutomaticAdvance();
   epoch += 1;
   sequence = 0;
@@ -479,6 +488,9 @@ function applyRunnerResponse(response) {
     pendingEdits.clear();
     unfinishedEdits.clear();
     finishingEdits.clear();
+    const target = dialogReturnFocus;
+    dialogReturnFocus = null;
+    if (target?.isConnected) target.focus({ preventScroll: true });
     return;
   }
   if (response.status === "error") {
@@ -506,6 +518,7 @@ function showSimplePayload(payload) {
   $("dbody").replaceChildren(body);
   $("dbtns").replaceChildren(actionButton("OK", true, () => queueActions([])));
   $("overlay").classList.add("show");
+  $("dbtns").querySelector("button")?.focus({ preventScroll: true });
 }
 
 function showPayload(payload) {
@@ -713,9 +726,8 @@ function dialogContext() {
         return true;
       }
       if (key === "Enter") return false;
-      if (editable && id === currentRootId && key !== "Escape") return false;
+      if (key !== "Escape") return false;
       if (key === "Escape" && id !== currentRootId) return false;
-      if (key.length === 1 && !modifiers.length) return;
       queueActions([{ type: "key", id, key, modifiers: modifiers.map((value) =>
         value.toLowerCase()) }]).catch(reportFailure);
       return true;
@@ -924,6 +936,7 @@ function configureAutoSync(config) {
 function closeMenu() {
   $("ipMenu").classList.remove("show");
   $("ipMenuBtn").classList.remove("open");
+  $("ipMenuBtn").setAttribute("aria-expanded", "false");
   document.querySelectorAll(".hasSub.open").forEach((element) =>
     element.classList.remove("open"));
 }
@@ -1000,7 +1013,14 @@ $("ipMenuBtn").addEventListener("click", (event) => {
   if (event.target.closest(".item")) return;
   $("ipMenu").classList.toggle("show");
   $("ipMenuBtn").classList.toggle("open");
+  $("ipMenuBtn").setAttribute("aria-expanded",
+    String($("ipMenu").classList.contains("show")));
   event.stopPropagation();
+});
+$("ipMenuBtn").addEventListener("keydown", (event) => {
+  if (!["Enter", " "].includes(event.key)) return;
+  event.preventDefault();
+  $("ipMenuBtn").click();
 });
 document.addEventListener("click", closeMenu);
 document.addEventListener("submit", (event) => event.preventDefault(), true);

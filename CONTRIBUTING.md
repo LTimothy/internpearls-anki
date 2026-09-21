@@ -67,6 +67,21 @@ the menu and startup wiring. See "Code layout" in the README.
 
 ## Pull requests
 
+### Browser demo parity
+
+The browser demo supports the non-AI flows covered by its parity tests. Changes to
+that supported surface carry all of the following coverage obligations:
+
+- Add every new widget node kind or action kind to the shared schema and its boundary
+  tests.
+- Add a real Qt test when the change depends on signal, focus, keyboard, layout, or
+  other Qt semantics.
+- Add or update a browser parity case when a supported flow changes.
+- Do not treat registry equality as proof of parity. It proves that names line up, not
+  that a person can complete the flow or observe the same result.
+- Name unsupported capabilities as explicit limitations. Do not imply parity for a
+  path the browser cannot execute.
+
 - Publish only source, tests, user documentation, and release assets. Keep local
   notes, machine configuration, and working documents outside the tracked tree.
   New root files or Pages content require an explicit `.gitignore` allowlist change.

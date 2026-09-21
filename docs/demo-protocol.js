@@ -359,7 +359,8 @@ function validatePayload(type, payload) {
     }
   } else if (type === "maintainer") {
     exactKeys(payload, ["operation"]);
-    if (!["fix", "reword", "add", "restyle"].includes(payload.operation)) fail();
+    if (!["fix", "reword", "add", "restyle", "history", "bulk", "auto"]
+      .includes(payload.operation)) fail();
   } else if (type === "set-theme") {
     exactKeys(payload, ["dark"]);
     if (typeof payload.dark !== "boolean") fail();
