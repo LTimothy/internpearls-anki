@@ -30,7 +30,7 @@ from .collection import (NoteTypeFieldsRequired, _apply_deck, _apply_template_ch
                          _existing_guid_to_fields, _existing_guid_to_nid,
                          _existing_notes_summary, _import_apkg,
                          _pre_sync_backup_or_confirm_skip, _restore,
-                         _snapshot, _template_changes, apply_deck_moves,
+                         _snapshot, _snapshot_fields, _template_changes, apply_deck_moves,
                          archive_notes, carry_over_protected_fields,
                          carry_scheduling_forward, decks_holding,
                          installed_matching_collection)
@@ -45,8 +45,8 @@ from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, manifest_needs_newer_addon,
-                    note_display_label, note_fields_hash, plain_text, plural,
-                    prune_declined, remap_cards, write_personalized)
+                    note_display_label, note_fields_hash, per_note_for_package,
+                    plain_text, plural, prune_declined, remap_cards, write_personalized)
 from .net import (_CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled,
                   TransportError, _gh_raw)
 from .palette import colors
@@ -610,6 +610,23 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 cancelled = True
                 break
             src = fetch(d)
+            # note_protected_fields is keyed by the guid the deck source assigns, but a
+            # note matched by front (existing_fronts already reflects any fork from an
+            # earlier deck in this same run) keeps the learner's own, different guid
+            # forever. Re-key this deck's declarations onto that guid before anything
+            # below reads per_note, so a front-matched note is covered too, not just a
+            # guid-matched one.
+            _remap, _in_place, _as_new, _new_notes, matched = remap_cards(
+                src, existing_fronts, aliases)
+            deck_resolved = per_note_for_package(per_note, matched)
+            per_note = {**per_note, **deck_resolved}
+            for guid, fields in deck_resolved.items():
+                top_up = _snapshot_fields(guid, fields)
+                if top_up:
+                    # Merge, not replace: this guid may already hold a snapshot value
+                    # from the global protected_fields list, and a plain assignment
+                    # would drop it.
+                    snap.setdefault(guid, {}).update(top_up)
             tpl = _template_changes(src)
             # A note-type conversion is the same class of thing as a template change:
             # it bumps the schema, so it needs consent and must never happen
@@ -1433,9 +1450,14 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
                 _, kept, new, new_notes, matched = remap_cards(src, existing_fronts, aliases)
                 changed = {}
                 if existing_fields and matched:
+                    # Resolved the same way _run_sync resolves it, so a note matched by
+                    # front reads as protected here too: otherwise the preview promises
+                    # a change the sync then refuses to make.
+                    resolved_per_note = {**(per_note or {}),
+                                        **per_note_for_package(per_note, matched)}
                     changed = find_changed_notes(
                         matched, apkg_note_details(src), existing_fields,
-                        protected=_cfg()["protected"], per_note=per_note)
+                        protected=_cfg()["protected"], per_note=resolved_per_note)
                 preview[d["name"]] = (kept, new, new_notes, changed)
             except DownloadCancelled:
                 # Cancel clicked mid-download rather than between decks. That is the

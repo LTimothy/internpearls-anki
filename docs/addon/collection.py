@@ -373,6 +373,28 @@ def _snapshot(protected, scope_tag, per_note=None):
     return snap
 
 
+def _snapshot_fields(guid, fields):
+    """Current values of the named fields on one note, keyed by the note's own field
+    name. Non-empty only, same as _snapshot's own per-note loop.
+
+    For topping up a snapshot already taken: a note matched by front only reveals which
+    guid it lives under once its package has been fetched and matched, so its per-note
+    declared fields (see per_note_for_package) can only be read at that later point,
+    one note at a time, rather than in the single collection-wide pass _snapshot makes
+    up front.
+    """
+    nid = mw.col.db.scalar("select id from notes where guid = ?", guid)
+    if not nid:
+        return {}
+    note = mw.col.get_note(nid)
+    saved = {}
+    for name in fields:
+        f = _note_field(note, name)
+        if f and note[f].strip():
+            saved[f] = note[f]
+    return saved
+
+
 def _capture_shipped(protected, scope_tag, touched, per_note=None):
     """What the deck source's own values are, read straight after an import and before
     anything is restored, which is the one moment the collection holds them.
@@ -695,17 +717,21 @@ def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields,
     Notes) onto its replacement(s) so a personal annotation isn't stranded on a card
     that's about to be suspended out of review.
 
-    `retired` is the fresh (not-yet-archived) entries from find_retired_in_collection
-    — each has `guid` and `superseded_by`. Only fills a replacement's field if it's
-    currently blank (fields_to_carry_over), so this never overwrites something the
-    learner's already written on the new card, and copies to every replacement they
-    already have (a symmetric split has no single "primary" to prefer). Returns the
-    number of replacement notes updated.
+    `retired` is the fresh (not-yet-archived) entries from find_retired_in_collection,
+    each with `guid` and `superseded_by`, and, when the caller has one, `source_guid`.
+    Only fills a replacement's field if it's currently blank (fields_to_carry_over), so
+    this never overwrites something the learner's already written on the new card, and
+    copies to every replacement they already have (a symmetric split has no single
+    "primary" to prefer). Returns the number of replacement notes updated.
 
-    Looks up `per_note` twice per pair, once for the predecessor's own guid and once
-    for each replacement's: a field the deck source declares protected only on the
-    successor would otherwise never be read here, since the predecessor's list is a
-    different note's declaration.
+    Looks up `per_note` twice per pair, once for the predecessor and once for each
+    replacement: a field the deck source declares protected only on the successor would
+    otherwise never be read here, since the predecessor's list is a different note's
+    declaration. `per_note` is keyed by the guid the deck source assigns, so the
+    predecessor's own lookup uses `source_guid` when the entry carries one (the ledger's
+    own key, unaffected by find_retired_in_collection's front fallback); a caller with
+    no such guid to offer (a stranded-pair merge, which has no source ledger entry at
+    all) falls back to `guid`, matching today's behaviour.
     """
     n = 0
     for r in retired:
@@ -713,7 +739,8 @@ def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields,
         if old_nid is None:
             continue
         old_note = mw.col.get_note(old_nid)
-        predecessor_fields = protected_for(r["guid"], protected_fields, per_note)
+        predecessor_fields = protected_for(
+            r.get("source_guid", r["guid"]), protected_fields, per_note)
         saved = {}
         for name in predecessor_fields:
             f = _note_field(old_note, name)
@@ -736,7 +763,13 @@ def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields,
             if not to_write:
                 continue
             for f, v in to_write.items():
-                target_note[f] = v
+                # `f` is the predecessor's own field name; the replacement's note type
+                # can spell it differently (casing), so resolve the actual write target
+                # rather than assuming the name matches verbatim.
+                tf = _note_field(target_note, f)
+                if tf is None:
+                    continue
+                target_note[tf] = v
             mw.col.update_note(target_note)
             n += 1
     return n
