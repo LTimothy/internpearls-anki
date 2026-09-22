@@ -1257,12 +1257,13 @@ def build_update_body(items, sources, flags, new_index, decisions,
 
     `items` is a mix of ("header", text), ("note", html), ("sep",), ("deck", deck_short,
     counts), ("card", deck_name, detail), ("retired", identity) or ("retired", identity,
-    reason), ("moved", front, dest_deck_short), and ("group_note", note) entries, one per
-    row, built by sync.py from every deck's new and changed cards (_gather_pending_items)
-    and from the retired/relocated cards it finds pending (_retired_moved_items), folded
-    through group_change_notes (see `_grouped_rows` in sync.py). The first three are the
-    shapes build_list_body takes too, and are drawn by the same builder: a header groups
-    a run of rows, a note is the sentence introducing one, and a sep draws the hairline
+    reason), ("moved", front, dest_deck_short), and ("group_note", note, card_count)
+    entries, one per row, built by sync.py from every deck's new and changed cards
+    (_gather_pending_items) and from the retired/relocated cards it finds pending
+    (_retired_moved_items), folded through group_change_notes (see `_grouped_rows` in
+    sync.py). The first three are the shapes build_list_body takes too, and are drawn
+    by the same builder: a header groups a run of rows, a note is the sentence
+    introducing one, and a sep draws the hairline
     between two rows. A "deck" row is the per-deck summary that opens the list, in a
     section of its own where nothing is ever chipped and nothing ever expands, so it
     declines the caret and chip columns (see simple_row) and its deck names share a left
