@@ -34,12 +34,16 @@ PRONOUNS = re.compile(r"\b(she|her|hers|herself)\b", re.I)
 # would be silently dropped from the scan.
 QUOTED = re.compile(r'"[^"\n]*"' + r"|(?<![A-Za-z])'[^'\n]*'")
 
-# Deliberately requires an underscore (or a plural-then-underscore) right after "her",
-# not just any lowercase run: a naive `her[_a-z]*` also matches ordinary words like
-# "here", "hero", and "herald" in comments and prose, since they satisfy the same
-# pattern letter for letter. Requiring the underscore keeps this test scoped to
-# identifiers (her_guid, _her_front_to_guid, hers_map) rather than English.
-IDENTIFIER = re.compile(r"\b_?hers?_[a-z]*|\bby_her\b|Her[A-Z]")
+# "her"/"hers" must stand as a whole segment: a letter or digit on either side means
+# it's part of a longer word (here, hero, herald, other, cipher, whether, gathers),
+# not the identifier fragment this guards against. A leading `\b` with a lookahead
+# for "any letter" (e.g. `her(?=[_a-z]|$)`) still matches "here" and "hero", because
+# the lookahead accepts the "e"/"o" that follows; only an explicit non-alnum
+# lookbehind/lookahead on both sides rules that out, which also means `_` and `-`
+# correctly count as separators (onto_her_guid, "her-guid"), same as a quote or
+# string edge. `Her[A-Z]` still catches the camelCase form (HerGuid) separately,
+# since the character after "Her" there is itself a letter.
+IDENTIFIER = re.compile(r"(?<![A-Za-z0-9])hers?(?![A-Za-z0-9])|Her[A-Z]")
 
 
 def _tracked():
