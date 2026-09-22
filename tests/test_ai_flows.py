@@ -1977,3 +1977,30 @@ def test_poll_worker_waits_for_delivery_instead_of_pumping_events(anki, monkeypa
 
     assert finishes == ["finish"]
     assert pumped == []
+
+
+def test_completion_guard_stops_the_run_before_it_warns(anki, monkeypatch):
+    """The warning is modal. Shown first, it left the assistant running for as
+    long as it stayed open (real Anki: the CLI kept going until OK was clicked)
+    and let the modal's event loop re-enter the poll while _gen_done was still
+    False. Everything must already be stopped when the warning appears."""
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="slow")
+    dlg._start_generation()
+    worker, timer = dlg._worker, dlg._timer
+    at_warning = {}
+
+    def record(_text, **_kwargs):
+        at_warning.update(cancelled=worker.cancel_event.is_set(),
+                          gen_done=dlg._gen_done,
+                          poll_timer_active=timer.is_active())
+
+    monkeypatch.setattr(ai_dialog, "_warn", record)
+
+    def boom():
+        raise RuntimeError("completion blew up")
+
+    dlg._guard_completion(boom)
+
+    assert at_warning == {"cancelled": True, "gen_done": True,
+                          "poll_timer_active": False}
+    dlg._wait_for_worker(timeout=15)
