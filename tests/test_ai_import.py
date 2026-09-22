@@ -56,14 +56,15 @@ def test_add_generated_notes_empty_list_is_noop(anki):
 
 
 def test_add_generated_notes_never_touches_existing_notes(anki):
-    her = anki.col.add_note("her-guid", ["Existing front", "b", "", "", "", "", ""],
+    existing = anki.col.add_note("her-guid", ["Existing front", "b", "", "", "", "", ""],
                             ["InternPearls::Pharm"], deck="Intern Pearls::Intern Custom")
-    before_fields, before_tags, before_deck = list(her.fields), list(her.tags), her.deck
+    before_fields, before_tags, before_deck = (list(existing.fields), list(existing.tags),
+                                               existing.deck)
     collection.add_generated_notes([_card("New card")], media={},
                                    deck_name=DECK, scope_tag=SCOPE)
-    assert her.fields == before_fields
-    assert her.tags == before_tags
-    assert her.deck == before_deck
+    assert existing.fields == before_fields
+    assert existing.tags == before_tags
+    assert existing.deck == before_deck
 
 
 def test_add_generated_notes_unknown_note_type_raises_nothing_written(anki):
@@ -89,7 +90,7 @@ def test_add_generated_notes_is_one_undo_step(anki):
     n = collection.add_generated_notes(
         [_card("Q1"), _card("Q2"), _card("Q3")], media={}, deck_name=DECK, scope_tag=SCOPE)
     assert n == 3
-    assert len(anki.col._notes) == 4   # her existing note + 3 generated
+    assert len(anki.col._notes) == 4   # the existing note + 3 generated
     anki.col.undo()
     assert len(anki.col._notes) == 1   # a single undo removed all 3 together
     remaining = next(iter(anki.col._notes.values()))
@@ -110,7 +111,7 @@ def test_partial_failure_still_lands_as_one_undo_step(anki):
 
     generated_fronts = {n["Front"] for n in anki.col._notes.values() if n.guid != "her-guid"}
     assert generated_fronts == {"Q1", "Q2"}   # Q3/Q4 never landed
-    assert len(anki.col._notes) == 3          # her existing note + Q1 + Q2
+    assert len(anki.col._notes) == 3          # the existing note + Q1 + Q2
 
     anki.col.undo()
     assert len(anki.col._notes) == 1          # one undo cleared the whole partial import

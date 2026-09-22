@@ -109,9 +109,9 @@ def _addon_update_work(auto_update, token=None):
     A failed package download is not that: the version fetch already succeeded, so
     there IS something to say, and a newer release exists whether or not this launch
     could download it. It comes back as package_path=None, which is the caller's "tell
-    her a newer version is out" branch. Letting it raise instead took the whole result
-    with it, so an auto-update that failed to download said nothing at all and left the
-    menu label unrefreshed too.
+    the learner a newer version is out" branch. Letting it raise instead took the
+    whole result with it, so an auto-update that failed to download said nothing at
+    all and left the menu label unrefreshed too.
     """
     info = _fetch_addon_version_info(timeout=_BG_TIMEOUT, token=token)
     package_path = None

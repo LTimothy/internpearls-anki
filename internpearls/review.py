@@ -7,8 +7,8 @@ sync.py's update flow, so living in dialogs.py would close that import into a cy
 Presentation only, in both directions: it reads note fields that sync.py already pulled
 out of a downloaded .apkg, and hands back what the learner typed. It also reads the
 collection's own media folder, to render the learner's side of a changed-field
-comparison from a picture she already has, but it writes nothing there or anywhere else,
-and touches no network. That's still why the dialog has no Cancel.
+comparison from a picture the learner already has, but it writes nothing there or
+anywhere else, and touches no network. That's still why the dialog has no Cancel.
 """
 import datetime
 import hashlib
@@ -430,9 +430,9 @@ def _diff_html(segments):
     words left to the line's dim base colour. One line that states the whole change,
     instead of two near-identical paragraphs the reader has to compare word by word.
 
-    Strikethrough is the same convention a Never row already uses: text she will not
-    have. The chip pair for additions ties them to the UPDATED marker at the row's
-    head, and is a background/foreground pairing the palette already guarantees.
+    Strikethrough is the same convention a Never row already uses: text the learner
+    will not have. The chip pair for additions ties them to the UPDATED marker at the
+    row's head, and is a background/foreground pairing the palette already guarantees.
     """
     c = colors()
     parts = []
@@ -551,9 +551,9 @@ def _rewrite_summary(old, new):
 
 def _old_version_html(detail, name, old):
     """The old field rendered the way the card itself renders: structure kept,
-    pictures resolved from the learner's own collection (they are her cards, already
-    on disk), and a cloze's deletions filled in blue like the header line, never raw
-    {{c1::…}} braces. Built on first reveal, not at batch-build time."""
+    pictures resolved from the learner's own collection (they are the learner's cards,
+    already on disk), and a cloze's deletions filled in blue like the header line,
+    never raw {{c1::…}} braces. Built on first reveal, not at batch-build time."""
     rendered = field_preview_html(old, image_html=_collection_image)
     if _is_cloze(detail) and name == "Text":
         rendered = cloze_filled_html(rendered, escape=False)
@@ -566,8 +566,8 @@ def _rewrite_row(detail, name, old, new, card_label):
 
     The design both independent reviews converged on. The new version is already the
     card rendered above, so for the reader deciding Apply the old text is reference
-    material, not content: the summary line is everything she needs at a glance, and
-    the reader weighing Keep yours pays one click (the same flat-link idiom as Add
+    material, not content: the summary line is everything the reader needs at a glance,
+    and the reader weighing Keep yours pays one click (the same flat-link idiom as Add
     note, worded in the decision button's own vocabulary) to see what "yours" says.
 
     The reveal is the old field verbatim and unmarked, behind a muted left rule that
@@ -780,8 +780,8 @@ def _chip_with_source(detail, chips):
 def _collection_image(name):
     """One of the learner's own media files as an <img>, or None when it is not there.
 
-    Her side of a comparison comes out of the collection, not out of the .apkg, so its
-    pictures are already on disk and need no extraction.
+    The learner's side of a comparison comes out of the collection, not out of the
+    .apkg, so its pictures are already on disk and need no extraction.
     """
     try:
         folder = mw.col.media.dir()
@@ -811,10 +811,11 @@ def _separator():
 _NEW_OPTIONS = [("import", "Import"), ("skip", "Skip"), ("never", "Never")]
 # The changed row's three options mirror the new row's, and "frozen" is Never's
 # counterpart here. It is a state of its own rather than "never" reused, because the two
-# mean different things once the card is in her collection and the Declined cards screen
-# has to be able to say which is which: Never imported, against a card she keeps whose
-# updates she has turned off. The button says Never on both kinds; what it turns down is
-# whatever that row is offering, and the caption on the click spells that out.
+# mean different things once the card is in the learner's collection and the Declined
+# cards screen has to be able to say which is which: Never imported, against a card the
+# learner keeps whose updates they have turned off. The button says Never on both
+# kinds; what it turns down is whatever that row is offering, and the caption on the
+# click spells that out.
 _CHANGED_OPTIONS = [("apply", "Apply"), ("keep", "Keep yours"), ("frozen", "Never")]
 _DEFAULT_DECISION = {"new": "import", "changed": "apply"}
 
@@ -837,7 +838,7 @@ _DECLINE_CAPTION = {
 }
 
 # Nothing is transmitted from here: a note is folded into the digest at the end of the
-# run, copied to the clipboard, and pasted by the reader herself. The placeholder used
+# run, copied to the clipboard, and pasted by the reader. The placeholder used
 # to say it was sent to the deck author, which is the one thing it is not, and asked
 # what was wrong with the card, on a box the neutral Add note link opens too.
 _FEEDBACK_PLACEHOLDER = ("Anything to pass on about this card? You'll get a copy at the "
@@ -1062,9 +1063,9 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         # decline is not a default row, and gating this on the default left exactly
         # those rows with no way to write a note at all.
         add_note.setVisible(not show_box)
-        # Struck through only for Never, which is a card she will not have. A frozen
-        # row keeps a card she does have, so striking it would say the opposite of
-        # what happened.
+        # Struck through only for Never, which is a card the learner will not have. A
+        # frozen row keeps a card the learner does have, so striking it would say the
+        # opposite of what happened.
         gone = state == "never"
         font = primary.font()
         font.setStrikeOut(gone)
@@ -1219,11 +1220,11 @@ def _chip_kinds(items):
 def save_feedback(entries):
     """Write the in-progress notes to user_files/, or clear the file when there are none.
 
-    Called as she types rather than only when the dialog closes. Everything else a run
-    does can be reproduced by clicking Update again; what she wrote about a card cannot,
-    so it is the one thing that must survive a crash, a force quit, or an error thrown
-    three dialogs later. Kept next to the other persistent state, so an add-on update
-    does not wipe it.
+    Called as the learner types rather than only when the dialog closes. Everything
+    else a run does can be reproduced by clicking Update again; what the learner wrote
+    about a card cannot, so it is the one thing that must survive a crash, a force
+    quit, or an error thrown three dialogs later. Kept next to the other persistent
+    state, so an add-on update does not wipe it.
     """
     if entries:
         _save_json(FEEDBACK, entries)
@@ -1239,7 +1240,7 @@ def load_saved_feedback():
 
 
 def clear_saved_feedback():
-    """Drop the saved notes, once they have actually been shown to her."""
+    """Drop the saved notes, once they have actually been shown to the learner."""
     try:
         os.remove(FEEDBACK)
     except OSError:
@@ -1293,8 +1294,8 @@ def build_update_body(items, sources, flags, new_index, decisions,
     recompute the line shown below the list (flag counts, decision tallies, whatever
     the caller wants there); `safety_html` is fixed.
 
-    `touched`, when given, collects every guid whose decision control she actually
-    clicked this run, even a click that lands back on the row's own default or
+    `touched`, when given, collects every guid whose decision control the learner
+    actually clicked this run, even a click that lands back on the row's own default or
     reaffirms the state it was already showing. update_decks() reads this back after
     the dialog closes to tell an active re-decline (which should refresh the stored
     hash) and an active un-decline on a kind-flipped row (which should remove the
@@ -1349,7 +1350,7 @@ def build_update_body(items, sources, flags, new_index, decisions,
     # The safety note is standing reassurance, not this run's news, so it renders as
     # small print: at body size it was the tallest block on the screen, taking height
     # the list itself is here for. The status line above it keeps the body size, since
-    # it reports what she just did.
+    # it reports what the learner just did.
     safety_html = (f"<span style='color: {colors()['muted']}; font-size: 11px;'>"
                    f"{safety_html}</span>")
     bottom = _rich_label(status_line() + safety_html)
@@ -1367,7 +1368,7 @@ def build_update_body(items, sources, flags, new_index, decisions,
         if note:
             flags[guid] = note
         else:
-            flags.pop(guid, None)   # she cleared it; treat that as unflagging
+            flags.pop(guid, None)   # the learner cleared it; treat that as unflagging
         _refresh_bottom()
         saver.start()
 
@@ -1538,8 +1539,8 @@ def show_result(title, items):
     ui._ask_scrollable exists: a message box has no scroll area, so a run reporting a
     deck per line plus a list of collided cards just grew the box, and a long enough one
     put its own OK button past the bottom of the screen. It also means the one thing the
-    reader is being told about the run reads in the row vocabulary the confirmation she
-    just answered was built from, instead of as a `<ul>` dropped into a label.
+    reader is being told about the run reads in the row vocabulary the confirmation the
+    reader just answered was built from, instead of as a `<ul>` dropped into a label.
     """
     body = QWidget()
     lay = QVBoxLayout(body)
@@ -1564,8 +1565,8 @@ def show_result_with_feedback(title, items, entries, nothing_note="",
     A completion summary and a feedback digest used to arrive as separate boxes, back
     to back, at the exact point in the run where the reader is most done paying
     attention: the summary lands first, gets dismissed, and the digest, the one thing
-    she cannot reproduce by running the update again, appears behind it looking like
-    yet another popup. They are one dialog now, summary on top, digest below it.
+    the reader cannot reproduce by running the update again, appears behind it looking
+    like yet another popup. They are one dialog now, summary on top, digest below it.
 
     `title` is the run's own headline ("Update complete (source: X)" or "Update stopped
     early (source: X)"); `items` is everything below it in build_list_body's own
@@ -1573,8 +1574,8 @@ def show_result_with_feedback(title, items, entries, nothing_note="",
     notes read as paragraphs, and the cards a collision names read as rows of their own.
 
     Degrades in both directions on purpose: a run with no flagged cards is the summary
-    alone, and a digest with no summary (she backed out of the update but still wrote
-    notes) is the digest on its own.
+    alone, and a digest with no summary (the learner backed out of the update but still
+    wrote notes) is the digest on its own.
 
     `standing_declines` is the current sparse decline registry to append to any digest;
     it does not make a digest appear when the run has no entries of its own.
@@ -1601,7 +1602,7 @@ def _digest_heading(entries):
 
     An entry carries a note, a decision, or both (logic.feedback_entries builds one for
     a decision with nothing written on it too), and calling all of them flagged told a
-    reader who skipped two cards and flagged none that she had flagged two. Each half
+    reader who skipped two cards and flagged none that they had flagged two. Each half
     is named only when it has something to count.
     """
     flagged = sum(1 for e in entries if (e.get("note") or "").strip())
@@ -1615,20 +1616,21 @@ def _digest_heading(entries):
 def offer_feedback_digest(parent, entries, title=None, items=(), standing_declines=None):
     """Put the flagged-card summary on the clipboard and show it.
 
-    Shown as well as copied, for two reasons: she sees exactly what's being sent before
-    she sends it, and a clipboard that silently didn't take (a mocked or headless Qt)
-    costs a manual select-and-copy instead of costing her the notes she wrote. Read-only
-    and scrollable rather than an _info box, since this text is meant to be selected and
-    can run past a message box's height with nothing to grab. Monospaced and styled as a
-    payload block, since it's indent-structured plain text, not prose. Copy again is the
-    recovery if something else lands on the clipboard before she gets to paste.
+    Shown as well as copied, for two reasons: the learner sees exactly what's being
+    sent before it is sent, and a clipboard that silently didn't take (a mocked or
+    headless Qt) costs a manual select-and-copy instead of costing the learner the
+    notes they wrote. Read-only and scrollable rather than an _info box, since this
+    text is meant to be selected and can run past a message box's height with nothing
+    to grab. Monospaced and styled as a payload block, since it's indent-structured
+    plain text, not prose. Copy again is the recovery if something else lands on the
+    clipboard before the learner gets to paste.
 
     `title`/`items` are the end-of-run summary, drawn by _summary_block in the same
     title/row vocabulary the confirmation this dialog follows already uses. The optional
     `standing_declines` registry makes the copied payload a current-state handoff rather
     than only this run's delta. Left at
-    their defaults for a bare digest with no summary at all (she backed out of the
-    update but still flagged a card), which is why the whole block is skipped when
+    their defaults for a bare digest with no summary at all (the learner backed out of
+    the update but still flagged a card), which is why the whole block is skipped when
     `title` is empty rather than rendered with a blank heading.
     """
     text = build_feedback_digest(entries, version=ADDON_VERSION,
@@ -1665,8 +1667,9 @@ def offer_feedback_digest(parent, entries, title=None, items=(), standing_declin
     # Night Mode instead of fighting it. It used to hardcode a near-white background
     # and leave the text to the palette, which is the v0.32.1 dosing-block bug exactly:
     # measured at 1.34:1 in dark mode (light grey on near-white), so the one thing in
-    # this dialog she is meant to read was the one thing she could not. `base` is the
-    # background a text field already uses, so it still reads as a sunken payload block
+    # this dialog the learner is meant to read was the one thing they could not.
+    # `base` is the background a text field already uses, so it still reads as a
+    # sunken payload block
     # in both themes, and `text` on `base` is a pairing the platform guarantees.
     view.setStyleSheet("QPlainTextEdit { background: palette(base);"
                        " color: palette(text); border: 1px solid palette(mid); }")

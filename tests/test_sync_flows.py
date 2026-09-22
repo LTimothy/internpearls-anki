@@ -5329,7 +5329,7 @@ def test_run_sync_survives_a_garbage_registry_entry(anki, tmp_path):
     were restored. It must instead degrade gracefully and let the rest of the run
     finish."""
     from internpearls import config, sync
-    deck = _source_updating_card_a(anki, tmp_path)   # guid-a, her mnemonic on Notes
+    deck = _source_updating_card_a(anki, tmp_path)   # guid-a, its mnemonic on Notes
     config.save_declined({"g-garbage": "not a dict"})
 
     drive(anki, sync.sync_decks, respond=_accept_everything)
@@ -5748,7 +5748,7 @@ def test_a_garbage_registry_file_reads_as_an_empty_registry(anki):
 
 def test_a_garbage_registry_file_still_imports_and_restores(anki, tmp_path):
     from internpearls import config, sync
-    _source_updating_card_a(anki, tmp_path)   # guid-a, her mnemonic on Notes
+    _source_updating_card_a(anki, tmp_path)   # guid-a, its mnemonic on Notes
     config._save_json(config.DECLINED, ["not", "a", "registry"])
 
     drive(anki, sync.sync_decks, respond=_accept_everything)

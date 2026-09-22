@@ -53,14 +53,15 @@ INSTALLED = os.path.join(_USER_FILES, "installed.json")
 # must still survive an add-on update — currently just which add-on version we've already
 # nagged about, so the startup notice fires once per release, not every launch.
 STATE = os.path.join(_USER_FILES, "state.json")
-# Notes she has written about new cards, saved as she types rather than only when the
-# review dialog closes. Feedback is the one thing in a run that clicking Update again
-# cannot reproduce, and it used to live only in memory until the digest at the very end,
-# so anything that ended a run early (a crash, a force quit, an error mid-import) threw
-# it away silently. {guid: {note, deck, front}}; cleared once the digest has been shown.
+# Notes the learner has written about new cards, saved as they type rather than only
+# when the review dialog closes. Feedback is the one thing in a run that clicking
+# Update again cannot reproduce, and it used to live only in memory until the digest at
+# the very end, so anything that ended a run early (a crash, a force quit, an
+# error mid-import) threw it away silently. {guid: {note, deck, front}}; cleared once
+# the digest has been shown.
 FEEDBACK = os.path.join(_USER_FILES, "card_feedback.json")
 # What the deck source last shipped for each preserved field, so _restore can tell
-# "she edited this" from "the deck author changed this" instead of freezing the
+# "the learner edited this" from "the deck author changed this" instead of freezing the
 # field forever. {guid: {field: value}}. See collection._restore.
 SHIPPED = os.path.join(_USER_FILES, "shipped_fields.json")
 # The declined-card registry: {guid: {state, front, deck, decided, hash}}.
