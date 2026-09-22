@@ -56,7 +56,7 @@ def test_add_generated_notes_empty_list_is_noop(anki):
 
 
 def test_add_generated_notes_never_touches_existing_notes(anki):
-    existing = anki.col.add_note("her-guid", ["Existing front", "b", "", "", "", "", ""],
+    existing = anki.col.add_note("learner-guid", ["Existing front", "b", "", "", "", "", ""],
                             ["InternPearls::Pharm"], deck="Intern Pearls::Intern Custom")
     before_fields, before_tags, before_deck = (list(existing.fields), list(existing.tags),
                                                existing.deck)
@@ -85,7 +85,7 @@ def test_add_generated_notes_core_type_missing_from_collection_raises(anki):
 
 
 def test_add_generated_notes_is_one_undo_step(anki):
-    anki.col.add_note("her-guid", ["Existing front", "b", "", "", "", "", ""],
+    anki.col.add_note("learner-guid", ["Existing front", "b", "", "", "", "", ""],
                       ["InternPearls::Pharm"], deck="Intern Pearls::Intern Custom")
     n = collection.add_generated_notes(
         [_card("Q1"), _card("Q2"), _card("Q3")], media={}, deck_name=DECK, scope_tag=SCOPE)
@@ -94,7 +94,7 @@ def test_add_generated_notes_is_one_undo_step(anki):
     anki.col.undo()
     assert len(anki.col._notes) == 1   # a single undo removed all 3 together
     remaining = next(iter(anki.col._notes.values()))
-    assert remaining.guid == "her-guid"
+    assert remaining.guid == "learner-guid"
 
 
 def test_partial_failure_still_lands_as_one_undo_step(anki):
@@ -102,20 +102,20 @@ def test_partial_failure_still_lands_as_one_undo_step(anki):
     add_note itself raising) is not rolled back: but whatever DID land must still be
     exactly one undo step, per add_generated_notes' docstring. The original exception
     must propagate untouched."""
-    anki.col.add_note("her-guid", ["Existing front", "b", "", "", "", "", ""],
+    anki.col.add_note("learner-guid", ["Existing front", "b", "", "", "", "", ""],
                       ["InternPearls::Pharm"], deck="Intern Pearls::Intern Custom")
     anki.col.fail_add_note_after(3)   # the 3rd generated note fails
     cards = [_card("Q1"), _card("Q2"), _card("Q3"), _card("Q4")]
     with pytest.raises(RuntimeError, match="mock add_note failure"):
         collection.add_generated_notes(cards, media={}, deck_name=DECK, scope_tag=SCOPE)
 
-    generated_fronts = {n["Front"] for n in anki.col._notes.values() if n.guid != "her-guid"}
+    generated_fronts = {n["Front"] for n in anki.col._notes.values() if n.guid != "learner-guid"}
     assert generated_fronts == {"Q1", "Q2"}   # Q3/Q4 never landed
     assert len(anki.col._notes) == 3          # the existing note + Q1 + Q2
 
     anki.col.undo()
     assert len(anki.col._notes) == 1          # one undo cleared the whole partial import
-    assert next(iter(anki.col._notes.values())).guid == "her-guid"
+    assert next(iter(anki.col._notes.values())).guid == "learner-guid"
 
 
 def test_image_appended_to_primary_field_when_no_image_field(anki):

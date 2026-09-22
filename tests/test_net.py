@@ -286,7 +286,7 @@ def test_the_update_check_passes_the_configured_token(monkeypatch, anki):
     proves the config is actually wired up rather than just that the parameter, handed
     in directly, threads through to _gh_public_raw."""
     from internpearls import updates
-    anki.mw._config = {"github_token": "her-token"}
+    anki.mw._config = {"github_token": "learner-token"}
     seen = {}
 
     def fake_public_raw(path, ref="main", timeout=None, token=None):
@@ -295,11 +295,11 @@ def test_the_update_check_passes_the_configured_token(monkeypatch, anki):
 
     monkeypatch.setattr(updates, "_gh_public_raw", fake_public_raw)
     updates.check_updates()
-    assert seen["token"] == "her-token"
+    assert seen["token"] == "learner-token"
 
     seen.clear()
     updates._fetch_addon_version_info(token=updates._cfg()["gh_token"])
-    assert seen["token"] == "her-token"
+    assert seen["token"] == "learner-token"
 
 
 def test_any_other_http_status_reports_its_code(monkeypatch):

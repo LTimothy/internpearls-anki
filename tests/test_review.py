@@ -402,7 +402,7 @@ def test_every_marker_pill_clears_wcag_aa_against_its_own_background():
 
 def test_a_changed_row_carries_a_what_changed_group():
     detail = dict(_basic_note_detail(), guid="g1", kind="changed",
-                  was={"Back": "the answer she has today"})
+                  was={"Back": "the answer they have today"})
     texts = " ".join(n.get("text") or "" for n in _walk(
         review._card_row(detail, {}, {}, {}, _no_decide).node()))
     assert "What changed" in texts
