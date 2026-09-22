@@ -357,9 +357,14 @@ def fields_to_carry_over(saved, target_current):
     already has text in — the learner may have already started annotating it, or a
     previous partial run already carried a value over — so this only ever fills in
     a field that's currently blank.
+
+    Matched case-insensitively: the predecessor and replacement note types can spell
+    the same field with different casing, and a case-sensitive lookup would read the
+    replacement's actual value as missing instead.
     """
+    current_lower = {f.lower(): v for f, v in target_current.items()}
     return {f: v for f, v in saved.items()
-            if v.strip() and not (target_current.get(f) or "").strip()}
+            if v.strip() and not (current_lower.get(f.lower()) or "").strip()}
 
 
 def find_retired_in_collection(retired_ledger, existing_guids, existing_front_to_guid=None):
