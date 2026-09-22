@@ -2340,7 +2340,12 @@ def import_single():
                     yes_label="Import without it", no_label="Cancel"):
             return
     existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
-    remap, in_place, as_new, _, _matched = remap_cards(src, existing_fronts, aliases)
+    remap, in_place, as_new, _, matched = remap_cards(src, existing_fronts, aliases)
+    # note_protected_fields is keyed by the guid the deck source assigns, but a note
+    # matched by front (guid drift predating a stable id) keeps its own, different
+    # guid. Re-key onto that guid so _snapshot below covers it too, the same fix
+    # _run_sync already has.
+    per_note = {**per_note, **per_note_for_package(per_note, matched)}
     # Filtered the same way _apply_deck filters a regular sync's import: a declined
     # note must never land through this path either, whatever counts get shown next.
     declined = declined_guids(load_declined())

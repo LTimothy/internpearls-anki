@@ -1485,6 +1485,14 @@ def test_carry_over_only_touches_fields_with_saved_content():
         "Notes": "text"}
 
 
+def test_carry_over_matches_field_names_case_insensitively():
+    # The replacement note's own field can be spelled with different casing than
+    # the predecessor's; a case-sensitive lookup reads that as blank and carries
+    # a value over onto a field that already has text in it.
+    saved = {"Dosing": "old dose"}
+    assert logic.fields_to_carry_over(saved, {"dosing": "already written"}) == {}
+
+
 # ------------------------------------------------------ night mode dim factor
 def test_night_mode_dim_factor_at_zero_is_no_dimming():
     assert logic.night_mode_dim_factor(0) == 1.0
