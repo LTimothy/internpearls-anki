@@ -1707,6 +1707,10 @@ class _Layout:
         # is a layout margin, and a suite with no geometry has nothing else to read it
         # from (review._card_row indents an expanded body by exactly this).
         self._margins = (0, 0, 0, 0)
+        # {index: factor}, recorded for the same reason as _margins: a row that hands
+        # one child the stretch has no other way to say so without geometry
+        # (review._group_note_row gives its note label the stretch this way).
+        self._stretch = {}
         if parent is not None and isinstance(parent, QWidget):
             parent._layout = self
 
@@ -1737,6 +1741,12 @@ class _Layout:
             return None
         child = self._children.pop(i)
         return _LayoutItem(child if isinstance(child, QWidget) else None)
+
+    def setStretch(self, index, factor):
+        self._stretch[index] = factor
+
+    def stretch(self, index):
+        return self._stretch.get(index, 0)
 
     def addLayout(self, l):
         self._children.append(l)

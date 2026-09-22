@@ -559,12 +559,18 @@ def _row_count(items):
     """How many of `items` are an actual row rather than list scaffolding.
 
     build_list_body and build_update_body both interleave real rows (a deck, card,
-    retired, moved, or "row" entry) with ("header", ...), ("note", ...) and one
-    ("sep",) between every pair of rows in a group, per review.py's own docstrings.
+    retired, moved, or "row" entry) with ("header", ...), ("note", ...), one
+    ("sep",) between every pair of rows in a group, and ("group_note", ...) over a
+    group of cards sharing one change note, per review.py's own docstrings.
     Counting raw items double-counts the backlog: a 35-card list carries about 34
     seps plus a header, so "items remaining" comes out near double "cards remaining".
+
+    A folded group's members are scaffolding to the reader but not to this count:
+    they are built and one click away, not waiting on the list to reach them, which
+    is what this number reports.
     """
-    return sum(1 for item in items if item[0] not in ("header", "note", "sep"))
+    return sum(1 for item in items
+               if item[0] not in ("header", "note", "sep", "group_note"))
 
 
 def list_progress(wid):
