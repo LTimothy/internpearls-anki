@@ -488,6 +488,22 @@ def _scene_confirm(mock, opts):
                   ("retired", "An older phrasing of a since-split card",
                    "split into two focused cards"), ("sep",),
                   ("moved", "A card whose deck was reorganized", "Regional Basics")]
+    elif opts.get("group_size"):
+        # A change group of the requested size, every member a plain basic card
+        # sharing one note, for testing review._GROUP_COLLAPSE_MIN's own fold-or-not
+        # render (see test_change_note_groups.py). Real ("group_note", note,
+        # card_count) 3-tuples, unlike the grouped=True fixture above, which
+        # deliberately stays a 2-tuple.
+        n = opts["group_size"]
+        group_note = {"kind": "feedback",
+                      "note": f"an example reviewer note spanning {n} cards"}
+        items.append(("group_note", group_note, n))
+        for i in range(n):
+            member = {"guid": f"group-card-{i}", "notetype": "Study Deck - Basic",
+                      "fields": [("Front", f"Group member card number {i}?"),
+                                 ("Back", "Answer."), ("Why", ""), ("Image", ""),
+                                 ("Tag", ""), ("Dosing", ""), ("Notes", "")]}
+            items += [("sep", "grouped"), ("card", "Example Deck", member)]
     else:
         for i, d in enumerate(details):
             if i:
