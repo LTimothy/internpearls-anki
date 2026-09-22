@@ -379,7 +379,7 @@ def _capture_shipped(protected, scope_tag, touched):
 
     Limited to `touched` (the guids an import actually wrote this run) because a note in
     a deck that didn't update still holds the learner's restored value, and recording
-    that as "what we shipped" would make her own edit look like ours next time, so the
+    that as "what we shipped" would make their own edit look like ours next time, so the
     following sync would overwrite it. That is the exact failure this baseline exists to
     prevent, so it must not create it.
     """
@@ -403,20 +403,21 @@ def _capture_shipped(protected, scope_tag, touched):
 
 def _restore(snap, baseline=None, touched=None):
     """Put the learner's own annotations back after an import, but only the ones that
-    are actually hers.
+    are actually theirs.
 
-    Anki's importer overwrites every field on a matched note, so without this her
-    annotations are wiped on every sync. Restoring unconditionally is the blunt version
-    of that fix, and it has a cost: a preserved field can never receive a correction
-    from the deck source again, which is why preserving anything beyond an
+    Anki's importer overwrites every field on a matched note, so without this the
+    learner's annotations are wiped on every sync. Restoring unconditionally is the
+    blunt version of that fix, and it has a cost: a preserved field can never receive a
+    correction from the deck source again, which is why preserving anything beyond an
     always-empty-by-design Notes field used to mean freezing it forever.
 
     `baseline` ({guid: {field: value}}, what the source last shipped for that note)
-    makes it a three-way merge instead. If her pre-import value still equals what was
-    last shipped, she never touched it, so the freshly imported value is allowed to
-    stand. If it differs, the field is hers and gets restored. Comparing against the
-    INCOMING value can't distinguish those two cases: "she edited it" and "the deck
-    author changed it" both read as a difference, which is why the baseline is kept.
+    makes it a three-way merge instead. If the learner's pre-import value still equals
+    what was last shipped, they never touched it, so the freshly imported value is
+    allowed to stand. If it differs, the field is theirs and gets restored. Comparing
+    against the INCOMING value can't distinguish those two cases: "the learner edited
+    it" and "the deck author changed it" both read as a difference, which is why the
+    baseline is kept.
 
     With no baseline for a note (the first sync after this shipped, or a note the
     source has never written) the old always-restore behaviour applies, so the
@@ -426,9 +427,10 @@ def _restore(snap, baseline=None, touched=None):
     skipped entirely: an import that never ran over a note cannot have overwritten
     anything on it, so there is nothing to restore and nothing to conflict with.
 
-    Returns (restored, collisions), where a collision is a field she edited AND the
-    source changed since that baseline: hers wins, and the count lets the caller offer
-    to send those back rather than let the two versions drift apart unnoticed.
+    Returns (restored, collisions), where a collision is a field the learner edited AND
+    the source changed since that baseline: the learner's own edit wins, and the count
+    lets the caller offer to send those back rather than let the two versions drift
+    apart unnoticed.
     """
     baseline = baseline or {}
     restored, collisions = 0, []
@@ -449,12 +451,12 @@ def _restore(snap, baseline=None, touched=None):
             if f not in note:
                 continue
             if f in was_shipped and was_shipped[f] == v:
-                continue          # untouched by her; let the source's update stand
+                continue          # untouched by the learner; let the source's update stand
             if f in was_shipped and note[f] != was_shipped[f] and note[f] != v:
                 # Only when the two versions actually differ. An update that changed a
-                # field to exactly what she had already written is agreement, not a
-                # conflict, and reporting it asked her to go and reconcile two identical
-                # wordings.
+                # field to exactly what the learner had already written is agreement,
+                # not a conflict, and reporting it asked the learner to go and reconcile
+                # two identical wordings.
                 collisions.append((guid, f))
             if note[f] != v:
                 note[f] = v
@@ -502,7 +504,7 @@ class _NoteIdentity(dict):
         self.guids = set()
 
 
-def _her_front_to_guid(scope_tag):
+def _existing_front_to_guid(scope_tag):
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
     out = _NoteIdentity()
     ambiguous = set()
@@ -525,17 +527,17 @@ def existing_front_map(scope_tag):
     failure (e.g. a fresh profile with no notes yet) yields {}."""
     try:
         return {ai_logic._norm_front(front): front
-                for front in _her_front_to_guid(scope_tag)}
+                for front in _existing_front_to_guid(scope_tag)}
     except Exception:
         return {}
 
 
-def _her_guid_to_fields(scope_tag):
+def _existing_guid_to_fields(scope_tag):
     """{note guid: {field name: value}} for every note under the scope tag.
 
-    Change detection needs her side of the comparison by name, not by position, so this
-    zips each note's values against its own note type's field names rather than assuming
-    every note type agrees on an order.
+    Change detection needs the learner's side of the comparison by name, not by
+    position, so this zips each note's values against its own note type's field names
+    rather than assuming every note type agrees on an order.
     """
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
     out = {}
@@ -546,7 +548,7 @@ def _her_guid_to_fields(scope_tag):
     return out
 
 
-def _her_guid_to_nid(scope_tag):
+def _existing_guid_to_nid(scope_tag):
     """{note guid: note id} for every card under the scope tag. The reconcile flow needs
     to go from a retired card's GUID (what the ledger lists) back to the learner's note
     to archive it."""
@@ -554,11 +556,11 @@ def _her_guid_to_nid(scope_tag):
     return {mw.col.get_note(nid).guid: nid for nid in mw.col.find_notes(search)}
 
 
-def _her_guid_to_deck(scope_tag):
+def _existing_guid_to_deck(scope_tag):
     """{note guid: current deck name} for every note under the scope tag, keyed off
     its first card's deck (all cards of a note normally share one deck). The deck-move
     step needs this to tell "still where the source last filed it" (safe to relocate)
-    from "she's moved or customized it herself" (leave it alone)."""
+    from "the learner has moved or customized it themself" (leave it alone)."""
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
     out = {}
     for nid in mw.col.find_notes(search):
@@ -569,7 +571,7 @@ def _her_guid_to_deck(scope_tag):
     return out
 
 
-def _her_notes_summary(scope_tag, exclude_tag=None):
+def _existing_notes_summary(scope_tag, exclude_tag=None):
     """{guid, nid, model, front, label, reps, deck} for every note under the scope tag,
     the raw material find_duplicate_groups groups into duplicate candidates. `front` is
     the raw first field (the grouping key); `label` is a readable version for dialogs.
@@ -631,13 +633,13 @@ def installed_matching_collection(installed, scope_tag):
     it isn't) in two narrow, self-correcting cases — a deck mid-reorg where Sync
     decks has updated content but "Reconcile my decks" hasn't yet relocated the
     learner's existing cards to the new deck name (apply_deck_moves does that, not
-    Sync), and a card the learner has manually filed into a deck of her own outside
+    Sync), and a card the learner has manually filed into a deck of their own outside
     the spec's hierarchy entirely. Both just cause a harmless redundant re-sync of
     that one deck (0 new, N kept in place) rather than any data loss, which is the
     failure mode actually worth avoiding here — a false "needs sync" self-corrects;
     a false "up to date" hides a real problem silently.
     """
-    present = set(_her_guid_to_deck(scope_tag).values())
+    present = set(_existing_guid_to_deck(scope_tag).values())
 
     def _has_cards(name):
         return any(d == name or d.startswith(name + "::") for d in present)
@@ -645,18 +647,18 @@ def installed_matching_collection(installed, scope_tag):
     return {name: version for name, version in installed.items() if _has_cards(name)}
 
 
-def decks_holding(guids, her_guid_to_nid):
+def decks_holding(guids, existing_guid_to_nid):
     """The decks the given notes' cards are actually sitting in right now.
 
     What a pre-run backup has to cover is where a card IS, not where a ledger says it
-    was filed: a learner who reorganizes her own collection moves a card out from under
+    was filed: a learner who reorganizes their own collection moves a card out from under
     the deck the retirement ledger recorded, and archiving or rewriting it there would
     then happen in a deck no backup covered. Unknown guids are simply absent from the
     result, so the caller can fall back to whatever it does know.
     """
     out = []
     for guid in guids:
-        nid = her_guid_to_nid.get(guid)
+        nid = existing_guid_to_nid.get(guid)
         if nid is None:
             continue
         for cid in mw.col.get_note(nid).card_ids():
@@ -666,7 +668,7 @@ def decks_holding(guids, her_guid_to_nid):
     return out
 
 
-def apply_deck_moves(moves, her_guid_to_nid):
+def apply_deck_moves(moves, existing_guid_to_nid):
     """Relocate a learner's cards to match a pure deck reorg (Local Anesthetics
     moving into a new Regional deck, say) without touching content or scheduling.
 
@@ -678,7 +680,7 @@ def apply_deck_moves(moves, her_guid_to_nid):
     """
     n = 0
     for m in moves:
-        nid = her_guid_to_nid.get(m["guid"])
+        nid = existing_guid_to_nid.get(m["guid"])
         if nid is None:
             continue
         cids = mw.col.get_note(nid).card_ids()
@@ -688,21 +690,21 @@ def apply_deck_moves(moves, her_guid_to_nid):
     return n
 
 
-def carry_over_protected_fields(retired, her_guid_to_nid, protected_fields):
-    """Before a retired note is archived, copy her protected-field text (e.g. Notes)
-    onto its replacement(s) so a personal annotation isn't stranded on a card that's
-    about to be suspended out of review.
+def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields):
+    """Before a retired note is archived, copy the learner's protected-field text (e.g.
+    Notes) onto its replacement(s) so a personal annotation isn't stranded on a card
+    that's about to be suspended out of review.
 
     `retired` is the fresh (not-yet-archived) entries from find_retired_in_collection
     — each has `guid` and `superseded_by`. Only fills a replacement's field if it's
-    currently blank (fields_to_carry_over), so this never overwrites something she's
-    already written on the new card, and copies to every replacement she already has
-    (a symmetric split has no single "primary" to prefer). Returns the number of
-    replacement notes updated.
+    currently blank (fields_to_carry_over), so this never overwrites something the
+    learner's already written on the new card, and copies to every replacement they
+    already have (a symmetric split has no single "primary" to prefer). Returns the
+    number of replacement notes updated.
     """
     n = 0
     for r in retired:
-        old_nid = her_guid_to_nid.get(r["guid"])
+        old_nid = existing_guid_to_nid.get(r["guid"])
         if old_nid is None:
             continue
         old_note = mw.col.get_note(old_nid)
@@ -711,7 +713,7 @@ def carry_over_protected_fields(retired, her_guid_to_nid, protected_fields):
         if not saved:
             continue
         for target_guid in r["superseded_by"]:
-            target_nid = her_guid_to_nid.get(target_guid)
+            target_nid = existing_guid_to_nid.get(target_guid)
             if target_nid is None:
                 continue
             target_note = mw.col.get_note(target_nid)
@@ -751,7 +753,7 @@ def archive_notes(nids, retired_deck, tag):
 
 # The scheduling a card carries: what SM-2/FSRS reads to decide when it comes back, plus
 # the counters the learner sees. Deliberately not the deck (`did`) or the note's fields,
-# so carrying this forward moves her progress without moving her organization.
+# so carrying this forward moves their progress without moving their organization.
 _SCHED_FIELDS = ("type", "queue", "due", "ivl", "factor", "reps", "lapses")
 
 # FSRS schedules from the card's memory state, not from ivl/factor, so a card seeded
@@ -785,7 +787,7 @@ def _halve_memory_state(parent, card):
         pass
 
 
-def carry_scheduling_forward(pairs, her_guid_to_nid):
+def carry_scheduling_forward(pairs, existing_guid_to_nid):
     """Move a stranded predecessor's review history onto its live successor.
 
     `pairs` is find_stranded_pairs' output. For each, the predecessor's cards are copied
@@ -793,9 +795,10 @@ def carry_scheduling_forward(pairs, her_guid_to_nid):
     moves the ordinals that still line up rather than smearing card 1's schedule across
     all of them.
 
-    Two guards keep this from ever costing her progress. A successor card is only
-    written when it has FEWER reps than the predecessor, so a card she has already been
-    studying is never rolled back to an older schedule, and a re-run is a no-op. And
+    Two guards keep this from ever costing the learner's progress. A successor card is
+    only written when it has FEWER reps than the predecessor, so a card they have
+    already been studying is never rolled back to an older schedule, and a re-run is a
+    no-op. And
     nothing is cleared from the predecessor: it keeps its own scheduling and is archived
     afterwards, so the worst case is a duplicated schedule on a suspended card, which is
     recoverable by hand, rather than history that no card holds any more.
@@ -806,8 +809,8 @@ def carry_scheduling_forward(pairs, her_guid_to_nid):
     """
     moved = 0
     for p in pairs:
-        old_nid = her_guid_to_nid.get(p["guid"])
-        new_nid = her_guid_to_nid.get(p["successor_guid"])
+        old_nid = existing_guid_to_nid.get(p["guid"])
+        new_nid = existing_guid_to_nid.get(p["successor_guid"])
         if old_nid is None or new_nid is None:
             continue
         src = {}
@@ -827,7 +830,7 @@ def carry_scheduling_forward(pairs, her_guid_to_nid):
     return moved
 
 
-def _her_note_types(scope_tag):
+def _existing_note_types(scope_tag):
     """{note guid: notetype name} for every note under the scope tag."""
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
     out = {}
@@ -863,7 +866,7 @@ def seed_converted_siblings(nids):
     cards. Anki carries the original's scheduling onto the first and creates the rest
     as brand new, which is right when the blanks are new material and wrong here: the
     learner has been retrieving these same facts off the parent card for months, and
-    across a whole deck it would drop a four-figure new-card queue on her, which is the
+    across a whole deck it would drop a four-figure new-card queue on them, which is the
     workload problem this reformatting is meant to reduce.
 
     So a sibling inherits the parent's ease, counters and standing, at HALF its
@@ -1016,7 +1019,7 @@ def missing_notetype_targets(changes):
     return sorted({c["new"] for c in changes if not mw.col.models.by_name(c["new"])})
 
 
-def notetype_changes(src, her, aliases, scope_tag, declined):
+def notetype_changes(src, existing_fronts, aliases, scope_tag, declined):
     """Note-type changes this .apkg would need on the learner's own notes.
 
     Resolves the .apkg's guids through the same matching ladder the import uses, so a
@@ -1026,23 +1029,24 @@ def notetype_changes(src, her, aliases, scope_tag, declined):
     `declined` is logic.declined_guids' set, and a match is left out of the plan
     entirely. A conversion is only worth anything because the import right after it
     writes the new format's content onto the converted note, and a declined note is
-    dropped from that import (logic.declined_drop), so converting one moved her note to
-    a fill-in-the-blank type holding no blanks. Both identities are tested, the
-    package's own guid and the guid it would be remapped to, exactly the pair
-    declined_drop tests, so a decline can't be bypassed through either. It is a required
-    argument rather than a defaulted one so a fourth caller has to decide about it
-    instead of quietly planning a conversion for a card she turned away.
+    dropped from that import (logic.declined_drop), so converting one moved the
+    learner's note to a fill-in-the-blank type holding no blanks. Both identities are
+    tested, the package's own guid and the guid it would be remapped to, exactly the
+    pair declined_drop tests, so a decline can't be bypassed through either. It is a
+    required argument rather than a defaulted one so a fourth caller has to decide about
+    it instead of quietly planning a conversion for a card the learner turned away.
     """
-    remap, _in_place, _as_new, _new, _matched = remap_cards(src, her, aliases)
+    remap, _in_place, _as_new, _new, _matched = remap_cards(src, existing_fronts, aliases)
     incoming = apkg_note_types(src)
-    by_her = {}
+    by_existing_guid = {}
     for rid, _fields, guid in apkg_notes(src):
-        her_guid = remap.get(rid, guid)
-        if her_guid in declined or guid in declined:
+        existing_guid = remap.get(rid, guid)
+        if existing_guid in declined or guid in declined:
             continue
         if guid in incoming:
-            by_her[her_guid] = incoming[guid]
-    return plan_notetype_changes(by_her, _her_note_types(scope_tag), TARGET_FIELDS)
+            by_existing_guid[existing_guid] = incoming[guid]
+    return plan_notetype_changes(by_existing_guid, _existing_note_types(scope_tag),
+                                  TARGET_FIELDS)
 
 
 class NoteTypeFieldsRequired(RuntimeError):
@@ -1132,32 +1136,33 @@ def _prepare_import_notetypes(con, allow_field_additions=True):
                 (json.dumps({mid: model for mid, model in incoming.items() if mid in used}),))
 
 
-def _apply_deck(src, aliases, her, declined=frozenset(),
+def _apply_deck(src, aliases, existing_fronts, declined=frozenset(),
                 expected_conflicting_rids=frozenset(), allow_field_additions=True):
     """Import one deck, returning (in_place, as_new, touched) where `touched` is the
-    guids this import wrote in her collection: the remapped guid where a note matched
-    one of hers, the .apkg's own otherwise. _capture_shipped needs exactly that set.
+    guids this import wrote in the learner's collection: the remapped guid where a note
+    matched one of theirs, the .apkg's own otherwise. _capture_shipped needs exactly
+    that set.
 
     `declined` is the decline registry's guids; matching notes are dropped from the
     scratch package before Anki sees it, so a skipped or never-imported card never
     lands and a kept-back card's collection copy is never overwritten. Dropped notes
     are excluded from the counts and from `touched`."""
-    remap, in_place, as_new, _, _matched = remap_cards(src, her, aliases)
+    remap, in_place, as_new, _, _matched = remap_cards(src, existing_fronts, aliases)
     # Anki matches GUIDs globally, not just within our scope. Fail this deck before
     # import rather than silently writing an excluded note that was not backed up.
-    scoped = set(getattr(her, "guids", her.values()))
+    scoped = set(getattr(existing_fronts, "guids", existing_fronts.values()))
     for _rid, _fields, guid in apkg_notes(src):
         if guid not in scoped and mw.col.db.scalar("select id from notes where guid = ?", guid):
             raise ValueError("This package matches a note outside the managed scope; "
                              "no cards from this deck were imported.")
-    drop, touched, in_place, as_new = declined_drop(src, remap, her, declined,
+    drop, touched, in_place, as_new = declined_drop(src, remap, existing_fronts, declined,
                                                      in_place, as_new)
     # A unique name in the system temp directory, rather than a fixed one derived from
     # `src` (two runs can otherwise write and import through the same path, and on a
     # shared machine that path is predictable enough to be pre-created as a symlink) or
     # one beside `src` itself. For a local-folder source `src` is the learner's own
-    # configured folder, which may be a read-only share, and is hers rather than ours to
-    # leave a file in if the import raises before the cleanup below.
+    # configured folder, which may be a read-only share, and is theirs rather than ours
+    # to leave a file in if the import raises before the cleanup below.
     out = platform().allocate_temporary_file(
         platform_owner_id(mw), "sync-import", ".sync.apkg")
     try:
@@ -1413,10 +1418,11 @@ def remove_empty_cards():
     one the way a retired card is archived would leave a dead card sitting in a Retired
     deck forever, which is the thing the learner was already suspending by hand.
 
-    Three guards, in order: the note must be hers (scope tag), the note must keep at
-    least one real card (select_empty_cards refuses the rest, so no note can be orphaned
-    into deletion), and she sees and confirms every card first. The usual automatic
-    backup runs before anything is touched, so an unwanted run is recoverable.
+    Three guards, in order: the note must be the learner's own (scope tag), the note
+    must keep at least one real card (select_empty_cards refuses the rest, so no note
+    can be orphaned into deletion), and the learner sees and confirms every card first.
+    The usual automatic backup runs before anything is touched, so an unwanted run is
+    recoverable.
     """
     cfg = _cfg()
     rows, skipped = find_empty_cards(cfg["scope_tag"])
@@ -1457,7 +1463,7 @@ def remove_empty_cards():
     if not proceed:
         return
     # Asked again after the confirmation, not reused from before it. The report above
-    # was computed before a modal dialog the reader can sit in for as long as she likes,
+    # was computed before a modal dialog the reader can sit in for as long as they like,
     # and an import landing in the meantime (an auto-sync tick, an undo) can give one of
     # these cards real content back. Acting on the stale list would then delete a card
     # that now shows something, which is the one thing this add-on must never do. Only

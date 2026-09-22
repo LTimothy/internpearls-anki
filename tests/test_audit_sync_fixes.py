@@ -50,9 +50,9 @@ def test_declined_duplicate_front_guid_keeps_nonnegative_preview_counts(anki, tm
     anki.col.add_note('g2', _fields('Shared'), [TAGS], deck=DECK)
     cfg, manifest, fetch = source(anki, tmp_path, [('g2', _fields('Shared'), TAGS)])
     path = fetch(manifest['decks'][0])
-    her = collection._her_front_to_guid(cfg['scope_tag'])
-    remap, kept, new, _, _ = logic.remap_cards(path, her, {})
-    _, touched, kept, new = logic.declined_drop(path, remap, her, {'g2'}, kept, new)
+    existing_fronts = collection._existing_front_to_guid(cfg['scope_tag'])
+    remap, kept, new, _, _ = logic.remap_cards(path, existing_fronts, {})
+    _, touched, kept, new = logic.declined_drop(path, remap, existing_fronts, {'g2'}, kept, new)
     assert (touched, kept, new) == (set(), 0, 0)
 
 
@@ -498,7 +498,7 @@ def test_personalized_rewrite_failure_removes_scratch_file(anki, tmp_path,
                             RuntimeError('rewrite failed')))
 
     with pytest.raises(RuntimeError, match='rewrite failed'):
-        collection._apply_deck(src, {}, collection._her_front_to_guid(cfg['scope_tag']))
+        collection._apply_deck(src, {}, collection._existing_front_to_guid(cfg['scope_tag']))
 
     assert not scratch.exists()
 

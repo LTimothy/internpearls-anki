@@ -454,7 +454,7 @@ def test_sync_recovers_a_single_deck_lost_to_a_partial_collection_revert(anki, t
 
 def test_sync_overwrites_content_but_restores_protected_notes(anki, tmp_path):
     from internpearls import sync
-    # She has the v1 card with her own annotation in Notes.
+    # The learner has the v1 card with their own annotation in Notes.
     anki.col.add_note("g1", _fields("Front one", back="old back",
                                     notes="her personal mnemonic"), [TAGS])
     folder = _write_source(tmp_path, {
@@ -465,14 +465,14 @@ def test_sync_overwrites_content_but_restores_protected_notes(anki, tmp_path):
 
     note = anki.col.note_by_guid("g1")
     assert note["Back"] == "NEW back"                    # content updated
-    assert note["Notes"] == "her personal mnemonic"      # her field survived
+    assert note["Notes"] == "her personal mnemonic"      # the field survived
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1   # updated, not duplicated
 
 
-def test_preserved_field_she_never_touched_still_receives_updates(anki, tmp_path):
-    """The point of preserving a field she can edit: protecting Dosing must not mean
-    freezing it. First sync establishes what the source shipped; the second one is
-    free to correct it, because her copy still matches that baseline."""
+def test_preserved_field_the_learner_never_touched_still_receives_updates(anki, tmp_path):
+    """The point of preserving a field the learner can edit: protecting Dosing must not
+    mean freezing it. First sync establishes what the source shipped; the second one is
+    free to correct it, because the learner's copy still matches that baseline."""
     from internpearls import sync
     anki.col.add_note("g1", _fields("Front one", dosing="1 mg/kg"), [TAGS], deck=DECK)
     _configure(anki, _write_source(tmp_path, {
@@ -489,7 +489,7 @@ def test_preserved_field_she_never_touched_still_receives_updates(anki, tmp_path
     assert anki.col.note_by_guid("g1")["Dosing"] == "2 mg/kg (corrected)"
 
 
-def test_preserved_field_she_edited_is_kept_and_the_collision_reported(anki, tmp_path):
+def test_preserved_field_the_learner_edited_is_kept_and_the_collision_reported(anki, tmp_path):
     from internpearls import sync
     anki.col.add_note("g1", _fields("Front one", dosing="1 mg/kg"), [TAGS], deck=DECK)
     _configure(anki, _write_source(tmp_path, {
@@ -510,8 +510,8 @@ def test_preserved_field_she_edited_is_kept_and_the_collision_reported(anki, tmp
 
 def test_no_collision_reported_for_a_deck_this_run_never_touched(anki, tmp_path):
     """The false positive: a card in a deck with no update at all was reported as
-    conflicting. Nothing imported over it, so nothing of hers was overwritten and
-    there was no update to conflict with."""
+    conflicting. Nothing imported over it, so nothing of the learner's was overwritten
+    and there was no update to conflict with."""
     from internpearls import sync
     anki.col.add_note("g1", _fields("Front one", notes="her mnemonic"), [TAGS], deck=DECK)
     other = "Intern Pearls::Intern Custom::Other"
@@ -537,7 +537,7 @@ def test_no_collision_reported_for_a_deck_this_run_never_touched(anki, tmp_path)
 
 def test_preserved_field_falls_back_to_always_restoring_without_a_baseline(anki, tmp_path):
     """Upgrading into this feature must never cost an annotation: with no record of
-    what was last shipped, her value wins exactly as it did before."""
+    what was last shipped, the learner's value wins exactly as it did before."""
     from internpearls import sync
     anki.col.add_note("g1", _fields("Front one", notes="her mnemonic"), [TAGS])
     _configure(anki, _write_source(tmp_path, {
@@ -578,13 +578,14 @@ def _convert(answer):
 
 def test_qa_card_converted_to_cloze_keeps_its_card_and_history(anki, tmp_path):
     """The whole point: a question-and-answer card becoming a fill-in-the-blank used to
-    mean retiring hers and starting the new one from zero. Converting her note's type
-    first means the import matches it by GUID and updates it in place instead."""
+    mean retiring the learner's card and starting the new one from zero. Converting
+    the learner's note's type first means the import matches it by GUID and updates it
+    in place instead."""
     from internpearls import sync
     anki.col.models._models.append(_cloze_model())
-    her = anki.col.add_note("g1", _fields("Old Q and A front", notes="her mnemonic"),
-                            [TAGS], deck=DECK)
-    card = anki.col.get_card(her.card_ids()[0])
+    original_note = anki.col.add_note(
+        "g1", _fields("Old Q and A front", notes="her mnemonic"), [TAGS], deck=DECK)
+    card = anki.col.get_card(original_note.card_ids()[0])
     card.reps, card.ivl, card.due = 6, 21, 140
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
@@ -594,25 +595,25 @@ def test_qa_card_converted_to_cloze_keeps_its_card_and_history(anki, tmp_path):
 
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1        # one card, not two
     note = anki.col.note_by_guid("g1")
-    assert note.id == her.id                                      # same note
+    assert note.id == original_note.id                            # same note
     assert note.note_type()["name"] == "Study Deck - Cloze"
     assert note["Text"] == "A {{c1::cloze}} version"              # Front mapped to Text
     assert note["Notes"] == "her mnemonic"                        # annotation survived
     kept = anki.col.get_card(note.card_ids()[0])
     assert (kept.reps, kept.ivl, kept.due) == (6, 21, 140)        # history survived
-    assert anki.col.notetype_changes == [[her.id]]
+    assert anki.col.notetype_changes == [[original_note.id]]
 
 
 def test_extra_blanks_inherit_the_parent_card_rather_than_starting_new(anki, tmp_path):
-    """One card becoming four blanks must not become one card plus three new ones. She
-    has been retrieving these same facts off the parent for months, and across a deck it
-    would drop a four-figure new queue on her. Each extra blank inherits the parent's
-    standing at half its interval, since producing one blank cold is harder than the
-    paragraph the parent tested."""
+    """One card becoming four blanks must not become one card plus three new ones. The
+    learner has been retrieving these same facts off the parent for months, and across
+    a deck it would drop a four-figure new queue on them. Each extra blank inherits the
+    parent's standing at half its interval, since producing one blank cold is harder
+    than the paragraph the parent tested."""
     from internpearls import sync
     anki.col.models._models.append(_cloze_model())
-    her = anki.col.add_note("g1", _fields("Old Q and A front"), [TAGS], deck=DECK)
-    parent = anki.col.get_card(her.card_ids()[0])
+    original_note = anki.col.add_note("g1", _fields("Old Q and A front"), [TAGS], deck=DECK)
+    parent = anki.col.get_card(original_note.card_ids()[0])
     parent.reps, parent.ivl, parent.due, parent.factor, parent.type = 5, 20, 90, 2400, 2
     parent.memory_state = mock_anki.FsrsMemoryState(stability=18.0, difficulty=7.5)
     parent.desired_retention, parent.decay = 0.9, 0.1542
@@ -654,10 +655,11 @@ def test_extra_blanks_stay_new_when_the_parent_was_never_studied(anki, tmp_path)
 
 def test_declining_the_conversion_imports_alongside_instead(anki, tmp_path):
     """Declining is a real choice with a real consequence, and the dialog says so: the
-    cards still arrive, just as separate notes, leaving her progress on the old ones."""
+    cards still arrive, just as separate notes, leaving the learner's progress on the
+    old ones."""
     from internpearls import ai_logic, sync
     anki.col.models._models.append(_cloze_model())
-    her = anki.col.add_note("g1", _fields("Old Q and A front"), [TAGS], deck=DECK)
+    original_note = anki.col.add_note("g1", _fields("Old Q and A front"), [TAGS], deck=DECK)
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
                _cloze_model())}))
@@ -665,8 +667,8 @@ def test_declining_the_conversion_imports_alongside_instead(anki, tmp_path):
     _sync(anki, ask=_convert(False))
 
     assert anki.col.notetype_changes == []
-    assert ai_logic.is_generated_guid(anki.col.get_note(her.id).guid)
-    assert anki.col.get_note(her.id).note_type()["name"] == "Study Deck - Basic"
+    assert ai_logic.is_generated_guid(anki.col.get_note(original_note.id).guid)
+    assert anki.col.get_note(original_note.id).note_type()["name"] == "Study Deck - Basic"
     assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Cloze"
 
 
@@ -742,10 +744,10 @@ def test_a_learners_own_note_type_is_never_converted(anki, tmp_path):
 
 def test_reworded_front_with_stable_guid_updates_in_place_without_alias(anki, tmp_path):
     from internpearls import sync
-    # Her card still shows the old wording; the rebuilt deck kept the GUID (the
-    # stable-id convention) and ships a new front with NO front_aliases entry.
-    her = anki.col.add_note("g1", _fields("Old wording",
-                                          notes="annotation to keep"), [TAGS])
+    # The learner's card still shows the old wording; the rebuilt deck kept the GUID
+    # (the stable-id convention) and ships a new front with NO front_aliases entry.
+    original_note = anki.col.add_note("g1", _fields("Old wording",
+                                                     notes="annotation to keep"), [TAGS])
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("New wording, third revision"), TAGS)], None)})
     _configure(anki, folder)
@@ -754,16 +756,16 @@ def test_reworded_front_with_stable_guid_updates_in_place_without_alias(anki, tm
 
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
     note = anki.col.note_by_guid("g1")
-    assert note.id == her.id                              # same note: history kept
+    assert note.id == original_note.id                    # same note: history kept
     assert note["Front"] == "New wording, third revision"
     assert note["Notes"] == "annotation to keep"
 
 
 def test_front_alias_still_bridges_a_guid_mismatch(anki, tmp_path):
     from internpearls import sync
-    # Her card predates stable GUIDs (guid differs) AND still shows the old front:
-    # only the front_aliases fallback can match it.
-    her = anki.col.add_note("her-old-guid", _fields("Old wording"), [TAGS])
+    # The learner's card predates stable GUIDs (guid differs) AND still shows the old
+    # front: only the front_aliases fallback can match it.
+    original_note = anki.col.add_note("her-old-guid", _fields("Old wording"), [TAGS])
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("new-guid", _fields("New wording"), TAGS)], None)})
     manifest = json.loads(open(folder + "/manifest.json", encoding="utf8").read())
@@ -774,9 +776,9 @@ def test_front_alias_still_bridges_a_guid_mismatch(anki, tmp_path):
     _sync(anki)
 
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
-    note = anki.col.get_note(her.id)
+    note = anki.col.get_note(original_note.id)
     assert note["Front"] == "New wording"
-    assert note.guid == "her-old-guid"   # incoming guid was rewritten to hers
+    assert note.guid == "her-old-guid"   # incoming guid was rewritten to match it
 
 
 # ------------------------------------------------------------- template changes
@@ -1089,17 +1091,18 @@ def _write_retired_source(tmp_path, retired, deck_moves=None):
     return str(folder)
 
 
-def _her_card(anki, guid, front, deck=DECK):
+def _existing_card(anki, guid, front, deck=DECK):
     return anki.col.add_note(guid, _fields(front), TAGS.split(), deck=deck)
 
 
 def test_reconcile_archives_retired_cards(anki, tmp_path):
     from internpearls import sync
-    # She has the retired card old1 plus both its replacements and an unrelated card.
-    _her_card(anki, "old1", "bulky crisis card")
-    _her_card(anki, "new1a", "focused card A")
-    _her_card(anki, "new1b", "focused card B")
-    _her_card(anki, "keep", "an untouched card")
+    # The learner has the retired card old1 plus both its replacements and an
+    # unrelated card.
+    _existing_card(anki, "old1", "bulky crisis card")
+    _existing_card(anki, "new1a", "focused card A")
+    _existing_card(anki, "new1b", "focused card B")
+    _existing_card(anki, "keep", "an untouched card")
     folder = _write_retired_source(tmp_path, {
         DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
                         "superseded_by": ["new1a", "new1b"]}}})
@@ -1127,16 +1130,17 @@ def test_reconcile_archives_retired_cards(anki, tmp_path):
     assert any("Archived <b>1 retired card</b>" in i for i in anki.gui.infos)
 
 
-def test_reconcile_archives_a_retired_card_she_holds_under_an_older_guid(anki, tmp_path):
+def test_reconcile_archives_a_retired_card_the_learner_holds_under_an_older_guid(
+        anki, tmp_path):
     """The counterpart bug to the stuck deck move: a learner whose copy predates the
     identity the retirement ledger is keyed by holds a different GUID, so a pure GUID
-    match never finds her card. The replacements sync in, the retired one is never
+    match never finds their card. The replacements sync in, the retired one is never
     archived, and it duplicates them in every review indefinitely. Matching by front
-    finds it, and archives HER note rather than looking for a GUID she doesn't have."""
+    finds it, and archives THEIR note rather than looking for a GUID they don't have."""
     from internpearls import sync
     front = "bulky crisis card"
-    card = _her_card(anki, "her_older_guid", front)
-    _her_card(anki, "new1a", "focused card A")
+    card = _existing_card(anki, "her_older_guid", front)
+    _existing_card(anki, "new1a", "focused card A")
     folder = _write_retired_source(tmp_path, {
         DECK: {"canonical_guid": {"identity": front, "reason": "split",
                                   "superseded_by": ["new1a"]}}})
@@ -1158,8 +1162,8 @@ def test_reconcile_never_archives_a_locally_generated_card_matched_by_front(
     onto one of the learner's own AI-generated cards: its front coinciding with a
     retired entry's identity is not a deck source telling us that card is retired."""
     from internpearls import ai_logic, sync
-    card = _her_card(anki, ai_logic.generated_guid(), "bulky crisis card")
-    _her_card(anki, "new1a", "focused card A")
+    card = _existing_card(anki, ai_logic.generated_guid(), "bulky crisis card")
+    _existing_card(anki, "new1a", "focused card A")
     folder = _write_retired_source(tmp_path, {
         DECK: {"canonical_guid": {"identity": "bulky crisis card", "reason": "split",
                                   "superseded_by": ["new1a"]}}})
@@ -1176,10 +1180,11 @@ def test_reconcile_never_archives_a_locally_generated_card_matched_by_front(
 def test_reconcile_leaves_a_retired_card_alone_when_neither_guid_nor_front_match(
         anki, tmp_path):
     """The fallback only ever acts on a front it actually finds. A retired entry whose
-    identity matches nothing in her collection (an image note's "image||answer", say)
-    leaves every card of hers exactly as it was, the same as before front matching."""
+    identity matches nothing in the learner's collection (an image note's
+    "image||answer", say) leaves every card of theirs exactly as it was, the same as
+    before front matching."""
     from internpearls import sync
-    card = _her_card(anki, "her_older_guid", "a card she keeps")
+    card = _existing_card(anki, "her_older_guid", "a card she keeps")
     folder = _write_retired_source(tmp_path, {
         DECK: {"canonical_guid": {"identity": "pic.jpg||Femoral block",
                                   "reason": "split", "superseded_by": []}}})
@@ -1211,13 +1216,13 @@ def _sched(anki, note, **vals):
 
 def test_reconcile_moves_progress_onto_the_reworded_card_and_archives_the_old(
         anki, tmp_path):
-    """The real-world case: her GUID drifted before the reword was frozen, so the
-    reword imported as a second note and her review history sat on the dead copy while
-    the live one started from zero. She should end up with one card, current wording,
-    her progress intact."""
+    """The real-world case: the learner's GUID drifted before the reword was frozen, so
+    the reword imported as a second note and their review history sat on the dead copy
+    while the live one started from zero. They should end up with one card, current
+    wording, their progress intact."""
     from internpearls import sync
-    old = _her_card(anki, "g_old", "old wording")
-    new = _her_card(anki, "g_new", "new wording")
+    old = _existing_card(anki, "g_old", "old wording")
+    new = _existing_card(anki, "g_new", "new wording")
     _sched(anki, old, reps=4, ivl=12, due=90, factor=2300, lapses=1, type=2, queue=2)
     _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
 
@@ -1235,12 +1240,13 @@ def test_reconcile_moves_progress_onto_the_reworded_card_and_archives_the_old(
     assert any("Merged <b>1 reworded card</b>" in i for i in anki.gui.infos)
 
 
-def test_reconcile_never_rolls_back_a_reworded_card_she_already_studied(anki, tmp_path):
-    """If she's further along on the new wording than the old one, her progress there
-    is what counts. The old copy still archives; it just doesn't overwrite anything."""
+def test_reconcile_never_rolls_back_a_reworded_card_the_learner_already_studied(anki, tmp_path):
+    """If the learner is further along on the new wording than the old one, their
+    progress there is what counts. The old copy still archives; it just doesn't
+    overwrite anything."""
     from internpearls import sync
-    old = _her_card(anki, "g_old", "old wording")
-    new = _her_card(anki, "g_new", "new wording")
+    old = _existing_card(anki, "g_old", "old wording")
+    new = _existing_card(anki, "g_new", "new wording")
     _sched(anki, old, reps=1, ivl=2, due=10)
     _sched(anki, new, reps=9, ivl=40, due=200)
     _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
@@ -1254,8 +1260,8 @@ def test_reconcile_never_rolls_back_a_reworded_card_she_already_studied(anki, tm
 
 def test_reconcile_stranded_merge_is_idempotent(anki, tmp_path):
     from internpearls import sync
-    old = _her_card(anki, "g_old", "old wording")
-    _her_card(anki, "g_new", "new wording")
+    old = _existing_card(anki, "g_old", "old wording")
+    _existing_card(anki, "g_new", "new wording")
     _sched(anki, old, reps=4, ivl=12)
     folder = _stranded_source(tmp_path, {"old wording": "new wording"})
     _configure(anki, folder)
@@ -1273,12 +1279,12 @@ def test_reconcile_stranded_merge_is_idempotent(anki, tmp_path):
     assert len(anki.col._notes) == 2
 
 
-def test_reconcile_leaves_a_reworded_card_alone_when_she_only_has_the_old_one(
+def test_reconcile_leaves_a_reworded_card_alone_when_the_learner_only_has_the_old_one(
         anki, tmp_path):
     """Holding just the old wording is the import's job, not this one's: its front
-    matching merges her card in place. Touching it here would fight that."""
+    matching merges the learner's card in place. Touching it here would fight that."""
     from internpearls import sync
-    old = _her_card(anki, "g_old", "old wording")
+    old = _existing_card(anki, "g_old", "old wording")
     _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
 
     sync.reconcile_decks()
@@ -1294,8 +1300,8 @@ def test_reconcile_never_merges_a_locally_generated_card_as_the_stranded_predece
     pair. It must never be treated as that stale predecessor: no scheduling carried
     off it onto anything else, and no archiving."""
     from internpearls import ai_logic, sync
-    old = _her_card(anki, ai_logic.generated_guid(), "old wording")
-    _her_card(anki, "g_new", "new wording")
+    old = _existing_card(anki, ai_logic.generated_guid(), "old wording")
+    _existing_card(anki, "g_new", "new wording")
     _sched(anki, old, reps=4, ivl=12)
     _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
 
@@ -1303,7 +1309,7 @@ def test_reconcile_never_merges_a_locally_generated_card_as_the_stranded_predece
 
     card = anki.col.get_card(old.card_ids()[0])
     assert card.queue == 0 and card.did == anki.col.decks.id_for_name(DECK)
-    assert card.reps == 4                                 # her own progress, untouched
+    assert card.reps == 4                                 # its own progress, untouched
     assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
 
 
@@ -1313,8 +1319,8 @@ def test_reconcile_never_writes_carried_scheduling_onto_a_generated_successor(
     wording of a reworded pair must never receive a predecessor's scheduling, and the
     predecessor must not be archived against it either."""
     from internpearls import ai_logic, sync
-    old = _her_card(anki, "g_old", "old wording")
-    new = _her_card(anki, ai_logic.generated_guid(), "new wording")
+    old = _existing_card(anki, "g_old", "old wording")
+    new = _existing_card(anki, ai_logic.generated_guid(), "new wording")
     _sched(anki, old, reps=4, ivl=12, due=90, factor=2300, lapses=1, type=2, queue=2)
     _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
 
@@ -1335,7 +1341,7 @@ def test_reconcile_run_manually_clears_the_auto_sync_nudge_label(anki, tmp_path)
     stub = _StubAction()
     sync.register_reconcile_action(stub)
     stub.setText("Reconcile my decks (1 pending)")
-    _her_card(anki, "old1", "bulky crisis card")
+    _existing_card(anki, "old1", "bulky crisis card")
     folder = _write_retired_source(tmp_path, {
         DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
                         "superseded_by": []}}})
@@ -1348,7 +1354,7 @@ def test_reconcile_run_manually_clears_the_auto_sync_nudge_label(anki, tmp_path)
 
 def test_reconcile_is_idempotent(anki, tmp_path):
     from internpearls import sync
-    _her_card(anki, "old1", "bulky crisis card")
+    _existing_card(anki, "old1", "bulky crisis card")
     folder = _write_retired_source(tmp_path, {
         DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
                         "superseded_by": []}}})
@@ -1370,10 +1376,10 @@ def test_reconcile_is_idempotent(anki, tmp_path):
 
 def test_reconcile_reports_nothing_when_no_retired_cards_present(anki, tmp_path):
     from internpearls import sync
-    _her_card(anki, "mine", "a card of my own")
+    _existing_card(anki, "mine", "a card of my own")
     folder = _write_retired_source(tmp_path, {
         DECK: {"old1": {"identity": "bulky", "reason": "split",
-                        "superseded_by": []}}})   # she doesn't have old1
+                        "superseded_by": []}}})   # the learner doesn't have old1
     _configure(anki, folder)
 
     sync.reconcile_decks()
@@ -1384,7 +1390,7 @@ def test_reconcile_reports_nothing_when_no_retired_cards_present(anki, tmp_path)
 
 def test_reconcile_declined_leaves_everything_untouched(anki, tmp_path):
     from internpearls import sync
-    _her_card(anki, "old1", "bulky crisis card")
+    _existing_card(anki, "old1", "bulky crisis card")
     folder = _write_retired_source(tmp_path, {
         DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
                         "superseded_by": []}}})
@@ -1401,7 +1407,7 @@ def test_reconcile_declined_leaves_everything_untouched(anki, tmp_path):
 def test_reconcile_carries_notes_over_to_replacement_before_archiving(anki, tmp_path):
     from internpearls import sync
     anki.col.add_note("old1", _fields("bulky crisis card", notes="her mnemonic"), TAGS.split())
-    _her_card(anki, "new1a", "focused card A")
+    _existing_card(anki, "new1a", "focused card A")
     folder = _write_retired_source(tmp_path, {
         DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
                         "superseded_by": ["new1a"]}}})
@@ -1439,7 +1445,7 @@ def test_reconcile_names_every_card_as_a_row_and_stays_clickable(anki, tmp_path)
     from internpearls import widgets
     retired = {}
     for i in range(25):
-        _her_card(anki, f"old{i}", f"bulky card {i}")
+        _existing_card(anki, f"old{i}", f"bulky card {i}")
         retired[f"old{i}"] = {"identity": f"bulky card {i}", "reason": "split",
                               "superseded_by": []}
     folder = _write_retired_source(tmp_path, {DECK: retired})
@@ -1461,8 +1467,8 @@ def test_reconcile_marks_each_row_with_what_happens_to_it(anki, tmp_path):
     MOVED, and each row's deck detail is the trailing column rather than a parenthesis
     in its own sentence."""
     from internpearls import widgets
-    _her_card(anki, "old1", "bulky crisis card")
-    _her_card(anki, "g1", "a card whose deck moved", deck=DECK)
+    _existing_card(anki, "old1", "bulky crisis card")
+    _existing_card(anki, "g1", "a card whose deck moved", deck=DECK)
     folder = _write_retired_source(
         tmp_path,
         {DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
@@ -1485,7 +1491,7 @@ NEW_DECK = "Intern Pearls::Intern Custom::Regional"
 
 def test_reconcile_moves_card_to_reorganized_deck(anki, tmp_path):
     from internpearls import sync
-    card = _her_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
+    card = _existing_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
     folder = _write_retired_source(tmp_path, {}, deck_moves={
         "g1": {"from": DECK, "to": NEW_DECK}})
     _configure(anki, folder)
@@ -1501,7 +1507,7 @@ def test_reconcile_moves_card_to_reorganized_deck(anki, tmp_path):
 
 def test_reconcile_move_is_idempotent(anki, tmp_path):
     from internpearls import sync
-    _her_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
+    _existing_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
     folder = _write_retired_source(tmp_path, {}, deck_moves={
         "g1": {"from": DECK, "to": NEW_DECK}})
     _configure(anki, folder)
@@ -1514,10 +1520,10 @@ def test_reconcile_move_is_idempotent(anki, tmp_path):
     assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
 
 
-def test_reconcile_does_not_move_a_card_she_relocated_herself(anki, tmp_path):
+def test_reconcile_does_not_move_a_card_the_learner_relocated_themself(anki, tmp_path):
     from internpearls import sync
-    her_own_deck = "My Own Custom Deck"
-    card = _her_card(anki, "g1", "Lidocaine — onset time?", deck=her_own_deck)
+    learner_deck = "My Own Custom Deck"
+    card = _existing_card(anki, "g1", "Lidocaine — onset time?", deck=learner_deck)
     folder = _write_retired_source(tmp_path, {}, deck_moves={
         "g1": {"from": DECK, "to": NEW_DECK}})
     _configure(anki, folder)
@@ -1525,13 +1531,13 @@ def test_reconcile_does_not_move_a_card_she_relocated_herself(anki, tmp_path):
     sync.reconcile_decks()
 
     cid = card.card_ids()[0]
-    assert anki.col.decks.name(anki.col._cards[cid].did) == her_own_deck
+    assert anki.col.decks.name(anki.col._cards[cid].did) == learner_deck
     assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
 
 
 def test_reconcile_move_declined_leaves_deck_untouched(anki, tmp_path):
     from internpearls import sync
-    card = _her_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
+    card = _existing_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
     folder = _write_retired_source(tmp_path, {}, deck_moves={
         "g1": {"from": DECK, "to": NEW_DECK}})
     _configure(anki, folder)
@@ -1550,9 +1556,9 @@ def test_reconcile_relocates_a_stuck_card_by_front_when_guid_changed(anki, tmp_p
     the learner's card by front (like content-sync does) and relocates it."""
     from internpearls import sync
     front = "Lidocaine onset time?"
-    # She holds the card under an OLD guid (pre-seed-change), sitting at `from`.
-    card = _her_card(anki, "old_v1_guid", front, deck=DECK)
-    # The ledger is keyed by the CURRENT (v2) guid she doesn't have, but carries front.
+    # The learner holds the card under an OLD guid (pre-seed-change), sitting at `from`.
+    card = _existing_card(anki, "old_v1_guid", front, deck=DECK)
+    # The ledger is keyed by the CURRENT (v2) guid the learner doesn't have, but carries front.
     folder = _write_retired_source(tmp_path, {}, deck_moves={
         "new_v2_guid": {"from": DECK, "to": NEW_DECK, "front": front}})
     _configure(anki, folder)
@@ -1570,7 +1576,7 @@ def test_reconcile_never_relocates_a_locally_generated_card_matched_by_front(
     generated card's front must never pull it into a deck source's relocation."""
     from internpearls import ai_logic, sync
     front = "Lidocaine onset time?"
-    card = _her_card(anki, ai_logic.generated_guid(), front, deck=DECK)
+    card = _existing_card(anki, ai_logic.generated_guid(), front, deck=DECK)
     folder = _write_retired_source(tmp_path, {}, deck_moves={
         "canonical_guid": {"from": DECK, "to": NEW_DECK, "front": front}})
     _configure(anki, folder)
@@ -1587,7 +1593,7 @@ def test_reconcile_leaves_guid_mismatched_card_alone_without_front(anki, tmp_pat
     can't match a GUID-mismatched card, so reconcile leaves it exactly where it is
     rather than guessing. Same as the behavior before front matching existed."""
     from internpearls import sync
-    card = _her_card(anki, "old_v1_guid", "Lidocaine onset time?", deck=DECK)
+    card = _existing_card(anki, "old_v1_guid", "Lidocaine onset time?", deck=DECK)
     folder = _write_retired_source(tmp_path, {}, deck_moves={
         "new_v2_guid": {"from": DECK, "to": NEW_DECK}})   # no "front" key
     _configure(anki, folder)
@@ -1606,8 +1612,8 @@ def test_reconcile_dialog_uses_the_palette_not_a_css_keyword(anki, tmp_path):
     string, and it still has to be asked for by role."""
     from internpearls import palette
     active = palette.colors()
-    _her_card(anki, "old1", "bulky crisis card")
-    _her_card(anki, "g1", "Lidocaine onset time?", deck=DECK)
+    _existing_card(anki, "old1", "bulky crisis card")
+    _existing_card(anki, "g1", "Lidocaine onset time?", deck=DECK)
     folder = _write_retired_source(
         tmp_path,
         {DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
@@ -1625,14 +1631,14 @@ def test_reconcile_dialog_uses_the_palette_not_a_css_keyword(anki, tmp_path):
 
 
 def test_stranded_block_uses_the_palette_not_a_css_keyword(anki, tmp_path):
-    """The reworded-pair section of the confirmation (a card she holds in both an old
-    and a new wording) used to hardcode the CSS keyword gray too. Both wordings stay in
-    the row's own primary line rather than splitting across the trailing column, since
-    a card front is long enough to wrap and that column is not."""
+    """The reworded-pair section of the confirmation (a card the learner holds in both
+    an old and a new wording) used to hardcode the CSS keyword gray too. Both wordings
+    stay in the row's own primary line rather than splitting across the trailing
+    column, since a card front is long enough to wrap and that column is not."""
     from internpearls import palette
     active = palette.colors()
-    _her_card(anki, "g_old", "old wording")
-    _her_card(anki, "g_new", "new wording")
+    _existing_card(anki, "g_old", "old wording")
+    _existing_card(anki, "g_new", "new wording")
     _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
 
     texts = _label_texts(_reconcile_tree(anki))
@@ -1651,8 +1657,8 @@ def test_update_confirmation_lists_reworded_pairs_as_rows(anki, tmp_path):
     once its progress has moved across."""
     from internpearls import sync
     from internpearls.widgets import CHIPS
-    _her_card(anki, "g_old", "old wording")
-    _her_card(anki, "g_new", "new wording")
+    _existing_card(anki, "g_old", "old wording")
+    _existing_card(anki, "g_new", "new wording")
     _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
     anki.gui.interactive = True
     seen = {}
@@ -1676,13 +1682,14 @@ def test_update_confirmation_lists_reworded_pairs_as_rows(anki, tmp_path):
 def test_update_decks_syncs_and_reconciles_in_one_pass(anki, tmp_path):
     """The unified flow's whole point: one confirmation, one click, and content sync
     runs before archiving so a retired card's replacement — synced in during this
-    exact same call — is there to carry her personal note onto, and a reorganized
-    card relocates too. Three independent effects from one accepted dialog."""
+    exact same call — is there to carry the learner's personal note onto, and a
+    reorganized card relocates too. Three independent effects from one accepted
+    dialog."""
     from internpearls import sync
     anki.col.add_note("old1", _fields("bulky crisis card", notes="her mnemonic"),
                       TAGS.split())
     moved_deck = "Intern Pearls::Intern Custom::Regional (old)"
-    _her_card(anki, "moved1", "a card that moved decks", deck=moved_deck)
+    _existing_card(anki, "moved1", "a card that moved decks", deck=moved_deck)
     folder = _write_source(
         tmp_path, {DECK: ("v1", [("new1a", _fields("focused card A"), TAGS)], None)},
         retired={DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
@@ -1694,8 +1701,8 @@ def test_update_decks_syncs_and_reconciles_in_one_pass(anki, tmp_path):
 
     # Content synced.
     assert anki.col.note_by_guid("new1a")["Front"] == "focused card A"
-    # Retired card archived, and her note carried over onto the replacement that was
-    # only imported moments earlier in this same call.
+    # Retired card archived, and the learner's note carried over onto the replacement
+    # that was only imported moments earlier in this same call.
     old = anki.col.note_by_guid("old1")
     assert anki.col._cards[old.card_ids()[0]].queue == -1
     assert RETIRED_TAG in old.tags
@@ -1712,17 +1719,17 @@ def test_update_decks_never_merges_a_generated_card_in_the_post_sync_recompute(
     catch a pairing the sync itself just created), and that recompute must carry the
     same generated-card guard the earlier, pre-sync stranded list already has. Without
     it, a generated card whose front coincidentally matches a superseded_fronts pair
-    gets merged: the "predecessor's" scheduling overwrites her own card's history and
-    her own card gets archived as if it were the stale upstream copy."""
+    gets merged: the "predecessor's" scheduling overwrites its own card's history and
+    its own card gets archived as if it were the stale upstream copy."""
     from internpearls import ai_logic, sync
     gen_guid = ai_logic.generated_guid()
-    old = _her_card(anki, gen_guid, "old wording")
-    new = _her_card(anki, "g_new", "new wording")
+    old = _existing_card(anki, gen_guid, "old wording")
+    new = _existing_card(anki, "g_new", "new wording")
     _sched(anki, old, reps=4, ivl=12, due=90, factor=2300, lapses=1, type=2, queue=2)
     # An unrelated retired card, just so `fresh` is non-empty and update_decks actually
     # enters the archive/merge block the recompute lives inside; a run with nothing
     # pending never reaches it.
-    _her_card(anki, "old_other", "an unrelated retiring card")
+    _existing_card(anki, "old_other", "an unrelated retiring card")
     _configure(anki, _stranded_and_retired(
         tmp_path, {"old wording": "new wording"},
         {DECK: {"old_other": {"identity": "an unrelated retiring card",
@@ -1731,7 +1738,7 @@ def test_update_decks_never_merges_a_generated_card_in_the_post_sync_recompute(
     trees = _update(anki)
 
     generated = anki.col.get_card(old.card_ids()[0])
-    assert generated.queue == 2 and generated.reps == 4   # her own card, untouched
+    assert generated.queue == 2 and generated.reps == 4   # its own card, untouched
     assert RETIRED_TAG not in anki.col.note_by_guid(gen_guid).tags  # not archived
     kept = anki.col.get_card(new.card_ids()[0])
     assert kept.reps == 0        # never received the "predecessor's" scheduling
@@ -1744,7 +1751,7 @@ def test_update_decks_confirmation_shows_real_kept_new_counts(anki, tmp_path):
     static total card count can't tell the learner how much of an update is
     actually new to them versus already-matched content."""
     from internpearls import sync
-    anki.col.add_note("g1", _fields("Front one"), TAGS.split())   # she already has g1
+    anki.col.add_note("g1", _fields("Front one"), TAGS.split())   # the learner already has g1
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one"), TAGS),
                       ("g2", _fields("Front two"), TAGS)], None)})
@@ -1789,11 +1796,11 @@ def test_update_decks_confirmation_names_the_new_cards_not_just_a_count(anki, tm
     """Retired and relocated cards were always listed by name; a card being ADDED used
     to arrive as a bare count in its own bullet section. Now every new card is a row of
     its own, right on the confirmation, with a NEW chip. The kept card must NOT show a
-    row: this list is only what's new, and padding it with cards she already has would
-    bury that."""
+    row: this list is only what's new, and padding it with cards the learner already
+    has would bury that."""
     from internpearls import sync
     from internpearls.widgets import CHIPS
-    anki.col.add_note("g1", _fields("Front one"), TAGS.split())   # she already has g1
+    anki.col.add_note("g1", _fields("Front one"), TAGS.split())   # the learner already has g1
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one"), TAGS),
                       ("g2", _fields("Front two"), TAGS)], None)})
@@ -1815,7 +1822,8 @@ def test_update_decks_confirmation_names_the_new_cards_not_just_a_count(anki, tm
 
     assert "Front two" in seen["text"], "the new card should show as a row, not just a count"
     assert CHIPS["new"] in seen["text"], "the new row should carry its NEW chip"
-    assert "Front one" not in seen["text"], "a card she already has isn't new, so it has no row"
+    assert "Front one" not in seen["text"], \
+        "a card the learner already has isn't new, so it has no row"
 
 
 def test_update_decks_confirmation_counts_and_names_changed_cards(anki, tmp_path):
@@ -1855,7 +1863,7 @@ def test_update_decks_confirmation_shows_retired_and_moved_cards_as_rows(anki, t
     from internpearls.widgets import CHIPS
     old_deck = "Intern Pearls::Intern Custom::Regional (old)"
     anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
-    _her_card(anki, "moved1", "a card that moved decks", deck=old_deck)
+    _existing_card(anki, "moved1", "a card that moved decks", deck=old_deck)
     folder = _write_source(
         tmp_path, {},
         retired={DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
@@ -1917,7 +1925,7 @@ def test_update_decks_confirmation_uses_the_palette_not_a_css_keyword(anki, tmp_
     old_deck = "Intern Pearls::Intern Custom::Regional (old)"
     anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
     anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
-    _her_card(anki, "moved1", "a card that moved decks", deck=old_deck)
+    _existing_card(anki, "moved1", "a card that moved decks", deck=old_deck)
     folder = _write_source(
         tmp_path,
         {DECK: ("v2", [("g1", _fields("Front one", back="the new answer"), TAGS),
@@ -2014,8 +2022,9 @@ def test_update_decks_lists_both_new_and_changed_cards_inline(anki, tmp_path):
 
 
 def test_update_decks_lists_a_changed_only_card_inline(anki, tmp_path):
-    """A deck where every pending card is a rewrite of one she already has must still
-    show that card, tagged UPDATED, with no NEW chip anywhere since nothing is new."""
+    """A deck where every pending card is a rewrite of one the learner already has must
+    still show that card, tagged UPDATED, with no NEW chip anywhere since nothing is
+    new."""
     from internpearls import sync
     from internpearls.widgets import CHIPS
     anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
@@ -2223,7 +2232,7 @@ def test_one_update_preserves_keep_history_and_groups_retirement_with_moves(
     for guid, fields in (("g1", old_one), ("g2", old_two),
                          ("old1", _fields("Retired front"))):
         anki.col.add_note(guid, fields, TAGS.split())
-    _her_card(anki, "moved1", "Moved front", deck=DECK)
+    _existing_card(anki, "moved1", "Moved front", deck=DECK)
     shared = "coordinated revision across two cards"
     folder = _write_source(
         tmp_path,
@@ -2368,8 +2377,8 @@ def test_review_rules_separate_cards_without_trailing_the_last_one(anki, tmp_pat
 
 def test_review_collects_feedback_and_offers_the_digest(anki, tmp_path):
     """Boxes appear on every row and the digest is offered on close, no setting
-    involved. She sees the answer and the reasoning, not just the front, because
-    "this card is wrong" is a judgment you can't make from a prompt alone."""
+    involved. The learner sees the answer and the reasoning, not just the front,
+    because "this card is wrong" is a judgment you can't make from a prompt alone."""
     from internpearls import sync
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g2", _fields("Front two", "the answer"), TAGS)], None)})
@@ -2395,16 +2404,16 @@ def test_review_collects_feedback_and_offers_the_digest(anki, tmp_path):
 
     drive(anki, sync.update_decks, respond)
 
-    # Her card's primary line, tag, answer, and why are all there, but the old field
-    # captions are gone: dropping that chrome is exactly what this rework did.
+    # The learner's card's primary line, tag, answer, and why are all there, but the old
+    # field captions are gone: dropping that chrome is exactly what this rework did.
     assert "Front two" in seen["screen"]
     assert "Pharm" in seen["screen"]
     assert "the answer" in seen["screen"] and "why" in seen["screen"]
     assert "Back" not in seen["screen"], "field names shouldn't be captioned anymore"
-    # Typing into her box updates the confirmation's own flagged count live, since
+    # Typing into the flag box updates the confirmation's own flagged count live, since
     # there is no longer a separate review dialog whose closing used to trigger it.
     assert "1 card flagged" in seen.get("after", "")
-    # And the digest names the deck, the card, its id, and what she said.
+    # And the digest names the deck, the card, its id, and what the learner said.
     digest = anki.gui.clipboard[-1]
     assert "Front two" in digest and "dose is wrong" in digest and "g2" in digest
     assert "Pharm" in digest
@@ -2412,10 +2421,11 @@ def test_review_collects_feedback_and_offers_the_digest(anki, tmp_path):
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1
 
 
-def test_update_decks_declined_still_returns_the_feedback_she_wrote(anki, tmp_path):
-    """If she reads the new cards, flags one and then backs out, the flag is the most
-    interesting thing that happened in the whole run. Dropping it because she said no
-    would throw away the only part that clicking Update again later can't reproduce."""
+def test_update_decks_declined_still_returns_the_feedback_the_learner_wrote(anki, tmp_path):
+    """If the learner reads the new cards, flags one and then backs out, the flag is
+    the most interesting thing that happened in the whole run. Dropping it because
+    they said no would throw away the only part that clicking Update again later
+    can't reproduce."""
     from internpearls import sync
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)})
@@ -2439,7 +2449,7 @@ def test_update_decks_declined_still_returns_the_feedback_she_wrote(anki, tmp_pa
 
     drive(anki, sync.update_decks, respond)
 
-    assert anki.gui.clipboard, "declining the update must not discard her notes"
+    assert anki.gui.clipboard, "declining the update must not discard the learner's notes"
     assert "too bulky" in anki.gui.clipboard[-1]
     assert not anki.col.find_notes(f'"tag:{SCOPE}"'), "Cancel must still import nothing"
 
@@ -2469,7 +2479,7 @@ def test_update_decks_with_only_content_pending_skips_reconcile_cleanly(anki, tm
 
 def test_update_decks_with_only_reconcile_pending_skips_sync_cleanly(anki, tmp_path):
     from internpearls import sync
-    _her_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
+    _existing_card(anki, "g1", "Lidocaine — onset time?", deck=DECK)
     folder = _write_source(tmp_path, {}, deck_moves={"g1": {"from": DECK, "to": NEW_DECK}})
     _configure(anki, folder)
 
@@ -2553,7 +2563,7 @@ def test_preview_reuses_cached_download_for_an_unchanged_deck(anki, tmp_path):
     the main reason a "just checking" habit runs into sporadic source hiccups, so a
     second preview of the same version has to be a cache hit, not another fetch."""
     from internpearls import sync
-    from internpearls.collection import _her_front_to_guid
+    from internpearls.collection import _existing_front_to_guid
     from internpearls.logic import decks_to_update
 
     folder = _write_source(tmp_path, {
@@ -2562,7 +2572,7 @@ def test_preview_reuses_cached_download_for_an_unchanged_deck(anki, tmp_path):
     _configure(anki, folder)
     manifest, real_fetch, _ = sync._fetch_manifest(sync._cfg())
     todo = decks_to_update(manifest, {}, [])
-    her = _her_front_to_guid(SCOPE)
+    existing_fronts = _existing_front_to_guid(SCOPE)
 
     calls = []
 
@@ -2570,9 +2580,9 @@ def test_preview_reuses_cached_download_for_an_unchanged_deck(anki, tmp_path):
         calls.append(d["name"])
         return real_fetch(d, **kw)
 
-    sync._preview_content_changes(counting_fetch, todo, her, {})
+    sync._preview_content_changes(counting_fetch, todo, existing_fronts, {})
     assert len(calls) == 2   # both decks fetched the first time
-    sync._preview_content_changes(counting_fetch, todo, her, {})
+    sync._preview_content_changes(counting_fetch, todo, existing_fronts, {})
     assert len(calls) == 2   # second preview is all cache hits, no new fetches
 
 
@@ -2580,7 +2590,7 @@ def test_preview_refetches_a_deck_whose_version_changed(anki, tmp_path):
     """The cache is keyed by content-hash version, so a real push (new version) must
     miss it and re-download, never serve a stale .apkg."""
     from internpearls import sync
-    from internpearls.collection import _her_front_to_guid
+    from internpearls.collection import _existing_front_to_guid
     from internpearls.logic import decks_to_update
 
     folder = _write_source(tmp_path, {
@@ -2588,14 +2598,14 @@ def test_preview_refetches_a_deck_whose_version_changed(anki, tmp_path):
     _configure(anki, folder)
     manifest, real_fetch, _ = sync._fetch_manifest(sync._cfg())
     todo = decks_to_update(manifest, {}, [])
-    her = _her_front_to_guid(SCOPE)
+    existing_fronts = _existing_front_to_guid(SCOPE)
     calls = []
 
     def counting_fetch(d, **kw):
         calls.append(d["version"])
         return real_fetch(d, **kw)
 
-    sync._preview_content_changes(counting_fetch, todo, her, {})
+    sync._preview_content_changes(counting_fetch, todo, existing_fronts, {})
     assert calls == ["v1"]
     # Source pushes a new version of the same deck.
     folder2 = _write_source(tmp_path, {
@@ -2609,7 +2619,7 @@ def test_preview_refetches_a_deck_whose_version_changed(anki, tmp_path):
         calls.append(d["version"])
         return real_fetch2(d, **kw)
 
-    sync._preview_content_changes(counting_fetch2, todo2, her, {})
+    sync._preview_content_changes(counting_fetch2, todo2, existing_fronts, {})
     assert calls == ["v1", "v2"]   # version changed, cache missed, re-fetched
 
 
@@ -2647,9 +2657,9 @@ def test_clean_up_duplicates_archives_the_copy_with_fewer_reviews(anki, tmp_path
     from internpearls import sync
     old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
     new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
-    old_note = _her_card(anki, "old", "same front text", deck=old_deck)
-    _her_card(anki, "new", "same front text", deck=new_deck)
-    anki.col._cards[old_note.card_ids()[0]].reps = 3   # she has actually studied this one
+    old_note = _existing_card(anki, "old", "same front text", deck=old_deck)
+    _existing_card(anki, "new", "same front text", deck=new_deck)
+    anki.col._cards[old_note.card_ids()[0]].reps = 3   # this one was actually studied
     folder = _write_duplicate_source(tmp_path, new_deck)
     _configure(anki, folder)
 
@@ -2676,8 +2686,8 @@ def test_clean_up_duplicates_names_every_card_however_many_there_are(anki, tmp_p
     old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
     new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
     for i in range(20):
-        _her_card(anki, f"old{i}", f"duplicated card {i}", deck=old_deck)
-        _her_card(anki, f"new{i}", f"duplicated card {i}", deck=new_deck)
+        _existing_card(anki, f"old{i}", f"duplicated card {i}", deck=old_deck)
+        _existing_card(anki, f"new{i}", f"duplicated card {i}", deck=new_deck)
     _configure(anki, _write_duplicate_source(tmp_path, new_deck))
     anki.gui.interactive = True
     seen = {}
@@ -2702,8 +2712,8 @@ def test_clean_up_duplicates_dialog_uses_the_palette_not_a_css_keyword(anki, tmp
     active = palette.colors()
     old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
     new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
-    _her_card(anki, "old", "same front text", deck=old_deck)
-    _her_card(anki, "new", "same front text", deck=new_deck)
+    _existing_card(anki, "old", "same front text", deck=old_deck)
+    _existing_card(anki, "new", "same front text", deck=new_deck)
     folder = _write_duplicate_source(tmp_path, new_deck)
     _configure(anki, folder)
     anki.gui.interactive = True
@@ -2728,8 +2738,8 @@ def test_clean_up_duplicates_breaks_a_zero_review_tie_by_canonical_deck(anki, tm
     from internpearls import sync
     old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
     new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
-    _her_card(anki, "old", "same front text", deck=old_deck)
-    _her_card(anki, "new", "same front text", deck=new_deck)
+    _existing_card(anki, "old", "same front text", deck=old_deck)
+    _existing_card(anki, "new", "same front text", deck=new_deck)
     folder = _write_duplicate_source(tmp_path, new_deck)
     _configure(anki, folder)
 
@@ -2746,8 +2756,8 @@ def test_clean_up_duplicates_carries_notes_to_the_kept_copy(anki, tmp_path):
     from internpearls import sync
     old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
     new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
-    old_note = _her_card(anki, "old", "same front text", deck=old_deck)
-    new_note = _her_card(anki, "new", "same front text", deck=new_deck)
+    old_note = _existing_card(anki, "old", "same front text", deck=old_deck)
+    new_note = _existing_card(anki, "new", "same front text", deck=new_deck)
     new_note["Notes"] = "my personal mnemonic"   # written on the copy that will lose
     anki.col._cards[old_note.card_ids()[0]].reps = 2   # old has more reviews, so it wins
     folder = _write_duplicate_source(tmp_path, new_deck)
@@ -2764,8 +2774,8 @@ def test_clean_up_duplicates_is_idempotent(anki, tmp_path):
     from internpearls import sync
     old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
     new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
-    _her_card(anki, "old", "same front text", deck=old_deck)
-    _her_card(anki, "new", "same front text", deck=new_deck)
+    _existing_card(anki, "old", "same front text", deck=old_deck)
+    _existing_card(anki, "new", "same front text", deck=new_deck)
     folder = _write_duplicate_source(tmp_path, new_deck)
     _configure(anki, folder)
     drive(anki, sync.clean_up_duplicates, _click_duplicate_button(accept=True))
@@ -2781,8 +2791,8 @@ def test_clean_up_duplicates_declined_leaves_everything_untouched(anki, tmp_path
     from internpearls import sync
     old_deck = "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"
     new_deck = "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"
-    _her_card(anki, "old", "same front text", deck=old_deck)
-    _her_card(anki, "new", "same front text", deck=new_deck)
+    _existing_card(anki, "old", "same front text", deck=old_deck)
+    _existing_card(anki, "new", "same front text", deck=new_deck)
     folder = _write_duplicate_source(tmp_path, new_deck)
     _configure(anki, folder)
 
@@ -2796,7 +2806,7 @@ def test_clean_up_duplicates_declined_leaves_everything_untouched(anki, tmp_path
 
 def test_clean_up_duplicates_reports_nothing_when_no_duplicates_present(anki, tmp_path):
     from internpearls import sync
-    _her_card(anki, "mine", "a unique card")
+    _existing_card(anki, "mine", "a unique card")
     folder = _write_duplicate_source(tmp_path, DECK)
     _configure(anki, folder)
 
@@ -2946,8 +2956,8 @@ def test_invalidate_installed_ignores_a_deck_it_never_had(anki):
 
 
 # --------------------------------------------------------------- empty cards
-def _her_cloze(anki, guid, text, deck=DECK, ords=None):
-    """A cloze note of hers, with a card per ordinal in `ords` (defaults to the
+def _existing_cloze(anki, guid, text, deck=DECK, ords=None):
+    """A cloze note of the learner's, with a card per ordinal in `ords` (defaults to the
     ordinals the text actually has). Passing `ords` wider than the text is how a
     collection looks after the deck source regrouped a live cloze into fewer
     deletions: the surplus cards are still there with nothing left to render."""
@@ -2972,9 +2982,9 @@ def _her_cloze(anki, guid, text, deck=DECK, ords=None):
 def test_remove_empty_cards_removes_only_the_orphaned_ordinals(anki):
     from internpearls import collection
     # Regrouped from five deletions down to two: c3/c4/c5 are left with nothing.
-    _her_cloze(anki, "regrouped", "the {{c1::first}} and {{c2::second}}",
+    _existing_cloze(anki, "regrouped", "the {{c1::first}} and {{c2::second}}",
                ords=[0, 1, 2, 3, 4])
-    _her_cloze(anki, "intact", "an {{c1::untouched}} card", ords=[0])
+    _existing_cloze(anki, "intact", "an {{c1::untouched}} card", ords=[0])
 
     drive(anki, collection.remove_empty_cards, _click_duplicate_button(accept=True))
 
@@ -2986,8 +2996,8 @@ def test_remove_empty_cards_removes_only_the_orphaned_ordinals(anki):
 
 def test_remove_empty_cards_leaves_other_peoples_notes_alone(anki):
     from internpearls import collection
-    _her_cloze(anki, "hers", "the {{c1::first}} only", ords=[0, 1])
-    theirs = _her_cloze(anki, "theirs", "the {{c1::first}} only", ords=[0, 1])
+    _existing_cloze(anki, "hers", "the {{c1::first}} only", ords=[0, 1])
+    theirs = _existing_cloze(anki, "theirs", "the {{c1::first}} only", ords=[0, 1])
     theirs.tags = ["SomeoneElsesDeck"]
 
     drive(anki, collection.remove_empty_cards, _click_duplicate_button(accept=True))
@@ -3000,7 +3010,7 @@ def test_remove_empty_cards_never_deletes_a_note_whose_cards_are_all_empty(anki)
     from internpearls import collection
     # No deletions at all, so every card is empty: removing them would take the note
     # and its content with it. Reported, never acted on.
-    _her_cloze(anki, "contentless", "a card with no deletions in it", ords=[0])
+    _existing_cloze(anki, "contentless", "a card with no deletions in it", ords=[0])
 
     drive(anki, collection.remove_empty_cards, _click_duplicate_button(accept=True))
 
@@ -3038,7 +3048,7 @@ def test_remove_empty_cards_names_every_note_however_many_there_are(anki):
     scroll area, so a long list can no longer put the buttons out of reach."""
     from internpearls import collection
     for i in range(20):
-        _her_cloze(anki, f"regrouped{i}", f"the {{{{c1::first}}}} of card {i}",
+        _existing_cloze(anki, f"regrouped{i}", f"the {{{{c1::first}}}} of card {i}",
                   ords=[0, 1])
     anki.gui.interactive = True
     seen = {}
@@ -3059,7 +3069,7 @@ def test_remove_empty_cards_names_every_note_however_many_there_are(anki):
 def test_remove_empty_cards_dialog_uses_the_palette_not_a_css_keyword(anki):
     from internpearls import collection, palette
     active = palette.colors()
-    _her_cloze(anki, "regrouped", "the {{c1::first}} and {{c2::second}}",
+    _existing_cloze(anki, "regrouped", "the {{c1::first}} and {{c2::second}}",
               ords=[0, 1, 2, 3, 4])
     anki.gui.interactive = True
     seen = {}
@@ -3082,7 +3092,7 @@ def test_remove_empty_cards_dialog_uses_the_palette_not_a_css_keyword(anki):
 
 def test_remove_empty_cards_declines_cleanly(anki):
     from internpearls import collection
-    _her_cloze(anki, "regrouped", "the {{c1::first}} only", ords=[0, 1])
+    _existing_cloze(anki, "regrouped", "the {{c1::first}} only", ords=[0, 1])
 
     drive(anki, collection.remove_empty_cards, _click_duplicate_button(accept=False))
 
@@ -3124,8 +3134,8 @@ def _feedback_run(anki, tmp_path, on_screen, decide="Cancel"):
 
 
 def test_feedback_is_saved_without_waiting_for_the_dialog_to_close(anki, tmp_path):
-    """The whole point: what she types has to survive the run dying before the digest,
-    and the digest is several steps and one fallible import later.
+    """The whole point: what the learner types has to survive the run dying before the
+    digest, and the digest is several steps and one fallible import later.
 
     Answered in two passes on purpose. The first types into the box and does NOT close
     the dialog, so the second pass sees exactly the state a crash would interrupt: text
@@ -3156,8 +3166,9 @@ def test_feedback_is_saved_without_waiting_for_the_dialog_to_close(anki, tmp_pat
 
 
 def test_feedback_from_an_interrupted_run_comes_back_in_the_next_one(anki, tmp_path):
-    """A run that died before the digest left her notes on disk. The next update picks
-    them up on its own, with no recovery prompt of its own to click through."""
+    """A run that died before the digest left the learner's notes on disk. The next
+    update picks them up on its own, with no recovery prompt of its own to click
+    through."""
     from internpearls import review
     review.save_feedback({"gONE": {"note": "wrong dose", "deck": DECK,
                                    "front": "An earlier card"}})
@@ -3272,9 +3283,9 @@ def test_result_screen_uses_the_shared_title_and_row_components(anki, tmp_path):
 
 
 def test_result_screen_shows_only_the_digest_when_the_run_was_cancelled(anki, tmp_path):
-    """She backed out of the update but still flagged a card on the way: the digest is
-    the whole dialog, with no leftover title or result rows above it, since there is
-    no completed run to summarize."""
+    """The learner backed out of the update but still flagged a card on the way: the
+    digest is the whole dialog, with no leftover title or result rows above it, since
+    there is no completed run to summarize."""
     def on_screen(tree, seen, decide):
         box = next(n for n in _walk(tree) if n.get("t") == "textarea")
         return {"events": [{"id": box["id"], "value": "too bulky"},
@@ -3294,7 +3305,7 @@ def _update_with_look_change(anki, tmp_path, tick):
     """Run update_decks against a deck whose card template changed, ticking (or not)
     the new-look checkbox on the one confirmation."""
     from internpearls import sync
-    _her_card(anki, "g1", "Front one")
+    _existing_card(anki, "g1", "Front one")
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one"), TAGS)], make_model(css=NEW_CSS))})
     _configure(anki, folder)
@@ -3356,7 +3367,7 @@ def test_update_decks_groups_every_pending_row_under_its_own_deck(anki, tmp_path
     from internpearls.widgets import CHIPS
     anki.col.add_note("g1", _fields("Front one", back="the old answer"), TAGS.split())
     anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
-    _her_card(anki, "moved1", "a card leaving this deck")
+    _existing_card(anki, "moved1", "a card leaving this deck")
     folder = _write_source(
         tmp_path,
         {DECK: ("v2", [("g1", _fields("Front one", back="the new answer"), TAGS),
@@ -3435,8 +3446,9 @@ def test_update_decks_gives_a_retired_only_deck_its_own_heading(anki, tmp_path):
 # ------------------------------------------------- persistence & guards
 def test_protected_notes_are_restored_even_if_a_later_step_raises(anki, tmp_path,
                                                                   monkeypatch):
-    """The import overwrites every field on a matched note, so the restore that puts her
-    annotations back is the only thing standing between a sync and losing them. It works
+    """The import overwrites every field on a matched note, so the restore that puts the
+    learner's annotations back is the only thing standing between a sync and losing
+    them. It works
     off `touched`, and `touched` used to be recorded after seed_converted_siblings ran:
     anything raising in between dropped that deck out of the set entirely, so its notes
     were never restored and never recorded as shipped, silently and permanently."""
@@ -3666,8 +3678,8 @@ def test_backup_stays_one_file_when_export_deck_covers_the_run(anki, tmp_path):
 
 
 def test_backup_asks_before_a_run_it_cannot_cover(anki, tmp_path):
-    """Her cards are under the scope tag but in no deck this add-on can export, so the
-    promised backup can't be taken. That used to pass silently."""
+    """The learner's cards are under the scope tag but in no deck this add-on can
+    export, so the promised backup can't be taken. That used to pass silently."""
     from internpearls import sync
     anki.col.add_note("g1", _fields("Front one"), [TAGS])   # tagged, but in no deck
     _configure(anki, _write_source(tmp_path, {
@@ -3677,7 +3689,7 @@ def test_backup_asks_before_a_run_it_cannot_cover(anki, tmp_path):
     def respond(p):
         if p["kind"] == "ask":
             asked.append(p["text"])
-            return {"answer": False}          # she declines to go without one
+            return {"answer": False}          # declines to go without one
         if p["kind"] != "dialog":
             return {}
         done = _dismiss_result(p["tree"])
@@ -3747,8 +3759,8 @@ def test_import_single_accepted_still_fixes_note_types_first(anki, tmp_path):
 
 def test_import_single_writes_its_personalized_copy_outside_the_source_file(anki,
                                                                             tmp_path):
-    """The personalized copy used to be written as `<the file she picked>.sync.apkg`, a
-    predictable path in a folder that is hers rather than ours."""
+    """The personalized copy used to be written as `<the picked file>.sync.apkg`, a
+    predictable path in a folder that is the learner's rather than ours."""
     from internpearls import sync
     src = str(tmp_path / "hand.apkg")
     make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
@@ -3762,8 +3774,9 @@ def test_import_single_writes_its_personalized_copy_outside_the_source_file(anki
 
 def test_import_single_filters_a_never_declined_card(anki, tmp_path):
     """Import single deck used to build its own scratch import with no decline filter
-    at all, so a hand-picked .apkg could re-import a card she said Never to. It must be
-    dropped the same way a regular sync drops it, and the registry entry survives."""
+    at all, so a hand-picked .apkg could re-import a card the learner said Never to. It
+    must be dropped the same way a regular sync drops it, and the registry entry
+    survives."""
     from internpearls import config, sync
     config.save_declined({"g1": {"state": "never", "front": "Front one", "deck": DECK,
                                  "decided": "2026-08-01", "hash": ""}})
@@ -3795,8 +3808,8 @@ def test_auto_sync_counts_reworded_pairs_as_pending_too(anki, tmp_path):
     from internpearls import background, sync
     stub = _StubAction()
     sync.register_reconcile_action(stub)
-    _her_card(anki, "g_old", "old wording")
-    _her_card(anki, "g_new", "new wording")
+    _existing_card(anki, "g_old", "old wording")
+    _existing_card(anki, "g_new", "new wording")
     anki.mw._config = {"decks_dir": _stranded_source(tmp_path, {"old wording":
                                                                 "new wording"}),
                        "auto_sync_decks": True}
@@ -3826,7 +3839,7 @@ def test_auto_sync_does_not_renag_when_the_pending_count_shrinks(anki, tmp_path)
     background._auto_sync_check()
     assert len(anki.gui.tooltips) == 1
 
-    # She tidies one of them up by hand; one is left pending.
+    # The learner tidies one of them up by hand; one is left pending.
     del anki.col._notes[anki.col.note_by_guid("old2").id]
 
     background._auto_sync_check()
@@ -3906,7 +3919,7 @@ def test_update_asks_once_about_conversions_before_anything_imports(anki, tmp_pa
     from internpearls import sync
     other = "Intern Pearls::Intern Custom::Other"
     anki.col.models._models.append(_cloze_model())
-    _her_card(anki, "g1", "Old Q and A front")
+    _existing_card(anki, "g1", "Old Q and A front")
     anki.col.add_note("g2", _fields("Another Q and A front"), TAGS.split(), deck=other)
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
@@ -3931,7 +3944,7 @@ def test_update_declining_the_conversion_still_imports_without_asking_again(anki
                                                                             tmp_path):
     from internpearls import ai_logic, sync
     anki.col.models._models.append(_cloze_model())
-    her = _her_card(anki, "g1", "Old Q and A front")
+    original_note = _existing_card(anki, "g1", "Old Q and A front")
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
                _cloze_model())}))
@@ -3944,10 +3957,10 @@ def test_update_declining_the_conversion_still_imports_without_asking_again(anki
     _update(anki, ask=ask)
 
     assert sum("changed format" in t for t in asked) == 1
-    assert ai_logic.is_generated_guid(anki.col.get_note(her.id).guid)
-    assert anki.col.get_note(her.id).note_type()["name"] == "Study Deck - Basic"
+    assert ai_logic.is_generated_guid(anki.col.get_note(original_note.id).guid)
+    assert anki.col.get_note(original_note.id).note_type()["name"] == "Study Deck - Basic"
     assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Cloze"
-    assert anki.col.imports    # the content still imported, beside her old note
+    assert anki.col.imports    # the content still imported, beside the old note
 
 
 def test_update_confirmation_says_a_conversion_is_coming(anki, tmp_path):
@@ -3955,7 +3968,7 @@ def test_update_confirmation_says_a_conversion_is_coming(anki, tmp_path):
     the reader first hears about it rather than being surprised by it."""
     from internpearls import sync
     anki.col.models._models.append(_cloze_model())
-    _her_card(anki, "g1", "Old Q and A front")
+    _existing_card(anki, "g1", "Old Q and A front")
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
                _cloze_model())}))
@@ -4060,8 +4073,8 @@ def test_backup_covers_the_deck_a_reworded_pair_actually_sits_in(anki, tmp_path)
     yet merging one rewrites scheduling on the successor and archives the predecessor.
     Both halves here sit outside export_deck entirely."""
     outside = "Other Root::Extra"
-    _her_card(anki, "old", "the older wording", deck=outside)
-    _her_card(anki, "new", "the newer wording", deck=outside)
+    _existing_card(anki, "old", "the older wording", deck=outside)
+    _existing_card(anki, "new", "the newer wording", deck=outside)
     _configure(anki, _stranded_and_retired(
         tmp_path, {"the older wording": "the newer wording"}, {}))
 
@@ -4073,11 +4086,11 @@ def test_backup_covers_the_deck_a_reworded_pair_actually_sits_in(anki, tmp_path)
 def test_backup_prefers_where_a_retired_card_is_now_over_the_ledgers_deck(anki,
                                                                           tmp_path):
     """The ledger records the deck the source retired the card OUT of, which stops being
-    true the moment the learner refiles her copy. The backup has to cover where the card
-    is, since that is the deck about to be written in."""
-    hers = "Other Root::Where she filed it"
-    _her_card(anki, "old1", "bulky crisis card", deck=hers)
-    _her_card(anki, "new1", "focused card", deck=hers)
+    true the moment the learner refiles their copy. The backup has to cover where the
+    card is, since that is the deck about to be written in."""
+    learner_deck = "Other Root::Where she filed it"
+    _existing_card(anki, "old1", "bulky crisis card", deck=learner_deck)
+    _existing_card(anki, "new1", "focused card", deck=learner_deck)
     _configure(anki, _write_retired_source(tmp_path, {
         DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
                         "superseded_by": ["new1"]}}}))
@@ -4141,7 +4154,7 @@ def test_every_collection_writing_action_holds_the_manual_guard(anki, tmp_path,
 
         monkeypatch.setattr(module, name, wrapper)
 
-    watch(sync, "_her_notes_summary")          # clean_up_duplicates, before its dialog
+    watch(sync, "_existing_notes_summary")     # clean_up_duplicates, before its dialog
     watch(collection, "_import_apkg")          # import_deck, at the write itself
     watch(collection, "invalidate_installed")  # restore_from_backup, before the reload
     watch(collection, "find_empty_cards")      # remove_empty_cards, at the report
@@ -4161,7 +4174,7 @@ def test_every_collection_writing_action_holds_the_manual_guard(anki, tmp_path,
     anki.gui.interactive = False
 
     assert {name for name, _ in held} == {
-        "_her_notes_summary", "_import_apkg", "invalidate_installed",
+        "_existing_notes_summary", "_import_apkg", "invalidate_installed",
         "find_empty_cards"}
     assert all(ok for _name, ok in held), held
     assert not ui.manual_sync_in_progress()   # and every one of them released it
@@ -4174,7 +4187,7 @@ def test_remove_empty_cards_acts_on_the_cards_still_empty_after_the_confirmation
     Acting on the stale list would delete a card that now shows something, which is the
     one thing this add-on must never do."""
     from internpearls import collection
-    _her_cloze(anki, "regrouped", "the {{c1::first}} and {{c2::second}}", ords=[0, 1, 2])
+    _existing_cloze(anki, "regrouped", "the {{c1::first}} and {{c2::second}}", ords=[0, 1, 2])
     real_backup = collection._pre_sync_backup_or_confirm_skip
 
     def backup_then_refill(*a, **kw):
@@ -4311,7 +4324,7 @@ def test_a_deck_backup_is_written_in_a_format_this_addon_can_read(anki):
     add-on, and nothing said so."""
     from internpearls import collection
     from internpearls.logic import apkg_deck_names
-    _her_card(anki, "g1", "Front one", deck=DECK)
+    _existing_card(anki, "g1", "Front one", deck=DECK)
 
     path = collection._backup_deck(DECK)
 
@@ -4331,7 +4344,7 @@ def test_a_backup_label_is_reduced_to_something_a_filename_can_hold(anki):
     exist and the backup silently failed."""
     from internpearls import collection
     odd = "Other Root::Sub/Deck: odd"
-    _her_card(anki, "g1", "Front one", deck=odd)
+    _existing_card(anki, "g1", "Front one", deck=odd)
 
     path = collection._backup_deck(odd, "Sub/Deck: odd")
 
@@ -4351,7 +4364,7 @@ def test_pruning_keeps_ten_backups_of_each_root_rather_than_ten_in_all(anki):
             open(os.path.join(folder, f"Intern Pearls 2020-01-01-0000{i:02d} "
                                       f"{collection._backup_label(label)}.apkg"),
                  "wb").close()
-    _her_card(anki, "g1", "Front one", deck=DECK)
+    _existing_card(anki, "g1", "Front one", deck=DECK)
 
     collection._backup_deck("Intern Pearls", "Intern Pearls")
 
@@ -4402,8 +4415,9 @@ def test_a_partial_backup_failure_names_what_was_and_was_not_covered(anki, tmp_p
 
 # ---------------------------------------------------- collisions, told accurately
 def _collide(anki, tmp_path, second_decks):
-    """She has a Dosing note of her own over a value the source shipped; `second_decks`
-    is what the source ships next. Returns the trees of the second run."""
+    """The learner has a Dosing note of their own over a value the source shipped;
+    `second_decks` is what the source ships next. Returns the trees of the second
+    run."""
     anki.col.add_note("g1", _fields("Front one", dosing="1 mg/kg"), [TAGS], deck=DECK)
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v1", [("g1", _fields("Front one", dosing="1 mg/kg"), TAGS)], None)}))
@@ -4416,9 +4430,10 @@ def _collide(anki, tmp_path, second_decks):
 
 
 def test_a_cancelled_update_still_reports_the_collisions_it_found(anki, tmp_path):
-    """The decks that applied before the cancel can have collided with her own edits
-    exactly as a finished run's can, and those cards are the one thing on that screen
-    she may want to act on. The stopped-early summary dropped them."""
+    """The decks that applied before the cancel can have collided with the learner's
+    own edits exactly as a finished run's can, and those cards are the one thing on
+    that screen the learner may want to act on. The stopped-early summary dropped
+    them."""
     import aqt.qt as aqt_qt
     _collide(anki, tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one", dosing="3 mg/kg (corrected)"), TAGS)],
@@ -4434,10 +4449,10 @@ def test_a_cancelled_update_still_reports_the_collisions_it_found(anki, tmp_path
     assert anki.col.note_by_guid("g1")["Dosing"] == "2 mg/kg (my attending says so)"
 
 
-def test_an_update_that_agrees_with_her_own_wording_is_not_a_collision(anki, tmp_path):
-    """Hers and the source's landed on the same text. There is nothing to reconcile and
-    nobody to send it to, so reporting it asked her to go and compare two identical
-    wordings."""
+def test_an_update_that_agrees_with_the_learners_own_wording_is_not_a_collision(anki, tmp_path):
+    """The learner's own version and the source's landed on the same text. There is
+    nothing to reconcile and nobody to send it to, so reporting it asked the learner to
+    go and compare two identical wordings."""
     _collide(anki, tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one",
                                      dosing="2 mg/kg (my attending says so)"), TAGS)],
@@ -4451,10 +4466,10 @@ def test_an_update_that_agrees_with_her_own_wording_is_not_a_collision(anki, tmp
 
 # ------------------------------------------------- what a held-back deck is called
 def _cloze_conversion_source(anki, tmp_path):
-    """Her Q-and-A note, and a source that ships it as a fill-in-the-blank: a note-type
-    conversion, with the templates themselves unchanged."""
+    """The learner's Q-and-A note, and a source that ships it as a fill-in-the-blank: a
+    note-type conversion, with the templates themselves unchanged."""
     anki.col.models._models.append(_cloze_model())
-    _her_card(anki, "g1", "Old Q and A front")
+    _existing_card(anki, "g1", "Old Q and A front")
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
                _cloze_model())}))
@@ -4501,8 +4516,8 @@ def test_the_look_change_question_names_the_action_on_its_buttons(anki, tmp_path
 
 
 def test_the_conversion_question_names_the_action_on_its_buttons(anki, tmp_path):
-    """The other asymmetric one: moving her cards across, or importing them as new
-    beside the ones she has."""
+    """The other asymmetric one: moving the learner's cards across, or importing them
+    as new beside the ones they have."""
     _cloze_conversion_source(anki, tmp_path)
 
     _update(anki)
@@ -4513,7 +4528,7 @@ def test_the_conversion_question_names_the_action_on_its_buttons(anki, tmp_path)
 def test_the_look_change_checkbox_sits_above_the_list_it_belongs_with(anki, tmp_path):
     """It used to be added under the body, which on a long update is hundreds of
     streamed rows below the sentence explaining what ticking it costs."""
-    _her_card(anki, "g1", "Front one")
+    _existing_card(anki, "g1", "Front one")
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one", back="new"), TAGS)],
                make_model(css=NEW_CSS))}))
@@ -4528,7 +4543,7 @@ def test_a_sync_writes_its_personalized_copy_outside_the_source_folder(anki, tmp
                                                                        monkeypatch):
     """The personalized copy used to be written into the directory the deck was read
     from. For a local-folder source that is the learner's own configured folder, which
-    may be a read-only share, and is hers rather than ours to leave a file in."""
+    may be a read-only share, and is theirs rather than ours to leave a file in."""
     from internpearls import collection
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
@@ -4555,9 +4570,10 @@ def test_a_conversion_in_a_deck_the_preview_could_not_fetch_is_still_asked_about
     """Update my decks reads the run's schema changes out of the preview's own
     downloads. A deck whose preview download failed contributed nothing to that, so its
     note-type conversion was never disclosed and never asked about, while the apply
-    step's retry imported it anyway with convert=False: her cards stayed on the old
-    type, no question was ever put on screen, and the deck was recorded as installed, so
-    nothing offered it again until the source bumped that deck's version."""
+    step's retry imported it anyway with convert=False: the learner's cards stayed on
+    the old type, no question was ever put on screen, and the deck was recorded as
+    installed, so nothing offered it again until the source bumped that deck's
+    version."""
     from internpearls import sync
     _cloze_conversion_source(anki, tmp_path)
     _fetch_that_fails_during_preview(sync, monkeypatch)
@@ -4565,7 +4581,7 @@ def test_a_conversion_in_a_deck_the_preview_could_not_fetch_is_still_asked_about
 
     def ask(text):
         asked.append(text)
-        return True     # she says yes to the conversion, if ever asked
+        return True     # says yes to the conversion, if ever asked
 
     _update(anki, ask=ask)
 
@@ -4580,7 +4596,7 @@ def test_a_look_change_a_failed_preview_hid_is_offered_rather_than_dropped(
     tick that never mentioned it would be consent by accident and dropping it would
     mean never offering it again, so it is asked outright, once, after the import."""
     from internpearls import sync
-    _her_card(anki, "g1", "Front one")
+    _existing_card(anki, "g1", "Front one")
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one"), TAGS)], make_model(css=NEW_CSS))}))
     _fetch_that_fails_during_preview(sync, monkeypatch)
@@ -4609,7 +4625,7 @@ def test_a_cancelled_update_still_applies_the_look_the_finished_decks_carry(
     installed, so the next run has no update left to carry that consent on."""
     import aqt.qt as aqt_qt
     from internpearls import sync
-    _her_card(anki, "g1", "Front one")
+    _existing_card(anki, "g1", "Front one")
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one"), TAGS)], make_model(css=NEW_CSS)),
         NEW_DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)}))
@@ -4644,8 +4660,8 @@ def test_two_roots_that_sanitize_alike_get_a_backup_each(anki):
     reported both covered, and the two then pruned as one bucket."""
     from internpearls import collection
     from internpearls.logic import apkg_deck_names
-    _her_card(anki, "g1", "Front one", deck="A/B::Sub")
-    _her_card(anki, "g2", "Front two", deck="A:B::Sub")
+    _existing_card(anki, "g1", "Front one", deck="A/B::Sub")
+    _existing_card(anki, "g2", "Front two", deck="A:B::Sub")
 
     first = collection._backup_deck("A/B", "A/B")
     second = collection._backup_deck("A:B", "A:B")
@@ -4662,8 +4678,8 @@ def test_two_roots_that_sanitize_alike_prune_as_two_buckets(anki):
     be evicted by the other root's newer ones."""
     from internpearls import collection
     folder = collection._deck_backup_folder()
-    _her_card(anki, "g1", "Front one", deck="A/B::Sub")
-    _her_card(anki, "g2", "Front two", deck="A:B::Sub")
+    _existing_card(anki, "g1", "Front one", deck="A/B::Sub")
+    _existing_card(anki, "g2", "Front two", deck="A:B::Sub")
     for i in range(12):
         open(os.path.join(folder, f"Intern Pearls 2020-01-01-0000{i:02d} "
                                   f"{collection._backup_label('A/B')}.apkg"),
@@ -4687,7 +4703,7 @@ def test_pruning_bounds_backups_written_before_labels_carried_a_hash(anki):
         open(os.path.join(folder,
                           f"Intern Pearls 2020-01-01-0000{i:02d} Intern Pearls.apkg"),
              "wb").close()
-    _her_card(anki, "g1", "Front one", deck=DECK)
+    _existing_card(anki, "g1", "Front one", deck=DECK)
 
     path = collection._backup_deck("Intern Pearls", "Intern Pearls")
 
@@ -4710,7 +4726,7 @@ def test_remove_empty_cards_backs_up_where_the_cards_actually_are(anki, monkeypa
     deletes an empty card the learner has filed anywhere. Backing up export_deck alone
     covered none of that while the confirmation promised a backup."""
     from internpearls import collection
-    _her_cloze(anki, "regrouped", "the {{c1::first}} and {{c2::second}}",
+    _existing_cloze(anki, "regrouped", "the {{c1::first}} and {{c2::second}}",
                deck="Other Root::Extra", ords=[0, 1, 2])
     exported = _record_exports(collection, monkeypatch)
 
@@ -4740,11 +4756,11 @@ def test_clean_up_duplicates_backs_up_where_the_group_actually_is(anki, tmp_path
 
 def test_update_backs_up_the_deck_a_refiled_card_actually_sits_in(anki, tmp_path,
                                                                   monkeypatch):
-    """An import matches a note by GUID wherever it is, so a card she refiled herself is
-    rewritten in a deck the manifest's own names cover nothing of, while every
-    confirmation promises a backup covering what the run touches."""
+    """An import matches a note by GUID wherever it is, so a card the learner refiled
+    themself is rewritten in a deck the manifest's own names cover nothing of, while
+    every confirmation promises a backup covering what the run touches."""
     from internpearls import collection
-    _her_card(anki, "g1", "Front one", deck="Other Root::Extra")
+    _existing_card(anki, "g1", "Front one", deck="Other Root::Extra")
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one", back="new"), TAGS)], None)}))
     exported = _record_exports(collection, monkeypatch)
@@ -4759,7 +4775,7 @@ def test_auto_sync_backs_up_the_deck_a_refiled_card_actually_sits_in(anki, tmp_p
     """The unattended path has its own downloads on disk by the time it backs up, so it
     scopes from the same reading of them the interactive one does."""
     from internpearls import background, collection
-    _her_card(anki, "g1", "Front one", deck="Other Root::Extra")
+    _existing_card(anki, "g1", "Front one", deck="Other Root::Extra")
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one", back="new"), TAGS)], None)})
     anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
@@ -4829,7 +4845,7 @@ def test_a_backup_that_keeps_failing_nags_once_per_session(anki, tmp_path, monke
     """Unlike the template-deferral notice, this one re-announced itself every poll
     interval for as long as the backup kept failing."""
     from internpearls import background, collection
-    _her_card(anki, "g1", "Front one")
+    _existing_card(anki, "g1", "Front one")
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one", back="new"), TAGS)], None)})
     anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
@@ -4854,7 +4870,7 @@ def test_a_relocated_cards_row_names_the_card_rather_than_its_markup(anki, tmp_p
     from internpearls import sync
     from internpearls.logic import note_display_label
     picture = anki.col.add_note("moved_img", _fields(IMG_FRONT), TAGS.split(), deck=DECK)
-    _her_cloze(anki, "moved_cloze", CLOZE_FRONT)
+    _existing_cloze(anki, "moved_cloze", CLOZE_FRONT)
     _configure(anki, _write_retired_source(tmp_path, {}, deck_moves={
         "moved_img": {"from": DECK, "to": NEW_DECK},
         "moved_cloze": {"from": DECK, "to": NEW_DECK}}))
@@ -4924,7 +4940,7 @@ def test_the_backup_skip_question_names_its_buttons_and_defaults_to_cancelling(a
     """A bare Yes/No on "proceed without a backup" leaves Yes as the default, which is
     the reader agreeing to the risky half by pressing Return."""
     from internpearls import collection
-    _her_card(anki, "g1", "Front one")   # something in the collection to lose
+    _existing_card(anki, "g1", "Front one")   # something in the collection to lose
 
     proceed, backed_up = collection._pre_sync_backup_or_confirm_skip(
         "A Deck That Isn't Here", None, SCOPE)
@@ -4938,7 +4954,7 @@ def test_dismissing_the_backup_skip_question_means_cancel(anki):
     """Escape and the close box used to do nothing at all (every button carried
     AcceptRole), so the only way out of one of these was to answer it."""
     from internpearls import collection
-    _her_card(anki, "g1", "Front one")
+    _existing_card(anki, "g1", "Front one")
     anki.gui.escape_asks = True
 
     proceed, backed_up = collection._pre_sync_backup_or_confirm_skip(
@@ -4951,7 +4967,7 @@ def test_every_consequential_question_defaults_to_its_declining_button(anki, tmp
     """Import single deck raises three of them in one run: continue without the
     reworded-front list, import now, and proceed without a backup."""
     from internpearls import sync
-    _her_card(anki, "g1", "Front one")
+    _existing_card(anki, "g1", "Front one")
     anki.mw._config = {"decks_dir": str(tmp_path / "gone")}   # no manifest to fetch
     src = str(tmp_path / "hand.apkg")
     make_apkg(src, [("g1", _fields("Front one", back="new"), TAGS)], deck=DECK)
@@ -4966,7 +4982,7 @@ def test_every_consequential_question_defaults_to_its_declining_button(anki, tmp
 
 def test_dismissing_the_import_question_imports_nothing(anki, tmp_path):
     from internpearls import sync
-    _her_card(anki, "g1", "Front one")
+    _existing_card(anki, "g1", "Front one")
     _configure(anki, _write_retired_source(tmp_path, {}))
     src = str(tmp_path / "hand.apkg")
     make_apkg(src, [("g1", _fields("Front one", back="new"), TAGS)], deck=DECK)
@@ -5046,7 +5062,7 @@ def test_an_unreachable_source_still_reads_as_unreachable(anki, monkeypatch):
     shape is one net.py never produces (every failure there is a RuntimeError), so the
     old test green-lit a split production had already lost: an offline learner read
     "The deck source couldn't be used: the network isn't responding" and was told to go
-    check her GitHub token."""
+    check their GitHub token."""
     from internpearls import sync
     anki.mw._config = {"github_decks_repo": "someone/decks"}
     _offline_network(monkeypatch)
@@ -5112,7 +5128,7 @@ def test_a_card_in_both_ledgers_is_archived_rather_than_relocated(anki, tmp_path
     straight back out into a live deck, suspended and tagged, which is neither of the
     two outcomes the ledgers asked for."""
     from internpearls import sync
-    _her_card(anki, "old1", "bulky crisis card")
+    _existing_card(anki, "old1", "bulky crisis card")
     _configure(anki, _write_retired_source(
         tmp_path,
         {DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
@@ -5131,11 +5147,11 @@ def test_a_card_in_both_ledgers_is_archived_rather_than_relocated(anki, tmp_path
 
 def test_reconcile_leaves_an_opted_out_decks_cards_where_they_are(anki, tmp_path):
     """Manage decks says unchecking a deck stops future syncs for it. Archiving and
-    relocating her cards is a sync doing something to them, and neither read the
-    exclusion list at all."""
+    relocating the learner's cards is a sync doing something to them, and neither read
+    the exclusion list at all."""
     from internpearls import sync
-    _her_card(anki, "old1", "bulky crisis card")
-    _her_card(anki, "moved1", "a card leaving this deck")
+    _existing_card(anki, "old1", "bulky crisis card")
+    _existing_card(anki, "moved1", "a card leaving this deck")
     _configure(anki, _write_retired_source(
         tmp_path,
         {DECK: {"old1": {"identity": "bulky crisis card", "reason": "split",
@@ -5177,7 +5193,7 @@ def test_cancelling_the_retry_download_stops_the_run_cleanly(anki, tmp_path,
     nothing on a dialog nobody asked for."""
     import aqt.qt as aqt_qt
     from internpearls import sync
-    _her_card(anki, "g1", "Front one")
+    _existing_card(anki, "g1", "Front one")
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one", back="new"), TAGS)], None)}))
     _fetch_that_fails_during_preview(sync, monkeypatch)
@@ -5231,8 +5247,8 @@ def _run_unattended_poll(anki):
 
 
 def _source_with_two_new_cards(anki, tmp_path):
-    """A source with two cards neither yet in her collection, for tests that decline
-    one of them. Returns the Anki deck name."""
+    """A source with two cards neither yet in the learner's collection, for tests that
+    decline one of them. Returns the Anki deck name."""
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("guid-new-a", _fields("front a"), TAGS),
                       ("guid-new-b", _fields("front b"), TAGS)], None)})
@@ -5241,8 +5257,8 @@ def _source_with_two_new_cards(anki, tmp_path):
 
 
 def _source_updating_card_a(anki, tmp_path):
-    """She already holds guid-a under "front a"; the rebuilt deck reissues the same
-    GUID with a reworded front. Returns the Anki deck name."""
+    """The learner already holds guid-a under "front a"; the rebuilt deck reissues the
+    same GUID with a reworded front. Returns the Anki deck name."""
     anki.col.add_note("guid-a", _fields("front a", notes="her mnemonic"), [TAGS])
     folder = _write_source(tmp_path, {
         DECK: ("v2", [("guid-a", _fields("front a, revised"), TAGS)], None)})
@@ -5250,7 +5266,7 @@ def _source_updating_card_a(anki, tmp_path):
     return DECK
 
 
-def _her_fields(anki, guid):
+def _existing_fields(anki, guid):
     return list(anki.col.note_by_guid(guid).fields)
 
 
@@ -5268,17 +5284,17 @@ def test_run_sync_drops_declined_notes_before_import(anki, tmp_path):
     assert "front b" not in fronts
 
 
-def test_run_sync_keep_leaves_her_copy_untouched(anki, tmp_path):
+def test_run_sync_keep_leaves_the_learners_copy_untouched(anki, tmp_path):
     from internpearls import config, sync
-    deck = _source_updating_card_a(anki, tmp_path)   # she has guid-a, source rewords it
+    deck = _source_updating_card_a(anki, tmp_path)   # has guid-a, source rewords it
     config.save_declined({
         "guid-a": {"state": "keep", "front": "front a", "deck": deck,
                    "decided": "2026-08-25", "hash": ""}})
-    before = _her_fields(anki, "guid-a")
+    before = _existing_fields(anki, "guid-a")
 
     drive(anki, sync.sync_decks, respond=_accept_everything)
 
-    assert _her_fields(anki, "guid-a") == before
+    assert _existing_fields(anki, "guid-a") == before
 
 
 def test_unattended_auto_sync_respects_the_registry(anki, tmp_path):
@@ -5309,8 +5325,9 @@ def test_run_sync_prunes_moot_registry_entries(anki, tmp_path):
 def test_run_sync_survives_a_garbage_registry_entry(anki, tmp_path):
     """A hand-edited declined.json can hold a non-dict value for a guid. prune_declined
     sits between the import and the protected-field restore, so a crash there used to
-    abort the whole sync after her notes were overwritten but before they were restored.
-    It must instead degrade gracefully and let the rest of the run finish."""
+    abort the whole sync after the learner's notes were overwritten but before they
+    were restored. It must instead degrade gracefully and let the rest of the run
+    finish."""
     from internpearls import config, sync
     deck = _source_updating_card_a(anki, tmp_path)   # guid-a, her mnemonic on Notes
     config.save_declined({"g-garbage": "not a dict"})
@@ -5496,8 +5513,9 @@ def test_digest_reports_decisions_made_this_run_only(anki, tmp_path):
 
 def test_an_untouched_decline_keeps_its_stale_cue(anki, tmp_path):
     """A skip already on record when the confirmation opens, left untouched, must not
-    have its hash/decided/front rebuilt just because she accepted an unrelated update:
-    that would silently clear a pending "changed since decline" cue she never saw."""
+    have its hash/decided/front rebuilt just because the learner accepted an unrelated
+    update: that would silently clear a pending "changed since decline" cue they never
+    saw."""
     from internpearls import config
     deck = _source_with_two_new_cards(anki, tmp_path)
     config.save_declined({
@@ -5514,9 +5532,9 @@ def test_an_untouched_decline_keeps_its_stale_cue(anki, tmp_path):
 
 def test_actively_reclicking_skip_refreshes_the_stale_hash(anki, tmp_path):
     """The active-click sibling of test_an_untouched_decline_keeps_its_stale_cue:
-    clicking Skip again on a card whose incoming content changed since she last
-    declined it is a re-review, so the stored hash/decided/front must refresh even
-    though the state itself (skip) doesn't change. Not a new decision, though: it
+    clicking Skip again on a card whose incoming content changed since the learner
+    last declined it is a re-review, so the stored hash/decided/front must refresh
+    even though the state itself (skip) doesn't change. Not a new decision, though: it
     must not show up in the digest."""
     from internpearls import config, sync
     deck = _source_with_two_new_cards(anki, tmp_path)
@@ -5564,16 +5582,16 @@ def test_flipping_a_predeclined_row_back_to_import_undeclines_it(anki, tmp_path)
 
 def test_a_kept_decline_survives_when_its_row_becomes_new_again(anki, tmp_path):
     """A "keep" decline only means anything for a "changed" row. If the same guid's
-    note vanishes from her collection (she deleted it) and the next update re-offers
-    it as brand new instead, the row's control can't even show "keep" (a new row only
-    offers Import/Skip/Never), so leaving it untouched must not read as "she flipped
-    it back to default" and silently drop the registry entry."""
+    note vanishes from the learner's collection (they deleted it) and the next update
+    re-offers it as brand new instead, the row's control can't even show "keep" (a new
+    row only offers Import/Skip/Never), so leaving it untouched must not read as "the
+    learner flipped it back to default" and silently drop the registry entry."""
     from internpearls import config
     deck = _source_updating_card_a(anki, tmp_path)   # guid-a, "front a" -> reworded
     config.save_declined({
         "guid-a": {"state": "keep", "front": "front a", "deck": deck,
                    "decided": "2026-08-01", "hash": "stale-hash-value1"}})
-    del anki.col._notes[anki.col.note_by_guid("guid-a").id]   # she deleted her card
+    del anki.col._notes[anki.col.note_by_guid("guid-a").id]   # deleted their card
 
     _update(anki)   # accepts without touching guid-a's row (now rendered as new)
 
@@ -5583,15 +5601,16 @@ def test_a_kept_decline_survives_when_its_row_becomes_new_again(anki, tmp_path):
 
 def test_actively_importing_a_kind_flipped_decline_removes_it(anki, tmp_path):
     """The active-click sibling of test_a_kept_decline_survives_when_its_row_becomes_
-    new_again: if she actually clicks Import on that re-offered row rather than just
-    leaving it, that IS an explicit un-decline (default states are sparse, so nothing
-    in `decisions` itself can tell the two apart) and the card must import."""
+    new_again: if the learner actually clicks Import on that re-offered row rather
+    than just leaving it, that IS an explicit un-decline (default states are sparse,
+    so nothing in `decisions` itself can tell the two apart) and the card must
+    import."""
     from internpearls import config, sync
     deck = _source_updating_card_a(anki, tmp_path)   # guid-a, "front a" -> reworded
     config.save_declined({
         "guid-a": {"state": "keep", "front": "front a", "deck": deck,
                    "decided": "2026-08-01", "hash": "stale-hash-value1"}})
-    del anki.col._notes[anki.col.note_by_guid("guid-a").id]   # she deleted her card
+    del anki.col._notes[anki.col.note_by_guid("guid-a").id]   # deleted their card
     state = {"clicked": False}
 
     def respond(p):
@@ -5619,8 +5638,8 @@ def test_actively_importing_a_kind_flipped_decline_removes_it(anki, tmp_path):
 
 # ------------------------------------ declines and the note-type conversion plan
 def _declined_conversion_source(anki, tmp_path, state):
-    """Her Q-and-A note, a source shipping it as a fill-in-the-blank, and a standing
-    decline on that very card."""
+    """The learner's Q-and-A note, a source shipping it as a fill-in-the-blank, and a
+    standing decline on that very card."""
     from internpearls import config
     _cloze_conversion_source(anki, tmp_path)
     config.save_declined({"g1": {"state": state, "front": "Old Q and A front",
@@ -5634,7 +5653,7 @@ def _recording_ask(asked, answer=True):
     return ask
 
 
-def _assert_her_card_was_left_alone(anki, asked):
+def _assert_existing_card_was_left_alone(anki, asked):
     """A declined card's note keeps its type, its content and its history, and nothing
     about it was ever put on screen as a question."""
     note = anki.col.note_by_guid("g1")
@@ -5646,14 +5665,15 @@ def _assert_her_card_was_left_alone(anki, asked):
 
 def test_a_skip_declined_card_is_never_converted_or_asked_about(anki, tmp_path):
     """The conversion plan used to be computed with no idea the card was declined, so
-    her note was moved onto the fill-in-the-blank type while the import that writes the
-    blanks in was dropped: a cloze note holding a question and answer, and no blanks."""
+    the learner's note was moved onto the fill-in-the-blank type while the import that
+    writes the blanks in was dropped: a cloze note holding a question and answer, and
+    no blanks."""
     _declined_conversion_source(anki, tmp_path, "skip")
     asked = []
 
     _sync(anki, ask=_recording_ask(asked))
 
-    _assert_her_card_was_left_alone(anki, asked)
+    _assert_existing_card_was_left_alone(anki, asked)
 
 
 def test_a_keep_declined_card_is_never_converted_or_asked_about(anki, tmp_path):
@@ -5662,7 +5682,7 @@ def test_a_keep_declined_card_is_never_converted_or_asked_about(anki, tmp_path):
 
     _sync(anki, ask=_recording_ask(asked))
 
-    _assert_her_card_was_left_alone(anki, asked)
+    _assert_existing_card_was_left_alone(anki, asked)
 
 
 def test_a_never_declined_card_is_never_converted_or_asked_about(anki, tmp_path):
@@ -5673,7 +5693,7 @@ def test_a_never_declined_card_is_never_converted_or_asked_about(anki, tmp_path)
 
     _sync(anki, ask=_recording_ask(asked))
 
-    _assert_her_card_was_left_alone(anki, asked)
+    _assert_existing_card_was_left_alone(anki, asked)
 
 
 def test_a_deck_whose_only_conversion_is_declined_is_not_deferred(anki, tmp_path):
@@ -5694,12 +5714,12 @@ def test_a_deck_whose_only_conversion_is_declined_is_not_deferred(anki, tmp_path
 
 
 def test_a_mixed_deck_asks_only_about_the_conversions_left(anki, tmp_path):
-    """One declined card and one not: the question covers the one she can still say
-    yes to, and only that one's note moves."""
+    """One declined card and one not: the question covers the one the learner can
+    still say yes to, and only that one's note moves."""
     from internpearls import config
     anki.col.models._models.append(_cloze_model())
-    _her_card(anki, "g1", "Old Q and A front")
-    _her_card(anki, "g2", "Another Q and A front")
+    _existing_card(anki, "g1", "Old Q and A front")
+    _existing_card(anki, "g2", "Another Q and A front")
     config.save_declined({"g1": {"state": "never", "front": "Old Q and A front",
                                  "deck": DECK, "decided": "2026-08-01", "hash": ""}})
     _configure(anki, _write_source(tmp_path, {
@@ -5719,7 +5739,7 @@ def test_a_mixed_deck_asks_only_about_the_conversions_left(anki, tmp_path):
 def test_a_garbage_registry_file_reads_as_an_empty_registry(anki):
     """Not just a garbage entry: a whole file that parsed as valid JSON and isn't an
     object at all. It used to pass the sync's own set() over it and only raise later,
-    after the import had overwritten her protected fields."""
+    after the import had overwritten the learner's protected fields."""
     from internpearls import config
     for junk in (["a deck"], "just a string", 5):
         config._save_json(config.DECLINED, junk)
@@ -5753,9 +5773,9 @@ def test_a_dict_of_garbage_values_still_imports_and_restores(anki, tmp_path):
 def test_registry_housekeeping_cannot_skip_the_field_restore(anki, tmp_path,
                                                              monkeypatch):
     """The ordering, not the one exception that exposed it. Registry housekeeping used
-    to sit between the import and the restore, so anything it raised left her
-    annotations exactly as the import had overwritten them, with the decks recorded as
-    installed and the snapshot gone."""
+    to sit between the import and the restore, so anything it raised left the
+    learner's annotations exactly as the import had overwritten them, with the decks
+    recorded as installed and the snapshot gone."""
     from internpearls import sync
 
     def boom(*_a, **_kw):
@@ -5777,7 +5797,7 @@ def test_a_conversion_with_no_target_note_type_holds_the_deck_back(anki, tmp_pat
     note type does not exist yet, so the conversion silently converted nothing while
     the deck was still recorded as installed and never offered again."""
     from internpearls import sync
-    _her_card(anki, "g1", "Old Q and A front")     # no cloze note type in here
+    _existing_card(anki, "g1", "Old Q and A front")     # no cloze note type in here
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
                _cloze_model())}))
@@ -5795,7 +5815,7 @@ def test_a_conversion_with_no_target_note_type_holds_the_deck_back(anki, tmp_pat
     assert "Update my decks</b> again" in summary
 
     # ...and it is self-correcting: that import is what added the note type, so the
-    # next run finds the deck still pending and moves her card across for real.
+    # next run finds the deck still pending and moves the card across for real.
     _sync(anki)
 
     assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Cloze"
@@ -5840,9 +5860,9 @@ def test_a_conversion_only_the_apply_step_finds_defers_the_deck(anki, tmp_path,
                                                                 monkeypatch):
     """The run's one conversion question is decided before the apply loop. A deck that
     failed both the preview and the retry contributed nothing to it, so the loop found
-    its conversion with convert=False and declined it on her behalf: her cards stayed
-    on the old type, the new ones landed beside them, and the deck was recorded as
-    installed, so nothing offered it again."""
+    its conversion with convert=False and declined it on the learner's behalf: their
+    cards stayed on the old type, the new ones landed beside them, and the deck was
+    recorded as installed, so nothing offered it again."""
     from internpearls import sync
     _cloze_conversion_source(anki, tmp_path)
     _fetch_that_fails_until_apply(sync, monkeypatch)
@@ -6044,8 +6064,8 @@ def test_a_card_in_the_retired_ledger_and_a_reworded_pair_is_handled_once(anki,
     forward as well as its annotations, and then archives it, which is everything the
     retirement path does and more."""
     from internpearls import sync
-    old = _her_card(anki, "g_old", "the older wording")
-    _her_card(anki, "g_new", "the newer wording")
+    old = _existing_card(anki, "g_old", "the older wording")
+    _existing_card(anki, "g_new", "the newer wording")
     _sched(anki, old, reps=4, ivl=12, due=90, factor=2300, lapses=1, type=2, queue=2)
     _configure(anki, _stranded_and_retired(
         tmp_path, {"the older wording": "the newer wording"},
@@ -6066,12 +6086,12 @@ def test_a_card_in_the_retired_ledger_and_a_reworded_pair_is_handled_once(anki,
 # ------------------------------------- import single deck and a format change
 def test_import_single_offers_the_conversion_and_keeps_the_history(anki, tmp_path):
     """This path never looked for a note-type change at all, so a hand-picked
-    fill-in-the-blank rebuild GUID-remapped onto her question-and-answer note, which
-    Anki's importer will not update, while the confirmation promised the history would
-    carry."""
+    fill-in-the-blank rebuild GUID-remapped onto the learner's question-and-answer
+    note, which Anki's importer will not update, while the confirmation promised the
+    history would carry."""
     from internpearls import sync
     anki.col.models._models.append(_cloze_model())
-    _her_card(anki, "g1", "Old Q and A front")
+    _existing_card(anki, "g1", "Old Q and A front")
     src = str(tmp_path / "hand.apkg")
     make_apkg(src, [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
               model=_cloze_model(), deck=DECK)
@@ -6093,7 +6113,7 @@ def test_import_single_says_so_when_there_is_no_note_type_to_convert_onto(anki,
     import is what creates it. Nothing is asked, and the count above no longer claims
     a history those cards cannot keep."""
     from internpearls import sync
-    _her_card(anki, "g1", "Old Q and A front")
+    _existing_card(anki, "g1", "Old Q and A front")
     src = str(tmp_path / "hand.apkg")
     make_apkg(src, [("g1", ["A {{c1::cloze}} version", "why", "", "", ""], TAGS)],
               model=_cloze_model(), deck=DECK)
