@@ -486,17 +486,17 @@ def test_remap_cards_end_to_end(tmp_path):
         (2, "apkg-guid-aliased", "New wording"),
         (3, "apkg-guid-new", "Never seen before"),
     ])
-    her = {
-        "Matches directly": "her-guid-direct",   # front unchanged since her last sync
-        "Old wording": "her-guid-aliased",       # her card still has the old front
+    existing = {
+        "Matches directly": "her-guid-direct",   # front unchanged since the last sync
+        "Old wording": "her-guid-aliased",       # the learner's card still has the old front
     }
     aliases = {"New wording": "Old wording"}     # records that rename
 
-    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her, aliases)
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, existing, aliases)
 
     assert in_place == 2          # "Matches directly" and "New wording" (via alias)
     assert as_new == 1            # "Never seen before" has no match anywhere
-    # GUIDs get rewritten to match her existing cards so Anki's importer updates in
+    # GUIDs get rewritten to match the learner's existing cards so Anki's importer updates in
     # place instead of creating duplicates:
     assert remap == {1: "her-guid-direct", 2: "her-guid-aliased"}
     # and the one genuinely new card comes back in full, for the review dialog:
@@ -517,17 +517,17 @@ def test_remap_cards_guid_already_matches_needs_no_rewrite(tmp_path):
     # it to itself is pointless churn.
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "shared-guid", "Same front")])
-    her = {"Same front": "shared-guid"}
-    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her, aliases={})
+    existing = {"Same front": "shared-guid"}
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, existing, aliases={})
     assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
 
 
 def test_remap_cards_alias_target_also_missing_is_new(tmp_path):
     # An alias records a rename, but if the learner's collection has NEITHER the new
-    # wording nor the old one the alias points to, the card is genuinely new to her.
+    # wording nor the old one the alias points to, the card is genuinely new to the learner.
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "g1", "New wording")])
-    aliases = {"New wording": "Old wording"}   # but "Old wording" isn't in her map
+    aliases = {"New wording": "Old wording"}   # but "Old wording" isn't in the map
     remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, existing_fronts={}, aliases=aliases)
     assert (remap, in_place, as_new) == ({}, 0, 1)
     assert [rid for rid, _, _ in new_notes] == [1]
@@ -540,18 +540,18 @@ def test_remap_cards_matches_by_guid_before_front(tmp_path):
     # "reworded twice, alias only bridges one hop" case that used to strand history.
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "stable-guid", "Reworded front, take three")])
-    her = {"Original front wording": "stable-guid"}
-    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her, aliases={})
+    existing = {"Original front wording": "stable-guid"}
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, existing, aliases={})
     assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
 
 
 def test_remap_cards_guid_match_wins_over_front_match(tmp_path):
-    # If the incoming GUID already belongs to her card A, a coincidental front-text
-    # match against her card B must not override it: GUID is the deliberate identity.
+    # If the incoming GUID already belongs to card A, a coincidental front-text
+    # match against card B must not override it: GUID is the deliberate identity.
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "guid-a", "Front of B")])
-    her = {"Front of A": "guid-a", "Front of B": "guid-b"}
-    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her, aliases={})
+    existing = {"Front of A": "guid-a", "Front of B": "guid-b"}
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, existing, aliases={})
     assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
 
 
@@ -561,11 +561,11 @@ def test_remap_cards_uses_complete_guids_when_ambiguous_fronts_are_excluded(tmp_
 
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "guid-b", "Shared front")])
-    her = ExistingCards()
-    her.guids = {"guid-a", "guid-b"}
+    existing = ExistingCards()
+    existing.guids = {"guid-a", "guid-b"}
 
     remap, in_place, as_new, new_notes, matched = logic.remap_cards(
-        apkg, her, aliases={})
+        apkg, existing, aliases={})
 
     assert (remap, in_place, as_new, new_notes) == ({}, 1, 0, [])
     assert matched == [(1, "guid-b", "guid-b")]
@@ -610,8 +610,8 @@ def test_remap_cards_reports_every_pair_it_matched(tmp_path):
         (2, "apkg-guid-other", "Matched by front"),
         (3, "apkg-guid-new", "Nobody has this"),
     ])
-    her = {"Matched by front": "her-guid-front", "Matched by guid": "apkg-guid-same"}
-    _, in_place, as_new, new_notes, matched = logic.remap_cards(apkg, her, aliases={})
+    existing = {"Matched by front": "her-guid-front", "Matched by guid": "apkg-guid-same"}
+    _, in_place, as_new, new_notes, matched = logic.remap_cards(apkg, existing, aliases={})
     assert in_place == 2 and as_new == 1
     assert matched == [(1, "apkg-guid-same", "apkg-guid-same"),
                        (2, "apkg-guid-other", "her-guid-front")]
@@ -636,11 +636,11 @@ def test_remap_cards_never_touches_generated_guids(tmp_path):
         (1, "deck-guid-front", "What is LAST?"),
         (2, "deck-guid-alias", "New wording of a generated card"),
     ])
-    her = {"What is LAST?": generated}
+    existing = {"What is LAST?": generated}
     aliases = {"New wording of a generated card": "Old wording of a generated card"}
-    her["Old wording of a generated card"] = generated
+    existing["Old wording of a generated card"] = generated
 
-    remap, in_place, as_new, new_notes, matched = logic.remap_cards(apkg, her, aliases)
+    remap, in_place, as_new, new_notes, matched = logic.remap_cards(apkg, existing, aliases)
 
     assert as_new == 2 and in_place == 0
     assert remap == {} and matched == []
@@ -656,26 +656,27 @@ def test_find_changed_notes_reports_the_previous_value_of_each_changed_field():
     details = [_detail(1, "Study Deck - Basic",
                        [("Front", "A prompt"), ("Back", "the new answer"),
                         ("Why", "unchanged why"), ("Notes", "")])]
-    her = {"her-1": {"Front": "A prompt", "Back": "the old answer",
+    existing = {"her-1": {"Front": "A prompt", "Back": "the old answer",
                      "Why": "unchanged why", "Notes": ""}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her) == {
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing) == {
         1: {"Back": "the old answer"}}
 
 
 def test_find_changed_notes_ignores_a_note_that_is_identical():
     details = [_detail(1, "Study Deck - Basic",
                        [("Front", "A prompt"), ("Back", "same"), ("Notes", "")])]
-    her = {"her-1": {"Front": "A prompt", "Back": "same", "Notes": ""}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her) == {}
+    existing = {"her-1": {"Front": "A prompt", "Back": "same", "Notes": ""}}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing) == {}
 
 
 def test_find_changed_notes_skips_protected_fields():
     """Notes is the learner's own annotation space and every spec ships it empty, so
-    without this every card she has ever written a note on would read as changed."""
+    without this every card the learner has ever written a note on would read as
+    changed."""
     details = [_detail(1, "Study Deck - Basic",
                        [("Front", "A prompt"), ("Notes", "")])]
-    her = {"her-1": {"Front": "A prompt", "Notes": "her own annotation"}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her,
+    existing = {"her-1": {"Front": "A prompt", "Notes": "her own annotation"}}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing,
                                     protected=["Notes"]) == {}
 
 
@@ -686,9 +687,9 @@ def test_find_changed_notes_matches_a_protected_field_case_insensitively():
     change in the preview while the restore quietly put it back."""
     details = [_detail(1, "Study Deck - Basic",
                        [("Front", "A prompt"), ("Notes", ""), ("Dosing", "")])]
-    her = {"her-1": {"Front": "A prompt", "Notes": "her own annotation",
+    existing = {"her-1": {"Front": "A prompt", "Notes": "her own annotation",
                      "Dosing": "her dose note"}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her,
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing,
                                     protected=["notes", "DOSING"]) == {}
 
 
@@ -698,24 +699,24 @@ def test_find_changed_notes_compares_by_name_not_position():
     details = [_detail(1, "Study Deck - Image ID",
                        [("Image", '<img src="a.jpg">'), ("Prompt", "Which block?"),
                         ("Answer", "Femoral")])]
-    her = {"her-1": {"Prompt": "Which block?", "Answer": "Femoral",
+    existing = {"her-1": {"Prompt": "Which block?", "Answer": "Femoral",
                      "Image": '<img src="a.jpg">'}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her) == {}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing) == {}
 
 
-def test_find_changed_notes_ignores_a_field_her_note_type_does_not_have():
+def test_find_changed_notes_ignores_a_field_the_note_type_does_not_have():
     # _ensure_notetypes adds a genuinely missing field before an import; until it has,
-    # a field she cannot hold is not a content change to show her.
+    # a field the note type cannot hold is not a content change to show the learner.
     details = [_detail(1, "Study Deck - Basic",
                        [("Front", "A prompt"), ("Dosing", "0.5 mg IV")])]
-    her = {"her-1": {"Front": "A prompt"}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her) == {}
+    existing = {"her-1": {"Front": "A prompt"}}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing) == {}
 
 
 def test_find_changed_notes_ignores_whitespace_only_differences():
     details = [_detail(1, "Study Deck - Basic", [("Front", " A prompt ")])]
-    her = {"her-1": {"Front": "A prompt"}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, her) == {}
+    existing = {"her-1": {"Front": "A prompt"}}
+    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing) == {}
 
 
 def test_find_changed_notes_skips_a_pair_with_nothing_to_compare_against():
@@ -1257,17 +1258,18 @@ _LEDGER = {
 }
 
 
-def test_find_retired_returns_only_cards_she_has():
-    # She has old1 and old3 (retired) plus new1a (a replacement) and her own card.
-    her = {"old1", "old3", "new1a", "mine"}
-    found = logic.find_retired_in_collection(_LEDGER, her)
+def test_find_retired_returns_only_cards_the_learner_has():
+    # The learner has old1 and old3 (retired) plus new1a (a replacement) and a card of
+    # their own.
+    existing = {"old1", "old3", "new1a", "mine"}
+    found = logic.find_retired_in_collection(_LEDGER, existing)
     guids = {r["guid"] for r in found}
-    assert guids == {"old1", "old3"}   # only retired cards she still holds
+    assert guids == {"old1", "old3"}   # only retired cards still held
 
 
 def test_find_retired_counts_present_replacements():
-    her = {"old1", "new1a"}            # one of old1's two replacements is present
-    (r,) = logic.find_retired_in_collection(_LEDGER, her)
+    existing = {"old1", "new1a"}            # one of old1's two replacements is present
+    (r,) = logic.find_retired_in_collection(_LEDGER, existing)
     assert r["guid"] == "old1"
     assert r["superseded_by"] == ["new1a", "new1b"]
     assert r["replacements_present"] == 1
@@ -1286,27 +1288,27 @@ def test_find_retired_empty_when_nothing_matches():
 
 
 def test_find_retired_sorted_by_deck_then_identity():
-    her = {"old1", "old2", "old3"}
-    found = logic.find_retired_in_collection(_LEDGER, her)
+    existing = {"old1", "old2", "old3"}
+    found = logic.find_retired_in_collection(_LEDGER, existing)
     assert [r["identity"] for r in found] == [
         "bulky card one", "reworded card two", "removed card three"]
 
 
-def test_find_retired_falls_back_to_front_when_her_guid_drifted():
-    # Her copy predates the ledger's GUID (an id_seed change), so a GUID-only
+def test_find_retired_falls_back_to_front_when_the_guid_drifted():
+    # The learner's copy predates the ledger's GUID (an id_seed change), so a GUID-only
     # match misses it entirely and the card lingers forever.
-    her = {"hers1"}
+    existing = {"hers1"}
     front_map = {"bulky card one": "hers1"}
-    (r,) = logic.find_retired_in_collection(_LEDGER, her, front_map)
+    (r,) = logic.find_retired_in_collection(_LEDGER, existing, front_map)
     assert r["guid"] == "hers1"        # HER guid, so the caller can find the note
     assert r["identity"] == "bulky card one"
 
 
 def test_find_retired_prefers_guid_match_over_front():
     # Both signals available: the GUID is the stronger one and wins.
-    her = {"old1", "hers1"}
+    existing = {"old1", "hers1"}
     front_map = {"bulky card one": "hers1"}
-    (r,) = logic.find_retired_in_collection(_LEDGER, her, front_map)
+    (r,) = logic.find_retired_in_collection(_LEDGER, existing, front_map)
     assert r["guid"] == "old1"
 
 
@@ -1337,27 +1339,27 @@ _SUPERSEDED = {"old wording of a card": "new wording of a card",
                "another old wording": "another new wording"}
 
 
-def test_stranded_pair_found_when_she_holds_both_wordings():
-    her = {"old wording of a card": "g_old", "new wording of a card": "g_new"}
-    (p,) = logic.find_stranded_pairs(_SUPERSEDED, her)
+def test_stranded_pair_found_when_the_learner_holds_both_wordings():
+    existing = {"old wording of a card": "g_old", "new wording of a card": "g_new"}
+    (p,) = logic.find_stranded_pairs(_SUPERSEDED, existing)
     assert p == {"guid": "g_old", "front": "old wording of a card",
                  "successor_guid": "g_new", "successor_front": "new wording of a card"}
 
 
-def test_stranded_skipped_when_she_holds_only_the_old_wording():
+def test_stranded_skipped_when_only_the_old_wording_is_held():
     # Not a stranding: the import's own front matching merges this one, and acting
     # here as well would fight that ladder.
     assert logic.find_stranded_pairs(_SUPERSEDED, {"old wording of a card": "g_old"}) == []
 
 
-def test_stranded_skipped_when_she_holds_only_the_new_wording():
+def test_stranded_skipped_when_only_the_new_wording_is_held():
     # The normal case for anyone whose GUID matched: the reword landed in place.
     assert logic.find_stranded_pairs(_SUPERSEDED, {"new wording of a card": "g_new"}) == []
 
 
 def test_stranded_skipped_when_both_wordings_are_the_same_note():
-    her = {"old wording of a card": "g", "new wording of a card": "g"}
-    assert logic.find_stranded_pairs(_SUPERSEDED, her) == []
+    existing = {"old wording of a card": "g", "new wording of a card": "g"}
+    assert logic.find_stranded_pairs(_SUPERSEDED, existing) == []
 
 
 def test_stranded_empty_inputs():
@@ -1367,10 +1369,10 @@ def test_stranded_empty_inputs():
 
 
 def test_stranded_sorted_by_front():
-    her = {f: f"g{i}" for i, f in enumerate(
+    existing = {f: f"g{i}" for i, f in enumerate(
         ["old wording of a card", "new wording of a card",
          "another old wording", "another new wording"])}
-    assert [p["front"] for p in logic.find_stranded_pairs(_SUPERSEDED, her)] == [
+    assert [p["front"] for p in logic.find_stranded_pairs(_SUPERSEDED, existing)] == [
         "another old wording", "old wording of a card"]
 
 
@@ -1382,31 +1384,31 @@ _MOVES = {
 
 
 def test_deck_move_applies_when_card_still_at_recorded_from():
-    her_deck = {"g1": "Pharm::Local Anesthetics"}
-    (m,) = logic.find_deck_moves_needed(_MOVES, her_deck)
+    existing_deck = {"g1": "Pharm::Local Anesthetics"}
+    (m,) = logic.find_deck_moves_needed(_MOVES, existing_deck)
     assert m == {"guid": "g1", "from": "Pharm::Local Anesthetics",
                  "to": "Regional::Local Anesthetics"}
 
 
-def test_deck_move_skipped_once_she_already_reconciled():
-    # Her card is already at `to` — a previous reconcile already moved it.
-    her_deck = {"g1": "Regional::Local Anesthetics"}
-    assert logic.find_deck_moves_needed(_MOVES, her_deck) == []
+def test_deck_move_skipped_once_already_reconciled():
+    # The card is already at `to` — a previous reconcile already moved it.
+    existing_deck = {"g1": "Regional::Local Anesthetics"}
+    assert logic.find_deck_moves_needed(_MOVES, existing_deck) == []
 
 
-def test_deck_move_skipped_when_she_filed_it_elsewhere_herself():
-    # Not at `from` and not at `to` — her own organization, never overridden.
-    her_deck = {"g1": "My Own Custom Deck"}
-    assert logic.find_deck_moves_needed(_MOVES, her_deck) == []
+def test_deck_move_skipped_when_filed_elsewhere_already():
+    # Not at `from` and not at `to` — the learner's own organization, never overridden.
+    existing_deck = {"g1": "My Own Custom Deck"}
+    assert logic.find_deck_moves_needed(_MOVES, existing_deck) == []
 
 
-def test_deck_move_skipped_when_note_missing_from_her_collection():
+def test_deck_move_skipped_when_note_missing_from_the_collection():
     assert logic.find_deck_moves_needed(_MOVES, {}) == []
 
 
 def test_deck_moves_sorted_by_to_then_from():
-    her_deck = {"g1": "Pharm::Local Anesthetics", "g2": "Pharm::Vaporizers"}
-    found = logic.find_deck_moves_needed(_MOVES, her_deck)
+    existing_deck = {"g1": "Pharm::Local Anesthetics", "g2": "Pharm::Vaporizers"}
+    found = logic.find_deck_moves_needed(_MOVES, existing_deck)
     assert [m["guid"] for m in found] == ["g2", "g1"]   # "Random..." < "Regional..."
 
 
@@ -1542,67 +1544,67 @@ def test_clamp_night_mode_dim_percent_default_matches_the_pre_existing_fixed_dim
 
 # ------------------------------------------------------- duplicate grouping
 def test_find_duplicate_groups_ignores_notes_with_no_duplicate():
-    her_notes = [{"guid": "g1", "nid": 1, "model": "Basic", "front": "unique front",
+    existing_notes = [{"guid": "g1", "nid": 1, "model": "Basic", "front": "unique front",
                   "reps": 0, "deck": "Foo"}]
-    assert logic.find_duplicate_groups(her_notes, []) == []
+    assert logic.find_duplicate_groups(existing_notes, []) == []
 
 
 def test_find_duplicate_groups_prefers_the_copy_with_more_reviews():
-    her_notes = [
+    existing_notes = [
         {"guid": "old", "nid": 1, "model": "Basic", "front": "dup front",
          "reps": 3, "deck": "Old::Path"},
         {"guid": "new", "nid": 2, "model": "Basic", "front": "dup front",
          "reps": 0, "deck": "New::Path"},
     ]
-    groups = logic.find_duplicate_groups(her_notes, [])
+    groups = logic.find_duplicate_groups(existing_notes, [])
     assert len(groups) == 1
     assert groups[0]["keep"]["guid"] == "old"
     assert [a["guid"] for a in groups[0]["archive"]] == ["new"]
 
 
 def test_find_duplicate_groups_breaks_a_review_tie_by_canonical_deck():
-    her_notes = [
+    existing_notes = [
         {"guid": "old", "nid": 1, "model": "Basic", "front": "dup front", "reps": 0,
          "deck": "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"},
         {"guid": "new", "nid": 2, "model": "Basic", "front": "dup front", "reps": 0,
          "deck": "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"},
     ]
     canonical = ["Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"]
-    groups = logic.find_duplicate_groups(her_notes, canonical)
+    groups = logic.find_duplicate_groups(existing_notes, canonical)
     assert groups[0]["keep"]["guid"] == "new"
 
 
 def test_find_duplicate_groups_treats_a_canonical_subdeck_as_canonical_too():
-    her_notes = [
+    existing_notes = [
         {"guid": "old", "nid": 1, "model": "Basic", "front": "dup front", "reps": 0,
          "deck": "Intern Pearls::Intern Custom::Upper Extremity Nerve Blocks"},
         {"guid": "new", "nid": 2, "model": "Basic", "front": "dup front", "reps": 0,
          "deck": "Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks::3. The Blocks"},
     ]
     canonical = ["Intern Pearls::Intern Custom::Regional::Upper Extremity Nerve Blocks"]
-    groups = logic.find_duplicate_groups(her_notes, canonical)
+    groups = logic.find_duplicate_groups(existing_notes, canonical)
     assert groups[0]["keep"]["guid"] == "new"
 
 
 def test_find_duplicate_groups_breaks_a_full_tie_by_lower_note_id():
-    her_notes = [
+    existing_notes = [
         {"guid": "b", "nid": 2, "model": "Basic", "front": "dup front",
          "reps": 0, "deck": "Same"},
         {"guid": "a", "nid": 1, "model": "Basic", "front": "dup front",
          "reps": 0, "deck": "Same"},
     ]
-    groups = logic.find_duplicate_groups(her_notes, [])
+    groups = logic.find_duplicate_groups(existing_notes, [])
     assert groups[0]["keep"]["guid"] == "a"
 
 
 def test_find_duplicate_groups_does_not_cross_note_types():
-    her_notes = [
+    existing_notes = [
         {"guid": "b1", "nid": 1, "model": "Basic", "front": "same text",
          "reps": 0, "deck": "Foo"},
         {"guid": "c1", "nid": 2, "model": "Cloze", "front": "same text",
          "reps": 0, "deck": "Foo"},
     ]
-    assert logic.find_duplicate_groups(her_notes, []) == []
+    assert logic.find_duplicate_groups(existing_notes, []) == []
 
 
 # ------------------------------------------------------- note display labels
@@ -1684,13 +1686,13 @@ def test_duplicate_dialog_rows_carry_no_colour_of_their_own():
 
 
 def test_find_duplicate_groups_sorted_by_model_then_front():
-    her_notes = [
+    existing_notes = [
         {"guid": "z1", "nid": 1, "model": "Basic", "front": "zzz", "reps": 0, "deck": "Foo"},
         {"guid": "z2", "nid": 2, "model": "Basic", "front": "zzz", "reps": 0, "deck": "Foo"},
         {"guid": "a1", "nid": 3, "model": "Basic", "front": "aaa", "reps": 0, "deck": "Foo"},
         {"guid": "a2", "nid": 4, "model": "Basic", "front": "aaa", "reps": 0, "deck": "Foo"},
     ]
-    groups = logic.find_duplicate_groups(her_notes, [])
+    groups = logic.find_duplicate_groups(existing_notes, [])
     assert [g["front"] for g in groups] == ["aaa", "zzz"]
 
 
@@ -1932,10 +1934,11 @@ def test_apkg_notes_reads_the_real_notes_of_a_modern_package(modern_apkg):
     assert not any("Please update" in f for _r, fields, _g in rows for f in fields)
 
 
-def test_remap_cards_matches_a_modern_package_against_her_collection(modern_apkg):
+def test_remap_cards_matches_a_modern_package_against_the_collection(modern_apkg):
     """The consequence at the level the import actually depends on: with the stub being
-    read, in_place was 0 and nothing was remapped, so a card she already had came in as
-    a duplicate and her history stayed on the copy she stopped seeing."""
+    read, in_place was 0 and nothing was remapped, so a card the learner already had
+    came in as a duplicate and the learner's history stayed on the copy they stopped
+    seeing."""
     remap, in_place, as_new, new_notes, matched = logic.remap_cards(
         modern_apkg, {"Front A": "her-guid-a"}, {})
     assert remap == {11: "her-guid-a"}
@@ -2131,12 +2134,12 @@ def test_declined_drop_filters_every_match_path_and_corrects_the_counts(tmp_path
     src = str(tmp_path / "src.apkg")
     _make_mock_apkg(src, [(1, "guid-a", "front a"), (2, "guid-b", "front b"),
                           (3, "guid-c", "front c"), (4, "her-guid-d", "front d")])
-    her = {"front b": "her-guid-b", "front d": "her-guid-d"}
-    remap, in_place, as_new, _new, _matched = logic.remap_cards(src, her, {})
+    existing = {"front b": "her-guid-b", "front d": "her-guid-d"}
+    remap, in_place, as_new, _new, _matched = logic.remap_cards(src, existing, {})
     assert (in_place, as_new) == (2, 2)
 
     drop, touched, in_place, as_new = logic.declined_drop(
-        src, remap, her, {"her-guid-b", "guid-c", "her-guid-d"}, in_place, as_new)
+        src, remap, existing, {"her-guid-b", "guid-c", "her-guid-d"}, in_place, as_new)
 
     assert drop == {2, 3, 4}
     assert touched == {"guid-a"}

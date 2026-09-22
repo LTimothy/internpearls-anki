@@ -314,7 +314,7 @@ def _find_note_row(root, text):
 def test_choosing_never_hides_change_note_rows_and_restores_them_on_return():
     """A Never row struck through as gone must not still show what a reviewer said
     about it underneath: the row's own change-note lines have to hide with it, and come
-    back if the reader changes her mind about Never within the same run."""
+    back if the reader changes their mind about Never within the same run."""
     detail = dict(_basic_note_detail(), guid="g1", kind="new",
                  change_notes=[{"kind": "feedback", "note": "an example reviewer request",
                                "hash": "0" * 16}])
@@ -1094,7 +1094,7 @@ def test_add_note_sits_in_the_expanded_body_not_the_collapsed_header():
 # ------------------------------------------------------------- what the copy claims
 def test_the_feedback_placeholder_claims_no_transmission():
     """Nothing is sent from this box: the note joins a digest at the end of the run,
-    which is copied to the clipboard for the reader to paste herself. The placeholder
+    which is copied to the clipboard for the reader to paste. The placeholder
     used to say it was sent to the deck author, on a box the neutral Add note link
     opens too."""
     placeholder = review._FEEDBACK_PLACEHOLDER.lower()
@@ -1106,7 +1106,7 @@ def test_the_feedback_placeholder_claims_no_transmission():
 
 def test_the_digest_heading_counts_notes_and_decisions_apart():
     """"2 cards flagged" for two cards skipped and none flagged is the digest telling
-    the reader something she did not do."""
+    the reader something they did not do."""
     skipped = [{"guid": "g1", "note": "", "decision": "skipped"},
                {"guid": "g2", "note": "", "decision": "skipped"}]
     assert review._digest_heading(skipped) == "2 decisions recorded"
@@ -1214,9 +1214,9 @@ def test_a_note_already_written_survives_a_move_to_never():
 
 
 def test_never_on_a_changed_card_does_not_strike_it_out():
-    """On a new card Never strikes the line through, because she will not have it. On a
-    changed card she keeps the card she has, so the same styling would say the opposite
-    of what happened."""
+    """On a new card Never strikes the line through, because the learner will not have
+    it. On a changed card the learner keeps the card they have, so the same styling
+    would say the opposite of what happened."""
     detail = dict(_basic_note_detail(), guid="g1", kind="changed")
     row = review._card_row(detail, {}, {}, {}, lambda *a, **k: None)
     primary = next(w for w in _walk_widgets(row)

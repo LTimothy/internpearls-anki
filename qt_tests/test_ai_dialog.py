@@ -1020,7 +1020,7 @@ def test_accept_correction_rechecks_and_blocks_a_new_duplicate():
     card's front must not just apply the text: it has to re-run mechanical
     checks, since the correction itself can be what makes the card a
     duplicate. A card that comes back blocked is forced to Skip; a benign
-    correction (no new problem) leaves her Include decision alone."""
+    correction (no new problem) leaves the learner's Include decision alone."""
     mock, q = harness.bootstrap()
     harness.app()
     from internpearls import ai_dialog, ai_logic

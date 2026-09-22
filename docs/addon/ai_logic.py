@@ -170,8 +170,8 @@ def _norm_front(text):
 def mechanical_checks(cards, existing_fronts, image_errors=None):
     """Check drafted cards for duplicates, cloze syntax, length, and image
     resolution failures. existing_fronts is {normalized front: original front}
-    for her collection, built collection-side with the same _norm_front over
-    _her_front_to_guid keys; {} skips duplicate detection (throttled/offline
+    for the learner's collection, built collection-side with the same _norm_front over
+    _existing_front_to_guid keys; {} skips duplicate detection (throttled/offline
     reads must never block generation). image_errors is {card index: [message,
     ...]}, one entry per image that failed to resolve (download, decode, or
     read): computed by the caller (ai_dialog, which owns the network/disk

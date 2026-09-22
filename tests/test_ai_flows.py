@@ -1069,8 +1069,8 @@ def test_review_row_keeps_naming_the_image_once_expanded_and_painted(anki, monke
 
 def test_review_row_reason_is_silent_on_a_kept_verbatim_cards_own_uncheck(anki, monkeypatch):
     # A card the last revision left untouched keeps whatever the learner set for
-    # it herself; the reason line must not reappear just because it still
-    # happens to carry an image, or it would misreport her own choice as the
+    # it; the reason line must not reappear just because it still
+    # happens to carry an image, or it would misreport the learner's own choice as the
     # gate's default (see _apply_review_state's own comment).
     dlg = _ready_dialog(anki, monkeypatch)
     s = dlg.session
@@ -1078,14 +1078,14 @@ def test_review_row_reason_is_silent_on_a_kept_verbatim_cards_own_uncheck(anki, 
     s.checks = ai_logic.mechanical_checks(s.cards, {}, {})
     s.updated = set()                    # kept verbatim from the prior revision
     s.image_data = {0: [{"state": "ok", "kind": "svg"}]}
-    dlg._pending_prev_included = [False]  # her own earlier uncheck, unrelated to the gate
+    dlg._pending_prev_included = [False]  # a prior uncheck, unrelated to the gate
     dlg._apply_review_state()
     assert 0 not in s.image_gated
     row = dlg.cards_lay.itemAt(0).widget()
     assert "Has a picture" not in _row_text(row)
 
 
-def test_review_row_reason_is_silent_once_the_learner_checks_it_herself(anki, monkeypatch):
+def test_review_row_reason_is_silent_once_the_learner_checks_it(anki, monkeypatch):
     # _row_text walks every node regardless of visibility, so this checks the
     # widget's own isVisible() directly: the whole point is that choosing
     # Include hides this exact widget live, without a rebuild.
@@ -1096,7 +1096,7 @@ def test_review_row_reason_is_silent_once_the_learner_checks_it_herself(anki, mo
     reason_row = dlg._image_reason_rows[0]
     assert reason_row.isVisible()
     dlg._on_review_decision(0, "include")   # the live path a decision click takes
-    assert not reason_row.isVisible()   # she included it; nothing left to explain
+    assert not reason_row.isVisible()   # the learner included it; nothing left to explain
 
 
 def test_failed_image_download_becomes_a_mechanical_check_not_a_modal(anki, monkeypatch):

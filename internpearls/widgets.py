@@ -586,12 +586,12 @@ class StreamingList(QScrollArea):
 
         # Idle prefetch. Building a 50-row batch at the moment the reader scrolls to
         # the boundary is a visible hitch, so once the viewport is filled the backlog
-        # is built a few rows at a time on a timer while she reads. Prefetched rows
-        # stay hidden until the scroll path reveals them: a hidden row adds nothing
-        # to the layout, so the content height (and with it the scrollbar) only moves
-        # when she scrolls, not on every tick. The pace is deliberately slow, and a
-        # tick is skipped while she is scrolling, so building never competes with
-        # reading; revealing an already-built row is cheap.
+        # is built a few rows at a time on a timer while the reader keeps reading.
+        # Prefetched rows stay hidden until the scroll path reveals them: a hidden row
+        # adds nothing to the layout, so the content height (and with it the scrollbar)
+        # only moves when the reader scrolls, not on every tick. The pace is
+        # deliberately slow, and a tick is skipped while the reader is scrolling, so
+        # building never competes with reading; revealing an already-built row is cheap.
         self._prefetching = False
         self._idle = platform().create_timer(
             platform_owner_id(self), self._idle_extend, self.IDLE_DELAY_MS,

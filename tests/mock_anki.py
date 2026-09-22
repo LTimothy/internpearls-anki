@@ -635,7 +635,7 @@ class MockCollection:
     # === surface the add-on calls ===
     def find_notes(self, search):
         # The add-on searches '"tag:X" OR "tag:X::*"', optionally with a trailing
-        # ' -"tag:Y"' exclusion (see collection._her_notes_summary); a bare
+        # ' -"tag:Y"' exclusion (see collection._existing_notes_summary); a bare
         # 'deck:"X"' (collection.note_rows, by-deck scope); or "" for every note
         # (collection.note_rows with neither tag nor deck given).
         if search == "":

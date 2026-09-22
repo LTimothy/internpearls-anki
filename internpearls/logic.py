@@ -354,7 +354,7 @@ def fields_to_carry_over(saved, target_current):
 
     `saved` is {field: value} read off the note being retired; `target_current` is
     the same shape for the replacement. Never overwrites a field the replacement
-    already has text in — she may have already started annotating it herself, or a
+    already has text in — the learner may have already started annotating it, or a
     previous partial run already carried a value over — so this only ever fills in
     a field that's currently blank.
     """
@@ -1019,7 +1019,7 @@ def write_personalized(src, remap, out, drop=frozenset(), prepare_notetypes=None
     Anki reads a modern package's collection.anki21b, so rewriting a legacy member beside
     it would apply no guid at all while every caller went on reporting the matched counts
     remap_cards computed: every front-matched card would import as a duplicate and the
-    learner's history would stay on the copy she already had. Writing the anki21b back
+    learner's history would stay on the copy they already had. Writing the anki21b back
     needs zstd compression, which nothing here has, so the honest answer is the re-export
     instruction.
     """
@@ -1121,7 +1121,7 @@ def find_changed_notes(matched, details, existing_fields, protected=()):
     changed. Fields named in `protected` are skipped, since those hold the learner's own
     annotations and every spec ships them empty. A field the learner's note type does
     not have is skipped too: the import's own note-type step adds a genuinely missing
-    field, and until it does there is nothing existing to show.
+    field, and until it does there is no existing value to show.
 
     `protected` is matched case-insensitively, the way collection.py's _note_field
     resolves the same free-text names when it snapshots and restores them. The box is
@@ -1148,13 +1148,14 @@ def find_changed_notes(matched, details, existing_fields, protected=()):
     return out
 
 
-def find_duplicate_groups(her_notes, canonical_deck_names):
+def find_duplicate_groups(existing_notes, canonical_deck_names):
     """Group the learner's notes that share a note type and front text, and for each
     group decide which copy to keep.
 
-    `her_notes` is a list of {guid, nid, model, front, reps, deck} for every note under
-    the scope tag (collection.py's _her_notes_summary builds this; it already excludes
-    notes a previous run archived as a duplicate, so a repeat run is idempotent).
+    `existing_notes` is a list of {guid, nid, model, front, reps, deck} for every note
+    under the scope tag (collection.py's _existing_notes_summary builds this; it
+    already excludes notes a previous run archived as a duplicate, so a repeat run is
+    idempotent).
     `canonical_deck_names` is the manifest's current top-level deck names, used only as
     a tie breaker.
 
@@ -1167,7 +1168,7 @@ def find_duplicate_groups(her_notes, canonical_deck_names):
         {"model": ..., "front": ..., "keep": {...}, "archive": [{...}, ...]}
     """
     groups = {}
-    for note in her_notes:
+    for note in existing_notes:
         groups.setdefault((note["model"], note["front"]), []).append(note)
 
     def is_canonical(note):
@@ -1512,8 +1513,8 @@ def field_preview_html(value, image_html=None):
 
     field_preview_text's plain-text answer is right for the feedback digest and for a
     one-line label, and wrong for the dialog itself: a card back written as a <table>
-    or a <ul> arrives as an unreadable run-on line, so the reader judges a card she has
-    never actually seen. Real feedback came back that way ("just jumbled text to me")
+    or a <ul> arrives as an unreadable run-on line, so the reader judges a card the
+    learner has never actually seen. Real feedback came back that way ("just jumbled text to me")
     on cards whose only problem was that the preview flattened them.
 
     So structure is kept and everything else is dropped: script and style blocks go
@@ -1606,7 +1607,7 @@ def build_feedback_digest(entries, version="", date="", standing_declines=None):
 
     The guid line is what makes this worth more than the learner describing a card from
     memory: it names the exact spec note, so the fix doesn't start with hunting for
-    which card she meant. Fronts are stored as HTML, so they go through plain_text on
+    which card the learner meant. Fronts are stored as HTML, so they go through plain_text on
     the way out.
 
     `standing_declines`, when supplied, is the current declined-card registry. It is
@@ -1649,7 +1650,7 @@ def duplicate_dialog_rows(groups):
     find_duplicate_groups output.
 
     Each row leads with the card's readable label (the note's precomputed 'label',
-    see collection._her_notes_summary; escaped here since it's data), then says which
+    see collection._existing_notes_summary; escaped here since it's data), then says which
     copy is kept and which is archived. When every copy sits in the same deck it reads
     as a copy count rather than repeating that deck name twice.
 
@@ -1723,8 +1724,8 @@ def empty_cards_dialog_rows(rows, skipped=0):
     collection.find_empty_cards.
 
     Each row names the card the way the rest of the add-on labels one, and carries the
-    deletion numbers that went missing, since "c3, c4" is what she actually sees on the
-    dead card in review.
+    deletion numbers that went missing, since "c3, c4" is what the learner actually sees
+    on the dead card in review.
 
     Returns (heading, [{"label", "gone"}], tail), structured for the same reason
     duplicate_dialog_rows is: the confirmation draws a widget per row, and this module
@@ -1752,10 +1753,10 @@ def empty_cards_dialog_rows(rows, skipped=0):
 def feedback_entries(flags, index, decisions=None):
     """The flagged cards as digest entries: [{deck, front, guid, note}].
 
-    `flags` is {guid: her note}; `index` is {guid: (deck, front)}, which is what turns a
-    GUID into something a person can read. A flag whose GUID isn't in the index is
-    dropped rather than shown as a bare GUID: it means we no longer know which card she
-    meant, and a line naming no card is not something anyone can act on.
+    `flags` is {guid: the learner's note}; `index` is {guid: (deck, front)}, which is
+    what turns a GUID into something a person can read. A flag whose GUID isn't in the
+    index is dropped rather than shown as a bare GUID: it means we no longer know which
+    card the learner meant, and a line naming no card is not something anyone can act on.
 
     `decisions`, when given, is {guid: reader-facing state} ("skipped"/"kept yours"/
     "never"/"imported after all") for a decision made this run; a guid present there
@@ -1777,8 +1778,8 @@ def merge_saved_feedback(saved, flags, index):
     """Fold notes recovered from disk into this run's flags and card index, in place.
 
     A saved note is only restored for a card this run hasn't already collected a note
-    on: what she just typed is newer than what a previous run left behind, so the live
-    value wins on a conflict. The index gets the saved deck/front for every restored
+    on: what the learner just typed is newer than what a previous run left behind, so
+    the live value wins on a conflict. The index gets the saved deck/front for every restored
     card, since the card may well not be in this run at all (its deck already imported
     last time), and without a name it would be dropped from the digest.
 

@@ -1478,7 +1478,7 @@ def test_configure_source_switching_to_local_folder_clears_repo_and_keeps_token(
         anki, tmp_path):
     """Picking Local folder while a repo is already configured must make the folder
     the effective source (a lingering repo otherwise wins inside _fetch_manifest) and
-    must not throw away a token she'll need if she switches back."""
+    must not throw away a token the learner will need if they switch back."""
     from internpearls import dialogs
     anki.mw._config = {"github_decks_repo": "example-org/study-decks",
                        "github_token": "test-token-abc123"}
@@ -1675,8 +1675,8 @@ def _digest_texts(anki, entries):
 
 
 def test_the_digest_says_nothing_is_sent_and_what_to_do_with_it(anki):
-    """Nothing here transmits anything: the digest is copied to the clipboard for her
-    to paste. "Copied, ready to paste" left it possible to read this and close it
+    """Nothing here transmits anything: the digest is copied to the clipboard for the
+    learner to paste. "Copied, ready to paste" left it possible to read this and close it
     assuming the deck author now had it."""
     texts = _digest_texts(anki, [{"deck": "IP::A", "guid": "g1", "front": "Front one",
                                   "note": "dose looks off"}])
@@ -2137,8 +2137,8 @@ def test_returning_to_default_closes_an_empty_box_and_restores_add_note(anki):
 
 
 def test_typed_but_unsaved_text_keeps_the_box_open_on_return_to_default(anki):
-    """The empty-box-closes fix must not also swallow a note she's mid-typing: text
-    sitting in the box, even before it has reached `flags`, keeps it open."""
+    """The empty-box-closes fix must not also swallow a note the learner's mid-typing:
+    text sitting in the box, even before it has reached `flags`, keeps it open."""
     body, boxes, flush, decisions = _build_body_with_one_new_card()
     cell = _find_decision_cell(body)
     cell.buttons["skip"].click()
@@ -2228,9 +2228,9 @@ def test_status_line_is_recomputed_after_a_decision_change(anki):
 
 
 def test_declined_dialog_names_a_frozen_card_for_what_it_is(anki):
-    """"Never imported" is the wrong words for a card she has and kept: what she turned
-    down was every future version of it, so it needs its own heading or the only way
-    back is under Other."""
+    """"Never imported" is the wrong words for a card the learner has and kept: what
+    the learner turned down was every future version of it, so it needs its own
+    heading or the only way back is under Other."""
     from internpearls import config
     config.save_declined({
         "g1": {"state": "frozen", "front": "front a", "deck": "IP::A",

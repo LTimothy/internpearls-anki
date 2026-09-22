@@ -295,7 +295,8 @@ def _auto_sync_check():
         # theirs: an unattended sync applies whatever the manifest lists, wherever the
         # learner keeps those cards, and backing up only export_deck left anything
         # filed outside it unprotected. The packages are already on disk from the fetch
-        # phase, so reading which of her notes each one matches costs no network.
+        # phase, so reading which of the learner's notes each one matches costs no
+        # network.
         if not _pre_sync_backup_or_skip_silently(
                 cfg["export_deck"],
                 [d["name"] for d in result["todo"]]

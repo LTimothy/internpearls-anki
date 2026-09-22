@@ -240,7 +240,7 @@ def configure_source():
         # never even looks at decks_dir while one is set. Clear it so picking a local
         # folder actually takes effect, mirroring how the GitHub branch above clears
         # decks_dir. The token is left alone; it's inert with no repo configured, and
-        # she'll need it again if she switches back.
+        # the learner will need it again if they switch back.
         conf["github_decks_repo"] = ""
     else:
         return  # Cancel, or the dialog was closed
@@ -772,7 +772,7 @@ class _DeclinedDialog(QDialog):
     Offer again forgets the entry and drops its deck from installed.json (see
     collection.invalidate_installed), so the next Update my decks treats the deck as
     changed and re-offers the card. It never touches the collection itself: a kept-back
-    card the learner already has stays exactly as she left it.
+    card the learner already has stays exactly as the learner left it.
 
     Reads and writes the registry directly rather than caching it on the instance, so
     _rebuild() always reflects whatever _offer_again() just changed.

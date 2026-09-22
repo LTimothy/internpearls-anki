@@ -862,9 +862,9 @@ def test_picture_only_front_is_named_not_blank():
 
 
 def test_right_side_offers_the_other_cards_under_the_deck_root():
-    """Jessica's collection keeps two filtered decks of other people's cards under the
-    Intern Pearls deck. The second right-hand option compares our cards against just
-    those, ignoring the rest of her collection."""
+    """The learner's collection keeps two filtered decks of other people's cards under
+    the Intern Pearls deck. The second right-hand option compares our cards against
+    just those, ignoring the rest of the learner's collection."""
     mock, _ = harness.bootstrap()
     harness.app()
     _populate(mock)

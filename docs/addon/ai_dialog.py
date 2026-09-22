@@ -710,8 +710,8 @@ class _Session:
         self.image_data = {}
         # Indices excluded by default purely because they carry an unreviewed
         # image (see _apply_review_state): what _build_review_row's reason
-        # line gates on, so a card the learner unchecked herself never gets a
-        # reason line explaining a default she didn't hit.
+        # line gates on, so a card the learner unchecked never gets a
+        # reason line explaining a default the learner didn't hit.
         self.image_gated = set()
         # True when the last revision came back with a different card count than
         # it was sent: the one shape the prompt promises but nothing verifies.
@@ -2422,17 +2422,17 @@ class _GenerateDialog(QDialog):
         prev_included = self._pending_prev_included
         # Only the cards whose CURRENT inclusion is actually the default computed
         # above (a fresh draft, or one this revision changed) can have been
-        # excluded by the image gate; a card kept verbatim from before carries
-        # her own earlier decision instead, whatever the fresh default would say.
+        # excluded by the image gate; a card kept verbatim from before carries the
+        # learner's own earlier decision instead, whatever the fresh default would say.
         s.image_gated = {
             i for i, per in enumerate(s.checks)
             if (prev_included is None or i in s.updated)
             and s.cards[i]["images"] and not any(c["level"] == "block" for c in per)}
         if prev_included is not None:
             # A card the revision left verbatim keeps whatever the user set for
-            # it (an override she made on purpose survives); only a genuinely
+            # it (an override they made on purpose survives); only a genuinely
             # new or changed card falls back to the mechanical-check default
-            # (which, per I2, excludes any card carrying an image she hasn't
+            # (which, per I2, excludes any card carrying an image they haven't
             # had a chance to look at yet in ITS current form).
             s.included = [prev_included[i] if i not in s.updated
                          else default_included[i] for i in range(len(s.cards))]
@@ -2478,7 +2478,7 @@ class _GenerateDialog(QDialog):
         cards_scroll.setWidget(cards_container)
         lay.addWidget(cards_scroll, 1)
         # Run-level facts (token spend, the rate-limit window, the revision diff
-        # summary) rather than what she's deciding between: see
+        # summary) rather than what the learner's deciding between: see
         # _update_review_summary. Hidden entirely when there's nothing to say
         # (the very first draft of a session, before any run has billed anything).
         self.review_footer = hint_label("")
@@ -2757,7 +2757,7 @@ class _GenerateDialog(QDialog):
 
         Split in two, the way the update screen separates what the reader is
         deciding from run-level facts (review.py:1238-1246): the header under
-        the title stays what she's actually choosing between (how many cards,
+        the title stays what the reader's actually choosing between (how many cards,
         how many included vs. skipped), and everything about the run itself
         (token spend, the rate-limit window, the revision diff) moves to a
         small-print footer under the list, rather than one line carrying both.
@@ -2911,10 +2911,10 @@ class _GenerateDialog(QDialog):
         the row no longer offers it. Then recompute mechanical checks the same
         way _apply_review_state does (same duplicate map, same image errors):
         an accepted correction can turn a card's front into a duplicate of one
-        already in her collection, and a card that now carries a block is
+        already in the learner's collection, and a card that now carries a block is
         forced to Skip rather than trusting whatever decision was made before
         the correction changed its fields. A card that stays clean keeps
-        whatever she'd already chosen."""
+        whatever the learner had already chosen."""
         s = self.session
         verdict = s.verdicts.get(i)
         if not verdict or not verdict.get("correction"):
