@@ -2387,6 +2387,61 @@ def test_one_update_preserves_keep_history_and_groups_retirement_with_moves(
     }] == ["group_note", "card", "card", "retired", "moved"]
 
 
+def test_group_header_carries_the_card_count(anki, tmp_path, monkeypatch):
+    """A group's header names how many cards it covers, so a sweep touching five cards
+    reads as one line rather than five rows of scroll."""
+    from internpearls.logic import note_fields_hash
+    guids = [f"g{i}" for i in range(1, 6)]
+    for guid in guids:
+        anki.col.add_note(guid, _fields(f"Front {guid}", back=f"old answer {guid}"),
+                          TAGS.split())
+    new_fields = {guid: _fields(f"Front {guid}", back=f"new answer {guid}")
+                  for guid in guids}
+    shared = {"kind": "feedback", "note": "reworded all five for clarity"}
+    change_notes = {guid: [dict(shared, hash=note_fields_hash(new_fields[guid]))]
+                    for guid in guids}
+    folder = _write_source(
+        tmp_path, {DECK: ("v2", [(guid, new_fields[guid], TAGS) for guid in guids],
+                          None)},
+        change_notes=change_notes)
+    _configure(anki, folder)
+    captured = _capture_update_items(monkeypatch)
+    _update(anki, accept=False)
+    items = captured[0]
+    group_notes = [i for i in items if i[0] == "group_note"]
+    assert len(group_notes) == 1
+    assert group_notes[0][1]["note"] == "reworded all five for clarity"
+    assert group_notes[0][2] == 5
+
+
+def test_group_header_counts_cards_not_a_retired_member(anki, tmp_path, monkeypatch):
+    """A retired row joining a group's own change-note group is a member, but not a
+    card: the header's count must still read 2 for two replacement cards, not 3."""
+    from internpearls.logic import note_fields_hash
+    anki.col.add_note("g1", _fields("Front one", back="the old answer one"),
+                      TAGS.split())
+    anki.col.add_note("g2", _fields("Front two", back="the old answer two"),
+                      TAGS.split())
+    anki.col.add_note("old1", _fields("bulky crisis card"), TAGS.split())
+    new1 = _fields("Front one", back="the new answer one")
+    new2 = _fields("Front two", back="the new answer two")
+    shared = {"kind": "maintainer", "note": "split the table into two cards"}
+    note1 = dict(shared, hash=note_fields_hash(new1))
+    note2 = dict(shared, hash=note_fields_hash(new2))
+    folder = _write_source(
+        tmp_path, {DECK: ("v2", [("g1", new1, TAGS), ("g2", new2, TAGS)], None)},
+        retired={DECK: {"old1": {"identity": "bulky crisis card",
+                                 "reason": "split", "superseded_by": ["g1", "g2"]}}},
+        change_notes={"g1": [note1], "g2": [note2]})
+    _configure(anki, folder)
+    captured = _capture_update_items(monkeypatch)
+    _update(anki, accept=False)
+    items = captured[0]
+    group_notes = [i for i in items if i[0] == "group_note"]
+    assert len(group_notes) == 1
+    assert group_notes[0][2] == 2
+
+
 def test_review_box_starts_empty_with_nothing_summarized(anki, tmp_path):
     """Default: the confirmation previews the incoming cards inline, with a cloze
     note's deletions filled in rather than blanked. A row's feedback box is

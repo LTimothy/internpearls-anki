@@ -1534,24 +1534,32 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
         return [row for k in keys for row in extra.pop(k)]
 
     def _section(heading, rows):
+        """`rows` is `_grouped_rows`' own (row, grouped) pairs. `grouped` marks a row
+        that sits under a group_note header: the sep ahead of it is tagged the same
+        way, so a future collapsed-group render (task 9) can tell a hairline inside a
+        folded group from one between two top-level rows, without changing what this
+        tag renders as today (review._list_row keys only on item[0] == "sep")."""
         items.append(("header", heading))
-        for i, row in enumerate(rows):
+        for i, (row, grouped) in enumerate(rows):
             if i:
-                items.append(("sep",))   # between rows, not before the first
+                items.append(("sep", "grouped") if grouped else ("sep",))
             items.append(row)
 
     def _grouped_rows(details, extra_rows, deck_name):
         """This deck's card details and its raw `_retired_moved_items` rows, folded
-        through group_change_notes into the deck section's own row list.
+        through group_change_notes into the deck section's own (row, grouped) list,
+        `grouped` marking a row that sits under a group_note header (see `_section`).
 
         A group of more than one member whose note survived (a card whose note is
         empty, or a retired row naming no card in this batch, never merges into
-        anything with a note) gets one ("group_note", note) header, rendered the same
-        accent-barred way a single card's own because-line already is (see
+        anything with a note) gets one ("group_note", note, card_count) header, rendered
+        the same accent-barred way a single card's own because-line already is (see
         review._change_note_row); the header's own entry is then dropped from each
         member card's own `change_notes`, so it is not shown twice, while any other
         entry on that card (a feedback/maintainer pairing) still renders on the card
-        itself. A retired member still carries its own reason regardless of grouping;
+        itself. `card_count` is the group's ("card", ...) members only, not
+        `len(members)`: a retired member renders as ("retired", ...) instead. A retired
+        member still carries its own reason regardless of grouping;
         that is a different fact than the shared note and always renders. A moved row
         never groups (nothing in group_change_notes reads it) and always trails.
         """
@@ -1562,12 +1570,16 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
         for group in sort_source_groups(group_change_notes(details, retired_raw)):
             members, note = group["members"], group["note"]
             header = len(members) > 1 and note is not None
+            # A retired member renders as ("retired", ...), not a card, so it does not
+            # belong in a header that reads "N cards".
+            card_members = sum(1 for m in members if id(m) not in retired_ids)
             if header:
-                rows.append(("group_note", note))
+                rows.append((("group_note", note, card_members), False))
             key = (note.get("kind"), note.get("note"), note.get("on")) if note else None
             for m in members:
                 if id(m) in retired_ids:
-                    rows.append(("retired", m["identity"], m.get("reason", "")))
+                    rows.append((("retired", m["identity"], m.get("reason", "")),
+                                 header))
                     continue
                 if header:
                     cn = m.get("change_notes") or []
@@ -1575,9 +1587,9 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
                             (e.get("kind"), e.get("note"), e.get("on")) == key)]
                     if len(kept) != len(cn):
                         m = dict(m, change_notes=kept)
-                rows.append(("card", deck_name, m))
+                rows.append((("card", deck_name, m), header))
         for m in moved_raw:
-            rows.append(("moved", m["front"], m["to"]))
+            rows.append((("moved", m["front"], m["to"]), False))
         return rows
 
     for d in todo:
