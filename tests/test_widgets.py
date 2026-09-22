@@ -5,14 +5,6 @@ same as every other test file here.
 """
 
 
-def _tall(lst):
-    """Make a StreamingList's rows_container read as already taller than its
-    (always-0 under the mock) viewport, so _idle_extend's viewport-fill guard does
-    not shadow whatever the caller actually wants to exercise."""
-    import types
-    lst._rows_container.sizeHint = lambda: types.SimpleNamespace(height=lambda: 999)
-
-
 def _stub_row(built, item):
     """A bare row builder that records what it was asked to build, so the streaming
     list tests measure the container's own batching behaviour rather than a card's
@@ -418,11 +410,6 @@ def test_streaming_list_prefetch_leaves_a_stay_hidden_row_hidden_when_revealed()
         lst = widgets.StreamingList(row_for, list(range(6)), batch=2)
         lst.isVisible = lambda: True
         lst._last_scroll = -1
-        # The mock's sizeHint and viewport height are both always 0, which would
-        # otherwise read as "still short of the viewport" and take _idle_extend's
-        # stall-recovery branch instead of the prefetch path this test exercises.
-        # Real Qt geometry is qt_tests/'s job; here just clear that guard.
-        _tall(lst)
         lst._idle_extend()
         handle = native._live_work[-1]
         handle.join()
