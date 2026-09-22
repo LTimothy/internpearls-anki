@@ -23,8 +23,8 @@ from .config import (DECK_BACKUPS_KEEP, INSTALLED, TARGET_FIELDS, _USER_FILES, _
 from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
                     changed_templates, declined_drop, empty_cards_dialog_rows,
                     fields_to_carry_over, manifest_decks_for, model_shape,
-                    note_display_label, plan_notetype_changes, plural, remap_cards,
-                    select_empty_cards, write_personalized)
+                    note_display_label, plan_notetype_changes, plural, protected_for,
+                    remap_cards, select_empty_cards, write_personalized)
 from .platform import platform, platform_owner_id
 from .review import _CONFIRM_HEIGHT, append_rows, build_list_body, show_result
 from .ui import _ask, _ask_with_widget, _info, _manual_flow, _safe, _warn
@@ -358,13 +358,13 @@ def _note_field(note, name):
     return next((f for f in note.keys() if f.lower() == lowered), None)
 
 
-def _snapshot(protected, scope_tag):
+def _snapshot(protected, scope_tag, per_note=None):
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
     snap = {}
     for nid in mw.col.find_notes(search):
         note = mw.col.get_note(nid)
         saved = {}
-        for name in protected:
+        for name in protected_for(note.guid, protected, per_note):
             f = _note_field(note, name)
             if f and note[f].strip():
                 saved[f] = note[f]
@@ -373,7 +373,7 @@ def _snapshot(protected, scope_tag):
     return snap
 
 
-def _capture_shipped(protected, scope_tag, touched):
+def _capture_shipped(protected, scope_tag, touched, per_note=None):
     """What the deck source's own values are, read straight after an import and before
     anything is restored, which is the one moment the collection holds them.
 
@@ -392,7 +392,7 @@ def _capture_shipped(protected, scope_tag, touched):
         if note.guid not in touched:
             continue
         vals = {}
-        for name in protected:
+        for name in protected_for(note.guid, protected, per_note):
             f = _note_field(note, name)
             if f:
                 vals[f] = note[f]
@@ -690,7 +690,7 @@ def apply_deck_moves(moves, existing_guid_to_nid):
     return n
 
 
-def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields):
+def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields, per_note=None):
     """Before a retired note is archived, copy the learner's protected-field text (e.g.
     Notes) onto its replacement(s) so a personal annotation isn't stranded on a card
     that's about to be suspended out of review.
@@ -701,6 +701,11 @@ def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields)
     learner's already written on the new card, and copies to every replacement they
     already have (a symmetric split has no single "primary" to prefer). Returns the
     number of replacement notes updated.
+
+    Looks up `per_note` twice per pair, once for the predecessor's own guid and once
+    for each replacement's: a field the deck source declares protected only on the
+    successor would otherwise never be read here, since the predecessor's list is a
+    different note's declaration.
     """
     n = 0
     for r in retired:
@@ -708,8 +713,12 @@ def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields)
         if old_nid is None:
             continue
         old_note = mw.col.get_note(old_nid)
-        saved = {f: old_note[f] for f in protected_fields
-                 if f in old_note and old_note[f].strip()}
+        predecessor_fields = protected_for(r["guid"], protected_fields, per_note)
+        saved = {}
+        for name in predecessor_fields:
+            f = _note_field(old_note, name)
+            if f and old_note[f].strip():
+                saved[f] = old_note[f]
         if not saved:
             continue
         for target_guid in r["superseded_by"]:
@@ -717,7 +726,12 @@ def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields)
             if target_nid is None:
                 continue
             target_note = mw.col.get_note(target_nid)
-            current = {f: target_note[f] for f in protected_fields if f in target_note}
+            replacement_fields = protected_for(target_guid, protected_fields, per_note)
+            current = {}
+            for name in replacement_fields:
+                f = _note_field(target_note, name)
+                if f:
+                    current[f] = target_note[f]
             to_write = fields_to_carry_over(saved, current)
             if not to_write:
                 continue
@@ -954,9 +968,8 @@ def change_note_types(changes):
     return done
 
 
-def _check_protected_conversion(changes, protected):
+def _check_protected_conversion(changes, protected, per_note=None):
     """Refuse a conversion that would discard a nonempty protected field."""
-    protected = {str(name).casefold() for name in protected}
     for change in changes:
         old = mw.col.models.by_name(change["old"])
         new = mw.col.models.by_name(change["new"])
@@ -967,8 +980,10 @@ def _check_protected_conversion(changes, protected):
         if not nid:
             continue
         note = mw.col.get_note(nid)
+        guid_protected = {str(name).casefold()
+                          for name in protected_for(change["guid"], protected, per_note)}
         for i, field in enumerate(old["flds"]):
-            if (i not in kept and field["name"].casefold() in protected
+            if (i not in kept and field["name"].casefold() in guid_protected
                     and note[field["name"]].strip()):
                 raise ValueError(f"Cannot convert this deck: protected field {field['name']} "
                                  "has content but no destination in the new note type.")

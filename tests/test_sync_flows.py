@@ -266,16 +266,18 @@ def _fields(front, back="the back", notes="", dosing=""):
     return [front, back, "why", "", "Pharm", dosing, notes]
 
 
-def _write_source(tmp_path, decks, retired=None, deck_moves=None, change_notes=None):
+def _write_source(tmp_path, decks, retired=None, deck_moves=None, change_notes=None,
+                  note_protected_fields=None):
     """decks: {deck_name: (version, notes, model_or_None)} -> source folder path.
-    `retired`/`deck_moves`/`change_notes`, if given, ride along in the same manifest, so
-    update_decks() tests can build a source that carries a content update alongside a
-    reconcile ledger or the deck source's own change notes."""
+    `retired`/`deck_moves`/`change_notes`/`note_protected_fields`, if given, ride along
+    in the same manifest, so update_decks() tests can build a source that carries a
+    content update alongside a reconcile ledger or the deck source's own change notes."""
     folder = tmp_path / "source"
     folder.mkdir(exist_ok=True)
     manifest = {"schema": 1, "decks": [], "front_aliases": {},
                 "retired": retired or {}, "deck_moves": deck_moves or {},
-                "change_notes": change_notes or {}}
+                "change_notes": change_notes or {},
+                "note_protected_fields": note_protected_fields or {}}
     for name, spec in decks.items():
         version, notes, model = spec[0], spec[1], spec[2]
         media = spec[3] if len(spec) > 3 else None
@@ -506,6 +508,37 @@ def test_preserved_field_the_learner_edited_is_kept_and_the_collision_reported(a
 
     assert anki.col.note_by_guid("g1")["Dosing"] == "1 mg/kg (my attending says 1.5)"
     assert "changed a field you had also written in yourself" in _summary_text(trees)
+
+
+def test_note_protected_field_survives_edit_while_declared_only_on_that_note(anki, tmp_path):
+    """note_protected_fields (from the manifest) protects a field on one note without
+    the global protected_fields setting covering every note with a field of that name:
+    Dosing isn't in the global list here at all, only in this note's own declaration.
+
+    Three behaviours in one note: the declared field carries the deck's own content
+    until the learner edits it (first sync, no edit yet); once edited, that value
+    survives a later sync that ships something else; and an undeclared field on the
+    very same note (Back) keeps receiving updates as normal.
+    """
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one", dosing="1 mg/kg"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", dosing="1 mg/kg"), TAGS)], None)},
+        note_protected_fields={"g1": ["Dosing"]}))
+    anki.mw._config["protected_fields"] = ["Notes"]
+    _sync(anki)   # establishes the baseline; Dosing is untouched so far
+
+    anki.col.note_by_guid("g1")["Dosing"] = "learner's own dose note"
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="NEW back", dosing="2 mg/kg"),
+                       TAGS)], None)},
+        note_protected_fields={"g1": ["Dosing"]}))
+    anki.mw._config["protected_fields"] = ["Notes"]
+    _sync(anki)
+
+    note = anki.col.note_by_guid("g1")
+    assert note["Dosing"] == "learner's own dose note"   # kept, though not globally protected
+    assert note["Back"] == "NEW back"                    # undeclared field still updated
 
 
 def test_no_collision_reported_for_a_deck_this_run_never_touched(anki, tmp_path):
