@@ -53,6 +53,12 @@ _STRUCTURAL_FIELDS = {"Why", "Dosing", "Tag", "Image"}
 # these confirmations too and cannot import sync.py (sync.py imports it).
 _CONFIRM_HEIGHT = 380
 
+# A change group bigger than this folds behind its own header: the shared note is the
+# whole explanation, and thirty rows of it is scroll rather than information. Above
+# three on purpose, so the demo's three-member history fixture still renders its
+# members (browser_tests/parity.spec.mjs).
+_GROUP_COLLAPSE_MIN = 5
+
 # Matches the deck's own CSS so review looks like study: the same green why rule,
 # grey dosing block, and blue cloze fill. Every colour below is asked for by role from
 # palette.colors(), which picks the light or dark set from Anki's own theme at the
@@ -710,6 +716,46 @@ def _change_note_row(note, indent):
     return row
 
 
+def _group_note_row(note, card_count):
+    """The header over a change group's members: the shared note (see
+    _change_note_row above), plus a toggle once the group is long enough to fold (see
+    _GROUP_COLLAPSE_MIN).
+
+    Returns (row, group). `group` is None below the threshold, when there is nothing
+    to fold and nothing for `_row` (build_update_body) to register a member against.
+    Otherwise it is the live fold state: {"expanded": bool, "widgets": [...]}, appended
+    to as each member row is built (even a batch built long after this header, via
+    StreamingList's own prefetch) and read back by the toggle to show or hide every
+    member built so far.
+    """
+    row = _change_note_row(note, 0)
+    row.layout().setStretch(0, 1)
+    if card_count < _GROUP_COLLAPSE_MIN:
+        return row, None
+
+    group = {"expanded": False, "widgets": []}
+    note_text = plain_text(note.get("note", ""))
+    if len(note_text) > 60:
+        note_text = note_text[:59].rstrip() + "…"
+    toggle = link_button("Show cards")
+
+    def _name_toggle(expanded):
+        verb = "Hide cards" if expanded else "Show cards"
+        toggle.setText(verb)
+        toggle.setAccessibleName(f"{verb}: {note_text}")
+
+    def _toggle(_checked=False):
+        group["expanded"] = not group["expanded"]
+        for widget in group["widgets"]:
+            widget.setVisible(group["expanded"])
+        _name_toggle(group["expanded"])
+
+    toggle.clicked.connect(_toggle)
+    _name_toggle(False)
+    row.layout().addWidget(toggle, 0, Qt.AlignmentFlag.AlignTop)
+    return row, group
+
+
 def _retired_row(identity, reason, chips):
     """A retired ledger entry's row: its identity through `simple_row`, and, when the
     ledger recorded one, its reason as a second, muted line beneath, in the same
@@ -1214,6 +1260,8 @@ def _chip_kinds(items):
             kinds.append(item[1])
         elif item[0] in ("retired", "moved"):
             kinds.append(item[0])
+        elif item[0] == "group_note":
+            pass   # the header carries no chip of its own
     return tuple(dict.fromkeys(k for k in kinds if k))
 
 
@@ -1279,7 +1327,10 @@ def build_update_body(items, sources, flags, new_index, decisions,
     one shared change note rendered once, over the member rows beneath it, through the
     same accent-barred style a single card's own note already uses (`_change_note_row`);
     each member card's own matching entry is already dropped from its `change_notes`
-    before this screen ever sees it, so the note is not shown twice. `sources` is
+    before this screen ever sees it, so the note is not shown twice. A group of at least
+    `_GROUP_COLLAPSE_MIN` cards folds behind its header, with a toggle to reveal its
+    members (`_group_note_row`); a smaller group renders every member open, as before.
+    `sources` is
     {deck_name: .apkg path}, threaded straight into build_resolvers so a row's picture
     extracts from the same already-downloaded file this screen read the rest of the
     card from.
@@ -1381,8 +1432,30 @@ def build_update_body(items, sources, flags, new_index, decisions,
     # given the same chip set or the column stops lining up.
     chips = _chip_kinds(items)
 
+    # The change group currently streaming through, or None between groups: set on a
+    # "group_note" item, read (and grown) by every member row that follows it, cleared
+    # on the plain sep that marks the group's end. See _grouped_rows in sync.py for
+    # where the ("sep", "grouped") tagging that drives this comes from.
+    active_group = None
+
     def _row(item):
-        if item[0] in ("header", "note", "sep"):
+        nonlocal active_group
+        if item[0] == "group_note":
+            note = item[1]
+            card_count = item[2] if len(item) > 2 else 0
+            row, active_group = _group_note_row(note, card_count)
+            return row
+        if item[0] == "sep":
+            grouped = len(item) > 1 and item[1] == "grouped"
+            group = active_group if grouped else None
+            row = _list_row(item, chips=chips)
+            if group is not None:
+                row.ip_stay_hidden = not group["expanded"]
+                group["widgets"].append(row)
+            if not grouped:
+                active_group = None
+            return row
+        if item[0] in ("header", "note"):
             return _list_row(item, chips=chips)
         if item[0] == "deck":
             _, deck_short, counts = item
@@ -1391,15 +1464,20 @@ def build_update_body(items, sources, flags, new_index, decisions,
             # A stranded-pair row (see sync._stranded_items) is a 2-tuple with no
             # reason of its own; a ledger retirement carries one as its 3rd element.
             reason = item[2] if len(item) > 2 else ""
-            return _retired_row(item[1], reason, chips)
+            row = _retired_row(item[1], reason, chips)
+            if active_group is not None:
+                row.ip_stay_hidden = not active_group["expanded"]
+                active_group["widgets"].append(row)
+            return row
         if item[0] == "moved":
             _, front, dest_short = item
             return simple_row("moved", front, f"→ {dest_short}", chips=chips)
-        if item[0] == "group_note":
-            return _change_note_row(item[1], 0)
         _, deck_name, detail = item
         row = _card_row(detail, flags, boxes, decisions, _on_decide,
                         resolve=resolvers.get(deck_name), chips=chips)
+        if active_group is not None:
+            row.ip_stay_hidden = not active_group["expanded"]
+            active_group["widgets"].append(row)
         box = boxes.get(detail["guid"])
         if box is not None:
             box.textChanged.connect(lambda g=detail["guid"], b=box: _on_change(g, b))
