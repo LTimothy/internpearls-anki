@@ -506,7 +506,7 @@ def test_remap_cards_end_to_end(tmp_path):
 def test_remap_cards_no_matches_are_all_new(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "g1", "Nobody has this")])
-    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her={}, aliases={})
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, existing_fronts={}, aliases={})
     assert (remap, in_place, as_new) == ({}, 0, 1)
     assert new_notes == [(1, ["Nobody has this", "back text"], "g1")]
 
@@ -528,7 +528,7 @@ def test_remap_cards_alias_target_also_missing_is_new(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "g1", "New wording")])
     aliases = {"New wording": "Old wording"}   # but "Old wording" isn't in her map
-    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, her={}, aliases=aliases)
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, existing_fronts={}, aliases=aliases)
     assert (remap, in_place, as_new) == ({}, 0, 1)
     assert [rid for rid, _, _ in new_notes] == [1]
 
@@ -556,12 +556,12 @@ def test_remap_cards_guid_match_wins_over_front_match(tmp_path):
 
 
 def test_remap_cards_uses_complete_guids_when_ambiguous_fronts_are_excluded(tmp_path):
-    class HerCards(dict):
+    class ExistingCards(dict):
         pass
 
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "guid-b", "Shared front")])
-    her = HerCards()
+    her = ExistingCards()
     her.guids = {"guid-a", "guid-b"}
 
     remap, in_place, as_new, new_notes, matched = logic.remap_cards(
@@ -581,7 +581,7 @@ def test_remap_cards_new_notes_length_always_matches_as_new(tmp_path):
         (3, "g-new-b", "New B"),
     ])
     _, _, as_new, new_notes, _ = logic.remap_cards(
-        apkg, her={"She has this": "g-known"}, aliases={})
+        apkg, existing_fronts={"She has this": "g-known"}, aliases={})
     assert as_new == len(new_notes) == 2
     assert [rid for rid, _, _ in new_notes] == [2, 3]   # apkg order preserved
 
@@ -593,7 +593,7 @@ def test_remap_cards_new_notes_carries_every_field_for_image_cards(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "g1", ['<img src="sample-a.jpg">', "Name this nerve",
                                       "Femoral nerve"])])
-    _, _, _, new_notes, _ = logic.remap_cards(apkg, her={}, aliases={})
+    _, _, _, new_notes, _ = logic.remap_cards(apkg, existing_fronts={}, aliases={})
     assert new_notes == [(1, ['<img src="sample-a.jpg">', "Name this nerve",
                               "Femoral nerve"], "g1")]
     # and the display helper picks the prompt out of exactly that list:
@@ -622,7 +622,7 @@ def test_remap_cards_matched_and_new_together_account_for_every_note(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "a", "One"), (2, "b", "Two"), (3, "c", "Three")])
     _, _, _, new_notes, matched = logic.remap_cards(
-        apkg, her={"One": "her-one"}, aliases={})
+        apkg, existing_fronts={"One": "her-one"}, aliases={})
     assert len(matched) + len(new_notes) == 3
 
 
