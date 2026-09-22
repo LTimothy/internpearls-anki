@@ -3,6 +3,27 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.72.0
+
+A deck source can now protect one field on one card. A note in a deck spec may list
+its own fields under `protected_fields`, and the manifest carries them as
+`note_protected_fields`. Sync decks and Import single deck add those fields to the
+configured Preserved fields for that card alone, through the same three-way merge: a
+field you have not edited still takes the deck's corrections, and a field you have
+edited keeps your version, with any conflicting source change reported in the results.
+This works for cards matched by front text as well as by guid.
+
+Update my decks folds a large group of cards that share one change note. Five or more
+cards under the same note now show the note once with a Show N cards button; the cards
+stay hidden until you open it and still apply when you press Update. Smaller groups are
+unchanged. The list keeps filling in the background, so decks listed after a folded
+group still appear without scrolling.
+
+When an AI run's completion fails, the run now stops before the error message appears,
+instead of continuing while the message stays open.
+
+Restart Anki after updating.
+
 ## v0.71.0
 
 Keep yours now remembers the exact revision you declined. Updates to other cards in
