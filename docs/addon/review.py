@@ -1456,9 +1456,9 @@ def build_update_body(items, sources, flags, new_index, decisions,
             if not grouped:
                 active_group = None
             return row
-        # A card, a retired ledger row, and a grouped sep (handled above) are the only
+        # A card and a retired ledger row (a grouped sep is handled above) are the only
         # items that continue a change group; anything else starts a new section.
-        if item[0] in ("header", "note", "deck", "moved"):
+        if item[0] not in ("card", "retired"):
             active_group = None
         if item[0] in ("header", "note"):
             return _list_row(item, chips=chips)
