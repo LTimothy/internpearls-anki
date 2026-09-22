@@ -2626,3 +2626,38 @@ def test_legacy_events_use_strict_actions_and_real_button_click(anki):
     })
 
     assert observed == [(True, True)]
+
+
+def test_combo_option_with_empty_item_data_gets_a_usable_id(anki):
+    """Qt lets an item carry empty data, and the add-on uses that for a "no
+    explicit choice" row (the AI effort dropdown's "Default"). Protocol v1 needs a
+    nonempty id, and an id the serializer advertises has to be one the resolver can
+    match: an empty one made the whole AI Backends dialog unrepresentable, which
+    took the browser demo's session down with it."""
+    from aqt.qt import QComboBox, QVBoxLayout, QWidget
+    import mock_anki
+
+    root = QWidget()
+    layout = QVBoxLayout(root)
+    combo = QComboBox()
+    combo.addItem("Default (medium)", "")     # the empty-data row
+    combo.addItem("high", "high")
+    layout.addWidget(combo)
+
+    tree = mock_anki.serialize_widget(root)
+    node = next(n for n in tree["nodes"] if n["id"] == combo.wid)
+    ids = [option["id"] for option in node["options"]]
+
+    assert all(ids), f"every option needs a nonempty id, got {ids}"
+    assert len(ids) == len(set(ids))
+    # The resolver has to agree with what the tree advertised, or the id is unusable.
+    assert [option_id for option_id, _ in mock_anki._combo_options(combo)] == ids
+
+    mock_anki.apply_actions(
+        {"actions": [{"type": "select-option", "id": combo.wid, "option_id": ids[0]}]},
+        allowed_ids={combo.wid})
+    assert combo.currentIndex() == 0
+    mock_anki.apply_actions(
+        {"actions": [{"type": "select-option", "id": combo.wid, "option_id": ids[1]}]},
+        allowed_ids={combo.wid})
+    assert combo.currentIndex() == 1
