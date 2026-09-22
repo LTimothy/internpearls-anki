@@ -1,17 +1,8 @@
 """Request capture regressions for every platform work caller."""
 import tempfile
 import time
-import types
 
 from internpearls.platform import NativePlatform, use_platform
-
-
-def _tall(listing):
-    """The mock's sizeHint and viewport height are both always 0, which would
-    otherwise read as "still short of the viewport" and take _idle_extend's
-    viewport-fill branch instead of the prefetch path these tests exercise. Real Qt
-    geometry is qt_tests/'s job; here just clear that guard."""
-    listing._rows_container.sizeHint = lambda: types.SimpleNamespace(height=lambda: 999)
 
 
 class _Work:
@@ -94,7 +85,6 @@ def test_streaming_prefetch_captures_safe_request_metadata(anki):
         listing = widgets.StreamingList(lambda _item: widgets.QWidget(), [1, 2], batch=1)
         listing.isVisible = lambda: True
         listing._last_scroll = -1
-        _tall(listing)
         listing._idle_extend()
 
     request = _request(native)
@@ -115,7 +105,6 @@ def test_streaming_prefetch_does_not_overlap_itself(anki):
             lambda _item: widgets.QWidget(), list(range(20)), batch=1)
         listing.isVisible = lambda: True
         listing._last_scroll = -1
-        _tall(listing)
         listing._idle_extend()
         listing._idle_extend()   # a tick landing before the first chunk delivered
         listing._idle_extend()

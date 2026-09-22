@@ -178,13 +178,20 @@ def test_a_large_immediate_fold_leaves_most_of_it_unbuilt_on_open():
 
     Needs real PyQt6 (harness.render): tests/mock_anki.py fakes sizeHint, so the mock's
     StreamingList never sees a real viewport height and this loop never runs there.
+
+    The bound below is tied to _fill_viewport's own stall mechanism (one growing batch
+    plus _FILL_STALL_BATCHES stalled ones) rather than an arbitrary margin off total(),
+    plus one further batch of slack: harness.render's own processEvents() calls can let
+    a 150ms idle tick land and pull in one more batch, which this feature (unlike
+    before it existed) can now do.
     """
     from internpearls.widgets import StreamingList
     n = 200
     shot = harness.render("confirm", group_size=n, size=(880, 400))
     lst = shot.dialog.findChild(StreamingList)
     assert lst is not None
-    assert lst.shown() < lst.total() - 100, (
+    max_synchronous = (StreamingList._FILL_STALL_BATCHES + 2) * lst._batch
+    assert lst.shown() <= max_synchronous, (
         f"{lst.shown()} of {lst.total()} shown on open: an immediate fold this "
         "large should leave most of it unbuilt")
 
@@ -226,12 +233,19 @@ def test_a_large_immediate_fold_still_reveals_the_next_decks_first_card_on_idle(
     click and no fill_all() here on purpose: the idle timer alone must finish the job,
     off the open path, the way a learner who never touches the dialog would experience
     it. Must fail against 10cbbcb and pass after the fix.
+
+    group_size=200 leaves the idle timer several batches short of the end after the
+    open-time stall, so this needs `_extend()` to re-arm itself five or more times in a
+    row, not just once, which binds the re-arm rather than only the single delivery a
+    smaller fold would exercise.
     """
     import time
+    from internpearls.widgets import StreamingList
     _, q = harness.bootstrap()
-    shot = harness.render("confirm", group_size=73, second_deck=True, size=(880, 400))
+    shot = harness.render("confirm", group_size=200, second_deck=True, size=(880, 400))
+    lst = shot.dialog.findChild(StreamingList)
     app = harness.app()
-    deadline = time.monotonic() + 8
+    deadline = time.monotonic() + 3
     texts = ""
     while time.monotonic() < deadline:
         app.processEvents()
@@ -242,3 +256,6 @@ def test_a_large_immediate_fold_still_reveals_the_next_decks_first_card_on_idle(
     assert "Second Deck" in texts
     assert "Second deck's first pending card?" in texts, (
         "the second deck's first pending card never became visible on idle")
+    assert lst.shown() == lst.total(), (
+        f"{lst.shown()} of {lst.total()} shown: the idle timer stopped re-arming "
+        "before it finished the list")
