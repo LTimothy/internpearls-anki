@@ -131,7 +131,7 @@ The idle prefetch in Update my cards was too eager: it built rows at about 200 a
 second, and each one grew the list, so the scrollbar kept shifting and the screen
 stuttered. Prefetched rows now stay hidden until scrolling reveals them, so the
 content height only changes when the reader scrolls, and the prefetch runs three
-rows every 150 ms and pauses while she is scrolling.
+rows every 150 ms and pauses while the list is being scrolled.
 
 ## v0.66.0
 
