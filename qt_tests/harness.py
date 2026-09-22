@@ -494,7 +494,28 @@ def _scene_confirm(mock, opts):
         # render (see test_change_note_groups.py). Real ("group_note", note,
         # card_count) 3-tuples, unlike the grouped=True fixture above, which
         # deliberately stays a 2-tuple.
+        #
+        # `pad`: N plain, visible filler cards ahead of the group. A folded member
+        # row is hidden from the moment it is built, and a hidden widget contributes
+        # nothing to its layout's sizeHint, so StreamingList._fill_viewport (which
+        # keeps extending until built content fills the viewport) would otherwise
+        # read a folded group as still-empty and build every member up front no
+        # matter how large the group is. Real, visible rows ahead of the group give
+        # it something to measure, so it stops after a batch or two and leaves later
+        # members to the idle prefetcher and later _extend() calls, same as a real
+        # deck section ahead of the group would.
         n = opts["group_size"]
+        pad = opts.get("pad", 0)
+        for i in range(pad):
+            if i:
+                items.append(("sep",))
+            filler = {"guid": f"filler-card-{i}", "notetype": "Study Deck - Basic",
+                      "fields": [("Front", f"Filler card number {i}?"),
+                                 ("Back", "Answer."), ("Why", ""), ("Image", ""),
+                                 ("Tag", ""), ("Dosing", ""), ("Notes", "")]}
+            items.append(("card", "Example Deck", filler))
+        if pad:
+            items.append(("sep",))
         group_note = {"kind": "feedback",
                       "note": f"an example reviewer note spanning {n} cards"}
         items.append(("group_note", group_note, n))
@@ -504,6 +525,25 @@ def _scene_confirm(mock, opts):
                                  ("Back", "Answer."), ("Why", ""), ("Image", ""),
                                  ("Tag", ""), ("Dosing", ""), ("Notes", "")]}
             items += [("sep", "grouped"), ("card", "Example Deck", member)]
+        if opts.get("second_deck"):
+            # sync._section's own shape: a ("header", ...) with no separator before
+            # it. The group's last member above has no trailing sep either, which is
+            # what review._row must still end the group on (see
+            # test_change_note_groups.py's second-deck test).
+            second_card = {"guid": "second-deck-card-0",
+                          "notetype": "Study Deck - Basic",
+                          "fields": [("Front", "Second deck's first pending card?"),
+                                     ("Back", "Answer."), ("Why", ""), ("Image", ""),
+                                     ("Tag", ""), ("Dosing", ""), ("Notes", "")]}
+            trailing_card = {"guid": "second-deck-card-1",
+                             "notetype": "Study Deck - Basic",
+                             "fields": [("Front", "Second deck's next card?"),
+                                        ("Back", "Answer."), ("Why", ""),
+                                        ("Image", ""), ("Tag", ""), ("Dosing", ""),
+                                        ("Notes", "")]}
+            items += [("header", "Second Deck"),
+                      ("card", "Second Deck", second_card), ("sep",),
+                      ("card", "Second Deck", trailing_card)]
     else:
         for i, d in enumerate(details):
             if i:
