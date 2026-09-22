@@ -737,16 +737,17 @@ def _group_note_row(note, card_count):
     note_text = plain_text(note.get("note", ""))
     if len(note_text) > 60:
         note_text = note_text[:59].rstrip() + "…"
-    toggle = link_button("Show cards")
+    toggle = link_button(f"Show {card_count} cards")
 
     def _name_toggle(expanded):
-        verb = "Hide cards" if expanded else "Show cards"
+        verb = f"Hide {card_count} cards" if expanded else f"Show {card_count} cards"
         toggle.setText(verb)
-        toggle.setAccessibleName(f"{verb}: {note_text}")
+        toggle.setAccessibleName(f"{verb}: {note_text}" if note_text else verb)
 
     def _toggle(_checked=False):
         group["expanded"] = not group["expanded"]
         for widget in group["widgets"]:
+            widget.ip_stay_hidden = not group["expanded"]
             widget.setVisible(group["expanded"])
         _name_toggle(group["expanded"])
 
@@ -1455,6 +1456,10 @@ def build_update_body(items, sources, flags, new_index, decisions,
             if not grouped:
                 active_group = None
             return row
+        # A card, a retired ledger row, and a grouped sep (handled above) are the only
+        # items that continue a change group; anything else starts a new section.
+        if item[0] in ("header", "note", "deck", "moved"):
+            active_group = None
         if item[0] in ("header", "note"):
             return _list_row(item, chips=chips)
         if item[0] == "deck":
