@@ -571,6 +571,63 @@ def test_note_protected_field_survives_when_the_note_matches_only_by_front(anki,
     assert anki.col.note_by_guid("her-own-guid")["Dosing"] == "learner's own dose note"
 
 
+def test_import_single_note_protected_field_survives_when_the_note_matches_only_by_front(
+        anki, tmp_path):
+    """Same guid-drift case as the sync test above, but through import_single(), which
+    computed the same front-matched remap and then discarded it instead of using it to
+    re-key note_protected_fields. A note matched only by front had its declared field
+    silently overwritten through this path even though Sync decks already handled it."""
+    from internpearls import sync
+    anki.col.add_note("her-own-guid", _fields("Front one", dosing="1 mg/kg"), [TAGS],
+                      deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("builder-guid", _fields("Front one", dosing="1 mg/kg"), TAGS)],
+               None)}, note_protected_fields={"builder-guid": ["Dosing"]}))
+    anki.mw._config["protected_fields"] = ["Notes"]
+    _sync(anki)   # matched by front; the learner's own guid is kept
+
+    anki.col.note_by_guid("her-own-guid")["Dosing"] = "learner's own dose note"
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("builder-guid", _fields("Front one", dosing="2 mg/kg"), TAGS)],
+             deck=DECK)
+    anki.gui.file_picks = [src]
+
+    sync.import_single()
+
+    assert anki.col.note_by_guid("her-own-guid")["Dosing"] == "learner's own dose note"
+
+
+def test_per_deck_snap_top_up_merges_rather_than_replaces_an_existing_entry(anki, tmp_path):
+    """_run_sync's initial _snapshot() captures the global Notes field for a
+    front-matched note before the per-deck loop learns which guid the note's own
+    Dosing declaration belongs to. The later top-up for Dosing (see _snapshot_fields
+    below) has to merge into that guid's existing snap entry, not replace it, or the
+    already-captured Notes value is lost and never restored."""
+    from internpearls import sync
+    anki.col.add_note("her-own-guid", _fields("Front one", dosing="1 mg/kg",
+                                              notes="original note"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("builder-guid", _fields("Front one", dosing="1 mg/kg",
+                                                notes="original note"), TAGS)],
+               None)}, note_protected_fields={"builder-guid": ["Dosing"]}))
+    anki.mw._config["protected_fields"] = ["Notes"]
+    _sync(anki)   # matched by front; establishes the baseline
+
+    note = anki.col.note_by_guid("her-own-guid")
+    note["Notes"] = "learner's own note"
+    note["Dosing"] = "learner's own dose note"
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("builder-guid", _fields("Front one", dosing="2 mg/kg",
+                                                notes="new note"), TAGS)],
+               None)}, note_protected_fields={"builder-guid": ["Dosing"]}))
+    anki.mw._config["protected_fields"] = ["Notes"]
+    _sync(anki)
+
+    note = anki.col.note_by_guid("her-own-guid")
+    assert note["Notes"] == "learner's own note"
+    assert note["Dosing"] == "learner's own dose note"
+
+
 def test_no_collision_reported_for_a_deck_this_run_never_touched(anki, tmp_path):
     """The false positive: a card in a deck with no update at all was reported as
     conflicting. Nothing imported over it, so nothing of the learner's was overwritten
