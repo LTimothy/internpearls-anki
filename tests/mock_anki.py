@@ -2184,12 +2184,11 @@ def _specific_fields(widget, kind):
                 "max_length": 1048576,
                 "max_blocks": getattr(widget, "_max_block_count", 0)}
     if kind == "combo":
-        options = []
-        for index, label in enumerate(widget._items):
-            option_id = widget._data[index]
-            if option_id is None:
-                option_id = f"{widget.wid}:option:{index}"
-            options.append({"id": str(option_id), "label": label})
+        # Built through _combo_options, the same function that resolves an incoming
+        # option_id back to an index. Two copies of this rule could disagree, and
+        # an id the tree advertises but the resolver cannot match is unusable.
+        options = [{"id": option_id, "label": widget._items[index]}
+                   for option_id, index in _combo_options(widget)]
         ids = [option["id"] for option in options]
         if len(ids) != len(set(ids)):
             raise ProtocolError("duplicate combo option id")
@@ -2381,7 +2380,10 @@ def _combo_options(widget):
     count = len(widget._items) if hasattr(widget, "_items") else widget.count()
     for index in range(count):
         data = widget._data[index] if hasattr(widget, "_data") else widget.itemData(index)
-        if data is None:
+        # Qt lets an item carry empty data, and the add-on uses that for a "no
+        # explicit choice" entry (the Default effort row). The protocol requires a
+        # nonempty id, so those fall back to the positional one.
+        if data is None or not str(data).strip():
             data = f"{widget.wid}:option:{index}"
         options.append((str(data), index))
     return options
@@ -3171,8 +3173,12 @@ def install():
 
         @staticmethod
         def openUrl(url):
-            _QDesktopServices.opened.append(
-                url.toString() if hasattr(url, "toString") else str(url))
+            target = url.toString() if hasattr(url, "toString") else str(url)
+            _QDesktopServices.opened.append(target)
+            # Narrated like the backup picker above: nothing opens in the browser
+            # demo, and a click that leaves no trace at all reads as a dead button.
+            if _gui is not None:
+                _gui.tooltips.append(f"(your browser would open {target})")
             return True
 
     class _QFontDatabase:

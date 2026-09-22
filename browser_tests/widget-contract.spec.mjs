@@ -377,3 +377,37 @@ test("a rich label keeps its formatting but cannot become script", async ({ page
   await page.waitForTimeout(50);
   expect(await page.evaluate(() => window.demoXss)).toBe(0);
 });
+
+test("a container does not re-enable a control the protocol disabled", async ({ page }) => {
+  // applyCommonState used to sweep every descendant control with the container's
+  // own state, so a disabled child inside an enabled row rendered clickable and
+  // every click came back as a disabled-target contract error.
+  await page.goto("/browser_tests/contract-page.html");
+  const result = await page.evaluate(async () => {
+    const { renderWidgetTree } = await import("/docs/demo-renderer.js");
+    const base = (id, kind, extra) => ({
+      id, kind, parent_id: null, children: [], style_roles: [], actions: [],
+      visible: true, effective_visible: true, enabled: true, effective_enabled: true,
+      readonly: false, accessible_name: "", accessible_description: "",
+      tooltip: "", focus_policy: "", ...extra,
+    });
+    const tree = {
+      root_id: "row",
+      nodes: [
+        base("row", "row", { children: ["live", "dead"], margins: { left: 0, top: 0, right: 0, bottom: 0 },
+          gap: 0, stretches: [], alignment: "start" }),
+        base("live", "button", { parent_id: "row", text: "Live", checkable: false, checked: false,
+          role: "other", default: false, escape: false, actions: ["activate"] }),
+        base("dead", "button", { parent_id: "row", text: "Dead", checkable: false, checked: false,
+          role: "other", default: false, escape: false, actions: ["activate"],
+          enabled: false, effective_enabled: false }),
+      ],
+    };
+    const rendered = renderWidgetTree(tree, { nodes: new Map(tree.nodes.map((n) => [n.id, n])) });
+    document.body.appendChild(rendered);
+    const at = (id) => rendered.querySelector(`[data-wid="${id}"]`);
+    return { live: at("live").disabled, dead: at("dead").disabled };
+  });
+  expect(result.live).toBe(false);
+  expect(result.dead).toBe(true);
+});

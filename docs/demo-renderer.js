@@ -386,9 +386,18 @@ function applyCommonState(element, node, context) {
   if (!node.effective_visible) element.style.display = "none";
   element.setAttribute("aria-hidden", String(!node.effective_visible));
   element.setAttribute("aria-disabled", String(!node.effective_enabled));
-  const controls = element.matches("button, input, select, textarea")
-    ? [element]
-    : Array.from(element.querySelectorAll("button, input, select, textarea"));
+  // Only the controls this node owns: itself, plus the parts a composite renderer
+  // built for it (a combo's select and editor, a toggle's input), which carry its
+  // own wid. A container must not push its state onto a child node's control,
+  // because the child already carries its own effective_enabled, computed with
+  // every ancestor accounted for. Sweeping all descendants re-enabled controls the
+  // protocol had disabled, so they rendered clickable and every click came back as
+  // a disabled-target contract error.
+  const controls = Array.from(new Set([
+    ...(element.matches("button, input, select, textarea") ? [element] : []),
+    ...Array.from(element.querySelectorAll("button, input, select, textarea"))
+      .filter((control) => control.dataset.wid === node.id),
+  ]));
   for (const control of controls) {
     control.disabled = !node.effective_enabled;
     if ("readOnly" in control) control.readOnly = Boolean(node.readonly);

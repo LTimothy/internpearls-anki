@@ -232,6 +232,11 @@ test("real Settings spin input keeps focus after edit acknowledgement", async ({
   await page.evaluate((id) => window.demo.runFlow(id), settingsId);
   const spin = page.locator("#dbody input[type=number]").first();
   await expect(spin).toBeVisible();
+  // The interval is disabled until automatic sync is on, exactly as the real
+  // dialog has it. This used to be editable straight away only because the
+  // renderer re-enabled every control inside an enabled container.
+  await page.getByRole("checkbox", { name: /Sync decks automatically/ }).click();
+  await expect(spin).toBeEnabled({ timeout: 120000 });
   const bounds = await spin.evaluate((element) => ({
     minimum: Number(element.min),
     maximum: Number(element.max),
@@ -641,4 +646,38 @@ test("rich-label sanitizing removes nothing the production dialogs emit", async 
 
   expect(result.total).toBeGreaterThan(0);
   expect(result.differing).toEqual([]);
+});
+
+test("a second action queued behind an in-flight response is not dropped", async ({ page }) => {
+  // Clicking one control and then another before the first response lands used to
+  // lose the second silently: the first response enabled the second control, and
+  // availability was folded into the identity signature the replay check compares,
+  // so the queued action read as targeting a different widget and was discarded.
+  await openRealDemo(page);
+  const dimming = await menuActionId(page, /dimming/i);
+  expect(dimming).not.toBeNull();
+
+  const result = await page.evaluate(async (menuId) => {
+    await window.demo.runFlow(menuId);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const radios = () => Array.from(
+      document.querySelectorAll('#overlay input[type="radio"]'),
+    ).map((input) => `${input.dataset.wid}=${input.checked}`);
+    const before = radios();
+    const check = document.querySelector('#overlay input[type="checkbox"]');
+    const second = document.querySelectorAll('#overlay input[type="radio"]')[1];
+    // Issued back to back, so the second is queued while the first is in flight.
+    const first = window.demo.dispatch([
+      { type: "toggle", id: check.dataset.wid, checked: true }]);
+    const queued = window.demo.dispatch([
+      { type: "toggle", id: second.dataset.wid, checked: true }]);
+    await Promise.all([first.catch(() => {}), queued.catch(() => {})]);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return { before, after: radios(), target: second.dataset.wid };
+  }, dimming);
+
+  expect(result.before).toContain(`${result.target}=false`);
+  expect(result.after).toContain(`${result.target}=true`);
+  // The group stayed exclusive rather than ending with both sides checked.
+  expect(result.after.filter((entry) => entry.endsWith("=true"))).toHaveLength(1);
 });
