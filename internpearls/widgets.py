@@ -540,12 +540,14 @@ class StreamingList(QScrollArea):
     genuinely needs every row built (e.g. before printing the whole list), and is safe
     to call on an already-exhausted list: it does nothing rather than rebuilding.
 
-    Batching is driven by two things, not one. Scrolling is the obvious one; the other
-    is the viewport growing past what is already built, which produces no scroll at all:
-    the scrollbar's range collapses to zero, `valueChanged` never fires again, and every
-    unbuilt row is stranded (a confirmation that silently listed 50 of 300 cards for
-    anyone who enlarged the dialog before scrolling). So a resize refills to the bottom
-    of the viewport as well. Both paths still build a batch at a time rather than
+    Batching is driven by three things, not one. Scrolling is the obvious one. A resize
+    is the second: growing the viewport past what is already built produces no scroll at
+    all, since the scrollbar's range collapses to zero and `valueChanged` never fires
+    again, so a resize refills to the bottom of the viewport too (a confirmation that
+    silently listed 50 of 300 cards for anyone who enlarged the dialog before scrolling).
+    The third is the idle timer: a folded group can leave the viewport short with
+    nothing to resize or scroll, so `_idle_extend` also fills toward the viewport height
+    on its own, off the open path. All three still build a batch at a time rather than
     everything, so the property this class exists for holds either way.
     """
 
@@ -607,6 +609,14 @@ class StreamingList(QScrollArea):
         return self._shown + len(self._prebuilt)
 
     def _idle_extend(self):
+        # A batch of folded rows adds no height, so _fill_viewport can stop with the
+        # viewport still unfilled. Finish filling here, off the open path.
+        if (self._shown < self.total()
+                and self._rows_container.sizeHint().height()
+                <= self.viewport().height()):
+            self._extend()
+            self._idle.start()
+            return
         if self.built() >= self.total():
             return
         # One chunk in flight at a time. A tick that beats the previous chunk's
@@ -667,13 +677,8 @@ class StreamingList(QScrollArea):
         super().resizeEvent(event)
         self._fill_viewport()
 
-    # A batch that adds no height is a strong signal it is entirely a folded group's
-    # members, since a single visible row would already grow the container. One retry
-    # covers a fold that ends right at a batch boundary; more than that is a fold
-    # taller than a couple of batches, and building further into it up front is the
-    # cost this class exists to avoid. Consistent with _GROUP_COLLAPSE_MIN in
-    # review.py: a small named threshold rather than a raw batch count.
-    _FILL_STALL_LIMIT = 1
+    # Consecutive no-growth batches tolerated before giving up synchronously.
+    _FILL_STALL_BATCHES = 2
 
     def _fill_viewport(self):
         """Build batches until the rows are taller than the viewport, run out, or
@@ -683,18 +688,17 @@ class StreamingList(QScrollArea):
         is only recomputed on Qt's own layout pass, so inside this loop it still reports
         the height from before the batch just appended, and the loop would build
         everything. A wrapping row's sizeHint is its unwrapped height, so this can
-        overshoot the viewport by a row or two; it never undershoots visible content,
-        which is the direction that would strand rows again.
+        overshoot the viewport by a row or two.
 
         A hidden row contributes nothing to that sizeHint, so a batch built entirely out
         of a folded group's members never grows it, and the loop above would otherwise
         keep extending until it ran out of items regardless of group size. Stopping once
-        that has stalled a couple of times in a row bounds the cost of an immediate fold
-        to a small, fixed number of batches instead. This never strands a row: a folded
-        member is reached by its own toggle (review._toggle sets visibility directly on
-        every widget it has built, no scrolling required), not by this loop, and
-        expanding the toggle grows the container past what is already built, which is
-        what gives the reader a real scrollbar to reach anything still unbuilt.
+        that has stalled `_FILL_STALL_BATCHES` times in a row bounds the synchronous cost
+        of an immediate fold, but can leave the viewport genuinely short with no
+        scrollbar to reach the rest. `_idle_extend` closes that off the open path: it
+        keeps calling `_extend()` on its own timer, at no added total cost since it
+        already builds every row to `total()` regardless, until the container's
+        sizeHint clears the viewport. This never strands a row.
         """
         stalled = 0
         height = self._rows_container.sizeHint().height()
@@ -703,7 +707,7 @@ class StreamingList(QScrollArea):
             grown = self._rows_container.sizeHint().height()
             if grown <= height:
                 stalled += 1
-                if stalled > self._FILL_STALL_LIMIT:
+                if stalled >= self._FILL_STALL_BATCHES:
                     break
             else:
                 stalled = 0
