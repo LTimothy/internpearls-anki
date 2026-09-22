@@ -502,8 +502,8 @@ def _scene_confirm(mock, opts):
         # read a folded group as still-empty and build every member up front no
         # matter how large the group is. Real, visible rows ahead of the group give
         # it something to measure, so it stops after a batch or two and leaves later
-        # members to the idle prefetcher and later _extend() calls, same as a real
-        # deck section ahead of the group would.
+        # members to be built (hidden) by the idle prefetcher and revealed by a later
+        # scroll, same as a real deck section ahead of the group would.
         n = opts["group_size"]
         pad = opts.get("pad", 0)
         for i in range(pad):

@@ -216,3 +216,29 @@ def test_every_member_of_a_large_immediate_fold_is_reachable_after_expanding():
     assert missing == [], (
         f"member(s) {missing} unreachable after the fold was expanded and the "
         "list filled")
+
+
+def test_a_large_immediate_fold_still_reveals_the_next_decks_first_card_on_idle():
+    """The visibility defect this task closes: `_fill_viewport`'s stall break (above)
+    is right to stop building synchronously into a large fold, but that alone leaves
+    the viewport short with no scrollbar, so a following deck's pending cards were
+    never shown on the one screen whose job is to list what is pending. No toggle
+    click and no fill_all() here on purpose: the idle timer alone must finish the job,
+    off the open path, the way a learner who never touches the dialog would experience
+    it. Must fail against 10cbbcb and pass after the fix.
+    """
+    import time
+    _, q = harness.bootstrap()
+    shot = harness.render("confirm", group_size=73, second_deck=True, size=(880, 400))
+    app = harness.app()
+    deadline = time.monotonic() + 8
+    texts = ""
+    while time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+        texts = "\n".join(w.text() for w in _visible_labels(shot.dialog, q))
+        if "Second deck's first pending card?" in texts:
+            break
+    assert "Second Deck" in texts
+    assert "Second deck's first pending card?" in texts, (
+        "the second deck's first pending card never became visible on idle")
