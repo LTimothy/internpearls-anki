@@ -306,44 +306,44 @@ def decide_addon_update_action(current, latest, auto_update, notify, last_notifi
     return "none"
 
 
-def find_deck_moves_needed(moves_ledger, her_guid_to_deck, her_front_to_guid=None):
+def find_deck_moves_needed(moves_ledger, existing_guid_to_deck, existing_front_to_guid=None):
     """Which of the learner's cards need to move deck to match a pure reorg.
 
     `moves_ledger` is {guid: {from, to, front?}}: every note the deck repo has ever
     relocated without changing its GUID (see build_all.py's deck_moves.json). `front`,
-    when present, is the note's current first field, used to find a learner's card
+    when present, is the note's current first field, used to find the learner's card
     even when its GUID no longer matches the ledger's (see below).
-    `her_guid_to_deck` is {guid: current deck name} for her collection.
-    `her_front_to_guid` is {first field: guid} for her collection (optional).
+    `existing_guid_to_deck` is {guid: current deck name} for the learner's collection.
+    `existing_front_to_guid` is {first field: guid} for the learner's collection (optional).
 
     Normally a card is matched to a ledger entry by GUID. But a card whose deck source
     changed its `id_seed` (say a deck's seed moving from v1 to v2) has a *different*
-    GUID in a learner's older collection than the one the ledger is keyed by, so a
+    GUID in the learner's older collection than the one the ledger is keyed by, so a
     pure GUID match misses it: the card sits stuck at `from` forever, its new deck
     perpetually re-offered because installed_matching_collection never finds a card
-    under it. So when the ledger GUID isn't in her collection, fall back to matching by
-    `front` (the same signal content-sync's remap_cards trusts; fronts are unique
-    across decks by build lint), and act on *her* GUID for that front. An older
-    manifest without `front`, or a caller that passes no `her_front_to_guid`, simply
-    keeps the GUID-only behavior.
+    under it. So when the ledger GUID isn't in the learner's collection, fall back to
+    matching by `front` (the same signal content-sync's remap_cards trusts; fronts are
+    unique across decks by build lint), and act on the learner's GUID for that front. An
+    older manifest without `front`, or a caller that passes no `existing_front_to_guid`,
+    simply keeps the GUID-only behavior.
 
-    A move only applies if her card is still sitting exactly where the deck source
-    last put it (`from`). If it's anywhere else (already at `to` because she reconciled
-    a previous move, or somewhere of her own choosing because she filed it into a
-    custom deck), leave it alone. This is what makes reconciling deck moves both
-    idempotent (nothing to do once she's there) and non-destructive of her own
-    organization (a deliberate move away from `from` is never overwritten).
+    A move only applies if the learner's card is still sitting exactly where the deck
+    source last put it (`from`). If it's anywhere else (already at `to` because the
+    learner reconciled a previous move, or somewhere of their own choosing because they
+    filed it into a custom deck), leave it alone. This is what makes reconciling deck
+    moves both idempotent (nothing to do once it's there) and non-destructive of the
+    learner's own organization (a deliberate move away from `from` is never overwritten).
 
-    Returns [{guid, from, to}] where `guid` is *her* note's GUID (so apply_deck_moves
-    can find it), sorted by `to` then `from` for stable display.
+    Returns [{guid, from, to}] where `guid` is the learner's own note GUID (so
+    apply_deck_moves can find it), sorted by `to` then `from` for stable display.
     """
     out = []
     for guid, move in (moves_ledger or {}).items():
-        her_guid = guid if guid in her_guid_to_deck else None
-        if her_guid is None and her_front_to_guid and move.get("front"):
-            her_guid = her_front_to_guid.get(move["front"])
-        if her_guid is not None and her_guid_to_deck.get(her_guid) == move.get("from"):
-            out.append({"guid": her_guid, "from": move["from"], "to": move["to"]})
+        existing_guid = guid if guid in existing_guid_to_deck else None
+        if existing_guid is None and existing_front_to_guid and move.get("front"):
+            existing_guid = existing_front_to_guid.get(move["front"])
+        if existing_guid is not None and existing_guid_to_deck.get(existing_guid) == move.get("from"):
+            out.append({"guid": existing_guid, "from": move["from"], "to": move["to"]})
     out.sort(key=lambda m: (m["to"], m["from"]))
     return out
 
@@ -362,93 +362,95 @@ def fields_to_carry_over(saved, target_current):
             if v.strip() and not (target_current.get(f) or "").strip()}
 
 
-def find_retired_in_collection(retired_ledger, her_guids, her_front_to_guid=None):
-    """The retired cards a learner still has in her collection.
+def find_retired_in_collection(retired_ledger, existing_guids, existing_front_to_guid=None):
+    """The retired cards the learner still has in their collection.
 
     When a deck splits, merges, or drops a card, the old card's GUID leaves the
-    canonical set but her copy of it is never touched by a sync (sync only ever adds
-    the replacements), so it lingers in her reviews as a duplicate. The deck repo
-    records every such retirement in `retired.json`, shipped to us inside the manifest.
+    canonical set but the learner's copy of it is never touched by a sync (sync only
+    ever adds the replacements), so it lingers in their reviews as a duplicate. The deck
+    repo records every such retirement in `retired.json`, shipped to us inside the
+    manifest.
 
     `retired_ledger` is that ledger: {deck_name: {guid: {identity, reason,
-    superseded_by, ...}}}. `her_guids` is the set of note GUIDs she has under the scope
-    tag. `her_front_to_guid` is {first field: guid} for those same notes (optional).
+    superseded_by, ...}}}. `existing_guids` is the set of note GUIDs the learner has
+    under the scope tag. `existing_front_to_guid` is {first field: guid} for those same
+    notes (optional).
 
     Normally a retired card is matched by GUID. But a learner whose copy predates the
-    identity the ledger is keyed by (the card was reworded between her import and the
-    GUID freeze, or its deck source changed `id_seed`) holds a *different* GUID, so a
-    pure GUID match misses her copy and the retired card lingers in her reviews
-    forever, with nothing to signal it. So when the ledger GUID isn't in her
+    identity the ledger is keyed by (the card was reworded between import and the GUID
+    freeze, or its deck source changed `id_seed`) holds a *different* GUID, so a pure
+    GUID match misses that copy and the retired card lingers in their reviews forever,
+    with nothing to signal it. So when the ledger GUID isn't in the learner's
     collection, fall back to matching by front text (the same signal content-sync's
-    remap_cards trusts; fronts are unique across decks by build lint) and report *her*
-    GUID for it. The front compared is the entry's own `front` if the ledger records
-    one, else its `identity`, which for a basic or cloze note is exactly the front.
-    Two kinds of entry therefore keep GUID-only behaviour, both by simply not matching
-    rather than by matching something wrong: an image note (identity is
+    remap_cards trusts; fronts are unique across decks by build lint) and report the
+    learner's own GUID for it. The front compared is the entry's own `front` if the
+    ledger records one, else its `identity`, which for a basic or cloze note is exactly
+    the front. Two kinds of entry therefore keep GUID-only behaviour, both by simply not
+    matching rather than by matching something wrong: an image note (identity is
     "image||answer", never a first field), and a card whose front was reworded under a
     frozen `id` before it was retired (identity is the pre-reword wording). Recording
     `front` at retirement time closes that second gap without another release here.
 
-    Returns one dict per retired card she still has, so the reconcile flow can show
-    and archive them:
+    Returns one dict per retired card the learner still has, so the reconcile flow can
+    show and archive them:
         {guid, deck, identity, reason, superseded_by, replacements_present}
-    where `guid` is HER note's GUID. `replacements_present` is how many of
-    `superseded_by` are already in her collection, so the UI can distinguish "replaced
-    by cards you already have" from "sync first to get the replacements". It stays a
-    GUID-only count: a collection whose GUIDs have drifted reads 0 and gets the
+    where `guid` is the learner's own note GUID. `replacements_present` is how many of
+    `superseded_by` are already in the learner's collection, so the UI can distinguish
+    "replaced by cards you already have" from "sync first to get the replacements". It
+    stays a GUID-only count: a collection whose GUIDs have drifted reads 0 and gets the
     advisory "sync first" note, which is a cosmetic miss, not a wrong archive. Sorted
     by deck then identity for stable display. Pure: the caller supplies the collection
     maps and does anything collection-touching (tag checks, the archive itself).
     """
-    her_guids = set(her_guids)
+    existing_guids = set(existing_guids)
     out = []
     for deck, entries in (retired_ledger or {}).items():
         for guid, info in (entries or {}).items():
-            her_guid = guid if guid in her_guids else None
-            if her_guid is None and her_front_to_guid:
+            existing_guid = guid if guid in existing_guids else None
+            if existing_guid is None and existing_front_to_guid:
                 front = info.get("front") or info.get("identity") or ""
-                her_guid = her_front_to_guid.get(front) if front else None
-            if her_guid is None:
+                existing_guid = existing_front_to_guid.get(front) if front else None
+            if existing_guid is None:
                 continue
             sup = list(info.get("superseded_by") or [])
             out.append({
-                "guid": her_guid,
+                "guid": existing_guid,
                 "deck": deck,
                 "identity": info.get("identity", ""),
                 "reason": info.get("reason", ""),
                 "superseded_by": sup,
-                "replacements_present": sum(1 for g in sup if g in her_guids),
+                "replacements_present": sum(1 for g in sup if g in existing_guids),
             })
     out.sort(key=lambda r: (r["deck"], r["identity"]))
     return out
 
 
-def find_stranded_pairs(superseded, her_front_to_guid):
+def find_stranded_pairs(superseded, existing_front_to_guid):
     """Pairs where the learner holds BOTH wordings of a card that was reworded once.
 
     Rewording a front freezes the old wording as the note's `id`, which keeps the GUID
-    stable so the reword updates a learner's card in place. That works for anyone whose
-    GUID matches. For anyone whose GUID drifted first, the reword matched nothing and
-    imported as a second note, leaving her with the dead wording (carrying whatever
-    review history she had built) sitting beside the live one (starting from zero).
-    Neither copy alone is right: the old one has her progress but stale content, the new
-    one has current content but no progress.
+    stable so the reword updates the learner's card in place. That works for anyone
+    whose GUID matches. For anyone whose GUID drifted first, the reword matched nothing
+    and imported as a second note, leaving the learner with the dead wording (carrying
+    whatever review history was built) sitting beside the live one (starting from
+    zero). Neither copy alone is right: the old one has the learner's progress but
+    stale content, the new one has current content but no progress.
 
     `superseded` is the manifest's {superseded front: its replacement}, derived by the
     deck source from those same `id` freezes, so the pairing is the deck author's own
     declaration that the two wordings are one card rather than a guess made here.
-    `her_front_to_guid` is {first field: guid} for her collection.
+    `existing_front_to_guid` is {first field: guid} for the learner's collection.
 
-    Only pairs where she holds both are returned. Holding just the old wording is not a
-    stranding: the import's own front matching merges it, which is the whole point of
-    that ladder, and acting here too would fight it. Returns
+    Only pairs where the learner holds both are returned. Holding just the old wording
+    is not a stranding: the import's own front matching merges it, which is the whole
+    point of that ladder, and acting here too would fight it. Returns
     [{guid, front, successor_guid, successor_front}] sorted by front for stable display;
     `guid` is the predecessor, the copy that gets emptied out and archived.
     """
     out = []
     for old_front, new_front in (superseded or {}).items():
-        old_guid = (her_front_to_guid or {}).get(old_front)
-        new_guid = (her_front_to_guid or {}).get(new_front)
+        old_guid = (existing_front_to_guid or {}).get(old_front)
+        new_guid = (existing_front_to_guid or {}).get(new_front)
         if old_guid and new_guid and old_guid != new_guid:
             out.append({"guid": old_guid, "front": old_front,
                         "successor_guid": new_guid, "successor_front": new_front})
@@ -701,27 +703,29 @@ def base_notetype_name(name):
     return (name or "").rstrip("+") or (name or "")
 
 
-def plan_notetype_changes(incoming_types, her_types, managed):
+def plan_notetype_changes(incoming_types, existing_types, managed):
     """Which of the learner's notes have to change note type for this update to land on
     them instead of beside them.
 
     Converting a Q&A card to a cloze changes its note type, and Anki's importer will not
     move an existing note to a different one. Without this the incoming note imports
-    fresh and she keeps a stale duplicate holding all her history, which is why such a
-    conversion has always had to retire the old card and restart the new one from zero.
+    fresh and the learner keeps a stale duplicate holding all their history, which is
+    why such a conversion has always had to retire the old card and restart the new one
+    from zero.
 
-    Both arguments are keyed by HER note guid: `incoming_types` is what this update
-    would make each matched note (the caller resolves the .apkg's own guids through
-    remap_cards first, so a note matched by front counts too), `her_types` is what they
-    are now. A change is planned only when both names are in `managed`, so a learner's
-    own note types are never touched and an unrecognised incoming type is left alone.
+    Both arguments are keyed by the learner's own note guid: `incoming_types` is what
+    this update would make each matched note (the caller resolves the .apkg's own guids
+    through remap_cards first, so a note matched by front counts too), `existing_types`
+    is what they are now. A change is planned only when both names are in `managed`, so
+    a learner's own note types are never touched and an unrecognised incoming type is
+    left alone.
 
     Returns [{guid, old, new}] sorted by guid, for a caller that asks permission first:
     Anki treats this as a schema change, meaning a one-time full AnkiWeb sync.
     """
     out = []
     for guid, new in (incoming_types or {}).items():
-        old = (her_types or {}).get(guid)
+        old = (existing_types or {}).get(guid)
         if old is None:
             continue
         old_base, new_base = base_notetype_name(old), base_notetype_name(new)
@@ -979,7 +983,7 @@ def declined_guids(registry):
     return set(registry or {})
 
 
-def declined_drop(src, remap, her, declined, in_place, as_new):
+def declined_drop(src, remap, existing_fronts, declined, in_place, as_new):
     """The rids to drop for a decline, plus `touched` and `in_place`/`as_new`
     corrected to exclude them. `remap` is mutated in place (a dropped note's remap
     entry removed), so a drop always wins over a remap for the same note.
@@ -987,12 +991,12 @@ def declined_drop(src, remap, her, declined, in_place, as_new):
     Shared by collection._apply_deck and sync.import_single, so a decline filters
     identically whichever path a deck lands in the collection through."""
     drop, touched = set(), set()
-    her_guids = set(getattr(her, "guids", her.values()))
+    existing_guids = set(getattr(existing_fronts, "guids", existing_fronts.values()))
     for rid, _f, guid in apkg_notes(src):
         final = remap.get(rid, guid)
         if final in declined or guid in declined:
             drop.add(rid)
-            if remap.pop(rid, None) is not None or guid in her_guids:
+            if remap.pop(rid, None) is not None or guid in existing_guids:
                 in_place -= 1
             else:
                 as_new -= 1
@@ -1051,17 +1055,18 @@ def write_personalized(src, remap, out, drop=frozenset(), prepare_notetypes=None
                     z.write(full, os.path.relpath(full, d))
 
 
-def remap_cards(src, her, aliases):
+def remap_cards(src, existing_fronts, aliases):
     """Match each note in the .apkg at `src` to one of the learner's existing cards.
 
     Matching order, strongest signal first:
-      1. GUID: the incoming note's GUID already belongs to one of her cards. This is
-         the durable path — deck specs give every card an explicit stable `id`, so a
-         reworded front no longer changes the GUID and needs no alias at all.
-      2. Front text: her card currently shows this exact front (`her` is
-         {front_text: guid}). Covers collections whose GUIDs predate stable ids.
-      3. `aliases` ({current_front: previous_front}): her card still shows the one
-         prior wording of a renamed front.
+      1. GUID: the incoming note's GUID already belongs to one of the learner's cards.
+         This is the durable path: deck specs give every card an explicit stable `id`,
+         so a reworded front no longer changes the GUID and needs no alias at all.
+      2. Front text: the learner's card currently shows this exact front
+         (`existing_fronts` is {front_text: guid}). Covers collections whose GUIDs
+         predate stable ids.
+      3. `aliases` ({current_front: previous_front}): the learner's card still shows
+         the one prior wording of a renamed front.
 
     Returns (remap, in_place, as_new, new_notes, matched): `remap` is {note_id: guid} for
     notes whose GUID needs rewriting to match an existing card, `in_place`/`as_new` are
@@ -1070,53 +1075,53 @@ def remap_cards(src, her, aliases):
 
     `new_notes` is [(note_id, fields, guid), ...] for the notes that will import as new,
     in the .apkg's own order, and `as_new` is exactly its length. `matched` is the
-    complement, [(note_id, apkg_guid, her_guid), ...], where her_guid is the .apkg's own
-    guid on a GUID match. Both are returned from here rather than re-derived by a second
-    function so the matching ladder above stays the single source of truth about what
-    "new" and "already hers" mean: a separate implementation would eventually disagree
-    with this one, and the visible symptom would be a preview that lies to the learner
-    about which cards are about to appear or change.
+    complement, [(note_id, apkg_guid, existing_guid), ...], where existing_guid is the
+    .apkg's own guid on a GUID match. Both are returned from here rather than re-derived
+    by a second function so the matching ladder above stays the single source of truth
+    about what "new" and "already existing" mean: a separate implementation would
+    eventually disagree with this one, and the visible symptom would be a preview that
+    lies to the learner about which cards are about to appear or change.
     """
     remap, in_place, new_notes, matched = {}, 0, [], []
-    her_guids = set(getattr(her, "guids", her.values()))
+    existing_guids = set(getattr(existing_fronts, "guids", existing_fronts.values()))
     for rid, fields, apkg_guid in apkg_notes(src):
-        if apkg_guid in her_guids:
+        if apkg_guid in existing_guids:
             in_place += 1
             matched.append((rid, apkg_guid, apkg_guid))
             continue
         front = fields[0] if fields else ""
-        her_guid = her.get(front)
-        if her_guid is None and front in aliases:
-            her_guid = her.get(aliases[front])
-        if is_generated_guid(her_guid):
-            her_guid = None   # locally generated cards are invisible to sync matching
-        if her_guid is None:
+        existing_guid = existing_fronts.get(front)
+        if existing_guid is None and front in aliases:
+            existing_guid = existing_fronts.get(aliases[front])
+        if is_generated_guid(existing_guid):
+            existing_guid = None   # locally generated cards are invisible to sync matching
+        if existing_guid is None:
             new_notes.append((rid, fields, apkg_guid))
         else:
             in_place += 1
-            matched.append((rid, apkg_guid, her_guid))
-            if her_guid != apkg_guid:
-                remap[rid] = her_guid
+            matched.append((rid, apkg_guid, existing_guid))
+            if existing_guid != apkg_guid:
+                remap[rid] = existing_guid
     return remap, in_place, len(new_notes), new_notes, matched
 
 
-def find_changed_notes(matched, details, her_fields, protected=()):
+def find_changed_notes(matched, details, existing_fields, protected=()):
     """Which already-matched notes this .apkg would rewrite, and what they say now.
 
     `matched` is remap_cards' own pair list, so this never re-decides what counts as
     matched. `details` is apkg_note_details' labeled output for the same .apkg,
-    `her_fields` is {guid: {field name: value}} for the learner's notes.
+    `existing_fields` is {guid: {field name: value}} for the learner's notes.
 
-    Returns {note_id: {field name: her current value}}, carrying only the fields that
+    Returns {note_id: {field name: current value}}, carrying only the fields that
     actually differ, so a caller can show what a card says today next to what it is
     about to say.
 
     Compared by field name, never by position: index 1 is Back on a basic note and
     Prompt on an image note, so a positional comparison would report whole decks as
     changed. Fields named in `protected` are skipped, since those hold the learner's own
-    annotations and every spec ships them empty. A field her note type does not have is
-    skipped too: the import's own note-type step adds a genuinely missing field, and
-    until it does there is nothing of hers to show.
+    annotations and every spec ships them empty. A field the learner's note type does
+    not have is skipped too: the import's own note-type step adds a genuinely missing
+    field, and until it does there is nothing existing to show.
 
     `protected` is matched case-insensitively, the way collection.py's _note_field
     resolves the same free-text names when it snapshots and restores them. The box is
@@ -1127,17 +1132,17 @@ def find_changed_notes(matched, details, her_fields, protected=()):
     skip = {str(p).lower() for p in (protected or ())}
     by_rid = {d.get("rid"): d for d in details}
     out = {}
-    for rid, _apkg_guid, her_guid in matched:
+    for rid, _apkg_guid, existing_guid in matched:
         detail = by_rid.get(rid)
-        hers = (her_fields or {}).get(her_guid)
-        if not detail or not hers:
+        existing_value = (existing_fields or {}).get(existing_guid)
+        if not detail or not existing_value:
             continue
         changed = {}
         for name, value in detail.get("fields", []):
-            if str(name).lower() in skip or name not in hers:
+            if str(name).lower() in skip or name not in existing_value:
                 continue
-            if (hers[name] or "").strip() != (value or "").strip():
-                changed[name] = hers[name]
+            if (existing_value[name] or "").strip() != (value or "").strip():
+                changed[name] = existing_value[name]
         if changed:
             out[rid] = changed
     return out
