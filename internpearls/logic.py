@@ -393,8 +393,11 @@ def find_retired_in_collection(retired_ledger, existing_guids, existing_front_to
 
     Returns one dict per retired card the learner still has, so the reconcile flow can
     show and archive them:
-        {guid, deck, identity, reason, superseded_by, replacements_present}
-    where `guid` is the learner's own note GUID. `replacements_present` is how many of
+        {guid, source_guid, deck, identity, reason, superseded_by, replacements_present}
+    where `guid` is the learner's own note GUID. `source_guid` is this same entry's
+    ledger key, unchanged by the front fallback, so a caller looking something up in a
+    manifest map keyed the builder's way (note_protected_fields) has the guid that map
+    actually uses, not the learner's resolved one. `replacements_present` is how many of
     `superseded_by` are already in the learner's collection, so the UI can distinguish
     "replaced by cards you already have" from "sync first to get the replacements". It
     stays a GUID-only count: a collection whose GUIDs have drifted reads 0 and gets the
@@ -415,6 +418,7 @@ def find_retired_in_collection(retired_ledger, existing_guids, existing_front_to
             sup = list(info.get("superseded_by") or [])
             out.append({
                 "guid": existing_guid,
+                "source_guid": guid,
                 "deck": deck,
                 "identity": info.get("identity", ""),
                 "reason": info.get("reason", ""),
@@ -1115,6 +1119,24 @@ def protected_for(guid, configured, per_note):
     return set(configured) | set((per_note or {}).get(guid) or ())
 
 
+def per_note_for_package(per_note, matched):
+    """Re-key {builder guid: [field]} onto the guids the learner's own notes carry.
+
+    `matched` is remap_cards' own list of (rid, package guid, existing guid). A note the
+    learner holds under a drifted guid is matched by front text, so a declaration keyed by
+    the builder's guid would otherwise never be found. find_retired_in_collection solves
+    the same problem the same way for the retired ledger.
+    """
+    if not per_note:
+        return {}
+    out = {}
+    for _rid, package_guid, existing_guid in matched:
+        fields = per_note.get(package_guid)
+        if fields:
+            out[existing_guid] = fields
+    return out
+
+
 def find_changed_notes(matched, details, existing_fields, protected=(), per_note=None):
     """Which already-matched notes this .apkg would rewrite, and what they say now.
 
@@ -1145,12 +1167,18 @@ def find_changed_notes(matched, details, existing_fields, protected=(), per_note
     """
     by_rid = {d.get("rid"): d for d in details}
     out = {}
+    # protected_for's per-note lookup is only worth redoing per note when there is a
+    # per-note map to consult; otherwise every note shares the same global skip set,
+    # and rebuilding it per note was 4000 set constructions on a 4000-note package
+    # instead of one.
+    fallback_skip = None if per_note else {str(p).lower() for p in protected}
     for rid, _apkg_guid, existing_guid in matched:
         detail = by_rid.get(rid)
         existing_value = (existing_fields or {}).get(existing_guid)
         if not detail or not existing_value:
             continue
-        skip = {str(p).lower() for p in protected_for(existing_guid, protected, per_note)}
+        skip = fallback_skip if fallback_skip is not None else {
+            str(p).lower() for p in protected_for(existing_guid, protected, per_note)}
         changed = {}
         for name, value in detail.get("fields", []):
             if str(name).lower() in skip or name not in existing_value:

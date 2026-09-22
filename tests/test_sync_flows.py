@@ -262,8 +262,8 @@ def _summary_text(trees):
     return "\n".join(_label_texts(trees[-1])) if trees else ""
 
 
-def _fields(front, back="the back", notes="", dosing=""):
-    return [front, back, "why", "", "Pharm", dosing, notes]
+def _fields(front, back="the back", notes="", dosing="", image=""):
+    return [front, back, "why", image, "Pharm", dosing, notes]
 
 
 def _write_source(tmp_path, decks, retired=None, deck_moves=None, change_notes=None,
@@ -513,32 +513,62 @@ def test_preserved_field_the_learner_edited_is_kept_and_the_collision_reported(a
 def test_note_protected_field_survives_edit_while_declared_only_on_that_note(anki, tmp_path):
     """note_protected_fields (from the manifest) protects a field on one note without
     the global protected_fields setting covering every note with a field of that name:
-    Dosing isn't in the global list here at all, only in this note's own declaration.
+    Dosing and Image aren't in the global list here at all, only in this note's own
+    declaration.
 
-    Three behaviours in one note: the declared field carries the deck's own content
-    until the learner edits it (first sync, no edit yet); once edited, that value
-    survives a later sync that ships something else; and an undeclared field on the
-    very same note (Back) keeps receiving updates as normal.
+    Three behaviours in one note: a declared field the learner never touches (Image)
+    still carries the deck's own content when that content changes; a declared field
+    the learner does edit (Dosing) survives a later sync that ships something else
+    there; and an undeclared field on the very same note (Back) keeps receiving
+    updates as normal.
     """
     from internpearls import sync
-    anki.col.add_note("g1", _fields("Front one", dosing="1 mg/kg"), [TAGS], deck=DECK)
+    anki.col.add_note("g1", _fields("Front one", dosing="1 mg/kg", image="<img src=old.jpg>"),
+                      [TAGS], deck=DECK)
     _configure(anki, _write_source(tmp_path, {
-        DECK: ("v1", [("g1", _fields("Front one", dosing="1 mg/kg"), TAGS)], None)},
-        note_protected_fields={"g1": ["Dosing"]}))
+        DECK: ("v1", [("g1", _fields("Front one", dosing="1 mg/kg", image="<img src=old.jpg>"),
+                       TAGS)], None)},
+        note_protected_fields={"g1": ["Dosing", "Image"]}))
     anki.mw._config["protected_fields"] = ["Notes"]
-    _sync(anki)   # establishes the baseline; Dosing is untouched so far
+    _sync(anki)   # establishes the baseline; neither field is touched by the learner yet
 
     anki.col.note_by_guid("g1")["Dosing"] = "learner's own dose note"
     _configure(anki, _write_source(tmp_path, {
-        DECK: ("v2", [("g1", _fields("Front one", back="NEW back", dosing="2 mg/kg"),
-                       TAGS)], None)},
-        note_protected_fields={"g1": ["Dosing"]}))
+        DECK: ("v2", [("g1", _fields("Front one", back="NEW back", dosing="2 mg/kg",
+                       image="<img src=new.jpg>"), TAGS)], None)},
+        note_protected_fields={"g1": ["Dosing", "Image"]}))
     anki.mw._config["protected_fields"] = ["Notes"]
     _sync(anki)
 
     note = anki.col.note_by_guid("g1")
     assert note["Dosing"] == "learner's own dose note"   # kept, though not globally protected
+    assert note["Image"] == "<img src=new.jpg>"          # untouched declared field still updates
     assert note["Back"] == "NEW back"                    # undeclared field still updated
+
+
+def test_note_protected_field_survives_when_the_note_matches_only_by_front(anki, tmp_path):
+    """note_protected_fields is keyed by the guid the deck source assigns to a card, but
+    a learner whose card predates that identity is matched by front text instead and
+    keeps their own guid on that note going forward. The declaration has to reach the
+    learner's note however it was matched, not only a guid-matched one, or protecting a
+    field is a silent no-op for anyone in that cohort."""
+    from internpearls import sync
+    anki.col.add_note("her-own-guid", _fields("Front one", dosing="1 mg/kg"), [TAGS],
+                      deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("builder-guid", _fields("Front one", dosing="1 mg/kg"), TAGS)],
+               None)}, note_protected_fields={"builder-guid": ["Dosing"]}))
+    anki.mw._config["protected_fields"] = ["Notes"]
+    _sync(anki)   # matched by front; the learner's own guid is kept, not the incoming one
+
+    anki.col.note_by_guid("her-own-guid")["Dosing"] = "learner's own dose note"
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("builder-guid", _fields("Front one", dosing="2 mg/kg"), TAGS)],
+               None)}, note_protected_fields={"builder-guid": ["Dosing"]}))
+    anki.mw._config["protected_fields"] = ["Notes"]
+    _sync(anki)
+
+    assert anki.col.note_by_guid("her-own-guid")["Dosing"] == "learner's own dose note"
 
 
 def test_no_collision_reported_for_a_deck_this_run_never_touched(anki, tmp_path):

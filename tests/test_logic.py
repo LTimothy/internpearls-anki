@@ -656,6 +656,31 @@ def test_protected_for_unions_the_global_list_with_the_note_s_own():
     assert logic.protected_for("g1", ["Notes"], None) == {"Notes"}
 
 
+# ---------------------------------------------------------------- per_note_for_package
+def test_per_note_for_package_rekeys_a_front_matched_note_onto_her_guid():
+    per_note = {"builder-guid": ["Dosing"]}
+    matched = [(1, "builder-guid", "her-guid")]
+    assert logic.per_note_for_package(per_note, matched) == {"her-guid": ["Dosing"]}
+
+
+def test_per_note_for_package_keeps_working_for_a_guid_matched_note():
+    per_note = {"g1": ["Dosing"]}
+    matched = [(1, "g1", "g1")]
+    assert logic.per_note_for_package(per_note, matched) == {"g1": ["Dosing"]}
+
+
+def test_per_note_for_package_ignores_a_note_with_no_declaration():
+    per_note = {"builder-guid": ["Dosing"]}
+    matched = [(1, "other-guid", "her-guid")]
+    assert logic.per_note_for_package(per_note, matched) == {}
+
+
+def test_per_note_for_package_handles_empty_input():
+    assert logic.per_note_for_package({}, [(1, "g1", "g1")]) == {}
+    assert logic.per_note_for_package(None, [(1, "g1", "g1")]) == {}
+    assert logic.per_note_for_package({"g1": ["Dosing"]}, []) == {}
+
+
 # ------------------------------------------------------------------ find_changed_notes
 def _detail(rid, notetype, fields):
     return {"rid": rid, "guid": f"g{rid}", "notetype": notetype, "fields": fields}
