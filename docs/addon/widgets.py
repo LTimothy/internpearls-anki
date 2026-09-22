@@ -667,19 +667,47 @@ class StreamingList(QScrollArea):
         super().resizeEvent(event)
         self._fill_viewport()
 
+    # A batch that adds no height is a strong signal it is entirely a folded group's
+    # members, since a single visible row would already grow the container. One retry
+    # covers a fold that ends right at a batch boundary; more than that is a fold
+    # taller than a couple of batches, and building further into it up front is the
+    # cost this class exists to avoid. Consistent with _GROUP_COLLAPSE_MIN in
+    # review.py: a small named threshold rather than a raw batch count.
+    _FILL_STALL_LIMIT = 1
+
     def _fill_viewport(self):
-        """Build batches until the rows are taller than the viewport, or run out.
+        """Build batches until the rows are taller than the viewport, run out, or
+        stall on folded content.
 
         Measured off the rows' own sizeHint rather than the scrollbar's range: the range
         is only recomputed on Qt's own layout pass, so inside this loop it still reports
         the height from before the batch just appended, and the loop would build
         everything. A wrapping row's sizeHint is its unwrapped height, so this can
-        overshoot the viewport by a row or two; it never undershoots, which is the
-        direction that would strand rows again.
+        overshoot the viewport by a row or two; it never undershoots visible content,
+        which is the direction that would strand rows again.
+
+        A hidden row contributes nothing to that sizeHint, so a batch built entirely out
+        of a folded group's members never grows it, and the loop above would otherwise
+        keep extending until it ran out of items regardless of group size. Stopping once
+        that has stalled a couple of times in a row bounds the cost of an immediate fold
+        to a small, fixed number of batches instead. This never strands a row: a folded
+        member is reached by its own toggle (review._toggle sets visibility directly on
+        every widget it has built, no scrolling required), not by this loop, and
+        expanding the toggle grows the container past what is already built, which is
+        what gives the reader a real scrollbar to reach anything still unbuilt.
         """
-        while (self._shown < self.total()
-               and self._rows_container.sizeHint().height() <= self.viewport().height()):
+        stalled = 0
+        height = self._rows_container.sizeHint().height()
+        while self._shown < self.total() and height <= self.viewport().height():
             self._extend()
+            grown = self._rows_container.sizeHint().height()
+            if grown <= height:
+                stalled += 1
+                if stalled > self._FILL_STALL_LIMIT:
+                    break
+            else:
+                stalled = 0
+            height = grown
 
     def _extend(self, count=None):
         """Build the next `batch` rows (or `count` of them) and append them, or do
