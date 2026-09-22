@@ -167,3 +167,52 @@ def test_a_folded_groups_last_member_does_not_swallow_the_next_decks_first_card(
         "the next deck's first card must render visible, not folded into the "
         "previous deck's group")
     assert "Second deck's next card?" in texts
+
+
+def test_a_large_immediate_fold_leaves_most_of_it_unbuilt_on_open():
+    """The regression this task targets: with no visible padding ahead of the group
+    (unlike the pad=20 fixture above), a fold spanning several batches used to defeat
+    StreamingList._fill_viewport entirely. A fully hidden batch adds no height, so the
+    loop's own exit condition was never satisfied and it kept extending until nothing
+    was left to build. shown() must stay well below total() instead.
+
+    Needs real PyQt6 (harness.render): tests/mock_anki.py fakes sizeHint, so the mock's
+    StreamingList never sees a real viewport height and this loop never runs there.
+    """
+    from internpearls.widgets import StreamingList
+    n = 200
+    shot = harness.render("confirm", group_size=n, size=(880, 400))
+    lst = shot.dialog.findChild(StreamingList)
+    assert lst is not None
+    assert lst.shown() < lst.total() - 100, (
+        f"{lst.shown()} of {lst.total()} shown on open: an immediate fold this "
+        "large should leave most of it unbuilt")
+
+
+def test_every_member_of_a_large_immediate_fold_is_reachable_after_expanding():
+    """The companion to the test above: leaving most of the fold unbuilt on open must
+    not cost reachability. Expanding the group grows the built rows to their real
+    height, which is what gives the reader a working scrollbar to reach the rest; a
+    manual fill_all() stands in for that scroll, the same idiom
+    test_toggle_keeps_prefetched_members_visible_through_a_later_extend uses above.
+    """
+    from internpearls.widgets import StreamingList
+    _, q = harness.bootstrap()
+    n = 200
+    shot = harness.render("confirm", group_size=n, size=(880, 400))
+    dialog = shot.dialog
+    lst = dialog.findChild(StreamingList)
+
+    toggle = next(b for b in dialog.findChildren(q.QPushButton)
+                  if b.text() == f"Show {n} cards")
+    toggle.click()
+    harness.app().processEvents()
+
+    lst.fill_all()
+    harness.app().processEvents()
+
+    texts = "\n".join(w.text() for w in _visible_labels(dialog, q))
+    missing = [i for i in range(n) if _member_marker(i) not in texts]
+    assert missing == [], (
+        f"member(s) {missing} unreachable after the fold was expanded and the "
+        "list filled")
