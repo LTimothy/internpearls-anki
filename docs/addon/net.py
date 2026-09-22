@@ -42,7 +42,7 @@ class TransportError(RuntimeError):
     Its own class because "couldn't reach the source" and "reached it and it can't be
     used" need opposite advice, and every failure here used to arrive as a plain
     RuntimeError, so the caller that words those two messages could only ever guess.
-    An offline learner was told to check her GitHub token. Still a RuntimeError, like
+    An offline learner was told to check their GitHub token. Still a RuntimeError, like
     everything else this module raises, so a caller that doesn't care catches it anyway.
     An HTTP status is deliberately NOT one of these: a 401, 403 or 404 means the host
     answered, and what it answered is about the repo, the branch or the token.
@@ -90,13 +90,13 @@ def _rate_limit_message(e, token=None):
     GitHub's core API allows 60 requests per hour per IP with no token, shared by
     every unattended check this add-on runs on its own (the launch-time update check,
     the deck auto-sync poll), so a shared connection can exhaust it without the learner
-    doing anything herself. That 403 looks identical to a real auth failure unless the
-    rate-limit headers are checked for, which is what used to send her to check a token
-    she never sent.
+    doing anything themselves. That 403 looks identical to a real auth failure unless
+    the rate-limit headers are checked for, which is what used to send the learner to
+    check a token they never sent.
 
     `token` says whether this request already carried one: a token was still limited, so
-    telling her to sign in with one (what the no-token case says) is nonsense advice
-    when she already has.
+    telling the learner to sign in with one (what the no-token case says) is nonsense
+    advice when they already have.
     """
     headers = e.headers
     if headers is not None and headers.get("X-RateLimit-Remaining") == "0":

@@ -120,8 +120,9 @@ def test_a_403_with_no_remaining_quota_reads_as_a_rate_limit_not_a_bad_token(
 
 def test_a_403_rate_limit_with_a_token_sent_points_at_the_token_and_pluralizes(
         monkeypatch):
-    """A token was sent and still got rate limited: telling her to sign in with one
-    (the no-token sentence) is nonsense advice, so the trailing sentence has to change.
+    """A token was sent and still got rate limited: telling the learner to sign in
+    with one (the no-token sentence) is nonsense advice, so the trailing sentence has
+    to change.
     A reset a few minutes out also has to come out plural."""
     import time
 

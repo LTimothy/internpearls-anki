@@ -354,8 +354,8 @@ def _manage_decks_fixture(mock):
     dialogs.INSTALLED = installed_path
 
     # installed_matching_collection only trusts installed.json for a deck that also
-    # has at least one of her notes actually sitting in it, so update_deck and
-    # current_deck each need one.
+    # has at least one of the learner's notes actually sitting in it, so update_deck
+    # and current_deck each need one.
     mock.col.add_note("manage-decks-update",
                       ["A gadget-care front", "back", "", "", "", "", ""],
                       ["InternPearls"], deck=update_deck)
