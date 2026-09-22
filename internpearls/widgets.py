@@ -548,7 +548,7 @@ class StreamingList(QScrollArea):
     The third is the idle timer: a folded group can leave the viewport short with
     nothing to resize or scroll, so `_idle_extend` also fills toward the viewport height
     on its own, off the open path. All three still build a batch at a time rather than
-    everything, so the property this class exists for holds either way.
+    everything, so the property this class exists for holds whichever fires.
     """
 
     def __init__(self, build_row, items, batch=50):
@@ -609,21 +609,25 @@ class StreamingList(QScrollArea):
         return self._shown + len(self._prebuilt)
 
     def _idle_extend(self):
+        # One chunk in flight at a time, checked first as defense in depth: the
+        # viewport-fill branch below advances _shown, and a prefetch already in
+        # flight was captured against the range before that advance.
+        if self._prefetching:
+            self._idle.start()
+            return
         # A batch of folded rows adds no height, so _fill_viewport can stop with the
-        # viewport still unfilled. Finish filling here, off the open path.
+        # viewport still unfilled. Finish filling here, off the open path. The
+        # viewport is genuinely 0-tall between __init__ and Qt's first layout pass, so
+        # require a laid-out viewport too, or an all-hidden first batch reads as
+        # already filled and this fires every tick on a list nobody is looking at yet.
         if (self._shown < self.total()
+                and self.viewport().height() > 0
                 and self._rows_container.sizeHint().height()
                 <= self.viewport().height()):
             self._extend()
             self._idle.start()
             return
         if self.built() >= self.total():
-            return
-        # One chunk in flight at a time. A tick that beats the previous chunk's
-        # delivery would otherwise read the same unchanged built() and queue the
-        # same rows again, and every such tick left another task pending.
-        if self._prefetching:
-            self._idle.start()
             return
         if (self.isVisible()
                 and platform().monotonic() - self._last_scroll > self.SCROLL_QUIET_S):
@@ -696,9 +700,12 @@ class StreamingList(QScrollArea):
         that has stalled `_FILL_STALL_BATCHES` times in a row bounds the synchronous cost
         of an immediate fold, but can leave the viewport genuinely short with no
         scrollbar to reach the rest. `_idle_extend` closes that off the open path: it
-        keeps calling `_extend()` on its own timer, at no added total cost since it
-        already builds every row to `total()` regardless, until the container's
-        sizeHint clears the viewport. This never strands a row.
+        keeps calling `_extend()` on its own timer until the container's sizeHint
+        clears the viewport, the same total rows `total()` would build regardless of
+        who calls `_extend()`. The rate is not the same: this path builds a full batch
+        per 150ms tick rather than the idle prefetch's own `IDLE_CHUNK` rows, trading
+        that deliberately slow pace for actually getting a folded group's tail onto
+        screen. This never strands a row.
         """
         stalled = 0
         height = self._rows_container.sizeHint().height()
