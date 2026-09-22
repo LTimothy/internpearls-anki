@@ -1300,7 +1300,7 @@ def test_find_retired_falls_back_to_front_when_the_guid_drifted():
     existing = {"hers1"}
     front_map = {"bulky card one": "hers1"}
     (r,) = logic.find_retired_in_collection(_LEDGER, existing, front_map)
-    assert r["guid"] == "hers1"        # HER guid, so the caller can find the note
+    assert r["guid"] == "hers1"        # the existing note's guid, so the caller can find it
     assert r["identity"] == "bulky card one"
 
 
@@ -1396,7 +1396,7 @@ def test_deck_move_skipped_once_already_reconciled():
     assert logic.find_deck_moves_needed(_MOVES, existing_deck) == []
 
 
-def test_deck_move_skipped_when_filed_elsewhere_already():
+def test_deck_move_skipped_when_filed_elsewhere_by_the_learner():
     # Not at `from` and not at `to` — the learner's own organization, never overridden.
     existing_deck = {"g1": "My Own Custom Deck"}
     assert logic.find_deck_moves_needed(_MOVES, existing_deck) == []
@@ -2129,7 +2129,7 @@ def test_write_personalized_drop_removes_cards_rows_too(tmp_path):
 def test_declined_drop_filters_every_match_path_and_corrects_the_counts(tmp_path):
     """One note per branch: untouched (guid-a), declined after a front-text remap
     (guid-b), declined while importing as new (guid-c), and declined on a direct GUID
-    match (her-guid-d). The drop wins over the remap, and each dropped note leaves
+    match ("her-guid-d"). The drop wins over the remap, and each dropped note leaves
     whichever count it was sitting in."""
     src = str(tmp_path / "src.apkg")
     _make_mock_apkg(src, [(1, "guid-a", "front a"), (2, "guid-b", "front b"),
