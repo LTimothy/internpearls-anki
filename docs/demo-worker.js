@@ -116,10 +116,15 @@ function isAccepted(type, payload, result) {
   return false;
 }
 
+// Held back until the response it belongs to has validated. A result the protocol
+// cannot represent must never reach the log: once one is in there, every later
+// message that carries the log fails to serialize too, including the error ones.
+let pendingRecord = null;
+
 function runCommand(type, payload, record = true) {
   const result = callHarness(type, payload);
   if (record && isAccepted(type, payload, result)) {
-    recovery.push(jsonClone({ type, payload, result }));
+    pendingRecord = jsonClone({ type, payload, result });
   }
   return result;
 }
@@ -142,6 +147,7 @@ function replayAndCancel(payload) {
 }
 
 async function execute(message) {
+  pendingRecord = null;
   let payload;
   if (message.type === "boot") {
     payload = await boot(message.payload);
@@ -151,15 +157,19 @@ async function execute(message) {
       ? replayAndCancel(message.payload)
       : runCommand(message.type, message.payload, true);
   }
-  return validateWorkerMessage({
+  const next = pendingRecord ? [...recovery, pendingRecord] : recovery;
+  const validated = validateWorkerMessage({
     protocol: DEMO_PROTOCOL_VERSION,
     request_id: message.request_id,
     type: message.type,
     ok: true,
     payload: jsonClone(payload),
     error: null,
-    recovery: jsonClone(recovery),
+    recovery: jsonClone(next),
   });
+  recovery = next;
+  pendingRecord = null;
+  return validated;
 }
 
 function errorResponse(message, code) {
@@ -168,15 +178,21 @@ function errorResponse(message, code) {
   const type = [
     "boot", "menu", "start", "feed", "state", "maintainer", "set-theme", "reset",
   ].includes(message?.type) ? message.type : "state";
-  return validateWorkerMessage({
+  const base = {
     protocol: DEMO_PROTOCOL_VERSION,
     request_id: requestId,
     type,
     ok: false,
     payload: {},
     error: { code },
-    recovery: jsonClone(recovery),
-  });
+  };
+  try {
+    return validateWorkerMessage({ ...base, recovery: jsonClone(recovery) });
+  } catch (_error) {
+    // The log itself will not serialize. Answering without it beats not
+    // answering, which leaves the page waiting on its watchdog and then stopped.
+    return validateWorkerMessage({ ...base, recovery: [] });
+  }
 }
 
 async function processMessage(raw) {

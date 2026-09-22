@@ -141,15 +141,41 @@ function transactionHasEdits(transaction) {
   return Boolean(transaction?.edits.length || transaction?.finishes.length);
 }
 
-function nodeSemanticSignature(id) {
+// State the reader edits. Never part of a signature: a node whose value changed is
+// still the same node.
+const VOLATILE_NODE_FIELDS = [
+  "checked", "current_index", "current_text", "editor_value", "offset",
+  "selection_end", "selection_start", "shown_count", "value",
+];
+// Whether a node can be acted on right now, which is not what it is. A control that
+// a previous action just enabled is the same control, so folding availability into
+// the identity signature discarded any action queued behind that response: clicking
+// two things in quick succession silently lost the second one.
+const AVAILABILITY_NODE_FIELDS = [
+  "enabled", "effective_enabled", "visible", "effective_visible",
+];
+
+function nodeSignature(id, omitted) {
   const node = currentNodes.get(id);
   if (!node) return null;
   const semantic = jsonClone(node);
-  for (const name of [
-    "checked", "current_index", "current_text", "editor_value", "offset",
-    "selection_end", "selection_start", "shown_count", "value",
-  ]) delete semantic[name];
+  for (const name of omitted) delete semantic[name];
   return JSON.stringify(semantic);
+}
+
+function nodeSemanticSignature(id) {
+  return nodeSignature(id, VOLATILE_NODE_FIELDS);
+}
+
+// What the node is, ignoring whether it happens to be actionable this instant.
+// Availability is checked separately, against the current tree.
+function nodeIdentitySignature(id) {
+  return nodeSignature(id, [...VOLATILE_NODE_FIELDS, ...AVAILABILITY_NODE_FIELDS]);
+}
+
+function nodeIsActionable(id) {
+  const node = currentNodes.get(id);
+  return Boolean(node && node.effective_visible && node.effective_enabled);
 }
 
 function choiceMatchesNode(choice, node) {
@@ -164,7 +190,8 @@ function choiceMatchesNode(choice, node) {
 function settlePendingChoices() {
   for (const [id, choice] of pendingChoices) {
     const node = currentNodes.get(id);
-    if (choice.signature !== nodeSemanticSignature(id) || choiceMatchesNode(choice, node)) {
+    if (choice.signature !== nodeIdentitySignature(id) || !nodeIsActionable(id)
+        || choiceMatchesNode(choice, node)) {
       pendingChoices.delete(id);
     }
   }
@@ -196,7 +223,7 @@ function captureActionRecords(actions, authority) {
       action: jsonClone(action),
       authority: { ...authority },
       hasTarget,
-      target: hasTarget ? nodeSemanticSignature(action.id) : null,
+      target: hasTarget ? nodeIdentitySignature(action.id) : null,
     };
   });
 }
@@ -205,7 +232,11 @@ function actionRecordIsCurrent(record) {
   if (record.authority.epoch !== epoch || sequence < record.authority.sequence
       || revision < record.authority.revision) return false;
   if (!record.hasTarget) return true;
-  return record.target !== null && record.target === nodeSemanticSignature(record.action.id);
+  if (record.target === null
+      || record.target !== nodeIdentitySignature(record.action.id)) return false;
+  // Asked of the current tree, not of the signature, so a target the last response
+  // enabled is replayable and one it hid or disabled is not.
+  return nodeIsActionable(record.action.id);
 }
 
 function commitEditTransaction(transaction) {
@@ -727,7 +758,7 @@ function registerInput(element, action) {
       const control = event.currentTarget;
       const selected = {
         action: control.demoAction(control),
-        signature: nodeSemanticSignature(id),
+        signature: nodeIdentitySignature(id),
         group: control instanceof HTMLInputElement && control.type === "radio"
           ? control.name : "",
       };
