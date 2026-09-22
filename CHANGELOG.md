@@ -3,6 +3,13 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.72.1
+
+Closing Update my decks while its list is still loading no longer raises an error
+afterwards. Every background timer now ends with the window that started it.
+
+Restart Anki after updating.
+
 ## v0.72.0
 
 A deck source can now protect one field on one card. A note in a deck spec may list
