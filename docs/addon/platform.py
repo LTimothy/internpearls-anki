@@ -430,7 +430,25 @@ class NativePlatform:
             self, request, compute, on_result, on_error, on_event, scratch_path)
 
     def create_timer(self, owner_id, callback, interval_ms, single_shot=False):
-        return _NativeTimerHandle(callback, interval_ms, single_shot)
+        # Parented to its owner, so the timer is destroyed with the widget that owns
+        # it and can never fire a callback into a deleted one.
+        return _NativeTimerHandle(callback, interval_ms, single_shot,
+                                  self._qt_owner(owner_id))
+
+    def _qt_owner(self, owner_id):
+        try:
+            from aqt.qt import QObject
+        except ImportError:     # the lightweight Qt mock models no QObject
+            return None
+        owner = None
+        for entries in self._weak_owner_ids.values():
+            for owner_ref, entry_id in entries:
+                if entry_id == owner_id:
+                    owner = owner_ref()
+        for stored_owner, entry_id in self._strong_owner_ids:
+            if entry_id == owner_id:
+                owner = stored_owner
+        return owner if isinstance(owner, QObject) else None
 
     def monotonic(self):
         return time.monotonic()

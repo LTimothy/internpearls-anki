@@ -14,6 +14,16 @@ from internpearls import ai_cli, ai_dialog
 from internpearls.platform import NativePlatform
 
 
+def _wait_for_delivery(dlg, timeout=15):
+    """A worker's result reaches the dialog through the platform's delivery timer, not
+    the moment its thread exits, so wait for that delivery rather than a fixed pause."""
+    from PyQt6.QtTest import QTest
+    end = time.time() + timeout
+    while not dlg._worker_ready and time.time() < end:
+        QTest.qWait(10)
+    assert dlg._worker_ready, "the worker's result was never delivered"
+
+
 def _wait_for_attachment_worker(dlg, timeout=2):
     app = harness.app()
     deadline = time.monotonic() + timeout
@@ -363,7 +373,7 @@ def test_completion_timer_exception_shows_dialog_and_recovers_to_input(monkeypat
     dlg._worker.join(timeout=15)
     assert not dlg._worker.is_alive()
     from PyQt6.QtTest import QTest
-    QTest.qWait(30)
+    _wait_for_delivery(dlg)
 
     dlg._timer.timeout.emit()   # a real Qt signal, not _finish_generation() called directly
     app.processEvents()
@@ -1357,7 +1367,7 @@ def test_escape_during_image_resolution_goes_back_instead_of_blocking_the_cards(
     while dlg._worker.is_alive() and time.time() < end:
         time.sleep(0.02)
     from PyQt6.QtTest import QTest
-    QTest.qWait(30)
+    _wait_for_delivery(dlg)
     dlg._timer.timeout.emit()          # the CLI phase hands off to the images
     app.processEvents()
     assert dlg.stack.currentWidget() is dlg.progress_page
