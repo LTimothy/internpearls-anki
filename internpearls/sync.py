@@ -482,7 +482,7 @@ def _collision_items(collisions):
     return items
 
 
-def _offer_notetype_changes(changes, protected=None, on_import_as_new=None):
+def _offer_notetype_changes(changes, protected=None, on_import_as_new=None, per_note=None):
     """Ask before converting the learner's notes to the note type an update ships.
 
     Declining is a real choice with a real consequence, and it says so: the cards still
@@ -510,7 +510,7 @@ def _offer_notetype_changes(changes, protected=None, on_import_as_new=None):
             on_import_as_new(changes)
         return []
     if protected is not None:
-        _check_protected_conversion(changes, protected)
+        _check_protected_conversion(changes, protected, per_note)
     return change_note_types(changes)
 
 
@@ -582,8 +582,9 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     declined: it stays pending, and the next run's preview puts it on screen up front.
     """
     aliases = manifest.get("front_aliases", {})   # from the (private) manifest, not config
+    per_note = manifest.get("note_protected_fields", {})
     _ensure_notetypes()
-    snap = _snapshot(cfg["protected"], cfg["scope_tag"])
+    snap = _snapshot(cfg["protected"], cfg["scope_tag"], per_note)
     baseline = _load_json(SHIPPED, {})
     existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
     reg = load_declined()
@@ -658,7 +659,8 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 forked = []
                 changed_nids = _offer_notetype_changes(
                     nt, cfg["protected"],
-                    on_import_as_new=lambda changes: forked.extend(changes))
+                    on_import_as_new=lambda changes: forked.extend(changes),
+                    per_note=per_note)
                 if forked:
                     deck_prefork_restored, deck_prefork_collisions = (
                         _restore_prior_touches_before_fork(
@@ -667,7 +669,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                         forked, cfg["scope_tag"])
             else:
                 if nt and convert_notetypes:
-                    _check_protected_conversion(nt, cfg["protected"])
+                    _check_protected_conversion(nt, cfg["protected"], per_note)
                     changed_nids = change_note_types(nt)
                 else:
                     changed_nids = []
@@ -744,7 +746,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     # the baseline would make the learner's own edit indistinguishable from the
     # source's own value next time.
     try:
-        shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched)
+        shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched, per_note)
     finally:
         restored, collisions = _restore(snap, baseline, touched)
     restored += prefork_restored
@@ -1073,7 +1075,7 @@ def _reworded_backup_decks(superseded, scope_tag):
     return decks
 
 
-def _merge_stranded(stranded, existing_nids, protected, retired_deck, tag):
+def _merge_stranded(stranded, existing_nids, protected, retired_deck, tag, per_note=None):
     """Carry each stranded predecessor's scheduling and personal notes onto its live
     successor, then archive the predecessor. Returns the number of pairs merged.
 
@@ -1089,7 +1091,7 @@ def _merge_stranded(stranded, existing_nids, protected, retired_deck, tag):
     carry_scheduling_forward(stranded, existing_nids)
     carry_over_protected_fields(
         [{"guid": p["guid"], "superseded_by": [p["successor_guid"]]} for p in stranded],
-        existing_nids, protected)
+        existing_nids, protected, per_note)
     archive_notes([existing_nids[p["guid"]] for p in stranded], retired_deck, tag)
     return len(stranded)
 
@@ -1228,8 +1230,10 @@ def reconcile_decks():
         _reconcile_backup_decks(fresh, moves, stranded, existing_nids), cfg["scope_tag"])
     if not proceed:
         return
-    carried = carry_over_protected_fields(fresh, existing_nids, cfg["protected"])
-    n_merged = _merge_stranded(stranded, existing_nids, cfg["protected"], retired_deck, tag)
+    per_note = manifest.get("note_protected_fields", {})
+    carried = carry_over_protected_fields(fresh, existing_nids, cfg["protected"], per_note)
+    n_merged = _merge_stranded(stranded, existing_nids, cfg["protected"], retired_deck, tag,
+                               per_note)
     n_archived = archive_notes([existing_nids[r["guid"]] for r in fresh], retired_deck, tag)
     n_moved = apply_deck_moves(moves, existing_nids)
     mw.reset()
@@ -1333,7 +1337,8 @@ def clean_up_duplicates():
                for g in groups for a in g["archive"]]
     existing_guid_to_nid = {n["guid"]: n["nid"] for g in groups
                             for n in [g["keep"], *g["archive"]]}
-    carried = carry_over_protected_fields(retired, existing_guid_to_nid, cfg["protected"])
+    carried = carry_over_protected_fields(retired, existing_guid_to_nid, cfg["protected"],
+                                          manifest.get("note_protected_fields", {}))
     n_archived = archive_notes([a["nid"] for g in groups for a in g["archive"]],
                                retired_deck, tag)
     mw.reset()
@@ -1380,7 +1385,8 @@ def _is_local(entry):
             and os.path.exists(entry))
 
 
-def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fields=None):
+def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fields=None,
+                             per_note=None):
     """Download every pending deck and match it against the collection, so the
     confirmation can show real "N kept · M new" counts instead of just each deck's
     total card count. A cancellable progress window covers it, since this is a live
@@ -1429,7 +1435,7 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
                 if existing_fields and matched:
                     changed = find_changed_notes(
                         matched, apkg_note_details(src), existing_fields,
-                        protected=_cfg()["protected"])
+                        protected=_cfg()["protected"], per_note=per_note)
                 preview[d["name"]] = (kept, new, new_notes, changed)
             except DownloadCancelled:
                 # Cancel clicked mid-download rather than between decks. That is the
@@ -1698,7 +1704,8 @@ def update_decks():
     if todo:
         preview, downloaded, cancelled = _preview_content_changes(
             fetch, todo, _existing_front_to_guid(cfg["scope_tag"]),
-            manifest.get("front_aliases", {}), _existing_guid_to_fields(cfg["scope_tag"]))
+            manifest.get("front_aliases", {}), _existing_guid_to_fields(cfg["scope_tag"]),
+            manifest.get("note_protected_fields", {}))
         if cancelled:
             _info(NOTHING_CHANGED)
             return
@@ -2232,8 +2239,10 @@ def update_decks():
         fresh = [r for r in fresh if r["guid"] not in merged_guids
                  and r["guid"] in existing_nids
                  and all(g in existing_nids for g in r.get("superseded_by", []))]
-        carried = carry_over_protected_fields(fresh, existing_nids, cfg["protected"])
-        n_merged = _merge_stranded(stranded, existing_nids, cfg["protected"], retired_deck, tag)
+        per_note = manifest.get("note_protected_fields", {})
+        carried = carry_over_protected_fields(fresh, existing_nids, cfg["protected"], per_note)
+        n_merged = _merge_stranded(stranded, existing_nids, cfg["protected"], retired_deck, tag,
+                                   per_note)
         n_archived = archive_notes([existing_nids[r["guid"]] for r in fresh], retired_deck, tag)
         n_moved = apply_deck_moves(moves, existing_nids)
         mw.reset()
@@ -2295,10 +2304,12 @@ def import_single():
     if isinstance(src, (list, tuple)):
         src = src[0]
     aliases = {}
+    per_note = {}
     try:
         manifest, _, _ = _fetch_manifest(cfg)
         if manifest:
             aliases = manifest.get("front_aliases", {})
+            per_note = manifest.get("note_protected_fields", {})
     except Exception as e:
         if not _ask(f"Couldn't fetch the reworded-front list from your deck source "
                     f"({e}).<br><br>Without it, any card whose front text changed there "
@@ -2352,7 +2363,7 @@ def import_single():
         return
     _ensure_notetypes()
     tpl = _template_changes(src)
-    snap = _snapshot(cfg["protected"], cfg["scope_tag"])
+    snap = _snapshot(cfg["protected"], cfg["scope_tag"], per_note)
     # After the snapshot and before the import, the order _run_sync uses: on the right
     # note type the import matches by GUID and updates in place, and a snapshot taken
     # first survives whatever the conversion's own field map does. Nothing is asked
@@ -2363,7 +2374,8 @@ def import_single():
         forked = []
         changed_nids = ([] if missing else _offer_notetype_changes(
             nt, cfg["protected"],
-            on_import_as_new=lambda changes: forked.extend(changes)))
+            on_import_as_new=lambda changes: forked.extend(changes),
+            per_note=per_note))
         forked_guids = set()
         if forked:
             existing_fronts, forked_guids = _fork_import_as_new(forked, cfg["scope_tag"])
@@ -2376,7 +2388,7 @@ def import_single():
             snap.pop(guid, None)
         # Restore before any later bookkeeping or presentation can fail.
         try:
-            shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched)
+            shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched, per_note)
         finally:
             restored, _ = _restore(snap, _load_json(SHIPPED, {}), touched)
         seed_converted_siblings(changed_nids)

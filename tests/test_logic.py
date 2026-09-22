@@ -647,6 +647,15 @@ def test_remap_cards_never_touches_generated_guids(tmp_path):
     assert {rid for rid, _, _ in new_notes} == {1, 2}
 
 
+# ---------------------------------------------------------------------- protected_for
+def test_protected_for_unions_the_global_list_with_the_note_s_own():
+    per_note = {"g1": ["Reference"]}
+    assert logic.protected_for("g1", ["Notes"], per_note) == {"Notes", "Reference"}
+    assert logic.protected_for("g2", ["Notes"], per_note) == {"Notes"}
+    assert logic.protected_for("g1", [], {}) == set()
+    assert logic.protected_for("g1", ["Notes"], None) == {"Notes"}
+
+
 # ------------------------------------------------------------------ find_changed_notes
 def _detail(rid, notetype, fields):
     return {"rid": rid, "guid": f"g{rid}", "notetype": notetype, "fields": fields}
@@ -678,6 +687,22 @@ def test_find_changed_notes_skips_protected_fields():
     existing = {"her-1": {"Front": "A prompt", "Notes": "her own annotation"}}
     assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing,
                                     protected=["Notes"]) == {}
+
+
+def test_find_changed_notes_skips_a_field_declared_protected_only_on_this_note():
+    """note_protected_fields is per-note: this note's guid declares Reference, but the
+    global `protected` list doesn't, and a second note with the same field name isn't
+    covered at all."""
+    details = [_detail(1, "Study Deck - Basic",
+                       [("Front", "A prompt"), ("Reference", "new figure")]),
+               _detail(2, "Study Deck - Basic",
+                       [("Front", "Another prompt"), ("Reference", "new figure two")])]
+    existing = {"her-1": {"Front": "A prompt", "Reference": "her own figure"},
+                "her-2": {"Front": "Another prompt", "Reference": "her own figure two"}}
+    changed = logic.find_changed_notes(
+        [(1, "g1", "her-1"), (2, "g2", "her-2")], details, existing,
+        protected=[], per_note={"her-1": ["Reference"]})
+    assert changed == {2: {"Reference": "her own figure two"}}
 
 
 def test_find_changed_notes_matches_a_protected_field_case_insensitively():

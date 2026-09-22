@@ -1105,7 +1105,17 @@ def remap_cards(src, existing_fronts, aliases):
     return remap, in_place, len(new_notes), new_notes, matched
 
 
-def find_changed_notes(matched, details, existing_fields, protected=()):
+def protected_for(guid, configured, per_note):
+    """Field names to preserve on one note: the configured global list plus any the deck
+    source has declared the learner's own on this card.
+
+    Per-note entries are what let one figure on one card survive a sync without freezing
+    that field across every card that has one.
+    """
+    return set(configured) | set((per_note or {}).get(guid) or ())
+
+
+def find_changed_notes(matched, details, existing_fields, protected=(), per_note=None):
     """Which already-matched notes this .apkg would rewrite, and what they say now.
 
     `matched` is remap_cards' own pair list, so this never re-decides what counts as
@@ -1128,8 +1138,11 @@ def find_changed_notes(matched, details, existing_fields, protected=()):
     free text and the real field names are capitalised, so an exact match here meant a
     typed "notes" listed the field as about to change while the restore quietly put it
     back: the preview and the safety net disagreeing about the same setting.
+
+    `per_note` is threaded through the same way and for the same reason: a field the
+    deck source declares protected only on this note (see protected_for) must skip here
+    too, or the preview promises a change the sync then refuses to make.
     """
-    skip = {str(p).lower() for p in (protected or ())}
     by_rid = {d.get("rid"): d for d in details}
     out = {}
     for rid, _apkg_guid, existing_guid in matched:
@@ -1137,6 +1150,7 @@ def find_changed_notes(matched, details, existing_fields, protected=()):
         existing_value = (existing_fields or {}).get(existing_guid)
         if not detail or not existing_value:
             continue
+        skip = {str(p).lower() for p in protected_for(existing_guid, protected, per_note)}
         changed = {}
         for name, value in detail.get("fields", []):
             if str(name).lower() in skip or name not in existing_value:
