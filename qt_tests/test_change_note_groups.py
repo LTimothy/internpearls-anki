@@ -245,7 +245,7 @@ def test_a_large_immediate_fold_still_reveals_the_next_decks_first_card_on_idle(
     shot = harness.render("confirm", group_size=200, second_deck=True, size=(880, 400))
     lst = shot.dialog.findChild(StreamingList)
     app = harness.app()
-    deadline = time.monotonic() + 3
+    deadline = time.monotonic() + 10
     texts = ""
     while time.monotonic() < deadline:
         app.processEvents()

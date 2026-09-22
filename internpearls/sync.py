@@ -615,18 +615,20 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # earlier deck in this same run) keeps the learner's own, different guid
             # forever. Re-key this deck's declarations onto that guid before anything
             # below reads per_note, so a front-matched note is covered too, not just a
-            # guid-matched one.
-            _remap, _in_place, _as_new, _new_notes, matched = remap_cards(
-                src, existing_fronts, aliases)
-            deck_resolved = per_note_for_package(per_note, matched)
-            per_note = {**per_note, **deck_resolved}
-            for guid, fields in deck_resolved.items():
-                top_up = _snapshot_fields(guid, fields)
-                if top_up:
-                    # Merge, not replace: this guid may already hold a snapshot value
-                    # from the global protected_fields list, and a plain assignment
-                    # would drop it.
-                    snap.setdefault(guid, {}).update(top_up)
+            # guid-matched one. Skipped when there is nothing declared yet, so a
+            # source with no note_protected_fields costs no extra apkg read.
+            if per_note:
+                _remap, _in_place, _as_new, _new_notes, matched = remap_cards(
+                    src, existing_fronts, aliases)
+                deck_resolved = per_note_for_package(per_note, matched)
+                per_note = {**per_note, **deck_resolved}
+                for guid, fields in deck_resolved.items():
+                    top_up = _snapshot_fields(guid, fields)
+                    if top_up:
+                        # Merge, not replace: this guid may already hold a snapshot
+                        # value from the global protected_fields list, and a plain
+                        # assignment would drop it.
+                        snap.setdefault(guid, {}).update(top_up)
             tpl = _template_changes(src)
             # A note-type conversion is the same class of thing as a template change:
             # it bumps the schema, so it needs consent and must never happen
@@ -1536,9 +1538,9 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
     def _section(heading, rows):
         """`rows` is `_grouped_rows`' own (row, grouped) pairs. `grouped` marks a row
         that sits under a group_note header: the sep ahead of it is tagged the same
-        way, so a future collapsed-group render (task 9) can tell a hairline inside a
-        folded group from one between two top-level rows, without changing what this
-        tag renders as today (review._list_row keys only on item[0] == "sep")."""
+        way, so the collapsed-group render can tell a hairline inside a folded group
+        from one between two top-level rows, without changing what this tag renders as
+        today (review._list_row keys only on item[0] == "sep")."""
         items.append(("header", heading))
         for i, (row, grouped) in enumerate(rows):
             if i:
@@ -2348,7 +2350,8 @@ def import_single():
         if not _ask(f"Couldn't fetch the reworded-front list from your deck source "
                     f"({e}).<br><br>Without it, any card whose front text changed there "
                     "will be treated as new instead of matching your existing card, "
-                    "so its history won't carry over. Continue anyway?",
+                    "so its history won't carry over, and per-card field protection "
+                    "will be off for this import. Continue anyway?",
                     yes_label="Import without it", no_label="Cancel"):
             return
     existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
