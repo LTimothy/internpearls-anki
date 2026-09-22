@@ -88,3 +88,22 @@ def test_work_result_survives_a_collection_with_no_caller_reference():
 
     assert delivered == ["value"]
     assert native._live_work == []
+
+
+def test_a_timer_is_destroyed_with_the_widget_that_owns_it():
+    """A timer that outlived its widget fired into a deleted Qt object, which PyQt6
+    turns into an abort. Parented to its owner, it goes when the owner goes."""
+    harness.bootstrap()
+    harness.app()
+    from PyQt6 import sip
+    from PyQt6.QtTest import QTest
+    from aqt.qt import QWidget
+
+    native = NativePlatform()
+    fired = []
+    owner = QWidget()
+    timer = native.create_timer(native.owner_id(owner), lambda: fired.append(1), 10)
+    timer.start()
+    sip.delete(owner)
+    QTest.qWait(60)
+    assert fired == []
