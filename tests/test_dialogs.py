@@ -2661,3 +2661,36 @@ def test_combo_option_with_empty_item_data_gets_a_usable_id(anki):
         {"actions": [{"type": "select-option", "id": combo.wid, "option_id": ids[1]}]},
         allowed_ids={combo.wid})
     assert combo.currentIndex() == 1
+
+
+def test_a_group_note_header_renders_and_gives_its_note_the_stretch(anki):
+    """The header over a change group is a real row, and building it is the one path
+    no mock test walked: the group_note tests in test_sync_flows.py all stop at the
+    items list. qt_tests/ renders this header with real Qt; the browser demo renders
+    it with this mock, so the mock has to answer the same calls real Qt does.
+    """
+    from internpearls import review
+    note = {"kind": "feedback", "note": "make both of these tables", "on": "2026-09-21"}
+    items = [("group_note", note, 2),
+             ("card", "Example Deck", _changed_card_detail("guid-changed-a")),
+             ("sep", "grouped"),
+             ("card", "Example Deck", _changed_card_detail("guid-changed-b"))]
+    body, boxes, flush = review.build_update_body(
+        items, {}, {}, {}, {}, "", lambda: "", "")
+    assert body is not None
+    header = _find_group_note_row(body)
+    assert header.layout().stretch(0) == 1
+
+
+def _find_group_note_row(body):
+    """The group header is the row whose only child is a label carrying the shared
+    note's own text."""
+    for widget in _walk_widgets(body):
+        lay = getattr(widget, "_layout", None)
+        if lay is None or lay.count() != 1:
+            continue
+        child = lay.itemAt(0).widget()
+        if (isinstance(child, mock_anki.QLabel)
+                and "make both of these tables" in child.text()):
+            return widget
+    raise AssertionError("no group note row found")
