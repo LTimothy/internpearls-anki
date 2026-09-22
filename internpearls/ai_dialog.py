@@ -859,7 +859,6 @@ class _GenerateDialog(QDialog):
             return fn(*args, **kwargs)
         except Exception as e:
             print(traceback.format_exc())
-            _warn(f"Something went wrong: {e}")
             self._gen_done, self._img_done = True, True
             # Cancellation reaches a worker through its own handle, not through a
             # flag this dialog keeps: _img_cancel_flag below only records which way
@@ -875,6 +874,10 @@ class _GenerateDialog(QDialog):
                 self._timer.stop()
             if hasattr(self, "_img_timer"):
                 self._img_timer.stop()
+            # Warned only now that the run is stopped. The warning is modal, so
+            # warning first left the assistant running for as long as it stayed
+            # open, and let the modal's event loop re-enter the still-live poll.
+            _warn(f"Something went wrong: {e}")
             try:
                 self._return_to_input_or_review()
             except Exception:
