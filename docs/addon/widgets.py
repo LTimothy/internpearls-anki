@@ -696,8 +696,10 @@ class StreamingList(QScrollArea):
             # A row appended to an already-visible list is only shown on Qt's next
             # layout pass, and a hidden item contributes nothing to its layout's
             # sizeHint. Showing it here is what lets _fill_viewport below measure the
-            # batch it just built rather than the height from before it.
-            row.setVisible(True)
+            # batch it just built rather than the height from before it. A row can ask
+            # to stay hidden (a folded change group's members); default is shown, so
+            # every existing caller is unaffected.
+            row.setVisible(not getattr(row, "ip_stay_hidden", False))
         self._shown = end
 
     def fill_all(self):

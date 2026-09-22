@@ -367,6 +367,65 @@ def test_streaming_list_repeated_bottom_scroll_after_exhaustion_does_not_rebuild
         "scrolling to the bottom of an exhausted list must not rebuild or overrun"
 
 
+def test_streaming_list_leaves_a_freshly_built_row_that_asked_to_stay_hidden():
+    """A folded change group hides its members, and the batch that reveals them must
+    not undo that. This covers _extend's fresh-build branch; the prebuilt-pop branch
+    (what the idle prefetch path actually goes through) is covered separately below."""
+    from internpearls import widgets
+    built = []
+    rows = {}
+
+    def row_for(item):
+        row = _stub_row(built, item)
+        if item % 2:
+            row.ip_stay_hidden = True
+        rows[item] = row
+        return row
+
+    lst = widgets.StreamingList(row_for, list(range(10)), batch=10)
+    assert len(built) == 10
+    assert rows[0].isVisible(), "a row with no flag must be shown, unaffected"
+    assert not rows[1].isVisible(), "a row that asked to stay hidden must stay hidden"
+
+
+def test_streaming_list_prefetch_leaves_a_stay_hidden_row_hidden_when_revealed():
+    """The idle prefetch path builds rows ahead of scrolling and holds them hidden in
+    _prebuilt. The batch that later reveals them is still _extend, popping from
+    _prebuilt rather than building fresh, so this drives the real prefetch machinery
+    (NativePlatform's background thread plus its mock-timer delivery) to prove that
+    branch honors the flag too, not only the fresh-build one above."""
+    from internpearls import widgets
+    from internpearls.platform import NativePlatform, use_platform, wait_for_mock_work
+    rows = {}
+
+    def row_for(item):
+        row = widgets.QWidget()
+        if item == 3:
+            row.ip_stay_hidden = True
+        rows[item] = row
+        return row
+
+    native = NativePlatform()
+    with use_platform(native):
+        lst = widgets.StreamingList(row_for, list(range(6)), batch=2)
+        lst.isVisible = lambda: True
+        lst._last_scroll = -1
+        lst._idle_extend()
+        handle = native._live_work[-1]
+        handle.join()
+        wait_for_mock_work(handle)
+
+    assert len(lst._prebuilt) == 3, "items 2, 3, 4 should be built ahead by the prefetch"
+    assert not rows[2].isVisible() and not rows[3].isVisible() and not rows[4].isVisible(), (
+        "every prebuilt row stays hidden until its batch is revealed")
+
+    lst._extend()   # the scroll-triggered reveal, pops the front of _prebuilt
+
+    assert rows[2].isVisible(), "a row with no flag must still be shown once revealed"
+    assert not rows[3].isVisible(), "a row that asked to stay hidden must stay hidden"
+    assert not rows[4].isVisible(), "not yet revealed, still waiting in _prebuilt"
+
+
 def test_chip_cell_carries_the_wizard_input_pages_own_words():
     """The input page's four rows name their own state rather than borrowing a
     card list's or the AI Backends window's: a backend a learner has not set up
