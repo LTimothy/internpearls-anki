@@ -657,10 +657,10 @@ def test_protected_for_unions_the_global_list_with_the_note_s_own():
 
 
 # ---------------------------------------------------------------- per_note_for_package
-def test_per_note_for_package_rekeys_a_front_matched_note_onto_her_guid():
+def test_per_note_for_package_rekeys_a_front_matched_note_onto_the_learners_guid():
     per_note = {"builder-guid": ["Dosing"]}
-    matched = [(1, "builder-guid", "her-guid")]
-    assert logic.per_note_for_package(per_note, matched) == {"her-guid": ["Dosing"]}
+    matched = [(1, "builder-guid", "learner-guid")]
+    assert logic.per_note_for_package(per_note, matched) == {"learner-guid": ["Dosing"]}
 
 
 def test_per_note_for_package_keeps_working_for_a_guid_matched_note():
@@ -671,7 +671,7 @@ def test_per_note_for_package_keeps_working_for_a_guid_matched_note():
 
 def test_per_note_for_package_ignores_a_note_with_no_declaration():
     per_note = {"builder-guid": ["Dosing"]}
-    matched = [(1, "other-guid", "her-guid")]
+    matched = [(1, "other-guid", "learner-guid")]
     assert logic.per_note_for_package(per_note, matched) == {}
 
 
@@ -722,12 +722,13 @@ def test_find_changed_notes_skips_a_field_declared_protected_only_on_this_note()
                        [("Front", "A prompt"), ("Reference", "new figure")]),
                _detail(2, "Study Deck - Basic",
                        [("Front", "Another prompt"), ("Reference", "new figure two")])]
-    existing = {"her-1": {"Front": "A prompt", "Reference": "her own figure"},
-                "her-2": {"Front": "Another prompt", "Reference": "her own figure two"}}
+    existing = {"learner-1": {"Front": "A prompt", "Reference": "the learner's own figure"},
+                "learner-2": {"Front": "Another prompt",
+                              "Reference": "the learner's own figure two"}}
     changed = logic.find_changed_notes(
-        [(1, "g1", "her-1"), (2, "g2", "her-2")], details, existing,
-        protected=[], per_note={"her-1": ["Reference"]})
-    assert changed == {2: {"Reference": "her own figure two"}}
+        [(1, "g1", "learner-1"), (2, "g2", "learner-2")], details, existing,
+        protected=[], per_note={"learner-1": ["Reference"]})
+    assert changed == {2: {"Reference": "the learner's own figure two"}}
 
 
 def test_find_changed_notes_matches_a_protected_field_case_insensitively():

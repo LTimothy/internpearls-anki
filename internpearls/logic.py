@@ -1155,10 +1155,13 @@ def find_changed_notes(matched, details, existing_fields, protected=(), per_note
 
     Compared by field name, never by position: index 1 is Back on a basic note and
     Prompt on an image note, so a positional comparison would report whole decks as
-    changed. Fields named in `protected` are skipped, since those hold the learner's own
-    annotations and every spec ships them empty. A field the learner's note type does
-    not have is skipped too: the import's own note-type step adds a genuinely missing
-    field, and until it does there is no existing value to show.
+    changed. Fields named in `protected` are skipped, since those hold the learner's
+    own annotations or, for a field declared protected on one specific note, content
+    the learner may have personally edited; either way this preview can't tell a
+    changed shipped value from a personal edit without the SHIPPED baseline it doesn't
+    load. A field the learner's note type does not have is skipped too: the import's
+    own note-type step adds a genuinely missing field, and until it does there is no
+    existing value to show.
 
     `protected` is matched case-insensitively, the way collection.py's _note_field
     resolves the same free-text names when it snapshots and restores them. The box is
