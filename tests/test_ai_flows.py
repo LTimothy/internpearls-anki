@@ -1413,7 +1413,7 @@ def test_scratch_cleanup_is_defensive_about_an_already_missing_directory(anki, m
 def test_revision_preserves_manual_include_choices_for_unchanged_cards(anki, monkeypatch):
     # Seed an existing note so the second card's front collides with it,
     # giving that card a block-level "duplicate" check and, by default, excluded.
-    anki.col.add_note("her-guid", ["Duplicate front", "b", "", "", "", "", ""],
+    anki.col.add_note("learner-guid", ["Duplicate front", "b", "", "", "", "", ""],
                       ["InternPearls"], deck="Intern Pearls::Intern Custom")
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="two_cards")
     dlg._start_generation()

@@ -487,8 +487,8 @@ def test_remap_cards_end_to_end(tmp_path):
         (3, "apkg-guid-new", "Never seen before"),
     ])
     existing = {
-        "Matches directly": "her-guid-direct",   # front unchanged since the last sync
-        "Old wording": "her-guid-aliased",       # the learner's card still has the old front
+        "Matches directly": "learner-guid-direct",   # front unchanged since the last sync
+        "Old wording": "learner-guid-aliased",       # the learner's card still has the old front
     }
     aliases = {"New wording": "Old wording"}     # records that rename
 
@@ -498,7 +498,7 @@ def test_remap_cards_end_to_end(tmp_path):
     assert as_new == 1            # "Never seen before" has no match anywhere
     # GUIDs get rewritten to match the learner's existing cards so Anki's importer updates in
     # place instead of creating duplicates:
-    assert remap == {1: "her-guid-direct", 2: "her-guid-aliased"}
+    assert remap == {1: "learner-guid-direct", 2: "learner-guid-aliased"}
     # and the one genuinely new card comes back in full, for the review dialog:
     assert new_notes == [(3, ["Never seen before", "back text"], "apkg-guid-new")]
 
@@ -610,11 +610,11 @@ def test_remap_cards_reports_every_pair_it_matched(tmp_path):
         (2, "apkg-guid-other", "Matched by front"),
         (3, "apkg-guid-new", "Nobody has this"),
     ])
-    existing = {"Matched by front": "her-guid-front", "Matched by guid": "apkg-guid-same"}
+    existing = {"Matched by front": "learner-guid-front", "Matched by guid": "apkg-guid-same"}
     _, in_place, as_new, new_notes, matched = logic.remap_cards(apkg, existing, aliases={})
     assert in_place == 2 and as_new == 1
     assert matched == [(1, "apkg-guid-same", "apkg-guid-same"),
-                       (2, "apkg-guid-other", "her-guid-front")]
+                       (2, "apkg-guid-other", "learner-guid-front")]
     assert len(new_notes) == 1
 
 
@@ -622,7 +622,7 @@ def test_remap_cards_matched_and_new_together_account_for_every_note(tmp_path):
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [(1, "a", "One"), (2, "b", "Two"), (3, "c", "Three")])
     _, _, _, new_notes, matched = logic.remap_cards(
-        apkg, existing_fronts={"One": "her-one"}, aliases={})
+        apkg, existing_fronts={"One": "learner-one"}, aliases={})
     assert len(matched) + len(new_notes) == 3
 
 
@@ -690,17 +690,17 @@ def test_find_changed_notes_reports_the_previous_value_of_each_changed_field():
     details = [_detail(1, "Study Deck - Basic",
                        [("Front", "A prompt"), ("Back", "the new answer"),
                         ("Why", "unchanged why"), ("Notes", "")])]
-    existing = {"her-1": {"Front": "A prompt", "Back": "the old answer",
+    existing = {"learner-1": {"Front": "A prompt", "Back": "the old answer",
                      "Why": "unchanged why", "Notes": ""}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing) == {
+    assert logic.find_changed_notes([(1, "g1", "learner-1")], details, existing) == {
         1: {"Back": "the old answer"}}
 
 
 def test_find_changed_notes_ignores_a_note_that_is_identical():
     details = [_detail(1, "Study Deck - Basic",
                        [("Front", "A prompt"), ("Back", "same"), ("Notes", "")])]
-    existing = {"her-1": {"Front": "A prompt", "Back": "same", "Notes": ""}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing) == {}
+    existing = {"learner-1": {"Front": "A prompt", "Back": "same", "Notes": ""}}
+    assert logic.find_changed_notes([(1, "g1", "learner-1")], details, existing) == {}
 
 
 def test_find_changed_notes_skips_protected_fields():
@@ -709,8 +709,8 @@ def test_find_changed_notes_skips_protected_fields():
     changed."""
     details = [_detail(1, "Study Deck - Basic",
                        [("Front", "A prompt"), ("Notes", "")])]
-    existing = {"her-1": {"Front": "A prompt", "Notes": "her own annotation"}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing,
+    existing = {"learner-1": {"Front": "A prompt", "Notes": "their own annotation"}}
+    assert logic.find_changed_notes([(1, "g1", "learner-1")], details, existing,
                                     protected=["Notes"]) == {}
 
 
@@ -738,9 +738,9 @@ def test_find_changed_notes_matches_a_protected_field_case_insensitively():
     change in the preview while the restore quietly put it back."""
     details = [_detail(1, "Study Deck - Basic",
                        [("Front", "A prompt"), ("Notes", ""), ("Dosing", "")])]
-    existing = {"her-1": {"Front": "A prompt", "Notes": "her own annotation",
-                     "Dosing": "her dose note"}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing,
+    existing = {"learner-1": {"Front": "A prompt", "Notes": "their own annotation",
+                     "Dosing": "their dose note"}}
+    assert logic.find_changed_notes([(1, "g1", "learner-1")], details, existing,
                                     protected=["notes", "DOSING"]) == {}
 
 
@@ -750,9 +750,9 @@ def test_find_changed_notes_compares_by_name_not_position():
     details = [_detail(1, "Study Deck - Image ID",
                        [("Image", '<img src="a.jpg">'), ("Prompt", "Which block?"),
                         ("Answer", "Femoral")])]
-    existing = {"her-1": {"Prompt": "Which block?", "Answer": "Femoral",
+    existing = {"learner-1": {"Prompt": "Which block?", "Answer": "Femoral",
                      "Image": '<img src="a.jpg">'}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing) == {}
+    assert logic.find_changed_notes([(1, "g1", "learner-1")], details, existing) == {}
 
 
 def test_find_changed_notes_ignores_a_field_the_note_type_does_not_have():
@@ -760,21 +760,21 @@ def test_find_changed_notes_ignores_a_field_the_note_type_does_not_have():
     # a field the note type cannot hold is not a content change to show the learner.
     details = [_detail(1, "Study Deck - Basic",
                        [("Front", "A prompt"), ("Dosing", "0.5 mg IV")])]
-    existing = {"her-1": {"Front": "A prompt"}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing) == {}
+    existing = {"learner-1": {"Front": "A prompt"}}
+    assert logic.find_changed_notes([(1, "g1", "learner-1")], details, existing) == {}
 
 
 def test_find_changed_notes_ignores_whitespace_only_differences():
     details = [_detail(1, "Study Deck - Basic", [("Front", " A prompt ")])]
-    existing = {"her-1": {"Front": "A prompt"}}
-    assert logic.find_changed_notes([(1, "g1", "her-1")], details, existing) == {}
+    existing = {"learner-1": {"Front": "A prompt"}}
+    assert logic.find_changed_notes([(1, "g1", "learner-1")], details, existing) == {}
 
 
 def test_find_changed_notes_skips_a_pair_with_nothing_to_compare_against():
     details = [_detail(1, "Study Deck - Basic", [("Front", "A prompt")])]
     assert logic.find_changed_notes([(1, "g1", "unknown-guid")], details, {}) == {}
-    assert logic.find_changed_notes([(99, "g99", "her-1")], details,
-                                    {"her-1": {"Front": "other"}}) == {}
+    assert logic.find_changed_notes([(99, "g99", "learner-1")], details,
+                                    {"learner-1": {"Front": "other"}}) == {}
 
 
 # ----------------------------------------------------------------- apkg_note_details
@@ -1348,28 +1348,28 @@ def test_find_retired_sorted_by_deck_then_identity():
 def test_find_retired_falls_back_to_front_when_the_guid_drifted():
     # The learner's copy predates the ledger's GUID (an id_seed change), so a GUID-only
     # match misses it entirely and the card lingers forever.
-    existing = {"hers1"}
-    front_map = {"bulky card one": "hers1"}
+    existing = {"learner1"}
+    front_map = {"bulky card one": "learner1"}
     (r,) = logic.find_retired_in_collection(_LEDGER, existing, front_map)
-    assert r["guid"] == "hers1"        # the existing note's guid, so the caller can find it
+    assert r["guid"] == "learner1"        # the existing note's guid, so the caller can find it
     assert r["identity"] == "bulky card one"
 
 
 def test_find_retired_prefers_guid_match_over_front():
     # Both signals available: the GUID is the stronger one and wins.
-    existing = {"old1", "hers1"}
-    front_map = {"bulky card one": "hers1"}
+    existing = {"old1", "learner1"}
+    front_map = {"bulky card one": "learner1"}
     (r,) = logic.find_retired_in_collection(_LEDGER, existing, front_map)
     assert r["guid"] == "old1"
 
 
 def test_find_retired_front_fallback_prefers_recorded_front_over_identity():
     ledger = {"Deck A": {"old1": {"identity": "the front it was frozen to",
-                                  "front": "the front she actually sees",
+                                  "front": "the front they actually see",
                                   "reason": "split", "superseded_by": []}}}
-    front_map = {"the front she actually sees": "hers1"}
-    (r,) = logic.find_retired_in_collection(ledger, {"hers1"}, front_map)
-    assert r["guid"] == "hers1"
+    front_map = {"the front they actually see": "learner1"}
+    (r,) = logic.find_retired_in_collection(ledger, {"learner1"}, front_map)
+    assert r["guid"] == "learner1"
 
 
 def test_find_retired_front_fallback_matches_nothing_when_front_is_unknown():
@@ -1378,11 +1378,11 @@ def test_find_retired_front_fallback_matches_nothing_when_front_is_unknown():
     ledger = {"Deck A": {"old1": {"identity": "pic.jpg||Femoral block",
                                   "reason": "split", "superseded_by": []}}}
     assert logic.find_retired_in_collection(
-        ledger, {"hers1"}, {"Femoral block": "hers1"}) == []
+        ledger, {"learner1"}, {"Femoral block": "learner1"}) == []
 
 
 def test_find_retired_without_front_map_keeps_guid_only_behaviour():
-    assert logic.find_retired_in_collection(_LEDGER, {"hers1"}) == []
+    assert logic.find_retired_in_collection(_LEDGER, {"learner1"}) == []
 
 
 # ---------------------------------------------------------- stranded rewords
@@ -1465,19 +1465,19 @@ def test_deck_moves_sorted_by_to_then_from():
 
 # ------------------------------------------------------- protected-field carryover
 def test_carry_over_fills_blank_target_field():
-    saved = {"Notes": "her mnemonic"}
-    assert logic.fields_to_carry_over(saved, {"Notes": ""}) == {"Notes": "her mnemonic"}
+    saved = {"Notes": "their mnemonic"}
+    assert logic.fields_to_carry_over(saved, {"Notes": ""}) == {"Notes": "their mnemonic"}
 
 
 def test_carry_over_never_overwrites_existing_target_text():
     saved = {"Notes": "old mnemonic"}
-    current = {"Notes": "something she already wrote on the new card"}
+    current = {"Notes": "something they already wrote on the new card"}
     assert logic.fields_to_carry_over(saved, current) == {}
 
 
 def test_carry_over_handles_whitespace_only_target_as_blank():
-    saved = {"Notes": "her mnemonic"}
-    assert logic.fields_to_carry_over(saved, {"Notes": "   "}) == {"Notes": "her mnemonic"}
+    saved = {"Notes": "their mnemonic"}
+    assert logic.fields_to_carry_over(saved, {"Notes": "   "}) == {"Notes": "their mnemonic"}
 
 
 def test_carry_over_only_touches_fields_with_saved_content():
@@ -1968,7 +1968,7 @@ def _modern_apkg(path, notes, notetypes, deck_names=("Default",)):
 
 
 _MODERN_NOTES = [
-    (11, "guid-a", ["Front A", "Back A", "her own annotation"], 77),
+    (11, "guid-a", ["Front A", "Back A", "their own annotation"], 77),
     (12, "guid-b", ['<img src="x.jpg">', "Name this", ""], 88),
 ]
 _MODERN_NOTETYPES = {77: ("Study Deck - Basic", ["Front", "Back", "Notes"]),
@@ -1989,7 +1989,7 @@ def test_apkg_notes_reads_the_real_notes_of_a_modern_package(modern_apkg):
     rows = logic.apkg_notes(modern_apkg)
     assert [(rid, fields[0], guid) for rid, fields, guid in rows] == [
         (11, "Front A", "guid-a"), (12, '<img src="x.jpg">', "guid-b")]
-    assert rows[0][1] == ["Front A", "Back A", "her own annotation"]
+    assert rows[0][1] == ["Front A", "Back A", "their own annotation"]
     assert not any("Please update" in f for _r, fields, _g in rows for f in fields)
 
 
@@ -1999,11 +1999,11 @@ def test_remap_cards_matches_a_modern_package_against_the_collection(modern_apkg
     came in as a duplicate and the learner's history stayed on the copy they stopped
     seeing."""
     remap, in_place, as_new, new_notes, matched = logic.remap_cards(
-        modern_apkg, {"Front A": "her-guid-a"}, {})
-    assert remap == {11: "her-guid-a"}
+        modern_apkg, {"Front A": "learner-guid-a"}, {})
+    assert remap == {11: "learner-guid-a"}
     assert (in_place, as_new) == (1, 1)
     assert [g for _rid, _f, g in new_notes] == ["guid-b"]
-    assert matched == [(11, "guid-a", "her-guid-a")]
+    assert matched == [(11, "guid-a", "learner-guid-a")]
 
 
 def test_apkg_note_details_labels_a_modern_package_from_its_notetype_tables(modern_apkg):
@@ -2013,7 +2013,7 @@ def test_apkg_note_details_labels_a_modern_package_from_its_notetype_tables(mode
     basic, image = logic.apkg_note_details(modern_apkg)
     assert basic["notetype"] == "Study Deck - Basic"
     assert basic["fields"] == [("Front", "Front A"), ("Back", "Back A"),
-                               ("Notes", "her own annotation")]
+                               ("Notes", "their own annotation")]
     assert image["notetype"] == "Study Deck - Image ID"
     assert image["fields"][1] == ("Prompt", "Name this")
 
@@ -2040,7 +2040,7 @@ def test_write_personalized_refuses_a_modern_package(tmp_path):
     even need zstandard importable."""
     src = _modern_apkg(tmp_path / "src.apkg", _MODERN_NOTES, _MODERN_NOTETYPES)
     with pytest.raises(RuntimeError, match="Support older Anki versions"):
-        logic.write_personalized(src, {11: "her-guid-a"}, str(tmp_path / "out.apkg"))
+        logic.write_personalized(src, {11: "learner-guid-a"}, str(tmp_path / "out.apkg"))
 
 
 def test_modern_readers_still_reject_a_zip_with_no_collection(tmp_path):
@@ -2157,7 +2157,7 @@ def test_write_personalized_drops_declined_notes(tmp_path):
 def test_write_personalized_drop_wins_over_remap(tmp_path):
     src, out = str(tmp_path / "src.apkg"), str(tmp_path / "out.apkg")
     _make_mock_apkg(src, [(1, "guid-a", "front a")])
-    logic.write_personalized(src, {1: "her-guid"}, out, drop={1})
+    logic.write_personalized(src, {1: "learner-guid"}, out, drop={1})
     assert logic.apkg_notes(out) == []
 
 
@@ -2188,17 +2188,17 @@ def test_write_personalized_drop_removes_cards_rows_too(tmp_path):
 def test_declined_drop_filters_every_match_path_and_corrects_the_counts(tmp_path):
     """One note per branch: untouched (guid-a), declined after a front-text remap
     (guid-b), declined while importing as new (guid-c), and declined on a direct GUID
-    match ("her-guid-d"). The drop wins over the remap, and each dropped note leaves
+    match ("learner-guid-d"). The drop wins over the remap, and each dropped note leaves
     whichever count it was sitting in."""
     src = str(tmp_path / "src.apkg")
     _make_mock_apkg(src, [(1, "guid-a", "front a"), (2, "guid-b", "front b"),
-                          (3, "guid-c", "front c"), (4, "her-guid-d", "front d")])
-    existing = {"front b": "her-guid-b", "front d": "her-guid-d"}
+                          (3, "guid-c", "front c"), (4, "learner-guid-d", "front d")])
+    existing = {"front b": "learner-guid-b", "front d": "learner-guid-d"}
     remap, in_place, as_new, _new, _matched = logic.remap_cards(src, existing, {})
     assert (in_place, as_new) == (2, 2)
 
     drop, touched, in_place, as_new = logic.declined_drop(
-        src, remap, existing, {"her-guid-b", "guid-c", "her-guid-d"}, in_place, as_new)
+        src, remap, existing, {"learner-guid-b", "guid-c", "learner-guid-d"}, in_place, as_new)
 
     assert drop == {2, 3, 4}
     assert touched == {"guid-a"}
@@ -2302,7 +2302,7 @@ def test_change_notes_for_orders_feedback_before_maintainer():
     why the card was touched at all; feedback now sorts first regardless of date."""
     fields = ["F"]
     h = logic.note_fields_hash(fields)
-    notes = {"g1": [{"kind": "feedback", "note": "her words", "hash": h},
+    notes = {"g1": [{"kind": "feedback", "note": "their words", "hash": h},
                     {"kind": "maintainer", "note": "the fix", "hash": h}]}
     got = logic.change_notes_for(notes, "g1", fields)
     assert [e["kind"] for e in got] == ["feedback", "maintainer"]
