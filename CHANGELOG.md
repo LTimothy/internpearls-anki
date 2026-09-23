@@ -3,6 +3,23 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.72.4
+
+A protected field you empty on purpose now stays empty when your decks update, instead
+of getting the deck's text back. Update my decks no longer lists it as about to change.
+
+When a reworded card takes over the review history of its older wording, it now keeps
+your FSRS memory state as well as the interval, so the scheduler picks up where you
+left off.
+
+Automatic deck syncing no longer applies anything if you switch or close your profile
+while it is still downloading.
+
+A card-generation run that finished normally no longer occasionally reports that the
+assistant produced no reply.
+
+Restart Anki after updating.
+
 ## v0.72.3
 
 Update my decks now lists a change to a protected field when the update will actually
