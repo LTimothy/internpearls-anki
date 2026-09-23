@@ -1447,3 +1447,37 @@ def test_svg_to_media_still_rejects_a_script_after_an_xml_declaration():
     with pytest.raises(ValueError):
         ai_logic.svg_to_media(
             '<?xml version="1.0"?><svg><script>alert(1)</script></svg>', 0)
+
+
+def test_a_remote_img_tag_in_a_field_is_stripped_and_the_images_list_kept():
+    import json
+    reply = json.dumps([{
+        "note_type": "Study Deck - Basic",
+        "fields": {"Front": "Q", "Back": "A",
+                   "Image": '<img src="https://example.com/a.png" alt="x"> caption'},
+        "images": [{"source": "url:https://example.com/a.png"}]}])
+    cards, errors = ai_logic.parse_cards_json(reply, ALLOWED, FIELD_MAP)
+    assert errors == []
+    assert cards[0]["fields"]["Image"] == " caption"
+    assert cards[0]["images"][0]["source"] == "url:https://example.com/a.png"
+
+
+def test_a_local_img_tag_in_a_field_is_left_alone():
+    import json
+    reply = json.dumps([{"note_type": "Study Deck - Basic",
+                         "fields": {"Front": 'Q <img src="slide3.png">', "Back": "A"}}])
+    cards, _ = ai_logic.parse_cards_json(reply, ALLOWED, FIELD_MAP)
+    assert cards[0]["fields"]["Front"] == 'Q <img src="slide3.png">'
+
+
+def test_image_rules_keep_pictures_out_of_fields():
+    for web in (True, False):
+        p = _flat(ai_logic.build_prompt(**_PROMPT_KW, web=web))
+        assert "never put an <img> tag in a field" in p.lower()
+
+
+def test_codex_turn_completed_usage_without_text_is_counted():
+    line = ('{"type":"turn.completed","usage":{"input_tokens":1000,'
+            '"cached_input_tokens":800,"output_tokens":50}}')
+    assert ai_logic.parse_stream_event("codex", line) == {"type": "usage",
+                                                          "tokens": 1050}
