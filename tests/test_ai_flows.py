@@ -200,7 +200,7 @@ def test_input_page_test_connection_button_works(anki, monkeypatch):
 
 
 def test_mode_radio_labels_are_the_backends_own_truthful_text(anki, monkeypatch):
-    # C1: one hardcoded claim for all three backends used to overclaim what
+    # One hardcoded claim for all three backends used to overclaim what
     # codex/agy actually enforce; each backend's radios must show its own text.
     monkeypatch.setattr(
         ai_cli, "find_cli",
@@ -754,7 +754,7 @@ def test_import_writes_notes_and_closes(anki, monkeypatch):
 
 
 def test_undo_shortcut_asks_qt_for_the_native_undo_key_sequence(anki):
-    """Finding 2, isolated from the dialog flow: _undo_shortcut() must ask Qt
+    """Isolated from the dialog flow: _undo_shortcut() must ask Qt
     for StandardKey.Undo rendered as NativeText, not a bare/default-format
     toString(): the mock's QKeySequence only renders the platform glyph for
     NativeText specifically (see mock_anki._QKeySequence), so this catches
@@ -800,7 +800,7 @@ def test_import_enables_undo_and_refreshes_the_deck_list(anki, monkeypatch):
 
 
 def test_import_success_message_uses_the_platform_undo_shortcut(anki, monkeypatch):
-    """Finding 2: the message used to hardcode "Ctrl+Z" on every platform. It
+    """The message used to hardcode "Ctrl+Z" on every platform. It
     should instead name whatever ai_dialog._undo_shortcut() (Qt's own native
     rendering of the standard Undo key sequence) actually returns."""
     dlg = _ready_dialog(anki, monkeypatch)
@@ -888,7 +888,7 @@ def test_import_success_message_pluralizes_a_single_card(anki, monkeypatch):
 
 
 def test_core_cloze_card_review_row_renders_non_empty(anki, monkeypatch):
-    """I6: PRIMARY_FIELD had no "Cloze" entry, so the review row fell back to
+    """PRIMARY_FIELD had no "Cloze" entry, so the review row fell back to
     "Front", which a Cloze note lacks, and rendered empty: approving a card
     whose text the user could not see."""
     from internpearls import ai_logic
@@ -1016,7 +1016,7 @@ def test_image_card_resolves_off_thread_and_reaches_review(anki, monkeypatch):
 
 
 def test_image_card_starts_excluded_by_default(anki, monkeypatch):
-    # I2: "excluded by default until the user has seen the rendered
+    # "Excluded by default until the user has seen the rendered
     # thumbnail": true even when resolution succeeds and no mechanical
     # check would otherwise block it.
     _stub_fetch_image(monkeypatch)
@@ -1268,7 +1268,7 @@ def _prompt_capturing_run_generation(monkeypatch):
 
 
 def test_empty_reply_retries_once_with_sandbox_nudge_then_reports(anki, monkeypatch):
-    # I9: an agy run that spends its whole turn on refused tools and never
+    # An agy run that spends its whole turn on refused tools and never
     # writes a reply must retry once, telling the model not to touch tools
     # or any folder but scratch, then (if that also comes back empty) show
     # one plain-sentence message naming the retry and the log file, never
