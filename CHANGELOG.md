@@ -3,6 +3,17 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.72.3
+
+Update my decks now lists a change to a protected field when the update will actually
+apply it: the field is empty on your card, or still holds what the deck last shipped.
+A protected field you have edited stays yours and stays off the list, as before.
+
+A long list on the update screen no longer shows some cards twice and leaves others
+out when you scroll while it is still loading.
+
+Restart Anki after updating.
+
 ## v0.72.2
 
 Closing a window while its background work is still running no longer keeps that work
