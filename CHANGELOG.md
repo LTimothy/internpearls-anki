@@ -3,6 +3,17 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.72.2
+
+Closing a window while its background work is still running no longer keeps that work
+held in memory for the rest of the session.
+
+A card image the assistant suggests that no longer exists now reads "no image at that
+address" on the review page, instead of advice to check a repository name, branch, and
+file path.
+
+Restart Anki after updating.
+
 ## v0.72.1
 
 Closing Update my decks while its list is still loading no longer raises an error
