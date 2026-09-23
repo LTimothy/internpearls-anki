@@ -596,3 +596,48 @@ def test_a_connection_that_drops_mid_read_is_a_transport_error(monkeypatch, erro
     _urlopen(monkeypatch, _DroppingResponse(error))
     with pytest.raises(net.TransportError):
         net._http_get("https://example.com/deck.apkg", on_chunk=lambda n: True)
+
+
+def _addon_zip(version):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("config.py", f'ADDON_VERSION = "{version}"   # see README\n')
+        z.writestr("manifest.json", "{}")
+    return buf.getvalue()
+
+
+def test_a_package_that_is_not_the_announced_version_is_refused(monkeypatch):
+    """The raw CDN fallback can serve the previous package for minutes after a
+    release; installing it and reporting the new version would be false."""
+    import os
+    from internpearls import updates
+    monkeypatch.setattr(updates, "_gh_public_raw",
+                        lambda path, **kw: _addon_zip("0.72.4"))
+    before = set(os.listdir(__import__("tempfile").gettempdir()))
+    with pytest.raises(RuntimeError, match="0.72.4"):
+        updates._download_addon_package(expected="0.73.0")
+    after = set(os.listdir(__import__("tempfile").gettempdir()))
+    assert not [n for n in after - before if n.startswith("internpearls-")]
+
+
+def test_the_announced_package_is_kept(monkeypatch):
+    import os
+    from internpearls import updates
+    monkeypatch.setattr(updates, "_gh_public_raw",
+                        lambda path, **kw: _addon_zip("0.73.0"))
+    path = updates._download_addon_package(expected="0.73.0")
+    assert os.path.exists(path)
+    os.remove(path)
+
+
+def test_a_background_update_with_a_stale_package_installs_nothing(monkeypatch):
+    from internpearls import updates
+    monkeypatch.setattr(updates, "_fetch_addon_version_info",
+                        lambda timeout=None, token=None: {"version": "99.0.0"})
+    monkeypatch.setattr(updates, "_gh_public_raw",
+                        lambda path, **kw: _addon_zip("0.1.0"))
+    result = updates._addon_update_work(True)
+    assert result["info"]["version"] == "99.0.0"
+    assert result["package_path"] is None
