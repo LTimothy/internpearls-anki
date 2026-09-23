@@ -60,8 +60,8 @@ BACKENDS = {
               "free_tier": "capped",
               "install_url": "https://github.com/openai/codex",
               "safety": "OS sandbox: commands and writes confined to the "
-                       "scratch folder, no network unless Codex is "
-                       "configured for it",
+                       "scratch folder; Codex's own web search is on when this "
+                       "version has it",
               # No forced default here: --model is only passed when the user sets
               # one (see build_argv), and only when supports_flag confirms this
               # codex actually documents it (probed as `codex exec --help`, where
@@ -75,14 +75,13 @@ BACKENDS = {
                             "blank to use the model set in codex's own "
                             "config file",
               "modes": {
-                  "thorough": "Thorough: asked to draft, verify, then self-review; "
-                              "sandboxed to the scratch folder (writes allowed "
-                              "there), no network unless Codex is configured "
-                              "for it, so it may not be able to verify anything "
-                              "online (1 to 3 min)",
+                  "thorough": "Thorough: asked to draft, verify online with "
+                              "Codex's web search, then self-review; commands "
+                              "sandboxed to the scratch folder, writes allowed "
+                              "there (1 to 3 min)",
                   "quick": "Quick draft: asked for a single pass with no "
-                          "verification; always sandboxed read-only with no "
-                          "network either way (15 to 30 s)"}},
+                          "verification, but it may search the web for card "
+                          "images; commands sandboxed read-only (15 s to 1 min)"}},
     "agy": {"label": "Antigravity CLI", "exe": "agy",
             "subscription": "Google account (free tier, throttled)",
             "free_tier": "throttled",
@@ -135,12 +134,10 @@ _MAX_TURNS = {"quick": 1, "thorough": 15}
 # --add-dir, verified against agy 1.1.24.
 _IMAGE_CAPABLE = {"claude": True, "codex": True, "agy": True}
 
-# Whether a backend's thorough-mode argv actually hands it web tools: claude's
-# build_argv allowlists WebSearch/WebFetch in thorough mode, agy runs under its
-# own approval defaults which include web access (see BACKENDS["agy"]'s own
-# "safety" note), and codex is sandboxed with no network unless the user has
-# configured it themselves, which this add-on cannot see or assume.
-_WEB_CAPABLE = {"claude": True, "codex": False, "agy": True}
+# Whether a backend can reach the web: claude's build_argv allowlists WebSearch and
+# WebFetch, agy runs under its own approval defaults which include web access, and
+# codex has its own web search behind the top-level --search flag (see web_capable).
+_WEB_CAPABLE = {"claude": True, "codex": True, "agy": True}
 
 
 class GenerationError(RuntimeError):
@@ -170,7 +167,11 @@ def image_capable(kind):
     return _IMAGE_CAPABLE.get(kind, False)
 
 
-def web_capable(kind):
+def web_capable(kind, path=None):
+    """`path`, when given, answers for the installed binary: a codex without
+    --search has no web search to turn on."""
+    if kind == "codex" and path is not None and not supports_flag(path, "--search"):
+        return False
     return _WEB_CAPABLE.get(kind, False)
 
 
@@ -457,8 +458,10 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
         # Thorough gets a real OS sandbox around scratch (reads and writes
         # there, nothing outside it); quick stays read-only, tool-free.
         sandbox = "workspace-write" if mode == "thorough" else "read-only"
-        argv = [path, "exec", "--json", "--sandbox", sandbox,
-                "--skip-git-repo-check", "-C", scratch]
+        # --search is top-level: `codex exec --search` is a parse error.
+        search = ["--search"] if supports_flag(path, "--search") else []
+        argv = [path] + search + ["exec", "--json", "--sandbox", sandbox,
+                                  "--skip-git-repo-check", "-C", scratch]
         if model and supports_flag(path, "--model", subcommand="exec"):
             argv += ["--model", model]
         for p in image_paths:

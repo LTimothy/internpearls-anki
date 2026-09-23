@@ -1898,7 +1898,7 @@ class _GenerateDialog(QDialog):
             prompt = ai_logic.build_check_prompt(
                 skills=ai_logic.active_skills(load_deck_skill(), user_skill_text),
                 cards=s.cards, field_map=FIELD_MAP, backend=s.backend,
-                web=ai_cli.web_capable(s.backend))
+                web=ai_cli.web_capable(s.backend, s.cli_path))
         else:
             prompt = ai_logic.build_prompt(
                 skills=ai_logic.active_skills(load_deck_skill(), user_skill_text),
@@ -1911,7 +1911,7 @@ class _GenerateDialog(QDialog):
                 feedback=self.feedback_box.toPlainText() if revision else "",
                 notes=s.notes if revision else None,
                 checks=s.checks if revision else None, mode=s.mode,
-                backend=s.backend, web=ai_cli.web_capable(s.backend))
+                backend=s.backend, web=ai_cli.web_capable(s.backend, s.cli_path))
         if extra_error:
             prompt += ("\n\n## Your previous reply failed validation\n"
                       + "\n".join(extra_error))
@@ -2288,7 +2288,7 @@ class _GenerateDialog(QDialog):
         s = self.session
         field_map = {i: FIELD_MAP[c["note_type"]] for i, c in enumerate(s.cards)}
         verdicts, errors = ai_logic.parse_verdicts_json(
-            res["text"], len(s.cards), field_map, web=ai_cli.web_capable(s.backend))
+            res["text"], len(s.cards), field_map, web=ai_cli.web_capable(s.backend, s.cli_path))
         if errors:
             if not self._retried_json:
                 self._retried_json = True
