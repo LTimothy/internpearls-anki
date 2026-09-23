@@ -454,6 +454,23 @@ def test_fetch_card_image_refuses_svg(monkeypatch):
         net.fetch_card_image("https://example.com/x.svg")
 
 
+def test_fetch_card_image_404_does_not_give_deck_source_advice(monkeypatch):
+    """A card image is an address the assistant suggested, so a 404 must not tell
+    the learner to check a repo name, branch and file path. The deck source keeps
+    that advice, since there it is the right thing to check."""
+    from internpearls import net
+    _urlopen(monkeypatch, _http_error(404))
+    with pytest.raises(net.HttpStatusError) as image:
+        net.fetch_card_image("https://example.com/pic.png")
+    assert image.value.code == 404
+    assert "repo" not in str(image.value) and "image" in str(image.value)
+
+    _urlopen(monkeypatch, _http_error(404))
+    with pytest.raises(net.HttpStatusError) as source:
+        net._http_get("https://api.github.com/repos/x/y/contents/manifest.json")
+    assert "check the repo name" in str(source.value)
+
+
 def test_fetch_card_image_happy(monkeypatch):
     from internpearls import net
     body = b"\x89PNG\r\n\x1a\n00"
