@@ -527,3 +527,44 @@ def test_fetch_card_image_rejects_a_redirect_to_http(monkeypatch):
     with pytest.raises(RuntimeError) as e:
         net.fetch_card_image("https://example.com/pic.png")
     assert "https" in str(e.value)
+
+
+@pytest.mark.parametrize("url, expected", [
+    ("https://en.wikipedia.org/wiki/File:Capnogram.png",
+     "https://en.wikipedia.org/wiki/Special:FilePath/Capnogram.png?width=1200"),
+    ("https://en.m.wikipedia.org/wiki/File:Brachial_plexus_2.svg",
+     "https://en.wikipedia.org/wiki/Special:FilePath/Brachial_plexus_2.svg?width=1200"),
+    ("https://commons.wikimedia.org/wiki/File:Brachial plexus 2.svg#mw-jump",
+     "https://commons.wikimedia.org/wiki/Special:FilePath/Brachial_plexus_2.svg?width=1200"),
+    ("https://upload.wikimedia.org/wikipedia/commons/0/0e/Brachial_plexus_2.svg",
+     "https://commons.wikimedia.org/wiki/Special:FilePath/Brachial_plexus_2.svg?width=1200"),
+    ("https://upload.wikimedia.org/wikipedia/en/a/ab/Local_figure.svg",
+     "https://en.wikipedia.org/wiki/Special:FilePath/Local_figure.svg?width=1200"),
+    ("https://upload.wikimedia.org/wikipedia/commons/5/5e/Capnogram.png",
+     "https://upload.wikimedia.org/wikipedia/commons/5/5e/Capnogram.png"),
+    ("https://upload.wikimedia.org/wikipedia/commons/thumb/0/0e/B.svg/800px-B.svg.png",
+     "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0e/B.svg/800px-B.svg.png"),
+    ("https://example.com/wiki/File:x.png", "https://example.com/wiki/File:x.png"),
+])
+def test_wikimedia_image_url(url, expected):
+    from internpearls import net
+    assert net.wikimedia_image_url(url) == expected
+
+
+def test_fetch_card_image_requests_a_wikimedia_file_page_as_its_image(monkeypatch):
+    from internpearls import net
+    seen = []
+    _urlopen(monkeypatch, _Response(b"\x89PNG", headers={"Content-Type": "image/png"}),
+             capture=seen)
+    net.fetch_card_image("https://en.wikipedia.org/wiki/File:Capnogram.png")
+    assert seen[0][0].full_url == (
+        "https://en.wikipedia.org/wiki/Special:FilePath/Capnogram.png?width=1200")
+
+
+def test_requests_name_the_addon_and_its_repo_in_the_user_agent(monkeypatch):
+    from internpearls import net
+    seen = []
+    _urlopen(monkeypatch, _Response(b"x"), capture=seen)
+    net._http_get("https://example.com/")
+    assert seen[0][0].get_header("User-agent") == (
+        "internpearls-addon (+https://github.com/LTimothy/internpearls-anki)")

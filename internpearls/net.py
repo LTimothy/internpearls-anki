@@ -7,10 +7,12 @@ portal fails fast with a clear dialog instead of hanging. Only the large .apkg
 downloads — reached only after first contact already proved we're online — get a
 generous timeout so a big deck on a slow link isn't cut off mid-transfer.
 """
+import re
 import socket
 import urllib.error
 import urllib.request
 from datetime import datetime
+from urllib.parse import quote, unquote
 
 from .config import ANKI_REPO
 
@@ -34,6 +36,9 @@ _BG_TIMEOUT = 3          # seconds; fail-fast bound for unattended background ch
 # still pumps the UI several times a second, large enough that a fast one isn't
 # dominated by the callback.
 _CHUNK = 64 * 1024
+
+# Descriptive, with a contact URL: Wikimedia's user-agent policy refuses generic ones.
+_USER_AGENT = f"internpearls-addon (+https://github.com/{ANKI_REPO})"
 
 
 class TransportError(RuntimeError):
@@ -148,7 +153,7 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
     `ui.cancellable_progress`'s `pump`). Passing nothing keeps the read exactly what it
     was, a single call, so no existing caller pays for the loop.
     """
-    headers = {"User-Agent": "internpearls-addon"}
+    headers = {"User-Agent": _USER_AGENT}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     if accept:
@@ -256,6 +261,34 @@ def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT, token=None):
 _IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
                 "image/webp": "webp"}
 
+_WIKI_FILE_PAGE = re.compile(
+    r"^https://([a-z-]+(?:\.m)?\.wikipedia\.org|commons(?:\.m)?\.wikimedia\.org)"
+    r"/wiki/File:([^?#]+)", re.I)
+_WIKI_UPLOAD_SVG = re.compile(
+    r"^https://upload\.wikimedia\.org/wikipedia/([a-z-]+)/[0-9a-f]/[0-9a-f]{2}/"
+    r"([^/?#]+\.svg)(?:[?#].*)?$", re.I)
+
+
+def wikimedia_image_url(url):
+    """A Wikimedia address that names an image without serving one as a raster file
+    (a File: page is HTML; an original SVG is refused above), rewritten to the
+    Special:FilePath redirect that serves a PNG or JPEG rendering. Any other URL is
+    returned unchanged."""
+    m = _WIKI_FILE_PAGE.match(url)
+    if m:
+        host = m.group(1).lower().replace(".m.", ".")
+        name = m.group(2)
+    else:
+        m = _WIKI_UPLOAD_SVG.match(url)
+        if not m:
+            return url
+        project = m.group(1).lower()
+        host = ("commons.wikimedia.org" if project == "commons"
+                else f"{project}.wikipedia.org")
+        name = m.group(2)
+    name = quote(unquote(name).replace(" ", "_"))
+    return f"https://{host}/wiki/Special:FilePath/{name}?width=1200"
+
 
 def fetch_card_image(url, max_bytes=5 * 1024 * 1024):
     """Download a model-suggested card image, the only thing that ever touches the
@@ -266,10 +299,12 @@ def fetch_card_image(url, max_bytes=5 * 1024 * 1024):
     and, since urllib follows redirects by default, again on the final URL after any
     redirect), a known image content-type (ignoring parameters like `; charset=`), and a
     hard `max_bytes` cap enforced against the bytes actually read as they arrive, not
-    just a Content-Length header the server can lie about or omit.
+    just a Content-Length header the server can lie about or omit. A Wikimedia File:
+    page or original SVG is fetched as its rendered image (see wikimedia_image_url).
     """
     if not url.startswith("https://"):
         raise RuntimeError("image URLs must be https")
+    url = wikimedia_image_url(url)
     ext = {}
 
     def on_response(r):
