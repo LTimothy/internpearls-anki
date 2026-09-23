@@ -701,6 +701,38 @@ def test_preserved_field_falls_back_to_always_restoring_without_a_baseline(anki,
     assert anki.col.note_by_guid("g1")["Notes"] == "their mnemonic"
 
 
+def test_a_protected_field_the_learner_cleared_stays_cleared(anki, tmp_path):
+    """Emptying a shipped value is an edit like any other: the baseline shows the
+    blank is theirs, so the next update must not put the source's text back."""
+    from internpearls import sync
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", notes="shipped hint"), TAGS)], None)}))
+    _sync(anki)                       # establishes the baseline
+    anki.col.note_by_guid("g1")["Notes"] = ""
+
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="NEW", notes="shipped hint"),
+                       TAGS)], None)}))
+    _sync(anki)
+
+    note = anki.col.note_by_guid("g1")
+    assert note["Back"] == "NEW"
+    assert note["Notes"] == ""
+
+
+def test_a_blank_protected_field_with_no_baseline_takes_the_source_value(anki, tmp_path):
+    """Without a baseline a blank can't be told apart from a field nobody has written
+    yet, so the source's text is let through, as it always was."""
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one"), [TAGS])
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", notes="shipped hint"), TAGS)], None)}))
+
+    _sync(anki)
+
+    assert anki.col.note_by_guid("g1")["Notes"] == "shipped hint"
+
+
 def test_preserved_field_name_matches_regardless_of_case(anki, tmp_path):
     """A lowercase field name used to protect nothing at all, silently."""
     from internpearls import sync
@@ -1110,6 +1142,57 @@ def test_auto_sync_applies_decks_inline_and_reports_by_tooltip(anki, tmp_path):
     assert anki.gui.asks == []   # unattended: must never open a dialog
 
 
+def test_auto_sync_applies_nothing_when_the_profile_changes_during_the_fetch(
+        anki, tmp_path, monkeypatch):
+    """The poll decides what to apply from the collection open when it starts, then
+    downloads off the main thread. A profile switched or closed while that download
+    runs must not receive the first profile's decks."""
+    import mock_anki
+    from internpearls import background
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+    first = anki.mw.col
+    other = mock_anki.MockCollection()
+    real_fetch = background._fetch_manifest
+
+    def fetch_then_switch(*args, **kwargs):
+        found = real_fetch(*args, **kwargs)
+        anki.mw.col = other
+        return found
+
+    monkeypatch.setattr(background, "_fetch_manifest", fetch_then_switch)
+
+    background._auto_sync_check()
+
+    assert other.imports == [] and first.imports == []
+    assert other.find_notes(f'"tag:{SCOPE}"') == []
+    assert not background._auto_sync_in_progress
+
+
+def test_auto_sync_applies_nothing_when_the_profile_closes_during_the_fetch(
+        anki, tmp_path, monkeypatch, capsys):
+    from internpearls import background
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+    first = anki.mw.col
+    real_fetch = background._fetch_manifest
+
+    def fetch_then_close(*args, **kwargs):
+        found = real_fetch(*args, **kwargs)
+        anki.mw.col = None
+        return found
+
+    monkeypatch.setattr(background, "_fetch_manifest", fetch_then_close)
+
+    background._auto_sync_check()
+
+    anki.mw.col = first
+    assert first.imports == []
+    assert "Traceback" not in capsys.readouterr().out
+
+
 def test_auto_sync_defers_a_template_change_and_nags_once(anki, tmp_path):
     from internpearls import background, sync
     folder = _write_source(tmp_path, {
@@ -1390,6 +1473,27 @@ def test_reconcile_moves_progress_onto_the_reworded_card_and_archives_the_old(
     assert anki.col.note_by_guid("g_new").id in anki.col.updated_cards   # persisted
     assert len(anki.col._notes) == 2                           # nothing deleted
     assert any("Merged <b>1 reworded card</b>" in i for i in anki.gui.infos)
+
+
+def test_reconcile_carries_the_fsrs_memory_state_onto_the_reworded_card(anki, tmp_path):
+    """Under FSRS the scheduler reads the memory state, not the interval, so the
+    reworded card needs the predecessor's state along with its interval."""
+    import mock_anki
+    from internpearls import sync
+    old = _existing_card(anki, "g_old", "old wording")
+    _existing_card(anki, "g_new", "new wording")
+    _sched(anki, old, reps=4, ivl=12, due=90, type=2, queue=2,
+           memory_state=mock_anki.FsrsMemoryState(stability=14.0, difficulty=6.0),
+           desired_retention=0.9, decay=0.2, last_review_time=1700000000)
+    _configure(anki, _stranded_source(tmp_path, {"old wording": "new wording"}))
+
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
+
+    kept = anki.col.get_card(anki.col.note_by_guid("g_new").card_ids()[0])
+    assert kept.ivl == 12
+    assert (kept.memory_state.stability, kept.memory_state.difficulty) == (14.0, 6.0)
+    assert (kept.desired_retention, kept.decay, kept.last_review_time) == (
+        0.9, 0.2, 1700000000)
 
 
 def test_reconcile_never_rolls_back_a_reworded_card_the_learner_already_studied(anki, tmp_path):

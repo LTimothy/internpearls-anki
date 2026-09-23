@@ -1294,3 +1294,28 @@ def test_child_pipes_are_utf8_rather_than_the_locale_codec(monkeypatch, tmp_path
     assert seen["encoding"] == "utf-8"
     assert seen["errors"] == "replace"
     assert json.loads(record.read_text())["stdin"] == prompt
+
+
+def test_a_result_line_read_just_before_the_exit_check_still_counts(monkeypatch):
+    # Forces the interleaving where the reader appends the final result line and
+    # finishes after the loop's drain but before its exit check: the loop must
+    # still read that line rather than report an empty reply.
+    real_event = threading.Event
+
+    class _LateEvent:
+        def __init__(self):
+            self._event = real_event()
+
+        def set(self):
+            self._event.set()
+
+        def is_set(self):
+            if not self._event.wait(timeout=10):
+                return False
+            time.sleep(0.3)    # let the child exit so poll() is not None
+            return True
+
+    proxy = type("threading", (), {"Thread": threading.Thread, "Event": _LateEvent})
+    monkeypatch.setattr(ai_cli, "threading", proxy)
+    res = _run()
+    assert '"Front": "q"' in res["text"]
