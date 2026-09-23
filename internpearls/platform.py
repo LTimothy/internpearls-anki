@@ -276,6 +276,12 @@ class _NativeWorkHandle:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._timer_handle = native.create_timer(
             request.owner_id, self._deliver, self._POLL_MS)
+        # The poll timer is parented to the owning widget, so it dies with it. No
+        # result can be delivered after that, so stop holding the handle rather
+        # than keeping it in _live_work for the rest of the session.
+        destroyed = getattr(self._timer_handle._timer, "destroyed", None)
+        if destroyed is not None:
+            destroyed.connect(self._abandon)
 
     @property
     def cancel_event(self):
@@ -333,6 +339,10 @@ class _NativeWorkHandle:
     def join(self, timeout=None):
         if self._started:
             self._thread.join(timeout)
+
+    def _abandon(self, *_):
+        self._delivered = True
+        self._native._release_work(self)
 
     def _deliver_for_mock(self):
         self._deliver()

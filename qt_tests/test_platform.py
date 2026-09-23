@@ -107,3 +107,36 @@ def test_a_timer_is_destroyed_with_the_widget_that_owns_it():
     sip.delete(owner)
     QTest.qWait(60)
     assert fired == []
+
+
+def test_work_whose_owner_dies_mid_flight_is_released_not_delivered():
+    """Poll timers are parented to their owner, so closing a dialog while its
+    work runs takes the delivery timer with it. The result must not reach the
+    deleted widget, and the platform must stop holding the handle: without the
+    release it stayed in _live_work, with its closures, for the whole session."""
+    import threading
+    from PyQt6 import sip
+    from aqt.qt import QWidget
+
+    harness.bootstrap()
+    app = harness.app()
+    native = NativePlatform()
+    owner = QWidget()
+    release, delivered = threading.Event(), []
+    handle = native.start_work(
+        WorkRequest("test", native.owner_id(owner), 1, 1, {"action": "test"}),
+        lambda _context: (release.wait(3), "late")[1],
+        delivered.append, delivered.append)
+    handle.start()
+    assert native._live_work == [handle]
+
+    sip.delete(owner)            # the dialog closes with the work in flight
+    release.set()
+    handle.join(timeout=3)
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert delivered == []
+    assert native._live_work == []
