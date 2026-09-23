@@ -1142,7 +1142,8 @@ def per_note_for_package(per_note, matched):
     return out
 
 
-def find_changed_notes(matched, details, existing_fields, protected=(), per_note=None):
+def find_changed_notes(matched, details, existing_fields, protected=(), per_note=None,
+                       baseline=None):
     """Which already-matched notes this .apkg would rewrite, and what they say now.
 
     `matched` is remap_cards' own pair list, so this never re-decides what counts as
@@ -1155,13 +1156,13 @@ def find_changed_notes(matched, details, existing_fields, protected=(), per_note
 
     Compared by field name, never by position: index 1 is Back on a basic note and
     Prompt on an image note, so a positional comparison would report whole decks as
-    changed. Fields named in `protected` are skipped, since those hold the learner's
-    own annotations or, for a field declared protected on one specific note, content
-    the learner may have personally edited; either way this preview can't tell a
-    changed shipped value from a personal edit without the SHIPPED baseline it doesn't
-    load. A field the learner's note type does not have is skipped too: the import's
-    own note-type step adds a genuinely missing field, and until it does there is no
-    existing value to show.
+    changed. A field named in `protected` follows collection._restore's own rule, so
+    the preview and the import agree: the import's value stands, and is shown here,
+    when the learner's field is blank (the snapshot keeps only non-empty values) or
+    still equals what `baseline` ({guid: {field: value}}) says the source last shipped.
+    Otherwise the restore puts the learner's value back, and nothing is shown. A field the learner's note type
+    does not have is skipped too: the import's own note-type step adds a genuinely
+    missing field, and until it does there is no existing value to show.
 
     `protected` is matched case-insensitively, the way collection.py's _note_field
     resolves the same free-text names when it snapshots and restores them. The box is
@@ -1187,9 +1188,13 @@ def find_changed_notes(matched, details, existing_fields, protected=(), per_note
             continue
         skip = fallback_skip if fallback_skip is not None else {
             str(p).lower() for p in protected_for(existing_guid, protected, per_note)}
+        shipped = (baseline or {}).get(existing_guid, {})
         changed = {}
         for name, value in detail.get("fields", []):
-            if str(name).lower() in skip or name not in existing_value:
+            if name not in existing_value:
+                continue
+            if (str(name).lower() in skip and (existing_value[name] or "").strip()
+                    and shipped.get(name) != existing_value[name]):
                 continue
             if (existing_value[name] or "").strip() != (value or "").strip():
                 changed[name] = existing_value[name]

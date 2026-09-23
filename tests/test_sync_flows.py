@@ -6399,3 +6399,30 @@ def test_hidden_unchanged_keep_stays_protected_during_update(anki, tmp_path):
     assert anki.col.note_by_guid('kept-guid').fields == original
     assert anki.col.note_by_guid('new-guid').fields[0] == 'Unrelated addition'
     assert config.load_declined() == registry
+
+
+def test_preview_lists_a_declared_field_only_while_the_learner_never_edited_it(anki, tmp_path):
+    """A declared field follows the restore's own rule: the source's new value is
+    shown when the learner still holds what was last shipped, and hidden once the
+    learner has edited it, since the restore would put their version back."""
+    from internpearls import sync
+    from internpearls.config import _cfg, _save_json
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", image="new figure"), TAGS)], None)})
+    _configure(anki, folder)
+    anki.col.add_note("g1", _fields("Front one", image="old figure"), TAGS.split(),
+                      deck=DECK)
+    _save_json(sync.SHIPPED, {"g1": {"Image": "old figure"}})
+    manifest, fetch, _source = sync._fetch_manifest(_cfg())
+
+    def preview_image(held):
+        sync._apkg_cache.clear()
+        fields = {"g1": {"Front": "Front one", "Image": held}}
+        preview, _dl, _cancelled = sync._preview_content_changes(
+            fetch, manifest["decks"], {"Front one": "g1"}, {},
+            existing_fields=fields, per_note={"g1": ["Image"]})
+        changed = preview[DECK][3]
+        return [c.get("Image") for c in changed.values()]
+
+    assert preview_image("old figure") == ["old figure"]
+    assert preview_image("the learner's own figure") == []
