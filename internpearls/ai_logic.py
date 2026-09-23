@@ -17,8 +17,6 @@ GENERATED_TAG_LEAF = "Generated"
 GENERATED_DECK_LEAF = "Generated"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.S)
-_IMAGE_SOURCE_RE = re.compile(
-    r"^(attached:[\w .\-]+|url:https://\S+|svg:<svg.*|file:[\w .\-]+\.svg)$", re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
 _CLOZE_OK_RE = re.compile(r"\{\{c\d+::[^{}]+?\}\}")
 _CLOZE_OPEN_RE = re.compile(r"\{\{c\d+")
@@ -29,6 +27,7 @@ _CLOZE_OPEN_RE = re.compile(r"\{\{c\d+")
 _SVG_SCRIPT_RE = re.compile(r"<script", re.I)
 _SVG_EVENT_ATTR_RE = re.compile(r"\bon\w+\s*=", re.I)
 _SVG_JS_URI_RE = re.compile(r"javascript\s*:", re.I)
+_SVG_PROLOGUE_RE = re.compile(r"^(?:\s|<\?xml[^>]*\?>|<!DOCTYPE[^>]*>)+", re.I)
 _SVG_OPEN_TAG_RE = re.compile(r"<svg\b[^>]*>", re.S)
 _SVG_ATTR_RE = re.compile(r'([\w:-]+)\s*=\s*"([^"]*)"|([\w:-]+)\s*=\s*\'([^\']*)\'')
 _SVG_RECT_PAIR_RE = re.compile(r"<rect\b[^>]*?>.*?</rect>", re.S)
@@ -96,9 +95,19 @@ def _find_json_obj(text):
     return text[start:end + 1] if 0 <= start < end else text
 
 
+def _image_entry(im):
+    """One image as review expects it. A malformed entry is kept rather than
+    rejected: its source then fails to resolve, which blocks that card alone."""
+    if not isinstance(im, dict):
+        return {"source": str(im), "alt": "", "attribution": ""}
+    return {"source": str(im.get("source", "")), "alt": str(im.get("alt", "")),
+            "attribution": str(im.get("attribution", ""))}
+
+
 def parse_cards_json(text, allowed_types, field_map):
     """Parse a model reply into card dicts. Returns (cards, errors); any error
-    empties cards, so a caller never imports a half-valid batch silently."""
+    empties cards, so a caller never imports a half-valid batch silently. A bad
+    image source is not an error here: it fails that card's image at review."""
     errors = []
     try:
         data = json.loads(_find_json(text))
@@ -137,21 +146,13 @@ def parse_cards_json(text, allowed_types, field_map):
             errors.append(f"card {i}: tags must be a list")
             continue
         images = raw.get("images") or []
-        bad_img = [im for im in images
-                   if not (isinstance(im, dict)
-                           and _IMAGE_SOURCE_RE.match(str(im.get("source", ""))))]
-        if bad_img:
-            errors.append(f"card {i}: invalid image source (allowed: attached:, "
-                          f"url:https:, svg:<svg, file:<name>.svg)")
-            continue
+        if not isinstance(images, list):
+            images = [images]
         cards.append({
             "note_type": ntype,
             "fields": {k: str(fields.get(k, "")) for k in field_map[ntype]},
             "tags": [str(t) for t in (raw.get("tags") or [])],
-            "images": [{"source": str(im["source"]),
-                        "alt": str(im.get("alt", "")),
-                        "attribution": str(im.get("attribution", ""))}
-                       for im in images],
+            "images": [_image_entry(im) for im in images],
             "rationale": str(raw.get("rationale", "")),
         })
     return ([], errors) if errors else (cards, [])
@@ -1187,8 +1188,9 @@ def svg_to_media(markup, index):
     Before encoding, the markup is normalized (see _normalize_svg) so a root with a
     viewBox but no absolute size gets one, and a width="100%" height="100%" background
     rect (sized against Qt's default viewport, not the viewBox) is replaced with a
-    proper full-size one."""
-    m = (markup or "").strip()
+    proper full-size one. An XML declaration or doctype before the root is dropped
+    first."""
+    m = _SVG_PROLOGUE_RE.sub("", (markup or "").strip())
     if not m.startswith("<svg"):
         raise ValueError("not svg markup")
     if _SVG_SCRIPT_RE.search(m):

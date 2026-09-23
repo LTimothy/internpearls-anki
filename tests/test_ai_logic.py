@@ -74,26 +74,12 @@ def test_parse_rejects_empty_primary_field():
     assert cards == [] and any("Front" in e for e in errors)
 
 
-def test_parse_rejects_bad_image_entry():
-    bad = ('[{"note_type": "Basic", "fields": {"Front": "x", "Back": "y"},'
-           '"images": [{"source": "ftp://nope"}]}]')
-    cards, errors = ai_logic.parse_cards_json(bad, ALLOWED, FIELD_MAP)
-    assert cards == [] and any("image" in e.lower() for e in errors)
-
-
 def test_parse_accepts_file_svg_image_source():
     good = ('[{"note_type": "Basic", "fields": {"Front": "x", "Back": "y"},'
            '"images": [{"source": "file:diagram.svg", "alt": "a"}]}]')
     cards, errors = ai_logic.parse_cards_json(good, ALLOWED, FIELD_MAP)
     assert errors == []
     assert cards[0]["images"][0]["source"] == "file:diagram.svg"
-
-
-def test_parse_rejects_file_source_not_ending_in_svg():
-    bad = ('[{"note_type": "Basic", "fields": {"Front": "x", "Back": "y"},'
-           '"images": [{"source": "file:diagram.png"}]}]')
-    cards, errors = ai_logic.parse_cards_json(bad, ALLOWED, FIELD_MAP)
-    assert cards == [] and any("image" in e.lower() for e in errors)
 
 
 def test_contract_mentions_file_image_source():
@@ -1420,3 +1406,44 @@ def test_parse_dupes_verdicts_json_unknown_verdict_word():
     verdicts, errors = ai_logic.parse_dupes_verdicts_json(reply, 1)
     assert errors
     assert verdicts[0]["verdict"] == "different"
+
+
+def test_a_bad_image_source_is_kept_on_its_card_rather_than_failing_the_reply():
+    import json
+    reply = json.dumps([
+        {"note_type": "Study Deck - Basic",
+         "fields": {"Front": "Q1", "Back": "A1"},
+         "images": [{"source": "url:http://example.com/x.png", "alt": "x"}]},
+        {"note_type": "Study Deck - Basic", "fields": {"Front": "Q2", "Back": "A2"}}])
+    cards, errors = ai_logic.parse_cards_json(reply, ALLOWED, FIELD_MAP)
+    assert errors == []
+    assert [c["fields"]["Front"] for c in cards] == ["Q1", "Q2"]
+    assert cards[0]["images"] == [
+        {"source": "url:http://example.com/x.png", "alt": "x", "attribution": ""}]
+
+
+def test_a_non_object_image_entry_becomes_an_unusable_source():
+    import json
+    reply = json.dumps([{"note_type": "Study Deck - Basic",
+                         "fields": {"Front": "Q1", "Back": "A1"},
+                         "images": ["a picture of a heart"]}])
+    cards, errors = ai_logic.parse_cards_json(reply, ALLOWED, FIELD_MAP)
+    assert errors == []
+    assert cards[0]["images"] == [
+        {"source": "a picture of a heart", "alt": "", "attribution": ""}]
+
+
+def test_svg_to_media_accepts_an_xml_declaration_and_doctype():
+    markup = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+              '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" '
+              '"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n'
+              '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>')
+    _name, data = ai_logic.svg_to_media(markup, 0)
+    assert data.startswith(b"<svg")
+
+
+def test_svg_to_media_still_rejects_a_script_after_an_xml_declaration():
+    import pytest
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media(
+            '<?xml version="1.0"?><svg><script>alert(1)</script></svg>', 0)
