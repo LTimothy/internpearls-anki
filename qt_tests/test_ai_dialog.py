@@ -610,7 +610,7 @@ def test_view_skills_extra_button_toggles_and_leaves_dialog_open(monkeypatch):
 
 
 def test_progress_page_cancel_link_cancels_the_run(monkeypatch):
-    """The Cancel link that replaced the old QDialogButtonBox button (Task 4)
+    """The Cancel link that replaced the old QDialogButtonBox button
     must still stop the run directly, never through QDialog.reject()'s own
     "discard the drafted cards" confirm (see _build_progress's comment)."""
     harness.bootstrap()

@@ -884,7 +884,7 @@ def test_conversion_request_only_sets_fields_the_real_message_has(anki, tmp_path
 def test_a_learners_own_note_type_is_never_converted(anki, tmp_path):
     from internpearls import logic
     assert logic.plan_notetype_changes(
-        {"g1": "Study Deck - Cloze"}, {"g1": "Her Own Custom Type"},
+        {"g1": "Study Deck - Cloze"}, {"g1": "A Custom Note Type"},
         {"Study Deck - Basic", "Study Deck - Cloze"}) == []
     assert logic.plan_notetype_changes(
         {"g1": "Some Unknown Incoming Type"}, {"g1": "Study Deck - Basic"},

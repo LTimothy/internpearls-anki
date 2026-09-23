@@ -176,7 +176,7 @@ def test_clean_card_gets_ok():
     assert checks[0] == [{"code": "ok", "level": "ok", "message": "checks pass"}]
 
 
-# === I2: a failed image resolution becomes a mechanical check, not a modal ===
+# === a failed image resolution becomes a mechanical check, not a modal ===
 
 def test_image_error_becomes_a_block_level_check():
     cards = [_card(Front="q", Back="a")]
@@ -232,7 +232,7 @@ def test_prompt_lists_attachments_and_fields():
     assert "slide3.png" in p and '"Front"' in p
 
 
-# === C1: the prompt itself must name the mode, since backends whose CLI gives
+# === the prompt itself must name the mode, since backends whose CLI gives
 # us no flags (codex, agy) have no other way to enforce a workflow difference.
 _PROMPT_KW = dict(skills=["S"], source="SRC", note_types=["Basic"],
                   field_map=FIELD_MAP, count=3)

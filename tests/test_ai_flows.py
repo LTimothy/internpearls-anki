@@ -180,7 +180,7 @@ def test_input_page_offers_to_edit_my_rules_once_some_are_saved(anki, monkeypatc
     assert "my rules" in dlg.skills_row.text()
 
 
-# === I7: Test connection (input page's own single-backend button) =========
+# === Test connection (input page's own single-backend button) =========
 
 def _drain_conn_test(dlg, timeout=15):
     """Test helper mirroring _wait_for_worker: joins the background thread a
@@ -284,7 +284,7 @@ def test_cancel_generation_preserves_inputs(anki, monkeypatch):
     assert not dlg.session.cards   # nothing touched the collection
 
 
-# === Task 4: progress row ===================================================
+# === progress row ===================================================
 
 def test_phase_chip_maps_phase_text_to_the_right_stage():
     assert ai_dialog._phase_chip("Drafting cards with Claude Code") == "drafting"
@@ -644,7 +644,7 @@ def test_skip_reveals_the_note_box_and_its_text_rides_the_next_revise_all(anki, 
     assert dlg.session.notes == {}          # consumed by the revision
 
 
-# === Minor: a fresh Generate after an existing draft is not a revision =====
+# === a fresh Generate after an existing draft is not a revision =====
 
 def test_fresh_generate_after_back_does_not_report_a_bogus_diff(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
@@ -811,7 +811,7 @@ def test_import_success_message_uses_the_platform_undo_shortcut(anki, monkeypatc
     assert f"{ai_dialog._undo_shortcut()} reverts it" in message
 
 
-# === Finding 3: singular counts must not read "1 cards" / "1 notes" =========
+# === singular counts must not read "1 cards" / "1 notes" =========
 
 def test_import_button_label_pluralizes_a_single_card(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
@@ -917,7 +917,7 @@ def test_excluded_card_is_not_imported(anki, monkeypatch):
     assert not anki.col._notes
 
 
-# === I4: importing zero cards must not close the wizard or claim an undo step ===
+# === importing zero cards must not close the wizard or claim an undo step ===
 
 def test_importing_zero_cards_does_not_close_the_wizard(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
@@ -954,7 +954,7 @@ def test_card_image_names_only_svg_attached_and_url_sources():
 
 
 def test_two_svg_images_get_distinct_media_filenames(anki, monkeypatch):
-    # _do_import only ever reuses what review already resolved (see I2): it
+    # _do_import only ever reuses what review already resolved (see the review-time image tests above): it
     # never calls svg_to_media itself, so the test seeds session.image_data
     # the way _run_image_resolution would have, rather than the raw source.
     dlg = _ready_dialog(anki, monkeypatch)
@@ -994,7 +994,7 @@ def test_one_failed_image_does_not_abort_import(anki, monkeypatch):
     assert any("Skipping an image" in w for w in anki.gui.warnings)
 
 
-# === I2: images are resolved and gated at review time, not import time ====
+# === images are resolved and gated at review time, not import time ====
 
 def _stub_fetch_image(monkeypatch, data=b"PNGDATA", ext="png", error=None):
     def fake(url):
@@ -1171,7 +1171,7 @@ def test_close_before_generation_does_not_ask(anki, monkeypatch):
     assert not anki.gui.asks
 
 
-# === I1: closing mid-generation must cancel the run, not orphan it =========
+# === closing mid-generation must cancel the run, not orphan it =========
 
 def test_close_mid_generation_asks_and_declining_keeps_it_running(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="slow")
@@ -1300,7 +1300,7 @@ def test_view_skills_escapes_raw_html_and_preserves_line_breaks(anki):
     assert body.count("<br>") >= 2          # newlines survived as real line breaks
 
 
-# === I5: dismissing View skills must never itself flip deck-skill consent ====
+# === dismissing View skills must never itself flip deck-skill consent ====
 
 def _seed_deck_skill(enabled=True):
     config.save_deck_skill({"text": "do X", "version": "1",
@@ -1355,7 +1355,7 @@ def test_scratch_dir_removed_after_import(anki, monkeypatch):
     assert dlg.session.scratch is None
 
 
-# === I8: cleanup must not run ahead of the call that can raise ==============
+# === cleanup must not run ahead of the call that can raise ==============
 
 def test_failing_import_leaves_scratch_dir_intact_for_a_retry(anki, monkeypatch):
     """add_generated_notes raises RuntimeError for an unknown/missing note type
@@ -1467,7 +1467,7 @@ def test_revision_with_different_card_count_does_not_claim_per_card_updates(anki
     assert "kept 1 verbatim" not in footer
 
 
-# === I3: cancelling or failing a revision must not strand the reviewed draft ===
+# === cancelling or failing a revision must not strand the reviewed draft ===
 
 def _revisable_dialog(anki, monkeypatch, cli_mode_box):
     """Like _ready_dialog, but build_argv reads its mode from a mutable box so
@@ -1540,7 +1540,7 @@ def test_first_generation_cancel_still_falls_back_to_input_with_no_draft(anki, m
     assert not dlg.session.cards
 
 
-# === I8: the entry point itself must be guarded like every other menu action =
+# === the entry point itself must be guarded like every other menu action =
 
 def test_generate_cards_entry_point_surfaces_a_bug_as_a_dialog(anki, monkeypatch):
     def boom(*a, **k):

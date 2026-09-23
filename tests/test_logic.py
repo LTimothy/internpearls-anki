@@ -576,12 +576,12 @@ def test_remap_cards_new_notes_length_always_matches_as_new(tmp_path):
     # would promise a number of cards the review dialog can't actually show.
     apkg = str(tmp_path / "deck.apkg")
     _make_mock_apkg(apkg, [
-        (1, "g-known", "She has this"),
+        (1, "g-known", "Already in the collection"),
         (2, "g-new-a", "New A"),
         (3, "g-new-b", "New B"),
     ])
     _, _, as_new, new_notes, _ = logic.remap_cards(
-        apkg, existing_fronts={"She has this": "g-known"}, aliases={})
+        apkg, existing_fronts={"Already in the collection": "g-known"}, aliases={})
     assert as_new == len(new_notes) == 2
     assert [rid for rid, _, _ in new_notes] == [2, 3]   # apkg order preserved
 
