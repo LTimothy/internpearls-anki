@@ -631,11 +631,14 @@ class StreamingList(QScrollArea):
             return
         if (self.isVisible()
                 and platform().monotonic() - self._last_scroll > self.SCROLL_QUIET_S):
-            end = min(self.built() + self.IDLE_CHUNK, self.total())
-            items = list(self._items[self.built():end])
+            start = self.built()
+            end = min(start + self.IDLE_CHUNK, self.total())
+            items = list(self._items[start:end])
 
             def build(items):
                 self._prefetching = False
+                if self.built() != start:
+                    return    # a scroll built these rows first; the next tick resumes
                 for item in items:
                     row = self._build_row(item)
                     row.setVisible(False)
@@ -647,7 +650,7 @@ class StreamingList(QScrollArea):
 
             request = new_work_request(
                 self, "list-prefetch", "streaming-list.prefetch",
-                inputs={"count": len(items), "start": self.built()})
+                inputs={"count": len(items), "start": start})
 
             def prefetch(context):
                 context.checkpoint("list-prefetch:start")

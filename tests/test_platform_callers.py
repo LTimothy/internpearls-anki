@@ -111,3 +111,47 @@ def test_streaming_prefetch_does_not_overlap_itself(anki):
 
     assert len(native.requests) == 1
     assert native.requests[0].inputs["start"] == 1
+
+
+class _DeferredPlatform(_RecordingPlatform):
+    """Holds each piece of work so a test decides when its result is delivered."""
+
+    def __init__(self):
+        super().__init__()
+        self.pending = []
+
+    def start_work(self, request, compute, on_result, on_error, on_event=None):
+        self.requests.append(request)
+        self.pending.append((compute, on_result))
+        return _Work()
+
+
+class _Checkpoints:
+    def checkpoint(self, _name):
+        pass
+
+
+def test_a_prefetch_that_lands_after_a_scroll_is_dropped(anki):
+    """A scroll can build rows while a prefetch for those same rows is in flight.
+    Delivering that batch anyway renders them twice and pushes every later row out of
+    place, so each row must appear exactly once, in order."""
+    from internpearls import widgets
+
+    def row(item):
+        widget = widgets.QWidget()
+        widget.item = item
+        return widget
+
+    native = _DeferredPlatform()
+    with use_platform(native):
+        listing = widgets.StreamingList(row, list(range(20)), batch=5)
+        listing.isVisible = lambda: True
+        listing._last_scroll = -1
+        listing._idle_extend()
+        listing._extend()
+        compute, deliver = native.pending[0]
+        deliver(compute(_Checkpoints()))
+        listing.fill_all()
+
+    lay = listing._rows_layout
+    assert [lay.itemAt(i).widget().item for i in range(lay.count())] == list(range(20))
