@@ -753,6 +753,9 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
     last_phase = None
     try:
         while True:
+            # Decided before the drain below, so a line the reader appends just
+            # before it finishes is still read on this pass rather than skipped.
+            finished = done.is_set() and proc.poll() is not None
             while seen < len(lines):
                 evt = parse_stream_event(kind, lines[seen])
                 seen += 1
@@ -787,7 +790,7 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                     last_usage = evt["tokens"]
                 if on_event:
                     on_event(evt)
-            if done.is_set() and proc.poll() is not None:
+            if finished:
                 break
             if cancel and cancel():
                 raise GenerationCancelled("cancelled")
