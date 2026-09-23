@@ -294,6 +294,14 @@ def fetch_card_image(url, max_bytes=5 * 1024 * 1024):
             raise RuntimeError("image is too large")
         return True
 
-    data = _http_get(url, timeout=_DOWNLOAD_TIMEOUT, on_response=on_response,
-                     on_chunk=on_chunk)
+    try:
+        data = _http_get(url, timeout=_DOWNLOAD_TIMEOUT, on_response=on_response,
+                         on_chunk=on_chunk)
+    except HttpStatusError as e:
+        # _http_get words a 404 for the deck-source repo it mostly serves. An image
+        # address is one the assistant suggested, so repo advice would mislead.
+        if e.code == 404:
+            raise HttpStatusError("no image at that address (the site returned 404)",
+                                  e.code) from e
+        raise
     return data, ext["value"]
