@@ -270,7 +270,7 @@ def test_prompt_image_rules_thorough_without_web():
 def test_prompt_image_rules_quick_with_web_may_search_for_images_only():
     p = _flat(ai_logic.build_prompt(**_PROMPT_KW, mode="quick", web=True))
     assert "must be a real image found online" in p
-    assert "only to find an image" in p
+    assert "search the web only to find images" in p.lower()
     assert "verifying facts online" in p
 
 
@@ -278,7 +278,7 @@ def test_prompt_image_rules_quick_without_web():
     p = _flat(ai_logic.build_prompt(**_PROMPT_KW, mode="quick", web=False))
     assert "no web tools" in p.lower()
     assert "skip the figure entirely" in p
-    assert "only to find an image" not in p
+    assert "only to find images" not in p
 
 
 def test_prompt_names_the_sandbox_only_for_agy():
@@ -1481,3 +1481,11 @@ def test_codex_turn_completed_usage_without_text_is_counted():
             '"cached_input_tokens":800,"output_tokens":50}}')
     assert ai_logic.parse_stream_event("codex", line) == {"type": "usage",
                                                           "tokens": 1050}
+
+
+def test_web_image_rules_require_a_found_image_for_a_visual_card():
+    for mode in ("quick", "thorough"):
+        p = _flat(ai_logic.build_prompt(**_PROMPT_KW, mode=mode, web=True))
+        assert "incomplete without one" in p
+    p = _flat(ai_logic.build_prompt(**_PROMPT_KW, mode="quick", web=False))
+    assert "incomplete without one" not in p

@@ -238,6 +238,9 @@ See the image rules below for what belongs in "images" and when."""
 
 
 _IMAGE_RULES_WEB = """## Images
+When a card is about something the learner looks at (a waveform or trace,
+anatomy, an imaging or histology finding, a device, a physical sign), search for
+a real image of it and attach it: a card like that is incomplete without one.
 A figure of a real thing (an ECG or capnography trace, anatomy, radiology,
 histology, a chemical structure, a device, a waveform) must be a real image
 found online, cited as url:https://... . Never draw one of these; a drawn
@@ -269,8 +272,8 @@ _MODE_INSTRUCTIONS = {
 }
 
 
-_QUICK_IMAGE_SEARCH = ("You may search the web, but only to find an image for a "
-                       "card that needs a real figure.")
+_QUICK_IMAGE_SEARCH = ("Search the web only to find images, and do search "
+                       "for one whenever a card is about something visual.")
 
 
 def build_prompt(skills, source, note_types, field_map, count, instructions="",
