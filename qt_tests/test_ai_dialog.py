@@ -115,7 +115,7 @@ def test_import_enables_real_undo_action_with_the_native_shortcut(monkeypatch):
     """Findings 1 and 2, against the real Qt objects this bug was actually
     found with.
 
-    Finding 1: a successful import used to write a real, mergeable undo entry
+    A successful import used to write a real, mergeable undo entry
     that nothing ever told Anki's main window about, so Edit > Undo stayed
     greyed out in the running app even though col.undo() genuinely worked
     headless. This drives the real "Generate cards with AI" flow through
@@ -124,7 +124,7 @@ def test_import_enables_real_undo_action_with_the_native_shortcut(monkeypatch):
     Anki's own update_undo_actions() enables from col.undo_status()) flips
     from disabled to enabled.
 
-    Finding 2: the completion message hardcoded "Ctrl+Z" on every platform.
+    The completion message hardcoded "Ctrl+Z" on every platform.
     Because this file runs against REAL PyQt6 (see harness.bootstrap), Qt's
     own QKeySequence(StandardKey.Undo).toString(NativeText) here is not a
     mock's guess at platform behavior: it is exactly what a real Anki
@@ -221,7 +221,7 @@ def test_review_row_renders_a_real_image_thumbnail(monkeypatch, tmp_path):
     app.processEvents()
 
     assert dlg.stack.currentWidget() is dlg.review_page
-    assert dlg.session.included == [False]   # I2: starts excluded until seen
+    assert dlg.session.included == [False]   # Starts excluded until seen
     row = dlg.cards_lay.itemAt(0).widget()
     from aqt.qt import QLabel
     text = " ".join(l.text() for l in row.findChildren(QLabel))

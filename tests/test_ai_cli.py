@@ -1016,7 +1016,7 @@ def test_agy_argv_is_mode_invariant_so_quick_must_not_claim_no_web_access():
 
 
 def test_claude_quick_mode_text_matches_build_argv_with_attachments():
-    # Finding 2: build_argv grants Read (scoped to the scratch dir) whenever
+    # build_argv grants Read (scoped to the scratch dir) whenever
     # images are attached, in EVERY mode: so quick's text must not claim
     # "no tools at all" once an image is in play, only that it still has no
     # web access. Pinned against the WITH-attachments call specifically,
