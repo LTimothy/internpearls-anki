@@ -531,7 +531,7 @@ def test_backend_controls_have_contextual_accessible_names(anki, monkeypatch):
 
 
 def test_row_chip_reads_as_one_of_the_readmes_three_states(anki, monkeypatch):
-    # I7: the row must say which of the README's three states detection landed
+    # The row must say which of the README's three states detection landed
     # in, and say it as its own chip rather than rendering --version's raw
     # output as if it were one. Plus the fourth state detection never produces:
     # a backend the reader set aside.

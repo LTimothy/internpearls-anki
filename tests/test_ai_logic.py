@@ -139,7 +139,7 @@ def test_check_cloze_syntax_ignores_literal_braces_in_prose():
 
 
 def test_primary_field_has_a_cloze_entry():
-    # I6: a core "Cloze" note used to fall back to "Front", which it has no
+    # A core "Cloze" note used to fall back to "Front", which it has no
     # such field, so its review row rendered empty.
     assert ai_logic.PRIMARY_FIELD["Cloze"] == "Text"
 
