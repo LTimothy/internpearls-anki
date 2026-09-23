@@ -1438,6 +1438,7 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
     it matched.
     """
     preview, downloaded = {}, {}
+    baseline = _load_json(SHIPPED, {})
     with cancellable_progress("Checking for updates", len(todo)) as step:
         for i, d in enumerate(todo, 1):
             short = d["name"].split("::")[-1]
@@ -1459,7 +1460,8 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
                                         **per_note_for_package(per_note, matched)}
                     changed = find_changed_notes(
                         matched, apkg_note_details(src), existing_fields,
-                        protected=_cfg()["protected"], per_note=resolved_per_note)
+                        protected=_cfg()["protected"], per_note=resolved_per_note,
+                        baseline=baseline)
                 preview[d["name"]] = (kept, new, new_notes, changed)
             except DownloadCancelled:
                 # Cancel clicked mid-download rather than between decks. That is the

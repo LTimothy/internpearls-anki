@@ -731,6 +731,50 @@ def test_find_changed_notes_skips_a_field_declared_protected_only_on_this_note()
     assert changed == {2: {"Reference": "the learner's own figure two"}}
 
 
+def test_find_changed_notes_shows_a_protected_field_the_learner_never_edited():
+    """The restore lets the source's value stand when the learner's value still equals
+    what was last shipped, so the import will change this field and the preview says so."""
+    details = [_detail(1, "Study Deck - Basic",
+                       [("Front", "A prompt"), ("Reference", "new figure")])]
+    existing = {"learner-1": {"Front": "A prompt", "Reference": "old figure"}}
+    baseline = {"learner-1": {"Reference": "old figure"}}
+    assert logic.find_changed_notes(
+        [(1, "g1", "learner-1")], details, existing, protected=[],
+        per_note={"learner-1": ["Reference"]}, baseline=baseline) == {
+            1: {"Reference": "old figure"}}
+
+
+def test_find_changed_notes_hides_a_protected_field_the_learner_edited():
+    details = [_detail(1, "Study Deck - Basic",
+                       [("Front", "A prompt"), ("Reference", "new figure")])]
+    existing = {"learner-1": {"Front": "A prompt", "Reference": "their own figure"}}
+    baseline = {"learner-1": {"Reference": "old figure"}}
+    assert logic.find_changed_notes(
+        [(1, "g1", "learner-1")], details, existing, protected=[],
+        per_note={"learner-1": ["Reference"]}, baseline=baseline) == {}
+
+
+def test_find_changed_notes_shows_a_blank_protected_field_the_source_fills():
+    """The snapshot keeps only non-empty values, so a blank protected field is not
+    restored and the import's value stands."""
+    details = [_detail(1, "Study Deck - Basic",
+                       [("Front", "A prompt"), ("Image", "a figure")])]
+    existing = {"learner-1": {"Front": "A prompt", "Image": ""}}
+    assert logic.find_changed_notes(
+        [(1, "g1", "learner-1")], details, existing, protected=["Image"]) == {
+            1: {"Image": ""}}
+
+
+def test_find_changed_notes_hides_a_protected_field_with_no_baseline():
+    """With no shipped baseline the restore keeps the learner's value, so nothing changes."""
+    details = [_detail(1, "Study Deck - Basic",
+                       [("Front", "A prompt"), ("Notes", "a source note")])]
+    existing = {"learner-1": {"Front": "A prompt", "Notes": "their note"}}
+    assert logic.find_changed_notes(
+        [(1, "g1", "learner-1")], details, existing, protected=["Notes"],
+        baseline={"learner-2": {"Notes": "their note"}}) == {}
+
+
 def test_find_changed_notes_matches_a_protected_field_case_insensitively():
     """The preserved-fields box is free text and the real names are capitalised, so
     collection.py's _note_field resolves them case-insensitively when it snapshots and
