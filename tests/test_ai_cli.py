@@ -1348,3 +1348,21 @@ def test_codex_is_web_capable_only_when_its_binary_has_search(monkeypatch):
     assert ai_cli.web_capable("codex", "/new/codex")
     assert not ai_cli.web_capable("codex", "/old/codex")
     assert ai_cli.web_capable("claude", "/old/claude")
+
+
+def test_kill_on_windows_ends_the_whole_process_tree(monkeypatch):
+    """Windows has no process groups to signal, so killing only the launcher left
+    the agent it spawned running after a cancel."""
+    calls = []
+
+    class _Proc:
+        pid = 4242
+
+        def kill(self):
+            calls.append("kill")
+
+    monkeypatch.setattr(ai_cli, "_WINDOWS", True)
+    monkeypatch.setattr(ai_cli.subprocess, "run",
+                        lambda argv, **kw: calls.append(argv))
+    ai_cli._kill(_Proc())
+    assert calls[0] == ["taskkill", "/F", "/T", "/PID", "4242"]
