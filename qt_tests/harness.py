@@ -1047,8 +1047,6 @@ def _scene_ai_review(mock, opts):
             with open(path, "w", encoding="utf8") as fh:
                 fh.write(svg)
             cards[last]["images"] = [{"source": f"svg:{svg}", "alt": "", "attribution": ""}]
-            s.included[last] = False
-            s.image_gated = {last}
             s.image_data[last] = [{"state": "ok", "kind": "svg", "path": path}]
         s.tokens_last_run = 12345
         if opts.get("verdicts"):

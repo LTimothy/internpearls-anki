@@ -708,11 +708,6 @@ class _Session:
         # "images" list: see _resolve_one_image. Populated at review time
         # (before the review page ever shows), reused unchanged by import.
         self.image_data = {}
-        # Indices excluded by default purely because they carry an unreviewed
-        # image (see _apply_review_state): what _build_review_row's reason
-        # line gates on, so a card the learner unchecked never gets a
-        # reason line explaining a default the learner didn't hit.
-        self.image_gated = set()
         # True when the last revision came back with a different card count than
         # it was sent: the one shape the prompt promises but nothing verifies.
         # See _finish_generation: this disables the per-index diff entirely.
@@ -760,7 +755,6 @@ class _GenerateDialog(QDialog):
         self.session = s = _Session()
         self._retried_json = False   # the single-retry budget on malformed model output
         self._reply_chunks = []      # accumulated delta text; reset per _start_generation
-        self._image_reason_rows = {}  # {card index: reason-row widget}; set by _rebuild_review
         # Backend kinds with a "Test connection" run currently in flight, from
         # the input page's single Test connection button (the setup page's own
         # per-backend buttons and Re-check now live in the separate AI Backends
@@ -2419,24 +2413,13 @@ class _GenerateDialog(QDialog):
         s.checks = ai_logic.mechanical_checks(
             s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
             image_errors)
-        default_included = [
-            not any(c["level"] == "block" for c in per) and not s.cards[i]["images"]
-            for i, per in enumerate(s.checks)]
+        default_included = [not any(c["level"] == "block" for c in per)
+                            for per in s.checks]
         prev_included = self._pending_prev_included
-        # Only the cards whose CURRENT inclusion is actually the default computed
-        # above (a fresh draft, or one this revision changed) can have been
-        # excluded by the image gate; a card kept verbatim from before carries the
-        # learner's own earlier decision instead, whatever the fresh default would say.
-        s.image_gated = {
-            i for i, per in enumerate(s.checks)
-            if (prev_included is None or i in s.updated)
-            and s.cards[i]["images"] and not any(c["level"] == "block" for c in per)}
         if prev_included is not None:
             # A card the revision left verbatim keeps whatever the user set for
             # it (an override they made on purpose survives); only a genuinely
-            # new or changed card falls back to the mechanical-check default
-            # (which, per I2, excludes any card carrying an image they haven't
-            # had a chance to look at yet in ITS current form).
+            # new or changed card falls back to the mechanical-check default.
             s.included = [prev_included[i] if i not in s.updated
                          else default_included[i] for i in range(len(s.cards))]
         else:
@@ -2529,7 +2512,6 @@ class _GenerateDialog(QDialog):
         self.note_boxes = {}
         self._note_captions = {}
         self._add_note_buttons = {}
-        self._image_reason_rows = {}
         for i, card in enumerate(s.cards):
             if i:
                 self.cards_lay.addWidget(_separator())
@@ -2654,17 +2636,6 @@ class _GenerateDialog(QDialog):
         for entry in entries:
             if entry.get("level") != "ok":
                 outer.addWidget(_check_reason_row(entry, indent))
-        if i in s.image_gated:
-            # Built whenever the gate applies to this card at all (that
-            # membership is fixed for this render), visibility tracks the
-            # decision control live: _on_review_decision shows/hides this exact
-            # widget rather than requiring a full rebuild to catch up.
-            reason_row = _check_reason_row(
-                {"level": "warn", "message": "Has a picture: open the row to "
-                                             "check it before including."}, indent)
-            reason_row.setVisible(not s.included[i])
-            self._image_reason_rows[i] = reason_row
-            outer.addWidget(reason_row)
 
         verdict = s.verdicts.get(i)
         if verdict:
@@ -2719,14 +2690,10 @@ class _GenerateDialog(QDialog):
 
         Skip reveals the note box (its text is what the next Revise all sends as
         this card's note); the box stays open if it already carries text, whichever
-        way the control moves. A picture-gated row's reason line clears once the
-        decision moves back to Include.
+        way the control moves.
         """
         s = self.session
         s.included[i] = state == "include"
-        reason_row = self._image_reason_rows.get(i)
-        if reason_row is not None:
-            reason_row.setVisible(state == "skip")
         box = self.note_boxes.get(i)
         if box is not None:
             show_box = bool(box.toPlainText().strip()) or state == "skip"
