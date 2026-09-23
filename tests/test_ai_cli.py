@@ -492,7 +492,7 @@ def test_run_other_exception_kills_process_and_is_not_masked(monkeypatch):
         os.kill(proc.pid, 0)
 
 
-# === I9: end-to-end evidence for all three backends' result parsing, not just
+# === end-to-end evidence for all three backends' result parsing, not just
 # claude. Neither codex nor agy is installed on this machine, so these drive
 # the fake CLI through run_generation()'s real path (build_argv included):
 # they prove the parsing/plumbing works for a given event shape, not that the
@@ -962,7 +962,7 @@ def test_backends_all_have_safety_posture():
         assert info.get("safety"), f"{kind} is missing a safety posture string"
 
 
-# === C1: per-backend mode text must be truthful, not one claim copy-pasted for
+# === per-backend mode text must be truthful, not one claim copy-pasted for
 # all three backends regardless of what build_argv actually enforces for them.
 def test_backends_all_have_mode_text_for_both_modes():
     for kind, info in ai_cli.BACKENDS.items():
@@ -1031,7 +1031,7 @@ def test_claude_quick_mode_text_matches_build_argv_with_attachments():
     assert "no web access" in quick_text
 
 
-# === I7: Test connection ===================================================
+# === Test connection ===================================================
 
 def _stub_build_argv(monkeypatch, mode_arg):
     monkeypatch.setattr(
