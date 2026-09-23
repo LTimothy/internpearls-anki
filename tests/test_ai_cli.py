@@ -809,7 +809,7 @@ def test_image_capable_table():
 def test_web_capable_table():
     assert ai_cli.web_capable("claude")
     assert ai_cli.web_capable("agy")
-    assert not ai_cli.web_capable("codex")
+    assert ai_cli.web_capable("codex")    # per binary once a path is given
     assert not ai_cli.web_capable("unknown-backend")
 
 
@@ -1319,3 +1319,33 @@ def test_a_result_line_read_just_before_the_exit_check_still_counts(monkeypatch)
     monkeypatch.setattr(ai_cli, "threading", proxy)
     res = _run()
     assert '"Front": "q"' in res["text"]
+
+
+def test_build_argv_codex_puts_search_before_exec_when_supported(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag",
+                        lambda path, flag, **kw: flag == "--search")
+    for mode in ("quick", "thorough"):
+        argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", mode, "/tmp/s", [])
+        assert argv.index("--search") < argv.index("exec")
+
+
+def test_build_argv_codex_omits_search_when_unsupported(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "thorough", "/tmp/s", [])
+    assert "--search" not in argv
+
+
+def test_codex_search_detected_from_the_top_level_help(monkeypatch):
+    monkeypatch.setenv("FAKE_HELP_TOP", "--search  Enable live web search")
+    ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
+    argv, _ = ai_cli.build_argv("codex", FAKE_HELP, "quick", "/tmp/s", [])
+    assert argv[1:3] == ["--search", "exec"]
+
+
+def test_codex_is_web_capable_only_when_its_binary_has_search(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag",
+                        lambda path, flag, **kw: path == "/new/codex")
+    assert ai_cli.web_capable("codex", "/new/codex")
+    assert not ai_cli.web_capable("codex", "/old/codex")
+    assert ai_cli.web_capable("claude", "/old/claude")
