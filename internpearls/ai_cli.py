@@ -51,9 +51,10 @@ BACKENDS = {
                                "facts and read or write files in the scratch "
                                "folder, then self-reviews (up to 15 turns, "
                                "1 to 3 min)",
-                   "quick": "Quick draft: exactly one turn, still no web access. "
-                           "But if you attach files, it can read the scratch copy "
-                           "of exactly those files, to view them (15 to 30 s)"}},
+                   "quick": "Quick draft: one pass with no fact-checking, but it "
+                           "may search the web for card images (up to 6 turns). "
+                           "If you attach files, it can read the scratch copy of "
+                           "exactly those files (15 s to 1 min)"}},
     "codex": {"label": "Codex CLI", "exe": "codex",
               "subscription": "ChatGPT account (free tier: about 50 coding "
                               "messages a day; more on Go, Plus, or Pro)",
@@ -113,9 +114,9 @@ BACKENDS = {
                             "runs under Antigravity's own approval defaults, which "
                             "may include web access (1 to 3 min)",
                 "quick": "Quick draft: asked for a single pass with no "
-                        "verification, but nothing here restricts its tools or "
-                        "turns either, so it may still use the web and may still "
-                        "take a while (15 to 30 s)"}},
+                        "verification, searching the web only for card images, "
+                        "but nothing here restricts its tools or turns, so it "
+                        "may take a while (15 s to 1 min)"}},
 }
 _COMMON_DIRS = ("/opt/homebrew/bin", "/usr/local/bin",
                 os.path.expanduser("~/.local/bin"),
@@ -128,7 +129,8 @@ _CAP_S = {"quick": 900, "thorough": 1800}
 # Turn budget per generation call, not per card: an automatic (count=None)
 # draft still fits inside one call, it just returns more cards in the same
 # reply, so this ceiling stays put regardless of how many cards get drafted.
-_MAX_TURNS = {"quick": 1, "thorough": 15}
+# Quick's turns are for finding images; the prompt still asks for one drafting pass.
+_MAX_TURNS = {"quick": 6, "thorough": 15}
 # Image-input support per backend. All three read an attached image: agy does
 # it headlessly with view_file against the scratch dir build_argv passes as
 # --add-dir, verified against agy 1.1.24.
@@ -443,6 +445,9 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
         elif image_paths:
             tools.append("Read")
             argv += ["--add-dir", scratch]
+        if mode != "thorough":
+            # Quick searches only to find card images; the prompt says so.
+            tools += ["WebSearch", "WebFetch"]
         # --tools is an allowlist of what's even available to the model, not just
         # what's auto-approved: naming this small a set here (never Bash/Edit/
         # NotebookEdit/Task) is what makes "worst case: bad card text" true
