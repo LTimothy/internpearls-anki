@@ -579,10 +579,11 @@ def test_build_argv_claude_thorough_allows_web_only():
     assert "--max-turns" in joined
 
 
-def test_build_argv_claude_quick_denies_all_tools():
+def test_build_argv_claude_quick_allows_web_search_and_nothing_else():
     argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick",
                                 "/tmp/scratch", [])
-    assert "WebSearch" not in " ".join(argv)
+    assert argv[argv.index("--tools") + 1] == "WebSearch,WebFetch"
+    assert argv[argv.index("--max-turns") + 1] == "6"
 
 
 def test_build_argv_claude_images_adds_read_and_dir():
@@ -631,7 +632,7 @@ def test_build_argv_claude_quick_stays_exactly_as_before(monkeypatch):
     assert "--restricted" not in argv
     assert "--permission-mode" not in argv
     assert "--add-dir" not in argv
-    assert argv[argv.index("--tools") + 1] == ""
+    assert argv[argv.index("--tools") + 1] == "WebSearch,WebFetch"
 
 
 def test_build_argv_claude_thorough_flags_detected_against_real_help_probe(
@@ -977,12 +978,12 @@ def test_claude_mode_text_matches_what_build_argv_actually_restricts():
     quick_argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick",
                                       "/tmp/s", [])
     modes = ai_cli.BACKENDS["claude"]["modes"]
-    # Thorough really does get web tools here, so claiming it may verify online
-    # is true; quick really does get none, so claiming no web access is true.
+    # Both modes get web tools; Quick's text says they are for images.
     assert "WebSearch" in " ".join(thorough_argv)
     assert "web" in modes["thorough"].lower()
-    assert "WebSearch" not in " ".join(quick_argv)
-    assert "no web access" in modes["quick"].lower()
+    assert "WebSearch" in " ".join(quick_argv)
+    assert "images" in modes["quick"].lower()
+    assert "no web access" not in modes["quick"].lower()
 
 
 def test_codex_argv_sandbox_differs_by_mode_and_text_matches():
@@ -1024,11 +1025,9 @@ def test_claude_quick_mode_text_matches_build_argv_with_attachments():
     quick_argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick",
                                       "/tmp/s", ["/tmp/s/photo.png"])
     tools = quick_argv[quick_argv.index("--tools") + 1]
-    assert "Read" in tools
-    assert "WebFetch" not in tools and "WebSearch" not in tools
+    assert tools == "Read,WebSearch,WebFetch"
     quick_text = ai_cli.BACKENDS["claude"]["modes"]["quick"].lower()
-    assert "no tools at all" not in quick_text
-    assert "no web access" in quick_text
+    assert "attach" in quick_text and "images" in quick_text
 
 
 # === Test connection ===================================================

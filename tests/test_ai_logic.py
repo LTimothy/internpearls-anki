@@ -281,14 +281,18 @@ def test_prompt_image_rules_thorough_without_web():
     assert "never generate a raster image" in p.lower()
 
 
-def test_prompt_image_rules_quick():
-    # Quick never spends a turn searching, even on a web-capable backend, so
-    # it gets the same no-web image policy as a backend with none at all.
+def test_prompt_image_rules_quick_with_web_may_search_for_images_only():
     p = _flat(ai_logic.build_prompt(**_PROMPT_KW, mode="quick", web=True))
+    assert "must be a real image found online" in p
+    assert "only to find an image" in p
+    assert "verifying facts online" in p
+
+
+def test_prompt_image_rules_quick_without_web():
+    p = _flat(ai_logic.build_prompt(**_PROMPT_KW, mode="quick", web=False))
     assert "no web tools" in p.lower()
     assert "skip the figure entirely" in p
-    assert "must be a real image found online" not in p
-    assert "never generate a raster image" in p.lower()
+    assert "only to find an image" not in p
 
 
 def test_prompt_names_the_sandbox_only_for_agy():
