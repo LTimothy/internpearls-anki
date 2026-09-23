@@ -1799,6 +1799,17 @@ def test_resolve_one_image_file_reads_svg_from_scratch(tmp_path):
     assert res["bytes"] == b"<svg></svg>"
 
 
+def test_resolve_one_image_refuses_a_file_source_that_is_not_svg(tmp_path):
+    (tmp_path / "diagram.png").write_bytes(b"png")
+    res = ai_dialog._resolve_one_image({"source": "file:diagram.png"}, str(tmp_path))
+    assert res["state"] == "error" and ".svg" in res["error"]
+
+
+def test_resolve_one_image_refuses_an_unrecognized_source(tmp_path):
+    res = ai_dialog._resolve_one_image({"source": "ftp://nope"}, str(tmp_path))
+    assert res["state"] == "error" and "unrecognized image source" in res["error"]
+
+
 def test_resolve_one_image_file_rejects_missing_file(tmp_path):
     res = ai_dialog._resolve_one_image({"source": "file:nope.svg"}, str(tmp_path))
     assert res["state"] == "error" and "not found" in res["error"].lower()
