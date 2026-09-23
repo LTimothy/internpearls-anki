@@ -568,3 +568,31 @@ def test_requests_name_the_addon_and_its_repo_in_the_user_agent(monkeypatch):
     net._http_get("https://example.com/")
     assert seen[0][0].get_header("User-agent") == (
         "internpearls-addon (+https://github.com/LTimothy/internpearls-anki)")
+
+
+class _DroppingResponse(_Response):
+    """A response whose connection fails partway through the body."""
+
+    def __init__(self, error):
+        super().__init__(b"")
+        self._error = error
+
+    def read(self, size=None):
+        raise self._error
+
+
+@pytest.mark.parametrize("error", [
+    ConnectionResetError(54, "Connection reset by peer"),
+    __import__("http.client").client.IncompleteRead(b"part", 100),
+    __import__("ssl").SSLError("record layer failure"),
+])
+def test_a_connection_that_drops_mid_read_is_a_transport_error(monkeypatch, error):
+    """An offline learner must get the reach-the-network advice, not the token advice
+    a plain RuntimeError gets."""
+    from internpearls import net
+    _urlopen(monkeypatch, _DroppingResponse(error))
+    with pytest.raises(net.TransportError):
+        net._http_get("https://api.github.com/repos/x/y/contents/manifest.json")
+    _urlopen(monkeypatch, _DroppingResponse(error))
+    with pytest.raises(net.TransportError):
+        net._http_get("https://example.com/deck.apkg", on_chunk=lambda n: True)

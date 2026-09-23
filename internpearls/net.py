@@ -7,6 +7,7 @@ portal fails fast with a clear dialog instead of hanging. Only the large .apkg
 downloads — reached only after first contact already proved we're online — get a
 generous timeout so a big deck on a slow link isn't cut off mid-transfer.
 """
+import http.client
 import re
 import socket
 import urllib.error
@@ -195,6 +196,12 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
             "and try again.") from e
     except urllib.error.URLError as e:
         raise TransportError(f"couldn't reach the network ({e.reason})") from e
+    except (OSError, http.client.HTTPException) as e:
+        # The connection dropped after it opened: a reset, a truncated body, a TLS
+        # error mid-read. Still the network, not the repo or the token.
+        raise TransportError(
+            f"the connection dropped partway through ({e}). Check your internet "
+            "connection and try again.") from e
 
 
 def _gh_raw(repo, path, token, ref, timeout=_CONNECT_TIMEOUT, on_chunk=None):
