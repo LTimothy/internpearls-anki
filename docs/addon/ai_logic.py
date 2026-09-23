@@ -27,6 +27,9 @@ _CLOZE_OPEN_RE = re.compile(r"\{\{c\d+")
 _SVG_SCRIPT_RE = re.compile(r"<script", re.I)
 _SVG_EVENT_ATTR_RE = re.compile(r"\bon\w+\s*=", re.I)
 _SVG_JS_URI_RE = re.compile(r"javascript\s*:", re.I)
+# A hotlinked picture typed into a field instead of listed under "images": it would
+# skip the download checks and fail offline, so the images list is the only path.
+_REMOTE_IMG_RE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*[\"']?https?://[^>]*>", re.I)
 _SVG_PROLOGUE_RE = re.compile(r"^(?:\s|<\?xml[^>]*\?>|<!DOCTYPE[^>]*>)+", re.I)
 _SVG_OPEN_TAG_RE = re.compile(r"<svg\b[^>]*>", re.S)
 _SVG_ATTR_RE = re.compile(r'([\w:-]+)\s*=\s*"([^"]*)"|([\w:-]+)\s*=\s*\'([^\']*)\'')
@@ -150,7 +153,8 @@ def parse_cards_json(text, allowed_types, field_map):
             images = [images]
         cards.append({
             "note_type": ntype,
-            "fields": {k: str(fields.get(k, "")) for k in field_map[ntype]},
+            "fields": {k: _REMOTE_IMG_RE.sub("", str(fields.get(k, "")))
+                       for k in field_map[ntype]},
             "tags": [str(t) for t in (raw.get("tags") or [])],
             "images": [_image_entry(im) for im in images],
             "rationale": str(raw.get("rationale", "")),
@@ -241,7 +245,8 @@ figure of a real thing is wrong more often than not. Drawing an SVG
 (svg:<svg...> inline, or file:<name>.svg with file tools) is allowed only for
 a simple schematic, such as a labelled box-and-arrow flow or a small
 comparison grid, when no real image fits, and only as a last resort. Never
-invent an image; never generate a raster image."""
+invent an image; never generate a raster image. List every image under
+"images" only: never put an <img> tag in a field."""
 
 _IMAGE_RULES_NO_WEB = """## Images
 You have no web tools to search with in this run: do not draw a figure of a
@@ -249,7 +254,8 @@ real thing (an ECG or capnography trace, anatomy, radiology, histology, a
 chemical structure, a device, a waveform) either, since a drawn one cannot be
 verified and is wrong more often than not. Use only the files attached to
 this prompt for images, and skip the figure entirely rather than invent or
-draw one. Never invent an image; never generate a raster image."""
+draw one. Never invent an image; never generate a raster image. List every
+image under "images" only: never put an <img> tag in a field."""
 
 
 _MODE_INSTRUCTIONS = {
@@ -736,6 +742,8 @@ def parse_stream_event(kind, line):
             if text:
                 return {"type": "result", "text": text,
                         "tokens": _usage_tokens(d.get("usage"))}
+            if t == "turn.completed" and isinstance(d.get("usage"), dict):
+                return {"type": "usage", "tokens": _usage_tokens(d["usage"])}
         return None
     if kind == "agy":
         # agy keys its stream-json lines by "event", not "type", and nests the
