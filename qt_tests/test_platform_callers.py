@@ -86,3 +86,45 @@ def test_duplicate_dialog_callers_capture_safe_work_requests(monkeypatch):
     ]
     dialog.deleteLater()
     app.processEvents()
+
+
+class _CancellableWork(_Work):
+    def __init__(self):
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class _TrackingPlatform(_RecordingPlatform):
+    def __init__(self):
+        super().__init__()
+        self.works = []
+
+    def start_work(self, request, compute, on_result, on_error, on_event=None):
+        self.requests.append(request)
+        work = _CancellableWork()
+        self.works.append(work)
+        return work
+
+
+def test_a_rescan_cancels_the_scan_it_replaces():
+    """A scan retired by a new one used to run to completion regardless, so each
+    sensitivity or exclusion change stacked another full scan onto the CPU."""
+    mock, _ = harness.bootstrap()
+    app = harness.app()
+    import mock_anki
+    from internpearls import dupes_dialog
+
+    mock.mw.col = mock_anki.MockCollection()
+    mock.mw.col.add_note("one", ["alpha", "beta"], ["Scope"], deck="one")
+    mock.mw.col.add_note("two", ["alpha", "gamma"], ["Other"], deck="two")
+    native = _TrackingPlatform()
+    with use_platform(native):
+        dialog = dupes_dialog._DuplicateScanDialog("Scope")
+        dialog._rescan()
+
+    first, second = native.works[-2:]
+    assert first.cancelled and not second.cancelled
+    dialog.deleteLater()
+    app.processEvents()
