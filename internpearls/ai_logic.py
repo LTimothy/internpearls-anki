@@ -262,12 +262,16 @@ _MODE_INSTRUCTIONS = {
 }
 
 
+_QUICK_IMAGE_SEARCH = ("You may search the web, but only to find an image for a "
+                       "card that needs a real figure.")
+
+
 def build_prompt(skills, source, note_types, field_map, count, instructions="",
                  attachments=(), cards=None, feedback="", notes=None,
                  checks=None, mode="thorough", backend="", web=True):
-    """web (from ai_cli.web_capable) says whether the backend has web tools at
-    all; Quick mode never spends a turn searching regardless, so the image
-    rules sent are the no-web set whenever mode == "quick" too."""
+    """web (from ai_cli.web_capable) says whether the backend can search at all;
+    Quick searches only for images, so it gets the web image rules plus that
+    limit."""
     notes = notes or {}
     parts = []
     for s in skills:
@@ -276,10 +280,13 @@ def build_prompt(skills, source, note_types, field_map, count, instructions="",
     parts.append("## Allowed note types and their fields\n"
                  + json.dumps(schema, indent=1))
     parts.append(_CONTRACT)
-    parts.append(_IMAGE_RULES_WEB if (web and mode != "quick") else _IMAGE_RULES_NO_WEB)
+    parts.append(_IMAGE_RULES_WEB if web else _IMAGE_RULES_NO_WEB)
     parts.append("## Task\nDraft flashcards from the source material below. "
                  "Quality over count. " + _count_instruction(count))
-    parts.append(_MODE_INSTRUCTIONS.get(mode, _MODE_INSTRUCTIONS["thorough"]))
+    mode_text = _MODE_INSTRUCTIONS.get(mode, _MODE_INSTRUCTIONS["thorough"])
+    if mode == "quick" and web:
+        mode_text += " " + _QUICK_IMAGE_SEARCH
+    parts.append(mode_text)
     if backend == "agy":
         parts.append(
             "## Sandbox\nThe only folder you may read is the scratch folder "
