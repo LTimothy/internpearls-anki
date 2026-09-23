@@ -659,7 +659,13 @@ class StreamingList(QScrollArea):
 
             self._prefetching = True
             platform().start_work(request, prefetch, build, abandon).start()
-        self._idle.start()
+        if self.isVisible():
+            self._idle.start()   # hidden, showEvent restarts it
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.built() < self.total() and not self._idle.is_active():
+            self._idle.start()
 
     def shown(self):
         return self._shown
