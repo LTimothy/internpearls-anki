@@ -3,6 +3,29 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.73.0
+
+Generated cards now come with pictures much more often. When a card is about something
+you look at, such as a waveform, anatomy or an imaging finding, the assistant searches
+for a real image and attaches it. This now happens in Quick mode too, not only in
+Thorough, and Quick can take up to about a minute when it looks for images.
+
+Codex CLI now uses its own web search when the installed version has it. Thorough runs
+on Codex can check facts online, Check facts gives real verdicts, and both modes can
+find images.
+
+A card whose picture downloaded starts on Include, like any other card. One whose
+picture could not be used still starts on Skip.
+
+A link to a Wikipedia or Wikimedia Commons file page, or to an SVG diagram there, now
+downloads as the image itself instead of failing.
+
+One unusable image in a draft now affects only that card instead of failing the whole
+draft. An image the assistant typed into a card's text as a web link is removed, so
+every picture on a card is a downloaded copy that works offline.
+
+Restart Anki after updating.
+
 ## v0.72.4
 
 A protected field you empty on purpose now stays empty when your decks update, instead
