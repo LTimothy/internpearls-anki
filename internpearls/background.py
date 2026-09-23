@@ -181,6 +181,9 @@ def _auto_sync_check():
     # taken only around the import itself, leaving the minutes-long fetch phase
     # unguarded: a second tick, or a manual sync, could start on top of it.
     _auto_sync_in_progress = True
+    # What this poll was planned against. The fetch can outlast a profile switch or
+    # close, and applying then would import this profile's decks into another one.
+    col = mw.col
 
     # Reconciled here, on the main thread, before any work is handed to the background
     # thread below — installed_matching_collection touches mw.col, which _fetch_work
@@ -245,6 +248,8 @@ def _auto_sync_check():
         global _last_reconcile_notified, _backup_failure_notified
         if error or not result:
             return   # offline, misconfigured, or unreachable — stay quiet
+        if mw.col is None or mw.col is not col:
+            return
         if "schema_blocked" in result:
             schema = result["schema_blocked"]
             if schema not in _schema_blocked_notified:

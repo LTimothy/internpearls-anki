@@ -755,14 +755,26 @@ def test_find_changed_notes_hides_a_protected_field_the_learner_edited():
 
 
 def test_find_changed_notes_shows_a_blank_protected_field_the_source_fills():
-    """The snapshot keeps only non-empty values, so a blank protected field is not
-    restored and the import's value stands."""
+    """With no baseline a blank protected field is not restored, so the import's
+    value stands."""
     details = [_detail(1, "Study Deck - Basic",
                        [("Front", "A prompt"), ("Image", "a figure")])]
     existing = {"learner-1": {"Front": "A prompt", "Image": ""}}
     assert logic.find_changed_notes(
         [(1, "g1", "learner-1")], details, existing, protected=["Image"]) == {
             1: {"Image": ""}}
+
+
+def test_find_changed_notes_hides_a_protected_field_the_learner_cleared():
+    """A blank where the baseline holds text is the learner's deletion, which the
+    restore keeps, so the preview must not promise the source's text."""
+    details = [_detail(1, "Study Deck - Basic",
+                       [("Front", "A prompt"), ("Image", "a figure")])]
+    existing = {"learner-1": {"Front": "A prompt", "Image": ""}}
+    baseline = {"learner-1": {"Image": "a figure"}}
+    assert logic.find_changed_notes(
+        [(1, "g1", "learner-1")], details, existing, protected=["Image"],
+        baseline=baseline) == {}
 
 
 def test_find_changed_notes_hides_a_protected_field_with_no_baseline():

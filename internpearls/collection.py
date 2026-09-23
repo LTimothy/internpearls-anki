@@ -366,7 +366,7 @@ def _snapshot(protected, scope_tag, per_note=None):
         saved = {}
         for name in protected_for(note.guid, protected, per_note):
             f = _note_field(note, name)
-            if f and note[f].strip():
+            if f:
                 saved[f] = note[f]
         if saved:
             snap[note.guid] = saved
@@ -375,7 +375,7 @@ def _snapshot(protected, scope_tag, per_note=None):
 
 def _snapshot_fields(guid, fields):
     """Current values of the named fields on one note, keyed by the note's own field
-    name. Non-empty only, same as _snapshot's own per-note loop.
+    name, blanks included, same as _snapshot's own per-note loop.
 
     For topping up a snapshot already taken: a note matched by front only reveals which
     guid it lives under once its package has been fetched and matched, so its per-note
@@ -390,7 +390,7 @@ def _snapshot_fields(guid, fields):
     saved = {}
     for name in fields:
         f = _note_field(note, name)
-        if f and note[f].strip():
+        if f:
             saved[f] = note[f]
     return saved
 
@@ -444,6 +444,9 @@ def _restore(snap, baseline=None, touched=None):
     With no baseline for a note (the first sync after this shipped, or a note the
     source has never written) the old always-restore behaviour applies, so the
     conservative direction is the default and an upgrade never loses an annotation.
+    A blank is the exception: without a baseline it can't be told from a field nobody
+    has written yet, so the source's value stands. With one, a blank where the source
+    shipped text is the learner's own deletion and is kept like any other edit.
 
     `touched` is the guids this run's import actually wrote. Notes outside it are
     skipped entirely: an import that never ran over a note cannot have overwritten
@@ -474,6 +477,8 @@ def _restore(snap, baseline=None, touched=None):
                 continue
             if f in was_shipped and was_shipped[f] == v:
                 continue          # untouched by the learner; let the source's update stand
+            if f not in was_shipped and not v.strip():
+                continue          # blank with no baseline: nothing of theirs to keep
             if f in was_shipped and note[f] != was_shipped[f] and note[f] != v:
                 # Only when the two versions actually differ. An update that changed a
                 # field to exactly what the learner had already written is agreement,
@@ -809,12 +814,13 @@ _SCHED_FIELDS = ("type", "queue", "due", "ivl", "factor", "reps", "lapses")
 _FSRS_FIELDS = ("desired_retention", "decay", "last_review_time")
 
 
-def _halve_memory_state(parent, card):
-    """Copy the parent's FSRS memory state onto a seeded sibling, at half stability.
+def _copy_memory_state(parent, card, scale):
+    """Copy the parent's FSRS memory state onto `card`, its stability times `scale`.
 
     Stability is roughly the interval at which the learner still recalls the card at
-    their desired retention, so it is the FSRS-side counterpart of the interval and has
-    to be halved with it. Copying the interval alone would leave FSRS recomputing from
+    their desired retention, so it is the FSRS-side counterpart of the interval and
+    scales with it: a seeded sibling at half interval takes half, a merged card taking
+    over the same history takes it whole. Copying the interval alone would leave FSRS recomputing from
     a memory state the card never had. Difficulty carries over unchanged: how hard the
     material is does not depend on which blank is asking about it.
 
@@ -826,7 +832,8 @@ def _halve_memory_state(parent, card):
     try:
         copy = type(state)()
         copy.CopyFrom(state)
-        copy.stability = max(0.5, state.stability / 2)
+        if scale != 1:
+            copy.stability = max(0.5, state.stability * scale)
         card.memory_state = copy
     except Exception:
         # Never let a scheduler detail break the conversion itself; the card still
@@ -869,9 +876,11 @@ def carry_scheduling_forward(pairs, existing_guid_to_nid):
             card = src.get(getattr(dst, "ord", 0))
             if card is None or getattr(dst, "reps", 0) >= getattr(card, "reps", 0):
                 continue
-            for f in _SCHED_FIELDS:
+            for f in _SCHED_FIELDS + _FSRS_FIELDS:
                 if hasattr(card, f):
                     setattr(dst, f, getattr(card, f))
+            # The same card's history, so the memory state travels whole.
+            _copy_memory_state(card, dst, 1)
             mw.col.update_card(dst)
             moved += 1
     return moved
@@ -940,7 +949,7 @@ def seed_converted_siblings(nids):
                     setattr(card, f, getattr(parent, f))
             card.ivl = max(1, getattr(parent, "ivl", 0) // 2)
             card.due = getattr(parent, "due", 0)
-            _halve_memory_state(parent, card)
+            _copy_memory_state(parent, card, 0.5)
             mw.col.update_card(card)
             seeded += 1
     return seeded
