@@ -6,8 +6,10 @@ can't drift apart.
 """
 import json
 import os
+import re
 import tempfile
 import traceback
+import zipfile
 
 from aqt import mw
 from aqt.utils import openLink
@@ -69,7 +71,15 @@ def _fetch_addon_version_info(timeout=_CONNECT_TIMEOUT, token=None):
     return json.loads(_gh_public_raw("version.json", timeout=timeout, token=token))
 
 
-def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT, token=None):
+def _package_version(path):
+    """ADDON_VERSION as written in a downloaded package's own config.py, or None."""
+    with zipfile.ZipFile(path) as z:
+        text = z.read("config.py").decode("utf8", "replace")
+    m = re.search(r'^ADDON_VERSION = "([^"]+)"', text, re.M)
+    return m.group(1) if m else None
+
+
+def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT, token=None, expected=None):
     """Download the current .ankiaddon package to a temp file and return its path.
 
     mkstemp rather than a fixed name in the shared temp directory: this file is handed
@@ -80,12 +90,26 @@ def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT, token=None):
 
     `token` is passed straight through to _gh_public_raw; see _fetch_addon_version_info
     for why it's a parameter rather than read here.
+
+    `expected` is the version version.json announced. A package that says otherwise is
+    deleted and refused: the raw CDN fallback can still serve the previous release for
+    minutes after a new one, and installing that would report an update that didn't
+    happen.
     """
     data = _gh_public_raw("internpearls.ankiaddon", timeout=timeout, token=token)
     fd, path = tempfile.mkstemp(prefix="internpearls-", suffix=".ankiaddon")
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
+        if expected is not None:
+            try:
+                found = _package_version(path)
+            except (zipfile.BadZipFile, KeyError):
+                found = None
+            if found != expected:
+                raise RuntimeError(
+                    f"the download was v{found or 'unknown'}, not v{expected}; GitHub "
+                    "may still be publishing it, so try again in a few minutes")
     except Exception:
         try:
             os.remove(path)
@@ -119,7 +143,7 @@ def _addon_update_work(auto_update, token=None):
     if auto_update and latest and not version_at_least(ADDON_VERSION, latest):
         try:
             package_path = _download_addon_package(timeout=_DOWNLOAD_TIMEOUT,
-                                                   token=token)
+                                                   token=token, expected=latest)
         except Exception:
             print(traceback.format_exc())
     return {"info": info, "package_path": package_path}
@@ -144,7 +168,8 @@ def check_updates():
                 yes_label="Install now", no_label="Not now"):
         return
     try:
-        mw.addonManager.install(_download_addon_package(token=token))
+        mw.addonManager.install(_download_addon_package(
+            token=token, expected=latest["version"]))
         _info("Updated. Please restart Anki.")
     except Exception as e:
         _warn(f"Auto-install failed ({e}).<br>Opening the download page instead.")
