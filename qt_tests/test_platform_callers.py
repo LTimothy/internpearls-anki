@@ -128,3 +128,28 @@ def test_a_rescan_cancels_the_scan_it_replaces():
     assert first.cancelled and not second.cancelled
     dialog.deleteLater()
     app.processEvents()
+
+
+def test_a_hidden_streaming_list_stops_polling_until_it_is_shown():
+    """While hidden and not fully built, the idle tick has nothing to do, so it must
+    not keep re-arming itself every 150ms for as long as the widget exists."""
+    _mock, q = harness.bootstrap()
+    app = harness.app()
+    from internpearls import widgets
+
+    def row(_item):
+        w = q.QWidget()
+        w.setFixedHeight(50)
+        return w
+
+    lst = widgets.StreamingList(row, list(range(500)), batch=20)
+    lst.resize(300, 200)
+    lst._idle._fire()      # the timer's own tick, while the list has never been shown
+    assert not lst._idle.is_active()
+
+    lst.show()
+    app.processEvents()
+    assert lst._idle.is_active()
+    lst.close()
+    lst.deleteLater()
+    app.processEvents()
