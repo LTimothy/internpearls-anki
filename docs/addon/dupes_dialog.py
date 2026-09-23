@@ -448,6 +448,9 @@ class _DuplicateScanDialog(QDialog):
                 self._scan_ready = True
                 self._poll_scan()
 
+        old_worker = getattr(self, "_worker", None)
+        if old_worker is not None:
+            old_worker.cancel()   # stops at its next checkpoint instead of finishing
         old_timer = getattr(self, "_timer", None)
         if old_timer is not None:
             old_timer.stop()

@@ -22,6 +22,8 @@ import warnings
 
 from .ai_logic import parse_stream_event, format_duration
 
+_WINDOWS = os.name == "nt"
+
 # "install_url" is where the AI Backends window's install-guide link sends a
 # reader who does not have this CLI yet: the tool's own documentation, never a
 # download the add-on fetches or runs itself.
@@ -886,13 +888,21 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
 
 
 def _kill(proc):
+    """End the CLI and everything it started. POSIX signals its session's group;
+    Windows has none, so taskkill /T walks the child tree instead."""
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        if _WINDOWS:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=10,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        pass
+    try:
+        proc.kill()   # the direct child, whatever the tree kill managed
+    except Exception:
+        pass
 
 
 def run_generation(kind, path, prompt, mode, scratch, image_paths=(),
