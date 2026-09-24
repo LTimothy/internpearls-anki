@@ -25,8 +25,10 @@ from .ui import section_label
 # the retired role below rather than a colour of their own: both read as "set aside",
 # though a skipped or kept card is re-offered on the deck's next version while a
 # retired one never returns.
+# "held" marks a card set aside unread with "hold for later"; it borrows updated's
+# attention role rather than retired's, since it comes back defaulting to Import.
 CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOVED",
-         "skipped": "SKIPPED", "kept": "KEPT YOURS",
+         "skipped": "SKIPPED", "kept": "KEPT YOURS", "held": "HELD",
          # The AI wizard's review row kinds (ai_dialog.py). Wording only, mapped
          # onto the existing role pairs below rather than a colour of their own: a
          # blocked check reads DECLINE, a warning reads UPDATED (attention, not yet
@@ -64,7 +66,7 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
 # see the AI wizard review section of the UX review for why no new palette entry
 # is needed for any of them.
 _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "moved",
-          "skipped": "retired", "kept": "retired",
+          "skipped": "retired", "kept": "retired", "held": "updated",
           "blocked": "decline", "warn": "updated", "ok": "accept", "revised": "updated",
           # A found assistant is a clean result (accept), one that is installed but
           # will not answer is the same "attention, not yet a stop" as a warning

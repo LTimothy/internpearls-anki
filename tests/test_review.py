@@ -1230,3 +1230,62 @@ def test_never_on_a_changed_card_does_not_strike_it_out():
                        if getattr(w, "text", None) and "anterior thigh" in (w.text() or ""))
     _cell_of(new_row).buttons["never"].click()
     assert new_primary.font().strikeOut()
+
+
+def test_a_held_row_wears_the_held_chip():
+    from internpearls import widgets
+    detail = dict(_basic_note_detail(), guid="g1", kind="new", declined_state="held")
+    assert review._row_chip(detail) == "held"
+    assert widgets.CHIPS["held"] == "HELD"
+
+
+def test_opening_a_row_reports_it_every_time_it_expands():
+    opened = []
+    row = review._card_row(dict(_basic_note_detail(), guid="g1", kind="new"),
+                           {}, {}, {}, _no_decide, on_open=opened.append)
+    caret = _caret_widget(row)
+    caret.clicked.emit()   # open
+    caret.clicked.emit()   # close
+    caret.clicked.emit()   # open again
+    assert opened == ["g1", "g1"]
+
+
+def test_a_held_row_starts_on_its_default_decision():
+    decisions = {}
+    items = [("card", "IP::A", dict(_basic_note_detail(), guid="g1", kind="new",
+                                    declined_state="held"))]
+    review.build_update_body(items, {}, {}, {}, decisions, "", lambda: "", "")
+    assert decisions == {}
+
+
+def test_hold_control_counts_and_relabels_as_rows_are_reviewed():
+    class _Button:
+        def __init__(self):
+            self.text, self.visible = None, None
+
+        def setText(self, t):
+            self.text = t
+
+        def setVisible(self, v):
+            self.visible = v
+
+    reviewed = set()
+    kinds = {"g1": "new", "g2": "changed", "g3": "new"}
+    extra, refresh = review.hold_control({"g3": {"state": "skip"}}, kinds,
+                                         lambda: reviewed)
+    assert extra["label"] == "Update reviewed, hold 2 for later"
+    assert extra["tooltip"] == review.HOLD_TOOLTIP and extra["visible"] is True
+    refresh()   # no live button yet: must not raise
+    extra["button"] = button = _Button()
+    reviewed.add("g1")
+    refresh()
+    assert button.text == "Update reviewed, hold 1 for later" and button.visible
+    reviewed.add("g2")
+    refresh()
+    assert button.visible is False
+
+
+def test_hold_control_offers_nothing_when_no_row_can_be_held():
+    extra, refresh = review.hold_control({}, {"g1": None}, lambda: set())
+    assert extra is None
+    refresh()
