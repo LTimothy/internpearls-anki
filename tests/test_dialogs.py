@@ -2694,3 +2694,41 @@ def _find_group_note_row(body):
                 and "make both of these tables" in child.text()):
             return widget
     raise AssertionError("no group note row found")
+
+
+def _extra_dialog(extra):
+    def run():
+        from aqt.qt import QWidget
+        from internpearls.ui import _ask_with_widget
+        extra["answer"] = _ask_with_widget(QWidget(), yes_label="Update", extra=extra)
+    return run
+
+
+def test_ask_with_widget_extra_button_accepts_and_records_the_click(anki):
+    extra = {"label": "Hold some", "tooltip": "why", "visible": True}
+
+    def respond(p):
+        btn = find(p["tree"], t="button", label="Hold some")
+        assert btn["tooltip"] == "why"
+        return {"events": [{"id": btn["id"], "click": True}]}
+
+    drive(anki, _extra_dialog(extra), respond)
+    assert extra["answer"] is True and extra["clicked"] is True
+    assert "button" not in extra
+
+
+def test_ask_with_widget_extra_button_sits_before_the_accept_button(anki):
+    extra = {"label": "Hold some", "tooltip": "", "visible": False}
+    seen = {}
+
+    def respond(p):
+        buttons = [n for n in walk(p["tree"]) if n.get("t") == "button"]
+        seen["labels"] = [b["label"] for b in buttons]
+        seen["hold_visible"] = next(b for b in buttons if b["label"] == "Hold some")["visible"]
+        return {"events": [{"id": find(p["tree"], t="button", label="Update")["id"],
+                            "click": True}]}
+
+    drive(anki, _extra_dialog(extra), respond)
+    assert seen["labels"] == ["Hold some", "Update", "Cancel"]
+    assert seen["hold_visible"] is False
+    assert extra["answer"] is True and not extra.get("clicked")

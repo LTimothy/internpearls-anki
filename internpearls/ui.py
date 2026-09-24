@@ -285,7 +285,7 @@ def _place_checkbox(dialog_layout, body, box):
 
 def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=None,
                      title=None, min_width=560, min_height=520, on_close=None,
-                     open_size=None):
+                     open_size=None, extra=None):
     """Like _ask_scrollable, but the body is a caller-built widget rather than an HTML
     string, for a screen whose content is more than one scrollable label can lay out
     well: fixed summary text above a list that should take whatever height the resized
@@ -309,6 +309,11 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
     has been deleted". Running here, while the dialog is still held, is the last moment
     they exist. Note that the mock-Anki suite cannot catch a mistake of this shape,
     since its widgets are plain Python objects with no C++ lifetime behind them.
+
+    `extra`, when given, is {"label", "tooltip", "visible"} for one more accepting
+    button, placed ahead of the yes button. While the dialog is open its live button
+    sits in extra["button"] so the caller can relabel or hide it; clicking it sets
+    extra["clicked"] and answers yes. The button entry is dropped again on return.
     """
     dlg = QDialog(mw)
     dlg.setWindowTitle(title or APP_NAME)
@@ -334,6 +339,16 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
         _place_checkbox(lay, body, box)
 
     bb = QDialogButtonBox()
+    if extra is not None:
+        other = bb.addButton(extra["label"], QDialogButtonBox.ButtonRole.ActionRole)
+        other.setToolTip(extra.get("tooltip", ""))
+        other.setVisible(extra.get("visible", True))
+        extra["button"] = other
+
+        def _other_clicked(_checked=False):
+            extra["clicked"] = True
+            dlg.accept()
+        other.clicked.connect(_other_clicked)
     yes = bb.addButton(yes_label, QDialogButtonBox.ButtonRole.AcceptRole)
     if no_label:
         bb.addButton(no_label, QDialogButtonBox.ButtonRole.RejectRole)
@@ -349,6 +364,8 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
     # After on_close, never before: that callback is the caller's last read of its own
     # widgets, and this is what frees them (see _ask_scrollable for why not sooner).
     dlg.deleteLater()
+    if extra is not None:
+        extra.pop("button", None)
     return answered
 
 
