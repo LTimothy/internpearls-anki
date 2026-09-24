@@ -3,6 +3,14 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## Unreleased
+
+Short on time during an update? The confirmation now has an **Update reviewed, hold N
+for later** button. It applies the cards you opened or decided on and holds the rest.
+Held cards come back, marked HELD and ready to import, the next time you run Update my
+decks, and a tooltip at startup reminds you they are waiting. They are also listed
+under Manage decks > Declined cards.
+
 ## v0.73.1
 
 A connection that drops partway through a download now reads as a network problem,

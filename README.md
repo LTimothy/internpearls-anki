@@ -36,9 +36,11 @@ The main button. It fetches `manifest.json` from your deck source and works out 
 
 **Decisions.** NEW rows offer Import / Skip / Never; UPDATED rows offer Apply / Keep yours / Never. The default is the choice that costs nothing. Skip, Keep yours and Never open a note box for an optional reason; any row has an "Add note" link once opened. Never collapses the row to "won't be offered again". A skipped card returns the next time its deck changes; a kept card returns only when that card's source content changes, pre-set to the same choice and wearing a SKIPPED or KEPT YOURS chip, with a "changed since" hint if the source moved since your decision. Never cards don't return as rows; the run reports how many are held back. Nothing here deletes a card you already have, and every decline can be undone from Manage decks > Declined cards.
 
+**Hold for later.** Short on time? Once some cards are open or decided, **Update reviewed, hold N for later** applies those and holds the N cards you haven't opened. Held cards stay out of your collection, including through auto-sync, and come back the next time you run Update my decks, even if nothing new shipped. They wear a HELD chip and start on Import or Apply, so accepting them later takes one click. A card you skipped or kept on an earlier update keeps that choice. A tooltip at startup says how many are waiting.
+
 **Why a card changed.** A deck source can ship a note with a changed or new card. Reviewer feedback appears quoted under the card's header, marked "from feedback"; a maintainer's note appears unquoted. Older feedback stays underneath as dated "earlier feedback". Maintainer notes show only for the exact content they describe. A first sync of a deck shows none. When one note explains several cards, it appears once with every row it caused beneath it; a group of five or more is folded behind the note with a "Show N cards" button, and its cards still apply when you press Update. A source can also label where a card came from (a question number, say); the label sits above any note, and labelled cards sort by it in numeric order within each deck.
 
-**Your notes are kept.** What you type in a note box is saved to disk as you type. At the end of the run your notes, plus a snapshot of every standing Skip, Keep yours and Never choice, arrive as a digest you copy and send yourself; nothing is transmitted. Anything unsent is picked up by your next update.
+**Your notes are kept.** What you type in a note box is saved to disk as you type. At the end of the run your notes, plus a snapshot of every standing Skip, Keep yours, Never and held card, arrive as a digest you copy and send yourself; nothing is transmitted. Anything unsent is picked up by your next update.
 
 **How cards are shown.** A fill-in-the-blank card shows its blanks filled in. When a field holds more than one blank group, each blank carries its group number (c1, c2). A hint shows in brackets beside its answer, and a change that only moves a hint is named as one. Pictures are named while a row is closed and rendered from the already-downloaded deck when you open it.
 
@@ -61,7 +63,7 @@ The run ends with one summary dialog, including the digest when you flagged or d
 
 Lists every deck the source offers, with a checkbox, its card count, and a NEW or UPDATED chip where one applies. Unchecking a deck stops future syncs for it; its cards stay in your collection and Reconcile leaves them alone. The panel also edits `protected_fields`. Save keeps your choices; Save and update now also runs Update my decks.
 
-**Declined cards (N)** lists every card you skipped, kept your version of, or said Never to, grouped by decision, each with its deck, date, and an Offer again button that forgets the decision so your next update re-offers it.
+**Declined cards (N)** lists every card you held for later, skipped, kept your version of, or said Never to, grouped by decision, each with its deck, date, and an Offer again button that forgets the decision so your next update re-offers it.
 
 **Configure source** (or Change source) sits beside the Source line and offers three sources, the example deck first:
 
@@ -206,7 +208,7 @@ Run Update my decks, or turn on automatic sync in Settings so content applies on
 
 ## How history is preserved
 
-**Your collection holds exactly the cards you said yes to.** Every Skip, Keep yours and Never is checked before any import, interactive or background, and a declined card is removed from the downloaded package before it reaches your collection. A decline always wins over a match, and a declined card's format change is neither asked about nor applied. Nothing deletes a card you have: Never stops offering it, and Keep yours lasts until that card's source content changes or you choose Offer again.
+**Your collection holds exactly the cards you said yes to.** Every Skip, Keep yours, Never and hold is checked before any import, interactive or background, and a declined card is removed from the downloaded package before it reaches your collection. A decline always wins over a match, and a declined card's format change is neither asked about nor applied. Nothing deletes a card you have: Never stops offering it, and Keep yours lasts until that card's source content changes or you choose Offer again.
 
 **Backups.** Every sync and manual import starts with a timestamped, self-contained backup of the decks it is about to change, including scheduling: normally exactly `export_deck`, and one backup per top-level deck when a run reaches outside it. What counts as changed is read from where the affected cards actually sit, including archiving, relocating and merging. Backups are kept 10 per deck, each deck's files kept apart by a hash of its name. If a backup can't be made you're asked whether to continue (a background sync skips that round instead), and the same applies when your cards sit in no deck the add-on can export. A first sync, with nothing yet in your collection, skips the backup.
 
