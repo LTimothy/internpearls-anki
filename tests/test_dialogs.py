@@ -2732,3 +2732,15 @@ def test_ask_with_widget_extra_button_sits_before_the_accept_button(anki):
     assert seen["labels"] == ["Hold some", "Update", "Cancel"]
     assert seen["hold_visible"] is False
     assert extra["answer"] is True and not extra.get("clicked")
+
+
+def test_declined_dialog_lists_held_cards_first(anki):
+    from internpearls import config
+    config.save_declined({
+        "g1": {"state": "skip", "front": "front a", "deck": "IP::A",
+               "decided": "2026-08-01", "hash": ""},
+        "g2": {"state": "held", "front": "front b", "deck": "IP::A",
+               "decided": "2026-09-23", "hash": ""}})
+    texts = _all_text(_snapshot_declined_dialog(anki))
+    assert "Held for later" in texts and "front b" in texts
+    assert texts.index("Held for later") < texts.index("Skipped for now")

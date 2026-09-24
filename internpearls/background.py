@@ -21,9 +21,10 @@ from .collection import _pre_sync_backup_or_skip_silently, installed_matching_co
 from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_CEILING_MIN,
                      AUTO_SYNC_INTERVAL_DEFAULT_MIN,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, INSTALLED, STATE,
-                     SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json)
+                     SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json,
+                     load_declined)
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
-                    decks_to_update, manifest_needs_newer_addon, plural)
+                    decks_to_update, held_entries, manifest_needs_newer_addon, plural)
 from .net import _BG_TIMEOUT, _DOWNLOAD_TIMEOUT
 from .platform import new_work_request, platform, wait_for_mock_work
 from .sync import (_cached_fetch, _content_backup_decks, _fetch_manifest, _is_local,
@@ -405,11 +406,21 @@ def _sweep_ai_scratch_background():
 
 
 @_bg_safe
+def _held_cards_nudge():
+    """Once per launch: remind the learner of cards set aside with "hold for later",
+    which only come back when Update my decks runs."""
+    n = len(held_entries(load_declined()))
+    if n:
+        tooltip(f"Intern Pearls: {plural(n, 'held card')} waiting. Run Update my "
+                f"decks to finish {'it' if n == 1 else 'them'}.", period=8000, parent=mw)
+
+
+@_bg_safe
 def _schedule_background_checks():
     """Run once, a couple seconds after Anki finishes starting up: the add-on-update
-    check, a sweep of any leftover AI scratch directories, and, only if auto-sync is on
-    in Settings, an immediate deck check plus the repeating poll that keeps checking
-    while Anki stays open.
+    check, a sweep of any leftover AI scratch directories, a reminder about held cards,
+    and, only if auto-sync is on in Settings, an immediate deck check plus the repeating
+    poll that keeps checking while Anki stays open.
 
     Wrapped like the two checks it schedules: this runs from startup wiring with no
     dialog around it, so anything it raises reaches Anki's own add-on error dialog on
@@ -417,6 +428,7 @@ def _schedule_background_checks():
     """
     QTimer.singleShot(2000, _check_addon_updates_background)
     QTimer.singleShot(3000, _sweep_ai_scratch_background)
+    QTimer.singleShot(5000, _held_cards_nudge)
     cfg = _cfg()
     if cfg["auto_sync_decks"]:
         QTimer.singleShot(4000, _auto_sync_check)
