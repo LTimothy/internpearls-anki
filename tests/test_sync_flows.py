@@ -6726,3 +6726,31 @@ def test_preview_lists_a_declared_field_only_while_the_learner_never_edited_it(a
     assert preview_image("old figure") == ["old figure"]
     assert preview_image("the learner's own figure") == []
 
+
+
+def test_startup_nudge_names_the_held_card_count(anki):
+    from internpearls import background, config
+    config.save_declined({
+        "g1": {"state": "held", "front": "a", "deck": DECK, "decided": "", "hash": ""},
+        "g2": {"state": "held", "front": "b", "deck": DECK, "decided": "", "hash": ""},
+        "g3": {"state": "skip", "front": "c", "deck": DECK, "decided": "", "hash": ""}})
+
+    background._held_cards_nudge()
+
+    assert anki.gui.tooltips == [
+        "Intern Pearls: 2 held cards waiting. Run Update my decks to finish them."]
+
+
+def test_startup_nudge_is_silent_with_nothing_held(anki):
+    from internpearls import background, config
+    config.save_declined({
+        "g3": {"state": "skip", "front": "c", "deck": DECK, "decided": "", "hash": ""}})
+
+    background._held_cards_nudge()
+
+    assert anki.gui.tooltips == []
+
+
+def test_startup_nudge_is_wrapped(anki):
+    from internpearls import background
+    assert hasattr(background._held_cards_nudge, "__wrapped__")

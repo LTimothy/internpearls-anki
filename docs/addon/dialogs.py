@@ -755,7 +755,8 @@ def manage_decks(pending=None):
 # whose state matches none of these still renders, under "Other", appended last in
 # _rebuild(): sync.py keeps a GUID declined by its presence in the registry alone,
 # regardless of what its state says, so every entry needs a way back to being offered.
-_DECLINE_GROUPS = (("never", "Never imported"), ("frozen", "Kept yours, no more updates"),
+_DECLINE_GROUPS = (("held", "Held for later"), ("never", "Never imported"),
+                   ("frozen", "Kept yours, no more updates"),
                    ("skip", "Skipped for now"), ("keep", "Kept yours"))
 
 # The cap review._scrolled stops the list growing the dialog past, once it holds more
@@ -883,8 +884,8 @@ class _DeclinedDialog(QDialog):
 
 @_safe
 def open_declined_cards():
-    """Open Declined cards: every never-imported, skipped, or kept-back card, grouped
-    by that choice, each with an Offer again button."""
+    """Open Declined cards: every held, never-imported, skipped, or kept-back card,
+    grouped by that choice, each with an Offer again button."""
     dlg = _DeclinedDialog(mw)
     dlg.exec()
     dlg.deleteLater()   # parented to mw otherwise, which owns it until Anki quits
