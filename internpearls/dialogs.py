@@ -750,8 +750,8 @@ def manage_decks(pending=None):
 
 
 # The order the groups render in, and each state's heading. Only non-empty groups
-# render; held leads because those cards are waiting on the learner to review them
-# (decided declines like never-imported are softer choices). An entry whose state
+# render; held leads because those cards still wait on the learner, then the
+# declines from strongest (never imported) to softest. An entry whose state
 # matches none of these still renders, under "Other", appended last in _rebuild():
 # sync.py keeps a GUID declined by its presence in the registry alone, regardless of
 # what its state says, so every entry needs a way back to being offered.
