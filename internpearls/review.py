@@ -25,8 +25,9 @@ from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
 from .logic import (apkg_media_index, build_feedback_digest, cloze_answer_changes,
                     cloze_filled_html, cloze_hint_changes,
                     extract_apkg_media, field_image_names,
-                    field_preview_html, field_preview_text, merged_word_diff,
-                    note_display_label, plain_text, plural, word_diff_ratio)
+                    field_preview_html, field_preview_text, holdable_guids,
+                    merged_word_diff, note_display_label, plain_text, plural,
+                    word_diff_ratio)
 from .palette import colors
 from .ui import (_ask_with_widget, _info, copy_to_clipboard, hint_label, link_button,
                  muted_label, title_label)
@@ -899,7 +900,7 @@ _FEEDBACK_PLACEHOLDER = ("Anything to pass on about this card? You'll get a copy
 # the most to explain.
 _TURNED_DOWN = frozenset({"skip", "keep", "never", "frozen"})
 
-_DECLINE_CHIP = {"skip": "skipped", "keep": "kept", "frozen": "kept"}
+_DECLINE_CHIP = {"skip": "skipped", "keep": "kept", "frozen": "kept", "held": "held"}
 
 
 def _row_chip(detail):
@@ -925,7 +926,8 @@ def _card_label(detail):
     return note_display_label([v for _, v in detail.get("fields", [])], max_len=60)
 
 
-def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=None):
+def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=None,
+              on_open=None):
     """One card as a single row: a caret, its one chip column (see `_row_chip`), its
     tag if it has one, and its primary line. Clicking the row (the caret or the line
     itself) reveals the answer, the why behind a green left rule, and dosing when
@@ -1015,6 +1017,8 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         expanded = not body.isVisible()
         if expanded:
             _reveal_images()
+            if on_open is not None:
+                on_open(guid)
         body.setVisible(expanded)
         caret.setText(_CARET_OPEN if expanded else _CARET_CLOSED)
         _name_caret(expanded)
@@ -1297,7 +1301,8 @@ def clear_saved_feedback():
 
 
 def build_update_body(items, sources, flags, new_index, decisions,
-                      top_html, status_line, safety_html, touched=None):
+                      top_html, status_line, safety_html, touched=None, opened=None,
+                      on_review=None):
     """The Update my decks screen's body: fixed summary text, the streaming list of
     pending new and changed cards plus any retired or relocated ones, then the
     status line and the safety note below it. `internpearls.ui._ask_with_widget`
@@ -1354,6 +1359,10 @@ def build_update_body(items, sources, flags, new_index, decisions,
     hash) and an active un-decline on a kind-flipped row (which should remove the
     entry) apart from a row simply left as the confirmation seeded it.
 
+    `opened` collects every guid whose row the learner expanded, and `on_review()`
+    runs after each expand and each decision click, so a caller can keep "hold for
+    later" counting only the rows nobody has looked at.
+
     Returns (widget, boxes, flush). `boxes` is {guid: QPlainTextEdit}, built lazily as
     the list's own rows are. `flush()` stops the debounce save timer, writes one final
     unconditional copy of what's flagged to disk, and releases the temporary directory
@@ -1364,6 +1373,7 @@ def build_update_body(items, sources, flags, new_index, decisions,
     boxes = {}
     carried = load_saved_feedback()
     touched = touched if touched is not None else set()
+    opened = opened if opened is not None else set()
 
     # A predeclined card's `decisions` entry has to exist before any row is ever
     # built, not just once its own row happens to render: StreamingList only builds
@@ -1428,6 +1438,13 @@ def build_update_body(items, sources, flags, new_index, decisions,
     def _on_decide(guid, state):
         touched.add(guid)
         _refresh_bottom()
+        if on_review is not None:
+            on_review()
+
+    def _on_open(guid):
+        opened.add(guid)
+        if on_review is not None:
+            on_review()
 
     # Measured once for the whole screen, not per row: every row in one list has to be
     # given the same chip set or the column stops lining up.
@@ -1479,7 +1496,7 @@ def build_update_body(items, sources, flags, new_index, decisions,
             return simple_row("moved", front, f"→ {dest_short}", chips=chips)
         _, deck_name, detail = item
         row = _card_row(detail, flags, boxes, decisions, _on_decide,
-                        resolve=resolvers.get(deck_name), chips=chips)
+                        resolve=resolvers.get(deck_name), chips=chips, on_open=_on_open)
         if active_group is not None:
             row.ip_stay_hidden = not active_group["expanded"]
             active_group["widgets"].append(row)
@@ -1501,6 +1518,34 @@ def build_update_body(items, sources, flags, new_index, decisions,
         media_dir.cleanup()
 
     return body, boxes, flush
+
+
+HOLD_TOOLTIP = ("Cards you opened or chose for are updated as shown. The rest wait, "
+                "and come back the next time you run Update my decks.")
+
+
+def hold_label(n):
+    return f"Update reviewed, hold {n} for later"
+
+
+def hold_control(registry, card_kinds, reviewed):
+    """The confirmation's "hold for later" button: the `extra` dict for
+    ui._ask_with_widget, or None when no row on this screen could be held, plus a
+    refresh() that keeps its count in step with `reviewed()`, the rows opened or
+    decided on so far."""
+    n = len(holdable_guids(registry, card_kinds, reviewed()))
+    if not n:
+        return None, lambda: None
+    extra = {"label": hold_label(n), "tooltip": HOLD_TOOLTIP, "visible": True}
+
+    def refresh():
+        button = extra.get("button")
+        if button is None:
+            return
+        left = len(holdable_guids(registry, card_kinds, reviewed()))
+        button.setText(hold_label(left))
+        button.setVisible(left > 0)
+    return extra, refresh
 
 
 def _list_row(item, card_columns=True, chips=None):
