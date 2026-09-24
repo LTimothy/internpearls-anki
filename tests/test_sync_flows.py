@@ -6821,6 +6821,26 @@ def test_startup_nudge_skips_a_held_card_in_an_excluded_deck(anki):
         "Intern Pearls: 1 held card waiting. Run Update my decks to finish it."]
 
 
+def test_a_held_card_whose_deck_left_the_source_is_released(anki, tmp_path):
+    """A deck the source stopped listing can never be offered again, so its held
+    cards would otherwise sit in the registry and keep the startup reminder going
+    every launch."""
+    from internpearls import background, config, sync
+    _source_with_two_new_cards(anki, tmp_path)
+    drive(anki, sync.update_decks, _open_then_hold("front a"))
+    assert config.load_declined()["guid-new-b"]["state"] == "held"
+    _write_source(tmp_path, {"Intern Pearls::Intern Custom::Other": (
+        "v1", [("guid-other", _fields("front other"), TAGS)], None)})
+
+    _update(anki)
+
+    assert "guid-new-b" not in config.load_declined()
+    assert "front b" not in _fronts(anki)
+    anki.gui.tooltips.clear()
+    background._held_cards_nudge()
+    assert anki.gui.tooltips == []
+
+
 def test_startup_nudge_is_wrapped(anki):
     from internpearls import background
     assert hasattr(background._held_cards_nudge, "__wrapped__")
