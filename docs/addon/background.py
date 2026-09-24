@@ -408,8 +408,12 @@ def _sweep_ai_scratch_background():
 @_bg_safe
 def _held_cards_nudge():
     """Once per launch: remind the learner of cards set aside with "hold for later",
-    which only come back when Update my decks runs."""
-    n = len(held_entries(load_declined()))
+    which only come back when Update my decks runs. A held card in a deck the learner
+    has since excluded in Manage decks can't come back that way, so it is not counted
+    here either."""
+    excluded = set(_cfg()["excluded"])
+    n = sum(1 for e in held_entries(load_declined()).values()
+            if e.get("deck") not in excluded)
     if n:
         tooltip(f"Intern Pearls: {plural(n, 'held card')} waiting. Run Update my "
                 f"decks to finish {'it' if n == 1 else 'them'}.", period=8000, parent=mw)

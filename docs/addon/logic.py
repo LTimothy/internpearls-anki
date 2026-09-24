@@ -194,7 +194,7 @@ def decks_to_update(manifest, installed, excluded=None, held=None):
     `installed` is {deck_name: version_last_applied}. A deck missing from it is new; a
     deck whose version changed needs re-sync; matching versions are skipped. `excluded`
     is an optional collection of deck names the user has opted out of syncing (from the
-    deck manager) — those are skipped regardless of version. `held` is deck names holding
+    deck manager, those are skipped regardless of version). `held` is deck names holding
     cards the learner set aside with "hold for later"; those count as pending even at a
     matching version, so the interactive run offers the held cards again. Auto-sync never
     passes it. Shared by Sync (to know what to apply) and Preview sync (to report the
