@@ -2609,3 +2609,56 @@ def test_word_diff_ratio_is_high_for_a_small_edit_and_low_for_a_rewrite():
 
 def test_word_diff_ratio_reads_empty_as_fully_similar():
     assert logic.word_diff_ratio([]) == 1.0
+
+
+# ------------------------------------------------------------- held for later
+
+def _held(deck="IP::A", front="f"):
+    return {"state": "held", "front": front, "deck": deck,
+            "decided": "2026-09-23", "hash": "h"}
+
+
+def test_held_entries_and_deck_names_read_only_held_dict_entries():
+    reg = {"g1": _held("IP::A"), "g2": _held("IP::B"),
+           "g3": {"state": "skip", "deck": "IP::C"}, "g4": "garbage",
+           "g5": {"state": "held", "deck": ""}}
+    assert set(logic.held_entries(reg)) == {"g1", "g2", "g5"}
+    assert logic.held_deck_names(reg) == {"IP::A", "IP::B"}
+    assert logic.held_entries(None) == {}
+
+
+def test_holdable_is_every_untouched_undeclined_card_row():
+    reg = {"g-skip": {"state": "skip"}, "g-held": _held(), "g-bad": "garbage"}
+    kinds = {"g-new": "new", "g-changed": "changed", "g-open": "new",
+             "g-skip": "new", "g-held": "changed", "g-bad": "new", "g-none": None}
+    assert logic.holdable_guids(reg, kinds, {"g-open"}) == [
+        "g-new", "g-changed", "g-held"]
+
+
+def test_released_held_is_accepted_at_default_or_no_longer_pending():
+    reg = {"shown-default": _held("IP::A"), "shown-skipped": _held("IP::A"),
+           "shown-held-again": _held("IP::A"), "gone-read": _held("IP::A"),
+           "gone-unread": _held("IP::B"), "not-held": {"state": "skip", "deck": "IP::A"}}
+    kinds = {"shown-default": "new", "shown-skipped": "new", "shown-held-again": "new"}
+    released = logic.released_held_guids(
+        reg, kinds, decisions={"shown-skipped": "skip"},
+        hold=["shown-held-again"], readable_decks={"IP::A"})
+    assert released == ["shown-default", "gone-read"]
+
+
+def test_decks_to_update_counts_a_current_deck_with_held_cards():
+    manifest = {"decks": [{"name": "IP::A", "version": "v1"},
+                          {"name": "IP::B", "version": "v1"},
+                          {"name": "IP::C", "version": "v1"}]}
+    installed = {"IP::A": "v1", "IP::B": "v1", "IP::C": "v1"}
+    names = [d["name"] for d in logic.decks_to_update(
+        manifest, installed, excluded={"IP::C"}, held={"IP::B", "IP::C"})]
+    assert names == ["IP::B"]
+    assert logic.decks_to_update(manifest, installed) == []
+
+
+def test_digest_snapshot_names_held_cards():
+    text = logic.build_feedback_digest(
+        [{"deck": "IP::A", "front": "front a", "guid": "g0", "note": "n"}],
+        standing_declines={"g1": _held("IP::A", "Held card")})
+    assert "Held for later (1)" in text and "Held card" in text
