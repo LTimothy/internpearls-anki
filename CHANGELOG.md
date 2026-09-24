@@ -3,6 +3,27 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.73.1
+
+A connection that drops partway through a download now reads as a network problem,
+with advice to check your internet connection, instead of sending you to check your
+GitHub token.
+
+The add-on's own update now checks that the file it downloaded is the version it just
+announced. If GitHub is still serving the previous release, nothing is installed and
+you are asked to try again in a few minutes.
+
+On Windows, cancelling a card-generation run now stops the assistant completely, not
+just the program that launched it.
+
+Changing a setting in Scan for duplicates now stops the scan it replaces instead of
+letting it run to the end in the background.
+
+A hidden update list no longer keeps waking up in the background while it has nothing
+to do.
+
+Restart Anki after updating.
+
 ## v0.73.0
 
 Generated cards now come with pictures much more often. When a card is about something
