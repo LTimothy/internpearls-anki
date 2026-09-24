@@ -5947,6 +5947,160 @@ def test_actively_importing_a_kind_flipped_decline_removes_it(anki, tmp_path):
     assert "decision: imported after all" in digest
 
 
+# ------------------------------------------------ update_decks: hold for later
+
+def _caret_for(tree, front):
+    return next(n for n in _walk(tree) if n.get("t") == "button"
+                and (n.get("accessible") or "").startswith("Show card:")
+                and front in n["accessible"])
+
+
+def _hold_button(tree):
+    return next((n for n in _walk(tree) if n.get("t") == "button"
+                 and (n.get("label") or "").startswith("Update reviewed, hold")), None)
+
+
+def _open_then_hold(*fronts):
+    """respond() for update_decks(): expand each named row, then click the hold
+    button."""
+    state = {"opened": 0}
+
+    def respond(p):
+        if p["kind"] == "ask":
+            return _answer_ask(p, None)
+        if p["kind"] != "dialog":
+            return {}
+        done = _dismiss_result(p["tree"])
+        if done:
+            return done
+        if state["opened"] < len(fronts):
+            caret = _caret_for(p["tree"], fronts[state["opened"]])
+            state["opened"] += 1
+            return {"events": [{"id": caret["id"], "click": True}]}
+        return {"events": [{"id": _hold_button(p["tree"])["id"], "click": True}]}
+    return respond
+
+
+def _fronts(anki):
+    return {anki.col.get_note(nid).fields[0]
+            for nid in anki.col.find_notes(f'"tag:{SCOPE}"')}
+
+
+def test_hold_imports_the_opened_card_and_holds_the_rest(anki, tmp_path):
+    from internpearls import config, sync
+    _source_with_two_new_cards(anki, tmp_path)
+    trees = []
+    respond = _open_then_hold("front a")
+
+    def capture(p):
+        if p["kind"] == "dialog":
+            trees.append(p["tree"])
+        return respond(p)
+
+    drive(anki, sync.update_decks, capture)
+
+    assert _fronts(anki) >= {"front a"} and "front b" not in _fronts(anki)
+    reg = config.load_declined()
+    assert reg["guid-new-b"]["state"] == "held" and reg["guid-new-b"]["hash"]
+    assert "guid-new-a" not in reg
+    assert _hold_button(trees[0])["label"] == "Update reviewed, hold 2 for later"
+    assert "1 card held for later" in _all_text(trees[-1])
+    assert anki.gui.clipboard == []   # holding is not a decision, so no digest
+
+
+def test_a_held_card_comes_back_on_the_next_update_marked_held(anki, tmp_path):
+    from internpearls import sync
+    _source_with_two_new_cards(anki, tmp_path)
+    drive(anki, sync.update_decks, _open_then_hold("front a"))
+
+    tree = _snapshot_update_confirmation(anki)
+
+    texts = _all_text(tree)
+    assert "HELD" in texts and "front b" in texts
+    assert "Changed since" not in texts
+    assert _hold_button(tree)["label"] == "Update reviewed, hold 1 for later"
+
+
+def test_accepting_a_held_card_imports_it_and_clears_the_hold(anki, tmp_path):
+    from internpearls import config, sync
+    _source_with_two_new_cards(anki, tmp_path)
+    drive(anki, sync.update_decks, _open_then_hold("front a"))
+
+    _update(anki)
+
+    assert "front b" in _fronts(anki)
+    assert "guid-new-b" not in config.load_declined()
+    assert anki.gui.clipboard == []
+
+
+def test_holding_again_keeps_a_held_card_held(anki, tmp_path):
+    from internpearls import config, sync
+    _source_with_two_new_cards(anki, tmp_path)
+    drive(anki, sync.update_decks, _open_then_hold("front a"))
+
+    drive(anki, sync.update_decks, _open_then_hold())
+
+    assert config.load_declined()["guid-new-b"]["state"] == "held"
+    assert "front b" not in _fronts(anki)
+
+
+def test_skipping_a_held_card_records_a_real_skip(anki, tmp_path):
+    from internpearls import config, sync
+    _source_with_two_new_cards(anki, tmp_path)
+    drive(anki, sync.update_decks, _open_then_hold("front a"))
+
+    drive(anki, sync.update_decks, respond=_choose_skip_for("guid-new-b"))
+
+    assert config.load_declined()["guid-new-b"]["state"] == "skip"
+    assert "decision: skipped" in anki.gui.clipboard[-1]
+
+
+def test_clicking_import_on_a_held_card_is_not_reported_as_an_undecline(anki, tmp_path):
+    from internpearls import config, sync
+    _source_with_two_new_cards(anki, tmp_path)
+    drive(anki, sync.update_decks, _open_then_hold("front a"))
+
+    drive(anki, sync.update_decks, respond=_choose_import_for("guid-new-b"))
+
+    assert "guid-new-b" not in config.load_declined()
+    assert "front b" in _fronts(anki)
+    assert anki.gui.clipboard == []
+
+
+def test_a_standing_skip_is_not_counted_as_holdable(anki, tmp_path):
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-b": {"state": "skip", "front": "front b", "deck": deck,
+                       "decided": "2026-08-01", "hash": ""}})
+
+    tree = _snapshot_update_confirmation(anki)
+
+    assert _hold_button(tree)["label"] == "Update reviewed, hold 1 for later"
+
+
+def test_deck_summary_counts_a_held_card_as_new(anki, tmp_path):
+    from internpearls import sync
+    _source_with_two_new_cards(anki, tmp_path)
+    drive(anki, sync.update_decks, _open_then_hold("front a"))
+
+    tree = _snapshot_update_confirmation(anki)
+
+    assert "1 new" in _all_text(tree)
+
+
+def test_auto_sync_leaves_a_held_only_deck_alone(anki, tmp_path):
+    from internpearls import sync
+    _source_with_two_new_cards(anki, tmp_path)
+    drive(anki, sync.update_decks, _open_then_hold("front a"))
+    anki.gui.tooltips.clear()
+
+    _run_unattended_poll(anki)
+
+    assert "front b" not in _fronts(anki)
+    assert not any("auto-synced" in t for t in anki.gui.tooltips)
+
+
 # ------------------------------------ declines and the note-type conversion plan
 def _declined_conversion_source(anki, tmp_path, state):
     """The learner's Q-and-A note, a source shipping it as a fill-in-the-blank, and a
