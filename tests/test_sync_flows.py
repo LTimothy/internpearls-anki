@@ -6138,8 +6138,62 @@ def test_holding_while_declining_the_backup_still_reports_the_hold(anki, tmp_pat
 
     drive(anki, sync.update_decks, _open_then_hold("front a"))
 
-    assert any("nothing was changed" in i for i in anki.gui.infos)
+    assert not any("nothing was changed" in i for i in anki.gui.infos)
+    assert any("cancelled before anything was imported" in i for i in anki.gui.infos)
     assert any("held for later" in i for i in anki.gui.infos)
+
+
+def _source_updating_card_a_pinned(anki, tmp_path):
+    """Same as _source_updating_card_a, but pins the learner's existing note into
+    DECK explicitly. A test that runs Update twice against this note needs that:
+    without a deck, installed_matching_collection crashes on the second run."""
+    anki.col.add_note("guid-a", _fields("front a", notes="their mnemonic"), [TAGS],
+                      deck=DECK)
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("guid-a", _fields("front a, revised"), TAGS)], None)})
+    _configure(anki, folder)
+    return DECK
+
+
+def test_holding_a_changed_card_round_trips_through_a_later_update(anki, tmp_path):
+    """A changed-kind hold: the learner's copy stays untouched while held, comes back
+    marked HELD with no stale "Changed since" cue, and accepting it applies the
+    change and clears the entry."""
+    from internpearls import config, sync
+    _source_updating_card_a_pinned(anki, tmp_path)
+
+    drive(anki, sync.update_decks, _open_then_hold())   # nothing to open; holds guid-a
+
+    reg = config.load_declined()
+    assert reg["guid-a"]["state"] == "held" and reg["guid-a"]["hash"]
+    assert _existing_fields(anki, "guid-a")[0] == "front a"   # the learner's copy untouched
+
+    tree = _snapshot_update_confirmation(anki)
+    texts = _all_text(tree)
+    assert "HELD" in texts
+    assert "Changed since" not in texts
+
+    _update(anki)
+
+    assert _existing_fields(anki, "guid-a")[0] == "front a, revised"
+    assert "guid-a" not in config.load_declined()
+
+
+def test_a_held_change_with_nothing_left_pending_is_released(anki, tmp_path):
+    """The learner can edit their own copy to match the incoming version while a
+    changed-kind hold sits on it. The next Update has nothing left to offer for that
+    card, so it releases the held entry rather than erroring on a row that no longer
+    exists."""
+    from internpearls import config, sync
+    _source_updating_card_a_pinned(anki, tmp_path)
+    drive(anki, sync.update_decks, _open_then_hold())
+    assert config.load_declined()["guid-a"]["state"] == "held"
+
+    anki.col.note_by_guid("guid-a").fields[:] = _fields("front a, revised")
+
+    _update(anki)
+
+    assert "guid-a" not in config.load_declined()
 
 
 # ------------------------------------ declines and the note-type conversion plan
@@ -6748,6 +6802,23 @@ def test_startup_nudge_is_silent_with_nothing_held(anki):
     background._held_cards_nudge()
 
     assert anki.gui.tooltips == []
+
+
+def test_startup_nudge_skips_a_held_card_in_an_excluded_deck(anki):
+    """The interactive run can't reach a deck the learner unticked in Manage decks, so
+    a held card sitting in one shouldn't nag every launch either."""
+    from internpearls import background, config
+    excluded_deck = "Intern Pearls::Intern Custom::Anatomy"
+    config.save_declined({
+        "g1": {"state": "held", "front": "a", "deck": DECK, "decided": "", "hash": ""},
+        "g2": {"state": "held", "front": "b", "deck": excluded_deck,
+               "decided": "", "hash": ""}})
+    anki.mw._config["excluded_decks"] = [excluded_deck]
+
+    background._held_cards_nudge()
+
+    assert anki.gui.tooltips == [
+        "Intern Pearls: 1 held card waiting. Run Update my decks to finish it."]
 
 
 def test_startup_nudge_is_wrapped(anki):

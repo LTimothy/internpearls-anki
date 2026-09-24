@@ -2140,6 +2140,10 @@ def update_decks():
                 f"{'It comes' if len(hold_now) == 1 else 'They come'} back the next "
                 "time you run Update my decks.") if hold_now else ""
     held_items = [("note", held_note)] if held_note else []
+    # Registry write already happened above, so an early exit can't just say nothing
+    # changed once a hold is involved: say what actually happened instead.
+    early_exit_note = (f"Update cancelled before anything was imported. {held_note}"
+                       if hold_now else NOTHING_CHANGED)
 
     undisclosed = set()
     if todo:
@@ -2152,8 +2156,7 @@ def update_decks():
             # stop cancelling the confirmation itself is, except the registry write
             # above already happened by this point, so whatever the learner decided
             # (including a hold) is reported rather than silently going unreported.
-            _finish(items=held_items, run_decisions=run_decisions,
-                   nothing_note=f"{NOTHING_CHANGED} {held_note}".strip())
+            _finish(run_decisions=run_decisions, nothing_note=early_exit_note)
             return
         conversions_by_deck.update(late_conversions)
         pending_conversions = [c for cs in conversions_by_deck.values() for c in cs]
@@ -2182,8 +2185,7 @@ def update_decks():
     if not proceed:
         # Same as the retry-cancel above: the registry write already happened, so
         # report what the learner decided rather than dropping it from the digest.
-        _finish(items=held_items, run_decisions=run_decisions,
-               nothing_note=f"{NOTHING_CHANGED} {held_note}".strip())
+        _finish(run_decisions=run_decisions, nothing_note=early_exit_note)
         return
 
     # Asked once, here, for the whole run: after the backup and before the first import,

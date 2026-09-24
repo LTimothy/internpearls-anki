@@ -311,9 +311,11 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
     since its widgets are plain Python objects with no C++ lifetime behind them.
 
     `extra`, when given, is {"label", "tooltip", "visible"} for one more accepting
-    button, placed ahead of the yes button. While the dialog is open its live button
-    sits in extra["button"] so the caller can relabel or hide it; clicking it sets
-    extra["clicked"] and answers yes. The button entry is dropped again on return.
+    button, added to the button box before the yes button (Qt places it by its action
+    role, so it may not sit next to Update on screen). While the dialog is open its
+    live button sits in extra["button"] so the caller can relabel or hide it; clicking
+    it sets extra["clicked"] and answers yes. The button entry is dropped again on
+    return.
     """
     dlg = QDialog(mw)
     dlg.setWindowTitle(title or APP_NAME)
