@@ -6727,7 +6727,6 @@ def test_preview_lists_a_declared_field_only_while_the_learner_never_edited_it(a
     assert preview_image("the learner's own figure") == []
 
 
-
 def test_startup_nudge_names_the_held_card_count(anki):
     from internpearls import background, config
     config.save_declined({
