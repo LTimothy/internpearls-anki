@@ -27,7 +27,7 @@ from .logic import (apkg_media_index, build_feedback_digest, cloze_answer_change
                     extract_apkg_media, field_image_names,
                     field_preview_html, field_preview_text, holdable_guids,
                     merged_word_diff, note_display_label, plain_text, plural,
-                    word_diff_ratio)
+                    truncate, word_diff_ratio)
 from .palette import colors
 from .ui import (_ask_with_widget, _info, copy_to_clipboard, hint_label, link_button,
                  muted_label, title_label)
@@ -717,28 +717,44 @@ def _change_note_row(note, indent):
     return row
 
 
-def _group_note_row(note, card_count):
-    """The header over a change group's members: the shared note (see
-    _change_note_row above), plus a toggle once the group is long enough to fold (see
-    _GROUP_COLLAPSE_MIN).
+def _fold_groups(items):
+    """`items` with each foldable group's members moved inside its own
+    ("group_note", note, card_count, members) item, so the streaming list never builds
+    a row a fold would hide. Members are the run of cards, retired rows and grouped
+    seps right after the header; anything else ends the group."""
+    out, i = [], 0
+    while i < len(items):
+        item = items[i]
+        i += 1
+        if item[0] != "group_note" or (item[2] if len(item) > 2 else 0) < _GROUP_COLLAPSE_MIN:
+            out.append(item)
+            continue
+        members = []
+        while i < len(items) and (items[i][0] in ("card", "retired")
+                                  or tuple(items[i][:2]) == ("sep", "grouped")):
+            members.append(items[i])
+            i += 1
+        out.append((item[0], item[1], item[2], members))
+    return out
 
-    Returns (row, group). `group` is None below the threshold, when there is nothing
-    to fold and nothing for `_row` (build_update_body) to register a member against.
-    Otherwise it is the live fold state: {"expanded": bool, "widgets": [...]}, appended
-    to as each member row is built (even a batch built long after this header, via
-    StreamingList's own prefetch) and read back by the toggle to show or hide every
-    member built so far.
-    """
+
+def _group_note_row(note, card_count, members=(), build_row=None):
+    """The header over a change group: the shared note (see _change_note_row above),
+    plus, for a group folded by _fold_groups, a toggle and a container that
+    `build_row` fills with the members the first time it is expanded."""
     row = _change_note_row(note, 0)
     row.layout().setStretch(0, 1)
-    if card_count < _GROUP_COLLAPSE_MIN:
-        return row, None
+    if not members:
+        return row
 
-    group = {"expanded": False, "widgets": []}
-    note_text = plain_text(note.get("note", ""))
-    if len(note_text) > 60:
-        note_text = note_text[:59].rstrip() + "…"
+    note_text = truncate(plain_text(note.get("note", "")), 60)
     toggle = link_button(f"Show {card_count} cards")
+    body = QWidget()
+    body_lay = QVBoxLayout(body)
+    body_lay.setContentsMargins(0, 0, 0, 0)
+    body_lay.setSpacing(0)
+    body.setVisible(False)
+    state = {"expanded": False, "built": False}
 
     def _name_toggle(expanded):
         verb = f"Hide {card_count} cards" if expanded else f"Show {card_count} cards"
@@ -746,16 +762,24 @@ def _group_note_row(note, card_count):
         toggle.setAccessibleName(f"{verb}: {note_text}" if note_text else verb)
 
     def _toggle(_checked=False):
-        group["expanded"] = not group["expanded"]
-        for widget in group["widgets"]:
-            widget.ip_stay_hidden = not group["expanded"]
-            widget.setVisible(group["expanded"])
-        _name_toggle(group["expanded"])
+        state["expanded"] = not state["expanded"]
+        if state["expanded"] and not state["built"]:
+            state["built"] = True
+            for member in members:
+                body_lay.addWidget(build_row(member))
+        body.setVisible(state["expanded"])
+        _name_toggle(state["expanded"])
 
     toggle.clicked.connect(_toggle)
     _name_toggle(False)
     row.layout().addWidget(toggle, 0, Qt.AlignmentFlag.AlignTop)
-    return row, group
+    group = QWidget()
+    group_lay = QVBoxLayout(group)
+    group_lay.setContentsMargins(0, 0, 0, 0)
+    group_lay.setSpacing(0)
+    group_lay.addWidget(row)
+    group_lay.addWidget(body)
+    return group
 
 
 def _retired_row(identity, reason, chips):
@@ -1450,34 +1474,11 @@ def build_update_body(items, sources, flags, new_index, decisions,
     # given the same chip set or the column stops lining up.
     chips = _chip_kinds(items)
 
-    # The change group currently streaming through, or None between groups: set on a
-    # "group_note" item, read (and grown) by every member row that follows it, cleared
-    # on the plain sep that marks the group's end. See _grouped_rows in sync.py for
-    # where the ("sep", "grouped") tagging that drives this comes from.
-    active_group = None
-
     def _row(item):
-        nonlocal active_group
         if item[0] == "group_note":
-            note = item[1]
-            card_count = item[2] if len(item) > 2 else 0
-            row, active_group = _group_note_row(note, card_count)
-            return row
-        if item[0] == "sep":
-            grouped = len(item) > 1 and item[1] == "grouped"
-            group = active_group if grouped else None
-            row = _list_row(item, chips=chips)
-            if group is not None:
-                row.ip_stay_hidden = not group["expanded"]
-                group["widgets"].append(row)
-            if not grouped:
-                active_group = None
-            return row
-        # A card and a retired ledger row (a grouped sep is handled above) are the only
-        # items that continue a change group; anything else starts a new section.
-        if item[0] not in ("card", "retired"):
-            active_group = None
-        if item[0] in ("header", "note"):
+            return _group_note_row(item[1], item[2] if len(item) > 2 else 0,
+                                   item[3] if len(item) > 3 else (), _row)
+        if item[0] in ("header", "note", "sep"):
             return _list_row(item, chips=chips)
         if item[0] == "deck":
             _, deck_short, counts = item
@@ -1486,27 +1487,20 @@ def build_update_body(items, sources, flags, new_index, decisions,
             # A stranded-pair row (see sync._stranded_items) is a 2-tuple with no
             # reason of its own; a ledger retirement carries one as its 3rd element.
             reason = item[2] if len(item) > 2 else ""
-            row = _retired_row(item[1], reason, chips)
-            if active_group is not None:
-                row.ip_stay_hidden = not active_group["expanded"]
-                active_group["widgets"].append(row)
-            return row
+            return _retired_row(item[1], reason, chips)
         if item[0] == "moved":
             _, front, dest_short = item
             return simple_row("moved", front, f"→ {dest_short}", chips=chips)
         _, deck_name, detail = item
         row = _card_row(detail, flags, boxes, decisions, _on_decide,
                         resolve=resolvers.get(deck_name), chips=chips, on_open=_on_open)
-        if active_group is not None:
-            row.ip_stay_hidden = not active_group["expanded"]
-            active_group["widgets"].append(row)
         box = boxes.get(detail["guid"])
         if box is not None:
             box.textChanged.connect(lambda g=detail["guid"], b=box: _on_change(g, b))
         return row
 
     if items:
-        lay.addWidget(StreamingList(_row, items), 1)
+        lay.addWidget(StreamingList(_row, _fold_groups(items)), 1)
     else:
         lay.addStretch()
 

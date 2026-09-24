@@ -542,14 +542,11 @@ class StreamingList(QScrollArea):
     genuinely needs every row built (e.g. before printing the whole list), and is safe
     to call on an already-exhausted list: it does nothing rather than rebuilding.
 
-    Batching is driven by three things, not one. Scrolling is the obvious one. A resize
-    is the second: growing the viewport past what is already built produces no scroll at
-    all, since the scrollbar's range collapses to zero and `valueChanged` never fires
-    again, so a resize refills to the bottom of the viewport too (a confirmation that
-    silently listed 50 of 300 cards for anyone who enlarged the dialog before scrolling).
-    The third is the idle timer: a folded group can leave the viewport short with
-    nothing to resize or scroll, so `_idle_extend` also fills toward the viewport height
-    on its own, off the open path. All three still build a batch at a time rather than
+    Batching is driven by scrolling and by resizing: growing the viewport past what is
+    already built produces no scroll at all, since the scrollbar's range collapses to
+    zero and `valueChanged` never fires again, so a resize refills to the bottom of the
+    viewport too (a confirmation that silently listed 50 of 300 cards for anyone who
+    enlarged the dialog before scrolling). Both build a batch at a time rather than
     everything, so the property this class exists for holds whichever fires.
     """
 
@@ -611,22 +608,7 @@ class StreamingList(QScrollArea):
         return self._shown + len(self._prebuilt)
 
     def _idle_extend(self):
-        # One chunk in flight at a time, checked first as defense in depth: the
-        # viewport-fill branch below advances _shown, and a prefetch already in
-        # flight was captured against the range before that advance.
-        if self._prefetching:
-            self._idle.start()
-            return
-        # A batch of folded rows adds no height, so _fill_viewport can stop with the
-        # viewport still unfilled. Finish filling here, off the open path. The
-        # viewport is genuinely 0-tall between __init__ and Qt's first layout pass, so
-        # require a laid-out viewport too, or an all-hidden first batch reads as
-        # already filled and this fires every tick on a list nobody is looking at yet.
-        if (self._shown < self.total()
-                and self.viewport().height() > 0
-                and self._rows_container.sizeHint().height()
-                <= self.viewport().height()):
-            self._extend()
+        if self._prefetching:       # one chunk in flight at a time
             self._idle.start()
             return
         if self.built() >= self.total():
@@ -692,44 +674,18 @@ class StreamingList(QScrollArea):
         super().resizeEvent(event)
         self._fill_viewport()
 
-    # Consecutive no-growth batches tolerated before giving up synchronously.
-    _FILL_STALL_BATCHES = 2
-
     def _fill_viewport(self):
-        """Build batches until the rows are taller than the viewport, run out, or
-        stall on folded content.
+        """Build batches until the rows are taller than the viewport or run out.
 
         Measured off the rows' own sizeHint rather than the scrollbar's range: the range
         is only recomputed on Qt's own layout pass, so inside this loop it still reports
         the height from before the batch just appended, and the loop would build
         everything. A wrapping row's sizeHint is its unwrapped height, so this can
         overshoot the viewport by a row or two.
-
-        A hidden row contributes nothing to that sizeHint, so a batch built entirely out
-        of a folded group's members never grows it, and the loop above would otherwise
-        keep extending until it ran out of items regardless of group size. Stopping once
-        that has stalled `_FILL_STALL_BATCHES` times in a row bounds the synchronous cost
-        of an immediate fold, but can leave the viewport genuinely short with no
-        scrollbar to reach the rest. `_idle_extend` closes that off the open path: it
-        keeps calling `_extend()` on its own timer until the container's sizeHint
-        clears the viewport, the same total rows `total()` would build regardless of
-        who calls `_extend()`. The rate is not the same: this path builds a full batch
-        per 150ms tick rather than the idle prefetch's own `IDLE_CHUNK` rows, trading
-        that deliberately slow pace for actually getting a folded group's tail onto
-        screen. This never strands a row.
         """
-        stalled = 0
-        height = self._rows_container.sizeHint().height()
-        while self._shown < self.total() and height <= self.viewport().height():
+        while (self._shown < self.total() and self._rows_container.sizeHint().height()
+               <= self.viewport().height()):
             self._extend()
-            grown = self._rows_container.sizeHint().height()
-            if grown <= height:
-                stalled += 1
-                if stalled >= self._FILL_STALL_BATCHES:
-                    break
-            else:
-                stalled = 0
-            height = grown
 
     def _extend(self, count=None):
         """Build the next `batch` rows (or `count` of them) and append them, or do
@@ -745,11 +701,9 @@ class StreamingList(QScrollArea):
                 self._rows_layout.addWidget(row)
             # A row appended to an already-visible list is only shown on Qt's next
             # layout pass, and a hidden item contributes nothing to its layout's
-            # sizeHint. Showing it here is what lets _fill_viewport below measure the
-            # batch it just built rather than the height from before it. A row can ask
-            # to stay hidden (a folded change group's members); default is shown, so
-            # every existing caller is unaffected.
-            row.setVisible(not getattr(row, "ip_stay_hidden", False))
+            # sizeHint. Showing it here is what lets _fill_viewport measure the batch
+            # it just built rather than the height from before it.
+            row.setVisible(True)
         self._shown = end
 
     def fill_all(self):

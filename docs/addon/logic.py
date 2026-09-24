@@ -1312,6 +1312,11 @@ def plain_text(field):
     return re.sub(r"\s+", " ", html.unescape(_TAG_RE.sub(" ", field or ""))).strip()
 
 
+def truncate(text, max_len):
+    """`text` capped at `max_len` characters, ending in an ellipsis when cut."""
+    return text if len(text) <= max_len else text[: max_len - 1].rstrip() + "…"
+
+
 def note_display_label(fields, max_len=90):
     """A short, human-readable label for a note, for dialogs that list its card.
 
@@ -1325,7 +1330,7 @@ def note_display_label(fields, max_len=90):
     for field in fields or []:
         text = plain_text(field)
         if text:
-            return text if len(text) <= max_len else text[: max_len - 1].rstrip() + "…"
+            return truncate(text, max_len)
     for field in fields or []:
         m = _IMG_SRC_RE.search(field or "")
         if m:
