@@ -27,7 +27,7 @@ from .logic import (apkg_media_index, build_feedback_digest, cloze_answer_change
                     extract_apkg_media, field_image_names,
                     field_preview_html, field_preview_text, holdable_guids,
                     merged_word_diff, note_display_label, plain_text, plural,
-                    word_diff_ratio)
+                    truncate, word_diff_ratio)
 from .palette import colors
 from .ui import (_ask_with_widget, _info, copy_to_clipboard, hint_label, link_button,
                  muted_label, title_label)
@@ -735,9 +735,7 @@ def _group_note_row(note, card_count):
         return row, None
 
     group = {"expanded": False, "widgets": []}
-    note_text = plain_text(note.get("note", ""))
-    if len(note_text) > 60:
-        note_text = note_text[:59].rstrip() + "…"
+    note_text = truncate(plain_text(note.get("note", "")), 60)
     toggle = link_button(f"Show {card_count} cards")
 
     def _name_toggle(expanded):
