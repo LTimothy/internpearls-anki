@@ -6101,6 +6101,47 @@ def test_auto_sync_leaves_a_held_only_deck_alone(anki, tmp_path):
     assert not any("auto-synced" in t for t in anki.gui.tooltips)
 
 
+def test_a_released_hold_stays_pending_if_its_deck_never_imports(anki, tmp_path,
+                                                                  monkeypatch):
+    """Releasing a held entry (the learner left its row at the default and did not
+    hold it again) writes the registry before anything imports. If the run then stops
+    before that deck's own import (here: the backup is declined), the card must not be
+    lost: it was the held entry alone that kept the deck pending, so releasing it has
+    to drop the deck from installed.json too, or the next run sees a deck that looks
+    fully up to date with the card in neither the registry nor the collection."""
+    from internpearls import sync
+    _source_with_two_new_cards(anki, tmp_path)
+    drive(anki, sync.update_decks, _open_then_hold("front a"))   # holds "front b"
+
+    # monkeypatch.undo() would also revert the `anki` fixture's own redirection of
+    # DECLINED/INSTALLED into tmp_path, since it shares this same monkeypatch
+    # instance: restore the real function by name instead of undoing everything.
+    real_backup = sync._pre_sync_backup_or_confirm_skip
+    monkeypatch.setattr(sync, "_pre_sync_backup_or_confirm_skip",
+                        lambda *a, **kw: (False, False))
+    drive(anki, sync.update_decks, respond=_click_update_button(True))
+    monkeypatch.setattr(sync, "_pre_sync_backup_or_confirm_skip", real_backup)
+
+    _update(anki)
+
+    assert "front b" in _fronts(anki)
+
+
+def test_holding_while_declining_the_backup_still_reports_the_hold(anki, tmp_path,
+                                                                    monkeypatch):
+    """A run that writes a fresh hold and then stops before backup/import (declining
+    the backup here) must still say so, not just "nothing was changed"."""
+    from internpearls import sync
+    monkeypatch.setattr(sync, "_pre_sync_backup_or_confirm_skip",
+                        lambda *a, **kw: (False, False))
+    _source_with_two_new_cards(anki, tmp_path)
+
+    drive(anki, sync.update_decks, _open_then_hold("front a"))
+
+    assert any("nothing was changed" in i for i in anki.gui.infos)
+    assert any("held for later" in i for i in anki.gui.infos)
+
+
 # ------------------------------------ declines and the note-type conversion plan
 def _declined_conversion_source(anki, tmp_path, state):
     """The learner's Q-and-A note, a source shipping it as a fill-in-the-blank, and a
@@ -6684,3 +6725,4 @@ def test_preview_lists_a_declared_field_only_while_the_learner_never_edited_it(a
 
     assert preview_image("old figure") == ["old figure"]
     assert preview_image("the learner's own figure") == []
+
