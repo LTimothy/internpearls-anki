@@ -2646,6 +2646,13 @@ def test_released_held_is_accepted_at_default_or_no_longer_pending():
     assert released == ["shown-default", "gone-read"]
 
 
+def test_held_outside_manifest_names_held_cards_whose_deck_is_gone():
+    reg = {"kept": _held("IP::A"), "gone": _held("IP::Gone"), "no-deck": _held(""),
+           "skip-gone": {"state": "skip", "deck": "IP::Gone"}}
+    manifest = {"decks": [{"name": "IP::A", "version": "v1"}, "garbage"]}
+    assert logic.held_outside_manifest(reg, manifest) == ["gone", "no-deck"]
+
+
 def test_decks_to_update_counts_a_current_deck_with_held_cards():
     manifest = {"decks": [{"name": "IP::A", "version": "v1"},
                           {"name": "IP::B", "version": "v1"},

@@ -1007,6 +1007,14 @@ def held_deck_names(registry):
     return {e["deck"] for e in held_entries(registry).values() if e.get("deck")}
 
 
+def held_outside_manifest(registry, manifest):
+    """Held cards whose deck the source no longer lists. Nothing can offer them
+    again, so the interactive run releases them rather than leaving them held."""
+    names = {d.get("name") for d in (manifest or {}).get("decks", [])
+             if isinstance(d, dict)}
+    return [g for g, e in held_entries(registry).items() if e.get("deck") not in names]
+
+
 def holdable_guids(registry, card_kinds, reviewed):
     """The card rows "hold for later" would set aside: a new or changed row the
     learner neither opened nor decided on, carrying no decline other than an

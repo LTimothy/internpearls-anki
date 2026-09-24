@@ -44,7 +44,8 @@ from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes
                     decks_to_update, feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
-                    find_stranded_pairs, held_deck_names, held_entries, holdable_guids,
+                    find_stranded_pairs, held_deck_names, held_entries,
+                    held_outside_manifest, holdable_guids,
                     manifest_needs_newer_addon,
                     note_display_label, note_fields_hash, per_note_for_package,
                     plain_text, plural, prune_declined, released_held_guids, remap_cards,
@@ -1732,6 +1733,11 @@ def update_decks():
         return
     manifest, fetch, source = fetched
     _check_deck_skill(cfg, manifest, fetch)
+    gone = held_outside_manifest(reg, manifest)
+    if gone:
+        for guid in gone:
+            del reg[guid]
+        save_declined(reg)
 
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     todo = decks_to_update(manifest, installed, cfg["excluded"],
