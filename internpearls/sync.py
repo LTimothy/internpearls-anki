@@ -44,15 +44,17 @@ from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes
                     decks_to_update, feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
-                    find_stranded_pairs, manifest_needs_newer_addon,
+                    find_stranded_pairs, held_deck_names, held_entries, holdable_guids,
+                    manifest_needs_newer_addon,
                     note_display_label, note_fields_hash, per_note_for_package,
-                    plain_text, plural, prune_declined, remap_cards, write_personalized)
+                    plain_text, plural, prune_declined, released_held_guids, remap_cards,
+                    write_personalized)
 from .net import (_CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled,
                   TransportError, _gh_raw)
 from .palette import colors
 from .review import (_CONFIRM_HEIGHT, NOTHING_CHANGED, append_rows, build_list_body,
-                     build_update_body, clear_saved_feedback, load_saved_feedback,
-                     show_result, show_result_with_feedback)
+                     build_update_body, clear_saved_feedback, hold_control,
+                     load_saved_feedback, show_result, show_result_with_feedback)
 from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _manual_flow, _safe,
                  _warn, cancellable_progress, wait_cursor)
 
@@ -1626,7 +1628,10 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
                 if state:
                     detail["declined_state"] = state
                     incoming = [v for _, v in detail["fields"]]
-                    if entry.get("hash") and entry["hash"] != note_fields_hash(incoming):
+                    # A held card was never read, so "changed since" has nothing to
+                    # compare against.
+                    if (state != "held" and entry.get("hash")
+                            and entry["hash"] != note_fields_hash(incoming)):
                         detail["changed_since_decline"] = True
                 label = source_label_for(note_sources, detail["guid"])
                 if label:
@@ -1729,7 +1734,8 @@ def update_decks():
     _check_deck_skill(cfg, manifest, fetch)
 
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
-    todo = decks_to_update(manifest, installed, cfg["excluded"])
+    todo = decks_to_update(manifest, installed, cfg["excluded"],
+                           held=held_deck_names(reg))
     existing_nids, fresh, _already, moves, retired_deck, tag, stranded = _reconcile_pending(
         manifest, cfg)
 
@@ -1803,6 +1809,8 @@ def update_decks():
     # holding none of the new content, on the strength of a question about a card the list
     # above may not even show.
     declined = declined_guids(reg)
+    # Held cards default to Import on this screen, so they count as pending.
+    counted_out = declined - set(held_entries(reg))
     existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
     aliases = manifest.get("front_aliases", {})
     for d in todo:
@@ -1839,7 +1847,7 @@ def update_decks():
     # guid only exists in `changed_cards`, so those are tallied per deck here.
     suppressed_changed = {}
     for deck_name, _label, g in changed_cards:
-        if g in declined:
+        if g in counted_out:
             suppressed_changed[deck_name] = suppressed_changed.get(deck_name, 0) + 1
 
     def _deck_summary_row(d):
@@ -1861,7 +1869,7 @@ def update_decks():
             return ("deck", short, "couldn't preview · still imports")
         changing = len(pc[3]) - suppressed_changed.get(d["name"], 0)
         kept = f"{pc[0]} kept" + (f" ({changing} changing)" if changing else "")
-        new_count = sum(1 for _rid, _fields, g in pc[2] if g not in declined)
+        new_count = sum(1 for _rid, _fields, g in pc[2] if g not in counted_out)
         return ("deck", short, f"{kept} · {new_count} new")
 
     muted = colors()["muted"]
@@ -2008,10 +2016,20 @@ def update_decks():
     # any row is built; read back here once the dialog closes to know what the learner
     # decided.
     decisions = {}
-    touched = set()
+    touched, opened = set(), set()
+    row_kind = {item[2]["guid"]: item[2].get("kind")
+               for item in items if item[0] == "card"}
+    hold, refresh_hold = hold_control(reg, row_kind, lambda: touched | opened)
     body, _boxes, flush = build_update_body(
         items, sources, flags, new_index, decisions, top_html,
-        _status_line, _UPDATE_SAFETY_NOTE, touched)
+        _status_line, _UPDATE_SAFETY_NOTE, touched, opened=opened,
+        on_review=refresh_hold)
+    # Decks whose pending cards were all listed, so a held card missing from the list
+    # has nothing left to offer rather than just failing to read.
+    readable = {d["name"] for d in todo
+                if d["name"] in sources
+                or (preview.get(d["name"]) and not (preview[d["name"]][2]
+                                                    or preview[d["name"]][3]))}
 
     # "Update" only when there is content to update. With nothing pending but retired
     # and relocated cards, this run does exactly what Reconcile my decks does, so it
@@ -2032,7 +2050,8 @@ def update_decks():
     # densest screen the add-on draws, and at the bare floor the list got a thin slice
     # of the height while every row crushed its card text against its decision control.
     accepted = _ask_with_widget(body, yes_label=yes_label, checkbox=tpl_choice,
-                                on_close=flush, min_width=660, open_size=(880, 800))
+                                on_close=flush, min_width=660, open_size=(880, 800),
+                                extra=hold)
 
     if not accepted:
         _finish()
@@ -2040,12 +2059,12 @@ def update_decks():
 
     # Folded into the declined registry now, before anything else about this run
     # happens: a Skip/Keep/Never the learner chose has to survive even if the apply
-    # loop below gets cancelled partway through. `row_kind` is every card row's own
-    # kind, which is what decides both what its control could show and what "the
-    # learner flipped it back to default" can mean below.
-    row_kind = {item[2]["guid"]: item[2].get("kind")
-               for item in items if item[0] == "card"}
+    # loop below gets cancelled partway through. `row_kind` (built above) is every
+    # card row's own kind, which is what decides both what its control could show and
+    # what "the learner flipped it back to default" can mean below.
     prior = dict(reg)
+    hold_now = (holdable_guids(prior, row_kind, touched | opened)
+               if hold and hold.get("clicked") else [])
     today = datetime.date.today().isoformat()
 
     def _prior_entry(g):
@@ -2100,11 +2119,19 @@ def update_decks():
     _EXPRESSIBLE_DECLINE = {"new": "skip", "changed": "keep"}
     for guid in [g for g in reg
                  if g not in decisions and g in row_kind
+                 and _prior_entry(g).get("state") != "held"
                  and (_prior_entry(g).get("state") == _EXPRESSIBLE_DECLINE.get(row_kind.get(g))
                       or (g in touched and _prior_entry(g).get("state") is not None))]:
         del reg[guid]        # the learner flipped a standing decline back to the default
         run_decisions[guid] = "imported after all"
+    for guid in released_held_guids(prior, row_kind, decisions, hold_now, readable):
+        reg.pop(guid, None)
+    for guid in hold_now:
+        reg[guid] = _registry_entry(guid, "held")
     save_declined(reg)
+    held_items = [("note", f"{plural(len(hold_now), 'card')} held for later. "
+                           f"{'It comes' if len(hold_now) == 1 else 'They come'} back "
+                           "the next time you run Update my decks.")] if hold_now else []
 
     undisclosed = set()
     if todo:
@@ -2230,6 +2257,7 @@ def update_decks():
             # the one thing here the learner may want to act on, so a stopped run
             # reports them too.
             items += _collision_items(collisions)
+            items += held_items
             items.append(("note", backup_line))
             _finish(f"Update stopped early (source: {source})", items, run_decisions)
             return
@@ -2317,6 +2345,7 @@ def update_decks():
         items.append(("note", f"Preserved fields restored on {plural(restored, 'card')}."))
     items += _converted_items(converted)
     items += _collision_items(collisions)
+    items += held_items
     items.append(("note", backup_line))
     _finish(f"Update complete (source: {source})", items, run_decisions)
 
