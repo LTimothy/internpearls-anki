@@ -2669,3 +2669,11 @@ def test_digest_snapshot_names_held_cards():
         [{"deck": "IP::A", "front": "front a", "guid": "g0", "note": "n"}],
         standing_declines={"g1": _held("IP::A", "Held card")})
     assert "Held for later (1)" in text and "Held card" in text
+
+
+def test_truncate_caps_text_with_an_ellipsis_inside_the_limit():
+    assert logic.truncate("short", 60) == "short"
+    assert logic.truncate("x" * 60, 60) == "x" * 60
+    capped = logic.truncate("word " * 20, 60)
+    assert len(capped) <= 60 and capped.endswith("…") and not capped.endswith(" …")
+    assert logic.truncate("", 60) == ""
