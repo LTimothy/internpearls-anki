@@ -188,15 +188,18 @@ def parse_fields(text, default=("Notes",)):
     return out or list(default)
 
 
-def decks_to_update(manifest, installed, excluded=None):
+def decks_to_update(manifest, installed, excluded=None, held=None):
     """Decks from the manifest whose version differs from what's already installed.
 
     `installed` is {deck_name: version_last_applied}. A deck missing from it is new; a
     deck whose version changed needs re-sync; matching versions are skipped. `excluded`
     is an optional collection of deck names the user has opted out of syncing (from the
-    deck manager) — those are skipped regardless of version. Shared by Sync (to know what
-    to apply) and Preview sync (to report the same set without touching the collection),
-    so the two can never disagree about what's pending.
+    deck manager) — those are skipped regardless of version. `held` is deck names holding
+    cards the learner set aside with "hold for later"; those count as pending even at a
+    matching version, so the interactive run offers the held cards again. Auto-sync never
+    passes it. Shared by Sync (to know what to apply) and Preview sync (to report the
+    same set without touching the collection), so the two can never disagree about
+    what's pending.
 
     An entry missing `name` or `version`, or a non-dict entry, is skipped rather than
     raising: without a name there is nothing to fetch or file cards under, and without a
@@ -204,6 +207,7 @@ def decks_to_update(manifest, installed, excluded=None):
     not stop every other deck in the manifest from syncing.
     """
     excluded = set(excluded or ())
+    held = set(held or ())
     out = []
     for d in (manifest or {}).get("decks", []):
         if not isinstance(d, dict):
@@ -211,7 +215,7 @@ def decks_to_update(manifest, installed, excluded=None):
         name, version = d.get("name"), d.get("version")
         if not name or version is None or name in excluded:
             continue
-        if installed.get(name) != version:
+        if installed.get(name) != version or name in held:
             out.append(d)
     return out
 
@@ -992,6 +996,48 @@ def declined_guids(registry):
     return set(registry or {})
 
 
+def held_entries(registry):
+    """{guid: entry} for every card set aside with "hold for later"."""
+    return {g: e for g, e in (registry or {}).items()
+            if isinstance(e, dict) and e.get("state") == "held"}
+
+
+def held_deck_names(registry):
+    """The decks that hold at least one held card."""
+    return {e["deck"] for e in held_entries(registry).values() if e.get("deck")}
+
+
+def holdable_guids(registry, card_kinds, reviewed):
+    """The card rows "hold for later" would set aside: a new or changed row the
+    learner neither opened nor decided on, carrying no decline other than an
+    earlier hold. A standing Skip/Keep/Never keeps its own state, since it was
+    decided on an earlier run. `card_kinds` is {guid: kind} in row order."""
+    out = []
+    for guid, kind in card_kinds.items():
+        if kind not in ("new", "changed") or guid in reviewed:
+            continue
+        entry = (registry or {}).get(guid)
+        if entry is None or (isinstance(entry, dict) and entry.get("state") == "held"):
+            out.append(guid)
+    return out
+
+
+def released_held_guids(registry, card_kinds, decisions, hold, readable_decks):
+    """Held entries this run settles by removing them: a held row left at its
+    default (Import/Apply) and not held again, and a held card whose deck was read
+    this run but which has nothing pending any more. A held row the learner
+    declined is left to that decline's own write."""
+    hold = set(hold)
+    out = []
+    for guid, entry in held_entries(registry).items():
+        if guid in card_kinds:
+            if guid not in decisions and guid not in hold:
+                out.append(guid)
+        elif entry.get("deck") in readable_decks:
+            out.append(guid)
+    return out
+
+
 def declined_drop(src, remap, existing_fronts, declined, in_place, as_new):
     """The rids to drop for a decline, plus `touched` and `in_place`/`as_new`
     corrected to exclude them. `remap` is mutated in place (a dropped note's remap
@@ -1613,6 +1659,7 @@ def field_preview_html(value, image_html=None):
 
 
 _DECLINE_SNAPSHOT_GROUPS = (
+    ("held", "Held for later"),
     ("never", "Never imported"),
     ("frozen", "Kept yours, no more updates"),
     ("skip", "Skipped for now"),
