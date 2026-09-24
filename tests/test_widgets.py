@@ -367,41 +367,17 @@ def test_streaming_list_repeated_bottom_scroll_after_exhaustion_does_not_rebuild
         "scrolling to the bottom of an exhausted list must not rebuild or overrun"
 
 
-def test_streaming_list_leaves_a_freshly_built_row_that_asked_to_stay_hidden():
-    """A folded change group hides its members, and the batch that reveals them must
-    not undo that. This covers _extend's fresh-build branch; the prebuilt-pop branch
-    (what the idle prefetch path actually goes through) is covered separately below."""
-    from internpearls import widgets
-    built = []
-    rows = {}
-
-    def row_for(item):
-        row = _stub_row(built, item)
-        if item % 2:
-            row.ip_stay_hidden = True
-        rows[item] = row
-        return row
-
-    lst = widgets.StreamingList(row_for, list(range(10)), batch=10)
-    assert len(built) == 10
-    assert rows[0].isVisible(), "a row with no flag must be shown, unaffected"
-    assert not rows[1].isVisible(), "a row that asked to stay hidden must stay hidden"
-
-
-def test_streaming_list_prefetch_leaves_a_stay_hidden_row_hidden_when_revealed():
-    """The idle prefetch path builds rows ahead of scrolling and holds them hidden in
-    _prebuilt. The batch that later reveals them is still _extend, popping from
-    _prebuilt rather than building fresh, so this drives the real prefetch machinery
-    (NativePlatform's background thread plus its mock-timer delivery) to prove that
-    branch honors the flag too, not only the fresh-build one above."""
+def test_streaming_list_prefetched_rows_stay_hidden_until_revealed():
+    """The idle prefetch builds rows ahead of scrolling and holds them hidden in
+    _prebuilt; the batch that later reveals them pops them from there. Drives the real
+    prefetch machinery (NativePlatform's background thread plus its mock-timer
+    delivery)."""
     from internpearls import widgets
     from internpearls.platform import NativePlatform, use_platform, wait_for_mock_work
     rows = {}
 
     def row_for(item):
         row = widgets.QWidget()
-        if item == 3:
-            row.ip_stay_hidden = True
         rows[item] = row
         return row
 
@@ -421,8 +397,8 @@ def test_streaming_list_prefetch_leaves_a_stay_hidden_row_hidden_when_revealed()
 
     lst._extend()   # the scroll-triggered reveal, pops the front of _prebuilt
 
-    assert rows[2].isVisible(), "a row with no flag must still be shown once revealed"
-    assert not rows[3].isVisible(), "a row that asked to stay hidden must stay hidden"
+    assert rows[2].isVisible() and rows[3].isVisible(), "revealed rows are shown"
+    assert not rows[4].isVisible(), "a row past the revealed batch stays hidden"
     assert not rows[4].isVisible(), "not yet revealed, still waiting in _prebuilt"
 
 

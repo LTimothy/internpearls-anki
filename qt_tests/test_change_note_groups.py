@@ -94,70 +94,10 @@ def test_a_three_member_group_is_unaffected():
     assert toggles == [], "a group below _GROUP_COLLAPSE_MIN must not offer a toggle"
 
 
-def test_toggle_keeps_prefetched_members_visible_through_a_later_extend():
-    """Critical 1: the toggle must maintain ip_stay_hidden on every widget it flips,
-    not just call setVisible on it. widgets.StreamingList._extend re-applies
-    `setVisible(not ip_stay_hidden)` to any row it pops out of `_prebuilt`, so a
-    member built by the idle prefetcher while the group was still folded, then
-    revealed by the toggle, goes hidden again the moment `_extend` reaches it.
-
-    This needs real PyQt6 (harness.render), not tests/mock_anki.py: the mock reports
-    every geometry as 0, so its StreamingList never has a viewport to fill and never
-    prefetches or runs a second `_extend`, which is exactly the path this bug lives
-    on.
-    """
-    from internpearls.widgets import StreamingList
-    _, q = harness.bootstrap()
-    n = 60
-    # pad=20 filler cards ahead of the group so the initial batch (50 items) reaches
-    # the group's own header and a few early members, then runs out mid-group: see
-    # harness._scene_confirm's group_size fixture for why padding is what makes that
-    # happen rather than every folded member being built up front.
-    shot = harness.render("confirm", group_size=n, pad=20, size=(880, 400))
-    dialog = shot.dialog
-    lst = dialog.findChild(StreamingList)
-    assert lst is not None
-
-    built_before = lst.built()
-    assert built_before < lst.total(), (
-        "fixture must leave members unbuilt after the first batch")
-
-    # Build the next chunk into _prebuilt the way StreamingList._idle_extend's own
-    # `build` closure does, while the group is still folded, so these rows are built
-    # with ip_stay_hidden=True.
-    end = min(built_before + 12, lst.total())
-    for item in lst._items[built_before:end]:
-        row = lst._build_row(item)
-        row.setVisible(False)
-        lst._rows_layout.addWidget(row)
-        lst._prebuilt.append(row)
-
-    toggle = next(b for b in dialog.findChildren(q.QPushButton)
-                  if b.text().startswith("Show"))
-    toggle.click()
-    harness.app().processEvents()
-
-    # The reader scrolling to the end: StreamingList pops the prebuilt rows first,
-    # then builds the rest fresh, both under the now-expanded group. fill_all rather
-    # than a single _extend() so every member is actually built by the time the
-    # assertion below runs; a member this test never reached is not a regression.
-    lst.fill_all()
-    harness.app().processEvents()
-
-    texts = "\n".join(w.text() for w in _visible_labels(dialog, q))
-    missing = [i for i in range(n) if _member_marker(i) not in texts]
-    assert missing == [], (
-        f"member(s) {missing} hidden after the toggle expanded the group and a "
-        "later _extend() ran")
-
-
 def test_a_folded_groups_last_member_does_not_swallow_the_next_decks_first_card():
-    """Critical 2: sync._section appends a deck's ("header", ...) with no separator
-    before it, and a folded group's own member items end on a card with no trailing
-    sep either (see harness._scene_confirm's group_size fixture). So when a deck's
-    final group is large, review._row's tracker used to carry the group across the
-    next deck's heading and register that deck's first card into it, rendering the
-    card hidden even though nothing asked to fold it.
+    """sync._section appends a deck's ("header", ...) with no separator before it,
+    and a folded group's members end on a card with no trailing sep either, so the
+    group must end at the next deck's heading rather than fold that deck's first card.
     """
     _, q = harness.bootstrap()
     shot = harness.render("confirm", group_size=5, second_deck=True, size=(880, 800))
@@ -169,40 +109,9 @@ def test_a_folded_groups_last_member_does_not_swallow_the_next_decks_first_card(
     assert "Second deck's next card?" in texts
 
 
-def test_a_large_immediate_fold_leaves_most_of_it_unbuilt_on_open():
-    """The regression this task targets: with no visible padding ahead of the group
-    (unlike the pad=20 fixture above), a fold spanning several batches used to defeat
-    StreamingList._fill_viewport entirely. A fully hidden batch adds no height, so the
-    loop's own exit condition was never satisfied and it kept extending until nothing
-    was left to build. shown() must stay well below total() instead.
-
-    Needs real PyQt6 (harness.render): tests/mock_anki.py fakes sizeHint, so the mock's
-    StreamingList never sees a real viewport height and this loop never runs there.
-
-    The bound below is tied to _fill_viewport's own stall mechanism (one growing batch
-    plus _FILL_STALL_BATCHES stalled ones) rather than an arbitrary margin off total(),
-    plus one further batch of slack: harness.render's own processEvents() calls can let
-    a 150ms idle tick land and pull in one more batch, which this feature (unlike
-    before it existed) can now do.
-    """
-    from internpearls.widgets import StreamingList
-    n = 200
-    shot = harness.render("confirm", group_size=n, size=(880, 400))
-    lst = shot.dialog.findChild(StreamingList)
-    assert lst is not None
-    max_synchronous = (StreamingList._FILL_STALL_BATCHES + 2) * lst._batch
-    assert lst.shown() <= max_synchronous, (
-        f"{lst.shown()} of {lst.total()} shown on open: an immediate fold this "
-        "large should leave most of it unbuilt")
-
-
 def test_every_member_of_a_large_immediate_fold_is_reachable_after_expanding():
-    """The companion to the test above: leaving most of the fold unbuilt on open must
-    not cost reachability. Expanding the group grows the built rows to their real
-    height, which is what gives the reader a working scrollbar to reach the rest; a
-    manual fill_all() stands in for that scroll, the same idiom
-    test_toggle_keeps_prefetched_members_visible_through_a_later_extend uses above.
-    """
+    """Expanding a large fold reaches every member; fill_all() stands in for
+    scrolling the rest of the list into view."""
     from internpearls.widgets import StreamingList
     _, q = harness.bootstrap()
     n = 200
@@ -226,19 +135,8 @@ def test_every_member_of_a_large_immediate_fold_is_reachable_after_expanding():
 
 
 def test_a_large_immediate_fold_still_reveals_the_next_decks_first_card_on_idle():
-    """The visibility defect this task closes: `_fill_viewport`'s stall break (above)
-    is right to stop building synchronously into a large fold, but that alone leaves
-    the viewport short with no scrollbar, so a following deck's pending cards were
-    never shown on the one screen whose job is to list what is pending. No toggle
-    click and no fill_all() here on purpose: the idle timer alone must finish the job,
-    off the open path, the way a learner who never touches the dialog would experience
-    it. Must fail against 10cbbcb and pass after the fix.
-
-    group_size=200 leaves the idle timer several batches short of the end after the
-    open-time stall, so this needs `_extend()` to re-arm itself five or more times in a
-    row, not just once, which binds the re-arm rather than only the single delivery a
-    smaller fold would exercise.
-    """
+    """A deck after a large folded group still shows its first pending card
+    without any click or scroll: the fold is one row, so the list reaches it."""
     import time
     from internpearls.widgets import StreamingList
     _, q = harness.bootstrap()
@@ -259,3 +157,31 @@ def test_a_large_immediate_fold_still_reveals_the_next_decks_first_card_on_idle(
     assert lst.shown() == lst.total(), (
         f"{lst.shown()} of {lst.total()} shown: the idle timer stopped re-arming "
         "before it finished the list")
+
+
+def test_a_folded_group_builds_none_of_its_members_until_expanded():
+    """Folding has to save the work, not just hide it: a folded group's member rows
+    are built the first time it is expanded, and kept for later toggles."""
+    _, q = harness.bootstrap()
+    n = 200
+    shot = harness.render("confirm", group_size=n, size=(880, 400))
+    dialog = shot.dialog
+
+    def built():
+        texts = "\n".join(w.text() for w in dialog.findChildren(q.QLabel))
+        return [i for i in range(n) if _member_marker(i) in texts]
+
+    assert built() == [], "a folded group built member rows before it was expanded"
+
+    toggle = next(b for b in dialog.findChildren(q.QPushButton)
+                  if b.text() == f"Show {n} cards")
+    toggle.click()
+    harness.app().processEvents()
+    texts = "\n".join(w.text() for w in _visible_labels(dialog, q))
+    assert [i for i in range(n) if _member_marker(i) not in texts] == []
+
+    toggle.click()
+    harness.app().processEvents()
+    texts = "\n".join(w.text() for w in _visible_labels(dialog, q))
+    assert [i for i in range(n) if _member_marker(i) in texts] == []
+    assert len(built()) == n, "collapsing again must keep the rows, not rebuild them"
