@@ -469,6 +469,8 @@ def _scene_confirm(mock, opts):
         details[0] = dict(details[0], declined_state="skip", changed_since_decline=True)
         details[1] = dict(details[1], declined_state="keep")
         details[2] = dict(details[2], kind="new")
+    if opts.get("held"):
+        details[0] = dict(details[0], declined_state="held")
     items = [("header", "1 deck has updates:"),
              ("deck", "Example Deck", "3 kept (1 changing) · 2 new"),
              ("header", "Example Deck")]
@@ -585,15 +587,19 @@ def _scene_confirm(mock, opts):
         return ""
 
     def _open():
+        touched, opened = set(), set()
+        extra, refresh = (review.hold_control(
+            {}, {d["guid"]: d.get("kind") for d in details},
+            lambda: touched | opened) if opts.get("hold") else (None, None))
         body, _boxes, flush = review.build_update_body(
             items, sources, flags, new_index, decisions,
-            top_html, _status_line, safety)
+            top_html, _status_line, safety, touched, opened=opened, on_review=refresh)
         # min_width and open_size match update_decks()'s own call: the wider floor is
         # what leaves a card's own text room beside its decision control. render()'s
         # fake exec re-sizes to each test's requested size afterwards, so open_size
         # here only proves the call accepts it, not what any test measures at.
         _ask_with_widget(body, yes_label="Update", checkbox=checkbox, min_width=660,
-                         open_size=(880, 800))
+                         open_size=(880, 800), extra=extra)
         flush()
 
     return _open
