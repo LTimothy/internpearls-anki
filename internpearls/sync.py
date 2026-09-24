@@ -33,7 +33,7 @@ from .collection import (NoteTypeFieldsRequired, _apply_deck, _apply_template_ch
                          _snapshot, _snapshot_fields, _template_changes, apply_deck_moves,
                          archive_notes, carry_over_protected_fields,
                          carry_scheduling_forward, decks_holding,
-                         installed_matching_collection)
+                         installed_matching_collection, invalidate_installed)
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, load_declined, load_deck_skill,
@@ -2124,14 +2124,22 @@ def update_decks():
                       or (g in touched and _prior_entry(g).get("state") is not None))]:
         del reg[guid]        # the learner flipped a standing decline back to the default
         run_decisions[guid] = "imported after all"
-    for guid in released_held_guids(prior, row_kind, decisions, hold_now, readable):
+    released = released_held_guids(prior, row_kind, decisions, hold_now, readable)
+    for guid in released:
         reg.pop(guid, None)
+    # A released hold may have been the only reason its deck was still pending; drop
+    # it from installed.json too, so a run that stops before that deck actually
+    # imports still offers the card again next time instead of losing it.
+    released_decks = {prior[g]["deck"] for g in released if prior.get(g, {}).get("deck")}
+    if released_decks:
+        invalidate_installed(released_decks)
     for guid in hold_now:
         reg[guid] = _registry_entry(guid, "held")
     save_declined(reg)
-    held_items = [("note", f"{plural(len(hold_now), 'card')} held for later. "
-                           f"{'It comes' if len(hold_now) == 1 else 'They come'} back "
-                           "the next time you run Update my decks.")] if hold_now else []
+    held_note = (f"{plural(len(hold_now), 'card')} held for later. "
+                f"{'It comes' if len(hold_now) == 1 else 'They come'} back the next "
+                "time you run Update my decks.") if hold_now else ""
+    held_items = [("note", held_note)] if held_note else []
 
     undisclosed = set()
     if todo:
@@ -2142,9 +2150,10 @@ def update_decks():
         if cancelled:
             # Nothing has been backed up or imported yet, so this is the same clean
             # stop cancelling the confirmation itself is, except the registry write
-            # above already happened by this point, so whatever the learner decided is
-            # reported through run_decisions rather than silently going unreported.
-            _finish(run_decisions=run_decisions, nothing_note=NOTHING_CHANGED)
+            # above already happened by this point, so whatever the learner decided
+            # (including a hold) is reported rather than silently going unreported.
+            _finish(items=held_items, run_decisions=run_decisions,
+                   nothing_note=f"{NOTHING_CHANGED} {held_note}".strip())
             return
         conversions_by_deck.update(late_conversions)
         pending_conversions = [c for cs in conversions_by_deck.values() for c in cs]
@@ -2173,7 +2182,8 @@ def update_decks():
     if not proceed:
         # Same as the retry-cancel above: the registry write already happened, so
         # report what the learner decided rather than dropping it from the digest.
-        _finish(run_decisions=run_decisions, nothing_note=NOTHING_CHANGED)
+        _finish(items=held_items, run_decisions=run_decisions,
+               nothing_note=f"{NOTHING_CHANGED} {held_note}".strip())
         return
 
     # Asked once, here, for the whole run: after the backup and before the first import,
