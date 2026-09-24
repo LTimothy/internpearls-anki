@@ -3,6 +3,15 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.74.1
+
+Update my decks opens faster when a large group of cards is folded behind a shared
+note. The folded cards are now built only when you press **Show N cards**, instead of
+being built hidden in the background. What the screen shows, and what Update applies,
+is unchanged.
+
+Restart Anki after updating.
+
 ## v0.74.0
 
 Short on time during an update? The confirmation now has an **Update reviewed, hold N
