@@ -1511,6 +1511,37 @@ def test_partial_import_retry_adds_only_the_cards_that_did_not_land(anki, monkey
     assert len(anki.col._notes) == 3
 
 
+def test_note_on_included_card_does_not_claim_skipped(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg._reveal_review_note(0)
+    assert dlg.session.included[0]
+    assert dlg._note_captions[0].text().startswith("Feedback for the next revision")
+    assert dlg.note_boxes[0].accessibleName() == dlg._note_captions[0].text()
+
+
+def test_note_caption_follows_the_decision(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.decision_cells[0].buttons["skip"].click()
+    assert dlg._note_captions[0].text().startswith("Skipped.")
+    assert dlg.note_boxes[0].accessibleName().startswith("Skipped.")
+    dlg.decision_cells[0].buttons["include"].click()
+    assert dlg._note_captions[0].text().startswith("Feedback for the next revision")
+    assert dlg.note_boxes[0].accessibleName().startswith("Feedback for")
+
+
+def test_note_caption_is_right_after_a_rebuild(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.decision_cells[0].buttons["skip"].click()
+    dlg._rebuild_review()
+    assert dlg._note_captions[0].text().startswith("Skipped.")
+
+
 def test_scratch_dir_removed_on_discard(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
