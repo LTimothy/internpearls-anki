@@ -721,6 +721,87 @@ def test_edit_card_cancel_leaves_the_card_untouched(anki, monkeypatch):
     assert dlg.session.updated == set()
 
 
+def _fake_edit(monkeypatch, fields, tags):
+    class _FakeEditDialog:
+        def __init__(self, parent, card):
+            pass
+
+        def exec(self):
+            return ai_dialog.QDialog.DialogCode.Accepted
+
+        def fields(self):
+            return fields
+
+        def tags(self):
+            return tags
+
+    monkeypatch.setattr(ai_dialog, "_EditCardDialog", _FakeEditDialog)
+
+
+def _confirmed_draft(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.session.verdicts = {0: {
+        "verdict": "confirmed", "note": "checked original", "correction": None,
+        "sources": [{"url": "https://example.com", "title": "Original"}]}}
+    dlg._rebuild_review()
+    return dlg
+
+
+def test_edit_that_changes_a_field_drops_the_verdict(anki, monkeypatch):
+    dlg = _confirmed_draft(anki, monkeypatch)
+    card = dlg.session.cards[0]
+    _fake_edit(monkeypatch, dict(card["fields"], Back="A different answer"), card["tags"])
+    dlg._edit_card(0)
+    assert 0 not in dlg.session.verdicts
+    assert "confirmed" not in dlg.review_header.text()
+    assert "Edited since check" in _row_text(dlg.cards_lay._children[0])
+
+
+def test_edit_drops_a_pending_correction_with_its_verdict(anki, monkeypatch):
+    dlg = _confirmed_draft(anki, monkeypatch)
+    dlg.session.verdicts[0] = {"verdict": "corrected", "note": "dose was off",
+                               "correction": {"Back": "corrected"}, "sources": []}
+    card = dlg.session.cards[0]
+    _fake_edit(monkeypatch, dict(card["fields"], Front="Reworded front"), card["tags"])
+    dlg._edit_card(0)
+    assert dlg.session.verdicts == {}
+
+
+def test_tags_only_edit_keeps_the_verdict(anki, monkeypatch):
+    dlg = _confirmed_draft(anki, monkeypatch)
+    card = dlg.session.cards[0]
+    _fake_edit(monkeypatch, dict(card["fields"]), ["another-tag"])
+    dlg._edit_card(0)
+    assert dlg.session.verdicts[0]["verdict"] == "confirmed"
+    assert "Edited since check" not in _row_text(dlg.cards_lay._children[0])
+
+
+def test_unchanged_save_keeps_the_verdict(anki, monkeypatch):
+    dlg = _confirmed_draft(anki, monkeypatch)
+    card = dlg.session.cards[0]
+    _fake_edit(monkeypatch, dict(card["fields"]), list(card["tags"]))
+    dlg._edit_card(0)
+    assert dlg.session.verdicts[0]["verdict"] == "confirmed"
+
+
+def test_next_check_clears_the_edited_since_check_line(anki, monkeypatch):
+    dlg = _confirmed_draft(anki, monkeypatch)
+    card = dlg.session.cards[0]
+    _fake_edit(monkeypatch, dict(card["fields"], Back="A different answer"), card["tags"])
+    dlg._edit_card(0)
+    assert dlg.session.edited_since_check == {0}
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs, **kw:
+            ([sys.executable, FAKE, "verdicts_ok"], True))
+    dlg._check_facts()
+    dlg._wait_for_worker(timeout=15)
+    assert dlg.session.edited_since_check == set()
+    assert "Edited since check" not in _row_text(dlg.cards_lay._children[0])
+
+
 def test_note_box_queues_and_clears_a_revision_note(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
