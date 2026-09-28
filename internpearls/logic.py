@@ -1030,6 +1030,21 @@ def holdable_guids(registry, card_kinds, reviewed):
     return out
 
 
+def unopened_line(card_kinds, reviewed, folded=()):
+    """The update screen's count of card rows nobody has opened or decided on yet,
+    and how many of those sit inside a folded group, or "" once there are none.
+    `card_kinds` is {guid: kind}; only new and changed rows count."""
+    rows = [g for g, k in card_kinds.items() if k in ("new", "changed")]
+    left = [g for g in rows if g not in reviewed]
+    if not left:
+        return ""
+    folded = set(folded)
+    inside = sum(1 for g in left if g in folded)
+    where = f", {inside} of them in folded groups" if inside else ""
+    return (f"<b>{len(left)} of {plural(len(rows), 'card')} not opened yet</b>{where}. "
+            "Update applies each one as its row is set.")
+
+
 def released_held_guids(registry, card_kinds, decisions, hold, readable_decks):
     """Held entries this run settles by removing them: a held row left at its
     default (Import/Apply) and not held again, and a held card whose deck was read

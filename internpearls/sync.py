@@ -48,13 +48,14 @@ from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes
                     held_outside_manifest, holdable_guids,
                     manifest_needs_newer_addon,
                     note_display_label, note_fields_hash, per_note_for_package,
+                    unopened_line,
                     plain_text, plural, prune_declined, released_held_guids, remap_cards,
                     write_personalized)
 from .net import (_CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled,
                   TransportError, _gh_raw)
 from .palette import colors
 from .review import (_CONFIRM_HEIGHT, NOTHING_CHANGED, append_rows, build_list_body,
-                     build_update_body, clear_saved_feedback, hold_control,
+                     build_update_body, clear_saved_feedback, folded_guids, hold_control,
                      load_saved_feedback, show_result, show_result_with_feedback)
 from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _manual_flow, _safe,
                  _warn, cancellable_progress, wait_cursor)
@@ -1856,7 +1857,7 @@ def update_decks():
         if g in counted_out:
             suppressed_changed[deck_name] = suppressed_changed.get(deck_name, 0) + 1
 
-    def _deck_summary_row(d):
+    def _deck_summary_row(d, folded=0):
         """One deck's line in the summary that opens the list: the deck as the row's
         primary text, its counts as the trailing muted column.
 
@@ -1876,7 +1877,8 @@ def update_decks():
         changing = len(pc[3]) - suppressed_changed.get(d["name"], 0)
         kept = f"{pc[0]} kept" + (f" ({changing} changing)" if changing else "")
         new_count = sum(1 for _rid, _fields, g in pc[2] if g not in counted_out)
-        return ("deck", short, f"{kept} · {new_count} new")
+        tail = f" · {folded} in folded groups" if folded else ""
+        return ("deck", short, f"{kept} · {new_count} new{tail}")
 
     muted = colors()["muted"]
     sections = []
@@ -1915,6 +1917,11 @@ def update_decks():
 
     def _status_line():
         parts = []
+        # What Update would apply without the reader having looked at it, said beside
+        # the buttons that do it. Informative only: the hold button is the way out.
+        unopened = unopened_line(row_kind, touched | opened, folded)
+        if unopened:
+            parts.append(unopened)
         if flags:
             if not recovered:
                 carried_txt = ""
@@ -1989,13 +1996,17 @@ def update_decks():
         todo, preview, downloaded, _retired_moved_items(fresh, moves, existing_nids),
         registry=reg, change_notes=manifest.get("change_notes"), installed=installed,
         note_sources=manifest.get("note_sources"))
+    folded = folded_guids(items)
+    folded_by_deck = {}
+    for deck_name in folded.values():
+        folded_by_deck[deck_name] = folded_by_deck.get(deck_name, 0) + 1
     if todo:
         summary = [("header", f"{plural(len(todo), 'deck')} "
                               f"{'has' if len(todo) == 1 else 'have'} updates:")]
         for i, d in enumerate(todo):
             if i:
                 summary.append(("sep",))
-            summary.append(_deck_summary_row(d))
+            summary.append(_deck_summary_row(d, folded_by_deck.get(d["name"], 0)))
         items = summary + items
     items += _stranded_items(stranded)
     if unreadable:

@@ -62,13 +62,90 @@ def test_a_five_member_group_hides_its_members_and_shows_its_header():
     texts = "\n".join(w.text() for w in _visible_labels(shot.dialog, q))
     assert "an example reviewer note spanning 5 cards" in texts, (
         "the group's own header must show even while its members are folded")
-    shown = [i for i in range(5) if _member_marker(i) in texts]
-    assert shown == [], f"member(s) {shown} rendered visible in a folded group"
+    assert "5 cards" in texts, "the box must say how many cards it holds"
+    # The first three are named in the box's preview; the rest are counted.
+    named = [i for i in range(5) if _member_marker(i) in texts]
+    assert named == [0, 1, 2], f"preview named {named}, expected the first three"
+    assert "and 2 more" in texts
     toggle = next(b for b in shot.dialog.findChildren(q.QPushButton)
                   if b.text() == "Show 5 cards")
     assert toggle.isVisible()
     assert toggle.accessibleName() == (
         "Show 5 cards: an example reviewer note spanning 5 cards")
+
+
+def test_a_feedback_group_never_folds():
+    """Cards changed because of reviewer feedback are the ones most worth checking,
+    so their group stays open however big it is."""
+    _, q = harness.bootstrap()
+    shot = harness.render("confirm", group_size=6, group_note_kind="feedback",
+                          size=(880, 800))
+    texts = "\n".join(w.text() for w in _visible_labels(shot.dialog, q))
+    missing = [i for i in range(6) if _member_marker(i) not in texts]
+    assert missing == [], f"member(s) {missing} hidden in a feedback group"
+    assert not [b for b in shot.dialog.findChildren(q.QPushButton)
+                if b.text() in ("Show 6 cards", "Hide 6 cards")]
+
+
+def _checked(dialog, q, label):
+    return [b for b in dialog.findChildren(q.QPushButton)
+            if b.text() == label and b.isVisible() and b.isChecked()]
+
+
+def test_one_group_decision_sets_every_member():
+    _, q = harness.bootstrap()
+    shot = harness.render("confirm", group_size=5, group_kind="changed", size=(880, 800))
+    dialog, app = shot.dialog, harness.app()
+    keep_all = next(b for b in dialog.findChildren(q.QPushButton)
+                    if b.text() == "Keep all yours")
+    keep_all.click()
+    app.processEvents()
+    next(b for b in dialog.findChildren(q.QPushButton)
+         if b.text() == "Show 5 cards").click()
+    app.processEvents()
+    assert len(_checked(dialog, q, "Keep yours")) == 5, (
+        "a member built after the group decision must start on it")
+    # Members were decided by the group, not clicked one by one, so no note box opens.
+    boxes = [b for b in dialog.findChildren(q.QPlainTextEdit) if b.isVisible()]
+    assert boxes == []
+
+
+def test_a_member_decided_on_its_own_leaves_the_group_mixed():
+    _, q = harness.bootstrap()
+    shot = harness.render("confirm", group_size=5, group_kind="changed", size=(880, 800),
+                          click_labels=("Show 5 cards",))
+    dialog, app = shot.dialog, harness.app()
+    keep = next(b for b in dialog.findChildren(q.QPushButton)
+                if b.accessibleName() == "Keep yours: Group member card number 1?")
+    keep.click()
+    app.processEvents()
+    assert not _checked(dialog, q, "Apply all") and not _checked(dialog, q, "Keep all yours")
+    assert any(w.text() == "mixed" for w in _visible_labels(dialog, q))
+
+
+def test_the_status_line_counts_unopened_cards_and_forgets_an_opened_group():
+    _, q = harness.bootstrap()
+    shot = harness.render("confirm", group_size=5, group_kind="changed", progress=True,
+                          size=(880, 800))
+    dialog, app = shot.dialog, harness.app()
+    texts = "\n".join(w.text() for w in _visible_labels(dialog, q))
+    assert "5 of 5 cards not opened yet</b>, 5 of them in folded groups" in texts
+    next(b for b in dialog.findChildren(q.QPushButton)
+         if b.text() == "Show 5 cards").click()
+    app.processEvents()
+    texts = "\n".join(w.text() for w in _visible_labels(dialog, q))
+    assert "not opened yet" not in texts, "opening the group counts its cards as seen"
+
+
+def test_folded_group_render_saved_as_png(tmp_path):
+    out_dir = os.environ.get("IP_SHOT_DIR") or str(tmp_path)
+    os.makedirs(out_dir, exist_ok=True)
+    for theme in ("light", "dark"):
+        shot = harness.render("confirm", theme=theme, group_size=12, group_kind="changed",
+                              progress=True, second_deck=True, size=(880, 800))
+        png = os.path.join(out_dir, f"folded-group-{theme}.png")
+        shot.image.save(png, "PNG")
+        assert os.path.exists(png)
 
 
 def test_pressing_the_toggle_reveals_a_folded_groups_members():
@@ -167,9 +244,15 @@ def test_a_folded_group_builds_none_of_its_members_until_expanded():
     shot = harness.render("confirm", group_size=n, size=(880, 400))
     dialog = shot.dialog
 
+    # A built member row is known by its caret, named for its card; the box's own
+    # preview names the first few fronts too, so label text cannot tell them apart.
+    def carets(visible_only=False):
+        return [b for b in dialog.findChildren(q.QPushButton)
+                if b.accessibleName().startswith("Show card: Group member card number")
+                and (b.isVisible() or not visible_only)]
+
     def built():
-        texts = "\n".join(w.text() for w in dialog.findChildren(q.QLabel))
-        return [i for i in range(n) if _member_marker(i) in texts]
+        return carets()
 
     assert built() == [], "a folded group built member rows before it was expanded"
 
@@ -182,6 +265,5 @@ def test_a_folded_group_builds_none_of_its_members_until_expanded():
 
     toggle.click()
     harness.app().processEvents()
-    texts = "\n".join(w.text() for w in _visible_labels(dialog, q))
-    assert [i for i in range(n) if _member_marker(i) in texts] == []
+    assert carets(visible_only=True) == []
     assert len(built()) == n, "collapsing again must keep the rows, not rebuild them"

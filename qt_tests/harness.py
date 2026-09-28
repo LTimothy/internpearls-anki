@@ -496,8 +496,11 @@ def _scene_confirm(mock, opts):
         # render (see test_change_note_groups.py). Real ("group_note", note,
         # card_count) 3-tuples, unlike the grouped=True fixture above, which
         # deliberately stays a 2-tuple.
+        # A maintainer's note by default, since only those fold; group_note_kind
+        # "feedback" renders the reviewer-driven group that always stays open.
+        # group_kind gives every member that row kind, and with it a decision control.
         n = opts["group_size"]
-        group_note = {"kind": "feedback",
+        group_note = {"kind": opts.get("group_note_kind", "maintainer"),
                       "note": f"an example reviewer note spanning {n} cards"}
         items.append(("group_note", group_note, n))
         for i in range(n):
@@ -505,6 +508,10 @@ def _scene_confirm(mock, opts):
                       "fields": [("Front", f"Group member card number {i}?"),
                                  ("Back", "Answer."), ("Why", ""), ("Image", ""),
                                  ("Tag", ""), ("Dosing", ""), ("Notes", "")]}
+            if opts.get("group_kind"):
+                member["kind"] = opts["group_kind"]
+                if opts["group_kind"] == "changed":
+                    member["was"] = {"Back": "Old answer."}
             items += [("sep", "grouped"), ("card", "Example Deck", member)]
         if opts.get("second_deck"):
             # sync._section's own shape: a ("header", ...) with no separator before
@@ -562,11 +569,20 @@ def _scene_confirm(mock, opts):
                           "AnkiWeb sync)", "checked": False}
                if opts.get("checkbox") else None)
 
+    touched, opened = set(), set()
+
     def _status_line():
-        return ""
+        # progress=True renders update_decks()' own count of unopened rows.
+        if not opts.get("progress"):
+            return ""
+        from internpearls.logic import unopened_line
+        kinds = {it[2]["guid"]: it[2].get("kind") for it in items if it[0] == "card"}
+        line = unopened_line(kinds, touched | opened, review.folded_guids(items))
+        return line + "<br><br>" if line else ""
 
     def _open():
-        touched, opened = set(), set()
+        touched.clear()
+        opened.clear()
         extra, refresh = (review.hold_control(
             {}, {d["guid"]: d.get("kind") for d in details},
             lambda: touched | opened) if opts.get("hold") else (None, None))

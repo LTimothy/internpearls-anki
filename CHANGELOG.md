@@ -3,6 +3,26 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.75.0
+
+Update my decks makes it harder to miss a group of changed cards.
+
+- Cards changed because of reviewer feedback are never folded away, however many there
+  are, since they are the ones most worth checking.
+- A folded group now sits in its own box that says what it holds ("12 cards updated"),
+  names its first three cards, and has a real **Show 12 cards** button.
+- One control decides a whole group: **Apply all** or **Keep all yours** for updated
+  cards, **Import all** or **Skip all** for new ones. It reads "mixed" once any card in
+  the group is set differently.
+- Opening a folded group counts its cards as looked at, so **Update reviewed, hold N
+  for later** no longer holds cards you read there.
+- A line above the buttons counts the cards you have not opened yet and how many of them
+  are folded, and each deck's summary line says how many of its cards are folded.
+- Reviewer feedback shown on a card is no longer greyed out, and the question labels
+  under a card's marker are a little larger.
+
+Restart Anki after updating.
+
 ## v0.74.1
 
 Update my decks opens faster when a large group of cards is folded behind a shared
