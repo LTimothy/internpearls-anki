@@ -122,8 +122,10 @@ def test_partial_failure_still_lands_as_one_undo_step(anki):
                       ["InternPearls::Pharm"], deck="Intern Pearls::Intern Custom")
     anki.col.fail_add_note_after(3)   # the 3rd generated note fails
     cards = [_card("Q1"), _card("Q2"), _card("Q3"), _card("Q4")]
-    with pytest.raises(RuntimeError, match="mock add_note failure"):
+    with pytest.raises(collection.PartialImport) as caught:
         collection.add_generated_notes(cards, media={}, deck_name=DECK, scope_tag=SCOPE)
+    assert caught.value.written == [0, 1]
+    assert "mock add_note failure" in str(caught.value.__cause__)
 
     generated_fronts = {n["Front"] for n in anki.col._notes.values() if n.guid != "learner-guid"}
     assert generated_fronts == {"Q1", "Q2"}   # Q3/Q4 never landed
@@ -132,6 +134,12 @@ def test_partial_failure_still_lands_as_one_undo_step(anki):
     anki.col.undo()
     assert len(anki.col._notes) == 1          # one undo cleared the whole partial import
     assert next(iter(anki.col._notes.values())).guid == "learner-guid"
+
+
+def test_failure_before_any_note_lands_propagates_unchanged(anki):
+    anki.col.fail_add_note_after(1)
+    with pytest.raises(RuntimeError, match="mock add_note failure"):
+        collection.add_generated_notes([_card("Q1")], media={}, deck_name=DECK, scope_tag=SCOPE)
 
 
 def test_image_appended_to_primary_field_when_no_image_field(anki):

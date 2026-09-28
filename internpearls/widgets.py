@@ -35,6 +35,7 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
          # a stop), a clean card reads ACCEPT, and a card a revision changed reads
          # UPDATED's own word for that idea.
          "blocked": "BLOCKED", "warn": "WARNING", "ok": "OK", "revised": "REVISED",
+         "imported": "IMPORTED",
          # The AI Backends window's row kinds (ai_setup.py): what the detection
          # pass found for one assistant, and which one the wizard will use. This
          # is the window's own vocabulary rather than a card's, so these get their
@@ -68,6 +69,7 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
 _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "moved",
           "skipped": "retired", "kept": "retired", "held": "updated",
           "blocked": "decline", "warn": "updated", "ok": "accept", "revised": "updated",
+          "imported": "accept",
           # A found assistant is a clean result (accept), one that is installed but
           # will not answer is the same "attention, not yet a stop" as a warning
           # (updated), one that is not there at all reads as a decline, and one the
