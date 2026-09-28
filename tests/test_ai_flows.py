@@ -786,6 +786,15 @@ def test_unchanged_save_keeps_the_verdict(anki, monkeypatch):
     assert dlg.session.verdicts[0]["verdict"] == "confirmed"
 
 
+def test_editing_the_front_to_blank_flags_and_skips_the_card(anki, monkeypatch):
+    dlg = _confirmed_draft(anki, monkeypatch)
+    card = dlg.session.cards[0]
+    _fake_edit(monkeypatch, dict(card["fields"], Front="<br>"), card["tags"])
+    dlg._edit_card(0)
+    assert any(c["code"] == "empty" for c in dlg.session.checks[0])
+    assert dlg.session.included == [False]
+
+
 def test_next_check_clears_the_edited_since_check_line(anki, monkeypatch):
     dlg = _confirmed_draft(anki, monkeypatch)
     card = dlg.session.cards[0]

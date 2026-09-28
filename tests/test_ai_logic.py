@@ -106,6 +106,26 @@ def test_check_duplicate_against_collection():
                for c in checks[0])
 
 
+def test_empty_front_is_blocked():
+    for front in ("", "   ", "<br>", "<div><br></div>&nbsp;"):
+        checks = ai_logic.mechanical_checks([_card(Front=front, Back="answer")], {})
+        assert any(c["code"] == "empty" and c["level"] == "block"
+                   for c in checks[0]), front
+
+
+def test_empty_front_is_allowed_when_the_card_carries_a_picture():
+    inline = _card(Front="", Back='<img src="x.png">')
+    listed = dict(_card(Front="", Back="answer"),
+                  images=[{"source": "attached:a.png", "alt": "", "attribution": ""}])
+    checks = ai_logic.mechanical_checks([inline, listed], {})
+    assert all(c["code"] != "empty" for per in checks for c in per)
+
+
+def test_empty_cloze_text_is_blocked():
+    checks = ai_logic.mechanical_checks([_card("Study Deck - Cloze", Text=" ")], {})
+    assert any(c["code"] == "empty" for c in checks[0])
+
+
 def test_check_cloze_syntax():
     ok = _card("Study Deck - Cloze", Text="{{c1::1.5 mL/kg}} bolus")
     bad = _card("Study Deck - Cloze", Text="{{c1:broken}} and {{c2::fine}")

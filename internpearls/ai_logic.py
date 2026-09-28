@@ -6,6 +6,7 @@ plain pytest; subprocess and Qt live in ai_cli.py and ai_dialog.py.
 """
 import binascii
 import hashlib
+import html as _html
 import json
 import os
 import re
@@ -172,6 +173,18 @@ def _norm_front(text):
     return " ".join(_plain(text).lower().split())
 
 
+def primary_is_blank(card):
+    """True when the card's primary field has no text and nothing else carries a
+    picture for it (an <img in any field, a listed image, or a resolved media file)."""
+    fields = card["fields"]
+    primary = PRIMARY_FIELD.get(card["note_type"], next(iter(fields), ""))
+    text = _html.unescape(_plain(fields.get(primary, ""))).replace("\xa0", " ").strip()
+    if text:
+        return False
+    return not (card.get("images") or card.get("_media_files")
+                or any("<img" in str(v).lower() for v in fields.values()))
+
+
 def mechanical_checks(cards, existing_fronts, image_errors=None):
     """Check drafted cards for duplicates, cloze syntax, length, and image
     resolution failures. existing_fronts is {normalized front: original front}
@@ -195,6 +208,11 @@ def mechanical_checks(cards, existing_fronts, image_errors=None):
         for msg in image_errors.get(i, []):
             entries.append({"code": "image", "level": "block",
                             "message": f"image could not be used: {msg}"})
+
+        if primary_is_blank(card):
+            what = "front" if primary == "Front" else primary.lower()
+            entries.append({"code": "empty", "level": "block",
+                            "message": f"{what} is empty"})
 
         if norm and norm in existing_fronts:
             entries.append({"code": "duplicate", "level": "block",
