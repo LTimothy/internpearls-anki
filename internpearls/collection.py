@@ -1567,8 +1567,8 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
     a real synced card. Nothing here reads or modifies an existing note; this only adds.
 
     Raises RuntimeError, before writing anything (media or notes), if a card names a
-    note type outside _GENERATED_ALLOWED_TYPES or one absent from this collection:
-    an atomic check, so that failure mode never leaves anything behind. Returns the
+    note type outside _GENERATED_ALLOWED_TYPES or one absent from this collection, or
+    has an empty primary field and no picture: an atomic check, so that failure mode never leaves anything behind. Returns the
     number of notes added; 0 for an empty `cards`.
 
     A failure part-way through the actual writes (a media write erroring, a backend
@@ -1598,6 +1598,11 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
         raise RuntimeError(
             "Can't import generated cards: unknown or missing note type(s) "
             + ", ".join(sorted(unknown)))
+    blank = [i for i, card in enumerate(cards, 1) if ai_logic.primary_is_blank(card)]
+    if blank:
+        raise RuntimeError(
+            "Can't import generated cards: the front is empty on card "
+            + ", ".join(map(str, blank)))
 
     undo_target = col.add_custom_undo_entry(f"Import {plural(len(cards), 'generated card')}")
     count = 0

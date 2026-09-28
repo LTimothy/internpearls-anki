@@ -75,6 +75,22 @@ def test_add_generated_notes_unknown_note_type_raises_nothing_written(anki):
     assert DECK not in anki.col.decks.names
 
 
+def test_add_generated_notes_blank_front_raises_nothing_written(anki):
+    with pytest.raises(RuntimeError, match="empty"):
+        collection.add_generated_notes(
+            [_card("Q1"), _card("<br>")], media={}, deck_name=DECK, scope_tag=SCOPE)
+    assert anki.col._notes == {}
+    assert DECK not in anki.col.decks.names
+
+
+def test_add_generated_notes_blank_front_with_a_picture_is_written(anki):
+    card = _card("", media_files=["generated-1.svg"])
+    n = collection.add_generated_notes(
+        [card], media={"generated-1.svg": b"<svg xmlns='x'/>"},
+        deck_name=DECK, scope_tag=SCOPE)
+    assert n == 1
+
+
 def test_add_generated_notes_core_type_missing_from_collection_raises(anki):
     """"Basic" is an allowed core type in principle, but this mock collection's models
     list only has "Study Deck - Basic": it was never actually synced in."""
