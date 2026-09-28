@@ -725,6 +725,9 @@ class _Session:
         # exact content, and a revision can change what card index i even
         # means, so carrying stale verdicts over would mislabel the new text.
         self.verdicts = {}
+        # Cards whose fields changed after their verdict was dropped; cleared when
+        # a check or a new draft lands.
+        self.edited_since_check = set()
 
 
 class _GenerateDialog(QDialog):
@@ -2240,6 +2243,7 @@ class _GenerateDialog(QDialog):
         reg = ai_logic.record_duration(reg, s.backend, s.mode, res["duration_s"])
         save_ai_usage(reg)
         s.verdicts = {}   # a new draft/revision makes any prior check stale
+        s.edited_since_check = set()
 
         # Card matching across a revision, by position: the prompt sends the
         # previous draft and instructs the model to return the SAME cards in the
@@ -2299,6 +2303,7 @@ class _GenerateDialog(QDialog):
         reg = ai_logic.record_duration(reg, s.backend, s.mode, res["duration_s"])
         save_ai_usage(reg)
         s.verdicts = verdicts
+        s.edited_since_check = set()
         s.check = False
         self._rebuild_review()
         self.stack.setCurrentWidget(self.review_page)
@@ -2640,6 +2645,8 @@ class _GenerateDialog(QDialog):
         verdict = s.verdicts.get(i)
         if verdict:
             outer.addWidget(self._build_verdict_row(i, verdict, indent))
+        elif i in s.edited_since_check:
+            outer.addWidget(_accent_row("<i>Edited since check</i>", "updated", indent))
 
         body.setVisible(False)
         blay = QVBoxLayout(body)
@@ -2784,7 +2791,11 @@ class _GenerateDialog(QDialog):
         dlg = _EditCardDialog(self, card)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        card["fields"].update(dlg.fields())
+        new_fields = dlg.fields()
+        if any(card["fields"].get(k, "") != v for k, v in new_fields.items()):
+            if s.verdicts.pop(i, None) is not None:
+                s.edited_since_check.add(i)
+        card["fields"].update(new_fields)
         card["tags"] = dlg.tags()
         s.updated.add(i)
         s.checks = ai_logic.mechanical_checks(
