@@ -1025,6 +1025,90 @@ def _build_review_render_dialog(theme):
     return dlg
 
 
+def _long_review_dialog(count=14):
+    _, q = harness.bootstrap()
+    app = harness.app()
+    from internpearls import ai_dialog, ai_logic
+
+    harness._ai_backend_available()
+    dlg = ai_dialog._GenerateDialog()
+    s = dlg.session
+    s.cards = harness._ai_synthetic_cards(count)
+    s.included = [True] * count
+    s.checks = ai_logic.mechanical_checks(s.cards, {}, {})
+    dlg._rebuild_review()
+    dlg.stack.setCurrentWidget(dlg.review_page)
+    dlg.resize(720, 420)
+    dlg.show()
+    app.processEvents()
+    return dlg
+
+
+def _settle(n=5):
+    from PyQt6.QtTest import QTest
+    for _ in range(n):
+        harness.app().processEvents()
+        QTest.qWait(5)
+
+
+def test_editing_a_card_keeps_open_rows_scroll_and_focus(monkeypatch):
+    dlg = _long_review_dialog()
+    for i in (2, 6):
+        dlg._row_carets[i].click()
+    _settle()
+    bar = dlg.cards_scroll.verticalScrollBar()
+    assert bar.maximum() > 0
+    bar.setValue(bar.maximum() // 2)
+    _settle()
+    before = bar.value()
+    assert before > 0
+
+    card = dlg.session.cards[6]
+    edited = dict(card["fields"], Back="A different answer")
+
+    class Edit:
+        def __init__(self, *args):
+            pass
+
+        def exec(self):
+            return ai_dialog.QDialog.DialogCode.Accepted
+
+        def fields(self):
+            return edited
+
+        def tags(self):
+            return []
+
+    monkeypatch.setattr(ai_dialog, "_EditCardDialog", Edit)
+    dlg._edit_card(6)
+    _settle()
+
+    assert dlg._row_bodies[2].isVisible() and dlg._row_bodies[6].isVisible()
+    assert not dlg._row_bodies[3].isVisible()
+    assert abs(bar.value() - before) <= 2
+    focus = dlg.focusWidget()
+    assert focus is not None and dlg._row_widgets[6].isAncestorOf(focus)
+
+
+def test_deciding_a_correction_keeps_open_rows_and_scroll():
+    dlg = _long_review_dialog()
+    dlg._row_carets[9].click()
+    _settle()
+    bar = dlg.cards_scroll.verticalScrollBar()
+    bar.setValue(bar.maximum())
+    _settle()
+    before = bar.value()
+    dlg.session.verdicts = {9: {"verdict": "corrected", "note": "wording",
+                                "correction": {"Back": "A tidier answer."},
+                                "sources": []}}
+    dlg._rebuild_review()
+    _settle()
+    dlg._keep_correction(9)
+    _settle()
+    assert dlg._row_bodies[9].isVisible()
+    assert abs(bar.value() - before) <= 2
+
+
 def test_accept_correction_rechecks_and_blocks_a_new_duplicate():
     """Accepting a correction that turns a card's Front into an existing
     card's front must not just apply the text: it has to re-run mechanical

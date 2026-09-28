@@ -761,6 +761,7 @@ class _GenerateDialog(QDialog):
             pass
         self.resize(max(open_w, 480), open_h)
         self.session = s = _Session()
+        self._expanded_rows = set()
         self._retried_json = False   # the single-retry budget on malformed model output
         self._reply_chunks = []      # accumulated delta text; reset per _start_generation
         # Backend kinds with a "Test connection" run currently in flight, from
@@ -2436,7 +2437,7 @@ class _GenerateDialog(QDialog):
         else:
             s.included = default_included
         self._pending_prev_included = None
-        self._rebuild_review()
+        self._rebuild_review(keep_place=False)
         self.stack.setCurrentWidget(self.review_page)
 
     def _return_to_input_or_review(self):
@@ -2469,11 +2470,11 @@ class _GenerateDialog(QDialog):
         # included) outside it and always reachable, however many cards are drafted.
         cards_container = QWidget()
         self.cards_lay = QVBoxLayout(cards_container)
-        cards_scroll = QScrollArea()
-        cards_scroll.setWidgetResizable(True)
-        cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        cards_scroll.setWidget(cards_container)
-        lay.addWidget(cards_scroll, 1)
+        self.cards_scroll = QScrollArea()
+        self.cards_scroll.setWidgetResizable(True)
+        self.cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.cards_scroll.setWidget(cards_container)
+        lay.addWidget(self.cards_scroll, 1)
         # Run-level facts (token spend, the rate-limit window, the revision diff
         # summary) rather than what the learner's deciding between: see
         # _update_review_summary. Hidden entirely when there's nothing to say
@@ -2502,13 +2503,22 @@ class _GenerateDialog(QDialog):
         lay.addWidget(bb)
         return page
 
-    def _rebuild_review(self):
+    def _restore_scroll(self, value):
+        try:
+            self.cards_scroll.verticalScrollBar().setValue(value)
+        except RuntimeError:
+            pass
+
+    def _rebuild_review(self, keep_place=True, focus_row=None):
         """(Re)populate the review page's card list from session state, on the same
         row skeleton the update screen's own review._card_row draws: a caret column,
         a fixed chip column, a bold primary line, and a body the caret reveals
         holding the back, why, dosing and images. Hairlined between rows rather than
         around, the same convention build_list_body's append_rows uses."""
         s = self.session
+        scroll = self.cards_scroll.verticalScrollBar().value() if keep_place else 0
+        if not keep_place:
+            self._expanded_rows = set()
         while self.cards_lay.count():
             item = self.cards_lay.takeAt(0)
             w = item.widget() if item else None
@@ -2523,12 +2533,18 @@ class _GenerateDialog(QDialog):
         self.note_boxes = {}
         self._note_captions = {}
         self._add_note_buttons = {}
+        self._row_widgets, self._row_bodies, self._row_carets = {}, {}, {}
         for i, card in enumerate(s.cards):
             if i:
                 self.cards_lay.addWidget(_separator())
             self.cards_lay.addWidget(self._build_review_row(i, card))
         self.cards_lay.addStretch()   # keeps a short list pinned to the top, not floating
         self._update_review_summary()
+        if keep_place:
+            self._restore_scroll(scroll)
+            QTimer.singleShot(0, lambda: self._restore_scroll(scroll))
+        if focus_row in self._row_carets:
+            self._row_carets[focus_row].setFocus()
 
     def _build_review_row(self, i, card):
         """One drafted card as a row, on review._card_row's own skeleton: caret,
@@ -2559,11 +2575,14 @@ class _GenerateDialog(QDialog):
             caret.setAccessibleName(f"{verb}: {card_label}")
             caret.setToolTip(verb)
 
-        def _toggle():
-            expanded = not body.isVisible()
+        def _set_expanded(expanded):
             body.setVisible(expanded)
             caret.setText(_CARET_OPEN if expanded else _CARET_CLOSED)
             _name_caret(expanded)
+            (self._expanded_rows.add if expanded else self._expanded_rows.discard)(i)
+
+        def _toggle():
+            _set_expanded(i not in self._expanded_rows)
 
         header = QWidget()
         hlay = QHBoxLayout(header)
@@ -2701,6 +2720,9 @@ class _GenerateDialog(QDialog):
         outer.addWidget(body)
         if not done:
             outer.addWidget(note_area)
+        self._row_widgets[i], self._row_bodies[i], self._row_carets[i] = row, body, caret
+        if i in self._expanded_rows:
+            _set_expanded(True)
         return row
 
     def _on_review_decision(self, i, state):
@@ -2831,7 +2853,7 @@ class _GenerateDialog(QDialog):
         card["tags"] = dlg.tags()
         s.updated.add(i)
         self._recheck(i)
-        self._rebuild_review()
+        self._rebuild_review(focus_row=i)
 
     def _build_verdict_row(self, i, verdict, indent):
         """A Check facts verdict, on _check_reason_row's own shape (an accent
@@ -2932,7 +2954,7 @@ class _GenerateDialog(QDialog):
         s.updated.add(i)
         verdict["correction"] = None
         self._recheck(i)
-        self._rebuild_review()
+        self._rebuild_review(focus_row=i)
 
     def _keep_correction(self, i):
         """Drop the proposed correction without touching the card; the
@@ -2943,7 +2965,7 @@ class _GenerateDialog(QDialog):
             return
         verdict["correction"] = None
         verdict["kept_yours"] = True
-        self._rebuild_review()
+        self._rebuild_review(focus_row=i)
 
     def _revise_all(self):
         """The only path that sends card-level feedback to the model: one CLI
