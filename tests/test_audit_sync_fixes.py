@@ -600,3 +600,70 @@ def test_progress_callback_error_after_import_still_restores_snapshot(anki, tmp_
     assert results[0][1].startswith('✗')
     assert anki.col.note_by_guid('g1')['Notes'] == 'my note'
     assert anki.col.imports
+
+
+def _delayed_auto_sync(anki, tmp_path, monkeypatch, notes=None):
+    """Dispatch an auto-sync poll against a source, holding its completion back.
+    Returns the dict the poll's result and completion callback are stored in."""
+    from internpearls import background
+    a = tmp_path / 'source-a'
+    a.mkdir()
+    source(anki, a, notes)
+    anki.col.path = str(tmp_path / 'reader.anki2')
+    anki.mw._config['auto_sync_decks'] = True
+    captured = {}
+
+    def capture(work, done):
+        captured['result'] = work()
+        captured['done'] = done
+
+    monkeypatch.setattr(background, '_run_in_background', capture)
+    background._auto_sync_check()
+    return captured
+
+
+def _assert_nothing_applied(anki):
+    from internpearls import config
+    assert not anki.col._notes
+    assert config._load_json(config.INSTALLED, {}) == {}
+    assert not any('auto-synced' in t for t in anki.gui.tooltips)
+
+
+def test_background_fetch_cannot_apply_after_source_change(anki, tmp_path, monkeypatch):
+    b = tmp_path / 'source-b'
+    b.mkdir()
+    captured = _delayed_auto_sync(anki, tmp_path, monkeypatch)
+    anki.mw._config['decks_dir'] = str(b)
+
+    captured['done'](captured['result'], None)
+
+    _assert_nothing_applied(anki)
+    anki.mw._config['decks_dir'] = str(tmp_path / 'source-a')
+    _assert_nothing_applied(anki)
+
+
+def test_background_fetch_cannot_apply_after_auto_sync_is_turned_off(anki, tmp_path,
+                                                                     monkeypatch):
+    captured = _delayed_auto_sync(anki, tmp_path, monkeypatch)
+    anki.mw._config['auto_sync_decks'] = False
+
+    captured['done'](captured['result'], None)
+
+    _assert_nothing_applied(anki)
+
+
+def test_background_fetch_skips_a_deck_excluded_in_flight(anki, tmp_path, monkeypatch):
+    captured = _delayed_auto_sync(anki, tmp_path, monkeypatch)
+    anki.mw._config['excluded_decks'] = [DECK]
+
+    captured['done'](captured['result'], None)
+
+    _assert_nothing_applied(anki)
+
+
+def test_background_fetch_still_applies_when_nothing_changed(anki, tmp_path, monkeypatch):
+    captured = _delayed_auto_sync(anki, tmp_path, monkeypatch)
+
+    captured['done'](captured['result'], None)
+
+    assert anki.col.note_by_guid('g1') is not None

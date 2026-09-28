@@ -221,6 +221,14 @@ def _cfg():
     }
 
 
+def source_identity():
+    """The deck source and scope the live config points at: what per-source state is
+    keyed by, and what an in-flight fetch must still match when it lands."""
+    conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
+    return (conf.get("github_decks_repo", ""), conf.get("github_ref", "main"),
+            conf.get("decks_dir", ""), conf.get("scope_tag", "InternPearls"))
+
+
 def _collection_state_path(path):
     """Never trust another collection/source's installed versions or baselines.
 
@@ -232,10 +240,8 @@ def _collection_state_path(path):
     collection_path = getattr(getattr(mw, "col", None), "path", None)
     if not isinstance(collection_path, str) or not collection_path:
         return path
-    conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
-    source = (conf.get("github_decks_repo", ""), conf.get("github_ref", "main"),
-              conf.get("decks_dir", ""), conf.get("scope_tag", "InternPearls"))
-    key = hashlib.sha256(json.dumps((os.path.realpath(collection_path), source)).encode()).hexdigest()[:24]
+    key = hashlib.sha256(json.dumps(
+        (os.path.realpath(collection_path), source_identity())).encode()).hexdigest()[:24]
     return os.path.join(os.path.dirname(path), "collections", key, os.path.basename(path))
 
 
