@@ -186,7 +186,8 @@ def primary_is_blank(card):
 
 
 def mechanical_checks(cards, existing_fronts, image_errors=None):
-    """Check drafted cards for duplicates, cloze syntax, length, and image
+    """Check drafted cards for duplicates (against the collection and earlier
+    cards in the draft), empty fronts, cloze syntax, length, and image
     resolution failures. existing_fronts is {normalized front: original front}
     for the learner's collection, built collection-side with the same _norm_front over
     _existing_front_to_guid keys; {} skips duplicate detection (throttled/offline
@@ -199,6 +200,7 @@ def mechanical_checks(cards, existing_fronts, image_errors=None):
     """
     image_errors = image_errors or {}
     out = []
+    first_seen = {}
     for i, card in enumerate(cards):
         entries = []
         ntype, fields = card["note_type"], card["fields"]
@@ -218,6 +220,12 @@ def mechanical_checks(cards, existing_fronts, image_errors=None):
             entries.append({"code": "duplicate", "level": "block",
                             "existing": existing_fronts[norm],
                             "message": "possible duplicate of an existing card"})
+        if norm:
+            if norm in first_seen:
+                entries.append({"code": "duplicate", "level": "block",
+                                "message": f"same front as draft card {first_seen[norm] + 1}"})
+            else:
+                first_seen[norm] = i
 
         # Keyed on the primary field being "Text" (a cloze-style deletion field),
         # not on the exact note type name, so a core "Cloze" note is validated

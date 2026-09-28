@@ -2776,6 +2776,20 @@ class _GenerateDialog(QDialog):
             "Revise all" + (f" ({plural(len(s.notes), 'note')})" if s.notes else ""))
         self.check_btn.setEnabled(bool(s.cards))
 
+    def _recheck(self, i):
+        """Recompute every card's checks after card i changed. Card i, and any
+        other card that just became blocked (a draft duplicate of i), is forced
+        to Skip; every other decision is left alone."""
+        s = self.session
+        was_blocked = [any(c["level"] == "block" for c in per) for per in s.checks]
+        s.checks = ai_logic.mechanical_checks(
+            s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
+            _image_errors(s))
+        for j, per in enumerate(s.checks):
+            if any(c["level"] == "block" for c in per) and (
+                    j == i or not (j < len(was_blocked) and was_blocked[j])):
+                s.included[j] = False
+
     def _edit_card(self, i):
         """Hand-edit one card's fields and tags, right in the review list, in
         one dialog covering the whole card. Nothing here touches the model:
@@ -2798,11 +2812,7 @@ class _GenerateDialog(QDialog):
         card["fields"].update(new_fields)
         card["tags"] = dlg.tags()
         s.updated.add(i)
-        s.checks = ai_logic.mechanical_checks(
-            s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
-            _image_errors(s))
-        if any(c["level"] == "block" for c in s.checks[i]):
-            s.included[i] = False
+        self._recheck(i)
         self._rebuild_review()
 
     def _build_verdict_row(self, i, verdict, indent):
@@ -2903,11 +2913,7 @@ class _GenerateDialog(QDialog):
         s.cards[i]["fields"].update(verdict["correction"])
         s.updated.add(i)
         verdict["correction"] = None
-        s.checks = ai_logic.mechanical_checks(
-            s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
-            _image_errors(s))
-        if any(c["level"] == "block" for c in s.checks[i]):
-            s.included[i] = False
+        self._recheck(i)
         self._rebuild_review()
 
     def _keep_correction(self, i):
