@@ -2744,3 +2744,64 @@ def test_declined_dialog_lists_held_cards_first(anki):
     texts = _all_text(_snapshot_declined_dialog(anki))
     assert "Held for later" in texts and "front b" in texts
     assert texts.index("Held for later") < texts.index("Skipped for now")
+
+
+def _folded_group_body(kind="changed", note_kind="maintainer", n=5):
+    from internpearls import review
+    note = {"kind": note_kind, "note": "one change across these cards", "on": "2026-09-27"}
+    items = [("group_note", note, n)]
+    for i in range(n):
+        items += [("sep", "grouped"),
+                  ("card", "Example Deck", _card_detail(
+                      f"guid-g{i}", kind, **({"was": {"Back": "old"}} if kind == "changed"
+                                             else {})))]
+    decisions, touched, opened = {}, set(), set()
+    body, _boxes, _flush = review.build_update_body(
+        items, {}, {}, {}, decisions, "", lambda: "", "", touched, opened=opened)
+    return body, decisions, touched, opened
+
+
+def _button(body, text):
+    return next(w for w in _walk_widgets(body)
+                if isinstance(w, mock_anki.QPushButton) and w.text() == text)
+
+
+def test_a_group_decision_reaches_members_that_were_never_built(anki):
+    body, decisions, touched, _opened = _folded_group_body()
+    _button(body, "Keep all yours").click()
+    assert decisions == {f"guid-g{i}": "keep" for i in range(5)}
+    assert touched == {f"guid-g{i}" for i in range(5)}
+    _button(body, "Apply all").click()
+    assert decisions == {}, "back to the default leaves no entry, like a row's own control"
+
+
+def test_a_new_card_group_offers_import_all_and_skip_all(anki):
+    body, decisions, _t, _o = _folded_group_body(kind="new")
+    _button(body, "Skip all").click()
+    assert set(decisions.values()) == {"skip"}
+
+
+def test_expanding_a_folded_group_counts_its_cards_as_opened(anki):
+    body, _d, _t, opened = _folded_group_body()
+    assert opened == set()
+    _button(body, "Show 5 cards").click()
+    assert opened == {f"guid-g{i}" for i in range(5)}
+
+
+def test_a_feedback_group_is_not_folded(anki):
+    from internpearls import review
+    note = {"kind": "feedback", "note": "make these tables"}
+    items = [("group_note", note, 6)] + [
+        x for i in range(6) for x in (("sep", "grouped"),
+                                      ("card", "D", _card_detail(f"g{i}", "changed")))]
+    assert review.folded_guids(items) == {}
+    items[0] = ("group_note", dict(note, kind="maintainer"), 6)
+    assert set(review.folded_guids(items)) == {f"g{i}" for i in range(6)}
+
+
+def test_unopened_line_counts_rows_left_and_those_folded():
+    from internpearls.logic import unopened_line
+    kinds = {"a": "new", "b": "changed", "c": "changed", "r": None}
+    line = unopened_line(kinds, {"a"}, {"b"})
+    assert line.startswith("<b>2 of 3 cards not opened yet</b>, 1 of them in folded groups.")
+    assert unopened_line(kinds, {"a", "b", "c"}, ()) == ""

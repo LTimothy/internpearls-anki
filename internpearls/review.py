@@ -60,6 +60,10 @@ _CONFIRM_HEIGHT = 380
 # members (browser_tests/parity.spec.mjs).
 _GROUP_COLLAPSE_MIN = 5
 
+# How many member fronts a folded group names under its header, so the box says what
+# is inside it before anyone opens it.
+_GROUP_PREVIEW = 3
+
 # Matches the deck's own CSS so review looks like study: the same green why rule,
 # grey dosing block, and blue cloze fill. Every colour below is asked for by role from
 # palette.colors(), which picks the light or dark set from Anki's own theme at the
@@ -665,7 +669,7 @@ def _changes_heading():
     """The small heading over the What changed group, so the dim lines under it read
     as one comparison block rather than as more of the card."""
     label = QLabel("What changed")
-    label.setStyleSheet(f"color: {colors()['dim']}; font-size: 11px;"
+    label.setStyleSheet(f"color: {colors()['dim']}; font-size: 12px;"
                         " font-weight: 600; margin-top: 4px;")
     return label
 
@@ -711,10 +715,25 @@ def _change_note_row(note, indent):
     # The bar is decorative and deliberately quiet; the text carries the meaning, in
     # the measured `muted`/`dim` roles. `updated_bg` is borrowed here for its tie to
     # the UPDATED chip, not for its own contrast against the window.
+    # Reviewer feedback reads at full strength: it is the reader's own words and the
+    # reason the change exists. A maintainer's note and older feedback stay muted.
+    voice = (note.get("kind") == "feedback" and not note.get("historical"))
+    colour = "" if voice else f" color: {c['muted']};"
     label.setStyleSheet(f"border: none; border-left: 3px solid {c['updated_bg']};"
-                        f" padding-left: 8px; color: {c['muted']};")
+                        f" padding-left: 8px;{colour}")
     lay.addWidget(label)
     return row
+
+
+def _folds(item):
+    """Whether a ("group_note", note, card_count) header folds its members away.
+
+    A group driven by reviewer feedback never folds, however big: those are the changes
+    the reader asked for, so they are the cards most worth checking, and a fold is
+    exactly what let them go through unseen."""
+    if item[0] != "group_note" or (item[2] if len(item) > 2 else 0) < _GROUP_COLLAPSE_MIN:
+        return False
+    return (item[1] or {}).get("kind") != "feedback"
 
 
 def _fold_groups(items):
@@ -726,7 +745,7 @@ def _fold_groups(items):
     while i < len(items):
         item = items[i]
         i += 1
-        if item[0] != "group_note" or (item[2] if len(item) > 2 else 0) < _GROUP_COLLAPSE_MIN:
+        if not _folds(item):
             out.append(item)
             continue
         members = []
@@ -738,22 +757,135 @@ def _fold_groups(items):
     return out
 
 
-def _group_note_row(note, card_count, members=(), build_row=None):
+def folded_guids(items):
+    """{guid: deck_name} for every card that sits inside a folded group, for the
+    caller's own counts of what the reader cannot see without opening something."""
+    return {m[2]["guid"]: m[1]
+            for item in _fold_groups(items) if item[0] == "group_note" and len(item) > 3
+            for m in item[3] if m[0] == "card"}
+
+
+def _group_title(members):
+    """What a folded group holds, counted by kind: "12 cards updated", "3 new, 9
+    updated", with any retired rows after."""
+    kinds = [m[2].get("kind") for m in members if m[0] == "card"]
+    parts = []
+    new, changed = kinds.count("new"), kinds.count("changed")
+    other = len(kinds) - new - changed
+    retired = sum(1 for m in members if m[0] == "retired")
+    if new and not changed and not other:
+        parts.append(f"{plural(new, 'new card')}")
+    elif changed and not new and not other:
+        parts.append(f"{plural(changed, 'card')} updated")
+    else:
+        parts.append(plural(len(kinds), "card"))
+        detail = [f"{n} {w}" for n, w in ((new, "new"), (changed, "updated")) if n]
+        if detail:
+            parts[-1] += f" ({', '.join(detail)})"
+    if retired:
+        parts.append(f"{retired} retired")
+    return ", ".join(parts)
+
+
+# A group's one decision, offered only when every card in it is the same kind, and
+# never Never: turning a dozen cards down for good is a decision to make one at a time.
+_GROUP_OPTIONS = {"new": [("import", "Import all"), ("skip", "Skip all")],
+                  "changed": [("apply", "Apply all"), ("keep", "Keep all yours")]}
+
+
+def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
     """The header over a change group: the shared note (see _change_note_row above),
-    plus, for a group folded by _fold_groups, a toggle and a container that
-    `build_row` fills with the members the first time it is expanded."""
+    and, for a group folded by _fold_groups, a bordered box around it that says what
+    the group holds, names its first few cards, offers one decision for all of them,
+    and has a button that builds the members the first time it is pressed.
+
+    `ctx` is build_update_body's own hooks: `decisions`, `set_member(guid, kind,
+    state)` to decide one member whether or not its row is built yet, `listen(fn)` to
+    hear about every decision on the screen, and `on_expand(guids)` so opening the
+    group counts its cards as looked at."""
     row = _change_note_row(note, 0)
     row.layout().setStretch(0, 1)
     if not members:
         return row
 
+    ctx = ctx or {}
+    c = colors()
     note_text = truncate(plain_text(note.get("note", "")), 60)
-    toggle = link_button(f"Show {card_count} cards")
+    cards = [m[2] for m in members if m[0] == "card"]
+    guids = [d["guid"] for d in cards]
+
+    group = QFrame()
+    group.setObjectName("changeGroup")
+    # Scoped to the frame's own name: a bare border rule would cascade into every
+    # label inside it and draw a box around each line.
+    group.setStyleSheet(f"QFrame#changeGroup {{ border: 1px solid {c['panel_rule']};"
+                        " border-radius: 6px; }")
+    group_lay = QVBoxLayout(group)
+    group_lay.setContentsMargins(10, 8, 10, 8)
+    group_lay.setSpacing(6)
+
+    head = QWidget()
+    hlay = QHBoxLayout(head)
+    hlay.setContentsMargins(0, 0, 0, 0)
+    hlay.setSpacing(8)
+    title = QLabel(_group_title(members))
+    title.setStyleSheet("font-weight: 600;")
+    hlay.addWidget(title, 1)
+
+    kinds = {d.get("kind") for d in cards}
+    options = _GROUP_OPTIONS.get(next(iter(kinds))) if len(kinds) == 1 else None
+    if options and ctx.get("set_member"):
+        kind = next(iter(kinds))
+        default = _DEFAULT_DECISION[kind]
+        decisions = ctx["decisions"]
+        mixed = hint_label("mixed")
+
+        def _current():
+            states = {decisions.get(g, default) for g in guids}
+            return next(iter(states)) if len(states) == 1 else None
+
+        def _decide_all(state):
+            for g in guids:
+                ctx["set_member"](g, kind, state)
+
+        cell = decision_cell(options, _current(), _decide_all,
+                             f"{len(guids)} cards: {note_text}")
+
+        def _refresh(_guid=None, _state=None):
+            state = _current()
+            cell.set_state(state)
+            mixed.setVisible(state not in dict(options))
+        _refresh()
+        ctx["listen"](_refresh)
+        hlay.addWidget(mixed, 0, Qt.AlignmentFlag.AlignVCenter)
+        hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
+
+    toggle = QPushButton(f"Show {card_count} cards")
+    toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+    hlay.addWidget(toggle, 0, Qt.AlignmentFlag.AlignTop)
+    group_lay.addWidget(head)
+    group_lay.addWidget(row)
+
+    preview = QWidget()
+    play = QVBoxLayout(preview)
+    play.setContentsMargins(11, 0, 0, 0)
+    play.setSpacing(1)
+    for d in cards[:_GROUP_PREVIEW]:
+        line = QLabel(html.escape(_card_label(d)))
+        line.setStyleSheet(f"color: {c['dim']};")
+        play.addWidget(line)
+    if len(cards) > _GROUP_PREVIEW:
+        more = QLabel(f"and {len(cards) - _GROUP_PREVIEW} more")
+        more.setStyleSheet(f"color: {c['muted']}; font-style: italic;")
+        play.addWidget(more)
+    group_lay.addWidget(preview)
+
     body = QWidget()
     body_lay = QVBoxLayout(body)
     body_lay.setContentsMargins(0, 0, 0, 0)
     body_lay.setSpacing(0)
     body.setVisible(False)
+    group_lay.addWidget(body)
     state = {"expanded": False, "built": False}
 
     def _name_toggle(expanded):
@@ -767,19 +899,21 @@ def _group_note_row(note, card_count, members=(), build_row=None):
             state["built"] = True
             for member in members:
                 body_lay.addWidget(build_row(member))
+            if ctx.get("on_expand"):
+                ctx["on_expand"](guids)
         body.setVisible(state["expanded"])
+        preview.setVisible(not state["expanded"])
         _name_toggle(state["expanded"])
 
     toggle.clicked.connect(_toggle)
     _name_toggle(False)
-    row.layout().addWidget(toggle, 0, Qt.AlignmentFlag.AlignTop)
-    group = QWidget()
-    group_lay = QVBoxLayout(group)
-    group_lay.setContentsMargins(0, 0, 0, 0)
-    group_lay.setSpacing(0)
-    group_lay.addWidget(row)
-    group_lay.addWidget(body)
-    return group
+    # Room between this box and the rows around it, which sit flush to their hairlines.
+    wrap = QWidget()
+    wlay = QVBoxLayout(wrap)
+    wlay.setContentsMargins(0, 6, 0, 6)
+    wlay.setSpacing(0)
+    wlay.addWidget(group)
+    return wrap
 
 
 def _retired_row(identity, reason, chips):
@@ -841,7 +975,7 @@ def _chip_with_source(detail, chips):
     for ref in label.split():
         tag = QLabel(html.escape(ref))
         tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tag.setStyleSheet(f"color: {dim}; font-size: 10px;")
+        tag.setStyleSheet(f"color: {dim}; font-size: 11px;")
         lay.addWidget(tag)
     # The chip column's own fixed width, so a tag can never widen the gutter and
     # push every row's text out of line.
@@ -951,7 +1085,7 @@ def _card_label(detail):
 
 
 def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=None,
-              on_open=None):
+              on_open=None, register=None):
     """One card as a single row: a caret, its one chip column (see `_row_chip`), its
     tag if it has one, and its primary line. Clicking the row (the caret or the line
     itself) reveals the answer, the why behind a green left rule, and dosing when
@@ -1165,17 +1299,24 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         # here like any other decision.
         initial = decisions.get(guid, default)
 
-        def _on_change(state):
+        def _decide(state, clicked):
             if state == default:
                 decisions.pop(guid, None)
             else:
                 decisions[guid] = state
-            _apply_decision_visuals(state, clicked=True)
+            _apply_decision_visuals(state, clicked=clicked)
             on_decide(guid, state)
 
+        def _on_change(state):
+            _decide(state, True)
+
         hlay.addStretch()
-        hlay.addWidget(decision_cell(options, initial, _on_change, card_label),
-                       0, Qt.AlignmentFlag.AlignTop)
+        cell = decision_cell(options, initial, _on_change, card_label)
+        hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
+        if register is not None:
+            # A group's own decision reaches a built row through here. Not a click on
+            # this row, so it opens no note box on each of a dozen cards.
+            register(guid, lambda state: (cell.set_state(state), _decide(state, False)))
         hlay.addWidget(never_note, 0, Qt.AlignmentFlag.AlignTop)
         _apply_decision_visuals(initial)
 
@@ -1459,16 +1600,44 @@ def build_update_body(items, sources, flags, new_index, decisions,
         _refresh_bottom()
         saver.start()
 
+    listeners = []
+    setters = {}
+
     def _on_decide(guid, state):
         touched.add(guid)
+        for fn in listeners:
+            fn(guid, state)
         _refresh_bottom()
         if on_review is not None:
             on_review()
 
     def _on_open(guid):
         opened.add(guid)
+        _refresh_bottom()
         if on_review is not None:
             on_review()
+
+    def _set_member(guid, kind, state):
+        """One card of a group decided from the group's own control: through its row
+        when that row is built, otherwise straight into `decisions`, which is what the
+        row reads its starting state from if it is built later."""
+        if guid in setters:
+            setters[guid](state)
+            return
+        if state == _DEFAULT_DECISION.get(kind):
+            decisions.pop(guid, None)
+        else:
+            decisions[guid] = state
+        _on_decide(guid, state)
+
+    def _on_expand(guids):
+        opened.update(guids)
+        _refresh_bottom()
+        if on_review is not None:
+            on_review()
+
+    group_ctx = {"decisions": decisions, "set_member": _set_member,
+                 "listen": listeners.append, "on_expand": _on_expand}
 
     # Measured once for the whole screen, not per row: every row in one list has to be
     # given the same chip set or the column stops lining up.
@@ -1477,7 +1646,7 @@ def build_update_body(items, sources, flags, new_index, decisions,
     def _row(item):
         if item[0] == "group_note":
             return _group_note_row(item[1], item[2] if len(item) > 2 else 0,
-                                   item[3] if len(item) > 3 else (), _row)
+                                   item[3] if len(item) > 3 else (), _row, group_ctx)
         if item[0] in ("header", "note", "sep"):
             return _list_row(item, chips=chips)
         if item[0] == "deck":
@@ -1493,7 +1662,8 @@ def build_update_body(items, sources, flags, new_index, decisions,
             return simple_row("moved", front, f"→ {dest_short}", chips=chips)
         _, deck_name, detail = item
         row = _card_row(detail, flags, boxes, decisions, _on_decide,
-                        resolve=resolvers.get(deck_name), chips=chips, on_open=_on_open)
+                        resolve=resolvers.get(deck_name), chips=chips, on_open=_on_open,
+                        register=setters.__setitem__)
         box = boxes.get(detail["guid"])
         if box is not None:
             box.textChanged.connect(lambda g=detail["guid"], b=box: _on_change(g, b))
