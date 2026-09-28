@@ -358,7 +358,10 @@ _REVIEW_CHIP_KINDS = ("blocked", "warn", "ok", "revised", "imported")
 # remember a draft against; see review._NEW_OPTIONS for the update screen's own set).
 _REVIEW_DECISION_OPTIONS = [("include", "Include"), ("skip", "Skip")]
 
-_REVIEW_NOTE_CAPTION = "Skipped. What should change? Sent with the next Revise all."
+_REVIEW_NOTE_CAPTIONS = {
+    False: "Skipped. What should change? Sent with the next Revise all.",
+    True: "Feedback for the next revision. Sent with the next Revise all.",
+}
 _REVIEW_NOTE_PLACEHOLDER = "e.g. trim the answer, split into two cards"
 
 
@@ -2598,11 +2601,12 @@ class _GenerateDialog(QDialog):
         # they can carry the same left indent as the body (`blay`'s own margins,
         # below) and stop at the same right edge as the decision cell instead of
         # running the row's full width flush with the page's left edge.
-        caption = muted_label(_REVIEW_NOTE_CAPTION)
+        caption_text = _REVIEW_NOTE_CAPTIONS[bool(s.included[i])]
+        caption = muted_label(caption_text)
         note_box = QPlainTextEdit(s.notes.get(i, ""))
         if hasattr(caption, "setBuddy"):
             caption.setBuddy(note_box)
-        note_box.setAccessibleName(_REVIEW_NOTE_CAPTION)
+        note_box.setAccessibleName(caption_text)
         note_box.setPlaceholderText(_REVIEW_NOTE_PLACEHOLDER)
         note_box.setFixedHeight(50)
         has_note = bool(s.notes.get(i))
@@ -2716,7 +2720,9 @@ class _GenerateDialog(QDialog):
             box.setVisible(show_box)
             caption = self._note_captions.get(i)
             if caption is not None:
+                caption.setText(_REVIEW_NOTE_CAPTIONS[s.included[i]])
                 caption.setVisible(show_box)
+            box.setAccessibleName(_REVIEW_NOTE_CAPTIONS[s.included[i]])
             add_note = self._add_note_buttons.get(i)
             if add_note is not None:
                 add_note.setVisible(not show_box)
