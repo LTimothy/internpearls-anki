@@ -1464,6 +1464,53 @@ def test_failing_import_leaves_scratch_dir_intact_for_a_retry(anki, monkeypatch)
     assert dlg.session.scratch == scratch
 
 
+def _three_card_draft(anki, monkeypatch):
+    import copy
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    for front in ("Second question", "Third question"):
+        extra = copy.deepcopy(dlg.session.cards[0])
+        extra["fields"]["Front"] = front
+        dlg.session.cards.append(extra)
+        dlg.session.included.append(True)
+    dlg.session.checks = ai_logic.mechanical_checks(dlg.session.cards, {})
+    dlg._rebuild_review()
+    return dlg
+
+
+def test_partial_import_retry_adds_only_the_cards_that_did_not_land(anki, monkeypatch):
+    dlg = _three_card_draft(anki, monkeypatch)
+    warnings = []
+    monkeypatch.setattr(ai_dialog, "_warn", lambda text, **kw: warnings.append(text))
+    original = anki.col.add_note
+    calls = []
+
+    def fail_second(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("Synthetic write failure on second note")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(anki.col, "add_note", fail_second)
+    scratch = dlg.session.scratch
+    resets = anki.mw.reset_count
+    assert dlg._do_import() == 0
+    assert len(anki.col._notes) == 1
+    assert dlg.session.imported == {0}
+    assert anki.mw.reset_count > resets
+    assert os.path.isdir(scratch)
+    assert warnings and "1" in warnings[0] and "2" in warnings[0]
+    assert "Undo" in warnings[0]
+    assert dlg.import_btn.text() == "Import 2 cards"
+    assert "IMPORTED" in _row_text(dlg.cards_lay._children[0])
+    assert dlg.decision_cells[0] is None
+
+    monkeypatch.setattr(anki.col, "add_note", original)
+    assert dlg._do_import() == 2
+    assert len(anki.col._notes) == 3
+
+
 def test_scratch_dir_removed_on_discard(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()

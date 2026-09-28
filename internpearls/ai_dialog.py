@@ -352,7 +352,7 @@ def _image_row_html(session, i, card):
 # revision marker, which outranks a clean row. Passed to every chip_cell/
 # chip_column_width call on this page so the gutter is measured against exactly
 # these four words and none of the update screen's (see widgets.py:67-74).
-_REVIEW_CHIP_KINDS = ("blocked", "warn", "ok", "revised")
+_REVIEW_CHIP_KINDS = ("blocked", "warn", "ok", "revised", "imported")
 
 # The row's decision control: Include or Skip only, no Never (there is nothing to
 # remember a draft against; see review._NEW_OPTIONS for the update screen's own set).
@@ -728,6 +728,8 @@ class _Session:
         # Cards whose fields changed after their verdict was dropped; cleared when
         # a check or a new draft lands.
         self.edited_since_check = set()
+        # Card indexes already written to the collection by a partly failed import.
+        self.imported = set()
 
 
 class _GenerateDialog(QDialog):
@@ -2270,6 +2272,7 @@ class _GenerateDialog(QDialog):
             s.updated = set()
 
         s.cards = cards
+        s.imported = set()
         s.notes = {}
         # Carried through to _apply_review_state once images (if any) have
         # resolved: None means "not a revision", so every card falls back to
@@ -2535,7 +2538,8 @@ class _GenerateDialog(QDialog):
         """
         s = self.session
         entries = s.checks[i]
-        kind = _review_row_kind(entries, i in s.updated)
+        done = i in s.imported
+        kind = "imported" if done else _review_row_kind(entries, i in s.updated)
         indent = _review_row_indent()
         card_label = note_display_label(list(card["fields"].values()), max_len=60)
 
@@ -2629,16 +2633,19 @@ class _GenerateDialog(QDialog):
         self._add_note_buttons[i] = add_note
 
         hlay.addStretch()
-        initial = "include" if s.included[i] else "skip"
-        cell = decision_cell(
-            _REVIEW_DECISION_OPTIONS, initial,
-            lambda v, idx=i: self._guard(self._on_review_decision, idx, v), card_label)
-        self.decision_cells.append(cell)
-        hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
+        if done:
+            self.decision_cells.append(None)
+        else:
+            initial = "include" if s.included[i] else "skip"
+            cell = decision_cell(
+                _REVIEW_DECISION_OPTIONS, initial,
+                lambda v, idx=i: self._guard(self._on_review_decision, idx, v), card_label)
+            self.decision_cells.append(cell)
+            hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
 
         outer.addWidget(header)
 
-        for entry in entries:
+        for entry in ([] if done else entries):
             if entry.get("level") != "ok":
                 outer.addWidget(_check_reason_row(entry, indent))
 
@@ -2676,18 +2683,20 @@ class _GenerateDialog(QDialog):
         if img_html:
             blay.addWidget(_rich_label(img_html))
 
-        edit_btn = link_button("Edit", on_click=lambda: self._guard(self._edit_card, i))
-        links = QWidget()
-        llay = QHBoxLayout(links)
-        llay.setContentsMargins(0, 0, 0, 0)
-        llay.setSpacing(CARET_GAP)
-        llay.addWidget(edit_btn)
-        llay.addWidget(add_note)
-        llay.addStretch()
-        blay.addWidget(links)
+        if not done:
+            edit_btn = link_button("Edit", on_click=lambda: self._guard(self._edit_card, i))
+            links = QWidget()
+            llay = QHBoxLayout(links)
+            llay.setContentsMargins(0, 0, 0, 0)
+            llay.setSpacing(CARET_GAP)
+            llay.addWidget(edit_btn)
+            llay.addWidget(add_note)
+            llay.addStretch()
+            blay.addWidget(links)
 
         outer.addWidget(body)
-        outer.addWidget(note_area)
+        if not done:
+            outer.addWidget(note_area)
         return row
 
     def _on_review_decision(self, i, state):
@@ -2740,13 +2749,16 @@ class _GenerateDialog(QDialog):
         small-print footer under the list, rather than one line carrying both.
         """
         s = self.session
-        n_inc = sum(s.included)
-        n_skip = len(s.cards) - n_inc
+        n_done = len(s.imported)
+        n_inc = sum(inc for i, inc in enumerate(s.included) if i not in s.imported)
+        n_skip = len(s.cards) - n_inc - n_done
         header = f"{plural(len(s.cards), 'card')} drafted"
         if s.attachments:
             n_sources = len(s.attachments) + bool(s.source.strip())
             header += f" from {plural(n_sources, 'source')}"
         header += f" · {n_inc} included, {n_skip} skipped"
+        if n_done:
+            header += f", {n_done} imported"
         if s.verdicts:
             counts = Counter(v["verdict"] for v in s.verdicts.values())
             bits = [f"{counts[k]} {k}" for k in ai_logic._VERDICT_WORDS if counts.get(k)]
@@ -2959,7 +2971,8 @@ class _GenerateDialog(QDialog):
         and an attached/file name is scoped to its own scratch dir.
         """
         s = self.session
-        pairs = [(i, c) for i, (c, inc) in enumerate(zip(s.cards, s.included)) if inc]
+        pairs = [(i, c) for i, (c, inc) in enumerate(zip(s.cards, s.included))
+                 if inc and i not in s.imported]
         if not pairs:
             _info("Nothing is selected to import. Check at least one card, "
                   "or Cancel to discard the draft.")
@@ -2993,8 +3006,19 @@ class _GenerateDialog(QDialog):
         # add_generated_notes can raise (e.g. Basic/Cloze missing or renamed on a
         # non-English profile). Cleanup waits until AFTER a successful import:
         # if this raises, the scratch dir must still be there for a retry.
-        n = collection.add_generated_notes(cards, media, s.deck_name,
-                                           _cfg()["scope_tag"])
+        try:
+            n = collection.add_generated_notes(cards, media, s.deck_name,
+                                               _cfg()["scope_tag"])
+        except collection.PartialImport as partial:
+            s.imported.update(pairs[pos][0] for pos in partial.written)
+            mw.reset()
+            self._rebuild_review()
+            landed = len(partial.written)
+            _warn(f"The import stopped part-way ({partial.__cause__}). "
+                  f"Added: {plural(landed, 'card')}. Not added: "
+                  f"{plural(len(pairs) - landed, 'card')}. Import again adds only "
+                  "the rest, and Edit > Undo removes the cards already added.")
+            return 0
         # add_generated_notes only writes the collection; nothing about that tells
         # Anki's main window a new undo entry exists or that the deck list changed
         # underneath it. mw.reset() is the same notification every other

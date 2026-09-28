@@ -1550,6 +1550,17 @@ def remove_empty_cards():
 _GENERATED_ALLOWED_TYPES = frozenset(TARGET_FIELDS) | {"Basic", "Cloze"}
 
 
+class PartialImport(Exception):
+    """add_generated_notes failed after some notes landed. `written` holds the
+    positions in the input list of the cards that were added; the original error
+    is the __cause__."""
+
+    def __init__(self, written, total):
+        super().__init__(f"{len(written)} of {total} generated cards were added")
+        self.written = written
+        self.total = total
+
+
 def add_generated_notes(cards, media, deck_name, scope_tag):
     """Write accepted AI-generated cards into `deck_name` as one undoable operation.
 
@@ -1576,7 +1587,9 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
     write), so a partial import is possible here. What's guaranteed instead: whatever
     already landed, media and notes alike, is still exactly one undo step, so the
     caller (or the user, with Ctrl+Z) can always get back to a clean collection in one
-    move. The original exception always propagates; this function never swallows one.
+    move. A failure after at least one note landed raises PartialImport (the original
+    error as its __cause__) naming which cards were written; a failure before that
+    propagates unchanged. This function never swallows an error.
     """
     cards = list(cards or [])
     if not cards:
@@ -1606,6 +1619,7 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
 
     undo_target = col.add_custom_undo_entry(f"Import {plural(len(cards), 'generated card')}")
     count = 0
+    landed = []
     try:
         did = col.decks.id(deck_name)
 
@@ -1621,7 +1635,7 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
                     written[fname] = col.media.add_file(path)
 
         tag = f"{scope_tag}::{ai_logic.GENERATED_TAG_LEAF}"
-        for card in cards:
+        for pos, card in enumerate(cards):
             note = col.new_note(models[card["note_type"]])
             for name, value in card["fields"].items():
                 if name in note:
@@ -1639,6 +1653,11 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
             note.tags = list(card.get("tags", [])) + [tag]
             col.add_note(note, did)
             count += 1
+            landed.append(pos)
+    except Exception as e:
+        if landed:
+            raise PartialImport(landed, len(cards)) from e
+        raise
     finally:
         # Whatever landed before a mid-loop failure is still exactly one undo step.
         col.merge_undo_entries(undo_target)
