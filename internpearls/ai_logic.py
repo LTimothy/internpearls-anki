@@ -466,13 +466,18 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
             errors.append(f"card {idx}: missing note")
             continue
         correction = raw.get("correction")
+        removed = False
         if correction is not None:
             allowed = set(field_map.get(idx, []))
             if (not isinstance(correction, dict) or not correction
                     or not set(correction) <= allowed):
                 errors.append(f"card {idx}: correction has an unknown field")
                 continue
-            correction = {k: str(v) for k, v in correction.items()}
+            stripped = {k: _REMOTE_IMG_RE.sub("", str(v)) for k, v in correction.items()}
+            removed = stripped != {k: str(v) for k, v in correction.items()}
+            correction = stripped
+            if removed and not any(v.strip() for v in correction.values()):
+                correction = None
         sources = []
         for src in raw.get("sources") or []:
             if not isinstance(src, dict):
@@ -482,6 +487,9 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
                 continue
             sources.append({"title": str(src.get("title") or url), "url": url})
         note = note.strip()
+        if removed:
+            note += (" A web picture in the suggested text was left out; "
+                     "pictures are added through the card's images.")
         if verdict == "confirmed" and not web:
             verdict = "unverified"
             note = "no web access, from recall only: " + note

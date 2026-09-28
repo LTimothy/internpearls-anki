@@ -420,6 +420,35 @@ def test_parse_verdicts_happy_path():
     assert verdicts[1]["correction"] == {"Back": "1.0 mL/kg"}
 
 
+def _corrected(correction, note="fixed"):
+    return _verdicts_text([{"index": 0, "verdict": "corrected", "note": note,
+                            "sources": [], "correction": correction}])
+
+
+def test_correction_cannot_reintroduce_a_remote_image():
+    text = _corrected({"Back": 'new answer <img src="https://example.com/p.png">'})
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert not errors
+    assert verdicts[0]["correction"] == {"Back": "new answer "}
+    assert "web picture" in verdicts[0]["note"]
+    assert "images" in verdicts[0]["note"]
+
+
+def test_correction_left_empty_by_the_strip_is_dropped_but_keeps_its_note():
+    text = _corrected({"Back": '<img src="https://example.com/p.png">'})
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert verdicts[0]["verdict"] == "corrected"
+    assert verdicts[0]["correction"] is None
+    assert "fixed" in verdicts[0]["note"] and "web picture" in verdicts[0]["note"]
+
+
+def test_correction_without_a_remote_image_is_untouched():
+    text = _corrected({"Back": "1.0 mL/kg"})
+    verdicts, _ = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert verdicts[0]["correction"] == {"Back": "1.0 mL/kg"}
+    assert "web picture" not in verdicts[0]["note"]
+
+
 def test_parse_verdicts_strips_markdown_fence():
     text = "```json\n" + _verdicts_text([
         {"index": 0, "verdict": "confirmed", "note": "ok", "correction": None,
