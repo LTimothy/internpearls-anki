@@ -8,6 +8,8 @@ things mocked are Anki itself and the dialogs, which are recorded and scripted.
 import json
 import os
 
+import pytest
+
 import mock_anki
 from mock_anki import make_apkg, make_model
 
@@ -6271,6 +6273,124 @@ def test_a_deck_whose_only_conversion_is_declined_is_not_deferred(anki, tmp_path
     assert deferred == [] and converted == 0
     assert results[0].startswith("✓")
     assert json.load(open(sync.INSTALLED, encoding="utf8")) == {DECK: "v2"}
+
+
+def _listed_conversion_source(anki, tmp_path, state):
+    """A conversion whose card also carries a content change, so the confirmation lists
+    it as a row, with a standing decline in `state` on it."""
+    from internpearls import config
+    anki.col.models._models.append(_cloze_model())
+    _existing_card(anki, "g1", "Old Q and A front")
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", ["A {{c1::cloze}} version", "why, revised", "", "", ""],
+                       TAGS)], _cloze_model())}))
+    config.save_declined({"g1": {"state": state, "front": "Old Q and A front",
+                                 "deck": DECK, "decided": "2026-08-01",
+                                 "hash": "stale-hash-value1"}})
+
+
+def _conversion_questions(asked):
+    return [t for t in asked if "changed format" in t]
+
+
+def _click_row_then_update(front, label, ask):
+    """respond() for update_decks(): press `label` on the row whose text contains
+    `front`, then Update, recording every question asked."""
+    state = {"clicked": False}
+    finish = _click_update_button(True, ask)
+
+    def respond(p):
+        if p["kind"] == "dialog" and not state["clicked"] \
+                and not _dismiss_result(p["tree"]):
+            state["clicked"] = True
+            btn = _find_row_button(p["tree"], front, label)
+            return {"events": [{"id": btn["id"], "click": True}]}
+        return finish(p)
+    return respond
+
+
+def test_released_held_conversion_requires_consent(anki, tmp_path):
+    _declined_conversion_source(anki, tmp_path, "held")
+    asked = []
+
+    _update(anki, ask=_recording_ask(asked))
+
+    assert len(_conversion_questions(asked)) == 1, asked
+
+
+def test_released_held_conversion_moves_the_note_in_place(anki, tmp_path):
+    _listed_conversion_source(anki, tmp_path, "held")
+    before = anki.col.note_by_guid("g1").id
+
+    _update(anki, ask=_recording_ask([], True))
+
+    note = anki.col.note_by_guid("g1")
+    assert note.id == before
+    assert note.note_type()["name"] == "Study Deck - Cloze"
+    assert len(anki.col._notes) == 1
+
+
+def test_released_held_conversion_imported_as_new_keeps_the_old_note(anki, tmp_path):
+    _listed_conversion_source(anki, tmp_path, "held")
+
+    _update(anki, ask=_recording_ask([], False))
+
+    guids = sorted(n.guid for n in anki.col._notes.values())
+    assert len(guids) == 2 and any(g.startswith("iplocal-") for g in guids), guids
+    assert anki.col.notetype_changes == []
+
+
+def test_a_conversion_held_again_is_neither_asked_about_nor_imported(anki, tmp_path):
+    from internpearls import config, sync
+    _listed_conversion_source(anki, tmp_path, "held")
+    asked = []
+
+    drive(anki, sync.update_decks, _open_then_hold())
+
+    assert config.load_declined()["g1"]["state"] == "held"
+    _assert_existing_card_was_left_alone(anki, asked)
+    assert len(anki.col._notes) == 1
+
+
+@pytest.mark.parametrize("state", ["skip", "keep"])
+def test_a_standing_decline_flipped_back_to_default_is_asked_about(anki, tmp_path,
+                                                                    state):
+    from internpearls import config, sync
+    _listed_conversion_source(anki, tmp_path, state)
+    asked = []
+
+    drive(anki, sync.update_decks,
+          _click_row_then_update("version", "Apply", _recording_ask(asked)))
+
+    assert "g1" not in config.load_declined()
+    assert len(_conversion_questions(asked)) == 1, asked
+    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Cloze"
+
+
+def test_a_conversion_missing_from_the_final_plan_defers_instead_of_forking(
+        anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    _cloze_conversion_source(anki, tmp_path)
+    monkeypatch.setattr(sync, "_final_conversion_plan", lambda *a, **kw: {})
+    asked = []
+
+    trees = _update(anki, ask=_recording_ask(asked))
+
+    assert not _conversion_questions(asked)
+    assert len(anki.col._notes) == 1
+    assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Basic"
+    assert json.load(open(sync.INSTALLED, encoding="utf8")) == {}
+    assert "note-type format update" in _summary_text(trees)
+
+
+def test_a_deck_with_no_conversions_is_not_deferred_by_the_final_plan(anki, tmp_path):
+    from internpearls import sync
+    _source_updating_card_a(anki, tmp_path)
+
+    _update(anki)
+
+    assert anki.col.note_by_guid("guid-a").fields[0] == "front a, revised"
+    assert json.load(open(sync.INSTALLED, encoding="utf8"))
 
 
 def test_a_mixed_deck_asks_only_about_the_conversions_left(anki, tmp_path):
