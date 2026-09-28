@@ -126,6 +126,30 @@ def test_empty_cloze_text_is_blocked():
     assert any(c["code"] == "empty" for c in checks[0])
 
 
+def test_draft_repeating_an_earlier_front_is_a_duplicate():
+    cards = [_card(Front="Same question", Back="a"), _card(Front="Other", Back="b"),
+             _card(Front="Same question", Back="c")]
+    checks = ai_logic.mechanical_checks(cards, {})
+    assert all(c["code"] != "duplicate" for c in checks[0] + checks[1])
+    dup = [c for c in checks[2] if c["code"] == "duplicate"]
+    assert dup and dup[0]["level"] == "block"
+    assert "draft card 1" in dup[0]["message"]
+
+
+def test_draft_duplicate_ignores_case_markup_and_spacing():
+    cards = [_card(Front="What is  LAST?", Back="a"),
+             _card(Front="<b>what is last?</b>", Back="b")]
+    checks = ai_logic.mechanical_checks(cards, {})
+    assert any(c["code"] == "duplicate" for c in checks[1])
+
+
+def test_draft_duplicate_reads_the_cloze_text_too():
+    cards = [_card("Study Deck - Cloze", Text="{{c1::a}} drug"),
+             _card("Study Deck - Cloze", Text="{{c1::a}} drug")]
+    checks = ai_logic.mechanical_checks(cards, {})
+    assert any(c["code"] == "duplicate" for c in checks[1])
+
+
 def test_check_cloze_syntax():
     ok = _card("Study Deck - Cloze", Text="{{c1::1.5 mL/kg}} bolus")
     bad = _card("Study Deck - Cloze", Text="{{c1:broken}} and {{c2::fine}")

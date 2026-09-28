@@ -795,6 +795,34 @@ def test_editing_the_front_to_blank_flags_and_skips_the_card(anki, monkeypatch):
     assert dlg.session.included == [False]
 
 
+def _two_card_draft(anki, monkeypatch):
+    import copy
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    second = copy.deepcopy(dlg.session.cards[0])
+    second["fields"]["Front"] = "Another question"
+    dlg.session.cards.append(second)
+    dlg.session.included.append(True)
+    dlg.session.checks = ai_logic.mechanical_checks(dlg.session.cards, {})
+    dlg._rebuild_review()
+    return dlg
+
+
+def test_edit_that_creates_then_removes_a_draft_duplicate(anki, monkeypatch):
+    dlg = _two_card_draft(anki, monkeypatch)
+    first = dlg.session.cards[0]
+    _fake_edit(monkeypatch, dict(dlg.session.cards[1]["fields"]), first["tags"])
+    dlg._edit_card(0)
+    assert any(c["code"] == "duplicate" for c in dlg.session.checks[1])
+    assert dlg.session.included == [True, False]
+    dlg.decision_cells[1].buttons["include"].click()
+    _fake_edit(monkeypatch, dict(first["fields"], Front="A third question"), first["tags"])
+    dlg._edit_card(0)
+    assert all(c["code"] != "duplicate" for c in dlg.session.checks[1])
+    assert dlg.session.included == [True, True]
+
+
 def test_next_check_clears_the_edited_since_check_line(anki, monkeypatch):
     dlg = _confirmed_draft(anki, monkeypatch)
     card = dlg.session.cards[0]
