@@ -44,7 +44,7 @@ The main button. It fetches `manifest.json` from your deck source and works out 
 
 **How cards are shown.** A fill-in-the-blank card shows its blanks filled in. When a field holds more than one blank group, each blank carries its group number (c1, c2). A hint shows in brackets beside its answer, and a change that only moves a hint is named as one. Pictures are named while a row is closed and rendered from the already-downloaded deck when you open it.
 
-**Look and format changes.** A change to how cards look (a template or its CSS) is a checkbox on the confirmation, unticked by default, because applying it costs a one-time full AnkiWeb sync; leaving it keeps your current appearance and imports everything else. A change to a card's format (Q&A becoming fill-in-the-blank) costs the same and gets one yes or no after you click Update and after the backup, covering the whole run. Saying no imports those cards as new cards beside your old ones. A deck whose download failed twice, or whose new format needs a note type you don't have yet, stays pending with the reason given. Declined cards are never part of this.
+**Look and format changes.** A change to how cards look (a template or its CSS) is a checkbox on the confirmation, unticked by default, because applying it costs a one-time full AnkiWeb sync; leaving it keeps your current appearance and imports everything else. A change to a card's format (Q&A becoming fill-in-the-blank) costs the same and gets one yes or no after you click Update and after the backup, covering the whole run. Saying no imports those cards as new cards beside your old ones. A deck whose download failed twice, or whose new format needs a note type you don't have yet, stays pending with the reason given. Cards you skipped, kept yours, said Never to or left held are never part of this; a held or declined card you set back to Import or Apply on the same screen is.
 
 Every question whose two answers cost different things names them on its buttons, and Return, Escape or closing the window all choose the one that costs nothing.
 
@@ -193,7 +193,7 @@ Both are schema-neutral, reversible by hand, backed up first, and no-ops when re
 
 How automatic the add-on is, kept apart from Manage decks (which decks, which fields, from where):
 
-- **Sync decks automatically when updates are available**, off by default. Checks the source in the background and applies changed decks, backing up first. It never applies a change that forces a full AnkiWeb sync (a template or a format change): that deck is held for the rest of the session with a tooltip pointing to Sync decks. It never archives or relocates; Reconcile my decks shows the backlog instead.
+- **Sync decks automatically when updates are available**, off by default. Checks the source in the background and applies changed decks, backing up first. It never applies a change that forces a full AnkiWeb sync (a template or a format change): that deck is held for the rest of the session with a tooltip pointing to Sync decks. A check that was already running when you change the source, turn auto-sync off or uncheck a deck applies nothing. It never archives or relocates; Reconcile my decks shows the backlog instead.
 - **Check every N minutes**, default 15, from 1 minute to a week. Checks run off the main thread and fail fast if the source is unreachable.
 - **Notify me when a new add-on version is out**, on by default, checked once per launch.
 - **Install add-on updates automatically**, off by default. Installs during that check; a restart loads it.
@@ -224,7 +224,7 @@ Run Update my decks, or turn on automatic sync in Settings so content applies on
 
 **Scope.** The snapshot and matching cover only cards under `scope_tag` (default `InternPearls`); everything else is ignored. The backup is always a real Anki export.
 
-**State.** Synced versions, shipped-field baselines and backups live in the add-on's `user_files/` folder, which survives add-on updates but not an uninstall, so export anything you want to keep before removing the add-on. They are separated by collection path and source under `user_files/collections/`; older unscoped files are left on disk but not trusted, so the next sync may re-offer decks. Backup filenames carry the full deck identity and a unique suffix. Restoring a backup clears the matching sync records (Restore full collection clears them all; Restore intern pearls deck clears only the decks in the file), so what came back is re-offered rather than reported up to date.
+**State.** Synced versions, shipped-field baselines, declined and held cards, unsent card notes, the deck source's consented skill and backups live in the add-on's `user_files/` folder, which survives add-on updates but not an uninstall, so export anything you want to keep before removing the add-on. They are separated by collection path and source under `user_files/collections/`, so two profiles, or two sources, never share decisions. Older unscoped synced versions and baselines are left on disk but not trusted, so the next sync may re-offer decks; an older declined-cards file, skill or unsent notes move to the first collection and source that opens them. Backup filenames carry the full deck identity and a unique suffix. Restoring a backup clears the matching sync records (Restore full collection clears them all; Restore intern pearls deck clears only the decks in the file), so what came back is re-offered rather than reported up to date.
 
 **Generated cards** sit outside all of this: their fresh local GUIDs never match anything a source ships, so no update, reconcile or cleanup ever touches them.
 
@@ -271,7 +271,7 @@ Pure Python with no `aqt`/`anki` imports lives in `internpearls/logic.py` (apkg 
 Everything that touches Anki is split by concern:
 
 - `__init__.py`: menu and startup wiring only.
-- `config.py`: constants (including `ADDON_VERSION`), config access, and state under `user_files/`: `installed.json`, `card_feedback.json`, `shipped_fields.json`, `state.json`, and the declined-card registry `declined.json` (`{guid: {state, front, deck, decided, hash}}`).
+- `config.py`: constants (including `ADDON_VERSION`), config access, and state under `user_files/`: `installed.json`, `card_feedback.json`, `shipped_fields.json`, `deck_skill.json`, `state.json`, and the declined-card registry `declined.json` (`{guid: {state, front, deck, decided, hash}}`). All but `state.json` are kept per collection and source.
 - `ui.py`: the `_info` / `_warn` / `_ask` / `_prompt` dialog wrappers, the `_safe` / `_bg_safe` error decorators, and styling helpers.
 - `palette.py`: every colour, in a light and a dark set.
 - `platform.py`: background work and timers. Work runs on a worker thread and delivers on the main thread; timers are parented to the widget that owns them.

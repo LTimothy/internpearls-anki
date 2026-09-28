@@ -667,3 +667,97 @@ def test_background_fetch_still_applies_when_nothing_changed(anki, tmp_path, mon
     captured['done'](captured['result'], None)
 
     assert anki.col.note_by_guid('g1') is not None
+
+
+def _profile(anki, tmp_path, name):
+    anki.col.path = str(tmp_path / name / 'collection.anki2')
+
+
+def _declined(state='never'):
+    return {'shared-guid': {'state': state, 'deck': 'Synthetic'}}
+
+
+def test_declines_are_isolated_per_collection(anki, tmp_path):
+    from internpearls import config
+    _profile(anki, tmp_path, 'profile-a')
+    config.save_declined(_declined('never'))
+    _profile(anki, tmp_path, 'profile-b')
+    assert config.load_declined() == {}
+    config.save_declined(_declined('skip'))
+    _profile(anki, tmp_path, 'profile-a')
+    assert config.load_declined()['shared-guid']['state'] == 'never'
+    _profile(anki, tmp_path, 'profile-b')
+    assert config.load_declined()['shared-guid']['state'] == 'skip'
+
+
+def test_declines_are_isolated_per_source(anki, tmp_path):
+    from internpearls import config
+    _profile(anki, tmp_path, 'profile-a')
+    anki.mw._config['github_decks_repo'] = 'example/one'
+    config.save_declined(_declined())
+    anki.mw._config['github_decks_repo'] = 'example/two'
+    assert config.load_declined() == {}
+    anki.mw._config['github_decks_repo'] = 'example/one'
+    assert config.load_declined() == _declined()
+
+
+def _legacy_state(config, review):
+    return {
+        'declined': (config.DECLINED, _declined(), config.load_declined),
+        'skill': (config.DECK_SKILL, {'text': 'rules', 'enabled': True},
+                  config.load_deck_skill),
+        'feedback': (review.FEEDBACK, {'g': {'note': 'hi', 'deck': 'D', 'front': 'F'}},
+                     review.load_saved_feedback),
+    }
+
+
+@pytest.mark.parametrize('kind', ['declined', 'skill', 'feedback'])
+def test_legacy_state_moves_to_the_first_collection_that_reads_it(anki, tmp_path, kind):
+    import json
+    from internpearls import config, review
+    path, data, load = _legacy_state(config, review)[kind]
+    Path(path).write_text(json.dumps(data))
+    _profile(anki, tmp_path, 'profile-a')
+    assert load() == data
+    assert not Path(path).exists()
+    _profile(anki, tmp_path, 'profile-b')
+    assert load() in ({}, None)
+    _profile(anki, tmp_path, 'profile-a')
+    assert load() == data
+
+
+@pytest.mark.parametrize('kind', ['declined', 'skill', 'feedback'])
+def test_no_collection_neither_reads_nor_writes_legacy_state(anki, tmp_path, kind):
+    import json
+    from internpearls import config, review
+    path, data, load = _legacy_state(config, review)[kind]
+    Path(path).write_text(json.dumps(data))
+    anki.mw.col = None
+    assert load() in ({}, None)
+    config.save_declined(_declined('skip'))
+    config.save_deck_skill({'text': 'other'})
+    review.save_feedback({'x': {'note': 'n'}})
+    assert json.loads(Path(path).read_text()) == data
+    assert sorted(p.name for p in Path(path).parent.iterdir()) == [Path(path).name]
+
+
+def test_a_skill_from_another_source_is_not_active(anki, tmp_path):
+    from internpearls import ai_logic, config
+    _profile(anki, tmp_path, 'profile-a')
+    anki.mw._config['github_decks_repo'] = 'example/one'
+    config.save_deck_skill({'text': 'source one rules', 'enabled': True})
+    assert 'source one rules' in ai_logic.active_skills(config.load_deck_skill(), '')
+    anki.mw._config['github_decks_repo'] = 'example/two'
+    assert 'source one rules' not in ai_logic.active_skills(config.load_deck_skill(), '')
+
+
+def test_saved_feedback_is_cleared_for_its_own_collection_only(anki, tmp_path):
+    from internpearls import review
+    _profile(anki, tmp_path, 'profile-a')
+    review.save_feedback({'a': {'note': 'one', 'deck': 'D', 'front': 'F'}})
+    _profile(anki, tmp_path, 'profile-b')
+    review.save_feedback({'b': {'note': 'two', 'deck': 'D', 'front': 'F'}})
+    review.clear_saved_feedback()
+    assert review.load_saved_feedback() == {}
+    _profile(anki, tmp_path, 'profile-a')
+    assert list(review.load_saved_feedback()) == ['a']

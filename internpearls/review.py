@@ -21,7 +21,8 @@ from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayou
                     QImage, QLabel, QPlainTextEdit, QPushButton, QScrollArea,
                     QSizePolicy, Qt, QTimer, QVBoxLayout, QWidget)
 
-from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
+from .config import (ADDON_VERSION, APP_NAME, FEEDBACK, _collection_state_path, _load_json,
+                     _save_json)
 from .logic import (apkg_media_index, build_feedback_digest, cloze_answer_changes,
                     cloze_filled_html, cloze_hint_changes,
                     extract_apkg_media, field_image_names,
@@ -1459,8 +1460,10 @@ def load_saved_feedback():
 
 def clear_saved_feedback():
     """Drop the saved notes, once they have actually been shown to the learner."""
+    path = _collection_state_path(FEEDBACK)
     try:
-        os.remove(FEEDBACK)
+        if path:
+            os.remove(path)
     except OSError:
         pass
 
