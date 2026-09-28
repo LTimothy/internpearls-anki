@@ -817,26 +817,22 @@ def _offer_template_changes(tpl_changes):
     return []
 
 
-def _retry_failed_downloads(fetch, todo, downloaded, existing_fronts, aliases, cfg, declined):
+def _retry_failed_downloads(fetch, todo, downloaded):
     """Download the decks whose preview download failed, before this run asks anything.
 
     `downloaded` is updated in place, so the apply step reuses these files instead of
-    fetching a third time. Returns (conversions, cancelled): {deck name: the note-type
-    conversions found in it}, for the run's single conversion question to cover, and
-    whether the reader clicked Cancel. Keyed by deck rather than one flat list because
-    a deck previewed fine and then swept out of the temp directory before this runs is
-    downloaded again here, and appending its conversions to the ones the preview
-    already found counted every one of its cards twice in that question. Nothing has
-    been backed up or imported at this point, so a cancel here is the caller stopping
+    fetching a third time. Returns whether the reader clicked Cancel. Nothing has been
+    backed up or imported at this point, so a cancel here is the caller stopping
     outright rather than carrying on with a button that did nothing.
 
     This runs where it does because of what a conversion costs. Detected inside the
     apply loop instead, it is first seen under the progress dialog, with nowhere left
     to ask: the deck imports with the question never put on screen, the conversion
     silently declined, and, since the import records the deck as installed anyway,
-    nothing offers it again until the source bumps that deck's version. The look change
-    in such a deck is handled after the run instead (see _apply_consented_look), since
-    the checkbox that would have carried it has already been answered.
+    nothing offers it again until the source bumps that deck's version. The caller
+    plans the conversions from whatever is on disk afterward. The look change in such
+    a deck is handled after the run instead (see _apply_consented_look), since the
+    checkbox that would have carried it has already been answered.
 
     A deck that fails again is left exactly as it was: the apply loop fetches it once
     more, with Cancel live, and reports a second failure as the per-deck failure it is.
@@ -846,25 +842,37 @@ def _retry_failed_downloads(fetch, todo, downloaded, existing_fronts, aliases, c
     """
     missing = [d for d in todo if not _is_local(downloaded.get(d["name"]))]
     if not missing:
-        return {}, False
-    conversions, cancelled = {}, False
+        return False
     with cancellable_progress("Downloading decks", len(missing)) as step:
         for i, d in enumerate(missing, 1):
             short = d["name"].split("::")[-1]
             if not step(i, f"Downloading {short} ({i} of {len(missing)})"):
-                cancelled = True
-                break
+                return True
             try:
-                src = _cached_fetch(fetch, d, on_chunk=step.pump)
-                downloaded[d["name"]] = src
-                conversions[d["name"]] = notetype_changes(
-                    src, existing_fronts, aliases, cfg["scope_tag"], declined)
+                downloaded[d["name"]] = _cached_fetch(fetch, d, on_chunk=step.pump)
             except DownloadCancelled:
-                cancelled = True
-                break
+                return True
             except Exception:
                 pass
-    return conversions, cancelled
+    return False
+
+
+def _final_conversion_plan(todo, downloaded, existing_fronts, aliases, scope_tag,
+                           declined):
+    """{deck name: the note-type conversions in it} for every deck of `todo` that is on
+    disk, planned against the declines as they stand once the learner has decided.
+    A deck that can't be read is left out."""
+    plan = {}
+    for d in todo:
+        src = downloaded.get(d["name"])
+        if not _is_local(src):
+            continue
+        try:
+            plan[d["name"]] = notetype_changes(src, existing_fronts, aliases, scope_tag,
+                                               declined)
+        except Exception:
+            pass
+    return plan
 
 
 def _apply_consented_look(tpl_changes, tpl_choice, disclosed):
@@ -1830,7 +1838,7 @@ def update_decks():
             pass    # a deck we can't read here still imports; it just can't offer this
         try:
             conversions_by_deck[d["name"]] = notetype_changes(
-                src, existing_fronts, aliases, cfg["scope_tag"], declined)
+                src, existing_fronts, aliases, cfg["scope_tag"], counted_out)
         except Exception:
             pass    # same: unreadable here, still imported, just not offered up front
     pending_conversions = [c for cs in conversions_by_deck.values() for c in cs]
@@ -2164,10 +2172,7 @@ def update_decks():
 
     undisclosed = set()
     if todo:
-        # Read off the registry as it now stands, so a card the learner declined on the
-        # confirmation a moment ago is already out of any conversion planned below.
-        late_conversions, cancelled = _retry_failed_downloads(
-            fetch, todo, downloaded, existing_fronts, aliases, cfg, declined_guids(reg))
+        cancelled = _retry_failed_downloads(fetch, todo, downloaded)
         if cancelled:
             # Nothing has been backed up or imported yet, so this is the same clean
             # stop cancelling the confirmation itself is, except the registry write
@@ -2175,15 +2180,19 @@ def update_decks():
             # (including a hold) is reported rather than silently going unreported.
             _finish(run_decisions=run_decisions, nothing_note=early_exit_note)
             return
-        conversions_by_deck.update(late_conversions)
+        # Planned from the registry as it now stands: a card the learner declined or
+        # kept held is out, one they released or set back to default is in.
+        conversions_by_deck = _final_conversion_plan(
+            todo, downloaded, existing_fronts, aliases, cfg["scope_tag"],
+            declined_guids(reg))
         pending_conversions = [c for cs in conversions_by_deck.values() for c in cs]
-        # Whatever still isn't on disk after two attempts is a deck the question below
-        # cannot be speaking for: the apply loop fetches it a third time, and a
-        # conversion that only surfaces there would otherwise be declined on the
-        # learner's behalf with nothing ever having asked (see _run_sync's
-        # undisclosed_conversions).
+        # A deck the question below cannot be speaking for: not on disk after two
+        # attempts, or planned with no conversion. A conversion the apply loop finds in
+        # either is deferred rather than declined on the learner's behalf or forked
+        # as new with nothing ever having asked (see _run_sync's undisclosed_conversions).
         undisclosed = {d["name"] for d in todo
-                       if not _is_local(downloaded.get(d["name"]))}
+                       if not _is_local(downloaded.get(d["name"]))
+                       or not conversions_by_deck.get(d["name"])}
 
     # The decks this run will write in: the ones it imports into, the ones its imports
     # will actually rewrite a card in (which is not the same list, see
