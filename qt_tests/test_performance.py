@@ -122,3 +122,62 @@ def test_filtering_a_huge_list_stays_lazy_and_quick():
     assert 0 < lst.shown() < lst.total()
     assert elapsed < _BUDGET_SECONDS, (
         f"filtering {_PENDING} cards took {elapsed:.3f}s, over {_BUDGET_SECONDS}s")
+
+
+def _long_update_body():
+    import aqt.qt as aqt_qt
+    from internpearls import review
+    from internpearls.widgets import FilterBar, StreamingList
+
+    harness.bootstrap()
+    app = harness.app()
+    aqt_qt.QLabel("warm").deleteLater()
+    items = [("header", "Example Deck")]
+    for i, detail in enumerate(_many_details(_PENDING)):
+        detail["fields"][0] = ("Front", f"Synthetic pending card {i}, a front long enough "
+                                        "to wrap onto a second line in the list")
+        items += ([("sep",)] if i else []) + [("card", "Example Deck", detail)]
+    body, _boxes, flush = review.build_update_body(
+        items, {}, {}, {}, {}, "", lambda: "", "safety note")
+    dlg = aqt_qt.QDialog()
+    aqt_qt.QVBoxLayout(dlg).addWidget(body)
+    dlg.resize(700, 620)
+    dlg.show()
+    app.processEvents()
+    return app, dlg, body.findChild(StreamingList), body.findChild(FilterBar), flush
+
+
+def test_scrolling_deep_into_a_long_list_costs_no_more_than_the_first_batch():
+    """Each batch revealed while scrolling must cost about the same wherever it lands.
+    Revealing rows inside the visible list used to re-lay-out every row already shown,
+    so each batch took longer than the last and a long catch-up stalled."""
+    app, dlg, lst, _bar, flush = _long_update_body()
+    bar = lst.verticalScrollBar()
+    steps = []
+    for _ in range(30):
+        start = time.perf_counter()
+        bar.setValue(bar.maximum())
+        app.processEvents()
+        steps.append(time.perf_counter() - start)
+    flush()
+    dlg.close()
+    assert lst.shown() > 1000
+    assert max(steps[-5:]) < _BUDGET_SECONDS, (
+        f"late scroll steps took {[round(s, 3) for s in steps[-5:]]}s, over "
+        f"{_BUDGET_SECONDS}s (first steps {[round(s, 3) for s in steps[:3]]}s)")
+
+
+def test_filtering_after_the_prefetch_has_built_everything_stays_quick():
+    """A filter tears down every row built so far, and the idle prefetch keeps building
+    while the dialog is open, so this is the case a learner reading a long list hits."""
+    app, dlg, lst, bar, flush = _long_update_body()
+    lst._build_upto(lst.total())
+    app.processEvents()
+    start = time.perf_counter()
+    bar.options.buttons["new"].click()
+    app.processEvents()
+    elapsed = time.perf_counter() - start
+    flush()
+    dlg.close()
+    assert elapsed < 1.0, (
+        f"filtering after a full prefetch took {elapsed:.3f}s")

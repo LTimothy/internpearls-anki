@@ -368,10 +368,9 @@ def test_streaming_list_repeated_bottom_scroll_after_exhaustion_does_not_rebuild
 
 
 def test_streaming_list_prefetched_rows_stay_hidden_until_revealed():
-    """The idle prefetch builds rows ahead of scrolling and holds them hidden in
-    _prebuilt; the batch that later reveals them pops them from there. Drives the real
-    prefetch machinery (NativePlatform's background thread plus its mock-timer
-    delivery)."""
+    """The idle prefetch builds rows ahead of scrolling into pages that stay hidden;
+    the batch that later reveals them shows their page. Drives the real prefetch
+    machinery (NativePlatform's background thread plus its mock-timer delivery)."""
     from internpearls import widgets
     from internpearls.platform import NativePlatform, use_platform, wait_for_mock_work
     rows = {}
@@ -391,15 +390,17 @@ def test_streaming_list_prefetched_rows_stay_hidden_until_revealed():
         handle.join()
         wait_for_mock_work(handle)
 
-    assert len(lst._prebuilt) == 3, "items 2, 3, 4 should be built ahead by the prefetch"
-    assert not rows[2].isVisible() and not rows[3].isVisible() and not rows[4].isVisible(), (
+    def shown(item):
+        return lst._pages[item // 2].isVisible() and rows[item].isVisible()
+
+    assert lst.built() - lst.shown() == 3, "items 2, 3, 4 should be built ahead by the prefetch"
+    assert not shown(2) and not shown(3) and not shown(4), (
         "every prebuilt row stays hidden until its batch is revealed")
 
-    lst._extend()   # the scroll-triggered reveal, pops the front of _prebuilt
+    lst._extend()   # the scroll-triggered reveal shows the next page
 
-    assert rows[2].isVisible() and rows[3].isVisible(), "revealed rows are shown"
-    assert not rows[4].isVisible(), "a row past the revealed batch stays hidden"
-    assert not rows[4].isVisible(), "not yet revealed, still waiting in _prebuilt"
+    assert shown(2) and shown(3), "revealed rows are shown"
+    assert not shown(4), "a row past the revealed batch stays hidden"
 
 
 def test_chip_cell_carries_the_wizard_input_pages_own_words():
@@ -438,7 +439,7 @@ def test_streaming_list_reset_replaces_its_rows_and_stays_lazy():
     assert lst.total() == 200 and lst.shown() == 50
     assert built[50:] == list(range(1000, 1050)), "only the new first batch was built"
     assert all(w.deleted for w in old)
-    assert lst._rows_layout.count() == 50
+    assert len(lst.rows()) == 50
 
 
 def test_streaming_list_reset_to_an_empty_source_leaves_no_rows():

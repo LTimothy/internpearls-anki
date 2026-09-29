@@ -119,3 +119,44 @@ def test_idle_prefetch_builds_the_backlog_hidden_and_reveals_it_on_scroll():
     assert lst.shown() > shown
     assert lst.built() >= built_before
     dlg.close()
+
+
+def test_a_row_that_grows_after_it_is_shown_is_not_clipped():
+    """Rows sit in pages that report a plain height, so a row opening its body must
+    still make its page, and the list, grow to fit it."""
+    harness.bootstrap()
+    app = harness.app()
+    from aqt.qt import QDialog, QLabel, QVBoxLayout, QWidget
+    from internpearls.widgets import StreamingList
+
+    bodies = []
+
+    def build(item):
+        row = QWidget()
+        lay = QVBoxLayout(row)
+        heading = QLabel(f"Row {item}, with a heading long enough to wrap in a narrow "
+                         "dialog like this one")
+        heading.setWordWrap(True)
+        lay.addWidget(heading)
+        body = QLabel("An opened body that wraps onto more than one line of text "
+                      "once the row is expanded by the reader")
+        body.setWordWrap(True)
+        body.setVisible(False)
+        lay.addWidget(body)
+        bodies.append(body)
+        return row
+
+    dlg = QDialog()
+    lst = StreamingList(build, list(range(12)), batch=5)
+    QVBoxLayout(dlg).addWidget(lst)
+    dlg.resize(300, 500)
+    dlg.show()
+    app.processEvents()
+    page = lst._pages[0]
+    before = page.height()
+    bodies[1].setVisible(True)
+    app.processEvents()
+    row = lst.rows()[1]
+    assert page.height() > before, "the page did not grow when a row opened"
+    assert row.geometry().bottom() < page.height(), "the opened row is clipped by its page"
+    dlg.close()
