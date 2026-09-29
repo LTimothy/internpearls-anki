@@ -2809,6 +2809,16 @@ def test_unopened_line_counts_rows_left_and_those_folded():
     assert unopened_line(kinds, {"a", "b", "c"}, ()) == ""
 
 
+def test_unopened_line_says_how_many_carry_an_earlier_decision():
+    from internpearls.logic import unopened_line
+    kinds = {"a": "new", "b": "changed", "c": "changed", "d": "new"}
+    reg = {"a": {"state": "skip"}, "b": {"state": "keep"}, "d": {"state": "keep"}}
+    line = unopened_line(kinds, set(), {"c"}, reg)
+    assert line.startswith("<b>4 of 4 cards not opened yet</b>, 1 of them in folded "
+                           "groups and 2 already decided on an earlier update.")
+    assert "already decided" not in unopened_line(kinds, set(), (), {})
+
+
 def _filter_body(n_new=12, n_changed=12, group=0, group_kind=None):
     """An update body over `n_new` new and `n_changed` changed cards, plus a folded
     group of `group` cards (alternating kinds unless `group_kind` fixes one)."""

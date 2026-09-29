@@ -6430,7 +6430,7 @@ def test_hold_imports_the_opened_card_and_holds_the_rest(anki, tmp_path):
     reg = config.load_declined()
     assert reg["guid-new-b"]["state"] == "held" and reg["guid-new-b"]["hash"]
     assert "guid-new-a" not in reg
-    assert _hold_button(trees[0])["label"] == "Update reviewed, hold 2 for later"
+    assert _hold_button(trees[0])["label"] == "Update reviewed, hold 2 undecided for later"
     assert "1 card held for later" in _all_text(trees[-1])
     assert anki.gui.clipboard == []   # holding is not a decision, so no digest
 
@@ -6445,7 +6445,7 @@ def test_a_held_card_comes_back_on_the_next_update_marked_held(anki, tmp_path):
     texts = _all_text(tree)
     assert "HELD" in texts and "front b" in texts
     assert "Changed since" not in texts
-    assert _hold_button(tree)["label"] == "Update reviewed, hold 1 for later"
+    assert _hold_button(tree)["label"] == "Update reviewed, hold 1 undecided for later"
 
 
 def test_accepting_a_held_card_imports_it_and_clears_the_hold(anki, tmp_path):
@@ -6503,7 +6503,7 @@ def test_a_standing_skip_is_not_counted_as_holdable(anki, tmp_path):
 
     tree = _snapshot_update_confirmation(anki)
 
-    assert _hold_button(tree)["label"] == "Update reviewed, hold 1 for later"
+    assert _hold_button(tree)["label"] == "Update reviewed, hold 1 undecided for later"
 
 
 def test_deck_summary_counts_a_held_card_as_new(anki, tmp_path):

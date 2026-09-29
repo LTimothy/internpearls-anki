@@ -13,20 +13,20 @@ def test_the_hold_button_counts_every_row_nobody_has_opened():
     _, q = harness.bootstrap()
     s = harness.render("confirm", hold=True, size=(880, 900))
     button = _hold_button(s.dialog, q)
-    assert button.text() == "Update reviewed, hold 3 for later"
+    assert button.text() == "Update reviewed, hold 3 undecided for later"
     assert button.isVisible() and button.toolTip()
 
 
 def test_opening_a_row_takes_it_out_of_the_hold_count():
     _, q = harness.bootstrap()
     s = harness.render("confirm", hold=True, expand=(0,), size=(880, 900))
-    assert _hold_button(s.dialog, q).text() == "Update reviewed, hold 2 for later"
+    assert _hold_button(s.dialog, q).text() == "Update reviewed, hold 2 undecided for later"
 
 
 def test_deciding_on_a_row_takes_it_out_of_the_hold_count():
     _, q = harness.bootstrap()
     s = harness.render("confirm", hold=True, click_labels=("Skip",), size=(880, 900))
-    assert _hold_button(s.dialog, q).text() == "Update reviewed, hold 2 for later"
+    assert _hold_button(s.dialog, q).text() == "Update reviewed, hold 2 undecided for later"
 
 
 def test_a_held_row_paints_the_held_chip():
