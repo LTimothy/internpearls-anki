@@ -2764,10 +2764,15 @@ class _GenerateDialog(QDialog):
     def _image_recovery_row(self, i, j, line, card_label):
         """A failed picture's message with Retry, Remove and Replace beside it."""
         row = QWidget()
-        lay = QHBoxLayout(row)
+        outer = QVBoxLayout(row)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(2)
+        outer.addWidget(_rich_label(line))
+        links = QWidget()
+        lay = QHBoxLayout(links)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(CARET_GAP)
-        lay.addWidget(_rich_label(line), 1)
+        outer.addWidget(links)
         card = self.session.cards[i]
         im = card["images"][j]
         busy = id(im) in self._image_busy
@@ -2778,6 +2783,7 @@ class _GenerateDialog(QDialog):
             btn.setAccessibleName(f"{name} picture {j + 1}: {card_label}")
             btn.setEnabled(not busy)
             lay.addWidget(btn)
+        lay.addStretch()
         return row
 
     def _start_image_recovery(self, i, j, work, new_image=None):
