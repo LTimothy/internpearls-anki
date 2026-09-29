@@ -320,6 +320,46 @@ def _resolve_one_image(im, scratch):
         return err
 
 
+def _resolve_with_thumb(im, scratch, i, j):
+    """_resolve_one_image, plus a thumbnail file for a picture that only exists in
+    memory (a download or a drawn figure), so Qt has a path to load it from."""
+    res = _resolve_one_image(im, scratch)
+    if res["state"] == "ok" and res["kind"] != "attached":
+        ext = res["ext"] if res["kind"] == "url" else "svg"
+        thumb = os.path.join(scratch, f"_thumb-{i}-{j}.{ext}")
+        try:
+            with open(thumb, "wb") as fh:
+                fh.write(res["bytes"])
+            res["path"] = thumb
+        except OSError:
+            pass
+    return res
+
+
+_REPLACEMENT_IMAGE_TYPES = ("png", "jpg", "jpeg", "webp", "gif")
+_REPLACEMENT_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _image_lines(session, i, card):
+    """[(image index, html line, failed)] for the review row's pictures."""
+    results = session.image_data.get(i) or []
+    lines = []
+    for j in range(len(card.get("images") or [])):
+        res = results[j] if j < len(results) else None
+        if res is None:
+            lines.append((j, "[image] resolving…", False))
+            continue
+        host = res.get("host")
+        host_txt = f" (from {html.escape(host)})" if host else ""
+        if res["state"] != "ok":
+            lines.append((j, f"[image failed{host_txt}]: "
+                             f"{html.escape(res.get('error', ''))}", True))
+            continue
+        tag = _image_tag(res["path"]) if res.get("path") else None
+        lines.append((j, (tag or "[image]") + host_txt, False))
+    return lines
+
+
 def _image_row_html(session, i, card):
     """The review row's image line(s): a rendered thumbnail when one resolved
     to a local file Qt can decode, a plain failure message when it didn't, and
@@ -327,24 +367,7 @@ def _image_row_html(session, i, card):
     what they're accepting" gate, so a card with an image never reviews as if
     it had none. Returns "" for a card with no images at all.
     """
-    imgs = card.get("images") or []
-    if not imgs:
-        return ""
-    results = session.image_data.get(i) or []
-    lines = []
-    for j, im in enumerate(imgs):
-        res = results[j] if j < len(results) else None
-        if res is None:
-            lines.append("[image] resolving…")
-            continue
-        host = res.get("host")
-        host_txt = f" (from {html.escape(host)})" if host else ""
-        if res["state"] != "ok":
-            lines.append(f"[image failed{host_txt}]: {html.escape(res.get('error', ''))}")
-            continue
-        tag = _image_tag(res["path"]) if res.get("path") else None
-        lines.append((tag or "[image]") + host_txt)
-    return "<br>".join(lines)
+    return "<br>".join(line for _, line, _ in _image_lines(session, i, card))
 
 
 # The chip kinds the review row can actually show, in the priority order a card's
@@ -352,13 +375,16 @@ def _image_row_html(session, i, card):
 # revision marker, which outranks a clean row. Passed to every chip_cell/
 # chip_column_width call on this page so the gutter is measured against exactly
 # these four words and none of the update screen's (see widgets.py:67-74).
-_REVIEW_CHIP_KINDS = ("blocked", "warn", "ok", "revised")
+_REVIEW_CHIP_KINDS = ("blocked", "warn", "ok", "revised", "imported")
 
 # The row's decision control: Include or Skip only, no Never (there is nothing to
 # remember a draft against; see review._NEW_OPTIONS for the update screen's own set).
 _REVIEW_DECISION_OPTIONS = [("include", "Include"), ("skip", "Skip")]
 
-_REVIEW_NOTE_CAPTION = "Skipped. What should change? Sent with the next Revise all."
+_REVIEW_NOTE_CAPTIONS = {
+    False: "Skipped. What should change? Sent with the next Revise all.",
+    True: "Feedback for the next revision. Sent with the next Revise all.",
+}
 _REVIEW_NOTE_PLACEHOLDER = "e.g. trim the answer, split into two cards"
 
 
@@ -449,9 +475,30 @@ def _check_reason_row(entry, indent):
 # A Check facts verdict's own label and palette role (see _build_verdict_row):
 # "unverified" has no role here since it takes colors()["warning"] directly
 # rather than one of the existing "<role>_bg" pairs _accent_row's roles read.
-_VERDICT_LABELS = {"confirmed": "Confirmed", "corrected": "Corrected",
+_VERDICT_LABELS = {"confirmed": "Confirmed", "suggested": "Correction suggested",
+                   "applied": "Correction applied", "kept": "Original kept",
                    "unverified": "Unverified"}
-_VERDICT_ROLE = {"confirmed": "accept", "corrected": "updated"}
+_VERDICT_ROLE = {"confirmed": "accept", "suggested": "updated", "applied": "accept",
+                 "kept": "retired"}
+_VERDICT_SUMMARY = {"confirmed": "confirmed", "suggested": "correction suggested",
+                    "applied": "correction applied", "kept": "original kept",
+                    "unverified": "unverified"}
+
+
+def _verdict_state(verdict):
+    """A verdict's label key: a corrected one is suggested until the learner
+    accepts it (applied) or keeps their own text (kept)."""
+    kind = verdict["verdict"]
+    if kind != "corrected":
+        return kind
+    if verdict.get("applied"):
+        return "applied"
+    return "kept" if verdict.get("kept_yours") else "suggested"
+
+
+def _pending_corrections(verdicts):
+    return sum(1 for v in verdicts.values()
+               if v.get("correction") and _verdict_state(v) == "suggested")
 
 
 def _card_image_names(card):
@@ -725,6 +772,11 @@ class _Session:
         # exact content, and a revision can change what card index i even
         # means, so carrying stale verdicts over would mislabel the new text.
         self.verdicts = {}
+        # Cards whose fields changed after their verdict was dropped; cleared when
+        # a check or a new draft lands.
+        self.edited_since_check = set()
+        # Card indexes already written to the collection by a partly failed import.
+        self.imported = set()
 
 
 class _GenerateDialog(QDialog):
@@ -753,6 +805,9 @@ class _GenerateDialog(QDialog):
             pass
         self.resize(max(open_w, 480), open_h)
         self.session = s = _Session()
+        self._expanded_rows = set()
+        self._image_busy = set()
+        self._image_workers = []
         self._retried_json = False   # the single-retry budget on malformed model output
         self._reply_chunks = []      # accumulated delta text; reset per _start_generation
         # Backend kinds with a "Test connection" run currently in flight, from
@@ -2240,6 +2295,7 @@ class _GenerateDialog(QDialog):
         reg = ai_logic.record_duration(reg, s.backend, s.mode, res["duration_s"])
         save_ai_usage(reg)
         s.verdicts = {}   # a new draft/revision makes any prior check stale
+        s.edited_since_check = set()
 
         # Card matching across a revision, by position: the prompt sends the
         # previous draft and instructs the model to return the SAME cards in the
@@ -2266,6 +2322,7 @@ class _GenerateDialog(QDialog):
             s.updated = set()
 
         s.cards = cards
+        s.imported = set()
         s.notes = {}
         # Carried through to _apply_review_state once images (if any) have
         # resolved: None means "not a revision", so every card falls back to
@@ -2299,6 +2356,7 @@ class _GenerateDialog(QDialog):
         reg = ai_logic.record_duration(reg, s.backend, s.mode, res["duration_s"])
         save_ai_usage(reg)
         s.verdicts = verdicts
+        s.edited_since_check = set()
         s.check = False
         self._rebuild_review()
         self.stack.setCurrentWidget(self.review_page)
@@ -2337,22 +2395,7 @@ class _GenerateDialog(QDialog):
                         per.append({"state": "error", "kind": "cancelled",
                                    "error": "cancelled"})
                         continue
-                    res = _resolve_one_image(im, private_scratch)
-                    if res["state"] == "ok" and res["kind"] != "attached":
-                        # attached: images already live in scratch under
-                        # their own name (res["path"] is set for that kind
-                        # above); url:/svg: bytes only ever existed in
-                        # memory, so a thumbnail needs its own file to hand
-                        # Qt's QImage a path to load.
-                        ext = res["ext"] if res["kind"] == "url" else "svg"
-                        thumb = os.path.join(
-                            private_scratch, f"_thumb-{i}-{len(per)}.{ext}")
-                        try:
-                            with open(thumb, "wb") as fh:
-                                fh.write(res["bytes"])
-                            res["path"] = thumb
-                        except OSError:
-                            pass
+                    res = _resolve_with_thumb(im, private_scratch, i, image_index)
                     context.checkpoint(
                         f"image:{i + 1}:{image_index + 1}:publish")
                     per.append(res)
@@ -2425,7 +2468,7 @@ class _GenerateDialog(QDialog):
         else:
             s.included = default_included
         self._pending_prev_included = None
-        self._rebuild_review()
+        self._rebuild_review(keep_place=False)
         self.stack.setCurrentWidget(self.review_page)
 
     def _return_to_input_or_review(self):
@@ -2458,11 +2501,11 @@ class _GenerateDialog(QDialog):
         # included) outside it and always reachable, however many cards are drafted.
         cards_container = QWidget()
         self.cards_lay = QVBoxLayout(cards_container)
-        cards_scroll = QScrollArea()
-        cards_scroll.setWidgetResizable(True)
-        cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        cards_scroll.setWidget(cards_container)
-        lay.addWidget(cards_scroll, 1)
+        self.cards_scroll = QScrollArea()
+        self.cards_scroll.setWidgetResizable(True)
+        self.cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.cards_scroll.setWidget(cards_container)
+        lay.addWidget(self.cards_scroll, 1)
         # Run-level facts (token spend, the rate-limit window, the revision diff
         # summary) rather than what the learner's deciding between: see
         # _update_review_summary. Hidden entirely when there's nothing to say
@@ -2475,6 +2518,9 @@ class _GenerateDialog(QDialog):
         self.feedback_box.setPlaceholderText(
             "e.g. shorter answers, add one card on avoided drugs")
         lay.addWidget(self.feedback_box)
+        self.import_note = hint_label("")
+        self.import_note.setVisible(False)
+        lay.addWidget(self.import_note)
         bb = QDialogButtonBox()
         back = bb.addButton("Back", QDialogButtonBox.ButtonRole.ActionRole)
         back.clicked.connect(lambda: self.stack.setCurrentWidget(self.input_page))
@@ -2491,13 +2537,22 @@ class _GenerateDialog(QDialog):
         lay.addWidget(bb)
         return page
 
-    def _rebuild_review(self):
+    def _restore_scroll(self, value):
+        try:
+            self.cards_scroll.verticalScrollBar().setValue(value)
+        except RuntimeError:
+            pass
+
+    def _rebuild_review(self, keep_place=True, focus_row=None):
         """(Re)populate the review page's card list from session state, on the same
         row skeleton the update screen's own review._card_row draws: a caret column,
         a fixed chip column, a bold primary line, and a body the caret reveals
         holding the back, why, dosing and images. Hairlined between rows rather than
         around, the same convention build_list_body's append_rows uses."""
         s = self.session
+        scroll = self.cards_scroll.verticalScrollBar().value() if keep_place else 0
+        if not keep_place:
+            self._expanded_rows = set()
         while self.cards_lay.count():
             item = self.cards_lay.takeAt(0)
             w = item.widget() if item else None
@@ -2512,12 +2567,18 @@ class _GenerateDialog(QDialog):
         self.note_boxes = {}
         self._note_captions = {}
         self._add_note_buttons = {}
+        self._row_widgets, self._row_bodies, self._row_carets = {}, {}, {}
         for i, card in enumerate(s.cards):
             if i:
                 self.cards_lay.addWidget(_separator())
             self.cards_lay.addWidget(self._build_review_row(i, card))
         self.cards_lay.addStretch()   # keeps a short list pinned to the top, not floating
         self._update_review_summary()
+        if keep_place:
+            self._restore_scroll(scroll)
+            QTimer.singleShot(0, lambda: self._restore_scroll(scroll))
+        if focus_row in self._row_carets:
+            self._row_carets[focus_row].setFocus()
 
     def _build_review_row(self, i, card):
         """One drafted card as a row, on review._card_row's own skeleton: caret,
@@ -2530,7 +2591,8 @@ class _GenerateDialog(QDialog):
         """
         s = self.session
         entries = s.checks[i]
-        kind = _review_row_kind(entries, i in s.updated)
+        done = i in s.imported
+        kind = "imported" if done else _review_row_kind(entries, i in s.updated)
         indent = _review_row_indent()
         card_label = note_display_label(list(card["fields"].values()), max_len=60)
 
@@ -2547,11 +2609,14 @@ class _GenerateDialog(QDialog):
             caret.setAccessibleName(f"{verb}: {card_label}")
             caret.setToolTip(verb)
 
-        def _toggle():
-            expanded = not body.isVisible()
+        def _set_expanded(expanded):
             body.setVisible(expanded)
             caret.setText(_CARET_OPEN if expanded else _CARET_CLOSED)
             _name_caret(expanded)
+            (self._expanded_rows.add if expanded else self._expanded_rows.discard)(i)
+
+        def _toggle():
+            _set_expanded(i not in self._expanded_rows)
 
         header = QWidget()
         hlay = QHBoxLayout(header)
@@ -2589,11 +2654,12 @@ class _GenerateDialog(QDialog):
         # they can carry the same left indent as the body (`blay`'s own margins,
         # below) and stop at the same right edge as the decision cell instead of
         # running the row's full width flush with the page's left edge.
-        caption = muted_label(_REVIEW_NOTE_CAPTION)
+        caption_text = _REVIEW_NOTE_CAPTIONS[bool(s.included[i])]
+        caption = muted_label(caption_text)
         note_box = QPlainTextEdit(s.notes.get(i, ""))
         if hasattr(caption, "setBuddy"):
             caption.setBuddy(note_box)
-        note_box.setAccessibleName(_REVIEW_NOTE_CAPTION)
+        note_box.setAccessibleName(caption_text)
         note_box.setPlaceholderText(_REVIEW_NOTE_PLACEHOLDER)
         note_box.setFixedHeight(50)
         has_note = bool(s.notes.get(i))
@@ -2624,22 +2690,27 @@ class _GenerateDialog(QDialog):
         self._add_note_buttons[i] = add_note
 
         hlay.addStretch()
-        initial = "include" if s.included[i] else "skip"
-        cell = decision_cell(
-            _REVIEW_DECISION_OPTIONS, initial,
-            lambda v, idx=i: self._guard(self._on_review_decision, idx, v), card_label)
-        self.decision_cells.append(cell)
-        hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
+        if done:
+            self.decision_cells.append(None)
+        else:
+            initial = "include" if s.included[i] else "skip"
+            cell = decision_cell(
+                _REVIEW_DECISION_OPTIONS, initial,
+                lambda v, idx=i: self._guard(self._on_review_decision, idx, v), card_label)
+            self.decision_cells.append(cell)
+            hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
 
         outer.addWidget(header)
 
-        for entry in entries:
+        for entry in ([] if done else entries):
             if entry.get("level") != "ok":
                 outer.addWidget(_check_reason_row(entry, indent))
 
         verdict = s.verdicts.get(i)
         if verdict:
             outer.addWidget(self._build_verdict_row(i, verdict, indent))
+        elif i in s.edited_since_check:
+            outer.addWidget(_accent_row("<i>Edited since check</i>", "updated", indent))
 
         body.setVisible(False)
         blay = QVBoxLayout(body)
@@ -2665,23 +2736,144 @@ class _GenerateDialog(QDialog):
                 label = _rich_label(html_value)
             blay.addWidget(label)
 
-        img_html = _image_row_html(s, i, card)
-        if img_html:
-            blay.addWidget(_rich_label(img_html))
+        for j, line, failed in _image_lines(s, i, card):
+            if failed and not done:
+                blay.addWidget(self._image_recovery_row(i, j, line, card_label))
+            else:
+                blay.addWidget(_rich_label(line))
 
-        edit_btn = link_button("Edit", on_click=lambda: self._guard(self._edit_card, i))
-        links = QWidget()
-        llay = QHBoxLayout(links)
-        llay.setContentsMargins(0, 0, 0, 0)
-        llay.setSpacing(CARET_GAP)
-        llay.addWidget(edit_btn)
-        llay.addWidget(add_note)
-        llay.addStretch()
-        blay.addWidget(links)
+        if not done:
+            edit_btn = link_button("Edit", on_click=lambda: self._guard(self._edit_card, i))
+            links = QWidget()
+            llay = QHBoxLayout(links)
+            llay.setContentsMargins(0, 0, 0, 0)
+            llay.setSpacing(CARET_GAP)
+            llay.addWidget(edit_btn)
+            llay.addWidget(add_note)
+            llay.addStretch()
+            blay.addWidget(links)
 
         outer.addWidget(body)
-        outer.addWidget(note_area)
+        if not done:
+            outer.addWidget(note_area)
+        self._row_widgets[i], self._row_bodies[i], self._row_carets[i] = row, body, caret
+        if i in self._expanded_rows:
+            _set_expanded(True)
         return row
+
+    def _image_recovery_row(self, i, j, line, card_label):
+        """A failed picture's message with Retry, Remove and Replace beside it."""
+        row = QWidget()
+        outer = QVBoxLayout(row)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(2)
+        outer.addWidget(_rich_label(line))
+        links = QWidget()
+        lay = QHBoxLayout(links)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(CARET_GAP)
+        outer.addWidget(links)
+        card = self.session.cards[i]
+        im = card["images"][j]
+        busy = id(im) in self._image_busy
+        for name, action in (("Retry", lambda: self._retry_image(i, j)),
+                             ("Remove", lambda: self._remove_image(i, j)),
+                             ("Replace", lambda: self._replace_image(i, j))):
+            btn = link_button(name, on_click=lambda _=False, a=action: self._guard(a))
+            btn.setAccessibleName(f"{name} picture {j + 1}: {card_label}")
+            btn.setEnabled(not busy)
+            lay.addWidget(btn)
+        lay.addStretch()
+        return row
+
+    def _start_image_recovery(self, i, j, work, new_image=None):
+        """Resolve one picture again on a worker, then apply the result to that
+        picture alone. `work(scratch)` returns the resolved-image dict."""
+        s = self.session
+        card = s.cards[i]
+        im = card["images"][j]
+        if id(im) in self._image_busy:
+            return
+        self._image_busy.add(id(im))
+
+        def compute(context):
+            return work(context.scratch)
+
+        def done(res):
+            self._image_busy.discard(id(im))
+            self._apply_image_result(card, im, new_image or im, res)
+
+        def failed(error):
+            self._image_busy.discard(id(im))
+            self._apply_image_result(card, im, im, {
+                "state": "error", "kind": "other", "error": str(error)})
+
+        request = new_work_request(
+            self, "image", "ai.image.recover",
+            inputs={"card": i + 1, "image": j + 1})
+        handle = platform().start_work(
+            request, compute, done, failed, scratch_path=s.scratch)
+        self._image_workers.append(handle)
+        handle.start()
+        self._rebuild_review(focus_row=i)
+
+    def _apply_image_result(self, card, old, new, res):
+        s = self.session
+        i = next((n for n, c in enumerate(s.cards) if c is card), None)
+        j = next((n for n, x in enumerate(card["images"]) if x is old), None)
+        if i is None or j is None:
+            return
+        results = s.image_data.setdefault(i, [])
+        while len(results) < len(card["images"]):
+            results.append({"state": "error", "kind": "other", "error": "not resolved"})
+        results[j] = res
+        if res["state"] == "ok":
+            card["images"][j] = new
+        self._recheck(i, force=False)
+        self._rebuild_review(focus_row=i)
+
+    def _retry_image(self, i, j):
+        card = self.session.cards[i]
+        im = card["images"][j]
+        self._start_image_recovery(
+            i, j, lambda scratch: _resolve_with_thumb(im, scratch, i, j))
+
+    def _remove_image(self, i, j):
+        s = self.session
+        s.cards[i]["images"].pop(j)
+        results = s.image_data.get(i)
+        if results and j < len(results):
+            results.pop(j)
+        self._recheck(i, force=False)
+        self._rebuild_review(focus_row=i)
+
+    def _replace_image(self, i, j):
+        from aqt.qt import QFileDialog
+        s = self.session
+        types = " ".join(f"*.{t}" for t in _REPLACEMENT_IMAGE_TYPES)
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose a replacement picture", "", f"Images ({types})")
+        if not path:
+            return
+        ext = os.path.splitext(path)[1].lower()
+        if ext.lstrip(".") not in _REPLACEMENT_IMAGE_TYPES:
+            _warn("Choose a PNG, JPEG, WebP or GIF picture.")
+            return
+        if s.scratch is None:
+            s.scratch = platform().allocate_scratch(platform_owner_id(self), "aigen")
+        old = s.cards[i]["images"][j]
+        name = f"replaced-{i}-{j}{ext}"
+        new = {"source": f"attached:{name}", "alt": old.get("alt", ""),
+               "attribution": ""}
+
+        def work(scratch):
+            if os.path.getsize(path) > _REPLACEMENT_MAX_BYTES:
+                return {"state": "error", "kind": "attached",
+                        "error": "picture is too large"}
+            shutil.copyfile(path, os.path.join(scratch, name))
+            return _scratch_image(scratch, name, "attached")
+
+        self._start_image_recovery(i, j, work, new_image=new)
 
     def _on_review_decision(self, i, state):
         """A card's decision control changed: write the new state and refresh what
@@ -2700,7 +2892,9 @@ class _GenerateDialog(QDialog):
             box.setVisible(show_box)
             caption = self._note_captions.get(i)
             if caption is not None:
+                caption.setText(_REVIEW_NOTE_CAPTIONS[s.included[i]])
                 caption.setVisible(show_box)
+            box.setAccessibleName(_REVIEW_NOTE_CAPTIONS[s.included[i]])
             add_note = self._add_note_buttons.get(i)
             if add_note is not None:
                 add_note.setVisible(not show_box)
@@ -2733,16 +2927,20 @@ class _GenerateDialog(QDialog):
         small-print footer under the list, rather than one line carrying both.
         """
         s = self.session
-        n_inc = sum(s.included)
-        n_skip = len(s.cards) - n_inc
+        n_done = len(s.imported)
+        n_inc = sum(inc for i, inc in enumerate(s.included) if i not in s.imported)
+        n_skip = len(s.cards) - n_inc - n_done
         header = f"{plural(len(s.cards), 'card')} drafted"
         if s.attachments:
             n_sources = len(s.attachments) + bool(s.source.strip())
             header += f" from {plural(n_sources, 'source')}"
         header += f" · {n_inc} included, {n_skip} skipped"
+        if n_done:
+            header += f", {n_done} imported"
         if s.verdicts:
-            counts = Counter(v["verdict"] for v in s.verdicts.values())
-            bits = [f"{counts[k]} {k}" for k in ai_logic._VERDICT_WORDS if counts.get(k)]
+            counts = Counter(_verdict_state(v) for v in s.verdicts.values())
+            bits = [f"{counts[k]} {word}" for k, word in _VERDICT_SUMMARY.items()
+                    if counts.get(k)]
             if bits:
                 header += " · " + ", ".join(bits)
         self.review_header.setText(header)
@@ -2764,10 +2962,29 @@ class _GenerateDialog(QDialog):
         self.review_footer.setText(footer)
         self.review_footer.setVisible(bool(footer))
 
+        pending = _pending_corrections(s.verdicts)
+        self.import_note.setText(
+            f"{pending} suggested correction{'' if pending == 1 else 's'} not reviewed"
+            if pending else "")
+        self.import_note.setVisible(bool(pending))
         self.import_btn.setText(f"Import {plural(n_inc, 'card')}")
         self.revise_btn.setText(
             "Revise all" + (f" ({plural(len(s.notes), 'note')})" if s.notes else ""))
         self.check_btn.setEnabled(bool(s.cards))
+
+    def _recheck(self, i, force=True):
+        """Recompute every card's checks after card i changed. Card i (when
+        `force`), and any other card that just became blocked (a draft duplicate
+        of i), is forced to Skip; every other decision is left alone."""
+        s = self.session
+        was_blocked = [any(c["level"] == "block" for c in per) for per in s.checks]
+        s.checks = ai_logic.mechanical_checks(
+            s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
+            _image_errors(s))
+        for j, per in enumerate(s.checks):
+            if any(c["level"] == "block" for c in per) and (
+                    (force and j == i) or not (j < len(was_blocked) and was_blocked[j])):
+                s.included[j] = False
 
     def _edit_card(self, i):
         """Hand-edit one card's fields and tags, right in the review list, in
@@ -2784,15 +3001,15 @@ class _GenerateDialog(QDialog):
         dlg = _EditCardDialog(self, card)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        card["fields"].update(dlg.fields())
+        new_fields = dlg.fields()
+        if any(card["fields"].get(k, "") != v for k, v in new_fields.items()):
+            if s.verdicts.pop(i, None) is not None:
+                s.edited_since_check.add(i)
+        card["fields"].update(new_fields)
         card["tags"] = dlg.tags()
         s.updated.add(i)
-        s.checks = ai_logic.mechanical_checks(
-            s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
-            _image_errors(s))
-        if any(c["level"] == "block" for c in s.checks[i]):
-            s.included[i] = False
-        self._rebuild_review()
+        self._recheck(i)
+        self._rebuild_review(focus_row=i)
 
     def _build_verdict_row(self, i, verdict, indent):
         """A Check facts verdict, on _check_reason_row's own shape (an accent
@@ -2804,9 +3021,8 @@ class _GenerateDialog(QDialog):
         verdict still carrying its proposed text also gets an Accept/Keep
         mine block underneath."""
         kind = verdict["verdict"]
-        label = _VERDICT_LABELS.get(kind, "Unverified")
-        if kind == "corrected" and verdict.get("kept_yours"):
-            label += " (kept yours)"
+        state = _verdict_state(verdict)
+        label = _VERDICT_LABELS.get(state, "Unverified")
         msg = html.escape(f"{label}: {verdict.get('note', '')}")
         sources = verdict.get("sources") or []
         if sources:
@@ -2834,7 +3050,7 @@ class _GenerateDialog(QDialog):
         if kind == "unverified":
             bar = c["warning"]
         else:
-            bar = c[_VERDICT_ROLE.get(kind, "updated") + "_bg"]
+            bar = c[_VERDICT_ROLE.get(state, "updated") + "_bg"]
         # The border-none reset is load-bearing: Qt drops a lone border-left on a
         # QLabel unless the border shorthand is cleared first (see _accent_row).
         label_widget.setStyleSheet(
@@ -2892,12 +3108,9 @@ class _GenerateDialog(QDialog):
         s.cards[i]["fields"].update(verdict["correction"])
         s.updated.add(i)
         verdict["correction"] = None
-        s.checks = ai_logic.mechanical_checks(
-            s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
-            _image_errors(s))
-        if any(c["level"] == "block" for c in s.checks[i]):
-            s.included[i] = False
-        self._rebuild_review()
+        verdict["applied"] = True
+        self._recheck(i)
+        self._rebuild_review(focus_row=i)
 
     def _keep_correction(self, i):
         """Drop the proposed correction without touching the card; the
@@ -2908,7 +3121,7 @@ class _GenerateDialog(QDialog):
             return
         verdict["correction"] = None
         verdict["kept_yours"] = True
-        self._rebuild_review()
+        self._rebuild_review(focus_row=i)
 
     def _revise_all(self):
         """The only path that sends card-level feedback to the model: one CLI
@@ -2942,7 +3155,8 @@ class _GenerateDialog(QDialog):
         and an attached/file name is scoped to its own scratch dir.
         """
         s = self.session
-        pairs = [(i, c) for i, (c, inc) in enumerate(zip(s.cards, s.included)) if inc]
+        pairs = [(i, c) for i, (c, inc) in enumerate(zip(s.cards, s.included))
+                 if inc and i not in s.imported]
         if not pairs:
             _info("Nothing is selected to import. Check at least one card, "
                   "or Cancel to discard the draft.")
@@ -2950,7 +3164,7 @@ class _GenerateDialog(QDialog):
         media = {}
         svg_index = 0
         for pos, (orig_i, card) in enumerate(pairs):
-            files = []
+            files, credits = [], []
             resolved = s.image_data.get(orig_i) or []
             for j in range(len(card["images"])):
                 res = resolved[j] if j < len(resolved) else None
@@ -2971,13 +3185,29 @@ class _GenerateDialog(QDialog):
                     name = res["name"]
                 media[name] = res["bytes"]
                 files.append(name)
+                credits.append(card["images"][j].get("attribution", ""))
             card["_media_files"] = files
+            card["_media_credits"] = credits
+            verdict = s.verdicts.get(orig_i)
+            cited = verdict and _verdict_state(verdict) in ("confirmed", "applied")
+            card["_sources"] = (verdict.get("sources") or []) if cited else []
         cards = [c for _, c in pairs]
         # add_generated_notes can raise (e.g. Basic/Cloze missing or renamed on a
         # non-English profile). Cleanup waits until AFTER a successful import:
         # if this raises, the scratch dir must still be there for a retry.
-        n = collection.add_generated_notes(cards, media, s.deck_name,
-                                           _cfg()["scope_tag"])
+        try:
+            n = collection.add_generated_notes(cards, media, s.deck_name,
+                                               _cfg()["scope_tag"])
+        except collection.PartialImport as partial:
+            s.imported.update(pairs[pos][0] for pos in partial.written)
+            mw.reset()
+            self._rebuild_review()
+            landed = len(partial.written)
+            _warn(f"The import stopped part-way ({partial.__cause__}). "
+                  f"Added: {plural(landed, 'card')}. Not added: "
+                  f"{plural(len(pairs) - landed, 'card')}. Import again adds only "
+                  "the rest, and Edit > Undo removes the cards already added.")
+            return 0
         # add_generated_notes only writes the collection; nothing about that tells
         # Anki's main window a new undo entry exists or that the deck list changed
         # underneath it. mw.reset() is the same notification every other
@@ -3017,6 +3247,9 @@ class _GenerateDialog(QDialog):
             timer = getattr(self, name, None)
             if timer is not None:
                 timer.stop()
+
+        for handle in getattr(self, "_image_workers", ()):
+            handle.cancel()
 
         attach_worker = getattr(self, "_attach_worker", None)
         if (attach_worker is not None

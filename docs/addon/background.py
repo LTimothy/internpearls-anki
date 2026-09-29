@@ -22,7 +22,7 @@ from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_CEILING_MIN,
                      AUTO_SYNC_INTERVAL_DEFAULT_MIN,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, INSTALLED, STATE,
                      SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json,
-                     load_declined)
+                     load_declined, source_identity)
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
                     decks_to_update, held_entries, manifest_needs_newer_addon, plural)
 from .net import _BG_TIMEOUT, _DOWNLOAD_TIMEOUT
@@ -185,6 +185,7 @@ def _auto_sync_check():
     # What this poll was planned against. The fetch can outlast a profile switch or
     # close, and applying then would import this profile's decks into another one.
     col = mw.col
+    source = source_identity()
 
     # Reconciled here, on the main thread, before any work is handed to the background
     # thread below — installed_matching_collection touches mw.col, which _fetch_work
@@ -251,6 +252,11 @@ def _auto_sync_check():
             return   # offline, misconfigured, or unreachable — stay quiet
         if mw.col is None or mw.col is not col:
             return
+        # The fetch can outlast a change in Manage decks or Settings; what it fetched
+        # belongs to the source and settings it was planned against.
+        live = _cfg()
+        if source_identity() != source or not live["auto_sync_decks"]:
+            return
         if "schema_blocked" in result:
             schema = result["schema_blocked"]
             if schema not in _schema_blocked_notified:
@@ -266,7 +272,7 @@ def _auto_sync_check():
         # this is the one place that keeps the "Reconcile my decks" menu label (and,
         # the first time a backlog appears or grows, a one-time tooltip pointing at
         # it) honest between manual checks.
-        _, fresh, _, moves, _, _, stranded = _reconcile_pending(result["manifest"], cfg)
+        _, fresh, _, moves, _, _, stranded = _reconcile_pending(result["manifest"], live)
         # `stranded` counts too: reconcile_decks and update_decks both treat a reworded
         # pair as pending work, so leaving it out here made the menu label disagree with
         # the screen it points at, and a backlog of nothing but reworded pairs was never
@@ -287,7 +293,8 @@ def _auto_sync_check():
                 period=8000, parent=mw)
         _last_reconcile_notified = pending
 
-        if not result["todo"]:
+        todo = [d for d in result["todo"] if d["name"] not in live["excluded"]]
+        if not todo:
             return   # nothing to sync this poll
         # Re-checked immediately before applying, not only at the top of the poll: this
         # callback arrives from a worker thread's delivery and can land after a
@@ -304,11 +311,11 @@ def _auto_sync_check():
         # phase, so reading which of the learner's notes each one matches costs no
         # network.
         if not _pre_sync_backup_or_skip_silently(
-                cfg["export_deck"],
-                [d["name"] for d in result["todo"]]
+                live["export_deck"],
+                [d["name"] for d in todo]
                 + _content_backup_decks(
                     [v for v in result["downloaded"].values() if _is_local(v)],
-                    result["manifest"].get("front_aliases", {}), cfg["scope_tag"])):
+                    result["manifest"].get("front_aliases", {}), live["scope_tag"])):
             # Once per session, not once per poll: a backup that fails usually keeps
             # failing, and the same tooltip every interval is noise around a message
             # that has already been read.
@@ -326,8 +333,8 @@ def _auto_sync_check():
             return v
 
         results, restored, _, deferred, _, _, _ = _run_sync(
-            cfg, result["manifest"], _already_fetched,
-            result["todo"], defer_template_changes=True)
+            live, result["manifest"], _already_fetched,
+            todo, defer_template_changes=True)
         ok = sum(1 for r in results if r.startswith("✓"))
         fail = len(results) - ok - len(deferred)
         # A deferred deck stays pending, so every later poll re-defers it. Only
@@ -335,7 +342,7 @@ def _auto_sync_check():
         # poll where re-deferrals were the only "activity". Recorded by version too, so
         # later polls skip the download and the backup for them entirely rather than
         # reaching this same decision again (see _fetch_work).
-        versions = {d["name"]: d.get("version") for d in result["todo"]}
+        versions = {d["name"]: d.get("version") for d in todo}
         deferred_keys = [(n, versions.get(n)) for n in deferred]
         deferred_new = [n for n, v in deferred_keys
                         if (n, v) not in _tpl_deferred_notified]

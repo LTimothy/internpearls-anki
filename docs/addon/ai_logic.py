@@ -6,6 +6,7 @@ plain pytest; subprocess and Qt live in ai_cli.py and ai_dialog.py.
 """
 import binascii
 import hashlib
+import html as _html
 import json
 import os
 import re
@@ -172,8 +173,43 @@ def _norm_front(text):
     return " ".join(_plain(text).lower().split())
 
 
+_SMALL_LINE = '<div style="font-size:small;opacity:.7">{}</div>'
+
+
+def image_credit_html(attribution):
+    """The small credit line that follows an imported picture ("" when it has none)."""
+    text = (attribution or "").strip()
+    return _SMALL_LINE.format("Image: " + _html.escape(text)) if text else ""
+
+
+def sources_html(sources):
+    """A "Sources:" line of links for an imported card ("" when no source has an
+    http(s) address). Titles and addresses are escaped."""
+    links = []
+    for src in sources or []:
+        url = str(src.get("url", ""))
+        if not url.lower().startswith(("http://", "https://")):
+            continue
+        title = str(src.get("title") or url)
+        links.append(f'<a href="{_html.escape(url, quote=True)}">{_html.escape(title)}</a>')
+    return _SMALL_LINE.format("Sources: " + ", ".join(links)) if links else ""
+
+
+def primary_is_blank(card):
+    """True when the card's primary field has no text and nothing else carries a
+    picture for it (an <img in any field, a listed image, or a resolved media file)."""
+    fields = card["fields"]
+    primary = PRIMARY_FIELD.get(card["note_type"], next(iter(fields), ""))
+    text = _html.unescape(_plain(fields.get(primary, ""))).replace("\xa0", " ").strip()
+    if text:
+        return False
+    return not (card.get("images") or card.get("_media_files")
+                or any("<img" in str(v).lower() for v in fields.values()))
+
+
 def mechanical_checks(cards, existing_fronts, image_errors=None):
-    """Check drafted cards for duplicates, cloze syntax, length, and image
+    """Check drafted cards for duplicates (against the collection and earlier
+    cards in the draft), empty fronts, cloze syntax, length, and image
     resolution failures. existing_fronts is {normalized front: original front}
     for the learner's collection, built collection-side with the same _norm_front over
     _existing_front_to_guid keys; {} skips duplicate detection (throttled/offline
@@ -186,6 +222,7 @@ def mechanical_checks(cards, existing_fronts, image_errors=None):
     """
     image_errors = image_errors or {}
     out = []
+    first_seen = {}
     for i, card in enumerate(cards):
         entries = []
         ntype, fields = card["note_type"], card["fields"]
@@ -196,10 +233,21 @@ def mechanical_checks(cards, existing_fronts, image_errors=None):
             entries.append({"code": "image", "level": "block",
                             "message": f"image could not be used: {msg}"})
 
+        if primary_is_blank(card):
+            what = "front" if primary == "Front" else primary.lower()
+            entries.append({"code": "empty", "level": "block",
+                            "message": f"{what} is empty"})
+
         if norm and norm in existing_fronts:
             entries.append({"code": "duplicate", "level": "block",
                             "existing": existing_fronts[norm],
                             "message": "possible duplicate of an existing card"})
+        if norm:
+            if norm in first_seen:
+                entries.append({"code": "duplicate", "level": "block",
+                                "message": f"same front as draft card {first_seen[norm] + 1}"})
+            else:
+                first_seen[norm] = i
 
         # Keyed on the primary field being "Text" (a cloze-style deletion field),
         # not on the exact note type name, so a core "Cloze" note is validated
@@ -440,13 +488,18 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
             errors.append(f"card {idx}: missing note")
             continue
         correction = raw.get("correction")
+        removed = False
         if correction is not None:
             allowed = set(field_map.get(idx, []))
             if (not isinstance(correction, dict) or not correction
                     or not set(correction) <= allowed):
                 errors.append(f"card {idx}: correction has an unknown field")
                 continue
-            correction = {k: str(v) for k, v in correction.items()}
+            stripped = {k: _REMOTE_IMG_RE.sub("", str(v)) for k, v in correction.items()}
+            removed = stripped != {k: str(v) for k, v in correction.items()}
+            correction = stripped
+            if removed and not any(v.strip() for v in correction.values()):
+                correction = None
         sources = []
         for src in raw.get("sources") or []:
             if not isinstance(src, dict):
@@ -456,6 +509,9 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
                 continue
             sources.append({"title": str(src.get("title") or url), "url": url})
         note = note.strip()
+        if removed:
+            note += (" A web picture in the suggested text was left out; "
+                     "pictures are added through the card's images.")
         if verdict == "confirmed" and not web:
             verdict = "unverified"
             note = "no web access, from recall only: " + note

@@ -221,22 +221,49 @@ def _cfg():
     }
 
 
-def _collection_state_path(path):
-    """Never trust another collection/source's installed versions or baselines.
+def source_identity():
+    """The deck source and scope the live config points at: what per-source state is
+    keyed by, and what an in-flight fetch must still match when it lands."""
+    conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
+    return (conf.get("github_decks_repo", ""), conf.get("github_ref", "main"),
+            conf.get("decks_dir", ""), conf.get("scope_tag", "InternPearls"))
 
-    Legacy unscoped files are left intact, not adopted: their owner is unknown.
-    The first scoped sync conservatively preserves annotations without a baseline.
+
+# Files kept per collection and source. The first group never adopts a legacy unscoped
+# file (its owner is unknown); the second moves it to whichever collection and source
+# reads it first, so existing decisions survive the upgrade without a second profile
+# inheriting them too.
+_SCOPED_STATE = ("installed.json", "shipped_fields.json")
+_ADOPTED_STATE = ("declined.json", "deck_skill.json", "card_feedback.json")
+
+
+def _collection_state_path(path):
+    """The per-collection, per-source path for `path`, or None when it belongs to a
+    collection and none is open.
+
+    A file outside the two groups above resolves to itself. The installed versions and
+    baselines are never trusted across collections or sources: the first scoped sync
+    conservatively preserves annotations without a baseline.
     """
-    if os.path.basename(path) not in ("installed.json", "shipped_fields.json"):
+    name = os.path.basename(path)
+    if name not in _SCOPED_STATE + _ADOPTED_STATE:
         return path
-    collection_path = getattr(getattr(mw, "col", None), "path", None)
+    col = getattr(mw, "col", None)
+    if col is None and name in _ADOPTED_STATE:
+        return None
+    collection_path = getattr(col, "path", None)
     if not isinstance(collection_path, str) or not collection_path:
         return path
-    conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
-    source = (conf.get("github_decks_repo", ""), conf.get("github_ref", "main"),
-              conf.get("decks_dir", ""), conf.get("scope_tag", "InternPearls"))
-    key = hashlib.sha256(json.dumps((os.path.realpath(collection_path), source)).encode()).hexdigest()[:24]
-    return os.path.join(os.path.dirname(path), "collections", key, os.path.basename(path))
+    key = hashlib.sha256(json.dumps(
+        (os.path.realpath(collection_path), source_identity())).encode()).hexdigest()[:24]
+    scoped = os.path.join(os.path.dirname(path), "collections", key, name)
+    if name in _ADOPTED_STATE and not os.path.exists(scoped) and os.path.exists(path):
+        try:
+            os.makedirs(os.path.dirname(scoped), exist_ok=True)
+            os.replace(path, scoped)
+        except OSError:
+            pass
+    return scoped
 
 
 def _load_json(path, default, strict=False):
@@ -249,6 +276,8 @@ def _load_json(path, default, strict=False):
     did: a missing or unreadable installed.json still reads as "nothing installed yet".
     """
     path = _collection_state_path(path)
+    if path is None:
+        return default
     try:
         with open(path, encoding="utf8") as fh:
             return json.load(fh)
@@ -275,6 +304,8 @@ def _save_json(path, data):
     state write this add-on makes.
     """
     path = _collection_state_path(path)
+    if path is None:
+        return
     dirname = os.path.dirname(path) or "."
     os.makedirs(dirname, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".tmp")
