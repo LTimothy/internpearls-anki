@@ -154,6 +154,79 @@ def test_image_appended_to_primary_field_when_no_image_field(anki):
     assert note["Front"] == 'Q1<img src="generated-1.svg">'
 
 
+_CREDIT = '<div style="font-size:small;opacity:.7">Image: {}</div>'
+
+
+def test_image_credit_follows_its_image_in_the_same_field(anki):
+    card = _card("Q1", media_files=["a.png", "b.png"])
+    card["_media_credits"] = ["Wikimedia Commons, CC BY-SA", ""]
+    collection.add_generated_notes(
+        [card], media={"a.png": b"1", "b.png": b"2"}, deck_name=DECK, scope_tag=SCOPE)
+    note = next(iter(anki.col._notes.values()))
+    assert note["Image"] == ('<img src="a.png">' + _CREDIT.format("Wikimedia Commons, CC BY-SA")
+                             + '<img src="b.png">')
+
+
+def test_image_credit_is_escaped(anki):
+    card = _card("Q1", media_files=["a.png"])
+    card["_media_credits"] = ['<script>alert(1)</script> & "co"']
+    collection.add_generated_notes(
+        [card], media={"a.png": b"1"}, deck_name=DECK, scope_tag=SCOPE)
+    note = next(iter(anki.col._notes.values()))
+    assert "<script>" not in note["Image"]
+    assert "&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;co&quot;" in note["Image"]
+
+
+def test_sources_are_appended_to_the_why_field(anki):
+    card = _card("Q1")
+    card["fields"]["Why"] = "Because."
+    card["_sources"] = [{"title": "Guideline <b>2024</b>", "url": "https://example.com/a?x=1&y=2"},
+                        {"title": "Second", "url": "http://example.org/b"}]
+    collection.add_generated_notes([card], media={}, deck_name=DECK, scope_tag=SCOPE)
+    note = next(iter(anki.col._notes.values()))
+    assert note["Why"] == (
+        'Because.<div style="font-size:small;opacity:.7">Sources: '
+        '<a href="https://example.com/a?x=1&amp;y=2">Guideline &lt;b&gt;2024&lt;/b&gt;</a>, '
+        '<a href="http://example.org/b">Second</a></div>')
+
+
+def test_sources_with_an_unsafe_url_are_left_out(anki):
+    card = _card("Q1")
+    card["_sources"] = [{"title": "bad", "url": "javascript:alert(1)"}]
+    collection.add_generated_notes([card], media={}, deck_name=DECK, scope_tag=SCOPE)
+    note = next(iter(anki.col._notes.values()))
+    assert note["Why"] == "W"
+
+
+def test_sources_go_to_back_on_a_basic_note_without_why(anki):
+    anki.col.models._models.append(make_model(name="Basic", fields=["Front", "Back"]))
+    card = _card("Q1", note_type="Basic")
+    card["_sources"] = [{"title": "Ref", "url": "https://example.com"}]
+    collection.add_generated_notes([card], media={}, deck_name=DECK, scope_tag=SCOPE)
+    note = next(iter(anki.col._notes.values()))
+    assert note["Back"].startswith("A<div") and 'href="https://example.com"' in note["Back"]
+
+
+def test_sources_go_to_back_extra_on_a_cloze_note(anki):
+    anki.col.models._models.append(
+        make_model(name="Cloze", fields=["Text", "Back Extra"]))
+    card = {"note_type": "Cloze", "fields": {"Text": "{{c1::x}}", "Back Extra": ""},
+            "tags": [], "images": [], "rationale": "",
+            "_sources": [{"title": "Ref", "url": "https://example.com"}]}
+    collection.add_generated_notes([card], media={}, deck_name=DECK, scope_tag=SCOPE)
+    note = next(iter(anki.col._notes.values()))
+    assert note["Back Extra"].startswith('<div style="font-size:small;opacity:.7">Sources: ')
+
+
+def test_sources_are_skipped_when_the_note_has_no_explanation_field(anki):
+    anki.col.models._models.append(make_model(name="Cloze", fields=["Text"]))
+    card = {"note_type": "Cloze", "fields": {"Text": "{{c1::x}}"},
+            "tags": [], "images": [], "rationale": "",
+            "_sources": [{"title": "Ref", "url": "https://example.com"}]}
+    collection.add_generated_notes([card], media={}, deck_name=DECK, scope_tag=SCOPE)
+    assert next(iter(anki.col._notes.values()))["Text"] == "{{c1::x}}"
+
+
 def test_two_separate_imports_get_independent_undo_steps(anki):
     """A second, later import must not fold into the first import's undo entry:
     undoing the second should leave the first's cards in place."""

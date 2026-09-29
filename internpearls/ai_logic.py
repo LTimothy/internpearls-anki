@@ -173,6 +173,28 @@ def _norm_front(text):
     return " ".join(_plain(text).lower().split())
 
 
+_SMALL_LINE = '<div style="font-size:small;opacity:.7">{}</div>'
+
+
+def image_credit_html(attribution):
+    """The small credit line that follows an imported picture ("" when it has none)."""
+    text = (attribution or "").strip()
+    return _SMALL_LINE.format("Image: " + _html.escape(text)) if text else ""
+
+
+def sources_html(sources):
+    """A "Sources:" line of links for an imported card ("" when no source has an
+    http(s) address). Titles and addresses are escaped."""
+    links = []
+    for src in sources or []:
+        url = str(src.get("url", ""))
+        if not url.lower().startswith(("http://", "https://")):
+            continue
+        title = str(src.get("title") or url)
+        links.append(f'<a href="{_html.escape(url, quote=True)}">{_html.escape(title)}</a>')
+    return _SMALL_LINE.format("Sources: " + ", ".join(links)) if links else ""
+
+
 def primary_is_blank(card):
     """True when the card's primary field has no text and nothing else carries a
     picture for it (an <img in any field, a listed image, or a resolved media file)."""
