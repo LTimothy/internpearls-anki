@@ -1268,6 +1268,17 @@ class QWidget:
                 "children": [self._layout.node()] if self._layout else []}
 
 
+class QSize:
+    def __init__(self, w=0, h=0):
+        self._w, self._h = w, h
+
+    def width(self):
+        return self._w
+
+    def height(self):
+        return self._h
+
+
 class QImage:
     """Enough of QImage for the width cap review.py applies to an extracted picture.
 
@@ -3388,7 +3399,7 @@ def install():
                       ("QFormLayout", QFormLayout),
                       ("QGridLayout", QGridLayout), ("QLayout", QLayout),
                       ("QDesktopServices", _QDesktopServices), ("QUrl", _QUrl),
-                      ("QImage", QImage),
+                      ("QImage", QImage), ("QSize", QSize),
                       ("QLineEdit", QLineEdit), ("QMessageBox", QMessageBox),
                       ("QPlainTextEdit", QPlainTextEdit),
                       ("QScrollArea", QScrollArea), ("QSizePolicy", _QSizePolicy),

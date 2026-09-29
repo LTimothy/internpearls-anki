@@ -153,8 +153,7 @@ def test_a_prefetch_that_lands_after_a_scroll_is_dropped(anki):
         deliver(compute(_Checkpoints()))
         listing.fill_all()
 
-    lay = listing._rows_layout
-    assert [lay.itemAt(i).widget().item for i in range(lay.count())] == list(range(20))
+    assert [w.item for w in listing.rows()] == list(range(20))
 
 
 def test_a_prefetch_that_lands_after_a_reset_is_dropped(anki):
@@ -178,6 +177,4 @@ def test_a_prefetch_that_lands_after_a_reset_is_dropped(anki):
         deliver(compute(_Checkpoints()))
         listing.fill_all()
 
-    lay = listing._rows_layout
-    assert [lay.itemAt(i).widget().item for i in range(lay.count())] == list(
-        range(100, 105))
+    assert [w.item for w in listing.rows()] == list(range(100, 105))

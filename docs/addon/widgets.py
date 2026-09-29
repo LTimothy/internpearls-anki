@@ -11,8 +11,8 @@ May import config, logic, palette, platform and ui. Must NOT import sync, dialog
 or review: that's the boundary that keeps this module out of the same import cycle
 review.py was built to dodge.
 """
-from aqt.qt import (QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, Qt,
-                     QVBoxLayout, QWidget)
+from aqt.qt import (QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
+                     QSize, Qt, QVBoxLayout, QWidget)
 
 from .palette import colors
 from .platform import new_work_request, platform, platform_owner_id
@@ -528,6 +528,28 @@ def simple_row(chip_kind, primary_html, trailing_html="", card_columns=True,
     return row
 
 
+class _Page(QWidget):
+    """One batch of StreamingList rows that reports a plain height instead of a
+    height-for-width. Wrapped labels otherwise make every layout pass ask every visible
+    row for its height, so each batch revealed cost more than the last. The height is
+    asked of the page's own layout at the list's width, which caches it until a row
+    changes."""
+
+    def hasHeightForWidth(self):
+        return False
+
+    def sizeHint(self):
+        parent = self.parentWidget()
+        width = parent.width() if parent is not None else self.width()
+        lay = self.layout()
+        height = (lay.totalHeightForWidth(width) if lay.hasHeightForWidth()
+                  else lay.totalSizeHint().height())
+        return QSize(width, height)
+
+    def minimumSizeHint(self):
+        return QSize(0, self.sizeHint().height())
+
+
 class StreamingList(QScrollArea):
     """A scroll area that builds its rows in batches instead of all at once.
 
@@ -558,7 +580,13 @@ class StreamingList(QScrollArea):
         self._items = items
         self._batch = batch
         self._shown = 0
+        self._built = 0
         self._generation = 0
+        # One page widget per batch of rows. Rows are built into a page while it is
+        # hidden and the page is shown once: showing a row inside an already visible
+        # list re-lays-out every visible row, so revealing rows one at a time cost a
+        # little more with each batch and stalled long lists.
+        self._pages = []
 
         # Rows live in their own inner container with its own layout, kept separate
         # from the stretch below it. Appending only ever touches the rows layout, so
@@ -583,7 +611,6 @@ class StreamingList(QScrollArea):
         self.setWidgetResizable(True)
         self.setWidget(body)
 
-        self._prebuilt = []
         self._last_scroll = 0.0
         self.verticalScrollBar().valueChanged.connect(self._maybe_extend)
         self._extend()
@@ -591,9 +618,9 @@ class StreamingList(QScrollArea):
         # Idle prefetch. Building a 50-row batch at the moment the reader scrolls to
         # the boundary is a visible hitch, so once the viewport is filled the backlog
         # is built a few rows at a time on a timer while the reader keeps reading.
-        # Prefetched rows stay hidden until the scroll path reveals them: a hidden row
-        # adds nothing to the layout, so the content height (and with it the scrollbar)
-        # only moves when the reader scrolls, not on every tick. The pace is
+        # Prefetched rows wait in a hidden page until the scroll path reveals it: a
+        # hidden page adds nothing to the layout, so the content height (and with it
+        # the scrollbar) only moves when the reader scrolls, not on every tick. The pace is
         # deliberately slow, and a tick is skipped while the reader is scrolling, so
         # building never competes with reading; revealing an already-built row is cheap.
         self._prefetching = False
@@ -608,7 +635,31 @@ class StreamingList(QScrollArea):
 
     def built(self):
         """Rows constructed so far, shown or waiting hidden."""
-        return self._shown + len(self._prebuilt)
+        return self._built
+
+    def rows(self):
+        """The row widgets built so far, in item order."""
+        return [page.layout().itemAt(i).widget()
+                for page in self._pages for i in range(page.layout().count())]
+
+    def _page(self, index):
+        """The page for batch `index`, created hidden and appended if it is new."""
+        while len(self._pages) <= index:
+            page = _Page()
+            lay = QVBoxLayout(page)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(0)
+            page.setVisible(False)
+            self._rows_layout.addWidget(page)
+            self._pages.append(page)
+        return self._pages[index]
+
+    def _build_upto(self, end):
+        """Build rows up to item `end` into their (still hidden) pages."""
+        while self._built < end:
+            row = self._build_row(self._items[self._built])
+            self._page(self._built // self._batch).layout().addWidget(row)
+            self._built += 1
 
     def _idle_extend(self):
         if self._prefetching:       # one chunk in flight at a time
@@ -630,11 +681,7 @@ class StreamingList(QScrollArea):
                 self._prefetching = False
                 if self.built() != start:
                     return    # a scroll built these rows first; the next tick resumes
-                for item in items:
-                    row = self._build_row(item)
-                    row.setVisible(False)
-                    self._rows_layout.addWidget(row)
-                    self._prebuilt.append(row)
+                self._build_upto(start + len(items))
 
             def abandon(_error):
                 if generation == self._generation:
@@ -695,23 +742,16 @@ class StreamingList(QScrollArea):
                <= self.viewport().height()):
             self._extend()
 
-    def _extend(self, count=None):
-        """Build the next `batch` rows (or `count` of them) and append them, or do
-        nothing once every item has already been built."""
+    def _extend(self):
+        """Reveal the next batch of rows, building any the prefetch has not, or do
+        nothing once every item is shown."""
         if self._shown >= self.total():
             return
-        end = min(self._shown + (count or self._batch), self.total())
-        for item in self._items[self._shown:end]:
-            if self._prebuilt:
-                row = self._prebuilt.pop(0)
-            else:
-                row = self._build_row(item)
-                self._rows_layout.addWidget(row)
-            # A row appended to an already-visible list is only shown on Qt's next
-            # layout pass, and a hidden item contributes nothing to its layout's
-            # sizeHint. Showing it here is what lets _fill_viewport measure the batch
-            # it just built rather than the height from before it.
-            row.setVisible(True)
+        end = min(self._shown + self._batch, self.total())
+        self._build_upto(end)
+        # Shown here rather than on Qt's next layout pass, so _fill_viewport measures
+        # the batch it just revealed.
+        self._page(self._shown // self._batch).setVisible(True)
         self._shown = end
 
     def fill_all(self):
@@ -726,12 +766,14 @@ class StreamingList(QScrollArea):
         while layout.count():
             widget = layout.takeAt(0).widget()
             if widget is not None:
+                widget.setVisible(False)
                 widget.setParent(None)
                 widget.deleteLater()
         self._items = items
-        self._prebuilt = []
+        self._pages = []
         self._prefetching = False
         self._shown = 0
+        self._built = 0
         bar = self.verticalScrollBar()
         if bar.value():
             bar.setValue(0)
