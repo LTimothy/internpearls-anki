@@ -418,6 +418,10 @@ def _held_cards_nudge():
     which only come back when Update my decks runs. A held card in a deck the learner
     has since excluded in Manage decks can't come back that way, so it is not counted
     here either."""
+    if mw.col is None:
+        # Held cards are kept per collection, so wait for a profile to open.
+        QTimer.singleShot(10000, _held_cards_nudge)
+        return
     excluded = set(_cfg()["excluded"])
     n = sum(1 for e in held_entries(load_declined()).values()
             if e.get("deck") not in excluded)
