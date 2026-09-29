@@ -1109,6 +1109,48 @@ def test_deciding_a_correction_keeps_open_rows_and_scroll():
     assert abs(bar.value() - before) <= 2
 
 
+def test_failed_image_links_recover_the_picture_in_real_qt(monkeypatch):
+    dlg = _long_review_dialog(count=2)
+    s = dlg.session
+    _, q = harness.bootstrap()
+    s.cards[1]["images"] = [{"source": "url:https://example.com/x.png",
+                             "alt": "", "attribution": ""}]
+    s.image_data = {1: [{"state": "error", "kind": "url", "error": "network is down",
+                         "host": "example.com"}]}
+    s.checks = ai_dialog.ai_logic.mechanical_checks(s.cards, {}, {1: ["network is down"]})
+    dlg._rebuild_review()
+    dlg._row_carets[1].click()
+    _settle()
+    names = {b.text() for b in dlg.findChildren(q.QPushButton)}
+    assert {"Retry", "Remove", "Replace"} <= names
+
+    monkeypatch.setattr(ai_dialog, "fetch_card_image", lambda url: (b"PNGDATA", "png"))
+    retry = next(b for b in dlg.findChildren(q.QPushButton) if b.text() == "Retry")
+    retry.click()
+    for _ in range(200):
+        _settle(1)
+        if s.image_data[1][0]["state"] == "ok":
+            break
+    assert s.image_data[1][0]["state"] == "ok"
+    assert not any(c["code"] == "image" for c in s.checks[1])
+    assert "Retry" not in {b.text() for b in dlg.findChildren(q.QPushButton)}
+
+
+def test_failed_image_row_renders_in_light_and_dark(tmp_path):
+    out_dir = os.environ.get("IP_SHOT_DIR") or str(tmp_path)
+    os.makedirs(out_dir, exist_ok=True)
+    try:
+        for theme in ("light", "dark"):
+            shot = harness.render("ai-review", theme=theme, failed_image=True,
+                                  count=3, expand=(2,), size=(720, 560))
+            assert "Replace" in harness.link_labels(shot.dialog)
+            png = os.path.join(out_dir, f"ai-review-failed-image-{theme}.png")
+            shot.image.save(png, "PNG")
+            assert os.path.exists(png)
+    finally:
+        harness.apply_theme("light")
+
+
 def test_accept_correction_rechecks_and_blocks_a_new_duplicate():
     """Accepting a correction that turns a card's Front into an existing
     card's front must not just apply the text: it has to re-run mechanical

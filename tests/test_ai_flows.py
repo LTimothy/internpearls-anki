@@ -1150,6 +1150,75 @@ def test_image_card_whose_image_failed_starts_excluded(anki, monkeypatch):
     assert dlg.session.included == [False]
 
 
+def _failed_image_dialog(anki, monkeypatch):
+    _stub_fetch_image(monkeypatch, error="network is down")
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert any(c["code"] == "image" for c in dlg.session.checks[0])
+    return dlg
+
+
+def _finish_recovery(dlg):
+    for handle in dlg._image_workers:
+        wait_for_mock_work(handle)
+
+
+def test_failed_image_row_offers_retry_remove_and_replace(anki, monkeypatch):
+    dlg = _failed_image_dialog(anki, monkeypatch)
+    text = _row_text(dlg.cards_lay.itemAt(0).widget())
+    assert "Retry" in text and "Remove" in text and "Replace" in text
+
+
+def test_retry_resolves_only_that_image_and_clears_its_block(anki, monkeypatch):
+    dlg = _failed_image_dialog(anki, monkeypatch)
+    card = dlg.session.cards[0]
+    _stub_fetch_image(monkeypatch)
+    dlg._retry_image(0, 0)
+    _finish_recovery(dlg)
+    assert dlg.session.cards[0] is card
+    assert dlg.session.image_data[0][0]["state"] == "ok"
+    assert all(c["code"] != "image" for c in dlg.session.checks[0])
+    assert "Retry" not in _row_text(dlg.cards_lay.itemAt(0).widget())
+
+
+def test_retry_that_fails_again_keeps_the_block_and_the_links(anki, monkeypatch):
+    dlg = _failed_image_dialog(anki, monkeypatch)
+    dlg._retry_image(0, 0)
+    _finish_recovery(dlg)
+    assert any(c["code"] == "image" for c in dlg.session.checks[0])
+    assert "Retry" in _row_text(dlg.cards_lay.itemAt(0).widget())
+
+
+def test_remove_drops_the_image_and_its_block(anki, monkeypatch):
+    dlg = _failed_image_dialog(anki, monkeypatch)
+    dlg._remove_image(0, 0)
+    assert dlg.session.cards[0]["images"] == []
+    assert all(c["code"] != "image" for c in dlg.session.checks[0])
+
+
+def test_replace_attaches_a_local_picture_for_that_image(anki, monkeypatch, tmp_path):
+    dlg = _failed_image_dialog(anki, monkeypatch)
+    picture = tmp_path / "chosen.png"
+    picture.write_bytes(b"PNGDATA")
+    anki.gui.file_picks = [str(picture)]
+    dlg._replace_image(0, 0)
+    _finish_recovery(dlg)
+    image = dlg.session.cards[0]["images"][0]
+    assert image["source"] == "attached:replaced-0-0.png"
+    assert dlg.session.image_data[0][0]["state"] == "ok"
+    assert all(c["code"] != "image" for c in dlg.session.checks[0])
+
+
+def test_replace_cancelled_changes_nothing(anki, monkeypatch):
+    dlg = _failed_image_dialog(anki, monkeypatch)
+    anki.gui.file_picks = [None]
+    before = dict(dlg.session.cards[0]["images"][0])
+    dlg._replace_image(0, 0)
+    assert dlg.session.cards[0]["images"][0] == before
+    assert not dlg._image_workers
+
+
 def test_review_row_shows_thumbnail_and_host_for_a_web_image(anki, monkeypatch):
     _stub_fetch_image(monkeypatch)
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")

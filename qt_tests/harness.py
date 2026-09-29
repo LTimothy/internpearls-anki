@@ -1017,7 +1017,8 @@ def _scene_ai_review(mock, opts):
     first three cards, which already carry the block/warn/revised chips
     this scene otherwise demonstrates. opts["verdicts"] adds a Check facts
     verdict to cards 0-2: confirmed with a source link, corrected with its
-    proposed text and Accept/Keep mine, and unverified.
+    proposed text and Accept/Keep mine, and unverified. opts["failed_image"]
+    gives the last card a picture that failed to load.
     """
     from internpearls import ai_dialog, ai_logic
     _ai_backend_available()
@@ -1049,6 +1050,15 @@ def _scene_ai_review(mock, opts):
                 fh.write(svg)
             cards[last]["images"] = [{"source": f"svg:{svg}", "alt": "", "attribution": ""}]
             s.image_data[last] = [{"state": "ok", "kind": "svg", "path": path}]
+        if opts.get("failed_image"):
+            last = n - 1
+            cards[last]["images"] = [{"source": "url:https://example.com/x.png",
+                                      "alt": "", "attribution": ""}]
+            s.image_data[last] = [{"state": "error", "kind": "url",
+                                   "error": "network is down", "host": "example.com"}]
+            s.checks = ai_logic.mechanical_checks(
+                cards, {}, {last: ["network is down"]})
+            s.included[last] = False
         s.tokens_last_run = 12345
         if opts.get("verdicts"):
             s.verdicts = {

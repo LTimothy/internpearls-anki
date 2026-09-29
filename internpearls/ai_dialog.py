@@ -320,6 +320,46 @@ def _resolve_one_image(im, scratch):
         return err
 
 
+def _resolve_with_thumb(im, scratch, i, j):
+    """_resolve_one_image, plus a thumbnail file for a picture that only exists in
+    memory (a download or a drawn figure), so Qt has a path to load it from."""
+    res = _resolve_one_image(im, scratch)
+    if res["state"] == "ok" and res["kind"] != "attached":
+        ext = res["ext"] if res["kind"] == "url" else "svg"
+        thumb = os.path.join(scratch, f"_thumb-{i}-{j}.{ext}")
+        try:
+            with open(thumb, "wb") as fh:
+                fh.write(res["bytes"])
+            res["path"] = thumb
+        except OSError:
+            pass
+    return res
+
+
+_REPLACEMENT_IMAGE_TYPES = ("png", "jpg", "jpeg", "webp", "gif")
+_REPLACEMENT_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _image_lines(session, i, card):
+    """[(image index, html line, failed)] for the review row's pictures."""
+    results = session.image_data.get(i) or []
+    lines = []
+    for j in range(len(card.get("images") or [])):
+        res = results[j] if j < len(results) else None
+        if res is None:
+            lines.append((j, "[image] resolving…", False))
+            continue
+        host = res.get("host")
+        host_txt = f" (from {html.escape(host)})" if host else ""
+        if res["state"] != "ok":
+            lines.append((j, f"[image failed{host_txt}]: "
+                             f"{html.escape(res.get('error', ''))}", True))
+            continue
+        tag = _image_tag(res["path"]) if res.get("path") else None
+        lines.append((j, (tag or "[image]") + host_txt, False))
+    return lines
+
+
 def _image_row_html(session, i, card):
     """The review row's image line(s): a rendered thumbnail when one resolved
     to a local file Qt can decode, a plain failure message when it didn't, and
@@ -327,24 +367,7 @@ def _image_row_html(session, i, card):
     what they're accepting" gate, so a card with an image never reviews as if
     it had none. Returns "" for a card with no images at all.
     """
-    imgs = card.get("images") or []
-    if not imgs:
-        return ""
-    results = session.image_data.get(i) or []
-    lines = []
-    for j, im in enumerate(imgs):
-        res = results[j] if j < len(results) else None
-        if res is None:
-            lines.append("[image] resolving…")
-            continue
-        host = res.get("host")
-        host_txt = f" (from {html.escape(host)})" if host else ""
-        if res["state"] != "ok":
-            lines.append(f"[image failed{host_txt}]: {html.escape(res.get('error', ''))}")
-            continue
-        tag = _image_tag(res["path"]) if res.get("path") else None
-        lines.append((tag or "[image]") + host_txt)
-    return "<br>".join(lines)
+    return "<br>".join(line for _, line, _ in _image_lines(session, i, card))
 
 
 # The chip kinds the review row can actually show, in the priority order a card's
@@ -762,6 +785,8 @@ class _GenerateDialog(QDialog):
         self.resize(max(open_w, 480), open_h)
         self.session = s = _Session()
         self._expanded_rows = set()
+        self._image_busy = set()
+        self._image_workers = []
         self._retried_json = False   # the single-retry budget on malformed model output
         self._reply_chunks = []      # accumulated delta text; reset per _start_generation
         # Backend kinds with a "Test connection" run currently in flight, from
@@ -2349,22 +2374,7 @@ class _GenerateDialog(QDialog):
                         per.append({"state": "error", "kind": "cancelled",
                                    "error": "cancelled"})
                         continue
-                    res = _resolve_one_image(im, private_scratch)
-                    if res["state"] == "ok" and res["kind"] != "attached":
-                        # attached: images already live in scratch under
-                        # their own name (res["path"] is set for that kind
-                        # above); url:/svg: bytes only ever existed in
-                        # memory, so a thumbnail needs its own file to hand
-                        # Qt's QImage a path to load.
-                        ext = res["ext"] if res["kind"] == "url" else "svg"
-                        thumb = os.path.join(
-                            private_scratch, f"_thumb-{i}-{len(per)}.{ext}")
-                        try:
-                            with open(thumb, "wb") as fh:
-                                fh.write(res["bytes"])
-                            res["path"] = thumb
-                        except OSError:
-                            pass
+                    res = _resolve_with_thumb(im, private_scratch, i, image_index)
                     context.checkpoint(
                         f"image:{i + 1}:{image_index + 1}:publish")
                     per.append(res)
@@ -2702,9 +2712,11 @@ class _GenerateDialog(QDialog):
                 label = _rich_label(html_value)
             blay.addWidget(label)
 
-        img_html = _image_row_html(s, i, card)
-        if img_html:
-            blay.addWidget(_rich_label(img_html))
+        for j, line, failed in _image_lines(s, i, card):
+            if failed and not done:
+                blay.addWidget(self._image_recovery_row(i, j, line, card_label))
+            else:
+                blay.addWidget(_rich_label(line))
 
         if not done:
             edit_btn = link_button("Edit", on_click=lambda: self._guard(self._edit_card, i))
@@ -2724,6 +2736,114 @@ class _GenerateDialog(QDialog):
         if i in self._expanded_rows:
             _set_expanded(True)
         return row
+
+    def _image_recovery_row(self, i, j, line, card_label):
+        """A failed picture's message with Retry, Remove and Replace beside it."""
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(CARET_GAP)
+        lay.addWidget(_rich_label(line), 1)
+        card = self.session.cards[i]
+        im = card["images"][j]
+        busy = id(im) in self._image_busy
+        for name, action in (("Retry", lambda: self._retry_image(i, j)),
+                             ("Remove", lambda: self._remove_image(i, j)),
+                             ("Replace", lambda: self._replace_image(i, j))):
+            btn = link_button(name, on_click=lambda _=False, a=action: self._guard(a))
+            btn.setAccessibleName(f"{name} picture {j + 1}: {card_label}")
+            btn.setEnabled(not busy)
+            lay.addWidget(btn)
+        return row
+
+    def _start_image_recovery(self, i, j, work, new_image=None):
+        """Resolve one picture again on a worker, then apply the result to that
+        picture alone. `work(scratch)` returns the resolved-image dict."""
+        s = self.session
+        card = s.cards[i]
+        im = card["images"][j]
+        if id(im) in self._image_busy:
+            return
+        self._image_busy.add(id(im))
+
+        def compute(context):
+            return work(context.scratch)
+
+        def done(res):
+            self._image_busy.discard(id(im))
+            self._apply_image_result(card, im, new_image or im, res)
+
+        def failed(error):
+            self._image_busy.discard(id(im))
+            self._apply_image_result(card, im, im, {
+                "state": "error", "kind": "other", "error": str(error)})
+
+        request = new_work_request(
+            self, "image", "ai.image.recover",
+            inputs={"card": i + 1, "image": j + 1})
+        handle = platform().start_work(
+            request, compute, done, failed, scratch_path=s.scratch)
+        self._image_workers.append(handle)
+        handle.start()
+        self._rebuild_review(focus_row=i)
+
+    def _apply_image_result(self, card, old, new, res):
+        s = self.session
+        i = next((n for n, c in enumerate(s.cards) if c is card), None)
+        j = next((n for n, x in enumerate(card["images"]) if x is old), None)
+        if i is None or j is None:
+            return
+        results = s.image_data.setdefault(i, [])
+        while len(results) < len(card["images"]):
+            results.append({"state": "error", "kind": "other", "error": "not resolved"})
+        results[j] = res
+        if res["state"] == "ok":
+            card["images"][j] = new
+        self._recheck(i, force=False)
+        self._rebuild_review(focus_row=i)
+
+    def _retry_image(self, i, j):
+        card = self.session.cards[i]
+        im = card["images"][j]
+        self._start_image_recovery(
+            i, j, lambda scratch: _resolve_with_thumb(im, scratch, i, j))
+
+    def _remove_image(self, i, j):
+        s = self.session
+        s.cards[i]["images"].pop(j)
+        results = s.image_data.get(i)
+        if results and j < len(results):
+            results.pop(j)
+        self._recheck(i, force=False)
+        self._rebuild_review(focus_row=i)
+
+    def _replace_image(self, i, j):
+        from aqt.qt import QFileDialog
+        s = self.session
+        types = " ".join(f"*.{t}" for t in _REPLACEMENT_IMAGE_TYPES)
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose a replacement picture", "", f"Images ({types})")
+        if not path:
+            return
+        ext = os.path.splitext(path)[1].lower()
+        if ext.lstrip(".") not in _REPLACEMENT_IMAGE_TYPES:
+            _warn("Choose a PNG, JPEG, WebP or GIF picture.")
+            return
+        if s.scratch is None:
+            s.scratch = platform().allocate_scratch(platform_owner_id(self), "aigen")
+        old = s.cards[i]["images"][j]
+        name = f"replaced-{i}-{j}{ext}"
+        new = {"source": f"attached:{name}", "alt": old.get("alt", ""),
+               "attribution": ""}
+
+        def work(scratch):
+            if os.path.getsize(path) > _REPLACEMENT_MAX_BYTES:
+                return {"state": "error", "kind": "attached",
+                        "error": "picture is too large"}
+            shutil.copyfile(path, os.path.join(scratch, name))
+            return _scratch_image(scratch, name, "attached")
+
+        self._start_image_recovery(i, j, work, new_image=new)
 
     def _on_review_decision(self, i, state):
         """A card's decision control changed: write the new state and refresh what
@@ -2816,10 +2936,10 @@ class _GenerateDialog(QDialog):
             "Revise all" + (f" ({plural(len(s.notes), 'note')})" if s.notes else ""))
         self.check_btn.setEnabled(bool(s.cards))
 
-    def _recheck(self, i):
-        """Recompute every card's checks after card i changed. Card i, and any
-        other card that just became blocked (a draft duplicate of i), is forced
-        to Skip; every other decision is left alone."""
+    def _recheck(self, i, force=True):
+        """Recompute every card's checks after card i changed. Card i (when
+        `force`), and any other card that just became blocked (a draft duplicate
+        of i), is forced to Skip; every other decision is left alone."""
         s = self.session
         was_blocked = [any(c["level"] == "block" for c in per) for per in s.checks]
         s.checks = ai_logic.mechanical_checks(
@@ -2827,7 +2947,7 @@ class _GenerateDialog(QDialog):
             _image_errors(s))
         for j, per in enumerate(s.checks):
             if any(c["level"] == "block" for c in per) and (
-                    j == i or not (j < len(was_blocked) and was_blocked[j])):
+                    (force and j == i) or not (j < len(was_blocked) and was_blocked[j])):
                 s.included[j] = False
 
     def _edit_card(self, i):
@@ -3086,6 +3206,9 @@ class _GenerateDialog(QDialog):
             timer = getattr(self, name, None)
             if timer is not None:
                 timer.stop()
+
+        for handle in getattr(self, "_image_workers", ()):
+            handle.cancel()
 
         attach_worker = getattr(self, "_attach_worker", None)
         if (attach_worker is not None
