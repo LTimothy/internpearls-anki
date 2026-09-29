@@ -572,7 +572,8 @@ def _scene_confirm(mock, opts):
         # answering a question that has its own dialog.
         top_html += (
             "<br><br><b>4 cards</b> in this update changed format (a question and "
-            "answer became a fill-in-the-blank). You'll be asked once, before anything "
+            "answer became a fill-in-the-blank, or the other way round). You'll be "
+            "asked once, before anything "
             "imports, whether to move your existing cards across."
             "<br><br>This update also changes how some cards look (template or "
             "styling) for: <b>Example Note Type</b>. Your review history and card "

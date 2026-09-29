@@ -796,7 +796,10 @@ class StreamingList(QScrollArea):
 
 class _SearchField(QLineEdit):
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape and self.text():
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.returnPressed.emit()
+            event.accept()
+        elif event.key() == Qt.Key.Key_Escape and self.text():
             self.clear()
             event.accept()
         else:
@@ -806,7 +809,8 @@ class _SearchField(QLineEdit):
 class FilterBar(QWidget):
     """Filter options and a search field, with a muted count line that shows while
     either is active. `on_change(mode, query)` runs when an option is picked and
-    shortly after the search text settles. Escape in the field clears it."""
+    shortly after the search text settles. Escape in the field clears it; Enter applies
+    it at once and never reaches the dialog's default button."""
 
     SEARCH_DELAY_MS = 150
 
@@ -836,6 +840,7 @@ class FilterBar(QWidget):
         self._timer = platform().create_timer(
             platform_owner_id(self), self._apply, self.SEARCH_DELAY_MS, single_shot=True)
         self.search.textChanged.connect(lambda _text: self._timer.start())
+        self.search.returnPressed.connect(lambda: self._pick(self._mode))
 
     def _pick(self, mode):
         self._mode = mode

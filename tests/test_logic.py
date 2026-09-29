@@ -647,6 +647,58 @@ def test_remap_cards_never_touches_generated_guids(tmp_path):
     assert {rid for rid, _, _ in new_notes} == {1, 2}
 
 
+def test_remap_cards_claims_each_learner_guid_at_most_once(tmp_path):
+    # X keeps the learner's GUID under a new wording while Y reuses the wording the
+    # learner's card still shows: Y must not also land on that card.
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "g1", "Q new wording"), (2, "gY", "Q old")])
+    existing = {"Q old": "g1"}
+    remap, in_place, as_new, new_notes, matched = logic.remap_cards(apkg, existing, {})
+    assert remap == {}
+    assert (in_place, as_new) == (1, 1)
+    assert [rid for rid, _, _ in new_notes] == [2]
+    assert matched == [(1, "g1", "g1")]
+
+
+def test_remap_cards_direct_front_beats_alias_for_the_same_card(tmp_path):
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "n2", "N"), (2, "n1", "O")])
+    existing = {"O": "g1"}
+    remap, in_place, as_new, new_notes, _ = logic.remap_cards(apkg, existing, {"N": "O"})
+    assert remap == {2: "g1"}
+    assert [rid for rid, _, _ in new_notes] == [1]
+
+
+def test_remap_cards_rename_cycle_matches_each_card_once(tmp_path):
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "n1", "A"), (2, "n2", "B")])
+    aliases = {"A": "B", "B": "A"}
+    remap, _, as_new, new_notes, _ = logic.remap_cards(apkg, {"A": "gA"}, aliases)
+    assert remap == {1: "gA"}
+    assert [rid for rid, _, _ in new_notes] == [2]
+    remap, _, as_new, _, _ = logic.remap_cards(apkg, {"A": "gA", "B": "gB"}, aliases)
+    assert (remap, as_new) == ({1: "gA", 2: "gB"}, 0)
+
+
+def test_remap_cards_package_order_does_not_decide_the_survivor(tmp_path):
+    existing, aliases = {"O": "g1"}, {"N": "O"}
+    results = []
+    for order in ([(1, "n1", "O"), (2, "n2", "N")], [(2, "n2", "N"), (1, "n1", "O")]):
+        apkg = str(tmp_path / f"deck{len(results)}.apkg")
+        _make_mock_apkg(apkg, order)
+        results.append(logic.remap_cards(apkg, existing, aliases)[0])
+    assert results[0] == results[1] == {1: "g1"}
+
+
+def test_remap_cards_generated_card_does_not_block_the_alias_fallback(tmp_path):
+    from internpearls import ai_logic
+    apkg = str(tmp_path / "deck.apkg")
+    _make_mock_apkg(apkg, [(1, "n1", "New")])
+    existing = {"New": ai_logic.generated_guid(), "Old": "g1"}
+    remap, in_place, as_new, _, _ = logic.remap_cards(apkg, existing, {"New": "Old"})
+    assert (remap, in_place, as_new) == ({1: "g1"}, 1, 0)
+
+
 # ---------------------------------------------------------------------- protected_for
 def test_protected_for_unions_the_global_list_with_the_note_s_own():
     per_note = {"g1": ["Reference"]}
@@ -679,6 +731,48 @@ def test_per_note_for_package_handles_empty_input():
     assert logic.per_note_for_package({}, [(1, "g1", "g1")]) == {}
     assert logic.per_note_for_package(None, [(1, "g1", "g1")]) == {}
     assert logic.per_note_for_package({"g1": ["Dosing"]}, []) == {}
+
+
+# ------------------------------------------------------------------ merge_learner_tags
+MARKERS = ("InternPearls::retired", "InternPearls::retired-duplicate")
+
+
+def test_merge_learner_tags_keeps_unmanaged_tags_and_takes_the_sources_scope_tags():
+    before = ["InternPearls::Pharm", "leech", "marked", "my-own::topic"]
+    imported = ["InternPearls::Physio", "InternPearls::Physio::Renal"]
+    assert logic.merge_learner_tags(before, imported, "InternPearls", MARKERS) == [
+        "InternPearls::Physio", "InternPearls::Physio::Renal", "leech", "marked",
+        "my-own::topic"]
+
+
+def test_merge_learner_tags_keeps_the_archive_markers_the_source_never_ships():
+    before = ["InternPearls::Pharm", "InternPearls::retired",
+              "internpearls::Retired-Duplicate"]
+    imported = ["InternPearls::Pharm"]
+    assert logic.merge_learner_tags(before, imported, "InternPearls", MARKERS) == [
+        "InternPearls::Pharm", "InternPearls::retired", "internpearls::Retired-Duplicate"]
+
+
+def test_merge_learner_tags_matches_the_scope_case_insensitively_without_duplicates():
+    before = ["internpearls::pharm", "Leech"]
+    imported = ["InternPearls::Pharm", "leech"]
+    assert logic.merge_learner_tags(before, imported, "InternPearls", MARKERS) == [
+        "InternPearls::Pharm", "Leech"]
+
+
+def test_merge_learner_tags_also_takes_the_sources_tags_outside_the_scope():
+    before = ["InternPearls::Pharm", "leech"]
+    imported = ["InternPearls::Pharm", "QBank::Test_10"]
+    assert logic.merge_learner_tags(before, imported, "InternPearls", MARKERS) == [
+        "InternPearls::Pharm", "leech", "QBank::Test_10"]
+    assert logic.merge_learner_tags(["InternPearlsExtra"], ["InternPearls"],
+                                    "InternPearls", MARKERS) == [
+        "InternPearls", "InternPearlsExtra"]
+
+
+def test_merge_learner_tags_without_a_scope_keeps_every_tag_from_both_sides():
+    assert logic.merge_learner_tags(["leech", "Pharm"], ["Pharm", "Physio"], "", ()) == [
+        "leech", "Pharm", "Physio"]
 
 
 # ------------------------------------------------------------------ find_changed_notes
@@ -1441,6 +1535,27 @@ def test_find_retired_without_front_map_keeps_guid_only_behaviour():
     assert logic.find_retired_in_collection(_LEDGER, {"learner1"}) == []
 
 
+def test_find_retired_never_offers_a_card_the_packages_still_carry():
+    # A reseed keeps the front, so the learner's only live copy matches the retired
+    # identity by front: it must not be offered for archiving.
+    existing = {"learner1"}
+    front_map = {"bulky card one": "learner1"}
+    assert logic.find_retired_in_collection(
+        _LEDGER, existing, front_map, live_fronts={"bulky card one"}) == []
+    assert logic.find_retired_in_collection(
+        _LEDGER, {"old1"}, {"bulky card one": "old1"}, live_guids={"old1"}) == []
+
+
+def test_find_retired_live_check_reads_the_learners_own_front_for_a_guid_match():
+    existing = {"old1"}
+    front_map = {"a wording the package now carries": "old1"}
+    assert logic.find_retired_in_collection(
+        _LEDGER, existing, front_map,
+        live_fronts={"a wording the package now carries"}) == []
+    assert [r["guid"] for r in logic.find_retired_in_collection(
+        _LEDGER, existing, front_map, live_fronts={"unrelated"})] == ["old1"]
+
+
 # ---------------------------------------------------------- stranded rewords
 _SUPERSEDED = {"old wording of a card": "new wording of a card",
                "another old wording": "another new wording"}
@@ -1481,6 +1596,42 @@ def test_stranded_sorted_by_front():
          "another old wording", "another new wording"])}
     assert [p["front"] for p in logic.find_stranded_pairs(_SUPERSEDED, existing)] == [
         "another old wording", "old wording of a card"]
+
+
+def test_stranded_cycle_reports_nothing():
+    superseded = {"A": "B", "B": "A"}
+    existing = {"A": "gA", "B": "gB"}
+    assert logic.find_stranded_pairs(superseded, existing) == []
+
+
+def test_stranded_chain_flows_to_the_final_successor():
+    superseded = {"A": "B", "B": "C"}
+    existing = {"A": "gA", "B": "gB", "C": "gC"}
+    pairs = logic.find_stranded_pairs(superseded, existing)
+    assert [(p["guid"], p["successor_guid"]) for p in pairs] == [("gA", "gC"), ("gB", "gC")]
+
+
+def test_stranded_chain_skips_an_intermediate_the_learner_lacks():
+    superseded = {"A": "B", "B": "C"}
+    pairs = logic.find_stranded_pairs(superseded, {"A": "gA", "C": "gC"})
+    assert [(p["guid"], p["successor_guid"]) for p in pairs] == [("gA", "gC")]
+
+
+def test_stranded_chain_without_the_final_successor_reports_nothing():
+    assert logic.find_stranded_pairs({"A": "B", "B": "C"}, {"A": "gA", "B": "gB"}) == []
+
+
+def test_stranded_leading_into_a_cycle_reports_nothing():
+    superseded = {"D": "A", "A": "B", "B": "A"}
+    existing = {"D": "gD", "A": "gA", "B": "gB"}
+    assert logic.find_stranded_pairs(superseded, existing) == []
+
+
+def test_stranded_never_offers_a_predecessor_the_packages_still_carry():
+    existing = {"old wording of a card": "g_old", "new wording of a card": "g_new"}
+    assert logic.find_stranded_pairs(
+        _SUPERSEDED, existing, live_fronts={"old wording of a card"}) == []
+    assert logic.find_stranded_pairs(_SUPERSEDED, existing, live_guids={"g_old"}) == []
 
 
 # --------------------------------------------------------------- deck moves
@@ -2284,14 +2435,15 @@ def test_prune_declined_drops_retired_and_vanished_entries():
     }
     changed = logic.prune_declined(
         reg, retired_guids={"g-retired"},
-        seen={"IP::A": {"g-alive"}})   # IP::B was not downloaded this run
+        seen={"IP::A": {"g-alive"}},   # IP::B was not downloaded this run
+        manifest_decks={"IP::A"})
     assert changed is True
     assert set(reg) == {"g-alive", "g-unseen"}
 
 
 def test_prune_declined_reports_no_change():
     reg = {"g": {"state": "skip", "deck": "IP::A", "front": "z"}}
-    assert logic.prune_declined(reg, set(), {"IP::A": {"g"}}) is False
+    assert logic.prune_declined(reg, set(), {"IP::A": {"g"}}, {"IP::A"}) is False
 
 
 def test_prune_declined_survives_a_non_dict_entry():
@@ -2302,7 +2454,8 @@ def test_prune_declined_survives_a_non_dict_entry():
     reg = {"g-garbage": "not a dict", "g-retired-garbage": "also not a dict",
            "g-alive": {"state": "skip", "deck": "IP::A", "front": "z"}}
     changed = logic.prune_declined(
-        reg, retired_guids={"g-retired-garbage"}, seen={"IP::A": {"g-alive"}})
+        reg, retired_guids={"g-retired-garbage"}, seen={"IP::A": {"g-alive"}},
+        manifest_decks={"IP::A"})
     assert changed is True
     assert set(reg) == {"g-garbage", "g-alive"}
 
@@ -2796,3 +2949,60 @@ def test_a_folded_group_keeps_its_fold_and_shows_only_matching_members():
                      ("group_note", note, 1, [("sep", "grouped"), members[3]])]
     assert logic.count_cards(shown) == 1
     assert logic.filter_update_items(items, "held") == []
+
+
+# ------------------------------------------------------------- prune_declined
+def _entry(deck, state="never"):
+    return {"state": state, "front": "f", "deck": deck, "decided": "d", "hash": ""}
+
+
+def test_prune_declined_keeps_a_card_moved_to_another_deck_and_follows_it():
+    reg = {"g1": _entry("A")}
+    seen = {"A": {"other"}, "B": {"g1"}}
+    assert logic.prune_declined(reg, set(), seen, {"A", "B"}) is True
+    assert reg["g1"]["deck"] == "B"
+
+
+def test_prune_declined_drops_a_card_absent_from_every_package():
+    reg = {"g1": _entry("A"), "g2": _entry("A")}
+    assert logic.prune_declined(reg, set(), {"A": {"g2"}, "B": set()}, {"A", "B"}) is True
+    assert list(reg) == ["g2"]
+
+
+def test_prune_declined_cannot_judge_absence_while_a_deck_is_unread():
+    reg = {"g1": _entry("A")}
+    assert logic.prune_declined(reg, set(), {"A": set()}, {"A", "B"}) is False
+    assert "g1" in reg
+
+
+def test_prune_declined_still_drops_retired_guids_whatever_was_read():
+    reg = {"g1": _entry("A")}
+    assert logic.prune_declined(reg, {"g1"}, {}, {"A"}) is True
+    assert reg == {}
+
+
+def test_prune_declined_leaves_a_hand_edited_entry_alone():
+    reg = {"g1": "not a dict"}
+    assert logic.prune_declined(reg, set(), {"A": set()}, {"A"}) is False
+    assert reg == {"g1": "not a dict"}
+
+
+def test_cards_lost_in_conversion_counts_cards_the_new_type_cannot_hold():
+    lost = logic.cards_lost_in_conversion
+    # A cloze with c1 and c2 becoming a one-template type loses c2.
+    assert lost([0, 1], to_cloze=False, template_map=[], template_count=1) == 1
+    # A cloze with only c1, or a Q and A becoming a cloze, keeps everything.
+    assert lost([0], to_cloze=False, template_map=[], template_count=1) == 0
+    assert lost([0, 1], to_cloze=True, template_map=[], template_count=1) == 0
+    # Between two regular types the template map decides.
+    assert lost([0, 1], to_cloze=False, template_map=[0], template_count=1) == 1
+    assert lost([0], to_cloze=False, template_map=[0, -1], template_count=2) == 0
+
+
+def test_split_notetype_changes_keeps_any_card_losing_conversion_beside():
+    safe = {"guid": "a", "old": "B", "new": "C", "drops": 0}
+    lossy = {"guid": "b", "old": "C", "new": "B", "drops": 2}
+    unmeasured = {"guid": "c", "old": "B", "new": "C"}
+    assert logic.split_notetype_changes([safe, lossy, unmeasured]) == (
+        [safe, unmeasured], [lossy])
+    assert logic.split_notetype_changes([]) == ([], [])
