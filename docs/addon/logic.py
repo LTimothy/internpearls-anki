@@ -1078,32 +1078,43 @@ def held_outside_manifest(registry, manifest):
     return [g for g, e in held_entries(registry).items() if e.get("deck") not in names]
 
 
+# The standing declines a row's control can show, by row kind. A registry state outside
+# these (an old Keep on a card that now arrives as new) is not a decision the row carries.
+_ROW_DECLINES = {"new": ("skip", "never"), "changed": ("keep", "frozen")}
+
+
+def carries_decision(entry, kind):
+    """Whether a card row arrives already decided by an earlier update's decline."""
+    return isinstance(entry, dict) and entry.get("state") in _ROW_DECLINES.get(kind, ())
+
+
 def holdable_guids(registry, card_kinds, reviewed):
     """The card rows "hold for later" would set aside: a new or changed row the
-    learner neither opened nor decided on, carrying no decline other than an
-    earlier hold. A standing Skip/Keep/Never keeps its own state, since it was
-    decided on an earlier run. `card_kinds` is {guid: kind} in row order."""
-    out = []
-    for guid, kind in card_kinds.items():
-        if kind not in ("new", "changed") or guid in reviewed:
-            continue
-        entry = (registry or {}).get(guid)
-        if entry is None or (isinstance(entry, dict) and entry.get("state") == "held"):
-            out.append(guid)
-    return out
+    learner neither opened nor decided on, now or on an earlier update. A standing
+    Skip/Keep/Never keeps its own state; an earlier hold, or an old decline the row
+    cannot show, is held like any undecided row. `card_kinds` is {guid: kind} in row
+    order."""
+    return [guid for guid, kind in card_kinds.items()
+            if kind in ("new", "changed") and guid not in reviewed
+            and not carries_decision((registry or {}).get(guid), kind)]
 
 
-def unopened_line(card_kinds, reviewed, folded=()):
-    """The update screen's count of card rows nobody has opened or decided on yet,
-    and how many of those sit inside a folded group, or "" once there are none.
-    `card_kinds` is {guid: kind}; only new and changed rows count."""
+def unopened_line(card_kinds, reviewed, folded=(), registry=None):
+    """The update screen's count of card rows nobody has opened yet, how many of those
+    sit inside a folded group and how many already carry an earlier update's decision,
+    or "" once there are none. `card_kinds` is {guid: kind}; only new and changed rows
+    count."""
     rows = [g for g, k in card_kinds.items() if k in ("new", "changed")]
     left = [g for g in rows if g not in reviewed]
     if not left:
         return ""
     folded = set(folded)
     inside = sum(1 for g in left if g in folded)
-    where = f", {inside} of them in folded groups" if inside else ""
+    decided = sum(1 for g in left
+                  if carries_decision((registry or {}).get(g), card_kinds[g]))
+    notes = ([f"{inside} of them in folded groups"] if inside else []) + (
+        [f"{decided} already decided on an earlier update"] if decided else [])
+    where = (", " + " and ".join(notes)) if notes else ""
     return (f"<b>{len(left)} of {plural(len(rows), 'card')} not opened yet</b>{where}. "
             "Update applies each one as its row is set.")
 

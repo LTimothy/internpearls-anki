@@ -1709,7 +1709,7 @@ HOLD_TOOLTIP = ("Cards you opened or chose for are updated as shown. The rest wa
 
 
 def hold_label(n):
-    return f"Update reviewed, hold {n} for later"
+    return f"Update reviewed, hold {n} undecided for later"
 
 
 def hold_control(registry, card_kinds, reviewed):

@@ -2785,7 +2785,19 @@ def test_holdable_is_every_untouched_undeclined_card_row():
     kinds = {"g-new": "new", "g-changed": "changed", "g-open": "new",
              "g-skip": "new", "g-held": "changed", "g-bad": "new", "g-none": None}
     assert logic.holdable_guids(reg, kinds, {"g-open"}) == [
-        "g-new", "g-changed", "g-held"]
+        "g-new", "g-changed", "g-held", "g-bad"]
+
+
+def test_an_old_decline_the_row_cannot_show_is_held_like_an_undecided_row():
+    # A Keep from when the card was changed, now arriving as new, and a Skip on a row
+    # that is now changed: neither row shows that decision, so hold takes them.
+    reg = {"g-keep": {"state": "keep"}, "g-skip": {"state": "skip"},
+           "g-frozen": {"state": "frozen"}, "g-never": {"state": "never"}}
+    kinds = {"g-keep": "new", "g-skip": "changed", "g-frozen": "changed",
+             "g-never": "new"}
+    assert logic.holdable_guids(reg, kinds, set()) == ["g-keep", "g-skip"]
+    assert logic.carries_decision(reg["g-frozen"], "changed")
+    assert not logic.carries_decision(reg["g-keep"], "new")
 
 
 def test_released_held_is_accepted_at_default_or_no_longer_pending():

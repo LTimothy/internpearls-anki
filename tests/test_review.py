@@ -1273,13 +1273,13 @@ def test_hold_control_counts_and_relabels_as_rows_are_reviewed():
     kinds = {"g1": "new", "g2": "changed", "g3": "new"}
     extra, refresh = review.hold_control({"g3": {"state": "skip"}}, kinds,
                                          lambda: reviewed)
-    assert extra["label"] == "Update reviewed, hold 2 for later"
+    assert extra["label"] == "Update reviewed, hold 2 undecided for later"
     assert extra["tooltip"] == review.HOLD_TOOLTIP and extra["visible"] is True
     refresh()   # no live button yet: must not raise
     extra["button"] = button = _Button()
     reviewed.add("g1")
     refresh()
-    assert button.text == "Update reviewed, hold 1 for later" and button.visible
+    assert button.text == "Update reviewed, hold 1 undecided for later" and button.visible
     reviewed.add("g2")
     refresh()
     assert button.visible is False

@@ -2063,7 +2063,7 @@ def update_decks():
         parts = []
         # What Update would apply without the reader having looked at it, said beside
         # the buttons that do it. Informative only: the hold button is the way out.
-        unopened = unopened_line(row_kind, touched | opened, folded)
+        unopened = unopened_line(row_kind, touched | opened, folded, reg)
         if unopened:
             parts.append(unopened)
         if flags:
