@@ -427,3 +427,42 @@ def test_chip_cell_carries_the_wizard_progress_rows_own_words():
     assert widgets.CHIPS["working"] == "WORKING"
     for kind in ("drafting", "verifying", "reviewing", "working"):
         assert widgets._ROLES[kind] == "new"
+
+
+def test_streaming_list_reset_replaces_its_rows_and_stays_lazy():
+    from internpearls import widgets
+    built = []
+    lst = widgets.StreamingList(lambda item: _stub_row(built, item), list(range(500)), batch=50)
+    old = [lst._rows_layout.itemAt(i).widget() for i in range(lst._rows_layout.count())]
+    lst.reset(list(range(1000, 1200)))
+    assert lst.total() == 200 and lst.shown() == 50
+    assert built[50:] == list(range(1000, 1050)), "only the new first batch was built"
+    assert all(w.deleted for w in old)
+    assert lst._rows_layout.count() == 50
+
+
+def test_streaming_list_reset_to_an_empty_source_leaves_no_rows():
+    from internpearls import widgets
+    built = []
+    lst = widgets.StreamingList(lambda item: _stub_row(built, item), list(range(60)), batch=50)
+    lst.reset([])
+    assert lst.total() == 0 and lst.shown() == 0 and lst._rows_layout.count() == 0
+    lst.fill_all()
+    assert lst.shown() == 0
+
+
+def test_filter_bar_applies_a_pick_at_once_and_a_search_after_the_delay():
+    from internpearls import widgets
+    calls = []
+    bar = widgets.FilterBar([("all", "All"), ("new", "New")],
+                            lambda mode, query: calls.append((mode, query)))
+    bar.options.buttons["new"].click()
+    assert calls == [("new", "")]
+    bar.search.setText("abc")
+    assert calls == [("new", "")], "typing alone must not rebuild the list"
+    bar._timer._timer.fire()
+    assert calls[-1] == ("new", "abc")
+    bar.set_count("Showing 1 of 30 cards")
+    assert bar._count.isVisible() and bar._count.text() == "Showing 1 of 30 cards"
+    bar.set_count("")
+    assert not bar._count.isVisible()

@@ -96,3 +96,29 @@ def test_update_screen_opens_fast_with_thousands_of_cards_pending():
     assert lst.shown() < lst.total(), (
         "every row was built up front; the screen must only build its first batch "
         "regardless of how many cards are pending")
+
+
+def test_filtering_a_huge_list_stays_lazy_and_quick():
+    """A filter rebuilds the stream from the matching items, so it must build a first
+    batch of them and no more, inside the same budget as opening the screen."""
+    import aqt.qt as aqt_qt
+    from internpearls import review
+    from internpearls.widgets import FilterBar, StreamingList
+
+    harness.bootstrap()
+    aqt_qt.QLabel("warm").deleteLater()
+    items = [("header", "Example Deck")]
+    for i, detail in enumerate(_many_details(_PENDING)):
+        items += ([("sep",)] if i else []) + [("card", "Example Deck", detail)]
+    body, _boxes, flush = review.build_update_body(
+        items, {}, {}, {}, {}, "", lambda: "", "safety note")
+    lst, bar = body.findChild(StreamingList), body.findChild(FilterBar)
+    start = time.perf_counter()
+    bar.options.buttons["changed"].click()
+    elapsed = time.perf_counter() - start
+    flush()
+    changed = _PENDING // 2
+    assert lst.total() == 1 + changed + (changed - 1)   # heading, rows, hairlines
+    assert 0 < lst.shown() < lst.total()
+    assert elapsed < _BUDGET_SECONDS, (
+        f"filtering {_PENDING} cards took {elapsed:.3f}s, over {_BUDGET_SECONDS}s")

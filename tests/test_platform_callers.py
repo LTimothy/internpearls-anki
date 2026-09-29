@@ -155,3 +155,29 @@ def test_a_prefetch_that_lands_after_a_scroll_is_dropped(anki):
 
     lay = listing._rows_layout
     assert [lay.itemAt(i).widget().item for i in range(lay.count())] == list(range(20))
+
+
+def test_a_prefetch_that_lands_after_a_reset_is_dropped(anki):
+    """A filter can replace the list while a prefetch for the old one is in flight;
+    delivering it would append rows from a list that is gone."""
+    from internpearls import widgets
+
+    def row(item):
+        widget = widgets.QWidget()
+        widget.item = item
+        return widget
+
+    native = _DeferredPlatform()
+    with use_platform(native):
+        listing = widgets.StreamingList(row, list(range(20)), batch=5)
+        listing.isVisible = lambda: True
+        listing._last_scroll = -1
+        listing._idle_extend()
+        listing.reset(list(range(100, 105)))
+        compute, deliver = native.pending[0]
+        deliver(compute(_Checkpoints()))
+        listing.fill_all()
+
+    lay = listing._rows_layout
+    assert [lay.itemAt(i).widget().item for i in range(lay.count())] == list(
+        range(100, 105))

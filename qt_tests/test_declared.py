@@ -75,6 +75,8 @@ def test_every_declared_colour_actually_paints(shot, scene, theme):
         rect = widget_rect(s.dialog, widget)
         if rect.width() < 1 or rect.height() < 1:
             continue
+        if rect.width() < widget.width() or rect.height() < widget.height():
+            continue   # straddling a scroll viewport's edge: only a sliver is on show
         painted = colour_counts(s.image, rect)
         for colour in declared:
             if painted.get(colour, 0) == 0:

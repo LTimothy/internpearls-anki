@@ -2677,3 +2677,122 @@ def test_truncate_caps_text_with_an_ellipsis_inside_the_limit():
     capped = logic.truncate("word " * 20, 60)
     assert len(capped) <= 60 and capped.endswith("…") and not capped.endswith(" …")
     assert logic.truncate("", 60) == ""
+
+
+def _pending_card(guid, kind="new", front=None, **extra):
+    detail = {"guid": guid, "kind": kind,
+              "fields": [("Front", front or f"Front of {guid}"), ("Back", "Answer")]}
+    detail.update(extra)
+    return ("card", "Example Deck", detail)
+
+
+def _sectioned(*sections):
+    """Update-list items from (heading, [rows]) pairs, hairlined the way sync builds them."""
+    items = []
+    for heading, rows in sections:
+        items.append(("header", heading))
+        for i, row in enumerate(rows):
+            if i:
+                items.append(("sep",))
+            items.append(row)
+    return items
+
+
+def _guids(items):
+    return [it[2]["guid"] for it in items if it[0] == "card"]
+
+
+def test_count_cards_includes_the_members_of_folded_groups():
+    members = [("sep", "grouped"), _pending_card("g1"), ("sep", "grouped"),
+               _pending_card("g2"), ("sep", "grouped"), ("retired", "gone")]
+    items = [_pending_card("a"), ("group_note", {"note": "n"}, 2, members)]
+    assert logic.count_cards(items) == 3
+
+
+def test_filter_update_items_with_nothing_active_returns_every_item():
+    items = _sectioned(("Deck", [_pending_card("a"), _pending_card("b", "changed")]))
+    assert logic.filter_update_items(items, "all", "  ") == items
+
+
+def test_filter_modes_pick_new_changed_held_and_untouched_cards():
+    held = _pending_card("h", "new", declined_state="held")
+    items = _sectioned(("Deck", [_pending_card("n"), _pending_card("c", "changed"),
+                                 held, _pending_card("t", "changed")]))
+    assert _guids(logic.filter_update_items(items, "new")) == ["n", "h"]
+    assert _guids(logic.filter_update_items(items, "changed")) == ["c", "t"]
+    assert _guids(logic.filter_update_items(items, "held")) == ["h"]
+    assert _guids(logic.filter_update_items(
+        items, "unreviewed", touched={"c", "t"})) == ["n", "h"]
+
+
+def test_search_is_case_insensitive_and_reads_the_visible_front():
+    items = _sectioned(("Deck", [
+        _pending_card("a", front="<b>Propofol</b> dose for induction?"),
+        _pending_card("b", front="Sevoflurane MAC")]))
+    assert _guids(logic.filter_update_items(items, "all", "PROPOFOL")) == ["a"]
+    assert _guids(logic.filter_update_items(items, "all", "b>")) == []
+
+
+def test_filter_and_search_combine():
+    items = _sectioned(("Deck", [_pending_card("a", "new", "Alpha one"),
+                                 _pending_card("b", "changed", "Alpha two"),
+                                 _pending_card("c", "changed", "Beta")]))
+    assert _guids(logic.filter_update_items(items, "changed", "alpha")) == ["b"]
+
+
+def test_a_section_with_no_visible_row_loses_its_header_and_hairlines():
+    items = _sectioned(("First", [_pending_card("a", "new"), _pending_card("b", "new")]),
+                       ("Second", [_pending_card("c", "changed"),
+                                   _pending_card("d", "new"),
+                                   _pending_card("e", "changed")]))
+    shown = logic.filter_update_items(items, "changed")
+    assert shown == [("header", "Second"), items[5], ("sep",), items[9]]
+
+
+def test_retired_and_moved_rows_show_only_under_all_and_match_a_search():
+    items = _sectioned(("Deck", [_pending_card("a"), ("retired", "Old wording", "split"),
+                                 ("moved", "Relocated card", "Other")]))
+    assert logic.filter_update_items(items, "new") == items[:2]
+    only_retired = logic.filter_update_items(items, "all", "old wording")
+    assert only_retired == [("header", "Deck"), ("retired", "Old wording", "split")]
+
+
+def test_the_per_deck_summary_is_hidden_while_a_filter_is_active():
+    items = [("header", "2 decks have updates:"), ("deck", "Deck", "1 new")] + _sectioned(
+        ("Deck", [_pending_card("a")]))
+    assert logic.filter_update_items(items, "new") == items[2:]
+
+
+def test_an_open_group_keeps_matching_members_and_counts_them():
+    note = {"kind": "maintainer", "note": "shared"}
+    items = [("header", "Deck"), ("group_note", note, 3),
+             ("sep", "grouped"), _pending_card("a", "new"),
+             ("sep", "grouped"), _pending_card("b", "changed"),
+             ("sep", "grouped"), _pending_card("c", "changed"),
+             ("sep",), _pending_card("z", "changed")]
+    shown = logic.filter_update_items(items, "changed")
+    assert shown == [("header", "Deck"), ("group_note", note, 2),
+                     ("sep", "grouped"), items[5], ("sep", "grouped"), items[7],
+                     ("sep",), items[9]]
+
+
+def test_a_group_with_no_matching_member_disappears():
+    note = {"kind": "maintainer", "note": "shared"}
+    items = [("header", "Deck"), ("group_note", note, 1),
+             ("sep", "grouped"), _pending_card("a", "new"),
+             ("sep",), _pending_card("z", "changed")]
+    assert logic.filter_update_items(items, "changed") == [
+        ("header", "Deck"), items[5]]
+
+
+def test_a_folded_group_keeps_its_fold_and_shows_only_matching_members():
+    note = {"kind": "maintainer", "note": "shared"}
+    members = [("sep", "grouped"), _pending_card("a", "new"),
+               ("sep", "grouped"), _pending_card("b", "changed"),
+               ("sep", "grouped"), ("retired", "Old wording", "split")]
+    items = [("header", "Deck"), ("group_note", note, 2, members)]
+    shown = logic.filter_update_items(items, "changed")
+    assert shown == [("header", "Deck"),
+                     ("group_note", note, 1, [("sep", "grouped"), members[3]])]
+    assert logic.count_cards(shown) == 1
+    assert logic.filter_update_items(items, "held") == []
