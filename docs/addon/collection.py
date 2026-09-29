@@ -1550,6 +1550,17 @@ def remove_empty_cards():
 _GENERATED_ALLOWED_TYPES = frozenset(TARGET_FIELDS) | {"Basic", "Cloze"}
 
 
+class PartialImport(Exception):
+    """add_generated_notes failed after some notes landed. `written` holds the
+    positions in the input list of the cards that were added; the original error
+    is the __cause__."""
+
+    def __init__(self, written, total):
+        super().__init__(f"{len(written)} of {total} generated cards were added")
+        self.written = written
+        self.total = total
+
+
 def add_generated_notes(cards, media, deck_name, scope_tag):
     """Write accepted AI-generated cards into `deck_name` as one undoable operation.
 
@@ -1560,15 +1571,18 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
     every such file across the whole accepted batch. This function only writes those
     bytes into the collection's media folder and turns each card's _media_files into
     `<img src="...">` tags appended to its Image field (or its primary field, for a
-    note type with none): it never resolves or fetches an image itself.
+    note type with none), each followed by its credit line from card["_media_credits"]
+    (parallel to _media_files). A card's card["_sources"] become a "Sources:" line
+    appended to its Why field, else Back, else Back Extra. It never resolves or
+    fetches an image itself.
 
     Every note gets a fresh iplocal- GUID (ai_logic.generated_guid()), so it can never
     match (and a later deck sync's remap_cards/_reconcile_pending can never touch)
     a real synced card. Nothing here reads or modifies an existing note; this only adds.
 
     Raises RuntimeError, before writing anything (media or notes), if a card names a
-    note type outside _GENERATED_ALLOWED_TYPES or one absent from this collection:
-    an atomic check, so that failure mode never leaves anything behind. Returns the
+    note type outside _GENERATED_ALLOWED_TYPES or one absent from this collection, or
+    has an empty primary field and no picture: an atomic check, so that failure mode never leaves anything behind. Returns the
     number of notes added; 0 for an empty `cards`.
 
     A failure part-way through the actual writes (a media write erroring, a backend
@@ -1576,7 +1590,9 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
     write), so a partial import is possible here. What's guaranteed instead: whatever
     already landed, media and notes alike, is still exactly one undo step, so the
     caller (or the user, with Ctrl+Z) can always get back to a clean collection in one
-    move. The original exception always propagates; this function never swallows one.
+    move. A failure after at least one note landed raises PartialImport (the original
+    error as its __cause__) naming which cards were written; a failure before that
+    propagates unchanged. This function never swallows an error.
     """
     cards = list(cards or [])
     if not cards:
@@ -1598,9 +1614,15 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
         raise RuntimeError(
             "Can't import generated cards: unknown or missing note type(s) "
             + ", ".join(sorted(unknown)))
+    blank = [i for i, card in enumerate(cards, 1) if ai_logic.primary_is_blank(card)]
+    if blank:
+        raise RuntimeError(
+            "Can't import generated cards: the front is empty on card "
+            + ", ".join(map(str, blank)))
 
     undo_target = col.add_custom_undo_entry(f"Import {plural(len(cards), 'generated card')}")
     count = 0
+    landed = []
     try:
         did = col.decks.id(deck_name)
 
@@ -1616,13 +1638,16 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
                     written[fname] = col.media.add_file(path)
 
         tag = f"{scope_tag}::{ai_logic.GENERATED_TAG_LEAF}"
-        for card in cards:
+        for pos, card in enumerate(cards):
             note = col.new_note(models[card["note_type"]])
             for name, value in card["fields"].items():
                 if name in note:
                     note[name] = value
-            imgs = "".join(f'<img src="{written.get(f, f)}">'
-                           for f in card.get("_media_files", []))
+            credits = card.get("_media_credits") or []
+            imgs = "".join(
+                f'<img src="{written.get(f, f)}">'
+                + ai_logic.image_credit_html(credits[k] if k < len(credits) else "")
+                for k, f in enumerate(card.get("_media_files", [])))
             if imgs:
                 if "Image" in note:
                     target = "Image"
@@ -1630,10 +1655,19 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
                     target = ai_logic.PRIMARY_FIELD.get(
                         card["note_type"], next(iter(card["fields"])))
                 note[target] = (note[target] + imgs) if note[target] else imgs
+            sources = ai_logic.sources_html(card.get("_sources"))
+            explain = next((n for n in ("Why", "Back", "Back Extra") if n in note), None)
+            if sources and explain:
+                note[explain] = note[explain] + sources
             note.guid = ai_logic.generated_guid()
             note.tags = list(card.get("tags", [])) + [tag]
             col.add_note(note, did)
             count += 1
+            landed.append(pos)
+    except Exception as e:
+        if landed:
+            raise PartialImport(landed, len(cards)) from e
+        raise
     finally:
         # Whatever landed before a mid-loop failure is still exactly one undo step.
         col.merge_undo_entries(undo_target)

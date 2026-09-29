@@ -1167,6 +1167,12 @@ class QWidget:
     def setAccessibleName(self, name):
         self._accessible = name
 
+    def accessibleName(self):
+        return getattr(self, "_accessible", "")
+
+    def setFocus(self, *a):
+        self.focused = True
+
     def deleteLater(self):
         """Qt's deferred delete. Nothing here owns C++ memory to free, so this records
         the call: a dialog parented to mw leaks in real Anki unless something asks for

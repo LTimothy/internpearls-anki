@@ -21,17 +21,18 @@ from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayou
                     QImage, QLabel, QPlainTextEdit, QPushButton, QScrollArea,
                     QSizePolicy, Qt, QTimer, QVBoxLayout, QWidget)
 
-from .config import ADDON_VERSION, APP_NAME, FEEDBACK, _load_json, _save_json
-from .logic import (apkg_media_index, build_feedback_digest, cloze_answer_changes,
-                    cloze_filled_html, cloze_hint_changes,
-                    extract_apkg_media, field_image_names,
-                    field_preview_html, field_preview_text, holdable_guids,
-                    merged_word_diff, note_display_label, plain_text, plural,
-                    truncate, word_diff_ratio)
+from .config import (ADDON_VERSION, APP_NAME, FEEDBACK, _collection_state_path, _load_json,
+                     _save_json)
+from .logic import (FILTER_MIN_CARDS, FILTER_MODES, apkg_media_index,
+                    build_feedback_digest, cloze_answer_changes, cloze_filled_html,
+                    cloze_hint_changes, count_cards, extract_apkg_media,
+                    field_image_names, field_preview_html, field_preview_text,
+                    filter_update_items, group_run, holdable_guids, merged_word_diff,
+                    note_display_label, plain_text, plural, truncate, word_diff_ratio)
 from .palette import colors
 from .ui import (_ask_with_widget, _info, copy_to_clipboard, hint_label, link_button,
                  muted_label, title_label)
-from .widgets import (CARET_GAP, CARET_W, StreamingList, chip_cell,
+from .widgets import (CARET_GAP, CARET_W, FilterBar, StreamingList, chip_cell,
                       chip_column_width, decision_cell, row_text_indent,
                       section_header, simple_row)
 
@@ -748,11 +749,7 @@ def _fold_groups(items):
         if not _folds(item):
             out.append(item)
             continue
-        members = []
-        while i < len(items) and (items[i][0] in ("card", "retired")
-                                  or tuple(items[i][:2]) == ("sep", "grouped")):
-            members.append(items[i])
-            i += 1
+        members, i = group_run(items, i)
         out.append((item[0], item[1], item[2], members))
     return out
 
@@ -849,7 +846,7 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
                 ctx["set_member"](g, kind, state)
 
         cell = decision_cell(options, _current(), _decide_all,
-                             f"{len(guids)} cards: {note_text}")
+                             f"{plural(len(guids), 'card')}: {note_text}")
 
         def _refresh(_guid=None, _state=None):
             state = _current()
@@ -860,7 +857,7 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
         hlay.addWidget(mixed, 0, Qt.AlignmentFlag.AlignVCenter)
         hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
 
-    toggle = QPushButton(f"Show {card_count} cards")
+    toggle = QPushButton(f"Show {plural(card_count, 'card')}")
     toggle.setCursor(Qt.CursorShape.PointingHandCursor)
     hlay.addWidget(toggle, 0, Qt.AlignmentFlag.AlignTop)
     group_lay.addWidget(head)
@@ -889,7 +886,7 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
     state = {"expanded": False, "built": False}
 
     def _name_toggle(expanded):
-        verb = f"Hide {card_count} cards" if expanded else f"Show {card_count} cards"
+        verb = f"{'Hide' if expanded else 'Show'} {plural(card_count, 'card')}"
         toggle.setText(verb)
         toggle.setAccessibleName(f"{verb}: {note_text}" if note_text else verb)
 
@@ -1459,8 +1456,10 @@ def load_saved_feedback():
 
 def clear_saved_feedback():
     """Drop the saved notes, once they have actually been shown to the learner."""
+    path = _collection_state_path(FEEDBACK)
     try:
-        os.remove(FEEDBACK)
+        if path:
+            os.remove(path)
     except OSError:
         pass
 
@@ -1527,6 +1526,10 @@ def build_update_body(items, sources, flags, new_index, decisions,
     `opened` collects every guid whose row the learner expanded, and `on_review()`
     runs after each expand and each decision click, so a caller can keep "hold for
     later" counting only the rows nobody has looked at.
+
+    From `FILTER_MIN_CARDS` card rows up, a FilterBar sits above the list. Picking a
+    filter or typing a search rebuilds the stream from `filter_update_items`; the
+    decisions, flags and touched set stay put, and rows are rebuilt from them.
 
     Returns (widget, boxes, flush). `boxes` is {guid: QPlainTextEdit}, built lazily as
     the list's own rows are. `flush()` stops the debounce save timer, writes one final
@@ -1670,7 +1673,24 @@ def build_update_body(items, sources, flags, new_index, decisions,
         return row
 
     if items:
-        lay.addWidget(StreamingList(_row, _fold_groups(items)), 1)
+        folded = _fold_groups(items)
+        stream = StreamingList(_row, folded)
+        total = count_cards(items)
+        if total >= FILTER_MIN_CARDS:
+            def _refilter(mode, query):
+                shown = filter_update_items(folded, mode, query, touched)
+                # The rows being replaced take their boxes, setters and group
+                # listeners with them; flags and decisions hold what they showed.
+                boxes.clear()
+                setters.clear()
+                listeners.clear()
+                stream.reset(shown)
+                active = mode != "all" or bool(query.strip())
+                bar.set_count(f"Showing {count_cards(shown)} of {total} cards"
+                              if active else "")
+            bar = FilterBar(FILTER_MODES, _refilter)
+            lay.addWidget(bar)
+        lay.addWidget(stream, 1)
     else:
         lay.addStretch()
 

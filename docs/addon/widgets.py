@@ -11,12 +11,12 @@ May import config, logic, palette, platform and ui. Must NOT import sync, dialog
 or review: that's the boundary that keeps this module out of the same import cycle
 review.py was built to dodge.
 """
-from aqt.qt import (QHBoxLayout, QLabel, QPushButton, QScrollArea, Qt,
+from aqt.qt import (QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, Qt,
                      QVBoxLayout, QWidget)
 
 from .palette import colors
 from .platform import new_work_request, platform, platform_owner_id
-from .ui import section_label
+from .ui import hint_label, section_label
 
 # The chip labels. Their colours come from the palette, so only the wording lives here.
 # "changed" reads UPDATED rather than CHANGED to match the wording review.py's rows
@@ -35,6 +35,7 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
          # a stop), a clean card reads ACCEPT, and a card a revision changed reads
          # UPDATED's own word for that idea.
          "blocked": "BLOCKED", "warn": "WARNING", "ok": "OK", "revised": "REVISED",
+         "imported": "IMPORTED",
          # The AI Backends window's row kinds (ai_setup.py): what the detection
          # pass found for one assistant, and which one the wizard will use. This
          # is the window's own vocabulary rather than a card's, so these get their
@@ -68,6 +69,7 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
 _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "moved",
           "skipped": "retired", "kept": "retired", "held": "updated",
           "blocked": "decline", "warn": "updated", "ok": "accept", "revised": "updated",
+          "imported": "accept",
           # A found assistant is a clean result (accept), one that is installed but
           # will not answer is the same "attention, not yet a stop" as a warning
           # (updated), one that is not there at all reads as a decline, and one the
@@ -556,6 +558,7 @@ class StreamingList(QScrollArea):
         self._items = items
         self._batch = batch
         self._shown = 0
+        self._generation = 0
 
         # Rows live in their own inner container with its own layout, kept separate
         # from the stretch below it. Appending only ever touches the rows layout, so
@@ -619,7 +622,11 @@ class StreamingList(QScrollArea):
             end = min(start + self.IDLE_CHUNK, self.total())
             items = list(self._items[start:end])
 
+            generation = self._generation
+
             def build(items):
+                if generation != self._generation:
+                    return    # the list was replaced while this chunk was in flight
                 self._prefetching = False
                 if self.built() != start:
                     return    # a scroll built these rows first; the next tick resumes
@@ -630,7 +637,8 @@ class StreamingList(QScrollArea):
                     self._prebuilt.append(row)
 
             def abandon(_error):
-                self._prefetching = False
+                if generation == self._generation:
+                    self._prefetching = False
 
             request = new_work_request(
                 self, "list-prefetch", "streaming-list.prefetch",
@@ -709,3 +717,82 @@ class StreamingList(QScrollArea):
     def fill_all(self):
         while self._shown < self.total():
             self._extend()
+
+    def reset(self, items):
+        """Replace the items and rebuild only the first batch. Anything holding the old
+        rows must let go of them first."""
+        self._generation += 1
+        layout = self._rows_layout
+        while layout.count():
+            widget = layout.takeAt(0).widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self._items = items
+        self._prebuilt = []
+        self._prefetching = False
+        self._shown = 0
+        bar = self.verticalScrollBar()
+        if bar.value():
+            bar.setValue(0)
+        self._extend()
+        if self.viewport().height() > 0:
+            self._fill_viewport()
+        if self.built() < self.total() and not self._idle.is_active():
+            self._idle.start()
+
+
+class _SearchField(QLineEdit):
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape and self.text():
+            self.clear()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+
+class FilterBar(QWidget):
+    """Filter options and a search field, with a muted count line that shows while
+    either is active. `on_change(mode, query)` runs when an option is picked and
+    shortly after the search text settles. Escape in the field clears it."""
+
+    SEARCH_DELAY_MS = 150
+
+    def __init__(self, modes, on_change, placeholder="Search cards"):
+        super().__init__()
+        self._mode = modes[0][0]
+        self._on_change = on_change
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        row = QWidget()
+        rlay = QHBoxLayout(row)
+        rlay.setContentsMargins(0, 0, 0, 0)
+        rlay.setSpacing(10)
+        self.options = decision_cell(list(modes), self._mode, self._pick)
+        for value, label in modes:
+            self.options.buttons[value].setAccessibleName(f"Show {label.lower()} cards")
+        rlay.addWidget(self.options, 0)
+        self.search = _SearchField()
+        self.search.setPlaceholderText(placeholder)
+        self.search.setAccessibleName(placeholder)
+        rlay.addWidget(self.search, 1)
+        lay.addWidget(row)
+        self._count = hint_label("")
+        self._count.setVisible(False)
+        lay.addWidget(self._count)
+        self._timer = platform().create_timer(
+            platform_owner_id(self), self._apply, self.SEARCH_DELAY_MS, single_shot=True)
+        self.search.textChanged.connect(lambda _text: self._timer.start())
+
+    def _pick(self, mode):
+        self._mode = mode
+        self._timer.stop()
+        self._apply()
+
+    def _apply(self):
+        self._on_change(self._mode, self.search.text())
+
+    def set_count(self, text):
+        self._count.setText(text)
+        self._count.setVisible(bool(text))
