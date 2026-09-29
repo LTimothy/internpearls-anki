@@ -363,9 +363,8 @@ def _image_lines(session, i, card):
 def _image_row_html(session, i, card):
     """The review row's image line(s): a rendered thumbnail when one resolved
     to a local file Qt can decode, a plain failure message when it didn't, and
-    for a web image the URL's host either way: this is I2's "the user sees
-    what they're accepting" gate, so a card with an image never reviews as if
-    it had none. Returns "" for a card with no images at all.
+    for a web image the URL's host either way, so the user sees what they're
+    accepting and a card with an image never reviews as if it had none. Returns "" for a card with no images at all.
     """
     return "<br>".join(line for _, line, _ in _image_lines(session, i, card))
 
