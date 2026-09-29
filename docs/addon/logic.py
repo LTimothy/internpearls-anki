@@ -371,7 +371,8 @@ def fields_to_carry_over(saved, target_current):
             if v.strip() and not (current_lower.get(f.lower()) or "").strip()}
 
 
-def find_retired_in_collection(retired_ledger, existing_guids, existing_front_to_guid=None):
+def find_retired_in_collection(retired_ledger, existing_guids, existing_front_to_guid=None,
+                               live_guids=(), live_fronts=()):
     """The retired cards the learner still has in their collection.
 
     When a deck splits, merges, or drops a card, the old card's GUID leaves the
@@ -413,8 +414,14 @@ def find_retired_in_collection(retired_ledger, existing_guids, existing_front_to
     advisory "sync first" note, which is a cosmetic miss, not a wrong archive. Sorted
     by deck then identity for stable display. Pure: the caller supplies the collection
     maps and does anything collection-touching (tag checks, the archive itself).
+
+    `live_guids` and `live_fronts` are the guids and fronts of the cards in the current
+    packages. A learner note that matches either is a live card, whatever the ledger
+    says about its identity (a reseed keeps the front), and is never reported.
     """
     existing_guids = set(existing_guids)
+    guid_front = {g: f for f, g in (existing_front_to_guid or {}).items()}
+    live_guids, live_fronts = set(live_guids), set(live_fronts)
     out = []
     for deck, entries in (retired_ledger or {}).items():
         for guid, info in (entries or {}).items():
@@ -423,6 +430,8 @@ def find_retired_in_collection(retired_ledger, existing_guids, existing_front_to
                 front = info.get("front") or info.get("identity") or ""
                 existing_guid = existing_front_to_guid.get(front) if front else None
             if existing_guid is None:
+                continue
+            if existing_guid in live_guids or guid_front.get(existing_guid) in live_fronts:
                 continue
             sup = list(info.get("superseded_by") or [])
             out.append({
@@ -438,7 +447,7 @@ def find_retired_in_collection(retired_ledger, existing_guids, existing_front_to
     return out
 
 
-def find_stranded_pairs(superseded, existing_front_to_guid):
+def find_stranded_pairs(superseded, existing_front_to_guid, live_guids=(), live_fronts=()):
     """Pairs where the learner holds BOTH wordings of a card that was reworded once.
 
     Rewording a front freezes the old wording as the note's `id`, which keeps the GUID
@@ -459,12 +468,26 @@ def find_stranded_pairs(superseded, existing_front_to_guid):
     point of that ladder, and acting here too would fight it. Returns
     [{guid, front, successor_guid, successor_front}] sorted by front for stable display;
     `guid` is the predecessor, the copy that gets emptied out and archived.
+
+    A chain of rewordings (A to B to C) pairs every older wording with the final one, so
+    progress flows to the wording that is current, whatever order the pairs are applied
+    in. A wording that leads into a cycle has no current successor and reports nothing.
+    A predecessor whose guid or front is in `live_guids`/`live_fronts` (the current
+    packages) is a live card and is never reported.
     """
+    fronts = existing_front_to_guid or {}
+    live_guids, live_fronts = set(live_guids), set(live_fronts)
     out = []
-    for old_front, new_front in (superseded or {}).items():
-        old_guid = (existing_front_to_guid or {}).get(old_front)
-        new_guid = (existing_front_to_guid or {}).get(new_front)
-        if old_guid and new_guid and old_guid != new_guid:
+    for old_front in (superseded or {}):
+        path, new_front = [old_front], superseded[old_front]
+        while new_front in superseded and new_front not in path:
+            path.append(new_front)
+            new_front = superseded[new_front]
+        if new_front in path:
+            continue
+        old_guid, new_guid = fronts.get(old_front), fronts.get(new_front)
+        if (old_guid and new_guid and old_guid != new_guid
+                and old_guid not in live_guids and old_front not in live_fronts):
             out.append({"guid": old_guid, "front": old_front,
                         "successor_guid": new_guid, "successor_front": new_front})
     out.sort(key=lambda p: p["front"])
@@ -750,6 +773,29 @@ def plan_notetype_changes(incoming_types, existing_types, managed):
     return out
 
 
+def cards_lost_in_conversion(card_ords, to_cloze, template_map, template_count):
+    """How many of a note's cards (by ordinal) Anki's change-notetype would delete.
+
+    A cloze target keeps every card. Otherwise a card survives only if a template takes
+    its ordinal: through `template_map` (Anki's default map between two regular types,
+    old ordinal per new template, -1 for none) or, from a cloze, by being below
+    `template_count`. Anki may keep one out-of-range cloze card; counting it as lost
+    errs toward keeping the note beside.
+    """
+    if to_cloze:
+        return 0
+    kept = ({o for o in template_map if o >= 0} if template_map
+            else set(range(template_count)))
+    return sum(1 for o in card_ords if o not in kept)
+
+
+def split_notetype_changes(changes):
+    """(convert in place, keep beside): a change that would delete any card is never
+    converted; the learner's note stays as it is and the new version imports beside it."""
+    lossy = [c for c in changes if c.get("drops")]
+    return [c for c in changes if not c.get("drops")], lossy
+
+
 def apkg_models(path):
     """Return {notetype_name: {"css": str, "tmpls": [(name, qfmt, afmt), ...]}} for
     every note type carried by the .apkg at `path`.
@@ -967,20 +1013,37 @@ def source_label_for(manifest_sources, guid):
     return label[:SOURCE_LABEL_MAX] if label else ""
 
 
-def prune_declined(reg, retired_guids, seen):
-    """Drop registry entries that are moot: the note was retired upstream, or it is
-    gone from its deck's current package. `seen` covers only decks actually
-    downloaded this run, so an entry for a deck not in `seen` is never judged for
-    absence. A hand-edited entry that isn't even a dict is left alone unless its
-    guid is retired: there's no "deck" to check it against, and a bad entry must
-    degrade gracefully rather than crash a sync. Mutates `reg`; returns whether
-    anything was removed."""
-    dead = [g for g, e in reg.items()
-            if g in retired_guids
-            or (isinstance(e, dict) and e.get("deck") in seen and g not in seen[e["deck"]])]
-    for g in dead:
-        del reg[g]
-    return bool(dead)
+def prune_declined(reg, retired_guids, seen, manifest_decks):
+    """Drop registry entries that are moot, and re-file the ones whose card moved.
+
+    An entry is moot when its note was retired upstream, or when its guid is in no
+    package of the manifest. `seen` is {deck: guids} for the decks actually read this
+    run (a package's own guids plus the learner guids they matched), and absence is only
+    judged once every deck in `manifest_decks` was read, because a card the source moved
+    to a deck this run did not read is still there. An entry whose card turns up in a
+    different deck than the one recorded follows it. A hand-edited entry that isn't even
+    a dict is left alone unless its guid is retired: there's no "deck" to check it
+    against, and a bad entry must degrade gracefully rather than crash a sync. Mutates
+    `reg`; returns whether anything changed."""
+    complete = set(manifest_decks) <= set(seen)
+    changed = False
+    for g in list(reg):
+        e = reg[g]
+        if g in retired_guids:
+            del reg[g]
+            changed = True
+            continue
+        if not isinstance(e, dict):
+            continue
+        homes = [d for d, guids in seen.items() if g in guids]
+        if homes:
+            if e.get("deck") not in homes:
+                e["deck"] = homes[0]
+                changed = True
+        elif complete and e.get("deck") in seen:
+            del reg[g]
+            changed = True
+    return changed
 
 
 def declined_guids(registry):
@@ -1256,6 +1319,9 @@ def remap_cards(src, existing_fronts, aliases):
          predate stable ids.
       3. `aliases` ({current_front: previous_front}): the learner's card still shows
          the one prior wording of a renamed front.
+    Each tier runs over the whole package before the next, and a learner GUID is claimed
+    by one incoming note only: a note whose text match is already taken imports as new,
+    since a visible duplicate beats a card that silently never arrives.
 
     Returns (remap, in_place, as_new, new_notes, matched): `remap` is {note_id: guid} for
     notes whose GUID needs rewriting to match an existing card, `in_place`/`as_new` are
@@ -1271,27 +1337,32 @@ def remap_cards(src, existing_fronts, aliases):
     eventually disagree with this one, and the visible symptom would be a preview that
     lies to the learner about which cards are about to appear or change.
     """
-    remap, in_place, new_notes, matched = {}, 0, [], []
+    notes = apkg_notes(src)
     existing_guids = set(getattr(existing_fronts, "guids", existing_fronts.values()))
-    for rid, fields, apkg_guid in apkg_notes(src):
-        if apkg_guid in existing_guids:
-            in_place += 1
-            matched.append((rid, apkg_guid, apkg_guid))
-            continue
-        front = fields[0] if fields else ""
-        existing_guid = existing_fronts.get(front)
-        if existing_guid is None and front in aliases:
-            existing_guid = existing_fronts.get(aliases[front])
-        if is_generated_guid(existing_guid):
-            existing_guid = None   # locally generated cards are invisible to sync matching
-        if existing_guid is None:
+    resolved = {i: guid for i, (_rid, _fields, guid) in enumerate(notes)
+                if guid in existing_guids}
+    claimed = set(resolved.values())
+    for use_alias in (False, True):
+        for i, (_rid, fields, _guid) in enumerate(notes):
+            front = fields[0] if fields else ""
+            if i in resolved or (use_alias and front not in aliases):
+                continue
+            existing_guid = existing_fronts.get(aliases[front] if use_alias else front)
+            # Locally generated cards are invisible to sync matching, and a learner
+            # card is claimed by one incoming note only.
+            if (existing_guid is not None and not is_generated_guid(existing_guid)
+                    and existing_guid not in claimed):
+                resolved[i] = existing_guid
+                claimed.add(existing_guid)
+    remap, new_notes, matched = {}, [], []
+    for i, (rid, fields, apkg_guid) in enumerate(notes):
+        if i not in resolved:
             new_notes.append((rid, fields, apkg_guid))
-        else:
-            in_place += 1
-            matched.append((rid, apkg_guid, existing_guid))
-            if existing_guid != apkg_guid:
-                remap[rid] = existing_guid
-    return remap, in_place, len(new_notes), new_notes, matched
+            continue
+        matched.append((rid, apkg_guid, resolved[i]))
+        if resolved[i] != apkg_guid:
+            remap[rid] = resolved[i]
+    return remap, len(matched), len(new_notes), new_notes, matched
 
 
 def protected_for(guid, configured, per_note):
@@ -1302,6 +1373,34 @@ def protected_for(guid, configured, per_note):
     that field across every card that has one.
     """
     return set(configured) | set((per_note or {}).get(guid) or ())
+
+
+def merge_learner_tags(before, imported, scope_tag, markers=()):
+    """A matched note's tags after an import: the source's own scope-tag subtree from
+    `imported`, every tag in `before` the source does not manage (anything outside the
+    scope, and the archive `markers` under it), and any other tag the source ships.
+    Anki compares tags case-insensitively.
+
+    With no scope tag nothing tells the source's tags from the learner's, so both are kept.
+    """
+    scope = (scope_tag or "").lower()
+    marks = [m.lower() for m in markers]
+
+    def under(tag, root):
+        return tag == root or tag.startswith(root + "::")
+
+    def managed(tag):
+        low = tag.lower()
+        return (bool(scope) and under(low, scope)
+                and not any(under(low, m) for m in marks))
+
+    out, seen = [], set()
+    for tag in ([t for t in imported if managed(t)] + [t for t in before if not managed(t)]
+                + [t for t in imported if not managed(t)]):
+        if tag.lower() not in seen:
+            seen.add(tag.lower())
+            out.append(tag)
+    return out
 
 
 def per_note_for_package(per_note, matched):

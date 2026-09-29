@@ -29,8 +29,9 @@ from .collection import (NoteTypeFieldsRequired, _apply_deck, _apply_template_ch
                          _existing_front_to_guid, _existing_guid_to_deck,
                          _existing_guid_to_fields, _existing_guid_to_nid,
                          _existing_notes_summary, _import_apkg,
-                         _pre_sync_backup_or_confirm_skip, _restore,
-                         _snapshot, _snapshot_fields, _template_changes, apply_deck_moves,
+                         _pre_sync_backup_or_confirm_skip, _restore, _restore_tags,
+                         _snapshot, _snapshot_fields, _snapshot_tags, _template_changes,
+                         apply_deck_moves,
                          archive_notes, carry_over_protected_fields,
                          carry_scheduling_forward, decks_holding,
                          installed_matching_collection, invalidate_installed)
@@ -50,7 +51,7 @@ from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes
                     note_display_label, note_fields_hash, per_note_for_package,
                     unopened_line,
                     plain_text, plural, prune_declined, released_held_guids, remap_cards,
-                    write_personalized)
+                    split_notetype_changes, write_personalized)
 from .net import (_CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled,
                   TransportError, _gh_raw)
 from .palette import colors
@@ -486,36 +487,75 @@ def _collision_items(collisions):
     return items
 
 
+_FORMAT_CHANGE = ("(a question and answer became a fill-in-the-blank, or the other way "
+                  "round)")
+
+
+def _kept_beside_text(beside, of_them):
+    """What happens to notes whose conversion would delete cards: nothing asked, so
+    this is said wherever the conversion question is."""
+    one = len(beside) == 1
+    who = (f"<b>{plural(len(beside), 'card')}</b> of them" if of_them
+           else "This card" if one else "These cards")
+    return (f"{who} would lose cards if moved (a fill-in-the-blank with several blanks "
+            "becomes a single card), and their review history with them. So "
+            f"{'it stays as it is' if one else 'they stay as they are'}, as a local copy "
+            "that no longer receives updates, and the new version is added beside "
+            f"{'it' if one else 'them'}.")
+
+
+def _conversion_question(convert, beside, decline_text):
+    """The consent question for `convert`, naming `beside` too when there are any."""
+    total = len(convert) + len(beside)
+    kept = f"{_kept_beside_text(beside, True)}<br><br>" if beside else ""
+    which = ("your existing cards" if not beside
+             else "the other one" if len(convert) == 1 else f"the other {len(convert)}")
+    return (f"<b>{plural(total, 'card')}</b> in this update changed format "
+            f"{_FORMAT_CHANGE}.<br><br>{kept}Move {which} to the new format? They keep "
+            "all their cards and review history. Anki treats this as a schema change, so "
+            "your next AnkiWeb sync will be a one-time full sync, choose \"Upload to "
+            f"AnkiWeb\" when asked.<br><br>{decline_text}")
+
+
+def _kept_beside_notice(beside):
+    return (f"<b>{plural(len(beside), 'card')}</b> in this update changed format "
+            f"{_FORMAT_CHANGE}.<br><br>{_kept_beside_text(beside, False)}")
+
+
 def _offer_notetype_changes(changes, protected=None, on_import_as_new=None, per_note=None):
     """Ask before converting the learner's notes to the note type an update ships.
 
     Declining is a real choice with a real consequence, and it says so: the cards still
     import, but as new notes beside their existing ones, so the history stays on a copy
-    that is no longer what the deck teaches. Accepting keeps one card with its history.
+    that is no longer what the deck teaches. Accepting keeps every card with its history.
     Mirrors _offer_template_changes because it costs the same thing, a one-time full
-    AnkiWeb sync, for the same reason.
+    AnkiWeb sync, for the same reason. A note whose conversion would delete a card is
+    never converted: it goes to `on_import_as_new` whatever the answer.
     """
     if not changes:
         return []
-    accepted = _ask(
-        f"<b>{plural(len(changes), 'card')}</b> in this update changed format (a "
-        "question and answer became a fill-in-the-blank).<br><br>Move your existing "
-        "cards to the new format? They keep their review history and stay one card "
-        "each. Anki treats this as a schema change, so your next AnkiWeb sync will be "
-        "a one-time full sync, choose \"Upload to AnkiWeb\" when asked.<br><br>"
-        "Choosing to import them as new makes your existing cards local copies: "
-        "they keep their current format, fields, note IDs, and review history, but "
-        "stop receiving updates from this source. The new-format cards import "
-        "separately and receive future source updates.",
-        yes_label="Move my cards across", no_label="Import them as new"
-    )
+    convert, beside = split_notetype_changes(changes)
+    if not convert:
+        _info(_kept_beside_notice(beside))
+        accepted = False
+    else:
+        accepted = _ask(
+            _conversion_question(
+                convert, beside,
+                "Choosing to import them as new makes your existing cards local copies: "
+                "they keep their current format, fields, note IDs, and review history, "
+                "but stop receiving updates from this source. The new-format cards "
+                "import separately and receive future source updates."),
+            yes_label="Move my cards across", no_label="Import them as new")
     if not accepted:
         if on_import_as_new is not None:
             on_import_as_new(changes)
         return []
     if protected is not None:
-        _check_protected_conversion(changes, protected, per_note)
-    return change_note_types(changes)
+        _check_protected_conversion(convert, protected, per_note)
+    if beside and on_import_as_new is not None:
+        on_import_as_new(beside)
+    return change_note_types(convert)
 
 
 def _planned_notetype_row_ids(src, existing_fronts, aliases, changes):
@@ -532,18 +572,63 @@ def _fork_import_as_new(changes, scope_tag):
     return _existing_front_to_guid(scope_tag), forked_guids
 
 
-def _restore_prior_touches_before_fork(changes, snap, baseline, touched):
-    """Restore personal fields an earlier deck overwrote before making a local copy."""
-    planned_guids = {change["guid"] for change in changes} & touched
-    return _restore(snap, baseline, planned_guids)
+def _load_shipped():
+    """shipped_fields.json as {guid: {field: text}}. A malformed file or entry reads as
+    no baseline, which keeps the learner's value."""
+    raw = _load_json(SHIPPED, {})
+    if not isinstance(raw, dict):
+        return {}
+    return {guid: {f: v for f, v in entry.items() if isinstance(f, str) and isinstance(v, str)}
+            for guid, entry in raw.items() if isinstance(entry, dict)}
+
+
+UPDATE_UNDO_NAME = "Intern Pearls deck update"
+# Undo step id -> (deck name, installed version before the step, {guid: prior baseline},
+# version the step applied). Anki's undo stack lives only as long as the open
+# collection, so memory is enough.
+_update_undo_steps = {}
+# (deck, version) updates the learner undid this session: auto-sync leaves them for a
+# manual Update my decks rather than applying them again unasked.
+undone_updates = set()
+
+
+def restore_pending_after_undo(changes):
+    """state_did_undo hook: undoing a deck update puts the old content back, so that
+    deck's installed version and shipped baselines go back to what they were and the
+    deck is offered again."""
+    try:
+        if getattr(changes, "operation", None) != UPDATE_UNDO_NAME:
+            return
+        step = _update_undo_steps.pop(getattr(changes, "counter", None), None)
+        if step is None:
+            return
+        name, prior_version, prior_shipped, undone_version = step
+        undone_updates.add((name, undone_version))
+        installed = _load_json(INSTALLED, {})
+        installed = installed if isinstance(installed, dict) else {}
+        if prior_version is None:
+            installed.pop(name, None)
+        else:
+            installed[name] = prior_version
+        _save_json(INSTALLED, installed)
+        shipped = _load_shipped()
+        for guid, entry in prior_shipped.items():
+            if entry is None:
+                shipped.pop(guid, None)
+            else:
+                shipped[guid] = entry
+        _save_json(SHIPPED, shipped)
+    except Exception:
+        # Anki drops a hook that raises; the cost of a miss is a deck not re-offered.
+        pass
 
 
 def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
               defer_template_changes=False, convert_notetypes=None,
               undisclosed_conversions=()):
-    """Apply every deck in `todo`: fix note types, snapshot protected fields, remap and
-    import each deck (keeping the learner's scheduling), restore the snapshotted fields,
-    and persist the new installed versions.
+    """Apply every deck in `todo`: fix note types, snapshot protected fields and tags,
+    remap and import each deck (keeping the learner's scheduling) and restore the
+    snapshot onto it in the same undo step, then persist the new installed versions.
 
     The caller must already have confirmed (if interactive) and taken a backup — this is
     the one place the actual history-preserving sequence lives, shared by the interactive
@@ -563,8 +648,8 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
 
     A False from `on_progress` stops *before* that deck's fetch/import, never
     partway through one, so whatever decks already completed are already fully
-    applied — the loop below still runs its snapshot-restore and persists their
-    versions for exactly those, same as a clean finish, just for fewer decks.
+    applied, restore included, and their versions are persisted the same as a clean
+    finish, just for fewer decks.
 
     `defer_template_changes` is the unattended-caller policy: applying a template bumps
     the collection schema (a one-time full AnkiWeb sync), which must never happen
@@ -589,25 +674,25 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     per_note = manifest.get("note_protected_fields", {})
     _ensure_notetypes()
     snap = _snapshot(cfg["protected"], cfg["scope_tag"], per_note)
-    baseline = _load_json(SHIPPED, {})
+    tag_snap = _snapshot_tags(cfg["scope_tag"])
+    baseline = _load_shipped()
+    prior_installed = _load_json(INSTALLED, {})
+    prior_installed = prior_installed if isinstance(prior_installed, dict) else {}
     existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
     reg = load_declined()
     declined = declined_guids(reg)
     seen = {}
-    results, tpl_changes, deferred, touched = [], {}, [], set()
+    results, tpl_changes, deferred = [], {}, []
+    shipped, restored, collisions = {}, 0, []
     # This run's own per-deck versions, and the only thing written back: the save below
     # merges them into whatever installed.json holds at that moment (see there), so no
     # caller has to hand its own snapshot of it in or take a half-updated one back.
     applied = {}
     converted = 0
-    prefork_restored = 0
-    prefork_collisions = []
     cancelled = False
     for i, d in enumerate(todo, 1):
         conversion_undo = None
         forked_guids = set()
-        deck_prefork_restored = 0
-        deck_prefork_collisions = []
         short = d["name"].split("::")[-1]
         try:
             if on_progress and not on_progress(i, len(todo), short):
@@ -672,62 +757,65 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # next run finds it pending and moves the learner's cards across for real.
             missing = ([] if convert_notetypes is False
                        else missing_notetype_targets(nt))
-            conversion_undo = mw.col.add_custom_undo_entry("Intern Pearls deck update")
+            conversion_undo = mw.col.add_custom_undo_entry(UPDATE_UNDO_NAME)
             # Before the import, not after: once the note is on the right type, the
             # import matches it by GUID and updates it in place, which is the whole
             # point. Afterwards it would be converting a duplicate.
+            forked = []
             if missing:
                 changed_nids = []
             elif convert_notetypes is None:
-                forked = []
                 changed_nids = _offer_notetype_changes(
                     nt, cfg["protected"],
                     on_import_as_new=lambda changes: forked.extend(changes),
                     per_note=per_note)
-                if forked:
-                    deck_prefork_restored, deck_prefork_collisions = (
-                        _restore_prior_touches_before_fork(
-                            forked, snap, baseline, touched))
-                    existing_fronts, forked_guids = _fork_import_as_new(
-                        forked, cfg["scope_tag"])
             else:
-                if nt and convert_notetypes:
-                    _check_protected_conversion(nt, cfg["protected"], per_note)
-                    changed_nids = change_note_types(nt)
-                else:
-                    changed_nids = []
-                    if nt:
-                        deck_prefork_restored, deck_prefork_collisions = (
-                            _restore_prior_touches_before_fork(
-                                nt, snap, baseline, touched))
-                        existing_fronts, forked_guids = _fork_import_as_new(
-                            nt, cfg["scope_tag"])
+                # A conversion that would delete a card is kept beside even when accepted.
+                to_convert, forked = (split_notetype_changes(nt) if convert_notetypes
+                                      else ([], nt))
+                if to_convert:
+                    _check_protected_conversion(to_convert, cfg["protected"], per_note)
+                changed_nids = change_note_types(to_convert)
+            if forked:
+                # Only the learner's note's guid changes: its fields and tags stay as
+                # they are, already restored if an earlier deck in this run imported it.
+                existing_fronts, forked_guids = _fork_import_as_new(
+                    forked, cfg["scope_tag"])
+            package_matched = []
             expected_conflicts = (
                 _planned_notetype_row_ids(src, existing_fronts, aliases, nt)
                 if missing else frozenset())
             in_place, as_new, wrote = _apply_deck(
                 src, aliases, existing_fronts, declined,
                 expected_conflicting_rids=expected_conflicts,
-                allow_field_additions=not defer_template_changes)
-            if conversion_undo is not None:
-                mw.col.merge_undo_entries(conversion_undo)
-                conversion_undo = None
+                allow_field_additions=not defer_template_changes,
+                matched_out=package_matched)
             for guid in forked_guids:
                 snap.pop(guid, None)
-            prefork_restored += deck_prefork_restored
-            prefork_collisions.extend(deck_prefork_collisions)
-            converted += len(changed_nids)
-            # Recorded the moment the import returns, before anything else in this
-            # iteration can raise. `touched` is what _restore and _capture_shipped work
-            # from, so a deck missing from it has its protected fields left as the
-            # import overwrote them: the learner's annotations, gone for good. Every
-            # later step here is best-effort by comparison.
-            touched |= wrote
-            existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
-            seen[d["name"]] = {g for _, _f, g in apkg_notes(src)}
+                tag_snap.pop(guid, None)
+            # Inside this deck's undo step, before the next deck is fetched: a run that
+            # stops or fails later can't leave this import's overwrite standing, and a
+            # failure here rolls the import back. The shipped values are read before
+            # the restore puts the learner's own back over them.
+            deck_shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], wrote,
+                                            per_note)
+            deck_restored, deck_collisions = _restore(snap, baseline, wrote)
+            _restore_tags(tag_snap, cfg["scope_tag"], wrote)
             # After the import, not before: the extra cloze cards only exist once the
             # cloze markup has actually landed on the note.
             seed_converted_siblings(changed_nids)
+            mw.col.merge_undo_entries(conversion_undo)
+            _update_undo_steps[conversion_undo] = (
+                d["name"], prior_installed.get(d["name"]),
+                {guid: baseline.get(guid) for guid in deck_shipped}, d.get("version"))
+            conversion_undo = None
+            shipped.update(deck_shipped)
+            restored += deck_restored
+            collisions.extend(deck_collisions)
+            converted += len(changed_nids)
+            existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
+            seen[d["name"]] = ({g for _, _f, g in apkg_notes(src)}
+                               | {existing for _r, _g, existing in package_matched})
             if missing:
                 # Worded as the routine second pass it is, rather than as a fault: the
                 # first report of this read as an error and the run that completed it
@@ -764,30 +852,16 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     # view of installed.json is taken before the fetch phase, which can be minutes old
     # by the time a multi-deck run gets here, and saving that as-is would revert any
     # version another sync recorded in the meantime.
-    # Read what the source shipped BEFORE restoring the learner's annotations over it:
-    # after _restore, their own version is what the note holds, and recording that as
-    # the baseline would make the learner's own edit indistinguishable from the
-    # source's own value next time.
-    try:
-        shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched, per_note)
-    finally:
-        restored, collisions = _restore(snap, baseline, touched)
-    restored += prefork_restored
-    collisions = prefork_collisions + collisions
     if shipped:
-        _save_json(SHIPPED, {**_load_json(SHIPPED, {}), **shipped})
+        _save_json(SHIPPED, {**_load_shipped(), **shipped})
     _save_json(INSTALLED, {**_load_json(INSTALLED, {}), **applied})
-    # Registry housekeeping runs last, and inside its own guard. Everything above is
-    # what keeps the learner's annotations: the import has already overwritten the protected
-    # fields by this point, and only _restore puts them back. Between the two, anything
-    # this raised (a hand-edited registry the per-entry hardening can't cover) took the
-    # restore down with it and left the overwrite standing, with the decks recorded as
-    # installed. Ordering, not the exception, is the fix; the guard is so a future
-    # different failure here can't reintroduce it.
+    # Registry housekeeping runs last, inside its own guard, so a hand-edited registry
+    # the per-entry hardening can't cover never fails a run whose decks already applied.
     try:
         retired_guids = {g for per_deck in (manifest.get("retired") or {}).values()
                          for g in per_deck}
-        if prune_declined(reg, retired_guids, seen):
+        if prune_declined(reg, retired_guids, seen,
+                          {d["name"] for d in manifest.get("decks", [])}):
             save_declined(reg)
     except Exception:
         pass
@@ -908,7 +982,55 @@ def _deck_opted_out(deck, excluded):
     return bool(deck) and any(deck == x or deck.startswith(x + "::") for x in excluded)
 
 
-def _reconcile_pending(manifest, cfg):
+def _live_cards_loader(manifest, fetch=None, local=None):
+    """A memoized zero-argument callable returning (guids, fronts) of every card in the
+    manifest's packages, read only when something is about to be archived.
+
+    `local` is {deck name: path} for packages already on disk; anything else is fetched
+    through `fetch` (through the session cache) under a cancellable progress window, or
+    skipped when there is none, so the unattended poll never downloads. A package that can't be read
+    contributes nothing.
+    """
+    cache = []
+
+    def load():
+        if not cache:
+            guids, fronts = set(), set()
+
+            def read(src):
+                for _rid, fields, guid in apkg_notes(src):
+                    guids.add(guid)
+                    fronts.add(fields[0] if fields else "")
+
+            to_fetch = []
+            for d in manifest.get("decks", []):
+                src = (local or {}).get(d["name"])
+                if _is_local(src):
+                    try:
+                        read(src)
+                    except Exception:
+                        pass
+                elif fetch is not None:
+                    to_fetch.append(d)
+            if to_fetch:
+                with cancellable_progress("Checking your current decks",
+                                          len(to_fetch)) as step:
+                    for i, d in enumerate(to_fetch, 1):
+                        short = d["name"].split("::")[-1]
+                        if not step(i, f"Reading {short} ({i} of {len(to_fetch)})"):
+                            break
+                        try:
+                            read(_cached_fetch(fetch, d, on_chunk=step.pump))
+                        except DownloadCancelled:
+                            break
+                        except Exception:
+                            pass
+            cache.append((guids, fronts))
+        return cache[0]
+    return load
+
+
+def _reconcile_pending(manifest, cfg, live_cards=None):
     """Everything "Reconcile my decks" would find pending: retired cards still in the
     collection (split into fresh vs. already-archived) and cards sitting in a
     since-reorganized deck. Shared by reconcile_decks() and update_decks() so the two
@@ -928,6 +1050,9 @@ def _reconcile_pending(manifest, cfg):
     archiving or relocating the learner's cards is not what "stopped" means), a
     relocation of a card this same pass is about to archive, and a retirement of a card
     that is also half of a reworded pair, which the merge already covers.
+
+    `live_cards` is a _live_cards_loader: with it, a learner note that matches (by guid
+    or front) a card the current packages still carry is never offered for archiving.
     """
     existing_nids = _existing_guid_to_nid(cfg["scope_tag"])
     # existing_fronts lets both ledgers act on a card whose GUID no longer matches them
@@ -961,6 +1086,15 @@ def _reconcile_pending(manifest, cfg):
                 and not is_generated_guid(p["guid"])
                 and not is_generated_guid(p["successor_guid"])
                 and tag not in mw.col.get_note(existing_nids[p["guid"]]).tags]
+    if live_cards is not None and (fresh or stranded):
+        live_guids, live_fronts = live_cards()
+        kept = {r["guid"] for r in find_retired_in_collection(
+            manifest.get("retired", {}), set(existing_nids), existing_fronts,
+            live_guids, live_fronts)}
+        fresh = [r for r in fresh if r["guid"] in kept]
+        kept_pairs = {(p["guid"], p["successor_guid"]) for p in find_stranded_pairs(
+            manifest.get("superseded_fronts", {}), existing_fronts, live_guids, live_fronts)}
+        stranded = [p for p in stranded if (p["guid"], p["successor_guid"]) in kept_pairs]
 
     def _opted_out(guid):
         """Read against where the learner's copy lives, not against the ledger's own
@@ -1157,7 +1291,7 @@ def reconcile_decks():
     cfg = _cfg()
     try:
         with wait_cursor():
-            manifest, _, source = _fetch_manifest(cfg)
+            manifest, fetch, source = _fetch_manifest(cfg)
     except Exception as e:
         _source_warning(e)
         return
@@ -1166,8 +1300,9 @@ def reconcile_decks():
               "Open <b>Intern Pearls → Manage decks</b> and use Configure source.")
         return
 
+    live_cards = _live_cards_loader(manifest, fetch)
     existing_nids, fresh, already, moves, retired_deck, tag, stranded = _reconcile_pending(
-        manifest, cfg)
+        manifest, cfg, live_cards)
     if not fresh and not moves and not stranded:
         _refresh_reconcile_action_label(0)
         if already:
@@ -1450,7 +1585,7 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
     it matched.
     """
     preview, downloaded = {}, {}
-    baseline = _load_json(SHIPPED, {})
+    baseline = _load_shipped()
     with cancellable_progress("Checking for updates", len(todo)) as step:
         for i, d in enumerate(todo, 1):
             short = d["name"].split("::")[-1]
@@ -1751,8 +1886,9 @@ def update_decks():
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     todo = decks_to_update(manifest, installed, cfg["excluded"],
                            held=held_deck_names(reg))
+    live_cards = _live_cards_loader(manifest, fetch)
     existing_nids, fresh, _already, moves, retired_deck, tag, stranded = _reconcile_pending(
-        manifest, cfg)
+        manifest, cfg, live_cards)
 
     if not todo and not fresh and not moves and not stranded:
         _refresh_reconcile_action_label(0)
@@ -1995,10 +2131,14 @@ def update_decks():
     # the reader hears of it. It can't be a second checkbox: _ask_with_widget carries
     # one, and the look change already has it.
     if pending_conversions:
+        convertible, beside = split_notetype_changes(pending_conversions)
         sections.append(
             f"<b>{plural(len(pending_conversions), 'card')}</b> in this update changed "
-            "format (a question and answer became a fill-in-the-blank). You'll be asked "
-            "once, before anything imports, whether to move your existing cards across.")
+            f"format {_FORMAT_CHANGE}."
+            + (f" {_kept_beside_text(beside, bool(convertible))}" if beside else "")
+            + (" You'll be asked once, before anything imports, whether to move "
+               f"{'the others' if beside else 'your existing cards'} across."
+               if convertible else ""))
 
     items, unreadable, sources, hidden = _gather_pending_items(
         todo, preview, downloaded, _retired_moved_items(fresh, moves, existing_nids),
@@ -2218,15 +2358,15 @@ def update_decks():
     # so nothing interrupts the apply loop from under its own progress dialog. Declining
     # is a real choice with a real cost, which is why it stays a question rather than
     # becoming a default either way.
-    convert = bool(pending_conversions) and _ask(
-        f"<b>{plural(len(pending_conversions), 'card')}</b> in this update changed "
-        "format (a question and answer became a fill-in-the-blank).<br><br>Move your "
-        "existing cards to the new format? They keep their review history and stay one "
-        "card each. Anki treats this as a schema change, so your next AnkiWeb sync will "
-        "be a one-time full sync, choose \"Upload to AnkiWeb\" when asked.<br><br>"
-        "Choosing to import them as new still imports them, as separate new cards "
-        "beside the ones you have, leaving your progress on the old versions.",
+    convertible, beside = split_notetype_changes(pending_conversions)
+    convert = bool(convertible) and _ask(
+        _conversion_question(
+            convertible, beside,
+            "Choosing to import them as new still imports them, as separate new cards "
+            "beside the ones you have, leaving your progress on the old versions."),
         yes_label="Move my cards across", no_label="Import them as new")
+    if beside and not convertible:
+        _info(_kept_beside_notice(beside))
 
     results, restored, tpl_changes, converted = [], 0, {}, 0
     if todo:
@@ -2325,8 +2465,12 @@ def update_decks():
         # Same generated-card guard as _reconcile_pending, on both sides: a card the
         # learner generated themself can coincidentally share a front with either half
         # of a superseded_fronts pair, and this recompute must never merge or archive it.
-        stranded = [p for p in find_stranded_pairs(
-            manifest.get("superseded_fronts", {}), _existing_front_to_guid(cfg["scope_tag"]))
+        superseded = manifest.get("superseded_fronts", {})
+        fronts_now = _existing_front_to_guid(cfg["scope_tag"])
+        pairs = find_stranded_pairs(superseded, fronts_now)
+        if pairs:
+            pairs = find_stranded_pairs(superseded, fronts_now, *live_cards())
+        stranded = [p for p in pairs
             if p["guid"] in existing_nids and p["successor_guid"] in existing_nids
             and not is_generated_guid(p["guid"])
             and not is_generated_guid(p["successor_guid"])
@@ -2443,13 +2587,17 @@ def import_single():
     nt = notetype_changes(src, existing_fronts, aliases, cfg["scope_tag"], declined)
     missing = missing_notetype_targets(nt)
     if nt and not missing:
-        format_line = (f" {plural(len(nt), 'card')} changed format (a question and "
-                       "answer became a fill-in-the-blank); you'll be asked whether to "
-                       f"move your existing {'card' if len(nt) == 1 else 'cards'} "
-                       "across, which is what keeps the history on those.")
+        convertible, beside = split_notetype_changes(nt)
+        format_line = (f" {plural(len(nt), 'card')} changed format {_FORMAT_CHANGE}."
+                       + (f" {_kept_beside_text(beside, bool(convertible))}"
+                          if beside else "")
+                       + (" You'll be asked whether to move "
+                          f"{'the others' if beside else 'your existing cards'} across, "
+                          "which is what keeps the history on those."
+                          if convertible else ""))
     elif nt:
-        format_line = (f" {plural(len(nt), 'card')} changed format (a question and "
-                       "answer became a fill-in-the-blank), and your collection has no "
+        format_line = (f" {plural(len(nt), 'card')} changed format {_FORMAT_CHANGE}, "
+                       "and your collection has no "
                        f"{', '.join(missing)} note type yet, so the history on "
                        f"{'that one' if len(nt) == 1 else 'those'} can't carry over "
                        "this time.")
@@ -2475,6 +2623,7 @@ def import_single():
     _ensure_notetypes()
     tpl = _template_changes(src)
     snap = _snapshot(cfg["protected"], cfg["scope_tag"], per_note)
+    tag_snap = _snapshot_tags(cfg["scope_tag"])
     # After the snapshot and before the import, the order _run_sync uses: on the right
     # note type the import matches by GUID and updates in place, and a snapshot taken
     # first survives whatever the conversion's own field map does. Nothing is asked
@@ -2497,11 +2646,13 @@ def import_single():
             expected_conflicting_rids=expected_conflicts)
         for guid in forked_guids:
             snap.pop(guid, None)
+            tag_snap.pop(guid, None)
         # Restore before any later bookkeeping or presentation can fail.
         try:
             shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched, per_note)
         finally:
-            restored, _ = _restore(snap, _load_json(SHIPPED, {}), touched)
+            restored, _ = _restore(snap, _load_shipped(), touched)
+            _restore_tags(tag_snap, cfg["scope_tag"], touched)
         seed_converted_siblings(changed_nids)
         mw.col.merge_undo_entries(undo)
     except Exception:
@@ -2509,7 +2660,7 @@ def import_single():
         mw.col.undo()
         raise
     if shipped:
-        _save_json(SHIPPED, {**_load_json(SHIPPED, {}), **shipped})
+        _save_json(SHIPPED, {**_load_shipped(), **shipped})
     mw.reset()
     _offer_template_changes(tpl)
     fields_line = (f" Preserved fields restored on {plural(restored, 'card')}."
