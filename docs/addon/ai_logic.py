@@ -233,7 +233,7 @@ def mechanical_checks(cards, existing_fronts, image_errors=None):
             entries.append({"code": "image", "level": "block",
                             "message": f"image could not be used: {msg}"})
 
-        if primary_is_blank(card):
+        if primary != "Text" and primary_is_blank(card):
             what = "front" if primary == "Front" else primary.lower()
             entries.append({"code": "empty", "level": "block",
                             "message": f"{what} is empty"})
@@ -512,6 +512,8 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
         if removed:
             note += (" A web picture in the suggested text was left out; "
                      "pictures are added through the card's images.")
+            if correction is None and verdict == "corrected":
+                verdict = "unverified"
         if verdict == "confirmed" and not web:
             verdict = "unverified"
             note = "no web access, from recall only: " + note

@@ -1643,22 +1643,28 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
             for name, value in card["fields"].items():
                 if name in note:
                     note[name] = value
+            files = card.get("_media_files", [])
             credits = card.get("_media_credits") or []
-            imgs = "".join(
-                f'<img src="{written.get(f, f)}">'
-                + ai_logic.image_credit_html(credits[k] if k < len(credits) else "")
-                for k, f in enumerate(card.get("_media_files", [])))
+            credit_lines = [ai_logic.image_credit_html(credits[k] if k < len(credits) else "")
+                            for k in range(len(files))]
+            # A credit follows its picture only in an Image field; beside a picture in
+            # the prompt field it would show on the question and join its front text.
+            in_image_field = "Image" in note
+            imgs = "".join(f'<img src="{written.get(f, f)}">'
+                           + (credit_lines[k] if in_image_field else "")
+                           for k, f in enumerate(files))
             if imgs:
-                if "Image" in note:
+                if in_image_field:
                     target = "Image"
                 else:
                     target = ai_logic.PRIMARY_FIELD.get(
                         card["note_type"], next(iter(card["fields"])))
                 note[target] = (note[target] + imgs) if note[target] else imgs
-            sources = ai_logic.sources_html(card.get("_sources"))
+            extra = ("" if in_image_field else "".join(credit_lines)) + ai_logic.sources_html(
+                card.get("_sources"))
             explain = next((n for n in ("Why", "Back", "Back Extra") if n in note), None)
-            if sources and explain:
-                note[explain] = note[explain] + sources
+            if extra and explain:
+                note[explain] = note[explain] + extra
             note.guid = ai_logic.generated_guid()
             note.tags = list(card.get("tags", [])) + [tag]
             col.add_note(note, did)
