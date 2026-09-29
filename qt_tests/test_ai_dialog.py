@@ -1449,6 +1449,29 @@ def test_review_verdicts_render_in_light_and_dark(tmp_path):
         harness.apply_theme("light")
 
 
+def test_review_correction_states_render_in_light_and_dark(tmp_path):
+    """Suggested, applied and kept corrections read differently, and the
+    unreviewed suggestion is noted beside Import."""
+    out_dir = os.environ.get("IP_SHOT_DIR") or str(tmp_path)
+    os.makedirs(out_dir, exist_ok=True)
+    try:
+        for theme in ("light", "dark"):
+            shot = harness.render("ai-review", theme=theme, verdicts=True,
+                                  resolved=True, count=4, size=(720, 640))
+            dlg = shot.dialog
+            header = dlg.review_header.text()
+            assert "1 correction suggested" in header
+            assert "1 correction applied" in header
+            assert "1 original kept" in header
+            assert dlg.import_note.isVisible()
+            assert dlg.import_note.text() == "1 suggested correction not reviewed"
+            png = os.path.join(out_dir, f"ai-review-corrections-{theme}.png")
+            shot.image.save(png, "PNG")
+            assert os.path.exists(png)
+    finally:
+        harness.apply_theme("light")
+
+
 def test_escape_during_image_resolution_goes_back_instead_of_blocking_the_cards(
         monkeypatch, tmp_path):
     """Cancelling the image phase used to poison the draft rather than abort
