@@ -3,6 +3,19 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.76.3
+
+Update my decks explains its two counts.
+
+- The hold button now reads **Update reviewed, hold N undecided for later**, and the line
+  above the buttons says how many of the unopened cards were already decided on an
+  earlier update (they keep that choice, so hold leaves them alone).
+- A card whose earlier choice no longer fits (for example Keep yours on a card that now
+  arrives as new) is held like any undecided card, instead of being applied at its
+  default without anyone choosing.
+
+Restart Anki after updating.
+
 ## v0.76.2
 
 Safer updates. A round of fixes for cases where an update, a restore or an undo could
