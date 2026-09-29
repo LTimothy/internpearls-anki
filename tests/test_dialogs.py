@@ -1918,7 +1918,9 @@ def _walk_widgets(root, out=None, seen=None):
 
 
 def _find_decision_cell(body):
-    return next(w for w in _walk_widgets(body) if hasattr(w, "buttons"))
+    """The first card's decision control, not the filter bar's options."""
+    return next(w for w in _walk_widgets(body)
+                if hasattr(w, "buttons") and "all" not in w.buttons)
 
 
 def _find_feedback_box(body):
@@ -2805,3 +2807,159 @@ def test_unopened_line_counts_rows_left_and_those_folded():
     line = unopened_line(kinds, {"a"}, {"b"})
     assert line.startswith("<b>2 of 3 cards not opened yet</b>, 1 of them in folded groups.")
     assert unopened_line(kinds, {"a", "b", "c"}, ()) == ""
+
+
+def _filter_body(n_new=12, n_changed=12, group=0, group_kind=None):
+    """An update body over `n_new` new and `n_changed` changed cards, plus a folded
+    group of `group` cards (alternating kinds unless `group_kind` fixes one)."""
+    from internpearls import review
+    rows = [("card", "Example Deck", _card_detail(
+        f"new-{i}", "new", fields=[("Front", f"New card {i}?"), ("Back", "A")]))
+        for i in range(n_new)]
+    rows += [("card", "Example Deck", _card_detail(
+        f"chg-{i}", "changed", was={"Back": "old"},
+        fields=[("Front", f"Changed card {i}?"), ("Back", "A")]))
+        for i in range(n_changed)]
+    items = [("header", "Example Deck")]
+    for i, row in enumerate(rows):
+        items += ([("sep",)] if i else []) + [row]
+    if group:
+        note = {"kind": "maintainer", "note": "one change across these cards"}
+        items += [("header", "Grouped Deck"), ("group_note", note, group)]
+        for i in range(group):
+            kind = group_kind or ("changed" if i % 2 else "new")
+            items += [("sep", "grouped"), ("card", "Grouped Deck", _card_detail(
+                f"grp-{i}", kind, **({"was": {"Back": "old"}} if kind == "changed"
+                                     else {}),
+                fields=[("Front", f"Grouped card {i}?"), ("Back", "A")]))]
+    decisions, touched = {}, set()
+    body, _boxes, _flush = review.build_update_body(
+        items, {}, {}, {}, decisions, "", lambda: "", "", touched)
+    return body, decisions, touched
+
+
+def _stream(body):
+    from internpearls import widgets
+    return next(w for w in _walk_widgets(body) if isinstance(w, widgets.StreamingList))
+
+
+def _bar(body):
+    from internpearls import widgets
+    return next((w for w in _walk_widgets(body) if isinstance(w, widgets.FilterBar)),
+                None)
+
+
+def _count_line(bar):
+    return bar._count.text() if bar._count.isVisible() else ""
+
+
+def _push_buttons(body, text):
+    return [w for w in _walk_widgets(body)
+            if isinstance(w, mock_anki.QPushButton) and w.text() == text]
+
+
+def test_the_filter_bar_appears_from_twenty_cards_and_not_before(anki):
+    assert _bar(_filter_body(10, 9)[0]) is None
+    bar = _bar(_filter_body(10, 10)[0])
+    assert bar is not None
+    assert list(bar.options.buttons) == ["all", "new", "changed", "held", "unreviewed"]
+    assert bar.search._placeholder == "Search cards"
+
+
+def test_the_filter_bar_sits_above_the_list_not_inside_it(anki):
+    body, _d, _t = _filter_body()
+    children = body._layout._children
+    assert children.index(_bar(body)) < children.index(_stream(body))
+
+
+def test_a_filter_narrows_the_list_and_all_restores_it(anki):
+    body, _d, _t = _filter_body(12, 12)
+    bar, stream = _bar(body), _stream(body)
+    full = stream.total()
+    assert _count_line(bar) == ""
+    bar.options.buttons["changed"].click()
+    assert stream.total() == 1 + 12 + 11    # header, rows, hairlines between them
+    assert _count_line(bar) == "Showing 12 of 24 cards"
+    bar.options.buttons["all"].click()
+    assert stream.total() == full
+    assert _count_line(bar) == ""
+
+
+def test_search_narrows_the_list_after_the_typing_delay(anki):
+    body, _d, _t = _filter_body(12, 12)
+    bar, stream = _bar(body), _stream(body)
+    bar.search.setText("CHANGED CARD 7")
+    assert _count_line(bar) == "", "the list waits for typing to stop"
+    bar._timer._timer.fire()
+    assert stream.total() == 2
+    assert _count_line(bar) == "Showing 1 of 24 cards"
+    bar.search.setText("")
+    bar._timer._timer.fire()
+    assert _count_line(bar) == ""
+
+
+def test_decisions_survive_switching_filters_back_and_forth(anki):
+    body, decisions, touched = _filter_body(12, 12)
+    bar = _bar(body)
+    _button(body, "Skip").click()
+    skipped = dict(decisions)
+    assert len(skipped) == 1
+    for mode in ("changed", "held", "new", "all"):
+        bar.options.buttons[mode].click()
+    assert decisions == skipped
+    assert touched == set(skipped)
+    checked = [w for w in _walk_widgets(body) if hasattr(w, "buttons")
+               and "skip" in w.buttons and w.buttons["skip"].isChecked()]
+    assert len(checked) == 1, "the rebuilt row still shows the decision"
+
+
+def test_not_reviewed_leaves_out_rows_the_learner_decided(anki):
+    body, _decisions, touched = _filter_body(12, 12)
+    bar, stream = _bar(body), _stream(body)
+    _button(body, "Skip").click()
+    bar.options.buttons["unreviewed"].click()
+    assert _count_line(bar) == "Showing 23 of 24 cards"
+    shown = {it[2]["guid"] for it in stream._items if it[0] == "card"}
+    assert len(shown) == 23 and not shown & touched
+
+
+def test_feedback_typed_before_a_filter_is_kept_after_it(anki):
+    body, _decisions, _touched = _filter_body(12, 12)
+    bar = _bar(body)
+    _button(body, "Skip").click()
+    _find_feedback_box(body).setPlainText("this one is off")
+    bar.options.buttons["held"].click()
+    assert _find_feedback_box(body) is None
+    bar.options.buttons["all"].click()
+    assert _find_feedback_box(body).toPlainText() == "this one is off"
+
+
+def test_a_group_decision_still_lands_after_a_filter_rebuilt_the_list(anki):
+    body, decisions, touched = _filter_body(8, 8, group=8, group_kind="changed")
+    bar = _bar(body)
+    bar.options.buttons["changed"].click()
+    bar.options.buttons["all"].click()
+    _push_buttons(body, "Keep all yours")[0].click()
+    assert decisions == {f"grp-{i}": "keep" for i in range(8)}
+    assert touched == set(decisions)
+
+
+def test_a_folded_group_under_a_filter_counts_and_builds_only_matches(anki):
+    body, _decisions, _touched = _filter_body(6, 6, group=8)
+    bar, stream = _bar(body), _stream(body)
+    assert _push_buttons(body, "Show 8 cards")
+    bar.options.buttons["changed"].click()
+    assert _push_buttons(body, "Show 4 cards") and not _push_buttons(body, "Show 8 cards")
+    _push_buttons(body, "Show 4 cards")[0].click()
+    shown = " ".join(w.text() for w in _walk_widgets(body)
+                     if isinstance(w, mock_anki.QLabel))
+    assert "Grouped card 1?" in shown and "Grouped card 0?" not in shown
+    bar.options.buttons["held"].click()
+    assert stream.total() == 0
+
+
+def test_the_list_stays_lazy_under_a_filter(anki):
+    body, _d, _t = _filter_body(150, 150)
+    bar, stream = _bar(body), _stream(body)
+    bar.options.buttons["changed"].click()
+    assert stream.total() > stream.shown() > 0

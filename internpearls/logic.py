@@ -1045,6 +1045,117 @@ def unopened_line(card_kinds, reviewed, folded=()):
             "Update applies each one as its row is set.")
 
 
+# The card list gets a filter bar from this many card rows up.
+FILTER_MIN_CARDS = 20
+
+FILTER_MODES = (("all", "All"), ("new", "New"), ("changed", "Changed"),
+                ("held", "Held"), ("unreviewed", "Not reviewed"))
+
+
+def group_run(items, start):
+    """(members, next_index): the run of card, retired and grouped-sep items from
+    `start`, which is what sits under a ("group_note", ...) header."""
+    end = start
+    while end < len(items) and (items[end][0] in ("card", "retired")
+                                or tuple(items[end][:2]) == ("sep", "grouped")):
+        end += 1
+    return list(items[start:end]), end
+
+
+def count_cards(items):
+    """Card rows in an update list, including the members of folded groups."""
+    return sum(1 for _ in _card_items(items))
+
+
+def _card_items(items):
+    for item in items:
+        if item[0] == "card":
+            yield item
+        elif item[0] == "group_note" and len(item) > 3:
+            yield from (m for m in item[3] if m[0] == "card")
+
+
+def _row_text(item):
+    if item[0] == "card":
+        return note_display_label([v for _, v in item[2].get("fields", [])],
+                                  max_len=10 ** 6)
+    return plain_text(item[1])
+
+
+def _row_shown(item, mode, needle, touched):
+    if item[0] == "card":
+        detail = item[2]
+        wanted = {"new": detail.get("kind") == "new",
+                  "changed": detail.get("kind") == "changed",
+                  "held": detail.get("declined_state") == "held",
+                  "unreviewed": detail.get("guid") not in touched}
+        if not wanted.get(mode, True):
+            return False
+    elif item[0] in ("retired", "moved"):
+        if mode != "all":
+            return False
+    else:
+        return False
+    return not needle or needle in _row_text(item).casefold()
+
+
+def _kept_members(members, mode, needle, touched):
+    kept, sep = [], None
+    for m in members:
+        if m[0] == "sep":
+            sep = m
+        elif _row_shown(m, mode, needle, touched):
+            kept += ([sep] if sep else []) + [m]
+            sep = None
+        else:
+            sep = None
+    return kept
+
+
+def filter_update_items(items, mode="all", query="", touched=()):
+    """`items` reduced to what a FILTER_MODES key and a search leave visible. Group
+    headers keep and count only their matching members, and headings with nothing left
+    under them go. Retired, moved and per-deck summary rows show only under All."""
+    needle = query.strip().casefold()
+    if mode == "all" and not needle:
+        return list(items)
+    out, heads, sep, fresh, prev, i = [], [], None, True, None, 0
+    while i < len(items):
+        item = items[i]
+        i += 1
+        if item[0] == "sep":
+            sep = item
+            continue
+        was, prev = prev, item[0]
+        if item[0] in ("header", "note"):
+            # A note straight after a header reads with it; anything else starts over,
+            # dropping a header whose rows were all filtered out.
+            heads = heads + [item] if item[0] == "note" and was == "header" else [item]
+            sep, fresh = None, True
+            continue
+        before, sep = sep, None
+        rows = [item]
+        if item[0] == "group_note":
+            folded = len(item) > 3
+            members, upto = (item[3], i) if folded else group_run(items, i)
+            i = upto
+            kept = _kept_members(members, mode, needle, touched)
+            if not any(m[0] in ("card", "retired") for m in kept):
+                continue
+            count = sum(1 for m in kept if m[0] == "card")
+            head = item[:2] + ((count,) if len(item) > 2 else ())
+            rows = [head + (kept,)] if folded else [head] + kept
+        elif not _row_shown(item, mode, needle, touched):
+            continue
+        out += heads
+        heads = []
+        if before is not None and not fresh:
+            out.append(before)
+        out += rows
+        fresh = False
+    return out
+
+
 def released_held_guids(registry, card_kinds, decisions, hold, readable_decks):
     """Held entries this run settles by removing them: a held row left at its
     default (Import/Apply) and not held again, and a held card whose deck was read

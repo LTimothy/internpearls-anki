@@ -541,6 +541,24 @@ def _scene_confirm(mock, opts):
                   ("retired", "An older phrasing of a since-split card"),
                   ("sep",),
                   ("moved", "A card whose deck was reorganized", "Regional Basics")]
+    if opts.get("many"):
+        # Enough plain rows past the fixture's own to reach the filter bar's threshold:
+        # every third one changed, every seventh held, in a section of their own.
+        filler = [{"guid": f"filler-{i}", "notetype": "Study Deck - Basic",
+                   "kind": "changed" if i % 3 == 1 else "new",
+                   "fields": [("Front", f"Filler card number {i}?"), ("Back", "Answer."),
+                              ("Why", ""), ("Image", ""), ("Tag", ""), ("Dosing", ""),
+                              ("Notes", "")]}
+                  for i in range(opts["many"])]
+        for i, d in enumerate(filler):
+            if d["kind"] == "changed":
+                d["was"] = {"Back": "Old answer."}
+            if i % 7 == 6:
+                d["declined_state"] = "held"
+        items.append(("header", "Long Deck"))
+        for i, d in enumerate(filler):
+            items += ([("sep",)] if i else []) + [("card", "Long Deck", d)]
+        details = details + filler
     sources = {"Example Deck": _fixture_image_apkg()} if opts.get("image") else {}
     # What is left above the list now that the per-deck summary is the list's own first
     # section: update_decks()'s fixed notes about the run as a whole.
@@ -1143,6 +1161,9 @@ SCENES = {
     "about": (_scene_about, "the About dialog"),
     "configure-source": (_scene_configure_source, "the deck-source choice screen"),
     "confirm": (_scene_confirm, "the Update my decks confirmation (inline card list)"),
+    "confirm-long": (lambda mock, opts: _scene_confirm(mock, dict(opts, many=24)),
+                     "the Update my decks confirmation with enough cards for its "
+                     "filter bar"),
     "ask-scrollable": (_scene_ask_scrollable, "a plain _ask_scrollable confirmation"),
     "sync-confirm": (_scene_sync_confirm, "Sync decks' confirmation (one row per deck)"),
     "reconcile-confirm": (_scene_reconcile_confirm,
