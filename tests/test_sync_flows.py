@@ -631,6 +631,189 @@ def test_import_single_note_protected_field_survives_when_the_note_matches_only_
     assert anki.col.note_by_guid("learner-own-guid")["Dosing"] == "learner's own dose note"
 
 
+@pytest.mark.parametrize("content_changes", [False, True])
+def test_update_keeps_the_learners_own_tags_and_takes_the_sources_scope_tags(
+        anki, tmp_path, content_changes):
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note.tags = [TAGS, "leech", "marked", "my-own::topic", f"{SCOPE}::retired"]
+
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one",
+                                     back="new back" if content_changes else "the back"),
+                       f"{SCOPE}::Physio")], None)}))
+    _sync(anki)
+
+    assert sorted(anki.col.note_by_guid("g1").tags) == sorted(
+        [f"{SCOPE}::Physio", "leech", "marked", "my-own::topic", f"{SCOPE}::retired"])
+
+
+OTHER = "Intern Pearls::Intern Custom::Other"
+
+
+def _two_deck_update(anki, tmp_path):
+    """Decks Pharm (g1) and Other (g2) installed at v1 with an annotation and a personal
+    tag on each; returns (cfg, manifest, fetch, todo) for a v2 of both."""
+    from internpearls import sync
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None),
+        OTHER: ("v1", [("g2", _fields("Front two"), f"{SCOPE}::Other")], None)}))
+    anki.mw._config["protected_fields"] = ["Notes"]
+    _sync(anki)
+    for guid in ("g1", "g2"):
+        note = anki.col.note_by_guid(guid)
+        note["Notes"] = f"my annotation {guid}"
+        note.tags = list(note.tags) + ["leech"]
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="v2"), TAGS)], None),
+        OTHER: ("v2", [("g2", _fields("Front two", back="v2"), f"{SCOPE}::Other")], None)})
+    _configure(anki, folder)
+    anki.mw._config["protected_fields"] = ["Notes"]
+    manifest = json.load(open(os.path.join(folder, "manifest.json")))
+    return (sync._cfg(), manifest, lambda d: os.path.join(folder, d["apkg"]),
+            manifest["decks"])
+
+
+def test_a_run_stopped_before_the_next_deck_has_restored_every_deck_already_imported(
+        anki, tmp_path):
+    from internpearls import sync
+    cfg, manifest, fetch, todo = _two_deck_update(anki, tmp_path)
+
+    def fetch_then_stop(d):
+        if d["name"] == OTHER:
+            raise KeyboardInterrupt
+        return fetch(d)
+
+    with pytest.raises(KeyboardInterrupt):
+        sync._run_sync(cfg, manifest, fetch_then_stop, todo)
+
+    note = anki.col.note_by_guid("g1")
+    assert note["Back"] == "v2"
+    assert note["Notes"] == "my annotation g1"
+    assert "leech" in note.tags
+
+
+@pytest.mark.parametrize("payload", [5, ["x"], {"g1": 5}, {"g1": {"Notes": 5}}, None])
+def test_a_malformed_shipped_baseline_keeps_the_learners_protected_fields(
+        anki, tmp_path, payload):
+    from internpearls import sync
+    cfg, manifest, fetch, todo = _two_deck_update(anki, tmp_path)
+    sync._save_json(sync.SHIPPED, payload)
+
+    results = sync._run_sync(cfg, manifest, fetch, todo)[0]
+
+    assert not any("✗" in line for line in results), results
+    for guid in ("g1", "g2"):
+        note = anki.col.note_by_guid(guid)
+        assert note["Back"] == "v2"
+        assert note["Notes"] == f"my annotation {guid}"
+
+
+def test_load_shipped_keeps_only_well_formed_entries(anki):
+    from internpearls import sync
+    sync._save_json(sync.SHIPPED, {"g1": {"Notes": "text", "Back": 5}, "g2": [], "g3": {}})
+    assert sync._load_shipped() == {"g1": {"Notes": "text"}, "g3": {}}
+    sync._save_json(sync.SHIPPED, ["x"])
+    assert sync._load_shipped() == {}
+
+
+def test_a_restore_failure_rolls_that_decks_import_back(anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    cfg, manifest, fetch, todo = _two_deck_update(anki, tmp_path)
+    real_restore = sync._restore
+
+    def fail_on_other(snap, baseline=None, touched=None):
+        if "g2" in (touched or ()):
+            raise RuntimeError("restore failed")
+        return real_restore(snap, baseline, touched)
+
+    monkeypatch.setattr(sync, "_restore", fail_on_other)
+    results = sync._run_sync(cfg, manifest, fetch, todo)[0]
+
+    assert any("✗" in line and "Other" in line for line in results), results
+    assert anki.col.note_by_guid("g1")["Notes"] == "my annotation g1"
+    other = anki.col.note_by_guid("g2")
+    assert (other["Back"], other["Notes"]) == ("the back", "my annotation g2")
+    assert sync._load_json(sync.INSTALLED, {}).get(OTHER) == "v1"
+
+
+def test_undoing_a_deck_update_makes_that_deck_pending_again(anki, tmp_path):
+    from internpearls import sync
+    cfg, manifest, fetch, todo = _two_deck_update(anki, tmp_path)
+    cfg["protected"] = ["Notes", "Back"]
+    before = {g: {"Notes": "", "Back": "the back"} for g in ("g1", "g2")}
+    sync._save_json(sync.SHIPPED, before)
+    sync._run_sync(cfg, manifest, fetch, todo)
+    assert sync._load_json(sync.INSTALLED, {}) == {DECK: "v2", OTHER: "v2"}
+    assert sync._load_json(sync.SHIPPED, {})["g2"]["Back"] == "v2"
+
+    undone = anki.col.undo()
+    sync.restore_pending_after_undo(undone)
+
+    assert undone.operation == "Intern Pearls deck update"
+    other = anki.col.note_by_guid("g2")
+    assert (other["Back"], other["Notes"]) == ("the back", "my annotation g2")
+    assert anki.col.note_by_guid("g1")["Back"] == "v2"
+    assert sync._load_json(sync.INSTALLED, {}) == {DECK: "v2", OTHER: "v1"}
+    assert sync._load_json(sync.SHIPPED, {}) == {**before, "g1": {"Notes": "", "Back": "v2"}}
+    assert [d["name"] for d in sync.decks_to_update(
+        manifest, sync._load_json(sync.INSTALLED, {}))] == [OTHER]
+    assert (OTHER, "v2") in sync.undone_updates
+
+
+def test_auto_sync_leaves_an_undone_update_for_a_manual_run(anki, tmp_path):
+    from internpearls import background, sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+    sync.undone_updates.add((DECK, "v1"))
+
+    background._auto_sync_check()
+
+    assert not anki.col.imports
+    assert not background._auto_sync_in_progress
+
+
+def test_an_unrelated_undo_leaves_installed_versions_alone(anki, tmp_path):
+    import types
+    from internpearls import sync
+    cfg, manifest, fetch, todo = _two_deck_update(anki, tmp_path)
+    sync._run_sync(cfg, manifest, fetch, todo)
+    step = len(anki.col._undo_entries) - 1
+
+    sync.restore_pending_after_undo(types.SimpleNamespace(operation="Update Note",
+                                                          counter=step))
+    sync.restore_pending_after_undo(types.SimpleNamespace(
+        operation="Intern Pearls deck update", counter=step + 50))
+
+    assert sync._load_json(sync.INSTALLED, {}) == {DECK: "v2", OTHER: "v2"}
+
+
+def test_the_undo_hook_is_registered_with_anki():
+    import sys
+    from internpearls import sync
+    mock_anki.load_addon_init()
+    assert sync.restore_pending_after_undo in sys.modules["aqt"].gui_hooks.state_did_undo
+
+
+def test_import_single_keeps_the_learners_own_tags(anki, tmp_path):
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one"), [TAGS, "leech"], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("g1", _fields("Front one", back="new back"), TAGS)], deck=DECK)
+    anki.gui.file_picks = [src]
+
+    sync.import_single()
+
+    note = anki.col.note_by_guid("g1")
+    assert note["Back"] == "new back"
+    assert sorted(note.tags) == sorted([TAGS, "leech"])
+
+
 def test_per_deck_snap_top_up_merges_rather_than_replaces_an_existing_entry(anki, tmp_path):
     """_run_sync's initial _snapshot() captures the global Notes field for a
     front-matched note before the per-deck loop learns which guid the note's own
@@ -926,6 +1109,140 @@ def test_a_learners_own_note_type_is_never_converted(anki, tmp_path):
     assert logic.plan_notetype_changes(
         {"g1": "Study Deck - Basic"}, {"g1": "Study Deck - Basic"},
         {"Study Deck - Basic"}) == []
+
+
+def _cloze_note(anki, guid, text):
+    """An existing fill-in-the-blank note with one reviewed card per blank."""
+    if not anki.col.models.by_name("Study Deck - Cloze"):
+        anki.col.models._models.append(_cloze_model())
+    note = anki.col.add_note(guid, [text, "why", "", "", ""], TAGS.split(),
+                             model=anki.col.models.by_name("Study Deck - Cloze"), deck=DECK)
+    anki.col._generate_cloze_cards(note)
+    for cid in note.card_ids():
+        card = anki.col.get_card(cid)
+        card.reps, card.ivl = 16, 98
+    return note.id, sorted(note.card_ids())
+
+
+def _run_showing(anki, flow, ask):
+    """Drive Sync decks or Update my decks to the end and return every (kind, text)
+    of the questions and messages it put on screen, plus its dialog trees."""
+    from internpearls import sync
+    seen, trees = [], []
+    click = (_click_sync_button(True, ask) if flow == "sync"
+             else _click_update_button(True, ask))
+
+    def respond(p):
+        if p["kind"] in ("ask", "info"):
+            seen.append((p["kind"], p.get("text", "")))
+        elif p["kind"] == "dialog":
+            trees.append(p["tree"])
+        return click(p)
+
+    drive(anki, sync.sync_decks if flow == "sync" else sync.update_decks, respond)
+    anki.gui.interactive = False
+    return seen, trees
+
+
+def _format_texts(seen, kind):
+    return [t for k, t in seen if k == kind and "changed format" in t]
+
+
+def _assert_kept_beside(anki, nid, card_ids, guid):
+    from internpearls import ai_logic
+    kept = anki.col.get_note(nid)
+    assert ai_logic.is_generated_guid(kept.guid)
+    assert kept.note_type()["name"] == "Study Deck - Cloze"
+    assert sorted(kept.card_ids()) == card_ids
+    assert all(anki.col.get_card(c).reps == 16 for c in card_ids)
+    assert anki.col.note_by_guid(guid).note_type()["name"] == "Study Deck - Basic"
+
+
+@pytest.mark.parametrize("flow", ["sync", "update"])
+def test_a_conversion_that_would_delete_cards_imports_beside_instead(anki, tmp_path, flow):
+    """Two blanks becoming one question and answer would delete the c2 card and its
+    history. The learner's note stays as it is and the new version imports beside it,
+    with nothing to consent to, so no question is asked, only said."""
+    nid, card_ids = _cloze_note(anki, "g1", "Old {{c1::one}} and {{c2::two}}")
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("What are one and two?"), TAGS)], None)}))
+
+    seen, trees = _run_showing(anki, flow, ask=lambda text: True)
+
+    assert anki.col.notetype_changes == []
+    _assert_kept_beside(anki, nid, card_ids, "g1")
+    assert _format_texts(seen, "ask") == []
+    (said,) = _format_texts(seen, "info")
+    assert "<b>1 card</b> in this update changed format" in said
+    assert "beside" in said and "Move" not in said
+    if flow == "update":
+        confirmation = "\n".join(_label_texts(trees[0]))
+        assert "beside" in confirmation and "asked" not in confirmation
+
+
+@pytest.mark.parametrize("flow", ["sync", "update"])
+def test_a_note_kept_beside_keeps_the_learners_protected_fields_and_tags(anki, tmp_path,
+                                                                        flow):
+    nid, card_ids = _cloze_note(anki, "g1", "Old {{c1::one}} and {{c2::two}}")
+    kept = anki.col.get_note(nid)
+    kept["Notes"] = "my note"
+    kept.tags = kept.tags + ["leech"]
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("What are one and two?"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["Notes"]
+
+    _run_showing(anki, flow, ask=lambda text: True)
+
+    _assert_kept_beside(anki, nid, card_ids, "g1")
+    kept = anki.col.get_note(nid)
+    assert kept["Notes"] == "my note"
+    assert sorted(kept.tags) == sorted([TAGS, "leech"])
+    incoming = anki.col.note_by_guid("g1")
+    assert incoming["Notes"] == "" and "leech" not in incoming.tags
+
+
+@pytest.mark.parametrize("flow", ["sync", "update"])
+def test_accepting_a_conversion_converts_only_the_cards_that_lose_nothing(anki, tmp_path,
+                                                                          flow):
+    """One blank becoming a question and answer keeps its card and converts in place;
+    two blanks in the same run are kept beside, and the one question says which is
+    which."""
+    safe_nid, (safe_cid,) = _cloze_note(anki, "g1", "Only {{c1::one}}")
+    lossy_nid, lossy_cids = _cloze_note(anki, "g2", "Old {{c1::one}} and {{c2::two}}")
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("What is one?"), TAGS),
+                      ("g2", _fields("What are one and two?"), TAGS)], None)}))
+
+    seen, _trees = _run_showing(anki, flow, ask=lambda text: True)
+
+    (asked,) = _format_texts(seen, "ask")
+    assert "<b>2 cards</b> in this update changed format" in asked
+    assert "<b>1 card</b> of them" in asked and "beside" in asked
+    assert anki.col.notetype_changes == [[safe_nid]]
+    converted = anki.col.note_by_guid("g1")
+    assert converted.id == safe_nid
+    assert converted.note_type()["name"] == "Study Deck - Basic"
+    assert converted.card_ids() == [safe_cid]
+    assert anki.col.get_card(safe_cid).reps == 16
+    _assert_kept_beside(anki, lossy_nid, lossy_cids, "g2")
+
+
+def test_a_card_losing_conversion_waits_for_a_manual_run_under_auto_sync(anki, tmp_path):
+    from internpearls import sync
+    nid, card_ids = _cloze_note(anki, "g1", "Old {{c1::one}} and {{c2::two}}")
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("What are one and two?"), TAGS)], None)})
+    _configure(anki, folder)
+
+    _results, _restored, _tpl, deferred, _c, _col, converted = sync._run_sync(
+        sync._cfg(), json.load(open(os.path.join(folder, "manifest.json"))),
+        lambda d: os.path.join(folder, d["apkg"]),
+        [{"name": DECK, "apkg": "Pharm.apkg", "version": "v2"}],
+        defer_template_changes=True)
+
+    assert deferred == [DECK] and converted == 0
+    note = anki.col.get_note(nid)
+    assert note.guid == "g1" and sorted(note.card_ids()) == card_ids
 
 
 def test_reworded_front_with_stable_guid_updates_in_place_without_alias(anki, tmp_path):
@@ -1475,6 +1792,77 @@ def test_reconcile_moves_progress_onto_the_reworded_card_and_archives_the_old(
     assert anki.col.note_by_guid("g_new").id in anki.col.updated_cards   # persisted
     assert len(anki.col._notes) == 2                           # nothing deleted
     assert any("Merged <b>1 reworded card</b>" in i for i in anki.gui.infos)
+
+
+def test_reconcile_keeps_a_card_whose_front_a_current_package_still_carries(anki, tmp_path):
+    """A reseed keeps a card's front while its guid changes, so the retired identity
+    matches the learner's only live copy by front. The package still carries that
+    front, so archiving it would leave the learner without the card."""
+    from internpearls import sync
+    front = "bulky crisis card"
+    card = _existing_card(anki, "learner_guid", front)
+    folder = _write_source(
+        tmp_path, {DECK: ("v1", [("reseeded_guid", _fields(front), TAGS)], None)},
+        retired={DECK: {"canonical_guid": {"identity": front, "reason": "split",
+                                           "superseded_by": []}}})
+    _configure(anki, folder)
+
+    sync.reconcile_decks()
+
+    cid = card.card_ids()[0]
+    assert anki.col._cards[cid].queue == 0
+    assert RETIRED_TAG not in anki.col.note_by_guid("learner_guid").tags
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
+
+
+def test_update_keeps_a_card_the_new_package_still_carries_under_a_retired_identity(
+        anki, tmp_path):
+    front = "bulky crisis card"
+    card = _existing_card(anki, "learner_guid", front)
+    folder = _write_source(
+        tmp_path, {DECK: ("v2", [("reseeded_guid", _fields(front, back="new"), TAGS)], None)},
+        retired={DECK: {"canonical_guid": {"identity": front, "reason": "split",
+                                           "superseded_by": []}}})
+    _configure(anki, folder)
+
+    _update(anki)
+
+    assert anki.col._cards[card.card_ids()[0]].queue == 0
+    assert RETIRED_TAG not in anki.col.note_by_guid("learner_guid").tags
+    assert anki.col.note_by_guid("learner_guid")["Back"] == "new"
+
+
+def test_reconcile_leaves_a_reworded_back_pair_alone(anki, tmp_path):
+    from internpearls import sync
+    first = _existing_card(anki, "g_a", "wording A")
+    second = _existing_card(anki, "g_b", "wording B")
+    _configure(anki, _stranded_source(tmp_path, {"wording A": "wording B",
+                                                 "wording B": "wording A"}))
+
+    sync.reconcile_decks()
+
+    for note in (first, second):
+        assert anki.col.get_card(note.card_ids()[0]).queue == 0
+    assert any("No retired cards or reorganized decks found" in i for i in anki.gui.infos)
+
+
+def test_reconcile_carries_a_reworded_chain_onto_the_final_wording(anki, tmp_path):
+    from internpearls import sync
+    a = _existing_card(anki, "g_a", "wording Z")
+    b = _existing_card(anki, "g_b", "wording M")
+    _existing_card(anki, "g_c", "wording X")
+    _sched(anki, a, reps=6, ivl=20, due=70, type=2, queue=2)
+    _configure(anki, _stranded_source(tmp_path, {"wording Z": "wording M",
+                                                 "wording M": "wording X"}))
+
+    drive(anki, sync.reconcile_decks, _click_reconcile_button(accept=True))
+
+    final = anki.col.get_card(anki.col.note_by_guid("g_c").card_ids()[0])
+    assert (final.reps, final.ivl, final.due) == (6, 20, 70)
+    assert final.queue == 2
+    for guid in ("g_a", "g_b"):
+        assert RETIRED_TAG in anki.col.note_by_guid(guid).tags
+    assert RETIRED_TAG not in anki.col.note_by_guid("g_c").tags
 
 
 def test_reconcile_carries_the_fsrs_memory_state_onto_the_reworded_card(anki, tmp_path):
@@ -3757,14 +4145,11 @@ def test_update_decks_gives_a_retired_only_deck_its_own_heading(anki, tmp_path):
 
 
 # ------------------------------------------------- persistence & guards
-def test_protected_notes_are_restored_even_if_a_later_step_raises(anki, tmp_path,
-                                                                  monkeypatch):
-    """The import overwrites every field on a matched note, so the restore that puts the
-    learner's annotations back is the only thing standing between a sync and losing
-    them. It works
-    off `touched`, and `touched` used to be recorded after seed_converted_siblings ran:
-    anything raising in between dropped that deck out of the set entirely, so its notes
-    were never restored and never recorded as shipped, silently and permanently."""
+def test_a_step_failing_after_the_import_rolls_the_deck_back_with_notes_intact(
+        anki, tmp_path, monkeypatch):
+    """Seeding converted siblings runs inside the deck's undo step, after the restore,
+    so a failure there rolls the whole deck back rather than leaving an import standing
+    with the learner's annotations overwritten."""
     from internpearls import sync
 
     def boom(_nids):
@@ -3777,9 +4162,10 @@ def test_protected_notes_are_restored_even_if_a_later_step_raises(anki, tmp_path
 
     trees = _sync(anki)
 
-    assert anki.col.note_by_guid("g1")["Back"] == "new back"      # the import landed
-    assert anki.col.note_by_guid("g1")["Notes"] == "their mnemonic"  # and so did the restore
-    assert "seeding blew up" in _summary_text(trees)               # reported, not swallowed
+    assert anki.col.note_by_guid("g1")["Back"] == "the back"
+    assert anki.col.note_by_guid("g1")["Notes"] == "their mnemonic"
+    assert "seeding blew up" in _summary_text(trees)
+    assert DECK not in sync._load_json(sync.INSTALLED, {})
 
 
 def test_sync_keeps_a_version_another_run_recorded_while_it_worked(anki, tmp_path,
@@ -5635,6 +6021,45 @@ def test_run_sync_prunes_moot_registry_entries(anki, tmp_path):
     assert "guid-gone" not in config.load_declined()
 
 
+def test_run_sync_keeps_a_decline_when_the_card_moves_to_another_deck_package(anki, tmp_path):
+    from internpearls import config, sync
+    other = "Intern Pearls::Intern Custom::Example Group"
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("guid-a", _fields("front a"), TAGS)], None),
+        other: ("v1", [("guid-moved", _fields("front moved"), f"{SCOPE}::ExampleGroup")], None)})
+    _configure(anki, folder)
+    config.save_declined({
+        "guid-moved": {"state": "never", "front": "front moved", "deck": DECK,
+                       "decided": "2026-08-25", "hash": ""}})
+
+    drive(anki, sync.sync_decks, respond=_accept_everything)
+
+    assert config.load_declined()["guid-moved"]["deck"] == other
+    fronts = {anki.col.get_note(nid).fields[0] for nid in anki.col.find_notes(f'"tag:{SCOPE}"')}
+    assert "front moved" not in fronts
+
+
+def test_run_sync_keeps_a_decline_recorded_under_the_learners_guid_for_an_alias_match(
+        anki, tmp_path):
+    from internpearls import config, sync
+    anki.col.add_note("learner-guid", _fields("old front"), [TAGS])
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("package-guid", _fields("new front"), TAGS)], None)})
+    manifest_path = os.path.join(folder, "manifest.json")
+    manifest = json.loads(open(manifest_path, encoding="utf8").read())
+    manifest["front_aliases"] = {"new front": "old front"}
+    with open(manifest_path, "w", encoding="utf8") as f:
+        json.dump(manifest, f)
+    _configure(anki, folder)
+    config.save_declined({
+        "learner-guid": {"state": "keep", "front": "old front", "deck": DECK,
+                         "decided": "2026-08-25", "hash": ""}})
+
+    drive(anki, sync.sync_decks, respond=_accept_everything)
+
+    assert "learner-guid" in config.load_declined()
+
+
 def test_run_sync_survives_a_garbage_registry_entry(anki, tmp_path):
     """A hand-edited declined.json can hold a non-dict value for a guid. prune_declined
     sits between the import and the protected-field restore, so a crash there used to
@@ -6806,6 +7231,22 @@ def test_import_single_says_so_when_there_is_no_note_type_to_convert_onto(anki,
     assert anki.col.notetype_changes == []
 
 
+def test_import_single_keeps_a_card_losing_conversion_beside(anki, tmp_path):
+    from internpearls import sync
+    nid, card_ids = _cloze_note(anki, "g1", "Old {{c1::one}} and {{c2::two}}")
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("g1", _fields("What are one and two?"), TAGS)], deck=DECK)
+    anki.gui.file_picks = [src]
+
+    sync.import_single()
+
+    (confirm,) = [a for a in anki.gui.asks if "changed format" in a]
+    assert "beside" in confirm and "asked" not in confirm
+    assert any("beside" in i and "changed format" in i for i in anki.gui.infos)
+    assert anki.col.notetype_changes == []
+    _assert_kept_beside(anki, nid, card_ids, "g1")
+
+
 def test_update_preview_hides_a_frozen_card_the_way_it_hides_a_never(anki, tmp_path):
     """Stop updating has to mean it. A frozen guid drops out of the confirmation
     entirely rather than coming back every time the deck changes, which is the whole
@@ -6977,3 +7418,79 @@ def test_a_held_card_whose_deck_left_the_source_is_released(anki, tmp_path):
 def test_startup_nudge_is_wrapped(anki):
     from internpearls import background
     assert hasattr(background._held_cards_nudge, "__wrapped__")
+
+
+# --------------------------------------------- restore, filtered decks, cancelled restore
+def _backups_at_the_keep_limit(collection, export):
+    import time
+    paths = []
+    for _ in range(collection.DECK_BACKUPS_KEEP):
+        paths.append(collection._backup_deck(export, export))
+        time.sleep(1.05)
+    return paths
+
+
+def test_restoring_the_oldest_kept_backup_does_not_prune_it_first(anki):
+    """The backup taken before a restore prunes the oldest file, which is the file the
+    learner chose when it is the oldest one kept."""
+    from internpearls import collection
+    export = collection._cfg()["export_deck"]
+    _existing_card(anki, "g1", "Front one", deck=export)
+    oldest = _backups_at_the_keep_limit(collection, export)[0]
+    anki.gui.file_picks.append(oldest)
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert os.path.exists(oldest)
+    assert not anki.gui.warnings
+
+
+def test_a_backup_never_prunes_the_file_it_was_told_to_keep(anki):
+    from internpearls import collection
+    export = collection._cfg()["export_deck"]
+    _existing_card(anki, "g1", "Front one", deck=export)
+    paths = _backups_at_the_keep_limit(collection, export)
+
+    newest = collection._backup_deck(export, export, keep=paths[0])
+
+    assert os.path.exists(paths[0]) and os.path.exists(newest)
+
+
+def test_a_card_in_a_filtered_deck_counts_as_installed_in_its_home_deck(anki):
+    from internpearls import collection
+    _existing_card(anki, "g1", "Front one")
+    nid = anki.col.find_notes("")[0]
+    anki.col.file_in_filtered_deck(nid, "Study Session", DECK)
+
+    assert collection._existing_guid_to_deck(SCOPE) == {"g1": DECK}
+    assert collection.installed_matching_collection({DECK: "v1"}, SCOPE) == {DECK: "v1"}
+    assert collection._existing_notes_summary(SCOPE)[0]["deck"] == DECK
+    assert collection.decks_holding(["g1"], {"g1": nid}) == [DECK]
+
+
+def test_cancelled_backup_restore_leaves_installed_state_alone(anki, monkeypatch):
+    import aqt
+    from internpearls import collection
+    from internpearls.config import INSTALLED, _load_json, _save_json
+    _save_json(INSTALLED, {DECK: "v1"})
+    anki.gui.answers.append(True)
+    monkeypatch.setattr(anki.mw, "onOpenBackup", lambda: None)   # picker cancelled
+
+    collection.restore_from_backup()
+
+    assert _load_json(INSTALLED, {}) == {DECK: "v1"}
+    assert aqt.gui_hooks.profile_will_close == []
+
+
+def test_an_accepted_backup_restore_clears_installed_state(anki):
+    import aqt
+    from internpearls import collection
+    from internpearls.config import INSTALLED, _load_json, _save_json
+    _save_json(INSTALLED, {DECK: "v1"})
+    anki.gui.answers.append(True)
+
+    collection.restore_from_backup()
+
+    assert _load_json(INSTALLED, {}) == {}
+    assert aqt.gui_hooks.profile_will_close == []

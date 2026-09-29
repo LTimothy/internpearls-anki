@@ -131,6 +131,7 @@ def make_model(name="Study Deck - Basic", fields=None, css=".card { color: black
         "tmpls": [{"name": "c", "qfmt": qfmt, "afmt": afmt, "ord": 0}],
         "css": css,
         "id": abs(hash(name)) % 10**9,
+        "type": 1 if "Cloze" in name else 0,
     }
 
 
@@ -281,20 +282,38 @@ class _Models:
 
     # === change-notetype surface (see collection.change_note_types) ===
     def change_notetype_info(self, *, old_notetype_id, new_notetype_id):
+        """Like Anki's: no template map when either side is a cloze, otherwise each new
+        template takes the old one at the same position (-1 for none)."""
         req = ChangeNotetypeRequest()
         req.old_notetype_id, req.new_notetype_id = old_notetype_id, new_notetype_id
+        old, new = (next(m for m in self._models if m["id"] == i)
+                    for i in (old_notetype_id, new_notetype_id))
+        req.is_cloze = bool(old.get("type") or new.get("type"))
+        if not req.is_cloze:
+            req.new_templates = [i if i < len(old["tmpls"]) else -1
+                                 for i in range(len(new["tmpls"]))]
         return types.SimpleNamespace(input=req)
 
     def change_notetype_of_notes(self, req):
         """Reassign the notes' model and remap their field values by the caller's map,
-        the way Anki's backend does. The mock keeps the note's cards as they are, which
-        is the behaviour under test: converting must not discard review history."""
+        the way Anki's backend does, including deleting every card the new note type
+        has no template for (a cloze's c2 onwards when it becomes a one-template type)."""
         new_model = next((m for m in self._models if m["id"] == req.new_notetype_id), None)
+        if new_model.get("type"):
+            kept = None
+        elif req.new_templates:
+            kept = {o for o in req.new_templates if o >= 0}
+        else:
+            kept = set(range(len(new_model["tmpls"])))
         for nid in req.note_ids:
             note = self._col._notes[nid]
             old = list(note.fields)
             note.model = new_model
             note._resize([old[i] if 0 <= i < len(old) else "" for i in req.new_fields])
+            for cid in list(note._card_ids):
+                if kept is not None and self._col._cards[cid].ord not in kept:
+                    note._card_ids.remove(cid)
+                    del self._col._cards[cid]
             self._col._generate_cloze_cards(note)
         self._col.notetype_changes.append(list(req.note_ids))
 
@@ -511,18 +530,19 @@ class MockCollection:
         if not self._undo_entries:
             raise Exception("nothing to undo")
         entry = self._undo_entries.pop()
+        counter = len(self._undo_entries)   # the id add_custom_undo_entry returned
         if "snapshot" in entry:
             self._notes, self._cards = entry["snapshot"]
             for note in self._notes.values():
                 note.model = self.models.by_name(note.model["name"]) or note.model
             self._undo_merge_open = None
-            return types.SimpleNamespace(operation=entry["name"])
+            return types.SimpleNamespace(operation=entry["name"], counter=counter)
         for nid in entry["notes"]:
             note = self._notes.pop(nid, None)
             if note:
                 for cid in note._card_ids:
                     self._cards.pop(cid, None)
-        return types.SimpleNamespace(operation=entry["name"])
+        return types.SimpleNamespace(operation=entry["name"], counter=counter)
 
     # === new_note / add_note: real Anki's two-call add path ===
     def new_note(self, model):
@@ -769,8 +789,8 @@ class MockCollection:
 
     def import_anki_package(self, request):
         """Anki's importer, reduced to what the add-on depends on: match by GUID;
-        a matched note gets EVERY field overwritten (scheduling is out of scope
-        here); an unmatched note is added as new, tags and deck included."""
+        a matched note gets EVERY field and its tags overwritten (scheduling is out of
+        scope here); an unmatched note is added as new, tags and deck included."""
         self.imports.append(request.package_path)
         rows, models_by_mid, deck_by_nid = _read_apkg(request.package_path)
         self._register_models(models_by_mid)
@@ -784,6 +804,7 @@ class MockCollection:
             if existing:
                 existing.fields = list(values)[:len(existing._names)] + \
                     [""] * max(0, len(existing._names) - len(values))
+                existing.tags = tags.split()
                 self._generate_cloze_cards(existing)
                 if deck and not existing.deck:
                     existing.deck = deck
@@ -1577,6 +1598,7 @@ class QLineEdit(QWidget):
         # Real QLineEdit emits this on Enter or on losing focus, not per keystroke;
         # the mock has no focus model, so tests trigger it directly.
         self.editingFinished = Signal()
+        self.returnPressed = Signal()
         # Real QLineEdit emits this only for a user's own keystrokes, never for a
         # programmatic setText; the mock has no keyboard model either, so a test
         # triggers it directly, same as editingFinished above.
@@ -2777,7 +2799,10 @@ class MockMW:
         self.form.actionUndo.setEnabled(bool(self.col._undo_entries))
 
     def onOpenBackup(self):
+        """An accepted restore: Anki unloads the profile, which fires this hook."""
         self._gui.tooltips.append("(Anki's own backup picker would open here)")
+        for hook in list(sys.modules["aqt"].gui_hooks.profile_will_close):
+            hook()
 
 
 class MockAnki:
@@ -3124,7 +3149,8 @@ def install():
     aqt = types.ModuleType("aqt")
     aqt.mw = mw
     aqt.gui_hooks = types.SimpleNamespace(main_window_did_init=[], card_will_show=[],
-                                          webview_will_set_content=[])
+                                          webview_will_set_content=[], state_did_undo=[],
+                                          profile_will_close=[])
 
     aqt_qt = types.ModuleType("aqt.qt")
 

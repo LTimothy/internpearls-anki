@@ -303,6 +303,249 @@ def run_legacy_notetype_contract():
             publisher.close()
 
 
+def _two_deck_source(root, reader):
+    """A reader holding decks A and B (one note each, with an annotation and personal
+    tags) and v2 packages of both in which the Back changed. Returns the v2 paths."""
+    publisher = Collection(str(root / 'two-deck-source.anki2'))
+    try:
+        basic = model(publisher, 'Basic')
+        for guid, deck in (('a1', 'Synthetic::A'), ('b1', 'Synthetic::B')):
+            n = publisher.new_note(basic)
+            n.guid, n['Front'], n['Back'], n.tags = guid, guid, 'v1', ['InternPearls::Old']
+            publisher.add_note(n, publisher.decks.id(deck))
+        world.mw.col = publisher
+        for deck in ('A', 'B'):
+            addon._export_deck_to(str(root / f'{deck}1.apkg'), f'Synthetic::{deck}')
+        for guid in ('a1', 'b1'):
+            n = publisher.get_note(publisher.db.scalar('select id from notes where guid=?', guid))
+            n['Back'], n.tags = 'v2', ['InternPearls::New']
+            publisher.update_note(n)
+        for deck in ('A', 'B'):
+            addon._export_deck_to(str(root / f'{deck}2.apkg'), f'Synthetic::{deck}')
+    finally:
+        publisher.close()
+    world.mw.col = reader
+    for deck in ('A', 'B'):
+        addon._import_apkg(str(root / f'{deck}1.apkg'))
+    for guid in ('a1', 'b1'):
+        n = reader.get_note(reader.db.scalar('select id from notes where guid=?', guid))
+        n['Notes'] = 'my annotation ' + guid
+        n.tags = list(n.tags) + ['leech', 'my-own', 'InternPearls::retired']
+        reader.update_note(n)
+    return {'Synthetic::A': str(root / 'A2.apkg'), 'Synthetic::B': str(root / 'B2.apkg')}
+
+
+def _learner_state_env(root):
+    for mod in (config, sync, addon):
+        mod.INSTALLED = str(root / 'installed.json')
+    sync.SHIPPED = str(root / 'shipped_fields.json')
+    config.DECLINED = str(root / 'declined.json')
+    world.mw.reset = lambda: None
+    world.mw._config = {}
+
+
+def _note(col, guid):
+    return col.get_note(col.db.scalar('select id from notes where guid=?', guid))
+
+
+def run_learner_state_contract():
+    """An update keeps the learner's own tags and protected fields."""
+    with tempfile.TemporaryDirectory(prefix='ip-learner-state-') as tmp:
+        root = Path(tmp)
+        _learner_state_env(root)
+        reader = Collection(str(root / 'reader.anki2'))
+        try:
+            paths = _two_deck_source(root, reader)
+            decks = [{'name': name, 'version': 'v2'} for name in paths]
+            sync._run_sync(config._cfg(), {'decks': decks}, lambda d: paths[d['name']], decks)
+            for guid in ('a1', 'b1'):
+                n = _note(reader, guid)
+                assert n['Back'] == 'v2' and n['Notes'] == 'my annotation ' + guid
+                assert sorted(n.tags) == ['InternPearls::New', 'InternPearls::retired',
+                                          'leech', 'my-own'], n.tags
+            print('PASS real update keeps personal tags and archive marker, takes scope tags')
+        finally:
+            reader.close()
+    with tempfile.TemporaryDirectory(prefix='ip-learner-state-') as tmp:
+        root = Path(tmp)
+        _learner_state_env(root)
+        reader = Collection(str(root / 'reader.anki2'))
+        try:
+            paths = _two_deck_source(root, reader)
+            decks = [{'name': name, 'version': 'v2'} for name in paths]
+
+            def stop_before_b(d):
+                if d['name'].endswith('B'):
+                    raise KeyboardInterrupt
+                return paths[d['name']]
+            try:
+                sync._run_sync(config._cfg(), {'decks': decks}, stop_before_b, decks)
+                raise AssertionError('the run should have stopped')
+            except KeyboardInterrupt:
+                pass
+            a1 = _note(reader, 'a1')
+            assert (a1['Back'], a1['Notes']) == ('v2', 'my annotation a1'), a1.fields
+            assert 'leech' in a1.tags
+            print('PASS real run stopped before the next deck has already restored the first')
+        finally:
+            reader.close()
+    for payload in (5, ['x'], {'a1': 5}, {'a1': {'Notes': 5}}):
+        with tempfile.TemporaryDirectory(prefix='ip-learner-state-') as tmp:
+            root = Path(tmp)
+            _learner_state_env(root)
+            reader = Collection(str(root / 'reader.anki2'))
+            try:
+                paths = _two_deck_source(root, reader)
+                config._save_json(sync.SHIPPED, payload)
+                decks = [{'name': name, 'version': 'v2'} for name in paths]
+                out = sync._run_sync(config._cfg(), {'decks': decks},
+                                     lambda d: paths[d['name']], decks)
+                assert not any('✗' in line for line in out[0]), out[0]
+                for guid in ('a1', 'b1'):
+                    assert _note(reader, guid)['Notes'] == 'my annotation ' + guid
+            finally:
+                reader.close()
+    print('PASS real malformed shipped baseline keeps protected fields')
+    with tempfile.TemporaryDirectory(prefix='ip-learner-state-') as tmp:
+        root = Path(tmp)
+        _learner_state_env(root)
+        reader = Collection(str(root / 'reader.anki2'))
+        real_restore = sync._restore
+        try:
+            paths = _two_deck_source(root, reader)
+            decks = [{'name': name, 'version': 'v2'} for name in paths]
+
+            def fail_on_b(snap, baseline=None, touched=None):
+                if 'b1' in (touched or ()):
+                    raise RuntimeError('restore failed')
+                return real_restore(snap, baseline, touched)
+            sync._restore = fail_on_b
+            out = sync._run_sync(config._cfg(), {'decks': decks}, lambda d: paths[d['name']],
+                                 decks)
+            assert any('✗' in line for line in out[0]), out[0]
+            b1 = _note(reader, 'b1')
+            assert (b1['Back'], b1['Notes']) == ('v1', 'my annotation b1'), b1.fields
+            assert _note(reader, 'a1')['Notes'] == 'my annotation a1'
+            print('PASS real restore failure rolls that deck back')
+        finally:
+            sync._restore = real_restore
+            reader.close()
+    with tempfile.TemporaryDirectory(prefix='ip-learner-state-') as tmp:
+        root = Path(tmp)
+        _learner_state_env(root)
+        reader = Collection(str(root / 'reader.anki2'))
+        try:
+            paths = _two_deck_source(root, reader)
+            config._save_json(sync.INSTALLED, {name: 'v1' for name in paths})
+            decks = [{'name': name, 'version': 'v2'} for name in paths]
+            sync._run_sync(config._cfg(), {'decks': decks}, lambda d: paths[d['name']], decks)
+            assert reader.undo_status().undo == sync.UPDATE_UNDO_NAME
+            # What aqt's Edit > Undo does: undo the step, then fire state_did_undo.
+            sync.restore_pending_after_undo(reader.undo())
+            b1 = _note(reader, 'b1')
+            assert (b1['Back'], b1['Notes']) == ('v1', 'my annotation b1'), b1.fields
+            assert 'leech' in b1.tags
+            assert _note(reader, 'a1')['Back'] == 'v2'
+            installed = config._load_json(sync.INSTALLED, {})
+            assert installed == {'Synthetic::A': 'v2', 'Synthetic::B': 'v1'}, installed
+            assert reader.undo_status().undo == sync.UPDATE_UNDO_NAME
+            sync.restore_pending_after_undo(reader.undo())
+            assert _note(reader, 'a1')['Back'] == 'v1'
+            assert config._load_json(sync.INSTALLED, {}) == {name: 'v1' for name in paths}
+            print('PASS real undo of an update is one step per deck and re-offers that deck')
+        finally:
+            reader.close()
+
+
+def run_conversion_keeps_every_card_contract():
+    """Cloze(c1, c2) shipped as Basic keeps both reviewed cards; one-card conversions
+    in either direction still convert in place."""
+    with tempfile.TemporaryDirectory(prefix='ip-conversion-cards-') as tmp:
+        root = Path(tmp)
+        world.mw.reset = lambda: None
+        for mod in (config, sync, addon):
+            mod.INSTALLED = str(root / 'installed.json')
+        sync.SHIPPED = str(root / 'shipped.json')
+        config.DECLINED = str(root / 'declined.json')
+
+        def package(name, notes):
+            col = Collection(str(root / f'{name}.anki2'))
+            try:
+                models = {'Basic': model(col, 'Basic'), 'Cloze': model(col, 'Cloze')}
+                for guid, kind, text in notes:
+                    n = col.new_note(models[kind])
+                    n.guid, n.fields[0], n.tags = guid, text, ['InternPearls']
+                    col.add_note(n, col.decks.id('Synthetic'))
+                world.mw.col = col
+                path = str(root / f'{name}.apkg')
+                addon._export_deck_to(path, 'Synthetic')
+                return path
+            finally:
+                col.close()
+
+        v1 = package('v1', [('lossy', 'Cloze', 'Q1 {{c1::a}} and {{c2::b}}'),
+                            ('single', 'Cloze', 'Q2 only {{c1::a}}'),
+                            ('qa', 'Basic', 'Q3 question')])
+        v2 = package('v2', [('lossy', 'Basic', 'Q1 what are a and b?'),
+                            ('single', 'Basic', 'Q2 what is a?'),
+                            ('qa', 'Cloze', 'Q3 a {{c1::fact}}')])
+        manifest = {'decks': [{'name': 'Synthetic', 'version': 'v2'}]}
+        ask, info = sync._ask, sync._info
+        try:
+            for flow, convert in (('Update my decks', True), ('Sync decks', None)):
+                reader = Collection(str(root / f'reader-{flow}.anki2'))
+                try:
+                    world.mw.col = reader
+                    config._save_json(sync.INSTALLED, {})
+                    addon._import_apkg(v1)
+                    before = {}
+                    for guid in ('lossy', 'single', 'qa'):
+                        note = reader.get_note(reader.db.scalar(
+                            'select id from notes where guid=?', guid))
+                        for card in note.cards():
+                            card.reps, card.ivl, card.type, card.queue = 16, 98, 2, 2
+                            reader.update_card(card)
+                        before[guid] = (note.id, sorted(note.card_ids()))
+                    assert len(before['lossy'][1]) == 2
+                    asked, said = [], []
+                    sync._ask = lambda text, **kw: asked.append(text) or True
+                    sync._info = lambda text, *a, **kw: said.append(text)
+                    outcome = sync._run_sync(config._cfg(), manifest, lambda d: v2,
+                                             manifest['decks'], convert_notetypes=convert)
+                    assert not any('✗' in line for line in outcome[0]), outcome[0]
+                    nid, cids = before['lossy']
+                    kept = reader.get_note(nid)
+                    assert kept.note_type()['name'] == 'Study Deck - Cloze'
+                    assert kept.guid != 'lossy'
+                    assert sorted(kept.card_ids()) == cids, (kept.card_ids(), cids)
+                    assert all(reader.get_card(c).reps == 16 for c in cids)
+                    beside = reader.get_note(reader.db.scalar(
+                        'select id from notes where guid=?', 'lossy'))
+                    assert beside.id != nid
+                    assert beside.note_type()['name'] == 'Study Deck - Basic'
+                    for guid, kind in (('single', 'Basic'), ('qa', 'Cloze')):
+                        nid, cids = before[guid]
+                        note = reader.get_note(nid)
+                        assert note.guid == guid, guid
+                        assert note.note_type()['name'] == 'Study Deck - ' + kind, guid
+                        assert note.fields[0] == {'single': 'Q2 what is a?',
+                                                  'qa': 'Q3 a {{c1::fact}}'}[guid]
+                        assert reader.get_card(cids[0]).reps == 16, guid
+                    assert reader.db.scalar('select count(*) from notes') == 4
+                    assert outcome[6] == 2, outcome
+                    question = [t for t in asked if 'changed format' in t]
+                    if convert is None:
+                        assert len(question) == 1 and '<b>1 card</b> of them' in question[0]
+                    print(f'PASS real {flow} keeps every card of a card-losing '
+                          'conversion and converts the rest in place')
+                finally:
+                    reader.close()
+        finally:
+            sync._ask, sync._info = ask, info
+
+
 if __name__ == '__main__':
     run_legacy_notetype_contract()
+    run_conversion_keeps_every_card_contract()
     run()
+    run_learner_state_contract()

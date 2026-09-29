@@ -38,7 +38,8 @@ from .dialogs import about, manage_decks, open_night_mode_dimming, open_settings
 from .dupes_dialog import open_duplicate_scan
 from .nightmode import dim_images_in_night_mode, dim_webviews_in_night_mode
 from .sync import (clean_up_duplicates, import_single, reconcile_decks,
-                   register_reconcile_action, sync_decks, update_decks)
+                   register_reconcile_action, restore_pending_after_undo, sync_decks,
+                   update_decks)
 from .updates import check_updates, register_update_action
 
 
@@ -115,5 +116,6 @@ def _menu():
 
 gui_hooks.card_will_show.append(dim_images_in_night_mode)
 gui_hooks.webview_will_set_content.append(dim_webviews_in_night_mode)
+gui_hooks.state_did_undo.append(restore_pending_after_undo)
 gui_hooks.main_window_did_init.append(_menu)
 gui_hooks.main_window_did_init.append(_schedule_background_checks)

@@ -85,6 +85,7 @@ def anki(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "USER_SKILL", str(user_files / "user_skill.md"))
     background._tpl_deferred_notified.clear()
     background._deferred_decks.clear()   # session-scoped skip list, same reason
+    sync.undone_updates.clear()
     background._backup_failure_notified = False
     background._last_reconcile_notified = 0
     sync._reconcile_action = None   # a prior test's registered stub must not leak in

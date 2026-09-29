@@ -182,3 +182,18 @@ def test_filter_bar_render_saved_as_png(tmp_path):
         saved.append(png)
     for png in saved:
         assert os.path.getsize(png) > 0
+
+
+def test_enter_in_the_search_field_applies_the_search_and_leaves_the_dialog_open():
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    dlg = harness.render("confirm-long", size=(880, 900)).dialog
+    bar = _bar(dlg)
+    bar.search.setText("number 13")
+    bar.search.setFocus()
+
+    for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        QTest.keyClick(bar.search, key)
+        harness.app().processEvents()
+        assert dlg.isVisible() and dlg.result() == 0
+    assert bar._count.text() == f"Showing 1 of {_TOTAL} cards"
