@@ -157,6 +157,18 @@ def test_image_appended_to_primary_field_when_no_image_field(anki):
 _CREDIT = '<div style="font-size:small;opacity:.7">Image: {}</div>'
 
 
+def test_image_credit_goes_with_the_answer_when_the_picture_is_in_the_prompt(anki):
+    anki.col.models._models.append(make_model(name="Basic", fields=["Front", "Back"]))
+    card = _card("Q1", note_type="Basic", media_files=["a.png"])
+    card["fields"]["Back"] = "A1"
+    card["_media_credits"] = ["Wikimedia Commons"]
+    collection.add_generated_notes(
+        [card], media={"a.png": b"1"}, deck_name=DECK, scope_tag=SCOPE)
+    note = next(iter(anki.col._notes.values()))
+    assert note["Front"] == 'Q1<img src="a.png">'
+    assert note["Back"] == "A1" + _CREDIT.format("Wikimedia Commons")
+
+
 def test_image_credit_follows_its_image_in_the_same_field(anki):
     card = _card("Q1", media_files=["a.png", "b.png"])
     card["_media_credits"] = ["Wikimedia Commons, CC BY-SA", ""]

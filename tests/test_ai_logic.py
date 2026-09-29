@@ -121,9 +121,9 @@ def test_empty_front_is_allowed_when_the_card_carries_a_picture():
     assert all(c["code"] != "empty" for per in checks for c in per)
 
 
-def test_empty_cloze_text_is_blocked():
+def test_empty_cloze_text_is_blocked_once():
     checks = ai_logic.mechanical_checks([_card("Study Deck - Cloze", Text=" ")], {})
-    assert any(c["code"] == "empty" for c in checks[0])
+    assert [c["code"] for c in checks[0] if c["level"] == "block"] == ["cloze"]
 
 
 def test_draft_repeating_an_earlier_front_is_a_duplicate():
@@ -434,10 +434,10 @@ def test_correction_cannot_reintroduce_a_remote_image():
     assert "images" in verdicts[0]["note"]
 
 
-def test_correction_left_empty_by_the_strip_is_dropped_but_keeps_its_note():
+def test_correction_left_empty_by_the_strip_is_unverified_and_keeps_its_note():
     text = _corrected({"Back": '<img src="https://example.com/p.png">'})
     verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
-    assert verdicts[0]["verdict"] == "corrected"
+    assert verdicts[0]["verdict"] == "unverified"
     assert verdicts[0]["correction"] is None
     assert "fixed" in verdicts[0]["note"] and "web picture" in verdicts[0]["note"]
 

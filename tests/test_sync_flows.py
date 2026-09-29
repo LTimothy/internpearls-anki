@@ -6914,6 +6914,19 @@ def test_startup_nudge_names_the_held_card_count(anki):
         "Intern Pearls: 2 held cards waiting. Run Update my decks to finish them."]
 
 
+def test_startup_nudge_waits_for_a_collection(anki, monkeypatch):
+    from internpearls import background
+    config_col = anki.col
+    anki.mw.col = None
+    rearmed = []
+    monkeypatch.setattr(background.QTimer, "singleShot",
+                        lambda ms, fn: rearmed.append(fn))
+    background._held_cards_nudge()
+    assert rearmed == [background._held_cards_nudge]
+    assert anki.gui.tooltips == []
+    anki.mw.col = config_col
+
+
 def test_startup_nudge_is_silent_with_nothing_held(anki):
     from internpearls import background, config
     config.save_declined({
