@@ -1018,7 +1018,8 @@ def _scene_ai_review(mock, opts):
     this scene otherwise demonstrates. opts["verdicts"] adds a Check facts
     verdict to cards 0-2: confirmed with a source link, corrected with its
     proposed text and Accept/Keep mine, and unverified. opts["failed_image"]
-    gives the last card a picture that failed to load.
+    gives the last card a picture that failed to load. opts["resolved"] with
+    verdicts turns cards 2 and 3 into an applied and a kept correction.
     """
     from internpearls import ai_dialog, ai_logic
     _ai_backend_available()
@@ -1076,6 +1077,14 @@ def _scene_ai_review(mock, opts):
                     "verdict": "unverified",
                     "note": "no web access; could not confirm from recall alone",
                     "correction": None, "sources": []}
+        if opts.get("resolved") and n > 3:
+            s.verdicts[2] = {
+                "verdict": "corrected", "note": "the loading dose was too high",
+                "correction": None, "applied": True,
+                "sources": [{"title": "ASRA checklist", "url": "https://example.com/asra"}]}
+            s.verdicts[3] = {
+                "verdict": "corrected", "note": "the wording differs from the reference",
+                "correction": None, "kept_yours": True, "sources": []}
         dlg._rebuild_review()
         dlg.stack.setCurrentWidget(dlg.review_page)
         dlg.exec()

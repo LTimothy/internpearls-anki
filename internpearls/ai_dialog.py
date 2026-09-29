@@ -475,9 +475,30 @@ def _check_reason_row(entry, indent):
 # A Check facts verdict's own label and palette role (see _build_verdict_row):
 # "unverified" has no role here since it takes colors()["warning"] directly
 # rather than one of the existing "<role>_bg" pairs _accent_row's roles read.
-_VERDICT_LABELS = {"confirmed": "Confirmed", "corrected": "Corrected",
+_VERDICT_LABELS = {"confirmed": "Confirmed", "suggested": "Correction suggested",
+                   "applied": "Correction applied", "kept": "Original kept",
                    "unverified": "Unverified"}
-_VERDICT_ROLE = {"confirmed": "accept", "corrected": "updated"}
+_VERDICT_ROLE = {"confirmed": "accept", "suggested": "updated", "applied": "accept",
+                 "kept": "retired"}
+_VERDICT_SUMMARY = {"confirmed": "confirmed", "suggested": "correction suggested",
+                    "applied": "correction applied", "kept": "original kept",
+                    "unverified": "unverified"}
+
+
+def _verdict_state(verdict):
+    """A verdict's label key: a corrected one is suggested until the learner
+    accepts it (applied) or keeps their own text (kept)."""
+    kind = verdict["verdict"]
+    if kind != "corrected":
+        return kind
+    if verdict.get("applied"):
+        return "applied"
+    return "kept" if verdict.get("kept_yours") else "suggested"
+
+
+def _pending_corrections(verdicts):
+    return sum(1 for v in verdicts.values()
+               if v.get("correction") and _verdict_state(v) == "suggested")
 
 
 def _card_image_names(card):
@@ -2497,6 +2518,9 @@ class _GenerateDialog(QDialog):
         self.feedback_box.setPlaceholderText(
             "e.g. shorter answers, add one card on avoided drugs")
         lay.addWidget(self.feedback_box)
+        self.import_note = hint_label("")
+        self.import_note.setVisible(False)
+        lay.addWidget(self.import_note)
         bb = QDialogButtonBox()
         back = bb.addButton("Back", QDialogButtonBox.ButtonRole.ActionRole)
         back.clicked.connect(lambda: self.stack.setCurrentWidget(self.input_page))
@@ -2908,8 +2932,9 @@ class _GenerateDialog(QDialog):
         if n_done:
             header += f", {n_done} imported"
         if s.verdicts:
-            counts = Counter(v["verdict"] for v in s.verdicts.values())
-            bits = [f"{counts[k]} {k}" for k in ai_logic._VERDICT_WORDS if counts.get(k)]
+            counts = Counter(_verdict_state(v) for v in s.verdicts.values())
+            bits = [f"{counts[k]} {word}" for k, word in _VERDICT_SUMMARY.items()
+                    if counts.get(k)]
             if bits:
                 header += " · " + ", ".join(bits)
         self.review_header.setText(header)
@@ -2931,6 +2956,11 @@ class _GenerateDialog(QDialog):
         self.review_footer.setText(footer)
         self.review_footer.setVisible(bool(footer))
 
+        pending = _pending_corrections(s.verdicts)
+        self.import_note.setText(
+            f"{pending} suggested correction{'' if pending == 1 else 's'} not reviewed"
+            if pending else "")
+        self.import_note.setVisible(bool(pending))
         self.import_btn.setText(f"Import {plural(n_inc, 'card')}")
         self.revise_btn.setText(
             "Revise all" + (f" ({plural(len(s.notes), 'note')})" if s.notes else ""))
@@ -2985,9 +3015,8 @@ class _GenerateDialog(QDialog):
         verdict still carrying its proposed text also gets an Accept/Keep
         mine block underneath."""
         kind = verdict["verdict"]
-        label = _VERDICT_LABELS.get(kind, "Unverified")
-        if kind == "corrected" and verdict.get("kept_yours"):
-            label += " (kept yours)"
+        state = _verdict_state(verdict)
+        label = _VERDICT_LABELS.get(state, "Unverified")
         msg = html.escape(f"{label}: {verdict.get('note', '')}")
         sources = verdict.get("sources") or []
         if sources:
@@ -3015,7 +3044,7 @@ class _GenerateDialog(QDialog):
         if kind == "unverified":
             bar = c["warning"]
         else:
-            bar = c[_VERDICT_ROLE.get(kind, "updated") + "_bg"]
+            bar = c[_VERDICT_ROLE.get(state, "updated") + "_bg"]
         # The border-none reset is load-bearing: Qt drops a lone border-left on a
         # QLabel unless the border shorthand is cleared first (see _accent_row).
         label_widget.setStyleSheet(
@@ -3073,6 +3102,7 @@ class _GenerateDialog(QDialog):
         s.cards[i]["fields"].update(verdict["correction"])
         s.updated.add(i)
         verdict["correction"] = None
+        verdict["applied"] = True
         self._recheck(i)
         self._rebuild_review(focus_row=i)
 

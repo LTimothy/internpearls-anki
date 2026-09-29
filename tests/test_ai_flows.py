@@ -594,7 +594,7 @@ def test_corrected_verdict_shows_proposed_text_with_accept_and_keep_mine(anki, m
            "correction": {"Back": "corrected answer"}, "sources": []}}
     dlg._rebuild_review()
     text = _row_text(dlg.cards_lay._children[0])
-    assert "Corrected: dose was off" in text
+    assert "Correction suggested: dose was off" in text
     assert "corrected answer" in text
     assert "Accept" in text and "Keep mine" in text
 
@@ -612,6 +612,52 @@ def test_accept_correction_writes_field_and_marks_updated(anki, monkeypatch):
     assert dlg.session.verdicts[0]["correction"] is None
 
 
+def test_accepted_correction_reads_applied(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.session.verdicts = {
+        0: {"verdict": "corrected", "note": "dose was off",
+           "correction": {"Back": "corrected answer"}, "sources": []}}
+    dlg._accept_correction(0)
+    assert "Correction applied: dose was off" in _row_text(dlg.cards_lay._children[0])
+
+
+def test_header_counts_suggested_applied_and_kept_separately(anki, monkeypatch):
+    dlg = _two_card_draft(anki, monkeypatch)
+    import copy
+    dlg.session.cards.append(copy.deepcopy(dlg.session.cards[0]))
+    dlg.session.cards[2]["fields"]["Front"] = "A third question"
+    dlg.session.included.append(True)
+    dlg.session.checks = ai_logic.mechanical_checks(dlg.session.cards, {})
+    pending = lambda: {"verdict": "corrected", "note": "n", "sources": [],
+                       "correction": {"Back": "new"}}
+    dlg.session.verdicts = {0: pending(), 1: pending(), 2: pending()}
+    dlg._rebuild_review()
+    assert "3 correction suggested" in dlg.review_header.text()
+    dlg._accept_correction(0)
+    dlg._keep_correction(1)
+    header = dlg.review_header.text()
+    assert "1 correction suggested" in header
+    assert "1 correction applied" in header
+    assert "1 original kept" in header
+
+
+def test_unreviewed_suggestions_are_noted_near_import_without_blocking_it(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    assert not dlg.import_note.isVisible() and dlg.import_note.text() == ""
+    dlg.session.verdicts = {
+        0: {"verdict": "corrected", "note": "n", "sources": [],
+           "correction": {"Back": "new"}}}
+    dlg._rebuild_review()
+    assert dlg.import_note.text() == "1 suggested correction not reviewed"
+    assert dlg.import_btn.isEnabled()
+    dlg._keep_correction(0)
+    assert dlg.import_note.text() == ""
+
+
 def test_keep_mine_drops_correction_and_marks_kept(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
@@ -624,7 +670,7 @@ def test_keep_mine_drops_correction_and_marks_kept(anki, monkeypatch):
     assert dlg.session.cards[0]["fields"]["Back"] == original_back
     assert dlg.session.verdicts[0]["correction"] is None
     text = _row_text(dlg.cards_lay._children[0])
-    assert "Corrected (kept yours): dose was off" in text
+    assert "Original kept: dose was off" in text
 
 
 def test_skip_reveals_the_note_box_and_its_text_rides_the_next_revise_all(anki, monkeypatch):
