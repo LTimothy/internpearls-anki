@@ -3158,7 +3158,7 @@ class _GenerateDialog(QDialog):
         media = {}
         svg_index = 0
         for pos, (orig_i, card) in enumerate(pairs):
-            files = []
+            files, credits = [], []
             resolved = s.image_data.get(orig_i) or []
             for j in range(len(card["images"])):
                 res = resolved[j] if j < len(resolved) else None
@@ -3179,7 +3179,12 @@ class _GenerateDialog(QDialog):
                     name = res["name"]
                 media[name] = res["bytes"]
                 files.append(name)
+                credits.append(card["images"][j].get("attribution", ""))
             card["_media_files"] = files
+            card["_media_credits"] = credits
+            verdict = s.verdicts.get(orig_i)
+            cited = verdict and _verdict_state(verdict) in ("confirmed", "applied")
+            card["_sources"] = (verdict.get("sources") or []) if cited else []
         cards = [c for _, c in pairs]
         # add_generated_notes can raise (e.g. Basic/Cloze missing or renamed on a
         # non-English profile). Cleanup waits until AFTER a successful import:

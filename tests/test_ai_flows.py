@@ -1657,6 +1657,34 @@ def test_note_caption_is_right_after_a_rebuild(anki, monkeypatch):
     assert dlg._note_captions[0].text().startswith("Skipped.")
 
 
+def test_import_carries_sources_only_for_confirmed_or_applied_verdicts(anki, monkeypatch):
+    dlg = _three_card_draft(anki, monkeypatch)
+    src = [{"title": "Ref", "url": "https://example.com/ref"}]
+    dlg.session.verdicts = {
+        0: {"verdict": "confirmed", "note": "ok", "correction": None, "sources": src},
+        1: {"verdict": "corrected", "note": "n", "sources": src,
+            "correction": {"Back": "new"}},
+        2: {"verdict": "unverified", "note": "n", "correction": None, "sources": src}}
+    dlg._accept_correction(1)
+    dlg._do_import()
+    fronts = [c["fields"]["Front"] for c in dlg.session.cards]
+    whys = {n["Front"]: n["Why"] for n in anki.col._notes.values()}
+    assert "Sources:" in whys[fronts[0]]
+    assert "Sources:" in whys[fronts[1]]
+    assert "Sources:" not in whys[fronts[2]]
+
+
+def test_import_carries_an_images_attribution(anki, monkeypatch):
+    _stub_fetch_image(monkeypatch)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    dlg.session.cards[0]["images"][0]["attribution"] = "Someone, CC BY"
+    dlg._do_import()
+    note = next(iter(anki.col._notes.values()))
+    assert "Image: Someone, CC BY</div>" in note["Image"]
+
+
 def test_scratch_dir_removed_on_discard(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()

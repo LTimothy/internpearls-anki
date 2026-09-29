@@ -1571,7 +1571,10 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
     every such file across the whole accepted batch. This function only writes those
     bytes into the collection's media folder and turns each card's _media_files into
     `<img src="...">` tags appended to its Image field (or its primary field, for a
-    note type with none): it never resolves or fetches an image itself.
+    note type with none), each followed by its credit line from card["_media_credits"]
+    (parallel to _media_files). A card's card["_sources"] become a "Sources:" line
+    appended to its Why field, else Back, else Back Extra. It never resolves or
+    fetches an image itself.
 
     Every note gets a fresh iplocal- GUID (ai_logic.generated_guid()), so it can never
     match (and a later deck sync's remap_cards/_reconcile_pending can never touch)
@@ -1640,8 +1643,11 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
             for name, value in card["fields"].items():
                 if name in note:
                     note[name] = value
-            imgs = "".join(f'<img src="{written.get(f, f)}">'
-                           for f in card.get("_media_files", []))
+            credits = card.get("_media_credits") or []
+            imgs = "".join(
+                f'<img src="{written.get(f, f)}">'
+                + ai_logic.image_credit_html(credits[k] if k < len(credits) else "")
+                for k, f in enumerate(card.get("_media_files", [])))
             if imgs:
                 if "Image" in note:
                     target = "Image"
@@ -1649,6 +1655,10 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
                     target = ai_logic.PRIMARY_FIELD.get(
                         card["note_type"], next(iter(card["fields"])))
                 note[target] = (note[target] + imgs) if note[target] else imgs
+            sources = ai_logic.sources_html(card.get("_sources"))
+            explain = next((n for n in ("Why", "Back", "Back Extra") if n in note), None)
+            if sources and explain:
+                note[explain] = note[explain] + sources
             note.guid = ai_logic.generated_guid()
             note.tags = list(card.get("tags", [])) + [tag]
             col.add_note(note, did)
