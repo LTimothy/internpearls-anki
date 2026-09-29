@@ -532,8 +532,12 @@ class _Page(QWidget):
     """One batch of StreamingList rows that reports a plain height instead of a
     height-for-width. Wrapped labels otherwise make every layout pass ask every visible
     row for its height, so each batch revealed cost more than the last. The height is
-    asked of the page's own layout at the list's width, which caches it until a row
-    changes."""
+    asked of the page's own layout at the list's width, and asked again when that
+    width changes."""
+
+    def __init__(self):
+        super().__init__()
+        self._hint_width = None
 
     def hasHeightForWidth(self):
         return False
@@ -541,6 +545,7 @@ class _Page(QWidget):
     def sizeHint(self):
         parent = self.parentWidget()
         width = parent.width() if parent is not None else self.width()
+        self._hint_width = width
         lay = self.layout()
         height = (lay.totalHeightForWidth(width) if lay.hasHeightForWidth()
                   else lay.totalSizeHint().height())
@@ -549,13 +554,20 @@ class _Page(QWidget):
     def minimumSizeHint(self):
         return QSize(0, self.sizeHint().height())
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # The list asked for this page's height at another width; wrapped rows need a
+        # different height at this one.
+        if self._hint_width is not None and self._hint_width != self.width():
+            self.updateGeometry()
+
 
 class StreamingList(QScrollArea):
     """A scroll area that builds its rows in batches instead of all at once.
 
-    Measured offscreen, building and showing the current review list costs about 2ms
-    per card: a 3000-card first sync takes 5.7 seconds of dead time with no feedback
-    before the dialog even appears. Building only the first `batch` rows up front, and
+    Measured offscreen, building a card row costs about half a millisecond, so building
+    a 3000-card first sync up front is over a second of dead time with no feedback
+    before the dialog even appears, and far more once the rows are laid out. Building only the first `batch` rows up front, and
     the next batch only once the reader has actually scrolled near the bottom, is what
     turns that multi-second freeze into a screen that opens in roughly the time one
     batch costs, whatever is still pending.
@@ -671,17 +683,15 @@ class StreamingList(QScrollArea):
                 and platform().monotonic() - self._last_scroll > self.SCROLL_QUIET_S):
             start = self.built()
             end = min(start + self.IDLE_CHUNK, self.total())
-            items = list(self._items[start:end])
-
             generation = self._generation
 
-            def build(items):
+            def build(end):
                 if generation != self._generation:
                     return    # the list was replaced while this chunk was in flight
                 self._prefetching = False
                 if self.built() != start:
                     return    # a scroll built these rows first; the next tick resumes
-                self._build_upto(start + len(items))
+                self._build_upto(end)
 
             def abandon(_error):
                 if generation == self._generation:
@@ -689,12 +699,12 @@ class StreamingList(QScrollArea):
 
             request = new_work_request(
                 self, "list-prefetch", "streaming-list.prefetch",
-                inputs={"count": len(items), "start": start})
+                inputs={"count": end - start, "start": start})
 
             def prefetch(context):
                 context.checkpoint("list-prefetch:start")
                 context.checkpoint("list-prefetch:complete")
-                return items
+                return end
 
             self._prefetching = True
             platform().start_work(request, prefetch, build, abandon).start()

@@ -160,3 +160,41 @@ def test_a_row_that_grows_after_it_is_shown_is_not_clipped():
     assert page.height() > before, "the page did not grow when a row opened"
     assert row.geometry().bottom() < page.height(), "the opened row is clipped by its page"
     dlg.close()
+
+
+def test_pages_follow_the_list_width_so_wrapped_rows_are_not_clipped():
+    """A page's height depends on how its wrapped rows break, so it must be measured
+    again whenever the list gets narrower or wider, including its first real layout."""
+    harness.bootstrap()
+    app = harness.app()
+    from aqt.qt import QDialog, QLabel, QVBoxLayout
+    from internpearls.widgets import StreamingList
+
+    def build(item):
+        row = QLabel(f"Row {item}: a long label that takes more lines as the dialog "
+                     "narrows, and fewer as it widens again " * 2)
+        row.setWordWrap(True)
+        return row
+
+    dlg = QDialog()
+    lst = StreamingList(build, list(range(30)), batch=10)
+    QVBoxLayout(dlg).addWidget(lst)
+
+    def fits():
+        page = lst._pages[0]
+        return page.height() == page.layout().totalHeightForWidth(page.width())
+
+    def settle():
+        # A scrollbar appearing or going narrows the list, which takes a second pass.
+        for _ in range(3):
+            app.processEvents()
+
+    dlg.resize(700, 500)
+    dlg.show()
+    settle()
+    assert fits(), "the first layout left a page at a height measured for another width"
+    for width in (300, 900):
+        dlg.resize(width, 500)
+        settle()
+        assert fits(), f"at {width}px a page kept the height of the previous width"
+    dlg.close()
