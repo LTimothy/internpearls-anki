@@ -3,6 +3,33 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.76.2
+
+Safer updates. A round of fixes for cases where an update, a restore or an undo could
+lose something of yours.
+
+- A card that changed format in a way that would remove some of your cards (a
+  fill-in-the-blank with several blanks becoming a single question and answer) is no
+  longer converted. Your card stays as it is, with all its cards and review history, and
+  the new version is added beside it. The format question now says so.
+- Updates keep your own tags, such as leech, marked and anything you added.
+- Your notes on cards are put back as each deck finishes updating, so an update that is
+  interrupted or stopped part-way no longer leaves them blank.
+- Edit > Undo after an update now undoes the whole deck at once, and that deck is offered
+  again next time. Auto-sync leaves an undone update for you to run by hand.
+- Restoring your oldest deck backup no longer deletes it first, and cancelling a
+  collection restore no longer makes every deck re-apply.
+- Cards sitting in a filtered deck no longer make their deck look uninstalled (which
+  could re-apply it on every auto-sync).
+- Pressing Enter in the Update my decks search box searches instead of applying the
+  update.
+- A card you skipped or turned away stays that way when the deck source moves it to
+  another deck.
+- Two cards from the source can no longer land on the same card of yours.
+- Reconcile my decks never offers to archive a card the source still ships.
+
+Restart Anki after updating.
+
 ## v0.76.1
 
 Update my decks stays quick with a long list of cards. Scrolling far down a big catch-up

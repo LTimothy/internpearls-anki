@@ -28,7 +28,8 @@ from .logic import (clamp_interval_minutes, decide_addon_update_action,
 from .net import _BG_TIMEOUT, _DOWNLOAD_TIMEOUT
 from .platform import new_work_request, platform, wait_for_mock_work
 from .sync import (_cached_fetch, _content_backup_decks, _fetch_manifest, _is_local,
-                   _reconcile_pending, _refresh_reconcile_action_label, _run_sync)
+                   _live_cards_loader, _reconcile_pending, _refresh_reconcile_action_label,
+                   _run_sync, undone_updates)
 from .ui import _bg_safe, manual_sync_in_progress
 from .updates import _addon_update_work, _refresh_update_action_label
 
@@ -217,7 +218,8 @@ def _auto_sync_check():
         # can decide about them, so re-downloading and re-backing-up for them every
         # poll bought nothing at all (see _deferred_decks).
         todo = [d for d in decks_to_update(manifest, installed, cfg["excluded"])
-                if (d["name"], d.get("version")) not in _deferred_decks]
+                if (d["name"], d.get("version")) not in _deferred_decks
+                and (d["name"], d.get("version")) not in undone_updates]
         # Always returned (even with todo empty) rather than bailing to None here: a
         # retirement or reorg can ship without bumping any deck's version, so this is
         # the only place that would ever notice one between manual checks — _apply
@@ -272,7 +274,9 @@ def _auto_sync_check():
         # this is the one place that keeps the "Reconcile my decks" menu label (and,
         # the first time a backlog appears or grows, a one-time tooltip pointing at
         # it) honest between manual checks.
-        _, fresh, _, moves, _, _, stranded = _reconcile_pending(result["manifest"], live)
+        _, fresh, _, moves, _, _, stranded = _reconcile_pending(
+            result["manifest"], live,
+            _live_cards_loader(result["manifest"], None, result["downloaded"]))
         # `stranded` counts too: reconcile_decks and update_decks both treat a reworded
         # pair as pending work, so leaving it out here made the menu label disagree with
         # the screen it points at, and a backlog of nothing but reworded pairs was never
