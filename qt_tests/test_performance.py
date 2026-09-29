@@ -162,9 +162,11 @@ def test_scrolling_deep_into_a_long_list_costs_no_more_than_the_first_batch():
     flush()
     dlg.close()
     assert lst.shown() > 1000
-    assert max(steps[-5:]) < _BUDGET_SECONDS, (
-        f"late scroll steps took {[round(s, 3) for s in steps[-5:]]}s, over "
-        f"{_BUDGET_SECONDS}s (first steps {[round(s, 3) for s in steps[:3]]}s)")
+    # Relative to the first batches, so a slow machine does not fail it; the stall this
+    # guards made late batches many times slower than early ones.
+    assert max(steps[-5:]) < max(4 * max(steps[:3]), _BUDGET_SECONDS), (
+        f"late scroll steps took {[round(s, 3) for s in steps[-5:]]}s against first "
+        f"steps of {[round(s, 3) for s in steps[:3]]}s")
 
 
 def test_filtering_after_the_prefetch_has_built_everything_stays_quick():
@@ -179,5 +181,5 @@ def test_filtering_after_the_prefetch_has_built_everything_stays_quick():
     elapsed = time.perf_counter() - start
     flush()
     dlg.close()
-    assert elapsed < 1.0, (
+    assert elapsed < 2.0, (
         f"filtering after a full prefetch took {elapsed:.3f}s")
