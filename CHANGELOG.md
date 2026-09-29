@@ -3,6 +3,43 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.76.0
+
+Update my decks and Generate cards (AI) get a round of fixes and a few new tools.
+
+Update my decks:
+
+- A card you held for later whose format changed (a question and answer that became a
+  fill-in-the-blank) now gets the usual question when you release it: move your card
+  across and keep its review history, or import the new one beside it. It used to be
+  imported as a separate card without asking.
+- Long updates (20 or more cards) get a filter bar: All, New, Changed, Held or Not
+  reviewed, plus a search box. Filtering never changes a decision.
+- Declined and held cards, a deck source's consented skill and unsent card notes are
+  now kept per profile and deck source, so two profiles no longer share them. Your
+  existing decisions move to the first profile that opens after updating.
+- Auto-sync no longer applies a download that started before you changed the deck
+  source, turned auto-sync off, or excluded that deck.
+
+Generate cards (AI):
+
+- A card with an empty front is flagged and never imported, and two drafted cards with
+  the same front are flagged too.
+- Editing a card clears its old fact-check result, and the row says it was edited since
+  the check.
+- Fact-check corrections are labelled Correction suggested, then Correction applied or
+  Original kept, and a note beside Import counts suggestions you have not reviewed. A
+  suggested correction can no longer add a picture straight from the web.
+- A picture that failed to load has Retry, Remove and Replace beside it.
+- Imported cards keep their picture credits, and cards with a confirmed or applied fact
+  check get a Sources line of links.
+- If an import stops part-way, the cards that made it are marked Imported and Import
+  again adds only the rest.
+- Editing a card or deciding a correction keeps your place in the list, and the note
+  box under an included card no longer says it was skipped.
+
+Restart Anki after updating.
+
 ## v0.75.0
 
 Update my decks makes it harder to miss a group of changed cards.
