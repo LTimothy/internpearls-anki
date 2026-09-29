@@ -3,6 +3,15 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.76.1
+
+Update my decks stays quick with a long list of cards. Scrolling far down a big catch-up
+used to slow down with every batch of cards it showed, and could stall and jump for
+seconds, and switching between All, New, Changed, Held and Not reviewed could pause
+while the list rebuilt. Both now take about the same time however long the list is.
+
+Restart Anki after updating.
+
 ## v0.76.0
 
 Update my decks and Generate cards (AI) get a round of fixes and a few new tools.
