@@ -112,11 +112,15 @@ test("non-ai", async ({ page }) => {
   dialog = await waitForDialog(page);
   await expect(dialog).toContainText("This update also changes how some cards look");
   const acceptedKeep = dialog.getByRole("button", { name: /^Keep yours:/ }).first();
-  const acceptedLater = dialog.getByRole("button", { name: /^Later:/ }).last();
+  const addedFront = "Which route gets epinephrine working fastest in anaphylaxis?";
+  const acceptedLater = dialog.getByRole("button", { name: `Later: ${addedFront}`,
+    exact: true });
   await acceptedKeep.click();
   await expect(acceptedKeep).toHaveAttribute("aria-pressed", "true");
   await acceptedLater.click();
   await expect(acceptedLater).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.locator(
+    `textarea[aria-label="Feedback note: ${addedFront}"]:visible`)).toHaveCount(0);
   await dialog.locator('textarea[aria-label^="Feedback note:"]:visible').first()
     .fill("Please clarify the generic example.");
   await expect(dialog).toContainText("1 card flagged");

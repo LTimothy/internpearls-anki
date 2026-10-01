@@ -1892,7 +1892,7 @@ NOTHING_CHANGED = "Update cancelled, nothing was changed."
 
 
 def show_result_with_feedback(title, items, entries, nothing_note="",
-                              standing_declines=None):
+                              standing_declines=None, excluded=()):
     """The end of a run, as one dialog instead of two.
 
     A completion summary and a feedback digest used to arrive as separate boxes, back
@@ -1911,7 +1911,8 @@ def show_result_with_feedback(title, items, entries, nothing_note="",
     wrote notes) is the digest on its own.
 
     `standing_declines` is the current sparse decline registry to append to any digest;
-    it does not make a digest appear when the run has no entries of its own.
+    it does not make a digest appear when the run has no entries of its own. Its Later
+    count leaves out cards in the `excluded` decks.
 
     `nothing_note` is the one sentence to show when there is neither: a run that
     stopped with nothing to summarize and nothing flagged used to return in silence,
@@ -1927,7 +1928,7 @@ def show_result_with_feedback(title, items, entries, nothing_note="",
             _info(nothing_note)
         return
     offer_feedback_digest(None, entries, title=title, items=items,
-                          standing_declines=standing_declines)
+                          standing_declines=standing_declines, excluded=excluded)
 
 
 def _digest_heading(entries):
@@ -1946,7 +1947,8 @@ def _digest_heading(entries):
     return ", ".join(parts) or plural(len(entries), "card")
 
 
-def offer_feedback_digest(parent, entries, title=None, items=(), standing_declines=None):
+def offer_feedback_digest(parent, entries, title=None, items=(), standing_declines=None,
+                          excluded=()):
     """Put the flagged-card summary on the clipboard and show it.
 
     Shown as well as copied, for two reasons: the learner sees exactly what's being
@@ -1968,7 +1970,8 @@ def offer_feedback_digest(parent, entries, title=None, items=(), standing_declin
     """
     text = build_feedback_digest(entries, version=ADDON_VERSION,
                                  date=datetime.date.today().isoformat(),
-                                 standing_declines=standing_declines)
+                                 standing_declines=standing_declines,
+                                 excluded=excluded)
     if not text:
         return
     copied = copy_to_clipboard(text)

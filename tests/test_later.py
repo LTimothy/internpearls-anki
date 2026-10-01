@@ -160,6 +160,20 @@ def test_digest_header_counts_only_the_listed_entries():
     assert "1 card left for later" in text
 
 
+def test_digest_count_line_leaves_out_later_cards_in_excluded_decks():
+    reg = {"g1": _entry("held"), "g2": _entry("held", deck="IP::Off"),
+           "g3": _entry("held", deck="IP::Off::Sub")}
+    text = logic.build_feedback_digest(
+        [{"deck": "IP::A", "front": "flagged", "guid": "g0", "note": "n"}],
+        standing_declines=reg, excluded=["IP::Off"])
+    assert "2 cards left for later" in text   # same exact-name rule as later_count
+    assert logic.later_count(reg, ["IP::Off"]) == 2
+    text = logic.build_feedback_digest(
+        [{"deck": "IP::A", "front": "flagged", "guid": "g0", "note": "n"}],
+        standing_declines={"g2": _entry("held", deck="IP::Off")}, excluded=["IP::Off"])
+    assert "left for later" not in text
+
+
 # ------------------------------------------------------------------------- nudge
 def test_later_nudge_is_due_only_when_the_count_grew():
     assert logic.later_nudge_due(3, None) is True
