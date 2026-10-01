@@ -1,13 +1,13 @@
 """Real-Qt render checks for the Declined cards dialog: the three group headings
-actually paint, and every row's Offer again button has real on-screen size, not just
-a sizeHint the mock suite cannot measure.
+(Later first) actually paint, and every row's Offer again button has real on-screen
+size, not just a sizeHint the mock suite cannot measure.
 """
 import pytest
 
 import harness
 from sampling import widget_rect
 
-HEADINGS = ("Never imported", "Skipped for now", "Kept yours")
+HEADINGS = ("Later", "Never imported", "Kept yours")
 
 
 def _visible_labels(dialog, q):
@@ -21,6 +21,15 @@ def test_all_three_group_headings_render(shot, theme):
     texts = {w.text() for w in _visible_labels(s.dialog, q)}
     missing = [h for h in HEADINGS if h not in texts]
     assert not missing, f"{theme}: missing group headings {missing}"
+    assert not {"Skipped for now", "Held for later"} & texts
+
+
+def test_later_is_the_first_group(shot):
+    _, q = harness.bootstrap()
+    s = shot("declined")
+    headings = [w for w in _visible_labels(s.dialog, q) if w.text() in HEADINGS]
+    tops = {w.text(): widget_rect(s.dialog, w).top() for w in headings}
+    assert min(tops, key=tops.get) == "Later", tops
 
 
 @pytest.mark.parametrize("theme", sorted(harness.THEMES))

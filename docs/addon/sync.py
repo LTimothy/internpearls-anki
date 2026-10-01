@@ -1853,8 +1853,8 @@ def _retired_moved_items(fresh, moves, existing_nids):
 _UPDATE_SAFETY_NOTE = (
     "This is a preview: nothing is applied until you confirm below, and a backup "
     "is taken automatically first. Your review history and your own notes on cards "
-    "are always kept, and nothing here is ever deleted. Anything you skip or turn "
-    "away can be offered again under Manage decks \u2192 Declined cards.")
+    "are always kept, and nothing here is ever deleted. Anything you leave for later "
+    "or turn away can be offered again under Manage decks \u2192 Declined cards.")
 
 
 @_safe
@@ -2056,8 +2056,8 @@ def update_decks():
     # digest's reader-facing ones, since this line sits beside the rows themselves.
     # A fixed word order, not decisions.values()'s own insertion order (click order),
     # so the tally reads the same regardless of which row the learner touched first.
-    _TALLY_WORDS = (("keep", "kept yours for now"), ("never", "never"),
-                    ("frozen", "no more updates"))
+    _TALLY_WORDS = (("held", "left for later"), ("keep", "kept yours for now"),
+                    ("never", "never"), ("frozen", "no more updates"))
 
     def _decision_tally():
         counts = {}
@@ -2070,7 +2070,7 @@ def update_decks():
         parts = []
         # What Update would apply without the reader having looked at it, said beside
         # the buttons that do it. Informative only: the hold button is the way out.
-        unopened = unopened_line(row_kind, touched | opened, folded, reg)
+        unopened = unopened_line(row_kind, touched | opened, folded, reg, decisions)
         if unopened:
             parts.append(unopened)
         if flags:

@@ -54,17 +54,19 @@ def test_chip_cell_carries_every_kinds_label():
 
 def test_decision_cell_selected_colour_role_matches_what_the_choice_does():
     """The segmented control's selected colour is its one visual statement of what a
-    choice does: accept roles for Import/Apply, updated for Skip/Keep, decline for
+    choice does: accept roles for Import/Apply, updated for Later/Keep, decline for
     Never. Pinned per state so a palette or mapping edit cannot silently swap them."""
     from internpearls import palette, widgets
     c = palette.colors()
     cells = {
-        widgets.decision_cell([("import", "Import"), ("skip", "Skip"),
+        widgets.decision_cell([("import", "Import"), ("held", "Later"),
                                ("never", "Never")], "import", lambda v: None):
-            (("import", "accept"), ("skip", "updated"), ("never", "decline")),
-        widgets.decision_cell([("apply", "Apply"), ("keep", "Keep mine")],
+            (("import", "accept"), ("held", "updated"), ("never", "decline")),
+        widgets.decision_cell([("apply", "Apply"), ("keep", "Keep mine"),
+                               ("held", "Later"), ("frozen", "Never")],
                               "apply", lambda v: None):
-            (("apply", "accept"), ("keep", "updated")),
+            (("apply", "accept"), ("keep", "updated"), ("held", "updated"),
+             ("frozen", "decline")),
     }
     for cell, mapping in cells.items():
         for state, role in mapping:
@@ -83,7 +85,7 @@ def test_decision_cell_renders_as_one_rounded_group_not_separate_buttons():
     bordered buttons: only the outer corners round, and every button after the first
     drops its own left border so the shared edge between two buttons paints once."""
     from internpearls import widgets
-    options = [("import", "Import"), ("skip", "Skip"), ("never", "Never")]
+    options = [("import", "Import"), ("held", "Later"), ("never", "Never")]
     cell = widgets.decision_cell(options, "import", lambda v: None)
     buttons = [cell.buttons[v] for v, _ in options]
     first, middle, last = buttons[0], buttons[1], buttons[-1]
@@ -110,9 +112,9 @@ def test_decision_cell_height_does_not_shift_between_selected_and_unselected():
     """A selected button's bold font-weight must not make that one button taller than
     its unselected neighbours, which would read as the row bobbing on every click."""
     from internpearls import widgets
-    options = [("import", "Import"), ("skip", "Skip")]
+    options = [("import", "Import"), ("held", "Later")]
     cell = widgets.decision_cell(options, "import", lambda v: None)
-    selected, unselected = cell.buttons["import"], cell.buttons["skip"]
+    selected, unselected = cell.buttons["import"], cell.buttons["held"]
 
     def height_rule(style):
         return [line.strip() for line in style.split(";")
@@ -206,9 +208,9 @@ def test_decision_cell_names_each_button_with_the_card_it_decides_about():
     """A 300-row list otherwise announces hundreds of controls called nothing but
     "Import", the way the Declined dialog's Offer again buttons used to."""
     from internpearls import widgets
-    cell = widgets.decision_cell([("import", "Import"), ("skip", "Skip")], "import",
+    cell = widgets.decision_cell([("import", "Import"), ("held", "Later")], "import",
                                  lambda v: None, card_label="A card front")
-    assert cell.buttons["skip"]._accessible == "Skip: A card front"
+    assert cell.buttons["held"]._accessible == "Later: A card front"
     bare = widgets.decision_cell([("import", "Import")], "import", lambda v: None)
     assert bare.buttons["import"]._accessible == "Import"
 

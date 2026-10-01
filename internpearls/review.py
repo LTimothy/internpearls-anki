@@ -27,8 +27,9 @@ from .logic import (FILTER_MIN_CARDS, FILTER_MODES, apkg_media_index,
                     build_feedback_digest, cloze_answer_changes, cloze_filled_html,
                     cloze_hint_changes, count_cards, extract_apkg_media,
                     field_image_names, field_preview_html, field_preview_text,
-                    filter_update_items, group_run, holdable_guids, merged_word_diff,
-                    note_display_label, plain_text, plural, truncate, word_diff_ratio)
+                    filter_update_items, group_run, holdable_guids, later_migration_line,
+                    merged_word_diff, note_display_label, plain_text, plural, truncate,
+                    word_diff_ratio)
 from .palette import colors
 from .ui import (_ask_with_widget, _info, copy_to_clipboard, hint_label, link_button,
                  muted_label, title_label)
@@ -786,8 +787,9 @@ def _group_title(members):
 
 # A group's one decision, offered only when every card in it is the same kind, and
 # never Never: turning a dozen cards down for good is a decision to make one at a time.
-_GROUP_OPTIONS = {"new": [("import", "Import all"), ("skip", "Skip all")],
-                  "changed": [("apply", "Apply all"), ("keep", "Keep all yours")]}
+_GROUP_OPTIONS = {"new": [("import", "Import all"), ("held", "Later all")],
+                  "changed": [("apply", "Apply all"), ("keep", "Keep all yours"),
+                              ("held", "Later all")]}
 
 
 def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
@@ -1011,29 +1013,22 @@ def _separator():
     return line
 
 
-_NEW_OPTIONS = [("import", "Import"), ("skip", "Skip"), ("never", "Never")]
-# The changed row's three options mirror the new row's, and "frozen" is Never's
+_NEW_OPTIONS = [("import", "Import"), ("held", "Later"), ("never", "Never")]
+# The changed row's options mirror the new row's, and "frozen" is Never's
 # counterpart here. It is a state of its own rather than "never" reused, because the two
 # mean different things once the card is in the learner's collection and the Declined
 # cards screen has to be able to say which is which: Never imported, against a card the
 # learner keeps whose updates they have turned off. The button says Never on both
 # kinds; what it turns down is whatever that row is offering, and the caption on the
 # click spells that out.
-_CHANGED_OPTIONS = [("apply", "Apply"), ("keep", "Keep yours"), ("frozen", "Never")]
+_CHANGED_OPTIONS = [("apply", "Apply"), ("keep", "Keep yours"), ("held", "Later"),
+                    ("frozen", "Never")]
 _DEFAULT_DECISION = {"new": "import", "changed": "apply"}
 
-# Where a declined card actually comes back from, spelled the same way in both captions.
-# A skipped card's deck is still recorded installed at the new version, so it is only
-# re-offered when the source ships another version of that deck: on a deck that rarely
-# changes, "next update" was a promise nothing here can keep, and Declined cards is the
-# one way back that does not depend on the source shipping anything.
-_BACK_FROM_DECLINE = ("offered again the next time this deck changes, or any time from "
-                      "Manage decks → Declined cards")
 _DECLINE_CAPTION = {
-    "skip": f"Set aside. It's {_BACK_FROM_DECLINE}.",
     "keep": ("Your card stays as it is. A change is offered again only when this "
              "card's source content changes, or any time from Manage decks → Declined cards."),
-    # No "offered again" clause on purpose: unlike the two above, this one is not a
+    # No "offered again" clause on purpose: unlike Keep, this one is not a
     # not-this-time. Manage decks → Declined cards is the only way back, and saying so
     # is what keeps it from reading as the same soft decision with a different label.
     "frozen": ("Your card stays as it is, and changes to it won't be offered again. "
@@ -1048,24 +1043,32 @@ _FEEDBACK_PLACEHOLDER = ("Anything to pass on about this card? You'll get a copy
                          "end to paste and send.")
 
 
-# Every decision that turns a card down, which is every decision worth offering the
-# note box for on the spot. Wider than _DECLINE_CAPTION, which is only the two that
-# earn a caption saying where the card comes back from; Never is a decision about the
-# card rather than about this offer, so it has nothing to come back from and still has
-# the most to explain.
-_TURNED_DOWN = frozenset({"skip", "keep", "never", "frozen"})
 
-_DECLINE_CHIP = {"skip": "skipped", "keep": "kept", "frozen": "kept", "held": "held"}
+def _later_caption(kind):
+    """What Later does, said on the row that chose it. Its default is the row's own."""
+    verb = "Apply" if kind == "changed" else "Import"
+    return (f"Comes back the next time you run Update my decks, set to {verb}. "
+            "With a note, it waits until the card is updated.")
+
+
+# Every decision that turns a card down, which is every decision worth offering the
+# note box for on the spot. Later is not one: it defers the card rather than judging
+# it, so it asks nothing, and the row's Add note link is still there.
+_TURNED_DOWN = frozenset({"keep", "never", "frozen"})
+
+_DECLINE_CHIP = {"keep": "kept", "frozen": "kept", "held": "held"}
+
+# A returning noted Later row's hint, by logic.later_status's `later_note_status`.
+_LATER_NOTE_HINT = {"not_updated": "Not updated yet", "updated": "Updated since your note"}
 
 
 def _row_chip(detail):
     """The one chip a card row wears.
 
-    A re-offered decline shows that decline rather than its kind: Skip is only ever
-    offered on a card the collection doesn't have and Keep yours only on a change to
-    one it does, so SKIPPED / KEPT YOURS says which kind the row is as well as what was
-    already decided about it. Stacking both (and, on a card changed since that decline,
-    an UPDATED beside them) cost three fixed-width columns plus the decision control,
+    A re-offered decline shows that decline rather than its kind: LATER / KEPT YOURS
+    says what was already decided about the row. Stacking both (and, on a card changed
+    since that decline, an UPDATED beside them) cost three fixed-width columns plus the
+    decision control,
     which at the dialog's own 660px floor left the card's own words about 150px: the
     exact crush the wider dialog had just undone, on the rows most worth reading. What
     the third pill said is said better by the hint line under the header, which names
@@ -1088,8 +1091,9 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     itself) reveals the answer, the why behind a green left rule, and dosing when
     present. A "new" or
     "changed" row also carries a segmented decision control (widgets.decision_cell) at
-    the right of its header, defaulting to Import/Apply; choosing Skip/Keep reveals a
-    feedback box for what the learner makes of it, and Never collapses the row with a
+    the right of its header, defaulting to Import/Apply; choosing Keep/Never reveals a
+    feedback box for what the learner makes of it (Later does not: it is a deferral),
+    and Never collapses the row with a
     struck-through primary line. Any row whose box is closed, a re-offered decline
     included, can open that same box with its own quiet "Add note" link, at the end of
     the expanded body, so feedback is never gated behind a decline; it costs the same
@@ -1223,7 +1227,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
 
     # The feedback box and its caption are built for every row, whatever its kind, but
     # stay invisible until something earns them: an existing note carried over in
-    # `flags`, a decline already on the card, or a click on Skip/Keep/Add note below.
+    # `flags`, a decline already on the card, or a click on Keep/Never/Add note below.
     caption = muted_label("")
     caption.setVisible(False)
     box = QPlainTextEdit(flags.get(guid, ""))
@@ -1233,7 +1237,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     box.setPlaceholderText(_FEEDBACK_PLACEHOLDER)
     box.setFixedHeight(50)
     # A note already written is what opens this, not a decline the reader made in some
-    # earlier run: ten re-offered skipped cards used to arrive as ten empty boxes
+    # earlier run: ten re-offered declined cards used to arrive as ten empty boxes
     # parked open, which is the state _apply_decision_visuals goes out of its way to
     # avoid everywhere else. Add note (below) is what reopens one on a row like that.
     box.setVisible(bool(flags.get(guid)))
@@ -1252,10 +1256,10 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     add_note.clicked.connect(_reveal_box)
 
     def _apply_decision_visuals(state, clicked=False):
-        declined = state in _DECLINE_CAPTION
-        caption.setVisible(declined)
-        if declined:
-            caption.setText(_DECLINE_CAPTION[state])
+        text = _later_caption(kind) if state == "held" else _DECLINE_CAPTION.get(state)
+        caption.setVisible(bool(text))
+        if text:
+            caption.setText(text)
         # Sticky once there's something to lose (a saved flag or typed-but-unsaved
         # text), but a decline back to default with nothing written in it closes
         # again, restoring the quiet Add note affordance rather than leaving an
@@ -1324,16 +1328,27 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         note_rows.append(note_row)
         outer.addWidget(note_row)
 
-    if changed_since_decline:
-        since = ("since you skipped it" if declined_state == "skip"
-                else "since you kept yours")
-        # In the row's own text column, like the body below it: this line is about the
-        # card, and drawn from the row's left edge it started left of even the caret.
+    # In the row's own text column, like the body below it: these lines are about the
+    # card, and drawn from the row's left edge they started left of even the caret.
+    hints = []
+    if changed_since_decline and declined_state != "held":
+        hints.append(muted_label("Changed since you kept yours. Worth another look."))
+    later_note = detail.get("later_note")
+    if declined_state == "held" and later_note:
+        # The learner's own words, shown as typed rather than read as markup.
+        note_label = muted_label(f"Your note: {later_note}")
+        note_label.setTextFormat(Qt.TextFormat.PlainText)
+        hints.append(note_label)
+        status = _LATER_NOTE_HINT.get(detail.get("later_note_status"))
+        if status:
+            hints.append(muted_label(status))
+    if hints:
         hint_row = QWidget()
-        hint_lay = QHBoxLayout(hint_row)
+        hint_lay = QVBoxLayout(hint_row)
         hint_lay.setContentsMargins(indent, 0, 0, 0)
         hint_lay.setSpacing(0)
-        hint_lay.addWidget(muted_label(f"Changed {since}. Worth another look."))
+        for hint in hints:
+            hint_lay.addWidget(hint)
         outer.addWidget(hint_row)
 
     body.setVisible(False)
@@ -1550,7 +1565,9 @@ def build_update_body(items, sources, flags, new_index, decisions,
     # missing from the dict a caller reads back. One pass over `items` costs nothing
     # (no widgets), and only ever writes a state that row's own control can actually
     # express, so a value the control couldn't show never silently reaches the
-    # persisted dict either.
+    # persisted dict either. A Later card returns at its default unless it is waiting
+    # (`later_wait`: an old Skip, or a noted card not updated yet).
+    migrated = 0
     for item in items:
         if item[0] != "card":
             continue
@@ -1560,6 +1577,9 @@ def build_update_body(items, sources, flags, new_index, decisions,
         default = _DEFAULT_DECISION.get(kind)
         options = {v for v, _ in (_NEW_OPTIONS if kind == "new"
                                   else _CHANGED_OPTIONS if kind == "changed" else ())}
+        migrated += bool(d.get("later_migrated"))
+        if state == "held" and not d.get("later_wait"):
+            continue
         if state and state != default and state in options:
             decisions.setdefault(d["guid"], state)
 
@@ -1577,6 +1597,8 @@ def build_update_body(items, sources, flags, new_index, decisions,
     # spacing, which reads as the list having been nudged down for no reason.
     if top_html:
         lay.addWidget(_rich_label(top_html))
+    if migrated:
+        lay.addWidget(muted_label(later_migration_line(migrated)))
 
     # The safety note is standing reassurance, not this run's news, so it renders as
     # small print: at body size it was the tallest block on the screen, taking height
@@ -1704,12 +1726,13 @@ def build_update_body(items, sources, flags, new_index, decisions,
     return body, boxes, flush
 
 
-HOLD_TOOLTIP = ("Cards you opened or chose for are updated as shown. The rest wait, "
-                "and come back the next time you run Update my decks.")
+HOLD_TOOLTIP = ("Cards you opened or chose for are updated as shown. The rest are left "
+                "for later: they come back the next time you run Update my decks, set "
+                "to Import or Apply.")
 
 
 def hold_label(n):
-    return f"Update reviewed, hold {n} undecided for later"
+    return f"Update, and leave {n} unopened for later"
 
 
 def hold_control(registry, card_kinds, reviewed, decisions=None):

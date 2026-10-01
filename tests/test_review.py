@@ -1063,7 +1063,7 @@ def test_a_decision_button_names_the_card_it_decides_about():
     row = review._card_row(detail, {}, {}, {}, _no_decide)
     cell = next(w for w in _walk_widgets(row) if hasattr(w, "buttons"))
     names = {v: b._accessible for v, b in cell.buttons.items()}
-    assert names["skip"] == "Skip: What nerve block covers the anterior thigh?"
+    assert names["held"] == "Later: What nerve block covers the anterior thigh?"
     assert all(name.endswith("anterior thigh?") for name in names.values())
 
 
@@ -1128,11 +1128,11 @@ def test_chip_kinds_reads_the_kinds_a_list_actually_holds():
 
 
 def test_chip_kinds_reads_a_card_rows_own_chip_not_its_bare_kind():
-    detail = {"guid": "g1", "kind": "new", "declined_state": "skip", "fields": []}
+    detail = {"guid": "g1", "kind": "new", "declined_state": "held", "fields": []}
     items = [("card", "D", detail), ("card", "D", {"guid": "g2", "kind": "new",
                                                    "fields": []}),
              ("retired", "an older phrasing")]
-    assert review._chip_kinds(items) == ("skipped", "new", "retired")
+    assert review._chip_kinds(items) == ("held", "new", "retired")
 
 
 # ------------------------------------------------------------------ mock Qt surface
@@ -1182,10 +1182,10 @@ def _cell_of(row):
 
 
 def test_every_way_of_turning_a_card_down_opens_the_note_box():
-    """Skip, Keep yours and Never all open the box on the click. Never used to be the
-    exception, which made the loudest decision in the dialog the only silent one: a
-    round arrived with twelve Nevers and no reason attached to any of them."""
-    for kind, decision in (("new", "skip"), ("new", "never"), ("changed", "keep")):
+    """Keep yours and Never open the box on the click. Never used to be the exception,
+    which made the loudest decision in the dialog the only silent one: a round arrived
+    with twelve Nevers and no reason attached to any of them."""
+    for kind, decision in (("new", "never"), ("changed", "keep"), ("changed", "frozen")):
         detail = dict(_basic_note_detail(), guid=f"g-{decision}", kind=kind)
         row = review._card_row(detail, {}, {}, {}, lambda *a, **k: None)
         box = _box_of(row)
@@ -1194,10 +1194,12 @@ def test_every_way_of_turning_a_card_down_opens_the_note_box():
         assert box.isVisible(), f"{decision} left no way to say why"
 
 
-def test_accepting_a_card_leaves_the_box_shut():
-    """The box opens on a decision worth explaining, not on every click. Import and
-    Apply keep the quiet Add note link instead."""
-    for kind, decision in (("new", "import"), ("changed", "apply")):
+def test_accepting_or_deferring_a_card_leaves_the_box_shut():
+    """The box opens on a decision worth explaining, not on every click. Import, Apply
+    and Later keep the quiet Add note link instead: Later is a deferral, not a
+    judgment."""
+    for kind, decision in (("new", "import"), ("changed", "apply"),
+                           ("new", "held"), ("changed", "held")):
         detail = dict(_basic_note_detail(), guid=f"g-{decision}", kind=kind)
         row = review._card_row(detail, {}, {}, {}, lambda *a, **k: None)
         _cell_of(row).buttons[decision].click()
@@ -1236,7 +1238,7 @@ def test_a_held_row_wears_the_held_chip():
     from internpearls import widgets
     detail = dict(_basic_note_detail(), guid="g1", kind="new", declined_state="held")
     assert review._row_chip(detail) == "held"
-    assert widgets.CHIPS["held"] == "HELD"
+    assert widgets.CHIPS["held"] == "LATER"
 
 
 def test_opening_a_row_reports_it_every_time_it_expands():
@@ -1273,13 +1275,13 @@ def test_hold_control_counts_and_relabels_as_rows_are_reviewed():
     kinds = {"g1": "new", "g2": "changed", "g3": "new"}
     extra, refresh = review.hold_control({"g3": {"state": "never"}}, kinds,
                                          lambda: reviewed)
-    assert extra["label"] == "Update reviewed, hold 2 undecided for later"
+    assert extra["label"] == "Update, and leave 2 unopened for later"
     assert extra["tooltip"] == review.HOLD_TOOLTIP and extra["visible"] is True
     refresh()   # no live button yet: must not raise
     extra["button"] = button = _Button()
     reviewed.add("g1")
     refresh()
-    assert button.text == "Update reviewed, hold 1 undecided for later" and button.visible
+    assert button.text == "Update, and leave 1 unopened for later" and button.visible
     reviewed.add("g2")
     refresh()
     assert button.visible is False
@@ -1289,7 +1291,7 @@ def test_hold_control_does_not_count_a_row_seeded_at_later():
     kinds = {"g1": "new", "g2": "new"}
     extra, _refresh = review.hold_control({"g2": {"state": "held"}}, kinds,
                                           lambda: set(), {"g2": "held"})
-    assert extra["label"] == "Update reviewed, hold 1 undecided for later"
+    assert extra["label"] == "Update, and leave 1 unopened for later"
 
 
 def test_hold_control_offers_nothing_when_no_row_can_be_held():

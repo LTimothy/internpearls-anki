@@ -6,7 +6,7 @@ test_chip_column.py's _row_grid builds a bare row.
 """
 import harness
 
-NEW_CARD_OPTIONS = [("import", "Import"), ("skip", "Skip"), ("never", "Never")]
+NEW_CARD_OPTIONS = [("import", "Import"), ("held", "Later"), ("never", "Never")]
 
 
 def _build(theme):
@@ -30,7 +30,7 @@ def test_every_button_renders_wider_than_a_single_character_would():
 
     Compared against one character rather than none: some platform styles apply a
     floor width to a button carrying literally no text, which comes out wider than a
-    short option like "Skip" legitimately paints and would sink the comparison for a
+    short option like "Later" legitimately paints and would sink the comparison for a
     reason that has nothing to do with whether the label painted.
     """
     _, q = harness.bootstrap()
