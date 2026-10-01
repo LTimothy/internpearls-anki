@@ -1101,7 +1101,8 @@ def later_status(entry, incoming_hash):
         return {}
     out = {}
     note = entry.get("note")
-    unchanged = entry.get("hash") == incoming_hash
+    stored = entry.get("hash")
+    unchanged = bool(stored) and stored == incoming_hash
     if isinstance(note, str) and note:
         out["later_note"] = note
         out["later_note_status"] = "not_updated" if unchanged else "updated"
@@ -1110,6 +1111,14 @@ def later_status(entry, incoming_hash):
     if (out.get("later_note_status") == "not_updated") or entry.get("migrated"):
         out["later_wait"] = True
     return out
+
+
+def later_count(registry, excluded):
+    """How many Later cards Update my decks can still offer: held entries outside the
+    decks named in `excluded`."""
+    excluded = set(excluded or ())
+    return sum(1 for e in held_entries(registry).values()
+               if e.get("deck") not in excluded)
 
 
 def later_nudge_due(count, last_seen):
@@ -1970,7 +1979,8 @@ def _decline_snapshot_lines(registry):
         state = state if isinstance(state, str) and state in known else None
         grouped[state].append((str(guid), entry))
 
-    lines = ["", f"Current standing declines ({len(registry) - later})"]
+    listed = len(registry) - later
+    lines = ["", f"Current standing declines ({listed})"] if listed else [""]
     for state, label in _DECLINE_SNAPSHOT_GROUPS + ((None, "Other"),):
         items = grouped[state]
         if not items:

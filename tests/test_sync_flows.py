@@ -5923,8 +5923,8 @@ def test_fix_note_types_holds_the_manual_guard_too(anki, monkeypatch):
 def test_declined_registry_round_trips(anki):
     from internpearls import config
     assert config.load_declined() == {}
-    entry = {"g1": {"state": "skip", "front": "f", "deck": "IP::A",
-                    "decided": "2026-08-25", "hash": "ab" * 8}}
+    entry = {"g1": {"state": "held", "front": "f", "deck": "IP::A",
+                    "decided": "2026-08-25", "hash": "ab" * 8, "note": "fix it"}}
     config.save_declined(entry)
     assert config.load_declined() == entry
     assert os.path.basename(config.DECLINED) == "declined.json"
@@ -6140,15 +6140,15 @@ def _choose_option_for(guid, label, accept):
     return respond
 
 
-def _choose_skip_for(guid):
-    """respond() for update_decks(): choose Skip on `guid`'s card, then accept via
+def _choose_never_for(guid):
+    """respond() for update_decks(): choose Never on `guid`'s card, then accept via
     Update."""
-    return _choose_option_for(guid, "Skip", True)
+    return _choose_option_for(guid, "Never", True)
 
 
-def _choose_skip_then_cancel(guid):
-    """Same as _choose_skip_for, but declines the confirmation afterward."""
-    return _choose_option_for(guid, "Skip", False)
+def _choose_never_then_cancel(guid):
+    """Same as _choose_never_for, but declines the confirmation afterward."""
+    return _choose_option_for(guid, "Never", False)
 
 
 def _choose_import_for(guid):
@@ -6157,8 +6157,9 @@ def _choose_import_for(guid):
     return _choose_option_for(guid, "Import", True)
 
 
-def test_update_preview_hides_never_and_presets_skip(anki, tmp_path):
-    from internpearls import config, sync
+def test_update_preview_hides_never_and_returns_an_old_skip_as_later(anki, tmp_path):
+    from internpearls import config
+    from internpearls.widgets import CHIPS
     deck = _source_with_two_new_cards(anki, tmp_path)
     config.save_declined({
         "guid-new-a": {"state": "never", "front": "front a", "deck": deck,
@@ -6171,9 +6172,8 @@ def test_update_preview_hides_never_and_presets_skip(anki, tmp_path):
     texts = _all_text(tree)
     assert "front a" not in texts            # never: hidden entirely
     assert "1 card hidden" in texts          # ...but counted
-    assert "SKIPPED" in texts                # skip re-offered, marked as such
-    # and the stale hash still says so, on the row's own hint line
-    assert "Changed since you skipped it" in texts
+    assert "front b" in texts and CHIPS["held"] in texts   # an old skip returns as Later
+    assert "Changed since" not in texts
 
 
 def test_deck_summary_counts_exclude_hidden_never_cards(anki, tmp_path):
@@ -6217,9 +6217,9 @@ def test_accepting_the_update_writes_decisions_to_the_registry(anki, tmp_path):
     from internpearls import config, sync
     _source_with_two_new_cards(anki, tmp_path)
     drive(anki, sync.update_decks,
-          respond=_choose_skip_for("guid-new-b"))   # click skip, then Update
+          respond=_choose_never_for("guid-new-b"))   # click Never, then Update
     reg = config.load_declined()
-    assert reg["guid-new-b"]["state"] == "skip"
+    assert reg["guid-new-b"]["state"] == "never"
     assert reg["guid-new-b"]["hash"]            # hash captured from the incoming note
     assert "guid-new-a" not in reg              # imported normally
     fronts = {anki.col.get_note(nid).fields[0]
@@ -6230,7 +6230,7 @@ def test_accepting_the_update_writes_decisions_to_the_registry(anki, tmp_path):
 def test_cancelling_writes_nothing_to_the_registry(anki, tmp_path):
     from internpearls import config, sync
     _source_with_two_new_cards(anki, tmp_path)
-    drive(anki, sync.update_decks, respond=_choose_skip_then_cancel("guid-new-b"))
+    drive(anki, sync.update_decks, respond=_choose_never_then_cancel("guid-new-b"))
     assert config.load_declined() == {}
 
 
@@ -6250,39 +6250,55 @@ def test_digest_reports_decisions_made_this_run_only(anki, tmp_path):
 
 
 def test_an_untouched_decline_keeps_its_stale_cue(anki, tmp_path):
-    """A skip already on record when the confirmation opens, left untouched, must not
-    have its hash/decided/front rebuilt just because the learner accepted an unrelated
-    update: that would silently clear a pending "changed since decline" cue they never
-    saw."""
+    """A Keep already on record when the confirmation opens, left untouched, must not
+    have its hash/decided/front rebuilt just because the learner accepted the update:
+    that would silently clear a pending "changed since decline" cue they never saw."""
     from internpearls import config
-    deck = _source_with_two_new_cards(anki, tmp_path)
+    deck = _source_updating_card_a(anki, tmp_path)
     config.save_declined({
-        "guid-new-b": {"state": "skip", "front": "front b", "deck": deck,
-                       "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+        "guid-a": {"state": "keep", "front": "front a", "deck": deck,
+                   "decided": "2026-08-01", "hash": "stale-hash-value1"}})
 
-    _update(anki)   # accepts the confirmation without touching guid-new-b's row
+    _update(anki)   # accepts the confirmation without touching guid-a's row
 
-    entry = config.load_declined()["guid-new-b"]
+    entry = config.load_declined()["guid-a"]
+    assert entry["state"] == "keep"
     assert entry["hash"] == "stale-hash-value1"
     assert entry["decided"] == "2026-08-01"
-    assert entry["front"] == "front b"
+    assert entry["front"] == "front a"
 
 
-def test_actively_reclicking_skip_refreshes_the_stale_hash(anki, tmp_path):
+def test_actively_reclicking_keep_refreshes_the_stale_hash(anki, tmp_path):
     """The active-click sibling of test_an_untouched_decline_keeps_its_stale_cue:
-    clicking Skip again on a card whose incoming content changed since the learner
-    last declined it is a re-review, so the stored hash/decided/front must refresh
-    even though the state itself (skip) doesn't change. Not a new decision, though: it
-    must not show up in the digest."""
+    clicking Keep yours again on a card whose incoming content changed since the
+    learner last declined it is a re-review, so the stored hash/decided/front must
+    refresh even though the state itself (keep) doesn't change. Not a new decision,
+    though: it must not show up in the digest."""
     from internpearls import config, sync
-    deck = _source_with_two_new_cards(anki, tmp_path)
+    deck = _source_updating_card_a(anki, tmp_path)
     config.save_declined({
-        "guid-new-b": {"state": "skip", "front": "front b", "deck": deck,
-                       "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+        "guid-a": {"state": "keep", "front": "front a", "deck": deck,
+                   "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+    state = {}
 
-    drive(anki, sync.update_decks, respond=_choose_skip_for("guid-new-b"))
+    def respond(p):
+        if p["kind"] == "ask":
+            return _answer_ask(p, None)
+        if p["kind"] != "dialog":
+            return {}
+        done = _dismiss_result(p["tree"])
+        if done:
+            return done
+        if not state.get("clicked"):
+            state["clicked"] = True
+            btn = _find_row_button(p["tree"], "front a, revised", "Keep yours")
+            return {"events": [{"id": btn["id"], "click": True}]}
+        return _click_update_button(True)(p)
 
-    entry = config.load_declined()["guid-new-b"]
+    drive(anki, sync.update_decks, respond)
+
+    entry = config.load_declined()["guid-a"]
+    assert entry["state"] == "keep"
     assert entry["hash"] != "stale-hash-value1" and entry["hash"]
     assert entry["decided"] != "2026-08-01"
     assert anki.gui.clipboard == []   # re-confirming an unchanged state isn't a decision
@@ -6294,13 +6310,13 @@ def test_digest_labels_only_the_state_changed_this_run_as_a_new_decision(anki, t
     from internpearls import config, sync
     deck = _source_with_two_new_cards(anki, tmp_path)
     config.save_declined({
-        "guid-new-a": {"state": "skip", "front": "front a", "deck": deck,
+        "guid-new-a": {"state": "never", "front": "front a", "deck": deck,
                        "decided": "2026-08-01", "hash": ""}})
 
-    drive(anki, sync.update_decks, respond=_choose_skip_for("guid-new-b"))
+    drive(anki, sync.update_decks, respond=_choose_never_for("guid-new-b"))
 
     digest = anki.gui.clipboard[-1]
-    assert digest.count("decision: skipped") == 1
+    assert digest.count("decision: never") == 1
     assert "front b" in digest
     assert "front a" in digest
     assert "Current standing declines (2)" in digest
@@ -6431,7 +6447,8 @@ def test_hold_imports_the_opened_card_and_holds_the_rest(anki, tmp_path):
     assert reg["guid-new-b"]["state"] == "held" and reg["guid-new-b"]["hash"]
     assert "guid-new-a" not in reg
     assert _hold_button(trees[0])["label"] == "Update reviewed, hold 2 undecided for later"
-    assert "1 card held for later" in _all_text(trees[-1])
+    assert ("1 card left for later. It comes back the next time you run Update my "
+            "decks.") in _all_text(trees[-1])
     assert anki.gui.clipboard == []   # holding is not a decision, so no digest
 
 
@@ -6471,15 +6488,15 @@ def test_holding_again_keeps_a_held_card_held(anki, tmp_path):
     assert "front b" not in _fronts(anki)
 
 
-def test_skipping_a_held_card_records_a_real_skip(anki, tmp_path):
+def test_declining_a_held_card_records_never(anki, tmp_path):
     from internpearls import config, sync
     _source_with_two_new_cards(anki, tmp_path)
     drive(anki, sync.update_decks, _open_then_hold("front a"))
 
-    drive(anki, sync.update_decks, respond=_choose_skip_for("guid-new-b"))
+    drive(anki, sync.update_decks, respond=_choose_never_for("guid-new-b"))
 
-    assert config.load_declined()["guid-new-b"]["state"] == "skip"
-    assert "decision: skipped" in anki.gui.clipboard[-1]
+    assert config.load_declined()["guid-new-b"]["state"] == "never"
+    assert "decision: never" in anki.gui.clipboard[-1]
 
 
 def test_clicking_import_on_a_held_card_is_not_reported_as_an_undecline(anki, tmp_path):
@@ -6494,12 +6511,16 @@ def test_clicking_import_on_a_held_card_is_not_reported_as_an_undecline(anki, tm
     assert anki.gui.clipboard == []
 
 
-def test_a_standing_skip_is_not_counted_as_holdable(anki, tmp_path):
+def test_a_standing_keep_is_not_counted_as_holdable(anki, tmp_path):
     from internpearls import config
-    deck = _source_with_two_new_cards(anki, tmp_path)
+    anki.col.add_note("guid-a", _fields("front a"), [TAGS])
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("guid-a", _fields("front a, revised"), TAGS),
+                      ("guid-new-b", _fields("front b"), TAGS)], None)})
+    _configure(anki, folder)
     config.save_declined({
-        "guid-new-b": {"state": "skip", "front": "front b", "deck": deck,
-                       "decided": "2026-08-01", "hash": ""}})
+        "guid-a": {"state": "keep", "front": "front a", "deck": DECK,
+                   "decided": "2026-08-01", "hash": ""}})
 
     tree = _snapshot_update_confirmation(anki)
 
@@ -6567,7 +6588,247 @@ def test_holding_while_declining_the_backup_still_reports_the_hold(anki, tmp_pat
 
     assert not any("nothing was changed" in i for i in anki.gui.infos)
     assert any("cancelled before anything was imported" in i for i in anki.gui.infos)
-    assert any("held for later" in i for i in anki.gui.infos)
+    assert any("left for later" in i for i in anki.gui.infos)
+
+
+# ----------------------------------------------------- update_decks: Later rows
+
+def _later_rows(monkeypatch, decide=None, notes=None, touch=(), seen=None):
+    """Stand in for the update screen's row controls once the real body is built:
+    `decide` is {guid: state} written into its decisions (None drops the guid, a row
+    at its default), `notes` goes into its flags, and `touch` marks rows as clicked.
+    `seen`, when given, collects the card details the screen was built from."""
+    from internpearls import sync
+    real = sync.build_update_body
+
+    def body(items, sources, flags, new_index, decisions, top_html, status_line,
+             safety_html, touched=None, **kw):
+        out = real(items, sources, flags, new_index, decisions, top_html, status_line,
+                   safety_html, touched, **kw)
+        if seen is not None:
+            seen.update({i[2]["guid"]: i[2] for i in items if i[0] == "card"})
+        for g, state in (decide or {}).items():
+            if state is None:
+                decisions.pop(g, None)
+            else:
+                decisions[g] = state
+        flags.update(notes or {})
+        touched.update(touch)
+        return out
+
+    monkeypatch.setattr(sync, "build_update_body", body)
+
+
+def _held(deck, **extra):
+    return {"state": "held", "front": "front b", "deck": deck, "decided": "2026-08-01",
+            "hash": "stored-hash", **extra}
+
+
+def test_later_with_a_note_stores_the_note_and_keeps_the_card_out(anki, tmp_path,
+                                                                   monkeypatch):
+    from internpearls import config, logic
+    _source_with_two_new_cards(anki, tmp_path)
+    _later_rows(monkeypatch, decide={"guid-new-b": "held"},
+                notes={"guid-new-b": "fix the dose first"}, touch={"guid-new-b"})
+
+    trees = _update(anki)
+
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["state"] == "held" and entry["note"] == "fix the dose first"
+    assert entry["hash"] == logic.note_fields_hash(_fields("front b"))
+    assert "front b" not in _fronts(anki) and "front a" in _fronts(anki)
+    assert ("1 card left for later. It comes back the next time you run Update my "
+            "decks.") in _all_text(trees[-1])
+    digest = anki.gui.clipboard[-1]
+    assert "fix the dose first" in digest and "decision:" not in digest
+
+
+def test_later_without_a_note_stores_no_note(anki, tmp_path, monkeypatch):
+    from internpearls import config
+    _source_with_two_new_cards(anki, tmp_path)
+    _later_rows(monkeypatch, decide={"guid-new-b": "held"}, touch={"guid-new-b"})
+
+    _update(anki)
+
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["state"] == "held" and "note" not in entry
+    assert "front b" not in _fronts(anki)
+    assert anki.gui.clipboard == []   # Later is not a decision for the digest
+
+
+def test_later_again_on_a_returning_noted_card_replaces_its_entry(anki, tmp_path,
+                                                                  monkeypatch):
+    from internpearls import config, logic
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-new-b": _held(deck, note="old note")})
+    _later_rows(monkeypatch, decide={"guid-new-b": "held"}, touch={"guid-new-b"})
+
+    _update(anki)
+
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["state"] == "held" and "note" not in entry
+    assert entry["hash"] == logic.note_fields_hash(_fields("front b"))
+    assert entry["decided"] != "2026-08-01"
+
+
+def test_a_waiting_later_row_left_alone_keeps_its_note_and_hash(anki, tmp_path,
+                                                                monkeypatch):
+    """A noted Later card whose content has not changed returns seeded at Later; left
+    alone it stays exactly as recorded."""
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    prior = _held(deck, note="fix the dose first")
+    config.save_declined({"guid-new-b": dict(prior)})
+    _later_rows(monkeypatch, decide={"guid-new-b": "held"})   # seeded, untouched
+
+    _update(anki)
+
+    assert config.load_declined()["guid-new-b"] == prior
+    assert "front b" not in _fronts(anki)
+    assert anki.gui.clipboard == []
+
+
+def test_holding_leaves_a_waiting_later_rows_entry_alone(anki, tmp_path, monkeypatch):
+    from internpearls import config, sync
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    prior = _held(deck, note="fix the dose first")
+    config.save_declined({"guid-new-b": dict(prior)})
+    _later_rows(monkeypatch, decide={"guid-new-b": "held"})
+    trees = []
+    respond = _open_then_hold("front a")
+
+    def capture(p):
+        if p["kind"] == "dialog":
+            trees.append(p["tree"])
+        return respond(p)
+
+    drive(anki, sync.update_decks, capture)
+
+    assert config.load_declined()["guid-new-b"] == prior
+    assert "1 card left for later" in _all_text(trees[-1])
+
+
+def test_a_migrated_row_left_at_later_loses_the_flag_after_the_run(anki, tmp_path,
+                                                                   monkeypatch):
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-new-b": _held(deck, migrated=True)})
+    _later_rows(monkeypatch, decide={"guid-new-b": "held"})
+
+    _update(anki)
+
+    assert config.load_declined()["guid-new-b"] == _held(deck)
+
+
+def test_a_migrated_row_set_to_import_is_reported_as_imported_after_all(
+        anki, tmp_path, monkeypatch):
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-new-b": _held(deck, migrated=True)})
+    _later_rows(monkeypatch, decide={"guid-new-b": None}, touch={"guid-new-b"})
+
+    _update(anki)
+
+    assert "guid-new-b" not in config.load_declined()
+    assert "front b" in _fronts(anki)
+    assert "decision: imported after all" in anki.gui.clipboard[-1]
+
+
+def test_explicit_later_and_hold_are_counted_together(anki, tmp_path, monkeypatch):
+    from internpearls import config, sync
+    _source_with_two_new_cards(anki, tmp_path)
+    _later_rows(monkeypatch, decide={"guid-new-a": "held"}, touch={"guid-new-a"})
+    trees = []
+    respond = _open_then_hold()
+
+    def capture(p):
+        if p["kind"] == "dialog":
+            trees.append(p["tree"])
+        return respond(p)
+
+    drive(anki, sync.update_decks, capture)
+
+    reg = config.load_declined()
+    assert {g: e["state"] for g, e in reg.items()} == {
+        "guid-new-a": "held", "guid-new-b": "held"}
+    assert ("2 cards left for later. They come back the next time you run Update my "
+            "decks.") in _all_text(trees[-1])
+
+
+def test_preview_tells_a_returning_later_row_its_note_status(anki, tmp_path,
+                                                             monkeypatch):
+    from internpearls import config, logic
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    same = logic.note_fields_hash(_fields("front b"))
+    config.save_declined({
+        "guid-new-a": {**_held(deck, note="too long"), "front": "front a"},
+        "guid-new-b": _held(deck, note="fix the dose", hash=same)})
+    seen = {}
+    _later_rows(monkeypatch, seen=seen)
+
+    _snapshot_update_confirmation(anki)
+
+    a, b = seen["guid-new-a"], seen["guid-new-b"]
+    assert b["declined_state"] == "held" and b["later_wait"] is True
+    assert b["later_note"] == "fix the dose" and b["later_note_status"] == "not_updated"
+    assert a["later_note_status"] == "updated" and "later_wait" not in a
+    assert "changed_since_decline" not in a and "changed_since_decline" not in b
+
+
+def test_preview_marks_a_migrated_row_as_waiting(anki, tmp_path, monkeypatch):
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-b": {"state": "skip", "front": "front b", "deck": deck,
+                       "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+    seen = {}
+    _later_rows(monkeypatch, seen=seen)
+
+    _snapshot_update_confirmation(anki)
+
+    b = seen["guid-new-b"]
+    assert b["declined_state"] == "held"
+    assert b["later_wait"] is True and b["later_migrated"] is True
+
+
+def test_digest_snapshot_leaves_out_an_entry_pruned_during_the_run(anki, tmp_path):
+    from internpearls import config, sync
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-gone": {"state": "never", "front": "retired front", "deck": deck,
+                      "decided": "2026-08-01", "hash": ""}})
+
+    drive(anki, sync.update_decks, respond=_choose_never_for("guid-new-b"))
+
+    assert "guid-gone" not in config.load_declined()
+    digest = anki.gui.clipboard[-1]
+    assert "front b" in digest
+    assert "retired front" not in digest and "guid-gone" not in digest
+
+
+def test_an_update_records_how_many_cards_are_left_for_later(anki, tmp_path,
+                                                             monkeypatch):
+    from internpearls import config
+    _source_with_two_new_cards(anki, tmp_path)
+    _later_rows(monkeypatch, decide={"guid-new-a": "held", "guid-new-b": "held"},
+                touch={"guid-new-a", "guid-new-b"})
+    config.save_later_seen(7)
+
+    _update(anki)
+
+    assert config.load_later_seen() == 2
+
+
+def test_cancelling_the_update_leaves_the_later_count_alone(anki, tmp_path,
+                                                            monkeypatch):
+    from internpearls import config
+    _source_with_two_new_cards(anki, tmp_path)
+    _later_rows(monkeypatch, decide={"guid-new-b": "held"}, touch={"guid-new-b"})
+    config.save_later_seen(7)
+
+    _update(anki, accept=False)
+
+    assert config.load_later_seen() == 7
 
 
 def _source_updating_card_a_pinned(anki, tmp_path):
@@ -7007,9 +7268,9 @@ def test_a_swept_preview_download_does_not_double_count_its_conversions(
 
 
 # ------------------------------------ preview counts vs. what actually imports
-def test_deck_summary_counts_exclude_a_standing_skip(anki, tmp_path):
-    """A standing skip drops the card from the import as surely as a Never does, so
-    counting it as pending made the preview say "1 new" and the result say none."""
+def test_deck_summary_counts_an_old_skip_as_new_like_any_later_card(anki, tmp_path):
+    """An old skip comes back as a Later card, which is pending on this screen like
+    any held card, so the deck summary counts it."""
     from internpearls import config
     deck = _source_with_two_new_cards(anki, tmp_path)
     config.save_declined({
@@ -7018,8 +7279,7 @@ def test_deck_summary_counts_exclude_a_standing_skip(anki, tmp_path):
 
     texts = _all_text(_snapshot_update_confirmation(anki))
 
-    assert "1 new" in texts
-    assert "2 new" not in texts
+    assert "2 new" in texts
 
 
 def test_deck_summary_counts_exclude_a_standing_keep(anki, tmp_path):
@@ -7347,7 +7607,7 @@ def test_startup_nudge_names_the_held_card_count(anki):
     config.save_declined({
         "g1": {"state": "held", "front": "a", "deck": DECK, "decided": "", "hash": ""},
         "g2": {"state": "held", "front": "b", "deck": DECK, "decided": "", "hash": ""},
-        "g3": {"state": "skip", "front": "c", "deck": DECK, "decided": "", "hash": ""}})
+        "g3": {"state": "never", "front": "c", "deck": DECK, "decided": "", "hash": ""}})
 
     background._held_cards_nudge()
 
@@ -7371,7 +7631,7 @@ def test_startup_nudge_waits_for_a_collection(anki, monkeypatch):
 def test_startup_nudge_is_silent_with_nothing_held(anki):
     from internpearls import background, config
     config.save_declined({
-        "g3": {"state": "skip", "front": "c", "deck": DECK, "decided": "", "hash": ""}})
+        "g3": {"state": "never", "front": "c", "deck": DECK, "decided": "", "hash": ""}})
 
     background._held_cards_nudge()
 

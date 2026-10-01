@@ -236,7 +236,7 @@ def source_identity():
 # file (its owner is unknown); the second moves it to whichever collection and source
 # reads it first, so existing decisions survive the upgrade without a second profile
 # inheriting them too.
-_SCOPED_STATE = ("installed.json", "shipped_fields.json")
+_SCOPED_STATE = ("installed.json", "shipped_fields.json", "later_seen.json")
 _ADOPTED_STATE = ("declined.json", "deck_skill.json", "card_feedback.json")
 
 
