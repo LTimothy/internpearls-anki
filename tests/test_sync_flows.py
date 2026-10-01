@@ -6624,6 +6624,72 @@ def _held(deck, **extra):
             "hash": "stored-hash", **extra}
 
 
+def test_an_old_skip_filed_under_a_renamed_deck_stays_out(anki, tmp_path, monkeypatch):
+    """An entry recorded under a deck the source no longer lists is still a standing
+    choice when its card ships in another deck: it must come back as a Later row and
+    stay out of a plain Update, not be dropped and imported."""
+    from internpearls import config
+    _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({
+        "guid-new-b": {"state": "skip", "front": "front b", "deck": "Renamed away::Old",
+                       "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+    seen = {}
+    _later_rows(monkeypatch, seen=seen)
+
+    _update(anki)
+
+    assert seen["guid-new-b"]["later_migrated"] is True
+    assert seen["guid-new-b"]["later_wait"] is True
+    assert "front b" not in _fronts(anki) and "front a" in _fronts(anki)
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["state"] == "held" and entry["deck"] == DECK
+
+
+def test_a_noted_later_card_filed_under_a_renamed_deck_keeps_waiting(anki, tmp_path):
+    from internpearls import config, logic
+    _source_with_two_new_cards(anki, tmp_path)
+    same = logic.note_fields_hash(_fields("front b"))
+    config.save_declined({"guid-new-b": _held("Renamed away::Old", note="fix it",
+                                              hash=same)})
+
+    _update(anki)
+
+    assert "front b" not in _fronts(anki)
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["state"] == "held" and entry["note"] == "fix it"
+    assert entry["deck"] == DECK and entry["hash"] == same
+
+
+def test_a_later_card_whose_deck_left_the_source_is_released(anki, tmp_path):
+    from internpearls import config
+    _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-elsewhere": {**_held("Renamed away::Old"),
+                                             "front": "elsewhere"}})
+
+    _update(anki)
+
+    assert "guid-elsewhere" not in config.load_declined()
+
+
+def test_digest_later_count_leaves_out_excluded_decks(anki, tmp_path):
+    from internpearls import config, sync
+    other = "Intern Pearls::Intern Custom::Example Group"
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("guid-new-a", _fields("front a"), TAGS),
+                      ("guid-new-b", _fields("front b"), TAGS)], None),
+        other: ("v1", [("guid-off", _fields("front off"), f"{SCOPE}::ExampleGroup")], None)})
+    _configure(anki, folder)
+    anki.mw._config["excluded_decks"] = [other]
+    config.save_declined({"guid-off": {**_held(other), "front": "front off"}})
+
+    drive(anki, sync.update_decks, respond=_choose_never_for("guid-new-b"))
+
+    digest = anki.gui.clipboard[-1]
+    assert "decision: never" in digest
+    assert "left for later" not in digest
+    assert config.load_declined()["guid-off"]["state"] == "held"
+
+
 def test_later_with_a_note_stores_the_note_and_keeps_the_card_out(anki, tmp_path,
                                                                    monkeypatch):
     from internpearls import config, logic

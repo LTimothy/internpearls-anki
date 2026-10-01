@@ -1880,11 +1880,6 @@ def update_decks():
         return
     manifest, fetch, source = fetched
     _check_deck_skill(cfg, manifest, fetch)
-    gone = held_outside_manifest(reg, manifest)
-    if gone:
-        for guid in gone:
-            del reg[guid]
-        save_declined(reg)
 
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     todo = decks_to_update(manifest, installed, cfg["excluded"],
@@ -2129,7 +2124,7 @@ def update_decks():
         if run_decisions is not None:
             save_later_seen(later_count(standing, cfg["excluded"]))
         show_result_with_feedback(title, items, entries, nothing_note=nothing_note,
-                                  standing_declines=standing)
+                                  standing_declines=standing, excluded=cfg["excluded"])
         if entries:
             clear_saved_feedback()
 
@@ -2196,6 +2191,18 @@ def update_decks():
     touched, opened = set(), set()
     row_kind = {item[2]["guid"]: item[2].get("kind")
                for item in items if item[0] == "card"}
+    # A held card filed under a deck the source no longer lists follows its row to the
+    # deck it ships in now. One with no row here has nothing left to offer it again,
+    # so it is released.
+    row_deck = {item[2]["guid"]: item[1] for item in items if item[0] == "card"}
+    gone = held_outside_manifest(reg, manifest)
+    if gone:
+        for guid in gone:
+            if guid in row_deck:
+                reg[guid]["deck"] = row_deck[guid]
+            else:
+                del reg[guid]
+        save_declined(reg)
     # The hold control is built after the body, which seeds `decisions`, so its count
     # leaves out rows that start away from their default.
     hold_refresh = []

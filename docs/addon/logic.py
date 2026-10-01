@@ -1979,23 +1979,25 @@ _DECLINE_SNAPSHOT_GROUPS = (
 )
 
 
-def _decline_snapshot_lines(registry):
-    """Render the current sparse decline registry for a feedback digest."""
+def _decline_snapshot_lines(registry, excluded=()):
+    """Render the current sparse decline registry for a feedback digest. Later cards
+    are one count line, counted as later_count does (outside `excluded` decks)."""
     registry = registry if isinstance(registry, dict) else {}
     known = {state for state, _label in _DECLINE_SNAPSHOT_GROUPS}
     grouped = {state: [] for state in known}
     grouped[None] = []
-    later = 0
+    held = 0
     for guid, raw in registry.items():
         entry = raw if isinstance(raw, dict) else {}
         state = entry.get("state")
         if state == "held":
-            later += 1
+            held += 1
             continue
         state = state if isinstance(state, str) and state in known else None
         grouped[state].append((str(guid), entry))
 
-    listed = len(registry) - later
+    listed = len(registry) - held
+    later = later_count(registry, excluded)
     lines = ["", f"Current standing declines ({listed})"] if listed else [""]
     for state, label in _DECLINE_SNAPSHOT_GROUPS + ((None, "Other"),):
         items = grouped[state]
@@ -2018,7 +2020,8 @@ def _decline_snapshot_lines(registry):
     return lines
 
 
-def build_feedback_digest(entries, version="", date="", standing_declines=None):
+def build_feedback_digest(entries, version="", date="", standing_declines=None,
+                          excluded=()):
     """Render flagged-card feedback as plain text, ready to paste into a message.
 
     `entries` is a list of {"deck", "front", "guid", "note"}, grouped here by deck in
@@ -2034,7 +2037,8 @@ def build_feedback_digest(entries, version="", date="", standing_declines=None):
 
     `standing_declines`, when supplied, is the current declined-card registry. It is
     rendered after the run's entries as a complete state snapshot; content hashes stay
-    out because they are sync bookkeeping rather than a learner decision.
+    out because they are sync bookkeeping rather than a learner decision. Later cards
+    in the `excluded` decks are left out of its count line.
 
     Returns "" for no entries, so a caller can treat empty as "nothing to send" without
     a separate check.
@@ -2063,7 +2067,7 @@ def build_feedback_digest(entries, version="", date="", standing_declines=None):
                 lines.append(f'  > {plain_text(e.get("note"))}')
             lines.append("")
     if standing_declines is not None:
-        lines.extend(_decline_snapshot_lines(standing_declines))
+        lines.extend(_decline_snapshot_lines(standing_declines, excluded))
     return "\n".join(lines).rstrip() + "\n"
 
 
