@@ -92,6 +92,14 @@ def test_later_status_migrated_with_a_note_carries_both():
                    "later_note_status": "updated"}
 
 
+def test_later_status_a_note_without_a_stored_hash_is_updated_and_does_not_wait():
+    for entry in (_entry(note="n", hash=""), {"state": "held", "note": "n"}):
+        assert logic.later_status(entry, "h1") == {
+            "later_note": "n", "later_note_status": "updated"}
+        assert logic.later_status(entry, None) == {
+            "later_note": "n", "later_note_status": "updated"}
+
+
 def test_later_status_ignores_non_held_and_non_dict_entries():
     assert logic.later_status(_entry("never", note="n"), "h1") == {}
     assert logic.later_status(_entry("keep", migrated=True), "h1") == {}
@@ -140,6 +148,18 @@ def test_digest_has_no_count_line_without_later_cards():
     assert "left for later" not in text
 
 
+def test_digest_with_only_later_cards_prints_no_empty_header():
+    text = _digest({"g1": _entry("held"), "g2": _entry("held")})
+    assert "Current standing declines" not in text
+    assert "2 cards left for later" in text
+
+
+def test_digest_header_counts_only_the_listed_entries():
+    text = _digest({"g1": _entry("held"), "g3": _entry("never")})
+    assert "Current standing declines (1)" in text
+    assert "1 card left for later" in text
+
+
 # ------------------------------------------------------------------------- nudge
 def test_later_nudge_is_due_only_when_the_count_grew():
     assert logic.later_nudge_due(3, None) is True
@@ -165,3 +185,13 @@ def test_later_seen_tolerates_a_corrupt_or_odd_file(anki):
         with open(config.LATER_SEEN, "w", encoding="utf8") as fh:
             fh.write(body)
         assert config.load_later_seen() == 0, body
+
+
+# -------------------------------------------------------------------- later_count
+def test_later_count_counts_held_entries_outside_excluded_decks():
+    reg = {"a": _entry("held"), "b": _entry("held", deck="IP::Gone"),
+           "c": _entry("never"), "d": "garbage", "e": _entry("held", migrated=True)}
+    assert logic.later_count(reg, ()) == 3
+    assert logic.later_count(reg, ["IP::Gone"]) == 2
+    assert logic.later_count({}, ()) == 0
+    assert logic.later_count(None, ()) == 0

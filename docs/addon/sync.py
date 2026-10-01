@@ -38,7 +38,7 @@ from .collection import (NoteTypeFieldsRequired, _apply_deck, _apply_template_ch
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, load_declined, load_deck_skill,
-                     save_declined, save_deck_skill)
+                     save_declined, save_deck_skill, save_later_seen)
 from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes_for,
                     source_label_for, group_change_notes, sort_source_groups,
                     declined_drop, declined_guids,
@@ -46,7 +46,7 @@ from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, held_deck_names, held_entries,
-                    held_outside_manifest, holdable_guids,
+                    held_outside_manifest, holdable_guids, later_count, later_status,
                     manifest_needs_newer_addon,
                     note_display_label, note_fields_hash, per_note_for_package,
                     unopened_line,
@@ -1645,10 +1645,11 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
     `registry` is config.load_declined()'s own {guid: entry}. A card previously
     declined "never" is dropped from the list entirely and counted in `hidden` instead
     of shown. An unchanged revision previously declined "keep" is omitted without
-    counting it as Never; it remains available from Manage decks. Other "skip"/"keep"
+    counting it as Never; it remains available from Manage decks. Other "keep"/"held"
     rows are kept but tagged `detail["declined_state"]`
-    (its own badge, see review._card_row) and, when the incoming fields hash differs
-    from what was declined, `detail["changed_since_decline"]` too.
+    (its own badge, see review._card_row). A "keep" row whose incoming fields hash
+    differs from what was declined gets `detail["changed_since_decline"]` too; a
+    "held" (Later) row gets logic.later_status' keys instead.
 
     Returns (items, failed, sources, hidden). `items` is a mix of ("header",
     deck_short_name), ("sep",), and ("card", deck_name, detail) entries plus whatever
@@ -1772,11 +1773,13 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
                     continue
                 if state:
                     detail["declined_state"] = state
-                    incoming = [v for _, v in detail["fields"]]
-                    # A held card was never read, so "changed since" has nothing to
-                    # compare against.
-                    if (state != "held" and entry.get("hash")
-                            and entry["hash"] != note_fields_hash(incoming)):
+                    incoming = note_fields_hash([v for _, v in detail["fields"]])
+                    # A held card says what it needs through later_status instead:
+                    # it was set aside, not turned down, so "changed since" is not
+                    # its cue.
+                    if state == "held":
+                        detail.update(later_status(entry, incoming))
+                    elif entry.get("hash") and entry["hash"] != incoming:
                         detail["changed_since_decline"] = True
                 label = source_label_for(note_sources, detail["guid"])
                 if label:
@@ -1910,7 +1913,8 @@ def update_decks():
     # GUIDs: without it a flag the learner writes couldn't say which deck or card it
     # was about.
     # `incoming_hashes` rides along the same two loops, since both already hold each
-    # card's fields: it's what a Skip/Keep this run records into the declined registry.
+    # card's fields: it's what a Keep, Never or Later this run records into the
+    # declined registry.
     new_cards, incoming_hashes = [], {}
     for d in todo:
         pc = preview.get(d["name"])
@@ -1992,7 +1996,7 @@ def update_decks():
     # A standing decline drops the card from the import whatever state it holds (see
     # logic.declined_guids), so the per-deck counts must not pitch any of them as
     # pending. Counting only the Never ones was the visible half of the bug: a card
-    # with a standing Skip or Keep mine, left untouched, was counted in "N new" or
+    # with a standing Keep mine, left untouched, was counted in "N new" or
     # "N changing" and then dropped, so the preview said "1 new" and the result said
     # none. A new card's guid reads straight off its deck's preview; a changed card's
     # guid only exists in `changed_cards`, so those are tallied per deck here.
@@ -2044,13 +2048,13 @@ def update_decks():
         "<i>This looks like a one-time catch-up — likely your first update in a "
         "while. Future updates should be much shorter.</i>"
         if len(fresh) + len(moves) + len(stranded) > 20 else "")
-    # {"skip": "...", "keep": "...", "never": "..."} counts, read off `decisions` below
+    # {"keep": "...", "never": "..."} counts, read off `decisions` below
     # (defined just ahead of build_update_body): a row's own control words, not the
     # digest's reader-facing ones, since this line sits beside the rows themselves.
     # A fixed word order, not decisions.values()'s own insertion order (click order),
     # so the tally reads the same regardless of which row the learner touched first.
-    _TALLY_WORDS = (("skip", "skipped for now"), ("keep", "kept yours for now"),
-                    ("never", "never"), ("frozen", "no more updates"))
+    _TALLY_WORDS = (("keep", "kept yours for now"), ("never", "never"),
+                    ("frozen", "no more updates"))
 
     def _decision_tally():
         counts = {}
@@ -2102,7 +2106,7 @@ def update_decks():
         line. Passed straight through to show_result_with_feedback, which renders them
         in the same row vocabulary the confirmation used. Left at their defaults on a
         Cancel or declined backup, where there is no completed run to summarize at all.
-        `run_decisions` is the reader-facing {guid: "skipped"/"kept yours"/"never"} for
+        `run_decisions` is the reader-facing {guid: "kept yours"/"never"/...} for
         whatever this run actually decided (computed once, right after the registry
         write below). Left at its default (none) only on declining the confirmation
         itself, the one exit before that write ever runs; every later exit, even one
@@ -2116,8 +2120,13 @@ def update_decks():
         a second time.
         """
         entries = feedback_entries(flags, new_index, run_decisions)
+        # Read back from disk rather than `reg`: the import prunes entries for
+        # retired cards, and the snapshot should match what the registry now holds.
+        standing = load_declined()
+        if run_decisions is not None:
+            save_later_seen(later_count(standing, cfg["excluded"]))
         show_result_with_feedback(title, items, entries, nothing_note=nothing_note,
-                                  standing_declines=reg)
+                                  standing_declines=standing)
         if entries:
             clear_saved_feedback()
 
@@ -2223,7 +2232,7 @@ def update_decks():
         return
 
     # Folded into the declined registry now, before anything else about this run
-    # happens: a Skip/Keep/Never the learner chose has to survive even if the apply
+    # happens: a Keep/Never/Later the learner chose has to survive even if the apply
     # loop below gets cancelled partway through. `row_kind` (built above) is every
     # card row's own kind, which is what decides both what its control could show and
     # what "the learner flipped it back to default" can mean below.
@@ -2254,9 +2263,12 @@ def update_decks():
     # again, carrying its prior hash/decided/front forward untouched, which is what
     # keeps a pending "changed since decline" cue from being silently cleared by an
     # unrelated accepted update.
-    run_decisions = {g: {"skip": "skipped", "keep": "kept yours", "never": "never",
+    # Later ("held") is a deferral rather than a decision, so it stays out of
+    # `run_decisions` and the digest; its own write follows below.
+    run_decisions = {g: {"keep": "kept yours", "never": "never",
                          "frozen": "kept yours, no more updates"}[s]
-                     for g, s in decisions.items() if _prior_entry(g).get("state") != s}
+                     for g, s in decisions.items()
+                     if s != "held" and _prior_entry(g).get("state") != s}
     for guid in run_decisions:
         reg[guid] = _registry_entry(guid, decisions[guid])
     # A guid can also sit in `decisions` at the very state the registry already held,
@@ -2266,8 +2278,18 @@ def update_decks():
     # stored hash/front must refresh to match, but it is not a new decision, so it
     # stays out of `run_decisions` and off the digest.
     for guid, s in decisions.items():
-        if guid in touched and _prior_entry(guid).get("state") == s:
+        if s != "held" and guid in touched and _prior_entry(guid).get("state") == s:
             reg[guid] = _registry_entry(guid, s)
+    # Later set or re-chosen this run is written fresh, with the row's note when it
+    # has one, so a noted card waits for its content to change. A row only seeded at
+    # Later and left alone keeps its entry, note and hash as they were.
+    later = [g for g, s in decisions.items() if s == "held"]
+    for guid in later:
+        if guid in touched or _prior_entry(guid).get("state") != "held":
+            reg[guid] = _registry_entry(guid, "held")
+            note = (flags.get(guid) or "").strip()
+            if note:
+                reg[guid]["note"] = note
     # A guid drops out of `decisions` (review._card_row's _on_change) only when the
     # learner's own click set its control back to that row's default, so absence here
     # normally means they chose that. But the only prior state a visible row can have
@@ -2281,7 +2303,7 @@ def update_decks():
     # tells that apart from an actual un-decline on such a row: an active click that
     # confirms the (now different) default is just as much a decision as flipping a
     # kind-matched row back to default always was.
-    _EXPRESSIBLE_DECLINE = {"new": "skip", "changed": "keep"}
+    _EXPRESSIBLE_DECLINE = {"changed": "keep"}
     for guid in [g for g in reg
                  if g not in decisions and g in row_kind
                  and _prior_entry(g).get("state") != "held"
@@ -2292,6 +2314,10 @@ def update_decks():
     released = released_held_guids(prior, row_kind, decisions, hold_now, readable)
     for guid in released:
         reg.pop(guid, None)
+        # A migrated entry was a Skip, whose flip back to Import was always reported.
+        if (guid in row_kind and _prior_entry(guid).get("migrated")
+                and (row_kind[guid] == "new" or guid in touched)):
+            run_decisions[guid] = "imported after all"
     # A released hold may have been the only reason its deck was still pending; drop
     # it from installed.json too, so a run that stops before that deck actually
     # imports still offers the card again next time instead of losing it.
@@ -2299,16 +2325,23 @@ def update_decks():
     if released_decks:
         invalidate_installed(released_decks)
     for guid in hold_now:
-        reg[guid] = _registry_entry(guid, "held")
+        if guid not in decisions:   # a row at Later was written above
+            reg[guid] = _registry_entry(guid, "held")
+    # The learner has now seen the "Skip is now Later" line for these rows.
+    for guid in row_kind:
+        entry = reg.get(guid)
+        if isinstance(entry, dict) and entry.get("state") == "held":
+            entry.pop("migrated", None)
     save_declined(reg)
-    held_note = (f"{plural(len(hold_now), 'card')} held for later. "
-                f"{'It comes' if len(hold_now) == 1 else 'They come'} back the next "
-                "time you run Update my decks.") if hold_now else ""
+    n_later = len(set(later) | set(hold_now))
+    held_note = (f"{plural(n_later, 'card')} left for later. "
+                f"{'It comes' if n_later == 1 else 'They come'} back the next "
+                "time you run Update my decks.") if n_later else ""
     held_items = [("note", held_note)] if held_note else []
     # Registry write already happened above, so an early exit can't just say nothing
     # changed once a hold is involved: say what actually happened instead.
     early_exit_note = (f"Update cancelled before anything was imported. {held_note}"
-                       if hold_now else NOTHING_CHANGED)
+                       if n_later else NOTHING_CHANGED)
 
     undisclosed = set()
     if todo:

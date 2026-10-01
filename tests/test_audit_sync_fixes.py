@@ -690,6 +690,17 @@ def test_declines_are_isolated_per_collection(anki, tmp_path):
     assert config.load_declined()['shared-guid']['state'] == 'keep'
 
 
+def test_later_seen_is_kept_per_collection(anki, tmp_path):
+    from internpearls import config
+    _profile(anki, tmp_path, 'profile-a')
+    config.save_later_seen(5)
+    _profile(anki, tmp_path, 'profile-b')
+    assert config.load_later_seen() == 0
+    config.save_later_seen(2)
+    _profile(anki, tmp_path, 'profile-a')
+    assert config.load_later_seen() == 5
+
+
 def test_declines_are_isolated_per_source(anki, tmp_path):
     from internpearls import config
     _profile(anki, tmp_path, 'profile-a')
