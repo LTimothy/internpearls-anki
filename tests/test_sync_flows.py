@@ -6671,6 +6671,53 @@ def test_later_again_on_a_returning_noted_card_replaces_its_entry(anki, tmp_path
     assert entry["decided"] != "2026-08-01"
 
 
+def test_later_reclicked_on_a_waiting_noted_card_keeps_its_note(anki, tmp_path,
+                                                                 monkeypatch):
+    from internpearls import config, logic
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    same = logic.note_fields_hash(_fields("front b"))
+    config.save_declined({"guid-new-b": _held(deck, note="fix the dose", hash=same)})
+    _later_rows(monkeypatch, decide={"guid-new-b": "held"}, touch={"guid-new-b"})
+
+    _update(anki)
+
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["state"] == "held" and entry["note"] == "fix the dose"
+    assert logic.later_status(entry, same)["later_wait"] is True
+    assert "front b" not in _fronts(anki)
+    assert anki.gui.clipboard == []   # the old note is not fed back into the digest
+
+
+def test_a_note_typed_on_a_seeded_later_row_is_stored(anki, tmp_path, monkeypatch):
+    """The Add note link does not count as a click on the row's control, so a note
+    typed on a row left at Later still has to reach its entry."""
+    from internpearls import config, logic
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-new-b": _held(deck, migrated=True)})
+    _later_rows(monkeypatch, decide={"guid-new-b": "held"},
+                notes={"guid-new-b": "needs a source"})
+
+    _update(anki)
+
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["state"] == "held" and entry["note"] == "needs a source"
+    assert "migrated" not in entry
+    assert entry["hash"] == logic.note_fields_hash(_fields("front b"))
+
+
+def test_the_hold_button_does_not_count_a_row_seeded_at_later(anki, tmp_path,
+                                                              monkeypatch):
+    from internpearls import config, logic
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    same = logic.note_fields_hash(_fields("front b"))
+    config.save_declined({"guid-new-b": _held(deck, note="fix the dose", hash=same)})
+    _later_rows(monkeypatch, decide={"guid-new-b": "held"})
+
+    tree = _snapshot_update_confirmation(anki)
+
+    assert _hold_button(tree)["label"] == "Update reviewed, hold 1 undecided for later"
+
+
 def test_a_waiting_later_row_left_alone_keeps_its_note_and_hash(anki, tmp_path,
                                                                 monkeypatch):
     """A noted Later card whose content has not changed returns seeded at Later; left
@@ -7268,9 +7315,9 @@ def test_a_swept_preview_download_does_not_double_count_its_conversions(
 
 
 # ------------------------------------ preview counts vs. what actually imports
-def test_deck_summary_counts_an_old_skip_as_new_like_any_later_card(anki, tmp_path):
-    """An old skip comes back as a Later card, which is pending on this screen like
-    any held card, so the deck summary counts it."""
+def test_deck_summary_does_not_count_an_old_skip_as_new(anki, tmp_path):
+    """An old skip comes back waiting at Later, so the update will not import it
+    unless the learner changes the row: the deck summary must not count it as new."""
     from internpearls import config
     deck = _source_with_two_new_cards(anki, tmp_path)
     config.save_declined({
@@ -7279,7 +7326,8 @@ def test_deck_summary_counts_an_old_skip_as_new_like_any_later_card(anki, tmp_pa
 
     texts = _all_text(_snapshot_update_confirmation(anki))
 
-    assert "2 new" in texts
+    assert "1 new" in texts
+    assert "2 new" not in texts
 
 
 def test_deck_summary_counts_exclude_a_standing_keep(anki, tmp_path):

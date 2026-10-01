@@ -1137,14 +1137,17 @@ def carries_decision(entry, kind):
     return isinstance(entry, dict) and entry.get("state") in _ROW_DECLINES.get(kind, ())
 
 
-def holdable_guids(registry, card_kinds, reviewed):
+def holdable_guids(registry, card_kinds, reviewed, decisions=None):
     """The card rows "hold for later" would set aside: a new or changed row the
     learner neither opened nor decided on, now or on an earlier update. A standing
-    Skip/Keep/Never keeps its own state; an earlier hold, or an old decline the row
-    cannot show, is held like any undecided row. `card_kinds` is {guid: kind} in row
-    order."""
+    Keep/Never keeps its own state; an earlier hold, or an old decline the row
+    cannot show, is held like any undecided row. A row in `decisions` (the screen's
+    sparse {guid: state}, so away from its default, such as one seeded at Later) is
+    not held either. `card_kinds` is {guid: kind} in row order."""
+    decisions = decisions or {}
     return [guid for guid, kind in card_kinds.items()
             if kind in ("new", "changed") and guid not in reviewed
+            and guid not in decisions
             and not carries_decision((registry or {}).get(guid), kind)]
 
 
