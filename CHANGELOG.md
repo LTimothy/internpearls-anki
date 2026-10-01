@@ -3,6 +3,26 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## Unreleased
+
+Later replaces Skip.
+
+- New cards now offer Import / Later / Never, and changed cards Apply / Keep yours /
+  Later / Never. Later keeps a card out of your collection and brings it back the next
+  time you run Update my decks, set to Import or Apply, whether or not its deck changed.
+  A group offers Later all. Choosing Later does not open the note box.
+- A Later card with a note waits for the fix: it comes back set to Later, with your note
+  and "Not updated yet", until the card is updated. Once it has changed it comes back set
+  to Import or Apply with "Updated since your note".
+- Cards you had skipped become Later cards. The first update after upgrading shows them
+  set to Later, under a line saying so, so none are imported by accident.
+- The hold button now reads **Update, and leave N unopened for later**, the Held filter
+  is called Later, and Manage decks > Declined cards lists Later cards as one group.
+- The feedback digest lists only Never and Kept yours cards, plus a count of cards left
+  for later, and no longer lists a card the run itself retired.
+- The startup reminder about waiting cards shows only when there are more of them than
+  your last Update my decks run left.
+
 ## v0.76.3
 
 Update my decks explains its two counts.

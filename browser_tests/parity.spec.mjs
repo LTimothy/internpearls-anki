@@ -112,11 +112,11 @@ test("non-ai", async ({ page }) => {
   dialog = await waitForDialog(page);
   await expect(dialog).toContainText("This update also changes how some cards look");
   const acceptedKeep = dialog.getByRole("button", { name: /^Keep yours:/ }).first();
-  const acceptedSkip = dialog.getByRole("button", { name: /^Skip:/ }).first();
+  const acceptedLater = dialog.getByRole("button", { name: /^Later:/ }).last();
   await acceptedKeep.click();
   await expect(acceptedKeep).toHaveAttribute("aria-pressed", "true");
-  await acceptedSkip.click();
-  await expect(acceptedSkip).toHaveAttribute("aria-pressed", "true");
+  await acceptedLater.click();
+  await expect(acceptedLater).toHaveAttribute("aria-pressed", "true");
   await dialog.locator('textarea[aria-label^="Feedback note:"]:visible').first()
     .fill("Please clarify the generic example.");
   await expect(dialog).toContainText("1 card flagged");
@@ -346,9 +346,9 @@ test("lists", async ({ page }) => {
   await maintain(page, "bulk");
   await runMenuItem(page, "Update my decks");
   const dialog = await waitForDialog(page);
-  const firstSkip = dialog.getByRole("button", { name: /^Skip: Bulk card 001$/ });
-  await firstSkip.click();
-  await expect(firstSkip).toHaveAttribute("aria-pressed", "true");
+  const firstLater = dialog.getByRole("button", { name: /^Later: Bulk card 001$/ });
+  await firstLater.click();
+  await expect(firstLater).toHaveAttribute("aria-pressed", "true");
 
   const list = dialog.locator(".scrollbox").first();
   const listId = await list.getAttribute("data-wid");
@@ -363,9 +363,9 @@ test("lists", async ({ page }) => {
     counts.push(await dialog.getByRole("button", { name: /^Import: Bulk card/ }).count());
   }
   expect(counts).toHaveLength(5);
-  await expect(dialog.getByRole("button", { name: /^Skip: Bulk card 001$/ }))
+  await expect(dialog.getByRole("button", { name: /^Later: Bulk card 001$/ }))
     .toHaveAttribute("aria-pressed", "true");
-  await expect(dialog).toContainText("1 skipped for now");
+  await expect(dialog).toContainText("1 left for later");
 
   await page.setViewportSize({ width: 800, height: 900 });
   await assertActionsReachable(page, true, "#overlay .scrollbox");

@@ -2180,10 +2180,10 @@ def feedback_entries(flags, index, decisions=None):
     index is dropped rather than shown as a bare GUID: it means we no longer know which
     card the learner meant, and a line naming no card is not something anyone can act on.
 
-    `decisions`, when given, is {guid: reader-facing state} ("skipped"/"kept yours"/
-    "never"/"imported after all") for a decision made this run; a guid present there
-    but with no note still gets an entry (empty "note"), carrying the "decision" key
-    the digest renders.
+    `decisions`, when given, is {guid: reader-facing state} ("kept yours"/"kept yours,
+    no more updates"/"never"/"imported after all") for a decision made this run; a guid
+    present there but with no note still gets an entry (empty "note"), carrying the
+    "decision" key the digest renders.
     """
     decisions = decisions or {}
     out = []

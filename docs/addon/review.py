@@ -1043,7 +1043,6 @@ _FEEDBACK_PLACEHOLDER = ("Anything to pass on about this card? You'll get a copy
                          "end to paste and send.")
 
 
-
 def _later_caption(kind):
     """What Later does, said on the row that chose it. Its default is the row's own."""
     verb = "Apply" if kind == "changed" else "Import"
@@ -1066,13 +1065,12 @@ def _row_chip(detail):
     """The one chip a card row wears.
 
     A re-offered decline shows that decline rather than its kind: LATER / KEPT YOURS
-    says what was already decided about the row. Stacking both (and, on a card changed
-    since that decline, an UPDATED beside them) cost three fixed-width columns plus the
-    decision control,
-    which at the dialog's own 660px floor left the card's own words about 150px: the
-    exact crush the wider dialog had just undone, on the rows most worth reading. What
-    the third pill said is said better by the hint line under the header, which names
-    the decline it changed since.
+    says what was already decided about the row. Stacking the decline beside the row's
+    kind (and an UPDATED on a card changed since) cost up to three fixed-width columns
+    plus the decision control, which at the dialog's own 660px floor left the card's own
+    words about 150px: the exact crush the wider dialog had just undone, on the rows most
+    worth reading. The hint line under the header says what the extra chips would have,
+    naming the decline the card changed since.
     """
     return _DECLINE_CHIP.get(detail.get("declined_state")) or detail.get("kind")
 
@@ -1089,11 +1087,10 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     """One card as a single row: a caret, its one chip column (see `_row_chip`), its
     tag if it has one, and its primary line. Clicking the row (the caret or the line
     itself) reveals the answer, the why behind a green left rule, and dosing when
-    present. A "new" or
-    "changed" row also carries a segmented decision control (widgets.decision_cell) at
-    the right of its header, defaulting to Import/Apply; choosing Keep/Never reveals a
-    feedback box for what the learner makes of it (Later does not: it is a deferral),
-    and Never collapses the row with a
+    present. A "new" or "changed" row also carries a segmented decision control
+    (widgets.decision_cell) at the right of its header, defaulting to Import/Apply;
+    choosing Keep or Never reveals a feedback box for what the learner makes of it
+    (Later does not: it is a deferral), and Never collapses the row with a
     struck-through primary line. Any row whose box is closed, a re-offered decline
     included, can open that same box with its own quiet "Add note" link, at the end of
     the expanded body, so feedback is never gated behind a decline; it costs the same
