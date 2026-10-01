@@ -2812,7 +2812,7 @@ def test_unopened_line_counts_rows_left_and_those_folded():
 def test_unopened_line_says_how_many_carry_an_earlier_decision():
     from internpearls.logic import unopened_line
     kinds = {"a": "new", "b": "changed", "c": "changed", "d": "new"}
-    reg = {"a": {"state": "skip"}, "b": {"state": "keep"}, "d": {"state": "keep"}}
+    reg = {"a": {"state": "never"}, "b": {"state": "keep"}, "d": {"state": "keep"}}
     line = unopened_line(kinds, set(), {"c"}, reg)
     assert line.startswith("<b>4 of 4 cards not opened yet</b>, 1 of them in folded "
                            "groups and 2 already decided on an earlier update.")

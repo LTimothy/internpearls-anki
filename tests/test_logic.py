@@ -1304,15 +1304,15 @@ def test_build_feedback_digest_carries_the_full_current_decline_snapshot():
                      "deck": "IP::Other", "decided": "2026-08-02", "hash": "h2"},
         "old-frozen": {"state": "frozen", "front": "Updates disabled",
                        "deck": "IP::Archive", "decided": "2026-08-03", "hash": "h3"},
-        "new-guid": {"state": "skip", "front": "New card",
+        "new-guid": {"state": "held", "front": "New card",
                      "deck": "IP::Example Deck", "decided": "2026-09-13", "hash": "h4"},
     })
 
-    assert "Current standing declines (4)" in text
+    assert "Current standing declines (3)" in text
     assert "Never imported (1)" in text and "Old rejected card" in text
     assert "Kept yours (1)" in text and "Old local wording" in text
     assert "Kept yours, no more updates (1)" in text and "Updates disabled" in text
-    assert "Skipped for now (1)" in text and "New card" in text
+    assert "1 card left for later" in text and "decided: 2026-09-13" not in text
     assert "decided: 2026-08-01" in text
     assert "hash:" not in text, "content hashes are implementation detail, not learner state"
 
@@ -2781,21 +2781,21 @@ def test_held_entries_and_deck_names_read_only_held_dict_entries():
 
 
 def test_holdable_is_every_untouched_undeclined_card_row():
-    reg = {"g-skip": {"state": "skip"}, "g-held": _held(), "g-bad": "garbage"}
+    reg = {"g-never": {"state": "never"}, "g-held": _held(), "g-bad": "garbage"}
     kinds = {"g-new": "new", "g-changed": "changed", "g-open": "new",
-             "g-skip": "new", "g-held": "changed", "g-bad": "new", "g-none": None}
+             "g-never": "new", "g-held": "changed", "g-bad": "new", "g-none": None}
     assert logic.holdable_guids(reg, kinds, {"g-open"}) == [
         "g-new", "g-changed", "g-held", "g-bad"]
 
 
 def test_an_old_decline_the_row_cannot_show_is_held_like_an_undecided_row():
-    # A Keep from when the card was changed, now arriving as new, and a Skip on a row
+    # A Keep from when the card was changed, now arriving as new, and a Never on a row
     # that is now changed: neither row shows that decision, so hold takes them.
-    reg = {"g-keep": {"state": "keep"}, "g-skip": {"state": "skip"},
+    reg = {"g-keep": {"state": "keep"}, "g-never-changed": {"state": "never"},
            "g-frozen": {"state": "frozen"}, "g-never": {"state": "never"}}
-    kinds = {"g-keep": "new", "g-skip": "changed", "g-frozen": "changed",
+    kinds = {"g-keep": "new", "g-never-changed": "changed", "g-frozen": "changed",
              "g-never": "new"}
-    assert logic.holdable_guids(reg, kinds, set()) == ["g-keep", "g-skip"]
+    assert logic.holdable_guids(reg, kinds, set()) == ["g-keep", "g-never-changed"]
     assert logic.carries_decision(reg["g-frozen"], "changed")
     assert not logic.carries_decision(reg["g-keep"], "new")
 
@@ -2803,7 +2803,7 @@ def test_an_old_decline_the_row_cannot_show_is_held_like_an_undecided_row():
 def test_released_held_is_accepted_at_default_or_no_longer_pending():
     reg = {"shown-default": _held("IP::A"), "shown-skipped": _held("IP::A"),
            "shown-held-again": _held("IP::A"), "gone-read": _held("IP::A"),
-           "gone-unread": _held("IP::B"), "not-held": {"state": "skip", "deck": "IP::A"}}
+           "gone-unread": _held("IP::B"), "not-held": {"state": "never", "deck": "IP::A"}}
     kinds = {"shown-default": "new", "shown-skipped": "new", "shown-held-again": "new"}
     released = logic.released_held_guids(
         reg, kinds, decisions={"shown-skipped": "skip"},
@@ -2813,7 +2813,7 @@ def test_released_held_is_accepted_at_default_or_no_longer_pending():
 
 def test_held_outside_manifest_names_held_cards_whose_deck_is_gone():
     reg = {"kept": _held("IP::A"), "gone": _held("IP::Gone"), "no-deck": _held(""),
-           "skip-gone": {"state": "skip", "deck": "IP::Gone"}}
+           "never-gone": {"state": "never", "deck": "IP::Gone"}}
     manifest = {"decks": [{"name": "IP::A", "version": "v1"}, "garbage"]}
     assert logic.held_outside_manifest(reg, manifest) == ["gone", "no-deck"]
 
@@ -2827,13 +2827,6 @@ def test_decks_to_update_counts_a_current_deck_with_held_cards():
         manifest, installed, excluded={"IP::C"}, held={"IP::B", "IP::C"})]
     assert names == ["IP::B"]
     assert logic.decks_to_update(manifest, installed) == []
-
-
-def test_digest_snapshot_names_held_cards():
-    text = logic.build_feedback_digest(
-        [{"deck": "IP::A", "front": "front a", "guid": "g0", "note": "n"}],
-        standing_declines={"g1": _held("IP::A", "Held card")})
-    assert "Held for later (1)" in text and "Held card" in text
 
 
 def test_truncate_caps_text_with_an_ellipsis_inside_the_limit():

@@ -1271,7 +1271,7 @@ def test_hold_control_counts_and_relabels_as_rows_are_reviewed():
 
     reviewed = set()
     kinds = {"g1": "new", "g2": "changed", "g3": "new"}
-    extra, refresh = review.hold_control({"g3": {"state": "skip"}}, kinds,
+    extra, refresh = review.hold_control({"g3": {"state": "never"}}, kinds,
                                          lambda: reviewed)
     assert extra["label"] == "Update reviewed, hold 2 undecided for later"
     assert extra["tooltip"] == review.HOLD_TOOLTIP and extra["visible"] is True

@@ -10,7 +10,7 @@ import tempfile
 
 from aqt import mw
 
-from .logic import clamp_night_mode_dim_percent
+from .logic import clamp_night_mode_dim_percent, migrate_declined
 
 ADDON_VERSION = "0.76.3"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
@@ -68,6 +68,9 @@ SHIPPED = os.path.join(_USER_FILES, "shipped_fields.json")
 # Lives in user_files/ like the feedback log and for the same reason: it must
 # survive add-on updates and reinstalls.
 DECLINED = os.path.join(_USER_FILES, "declined.json")
+# How many Later cards the startup reminder last mentioned, so it speaks again only
+# when the count grows.
+LATER_SEEN = os.path.join(_USER_FILES, "later_seen.json")
 
 AUTO_SYNC_INTERVAL_FLOOR_MIN = 1     # refuse to poll more often than this, however configured
 AUTO_SYNC_INTERVAL_DEFAULT_MIN = 15  # used when the setting is missing or unreadable
@@ -332,11 +335,24 @@ def load_declined():
     imports run, and the first reader that calls .items() raises after the collection
     has already been written."""
     reg = _load_json(DECLINED, {})
-    return reg if isinstance(reg, dict) else {}
+    if not isinstance(reg, dict):
+        return {}
+    if migrate_declined(reg):
+        save_declined(reg)
+    return reg
 
 
 def save_declined(reg):
     _save_json(DECLINED, reg)
+
+
+def load_later_seen():
+    n = _load_json(LATER_SEEN, 0)
+    return n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else 0
+
+
+def save_later_seen(n):
+    _save_json(LATER_SEEN, n)
 
 
 def add_dupes_ignored(key):
