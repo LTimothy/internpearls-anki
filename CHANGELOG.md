@@ -3,7 +3,7 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
-## Unreleased
+## v0.77.0
 
 Later replaces Skip.
 
@@ -22,6 +22,8 @@ Later replaces Skip.
   for later, and no longer lists a card the run itself retired.
 - The startup reminder about waiting cards shows only when there are more of them than
   your last Update my decks run left.
+
+Restart Anki after updating.
 
 ## v0.76.3
 
