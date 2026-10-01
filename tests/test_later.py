@@ -174,6 +174,40 @@ def test_digest_count_line_leaves_out_later_cards_in_excluded_decks():
     assert "left for later" not in text
 
 
+# ------------------------------------------------- held entries under a dropped deck
+_MANIFEST = {"decks": [{"name": "IP::A"}, {"name": "IP::B"}],
+             "retired": {"IP::A": ["g-retired"]}}
+
+
+def test_settle_refiles_a_held_entry_whose_card_was_read_elsewhere():
+    reg = {"g": _entry(deck="IP::Old", migrated=True)}
+    assert logic.settle_held_outside_manifest(reg, _MANIFEST, {"IP::B": {"g"}}) is True
+    assert reg["g"] == _entry(deck="IP::B", migrated=True)
+
+
+def test_settle_keeps_a_held_entry_until_every_deck_was_read():
+    reg = {"g": _entry(deck="IP::Old", note="n")}
+    before = dict(reg["g"])
+    assert logic.settle_held_outside_manifest(reg, _MANIFEST, {"IP::A": {"x"}}) is False
+    assert reg["g"] == before
+
+
+def test_settle_releases_a_held_entry_in_no_package_once_all_decks_were_read():
+    reg = {"g": _entry(deck="IP::Old"), "k": _entry("never", deck="IP::Old")}
+    seen = {"IP::A": {"x"}, "IP::B": {"y"}}
+    assert logic.settle_held_outside_manifest(reg, _MANIFEST, seen) is True
+    assert "g" not in reg and "k" in reg   # only held entries are settled here
+
+
+def test_settle_releases_a_retired_held_entry_and_leaves_manifest_decks_alone():
+    reg = {"g-retired": _entry(deck="IP::Old"), "in": _entry(deck="IP::A")}
+    assert logic.settle_held_outside_manifest(reg, _MANIFEST, {}) is True
+    assert list(reg) == ["in"]
+    bad = {"decks": [{"name": "IP::A"}], "retired": ["not", "a", "dict"]}
+    reg = {"g": _entry(deck="IP::Old")}
+    assert logic.settle_held_outside_manifest(reg, bad, {}) is False
+
+
 # ------------------------------------------------------------------------- nudge
 def test_later_nudge_is_due_only_when_the_count_grew():
     assert logic.later_nudge_due(3, None) is True
