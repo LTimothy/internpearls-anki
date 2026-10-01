@@ -464,7 +464,7 @@ test("a queued checkbox choice stays visible across an older Worker rerender", a
   const updateId = await menuActionId(page, /^Update my decks$/);
   await page.evaluate((id) => window.demo.runFlow(id), updateId);
   const decision = page.getByRole("button", {
-    name: /^(?:Keep yours|Skip|Import|Apply):/,
+    name: /^(?:Keep yours|Later|Import|Apply):/,
   }).first();
   const look = page.getByRole("checkbox", {
     name: /Also apply the new card look/,
