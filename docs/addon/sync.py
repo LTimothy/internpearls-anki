@@ -1964,8 +1964,11 @@ def update_decks():
     # holding none of the new content, on the strength of a question about a card the list
     # above may not even show.
     declined = declined_guids(reg)
-    # Held cards default to Import on this screen, so they count as pending.
-    counted_out = declined - set(held_entries(reg))
+    # Held cards default to Import on this screen, so they count as pending, except
+    # one that returns waiting at Later (a noted card not yet updated, or an old Skip).
+    counted_out = declined - {
+        g for g, e in held_entries(reg).items()
+        if not later_status(e, incoming_hashes.get(g)).get("later_wait")}
     existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
     aliases = manifest.get("front_aliases", {})
     for d in todo:
@@ -2193,11 +2196,21 @@ def update_decks():
     touched, opened = set(), set()
     row_kind = {item[2]["guid"]: item[2].get("kind")
                for item in items if item[0] == "card"}
-    hold, refresh_hold = hold_control(reg, row_kind, lambda: touched | opened)
+    # The hold control is built after the body, which seeds `decisions`, so its count
+    # leaves out rows that start away from their default.
+    hold_refresh = []
+
+    def _on_review():
+        for refresh in hold_refresh:
+            refresh()
+
     body, _boxes, flush = build_update_body(
         items, sources, flags, new_index, decisions, top_html,
         _status_line, _UPDATE_SAFETY_NOTE, touched, opened=opened,
-        on_review=refresh_hold)
+        on_review=_on_review)
+    hold, refresh_hold = hold_control(reg, row_kind, lambda: touched | opened,
+                                      decisions)
+    hold_refresh.append(refresh_hold)
     # Decks whose pending cards were all listed, so a held card missing from the list
     # has nothing left to offer rather than just failing to read.
     readable = {d["name"] for d in todo
@@ -2237,7 +2250,7 @@ def update_decks():
     # card row's own kind, which is what decides both what its control could show and
     # what "the learner flipped it back to default" can mean below.
     prior = dict(reg)
-    hold_now = (holdable_guids(prior, row_kind, touched | opened)
+    hold_now = (holdable_guids(prior, row_kind, touched | opened, decisions)
                if hold and hold.get("clicked") else [])
     today = datetime.date.today().isoformat()
 
@@ -2280,16 +2293,23 @@ def update_decks():
     for guid, s in decisions.items():
         if s != "held" and guid in touched and _prior_entry(guid).get("state") == s:
             reg[guid] = _registry_entry(guid, s)
-    # Later set or re-chosen this run is written fresh, with the row's note when it
-    # has one, so a noted card waits for its content to change. A row only seeded at
-    # Later and left alone keeps its entry, note and hash as they were.
+    # Later set or re-chosen this run, or given a new note, is written fresh with the
+    # row's note, so a noted card waits for its content to change. Re-choosing Later
+    # on a card still waiting keeps its earlier note. A row only seeded at Later and
+    # left alone keeps its entry, note and hash as they were.
     later = [g for g, s in decisions.items() if s == "held"]
     for guid in later:
-        if guid in touched or _prior_entry(guid).get("state") != "held":
-            reg[guid] = _registry_entry(guid, "held")
-            note = (flags.get(guid) or "").strip()
-            if note:
-                reg[guid]["note"] = note
+        was = _prior_entry(guid)
+        note = (flags.get(guid) or "").strip()
+        if not (guid in touched or was.get("state") != "held"
+                or (note and note != was.get("note"))):
+            continue
+        if not note and later_status(was, incoming_hashes.get(guid)).get(
+                "later_note_status") == "not_updated":
+            note = was["note"]
+        reg[guid] = _registry_entry(guid, "held")
+        if note:
+            reg[guid]["note"] = note
     # A guid drops out of `decisions` (review._card_row's _on_change) only when the
     # learner's own click set its control back to that row's default, so absence here
     # normally means they chose that. But the only prior state a visible row can have
@@ -2325,8 +2345,7 @@ def update_decks():
     if released_decks:
         invalidate_installed(released_decks)
     for guid in hold_now:
-        if guid not in decisions:   # a row at Later was written above
-            reg[guid] = _registry_entry(guid, "held")
+        reg[guid] = _registry_entry(guid, "held")
     # The learner has now seen the "Skip is now Later" line for these rows.
     for guid in row_kind:
         entry = reg.get(guid)

@@ -2788,6 +2788,13 @@ def test_holdable_is_every_untouched_undeclined_card_row():
         "g-new", "g-changed", "g-held", "g-bad"]
 
 
+def test_a_row_set_away_from_its_default_is_not_holdable():
+    kinds = {"g-later": "new", "g-plain": "new", "g-changed": "changed"}
+    decisions = {"g-later": "held"}
+    assert logic.holdable_guids({}, kinds, set(), decisions) == ["g-plain", "g-changed"]
+    assert logic.holdable_guids({}, kinds, set()) == ["g-later", "g-plain", "g-changed"]
+
+
 def test_an_old_decline_the_row_cannot_show_is_held_like_an_undecided_row():
     # A Keep from when the card was changed, now arriving as new, and a Never on a row
     # that is now changed: neither row shows that decision, so hold takes them.

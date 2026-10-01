@@ -1285,6 +1285,13 @@ def test_hold_control_counts_and_relabels_as_rows_are_reviewed():
     assert button.visible is False
 
 
+def test_hold_control_does_not_count_a_row_seeded_at_later():
+    kinds = {"g1": "new", "g2": "new"}
+    extra, _refresh = review.hold_control({"g2": {"state": "held"}}, kinds,
+                                          lambda: set(), {"g2": "held"})
+    assert extra["label"] == "Update reviewed, hold 1 undecided for later"
+
+
 def test_hold_control_offers_nothing_when_no_row_can_be_held():
     extra, refresh = review.hold_control({}, {"g1": None}, lambda: set())
     assert extra is None

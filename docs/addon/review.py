@@ -1712,12 +1712,12 @@ def hold_label(n):
     return f"Update reviewed, hold {n} undecided for later"
 
 
-def hold_control(registry, card_kinds, reviewed):
+def hold_control(registry, card_kinds, reviewed, decisions=None):
     """The confirmation's "hold for later" button: the `extra` dict for
     ui._ask_with_widget, or None when no row on this screen could be held, plus a
     refresh() that keeps its count in step with `reviewed()`, the rows opened or
-    decided on so far."""
-    n = len(holdable_guids(registry, card_kinds, reviewed()))
+    decided on so far, and with the live `decisions` map."""
+    n = len(holdable_guids(registry, card_kinds, reviewed(), decisions))
     if not n:
         return None, lambda: None
     extra = {"label": hold_label(n), "tooltip": HOLD_TOOLTIP, "visible": True}
@@ -1726,7 +1726,7 @@ def hold_control(registry, card_kinds, reviewed):
         button = extra.get("button")
         if button is None:
             return
-        left = len(holdable_guids(registry, card_kinds, reviewed()))
+        left = len(holdable_guids(registry, card_kinds, reviewed(), decisions))
         button.setText(hold_label(left))
         button.setVisible(left > 0)
     return extra, refresh
