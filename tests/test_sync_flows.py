@@ -6400,7 +6400,7 @@ def _caret_for(tree, front):
 
 def _hold_button(tree):
     return next((n for n in _walk(tree) if n.get("t") == "button"
-                 and (n.get("label") or "").startswith("Update reviewed, hold")), None)
+                 and (n.get("label") or "").startswith("Update, and leave")), None)
 
 
 def _open_then_hold(*fronts):
@@ -6446,7 +6446,7 @@ def test_hold_imports_the_opened_card_and_holds_the_rest(anki, tmp_path):
     reg = config.load_declined()
     assert reg["guid-new-b"]["state"] == "held" and reg["guid-new-b"]["hash"]
     assert "guid-new-a" not in reg
-    assert _hold_button(trees[0])["label"] == "Update reviewed, hold 2 undecided for later"
+    assert _hold_button(trees[0])["label"] == "Update, and leave 2 unopened for later"
     assert ("1 card left for later. It comes back the next time you run Update my "
             "decks.") in _all_text(trees[-1])
     assert anki.gui.clipboard == []   # holding is not a decision, so no digest
@@ -6460,9 +6460,9 @@ def test_a_held_card_comes_back_on_the_next_update_marked_held(anki, tmp_path):
     tree = _snapshot_update_confirmation(anki)
 
     texts = _all_text(tree)
-    assert "HELD" in texts and "front b" in texts
+    assert "LATER" in texts and "front b" in texts
     assert "Changed since" not in texts
-    assert _hold_button(tree)["label"] == "Update reviewed, hold 1 undecided for later"
+    assert _hold_button(tree)["label"] == "Update, and leave 1 unopened for later"
 
 
 def test_accepting_a_held_card_imports_it_and_clears_the_hold(anki, tmp_path):
@@ -6524,7 +6524,7 @@ def test_a_standing_keep_is_not_counted_as_holdable(anki, tmp_path):
 
     tree = _snapshot_update_confirmation(anki)
 
-    assert _hold_button(tree)["label"] == "Update reviewed, hold 1 undecided for later"
+    assert _hold_button(tree)["label"] == "Update, and leave 1 unopened for later"
 
 
 def test_deck_summary_counts_a_held_card_as_new(anki, tmp_path):
@@ -6715,7 +6715,7 @@ def test_the_hold_button_does_not_count_a_row_seeded_at_later(anki, tmp_path,
 
     tree = _snapshot_update_confirmation(anki)
 
-    assert _hold_button(tree)["label"] == "Update reviewed, hold 1 undecided for later"
+    assert _hold_button(tree)["label"] == "Update, and leave 1 unopened for later"
 
 
 def test_a_waiting_later_row_left_alone_keeps_its_note_and_hash(anki, tmp_path,
@@ -6779,6 +6779,63 @@ def test_a_migrated_row_set_to_import_is_reported_as_imported_after_all(
     assert "guid-new-b" not in config.load_declined()
     assert "front b" in _fronts(anki)
     assert "decision: imported after all" in anki.gui.clipboard[-1]
+
+
+def test_an_untouched_migrated_skip_is_not_imported_and_stays_later(anki, tmp_path):
+    """The real screen, no stand-in: an old Skip left alone must not be imported by
+    the first run after the change, and stays Later without its migration flag."""
+    from internpearls import config
+    from internpearls.widgets import CHIPS
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-new-b": {
+        "state": "skip", "front": "front b", "deck": deck, "decided": "2026-08-01",
+        "hash": "stale-hash-value1"}})
+
+    trees = _update(anki)
+
+    assert "front b" not in _fronts(anki) and "front a" in _fronts(anki)
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["state"] == "held" and "migrated" not in entry
+    texts = _all_text(trees[0])
+    assert CHIPS["held"] in texts
+    assert ("Skip is now Later. 1 card you skipped earlier is below, still set to "
+            "Later.") in texts
+    assert "1 left for later." in texts
+    assert "1 already decided on an earlier update" in texts
+    assert ("1 card left for later. It comes back the next time you run Update my "
+            "decks.") in _all_text(trees[-1])
+    assert anki.gui.clipboard == []
+
+
+def test_an_untouched_waiting_noted_row_is_not_imported_and_keeps_its_entry(
+        anki, tmp_path):
+    from internpearls import config, logic
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    same = logic.note_fields_hash(_fields("front b"))
+    prior = _held(deck, note="fix the dose first", hash=same)
+    config.save_declined({"guid-new-b": dict(prior)})
+
+    trees = _update(anki)
+
+    assert "front b" not in _fronts(anki)
+    assert config.load_declined()["guid-new-b"] == prior
+    texts = _all_text(trees[0])
+    assert "Your note: fix the dose first" in texts and "Not updated yet" in texts
+    assert "Skip is now Later" not in texts
+
+
+def test_a_noted_later_card_whose_content_changed_returns_at_import(anki, tmp_path):
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-new-b": _held(deck, note="fix the dose first")})
+
+    trees = _update(anki)
+
+    assert "front b" in _fronts(anki)
+    assert "guid-new-b" not in config.load_declined()
+    texts = _all_text(trees[0])
+    assert "Your note: fix the dose first" in texts
+    assert "Updated since your note" in texts
 
 
 def test_explicit_later_and_hold_are_counted_together(anki, tmp_path, monkeypatch):
@@ -6905,7 +6962,7 @@ def test_holding_a_changed_card_round_trips_through_a_later_update(anki, tmp_pat
 
     tree = _snapshot_update_confirmation(anki)
     texts = _all_text(tree)
-    assert "HELD" in texts
+    assert "LATER" in texts
     assert "Changed since" not in texts
 
     _update(anki)
@@ -7660,7 +7717,24 @@ def test_startup_nudge_names_the_held_card_count(anki):
     background._held_cards_nudge()
 
     assert anki.gui.tooltips == [
-        "Intern Pearls: 2 held cards waiting. Run Update my decks to finish them."]
+        "Intern Pearls: 2 cards waiting for later. Run Update my decks to finish them."]
+
+
+def test_startup_nudge_is_silent_until_the_later_count_grows(anki):
+    """The last interactive run saved how many Later cards it left; the reminder
+    speaks again only once there are more than that."""
+    from internpearls import background, config
+    config.save_declined({
+        "g1": {"state": "held", "front": "a", "deck": DECK, "decided": "", "hash": ""},
+        "g2": {"state": "held", "front": "b", "deck": DECK, "decided": "", "hash": ""}})
+    config.save_later_seen(2)
+    background._held_cards_nudge()
+    assert anki.gui.tooltips == []
+
+    config.save_later_seen(1)
+    background._held_cards_nudge()
+    assert anki.gui.tooltips == [
+        "Intern Pearls: 2 cards waiting for later. Run Update my decks to finish them."]
 
 
 def test_startup_nudge_waits_for_a_collection(anki, monkeypatch):
@@ -7700,7 +7774,7 @@ def test_startup_nudge_skips_a_held_card_in_an_excluded_deck(anki):
     background._held_cards_nudge()
 
     assert anki.gui.tooltips == [
-        "Intern Pearls: 1 held card waiting. Run Update my decks to finish it."]
+        "Intern Pearls: 1 card waiting for later. Run Update my decks to finish it."]
 
 
 def test_a_held_card_whose_deck_left_the_source_is_released(anki, tmp_path):

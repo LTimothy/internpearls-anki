@@ -102,6 +102,10 @@ def text_contrast(shot, widget, sample=12):
     rect = widget_rect(shot.dialog, widget)
     if rect.width() < 2 or rect.height() < 2:
         return None
+    # A widget clipped by a scroll viewport's edge to less than one line of its own
+    # text shows padding and background, not a glyph to measure.
+    if rect.height() < min(widget.height(), widget.fontMetrics().height()):
+        return None
     counts = colour_counts(shot.image, rect)
     if len(counts) < 2:
         return None

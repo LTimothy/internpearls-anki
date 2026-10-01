@@ -21,14 +21,13 @@ from .ui import hint_label, section_label
 # The chip labels. Their colours come from the palette, so only the wording lives here.
 # "changed" reads UPDATED rather than CHANGED to match the wording review.py's rows
 # already shipped; renaming the label now would be a cosmetic change no task asked for.
-# "skipped"/"kept" mark a decline decision review.py already carried out; they reuse
-# the retired role below rather than a colour of their own: both read as "set aside",
-# though a skipped or kept card is re-offered on the deck's next version while a
-# retired one never returns.
-# "held" marks a card set aside unread with "hold for later"; it borrows updated's
-# attention role rather than retired's, since it comes back defaulting to Import.
+# "kept" marks a decline decision review.py already carried out; it reuses the retired
+# role below rather than a colour of its own: it reads as "set aside", though a kept
+# card is re-offered when its source changes while a retired one never returns.
+# "held" marks a card left for later; it borrows updated's attention role rather than
+# retired's, since it comes back on the next run.
 CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOVED",
-         "skipped": "SKIPPED", "kept": "KEPT YOURS", "held": "HELD",
+         "kept": "KEPT YOURS", "held": "LATER",
          # The AI wizard's review row kinds (ai_dialog.py). Wording only, mapped
          # onto the existing role pairs below rather than a colour of their own: a
          # blocked check reads DECLINE, a warning reads UPDATED (attention, not yet
@@ -67,13 +66,13 @@ CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOV
 # see the AI wizard review section of the UX review for why no new palette entry
 # is needed for any of them.
 _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "moved",
-          "skipped": "retired", "kept": "retired", "held": "updated",
+          "kept": "retired", "held": "updated",
           "blocked": "decline", "warn": "updated", "ok": "accept", "revised": "updated",
           "imported": "accept",
           # A found assistant is a clean result (accept), one that is installed but
           # will not answer is the same "attention, not yet a stop" as a warning
           # (updated), one that is not there at all reads as a decline, and one the
-          # reader has set aside reuses retired the way skipped/kept already do.
+          # reader has set aside reuses retired the way kept already does.
           # "preferred" borrows new, the one role that reads as a marker rather
           # than a verdict: it says which row the settings below belong to.
           "found": "accept", "notfound": "decline", "notresponding": "updated",
@@ -400,7 +399,7 @@ def chip_cell(kind, kinds=None):
 def decision_cell(options, state, on_change, card_label=""):
     """A row's decision as a compact segmented control: one checkable button per
     option, exactly one checked. Selected colour says what the choice does: accept
-    roles for Import/Apply, updated for Skip/Keep, decline for Never.
+    roles for Import/Apply, updated for Later/Keep, decline for Never.
 
     `card_label` names the card these buttons decide about, for anyone not reading the
     row they sit on: a 300-row list otherwise announces hundreds of controls called
@@ -414,7 +413,7 @@ def decision_cell(options, state, on_change, card_label=""):
     neighbours.
     """
     _SELECTED_ROLE = {"import": "accept", "apply": "accept",
-                      "skip": "updated", "keep": "updated",
+                      "held": "updated", "keep": "updated",
                       "never": "decline", "frozen": "decline"}
     _RADIUS = 6
     _HEIGHT = 22

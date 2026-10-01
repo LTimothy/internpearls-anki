@@ -22,9 +22,10 @@ from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_CEILING_MIN,
                      AUTO_SYNC_INTERVAL_DEFAULT_MIN,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, INSTALLED, STATE,
                      SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json,
-                     load_declined, source_identity)
+                     load_declined, load_later_seen, source_identity)
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
-                    decks_to_update, held_entries, manifest_needs_newer_addon, plural)
+                    decks_to_update, later_count, later_nudge_due,
+                    manifest_needs_newer_addon, plural)
 from .net import _BG_TIMEOUT, _DOWNLOAD_TIMEOUT
 from .platform import new_work_request, platform, wait_for_mock_work
 from .sync import (_cached_fetch, _content_backup_decks, _fetch_manifest, _is_local,
@@ -418,26 +419,24 @@ def _sweep_ai_scratch_background():
 
 @_bg_safe
 def _held_cards_nudge():
-    """Once per launch: remind the learner of cards set aside with "hold for later",
-    which only come back when Update my decks runs. A held card in a deck the learner
-    has since excluded in Manage decks can't come back that way, so it is not counted
-    here either."""
+    """Once per launch: remind the learner of cards left for later, which only come
+    back when Update my decks runs, and only when there are more of them than the last
+    run left. A Later card in a deck the learner has since excluded in Manage decks
+    can't come back that way, so it is not counted here either."""
     if mw.col is None:
-        # Held cards are kept per collection, so wait for a profile to open.
+        # Later cards are kept per collection, so wait for a profile to open.
         QTimer.singleShot(10000, _held_cards_nudge)
         return
-    excluded = set(_cfg()["excluded"])
-    n = sum(1 for e in held_entries(load_declined()).values()
-            if e.get("deck") not in excluded)
-    if n:
-        tooltip(f"Intern Pearls: {plural(n, 'held card')} waiting. Run Update my "
+    n = later_count(load_declined(), _cfg()["excluded"])
+    if later_nudge_due(n, load_later_seen()):
+        tooltip(f"Intern Pearls: {plural(n, 'card')} waiting for later. Run Update my "
                 f"decks to finish {'it' if n == 1 else 'them'}.", period=8000, parent=mw)
 
 
 @_bg_safe
 def _schedule_background_checks():
     """Run once, a couple seconds after Anki finishes starting up: the add-on-update
-    check, a sweep of any leftover AI scratch directories, a reminder about held cards,
+    check, a sweep of any leftover AI scratch directories, a reminder about Later cards,
     and, only if auto-sync is on in Settings, an immediate deck check plus the repeating
     poll that keeps checking while Anki stays open.
 

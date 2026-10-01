@@ -1,7 +1,7 @@
 """A re-offered decline is still a row about a card, at the dialog's own 660px floor.
 
 The update screen's card row carries a caret column, a chip column and, at its right,
-a decision control. A re-offered decline used to add a second chip column (SKIPPED /
+a decision control. A re-offered decline used to add a second chip column (LATER /
 KEPT YOURS) and, for one changed since that decline, a third (UPDATED), each a
 fixed-width column measured off the widest chip word: on the 660px minimum that left
 the card's own front about 150px, on exactly the rows the "Worth another look" hint
@@ -13,8 +13,10 @@ with that row's own text rather than with a column in front of it.
 import harness
 from sampling import widget_rect
 
-# Row 0 in the declined fixture: a new card, skipped before and changed since.
+# Row 0 in the declined fixture: a new card left for later with a note, still waiting.
 DECLINED = "one short line"
+# Row 1: a changed card, kept before and changed since.
+KEPT = "deliberately long prompt"
 # Row 2: an ordinary new card, same three-option control, no decline.
 PLAIN = "untagged row"
 
@@ -71,8 +73,21 @@ def test_the_changed_since_hint_sits_in_the_rows_own_text_column():
     s = harness.render("confirm", declined=True, size=(660, 900))
     hint = _primary(s.dialog, q, "Worth another look")
     assert (widget_rect(s.dialog, hint).left()
-            == widget_rect(s.dialog, _primary(s.dialog, q, DECLINED)).left()), (
+            == widget_rect(s.dialog, _primary(s.dialog, q, KEPT)).left()), (
         "the changed-since hint does not line up with its own row's text")
+
+
+def test_a_waiting_later_rows_note_and_hint_sit_in_its_text_column_below_it():
+    _, q = harness.bootstrap()
+    s = harness.render("confirm", declined=True, size=(660, 900))
+    primary = widget_rect(s.dialog, _primary(s.dialog, q, DECLINED))
+    note = widget_rect(s.dialog, _primary(s.dialog, q,
+                                          "Your note: an example note asking for a fix"))
+    status = [l for l in _visible_labels(s.dialog, q) if l.text() == "Not updated yet"]
+    assert len(status) == 1
+    status = widget_rect(s.dialog, status[0])
+    assert note.left() == status.left() == primary.left()
+    assert primary.bottom() < note.top() < status.top()
 
 
 def test_an_expanded_declined_row_lines_its_body_up_with_its_own_text():

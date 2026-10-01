@@ -68,8 +68,8 @@ def test_the_bar_sits_above_the_list_and_outside_its_scroll_area():
 def test_a_filter_and_a_search_round_trip_keeps_every_decision():
     dlg = harness.render("confirm-long", size=(880, 900)).dialog
     bar = _bar(dlg)
-    _buttons(dlg, "Skip")[0].click()
-    assert len([b for b in _buttons(dlg, "Skip") if b.isChecked()]) == 1
+    _buttons(dlg, "Never")[0].click()
+    assert len([b for b in _buttons(dlg, "Never") if b.isChecked()]) == 1
 
     _pick(bar, "held")
     assert bar._count.text() == f"Showing 3 of {_TOTAL} cards"
@@ -79,14 +79,14 @@ def test_a_filter_and_a_search_round_trip_keeps_every_decision():
     _search(bar, "")
     _pick(bar, "all")
     assert not bar._count.isVisible()
-    assert len([b for b in _buttons(dlg, "Skip") if b.isChecked()]) == 1, (
+    assert len([b for b in _buttons(dlg, "Never") if b.isChecked()]) == 1, (
         "the rebuilt row must still show the decision made before the filter")
 
 
 def test_not_reviewed_drops_the_rows_the_learner_has_decided():
     dlg = harness.render("confirm-long", size=(880, 900)).dialog
     bar = _bar(dlg)
-    _buttons(dlg, "Skip")[0].click()
+    _buttons(dlg, "Never")[0].click()
     _pick(bar, "unreviewed")
     assert bar._count.text() == f"Showing {_TOTAL - 1} of {_TOTAL} cards"
 

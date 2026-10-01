@@ -1121,6 +1121,15 @@ def later_count(registry, excluded):
                if e.get("deck") not in excluded)
 
 
+def later_migration_line(n):
+    """The update screen's one line over a list holding `n` rows that were Skips
+    before Later replaced them, or "" when there are none."""
+    if not n:
+        return ""
+    return (f"Skip is now Later. {plural(n, 'card')} you skipped earlier "
+            f"{'is' if n == 1 else 'are'} below, still set to Later.")
+
+
 def later_nudge_due(count, last_seen):
     """Whether the startup reminder about Later cards should show: only when the count
     has grown past what the learner was last told."""
@@ -1151,19 +1160,23 @@ def holdable_guids(registry, card_kinds, reviewed, decisions=None):
             and not carries_decision((registry or {}).get(guid), kind)]
 
 
-def unopened_line(card_kinds, reviewed, folded=(), registry=None):
+def unopened_line(card_kinds, reviewed, folded=(), registry=None, decisions=None):
     """The update screen's count of card rows nobody has opened yet, how many of those
     sit inside a folded group and how many already carry an earlier update's decision,
     or "" once there are none. `card_kinds` is {guid: kind}; only new and changed rows
-    count."""
+    count. `decisions` is the screen's live {guid: state}: an unopened row in it was
+    seeded there by an earlier update (a waiting Later row, say), since a row decided
+    this run counts as reviewed."""
     rows = [g for g, k in card_kinds.items() if k in ("new", "changed")]
     left = [g for g in rows if g not in reviewed]
     if not left:
         return ""
     folded = set(folded)
     inside = sum(1 for g in left if g in folded)
+    decisions = decisions or {}
     decided = sum(1 for g in left
-                  if carries_decision((registry or {}).get(g), card_kinds[g]))
+                  if g in decisions
+                  or carries_decision((registry or {}).get(g), card_kinds[g]))
     notes = ([f"{inside} of them in folded groups"] if inside else []) + (
         [f"{decided} already decided on an earlier update"] if decided else [])
     where = (", " + " and ".join(notes)) if notes else ""

@@ -461,16 +461,30 @@ def _scene_confirm(mock, opts):
     if opts.get("limit"):
         details = details[:opts["limit"]]
     if opts.get("declined"):
-        # A re-offered decline, changed since it was turned away (row 0), beside an
+        # A re-offered Later card still waiting on its note (row 0), beside an
         # ordinary new row carrying the same three-option control (row 2). The two
         # differ only by the decline, which is what lets a test read what the decline
-        # itself costs the card's own words. Row 1 is the changed kind, declined the
-        # way a changed card can be.
-        details[0] = dict(details[0], declined_state="skip", changed_since_decline=True)
-        details[1] = dict(details[1], declined_state="keep")
+        # itself costs the card's own words. Row 1 is the changed kind, kept and
+        # changed since, the way a changed card can be declined.
+        details[0] = dict(details[0], declined_state="held", later_wait=True,
+                          later_note="an example note asking for a fix",
+                          later_note_status="not_updated")
+        details[1] = dict(details[1], declined_state="keep", changed_since_decline=True)
         details[2] = dict(details[2], kind="new")
     if opts.get("held"):
         details[0] = dict(details[0], declined_state="held")
+    if opts.get("later"):
+        # Every way a Later card comes back: an old Skip (row 0, seeded at Later), a
+        # noted card updated since the note (row 1, at Apply) and a noted card not
+        # updated yet (row 3, seeded at Later).
+        details[0] = dict(details[0], declined_state="held", later_wait=True,
+                          later_migrated=True)
+        details[1] = dict(details[1], declined_state="held",
+                          later_note="an example note asking for a fix",
+                          later_note_status="updated")
+        details[3] = dict(details[3], declined_state="held", later_wait=True,
+                          later_note="another example note, still waiting",
+                          later_note_status="not_updated")
     items = [("header", "1 deck has updates:"),
              ("deck", "Example Deck", "3 kept (1 changing) · 2 new"),
              ("header", "Example Deck")]
@@ -845,7 +859,7 @@ def _declined_fixture():
         json.dump({
             "g1": {"state": "never", "front": "Which widget is this, in one short line?",
                    "deck": "Example Deck", "decided": "2026-08-01", "hash": ""},
-            "g2": {"state": "skip",
+            "g2": {"state": "held",
                    "front": "A deliberately long prompt, written to run past the "
                             "dialog's width so the wrap lands under the text",
                    "deck": "Example Deck", "decided": "2026-08-02", "hash": ""},
@@ -1165,6 +1179,9 @@ SCENES = {
     "confirm-long": (lambda mock, opts: _scene_confirm(mock, dict(opts, many=24)),
                      "the Update my decks confirmation with enough cards for its "
                      "filter bar"),
+    "confirm-later": (lambda mock, opts: _scene_confirm(mock, dict(opts, later=True)),
+                      "the Update my decks confirmation with returning Later cards "
+                      "(an old Skip, a noted card updated and one not)"),
     "ask-scrollable": (_scene_ask_scrollable, "a plain _ask_scrollable confirmation"),
     "sync-confirm": (_scene_sync_confirm, "Sync decks' confirmation (one row per deck)"),
     "reconcile-confirm": (_scene_reconcile_confirm,
@@ -1203,7 +1220,7 @@ def render(scene, theme="light", expand=(), size=(640, 560), click_labels=(), **
     (mapTo, isVisible, sizeHint) need the widget, not just the image.
 
     `click_labels` clicks every QPushButton whose text exactly matches one of these
-    strings, in order, after rows are expanded: a decision_cell's "Skip" or "Never", or
+    strings, in order, after rows are expanded: a decision_cell's "Later" or "Never", or
     a row's "Add note" link, so a real-Qt test can exercise what a decision actually
     shows rather than only what the mock's structure records.
 

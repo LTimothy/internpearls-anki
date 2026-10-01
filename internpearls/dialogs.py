@@ -750,14 +750,20 @@ def manage_decks(pending=None):
 
 
 # The order the groups render in, and each state's heading. Only non-empty groups
-# render; held leads because those cards still wait on the learner, then the
+# render; Later leads because those cards still wait on the learner, then the
 # declines from strongest (never imported) to softest. An entry whose state
 # matches none of these still renders, under "Other", appended last in _rebuild():
 # sync.py keeps a GUID declined by its presence in the registry alone, regardless of
 # what its state says, so every entry needs a way back to being offered.
-_DECLINE_GROUPS = (("held", "Held for later"), ("never", "Never imported"),
-                   ("frozen", "Kept yours, no more updates"),
-                   ("skip", "Skipped for now"), ("keep", "Kept yours"))
+_DECLINE_GROUPS = (("held", "Later"), ("never", "Never imported"),
+                   ("frozen", "Kept yours, no more updates"), ("keep", "Kept yours"))
+
+
+def _decline_group(entry):
+    """The group an entry is listed under. An old "skip" is Later, whether or not
+    loading has migrated it yet."""
+    state = entry.get("state") if isinstance(entry, dict) else None
+    return "held" if state == "skip" else state
 
 # The cap review._scrolled stops the list growing the dialog past, once it holds more
 # rows than fit. Unlike _SCOPE_DIALOG_H above, this sets no floor: a short list stays
@@ -859,8 +865,7 @@ class _DeclinedDialog(QDialog):
         # the learner's only way back to a card this dialog can't otherwise name.
         grouped = {}
         for guid, entry in reg.items():
-            state = entry.get("state") if isinstance(entry, dict) else None
-            grouped.setdefault(state, []).append((guid, entry))
+            grouped.setdefault(_decline_group(entry), []).append((guid, entry))
 
         known_states = {state for state, _ in _DECLINE_GROUPS}
         for state, heading in _DECLINE_GROUPS:
@@ -884,8 +889,8 @@ class _DeclinedDialog(QDialog):
 
 @_safe
 def open_declined_cards():
-    """Open Declined cards: every held, never-imported, skipped, or kept-back card,
-    grouped by that choice, each with an Offer again button."""
+    """Open Declined cards: every Later, never-imported or kept-back card, grouped by
+    that choice, each with an Offer again button."""
     dlg = _DeclinedDialog(mw)
     dlg.exec()
     dlg.deleteLater()   # parented to mw otherwise, which owns it until Anki quits

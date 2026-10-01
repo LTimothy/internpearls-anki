@@ -63,8 +63,8 @@ def test_the_caret_does_not_eat_a_gutter(shot):
 
 def test_feedback_boxes_stay_hidden_until_a_decision_or_add_note(shot):
     """The box is contextual now, not gated by the Settings toggle: every new/changed
-    row carries one, but it stays hidden until Skip/Keep is chosen or its row's own
-    "Add note" link is clicked."""
+    row carries one, but it stays hidden until Keep/Never is chosen or its row's own
+    "Add note" link is clicked. Later is a deferral and opens none."""
     _, q = harness.bootstrap()
 
     def boxes(s):
@@ -73,17 +73,20 @@ def test_feedback_boxes_stay_hidden_until_a_decision_or_add_note(shot):
     closed = shot("confirm", expand=(0,))
     assert not boxes(closed), "a note box is showing before any decision was made"
 
-    declined = shot("confirm", expand=(0,), click_labels=("Skip",))
-    assert boxes(declined), "choosing Skip did not reveal row 0's note box"
+    declined = shot("confirm", expand=(0,), click_labels=("Never",))
+    assert boxes(declined), "choosing Never did not reveal row 0's note box"
+
+    later = shot("confirm", expand=(0,), click_labels=("Later",))
+    assert not boxes(later), "choosing Later opened a note box"
 
     added = shot("confirm", expand=(0,), click_labels=("Add note",))
     assert boxes(added), "clicking Add note did not reveal a note box"
 
     # The box lives beside the card's own expandable body, not inside it, so a
     # decline reveals it whether or not the row itself is ever opened.
-    still_collapsed = shot("confirm", click_labels=("Skip",))
+    still_collapsed = shot("confirm", click_labels=("Keep yours",))
     assert boxes(still_collapsed), (
-        "choosing Skip on a collapsed row did not reveal its note box")
+        "choosing Keep yours on a collapsed row did not reveal its note box")
 
 
 def test_choosing_never_strikes_the_primary_line_and_collapses_the_row(shot):

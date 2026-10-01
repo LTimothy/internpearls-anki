@@ -816,12 +816,13 @@ def test_declined_dialog_lists_entries_grouped_by_state(anki):
     config.save_declined({
         "g1": {"state": "never", "front": "front a", "deck": "IP::A",
                "decided": "2026-08-01", "hash": ""},
-        "g2": {"state": "skip", "front": "front b", "deck": "IP::A",
+        "g2": {"state": "held", "front": "front b", "deck": "IP::A",
                "decided": "2026-08-02", "hash": ""}})
     tree = _snapshot_declined_dialog(anki)
     texts = _all_text(tree)
     assert "Never imported" in texts and "front a" in texts
-    assert "Skipped for now" in texts and "front b" in texts
+    assert "Later" in texts.split("\n") and "front b" in texts
+    assert "Skipped for now" not in texts and "Held for later" not in texts
 
 
 def test_offer_again_removes_the_entry_and_invalidates_the_deck(anki):
@@ -1878,20 +1879,22 @@ def test_decision_cell_selects_and_reports(anki):
     from internpearls import widgets
     chosen = []
     cell = widgets.decision_cell(
-        [("import", "Import"), ("skip", "Skip"), ("never", "Never")],
+        [("import", "Import"), ("held", "Later"), ("never", "Never")],
         "import", chosen.append)
-    cell.buttons["skip"].click()
-    assert chosen == ["skip"]
+    cell.buttons["held"].click()
+    assert chosen == ["held"]
     cell.set_state("never")
     assert cell.buttons["never"].isChecked()
 
 
-def test_new_chip_kinds_have_labels_and_roles(anki):
-    from internpearls import widgets
-    assert widgets.CHIPS["skipped"] == "SKIPPED"
+def test_decline_chip_kinds_have_labels_and_roles(anki):
+    from internpearls import review, widgets
+    assert widgets.CHIPS["held"] == "LATER"
     assert widgets.CHIPS["kept"] == "KEPT YOURS"
-    assert widgets._ROLES["skipped"] == "retired"
+    assert widgets._ROLES["held"] == "updated"
     assert widgets._ROLES["kept"] == "retired"
+    assert "skipped" not in widgets.CHIPS and "skipped" not in widgets._ROLES
+    assert "skip" not in review._DECLINE_CHIP and "skip" not in review._TURNED_DOWN
 
 
 # --------------------------------------------------------- update-body decisions
@@ -1968,18 +1971,39 @@ def _build_body_with_one_changed_card():
     return _build_body([_changed_card_detail()])
 
 
-def test_new_card_row_offers_import_skip_never(anki):
+def test_new_card_row_offers_import_later_never(anki):
     body, boxes, flush, decisions = _build_body_with_one_new_card()
     cell = _find_decision_cell(body)
-    assert set(cell.buttons) == {"import", "skip", "never"}
+    assert list(cell.buttons) == ["import", "held", "never"]
+    assert [b.text() for b in cell.buttons.values()] == ["Import", "Later", "Never"]
     assert cell.buttons["import"].isChecked()
 
 
-def test_choosing_skip_reveals_the_feedback_box_and_records_the_decision(anki):
+def test_choosing_later_records_it_and_opens_no_note_box(anki):
+    """Later is a deferral, not a judgment, so it does not ask why."""
     body, boxes, flush, decisions = _build_body_with_one_new_card()
     cell = _find_decision_cell(body)
-    cell.buttons["skip"].click()
-    assert decisions == {"guid-new-a": "skip"}
+    cell.buttons["held"].click()
+    assert decisions == {"guid-new-a": "held"}
+    box = _find_feedback_box(body)
+    assert box is not None and not box.isVisible()
+    texts = " ".join(t or "" for t in _row_texts(body))
+    assert "next time you run Update my decks, set to Import" in texts
+    assert "With a note, it waits until the card is updated" in texts
+
+
+def test_later_on_a_changed_row_says_it_comes_back_set_to_apply(anki):
+    body, boxes, flush, decisions = _build_body_with_one_changed_card()
+    _find_decision_cell(body).buttons["held"].click()
+    assert decisions == {"guid-changed-a": "held"}
+    assert not _find_feedback_box(body).isVisible()
+    texts = " ".join(t or "" for t in _row_texts(body))
+    assert "next time you run Update my decks, set to Apply" in texts
+
+
+def test_choosing_never_on_a_new_card_opens_the_note_box(anki):
+    body, boxes, flush, decisions = _build_body_with_one_new_card()
+    _find_decision_cell(body).buttons["never"].click()
     box = _find_feedback_box(body)
     assert box is not None and box.isVisible()
 
@@ -1998,7 +2022,9 @@ def test_changed_card_row_offers_apply_keep_and_never(anki):
     it every time the deck changed."""
     body, boxes, flush, decisions = _build_body_with_one_changed_card()
     cell = _find_decision_cell(body)
-    assert set(cell.buttons) == {"apply", "keep", "frozen"}
+    assert list(cell.buttons) == ["apply", "keep", "held", "frozen"]
+    assert [b.text() for b in cell.buttons.values()] == [
+        "Apply", "Keep yours", "Later", "Never"]
     assert cell.buttons["apply"].isChecked()
 
 
@@ -2021,25 +2047,90 @@ def test_never_on_a_changed_card_opens_the_note_box(anki):
 
 
 def test_predeclined_detail_renders_one_chip_and_its_preset_state(anki):
-    """A re-offered decline wears the decline, and only that: NEW + SKIPPED + UPDATED
-    stacked three fixed-width columns in front of the card's own words, beside a
-    decision control, which is what crushed the front of exactly the rows the "Worth
-    another look" hint points at. The change since the decline is said by that hint,
-    not by a third pill."""
+    """A re-offered decline wears the decline, and only that: UPDATED + KEPT YOURS
+    stacked fixed-width columns in front of the card's own words, beside a decision
+    control, which is what crushed the front of exactly the rows the "Worth another
+    look" hint points at. The change since the decline is said by that hint, not by a
+    second pill."""
     from internpearls import widgets
-    detail = _new_card_detail(declined_state="skip", changed_since_decline=True)
+    detail = _changed_card_detail(declined_state="keep", changed_since_decline=True)
     body, boxes, flush, decisions = _build_body(details=[detail])
     cell = _find_decision_cell(body)
-    assert cell.buttons["skip"].isChecked()
+    assert cell.buttons["keep"].isChecked()
     texts = _row_texts(body)
     chips = [t for t in texts if t in set(widgets.CHIPS.values())]
-    assert chips == ["SKIPPED"], f"expected one chip, got {chips}"
-    assert any("Worth another look" in (t or "") for t in texts)
-    # decisions is the interface the next task persists verbatim, so the preset state
-    # has to actually land in the dict, not just drive what the control shows.
-    assert decisions == {"guid-new-a": "skip"}
-    cell.buttons["import"].click()
+    assert chips == ["KEPT YOURS"], f"expected one chip, got {chips}"
+    assert "Changed since you kept yours. Worth another look." in texts
+    # The preset state has to actually land in the dict the run persists, not just
+    # drive what the control shows.
+    assert decisions == {"guid-changed-a": "keep"}
+    cell.buttons["apply"].click()
     assert decisions == {}
+
+
+def test_a_waiting_later_row_is_seeded_at_later_and_wears_the_later_chip(anki):
+    from internpearls import widgets
+    detail = _new_card_detail(declined_state="held", later_wait=True,
+                              later_note="fix the dose", later_note_status="not_updated")
+    body, boxes, flush, decisions = _build_body(details=[detail])
+    assert _find_decision_cell(body).buttons["held"].isChecked()
+    assert decisions == {"guid-new-a": "held"}
+    texts = _row_texts(body)
+    assert [t for t in texts if t in set(widgets.CHIPS.values())] == ["LATER"]
+    assert "Your note: fix the dose" in texts and "Not updated yet" in texts
+    assert not _find_feedback_box(body).isVisible(), "a seeded Later asks nothing"
+
+
+def test_a_returning_later_row_that_does_not_wait_starts_at_its_default(anki):
+    from internpearls import widgets
+    plain = _new_card_detail(declined_state="held")
+    updated = _changed_card_detail(declined_state="held", later_note="fix the dose",
+                                   later_note_status="updated")
+    body, boxes, flush, decisions = _build_body(details=[plain, updated])
+    assert decisions == {}
+    texts = _row_texts(body)
+    assert texts.count(widgets.CHIPS["held"]) == 2
+    assert "Your note: fix the dose" in texts and "Updated since your note" in texts
+    assert "Not updated yet" not in texts
+
+
+def test_a_returning_note_is_shown_as_text_not_markup(anki):
+    detail = _new_card_detail(declined_state="held", later_wait=True,
+                              later_note="<b>dose</b> & route",
+                              later_note_status="not_updated")
+    row_labels = [w for w in _walk_widgets(_build_body([detail])[0])
+                  if isinstance(w, mock_anki.QLabel)
+                  and "Your note:" in (w.text() or "")]
+    assert len(row_labels) == 1
+    from aqt.qt import Qt
+    assert row_labels[0].text() == "Your note: <b>dose</b> & route"
+    assert row_labels[0]._format == Qt.TextFormat.PlainText
+
+
+def test_the_migration_line_shows_once_above_the_list(anki):
+    from internpearls import logic, widgets
+    details = [_new_card_detail(guid=f"guid-{i}", declined_state="held",
+                                later_wait=True, later_migrated=True)
+               for i in range(3)] + [_new_card_detail(guid="guid-plain")]
+    body = _build_body(details)[0]
+    line = ("Skip is now Later. 3 cards you skipped earlier are below, still set to "
+            "Later.")
+    texts = _row_texts(body)
+    assert texts.count(line) == 1
+    labels = [w for w in body._layout._children
+              if isinstance(w, mock_anki.QLabel) and w.text() == line]
+    stream = next(w for w in body._layout._children
+                  if isinstance(w, widgets.StreamingList))
+    assert labels and body._layout._children.index(labels[0]) < (
+        body._layout._children.index(stream)), "the line sits above the list"
+    assert logic.later_migration_line(1) == (
+        "Skip is now Later. 1 card you skipped earlier is below, still set to Later.")
+    assert logic.later_migration_line(0) == ""
+
+
+def test_no_migration_line_without_a_migrated_row(anki):
+    body = _build_body([_new_card_detail(declined_state="held", later_wait=True)])[0]
+    assert not any("Skip is now Later" in (t or "") for t in _row_texts(body))
 
 
 def test_a_kept_row_wears_the_kept_chip_rather_than_its_kind(anki):
@@ -2056,20 +2147,21 @@ def test_an_expanded_body_indents_by_the_columns_its_row_actually_draws(anki):
     that grows a second column and leaves this alone hangs its whole body a chip-width
     left of the line it belongs to."""
     from internpearls import review, widgets
-    detail = _new_card_detail(declined_state="skip", changed_since_decline=True)
+    detail = _changed_card_detail(declined_state="keep", changed_since_decline=True)
     row = review._card_row(detail, {}, {}, {}, lambda *a: None,
                            chips=review._chip_kinds([("card", "D", detail)]))
     # [header, the changed-since hint, the body, its caption, its feedback box]
     body = row._layout._children[-3]
     assert body._layout._margins[0] == widgets.row_text_indent(
-        1, ("skipped",)), "the expanded body no longer indents by its own columns"
+        1, ("kept",)), "the expanded body no longer indents by its own columns"
 
 
 def test_a_re_offered_decline_opens_with_no_empty_feedback_box(anki):
-    """Ten re-offered skipped cards used to arrive as ten open empty boxes: the parked
+    """Ten re-offered kept cards used to arrive as ten open empty boxes: the parked
     -open state _apply_decision_visuals avoids everywhere else. Add note is what opens
     one on a row like this."""
-    body, boxes, flush, decisions = _build_body([_new_card_detail(declined_state="skip")])
+    body, boxes, flush, decisions = _build_body(
+        [_changed_card_detail(declined_state="keep")])
     box = _find_feedback_box(body)
     assert box is not None and not box.isVisible()
     add_note = next(w for w in _walk_widgets(body)
@@ -2079,7 +2171,7 @@ def test_a_re_offered_decline_opens_with_no_empty_feedback_box(anki):
 
 def test_a_re_offered_decline_with_a_saved_note_opens_showing_it(anki):
     from internpearls import review
-    detail = _new_card_detail(declined_state="skip")
+    detail = _changed_card_detail(declined_state="keep")
     items = [("card", "Example Deck", detail)]
     flags = {detail["guid"]: "dose looks off"}
     body, boxes, flush = review.build_update_body(
@@ -2089,15 +2181,15 @@ def test_a_re_offered_decline_with_a_saved_note_opens_showing_it(anki):
 
 
 def test_declining_here_and_now_still_opens_the_box(anki):
-    body, boxes, flush, decisions = _build_body_with_one_new_card()
-    _find_decision_cell(body).buttons["skip"].click()
+    body, boxes, flush, decisions = _build_body_with_one_changed_card()
+    _find_decision_cell(body).buttons["keep"].click()
     assert _find_feedback_box(body).isVisible()
 
 
 def test_a_decline_caption_names_the_way_back_rather_than_promising_next_update(anki):
-    """A skipped card's deck is recorded installed at the new version, so it only comes
-    back when the source ships another version of that deck. Declined cards is the way
-    back that does not depend on that ever happening, so the caption names it."""
+    """A kept card is offered again only when its source content changes. Declined
+    cards is the way back that does not depend on that ever happening, so the caption
+    names it."""
     from internpearls import review
     for state, caption in review._DECLINE_CAPTION.items():
         assert "Declined cards" in caption, f"{state} caption names no way back"
@@ -2128,7 +2220,7 @@ def test_returning_to_default_closes_an_empty_box_and_restores_add_note(anki):
     quiet Add note affordance comes back so feedback is still reachable."""
     body, boxes, flush, decisions = _build_body_with_one_new_card()
     cell = _find_decision_cell(body)
-    cell.buttons["skip"].click()
+    cell.buttons["never"].click()
     box = _find_feedback_box(body)
     assert box.isVisible()
     cell.buttons["import"].click()
@@ -2143,7 +2235,7 @@ def test_typed_but_unsaved_text_keeps_the_box_open_on_return_to_default(anki):
     text sitting in the box, even before it has reached `flags`, keeps it open."""
     body, boxes, flush, decisions = _build_body_with_one_new_card()
     cell = _find_decision_cell(body)
-    cell.buttons["skip"].click()
+    cell.buttons["never"].click()
     box = _find_feedback_box(body)
     box.setPlainText("wrong dose")
     cell.buttons["import"].click()
@@ -2157,12 +2249,15 @@ def test_a_predeclined_card_past_the_first_streaming_batch_still_reaches_decisio
     from `items`, before any row widget exists."""
     from internpearls import review
     details = [_new_card_detail(guid=f"guid-{i}") for i in range(60)]
-    details[55] = _new_card_detail(guid="guid-55", declined_state="skip")
+    details[55] = _new_card_detail(guid="guid-55", declined_state="held",
+                                   later_wait=True)
+    details[56] = _new_card_detail(guid="guid-56", declined_state="held")
     items = [("card", "Example Deck", d) for d in details]
     flags, new_index, decisions = {}, {}, {}
     body, boxes, flush = review.build_update_body(
         items, {}, flags, new_index, decisions, "", lambda: "", "")
-    assert decisions.get("guid-55") == "skip", (
+    assert "guid-56" not in decisions, "a Later row that does not wait starts at Import"
+    assert decisions.get("guid-55") == "held", (
         "a predeclined card past the first StreamingList batch never reached decisions")
 
 
@@ -2179,7 +2274,7 @@ def test_scroll_actions_cross_four_streaming_batches_without_losing_a_decision(a
                      if callable(getattr(widget, "shown", None))
                      and callable(getattr(widget, "total", None)))
     first = _find_decision_cell(body)
-    first.buttons["skip"].click()
+    first.buttons["held"].click()
     shown = [streaming.shown()]
 
     for offset in range(1, 5):
@@ -2189,7 +2284,7 @@ def test_scroll_actions_cross_four_streaming_batches_without_losing_a_decision(a
         shown.append(streaming.shown())
 
     assert shown == [50, 100, 150, 200, 230]
-    assert decisions == {"guid-0": "skip"}
+    assert decisions == {"guid-0": "held"}
 
 
 def test_import_row_offers_a_quiet_add_note_that_reveals_the_box(anki):
@@ -2225,7 +2320,7 @@ def test_status_line_is_recomputed_after_a_decision_change(anki):
         items, {}, {}, {}, {}, "", status_line, "")
     before = len(calls)
     cell = _find_decision_cell(body)
-    cell.buttons["skip"].click()
+    cell.buttons["held"].click()
     assert len(calls) > before, "status_line was not recomputed after a decision change"
 
 
@@ -2736,16 +2831,29 @@ def test_ask_with_widget_extra_button_sits_before_the_accept_button(anki):
     assert extra["answer"] is True and not extra.get("clicked")
 
 
-def test_declined_dialog_lists_held_cards_first(anki):
+def test_declined_dialog_lists_later_cards_first_in_one_group(anki):
+    """An old Skip and a Later card are one group, listed ahead of the declines."""
     from internpearls import config
     config.save_declined({
+        "g0": {"state": "never", "front": "front z", "deck": "IP::A",
+               "decided": "2026-08-01", "hash": ""},
         "g1": {"state": "skip", "front": "front a", "deck": "IP::A",
                "decided": "2026-08-01", "hash": ""},
         "g2": {"state": "held", "front": "front b", "deck": "IP::A",
                "decided": "2026-09-23", "hash": ""}})
-    texts = _all_text(_snapshot_declined_dialog(anki))
-    assert "Held for later" in texts and "front b" in texts
-    assert texts.index("Held for later") < texts.index("Skipped for now")
+    lines = _all_text(_snapshot_declined_dialog(anki)).split("\n")
+    assert lines.count("Later") == 1
+    later, never = lines.index("Later"), lines.index("Never imported")
+    assert later < lines.index("front a") < never
+    assert later < lines.index("front b") < never
+
+
+def test_declined_dialog_puts_a_legacy_skip_entry_under_later(anki):
+    """Loading migrates every skip, but the dialog does not depend on that."""
+    from internpearls import dialogs
+    assert dialogs._decline_group({"state": "skip"}) == "held"
+    assert dialogs._decline_group({"state": "keep"}) == "keep"
+    assert dialogs._decline_group("not a dict") is None
 
 
 def _folded_group_body(kind="changed", note_kind="maintainer", n=5):
@@ -2777,10 +2885,24 @@ def test_a_group_decision_reaches_members_that_were_never_built(anki):
     assert decisions == {}, "back to the default leaves no entry, like a row's own control"
 
 
-def test_a_new_card_group_offers_import_all_and_skip_all(anki):
+def test_a_new_card_group_offers_import_all_and_later_all(anki):
+    from internpearls import review
+    assert review._GROUP_OPTIONS["new"] == [("import", "Import all"),
+                                            ("held", "Later all")]
     body, decisions, _t, _o = _folded_group_body(kind="new")
-    _button(body, "Skip all").click()
-    assert set(decisions.values()) == {"skip"}
+    _button(body, "Later all").click()
+    assert set(decisions.values()) == {"held"} and len(decisions) == 5
+
+
+def test_a_changed_card_group_offers_later_all_too(anki):
+    from internpearls import review
+    assert review._GROUP_OPTIONS["changed"] == [
+        ("apply", "Apply all"), ("keep", "Keep all yours"), ("held", "Later all")]
+    body, decisions, _t, _o = _folded_group_body()
+    _button(body, "Later all").click()
+    assert decisions == {f"guid-g{i}": "held" for i in range(5)}
+    assert not any(w.text() == "Never" for w in _walk_widgets(body)
+                   if isinstance(w, mock_anki.QPushButton))
 
 
 def test_expanding_a_folded_group_counts_its_cards_as_opened(anki):
@@ -2817,6 +2939,18 @@ def test_unopened_line_says_how_many_carry_an_earlier_decision():
     assert line.startswith("<b>4 of 4 cards not opened yet</b>, 1 of them in folded "
                            "groups and 2 already decided on an earlier update.")
     assert "already decided" not in unopened_line(kinds, set(), (), {})
+
+
+def test_unopened_line_counts_a_row_seeded_at_later_as_decided(anki):
+    """A seeded Later row is a decision from an earlier update, though the registry
+    alone (a held entry) does not say so; the screen's seeded `decisions` does."""
+    from internpearls.logic import unopened_line
+    kinds = {"a": "new", "b": "changed", "c": "new"}
+    reg = {"a": {"state": "held", "migrated": True}, "b": {"state": "keep"}}
+    line = unopened_line(kinds, set(), (), reg, {"a": "held", "b": "keep"})
+    assert line.startswith("<b>3 of 3 cards not opened yet</b>, 2 already decided on "
+                           "an earlier update.")
+    assert "1 already decided" in unopened_line(kinds, set(), (), reg)
 
 
 def _filter_body(n_new=12, n_changed=12, group=0, group_kind=None):
@@ -2911,22 +3045,23 @@ def test_search_narrows_the_list_after_the_typing_delay(anki):
 def test_decisions_survive_switching_filters_back_and_forth(anki):
     body, decisions, touched = _filter_body(12, 12)
     bar = _bar(body)
-    _button(body, "Skip").click()
-    skipped = dict(decisions)
-    assert len(skipped) == 1
+    _find_decision_cell(body).buttons["held"].click()   # not the filter bar's Later tab
+    later = dict(decisions)
+    assert len(later) == 1
     for mode in ("changed", "held", "new", "all"):
         bar.options.buttons[mode].click()
-    assert decisions == skipped
-    assert touched == set(skipped)
+    assert decisions == later
+    assert touched == set(later)
     checked = [w for w in _walk_widgets(body) if hasattr(w, "buttons")
-               and "skip" in w.buttons and w.buttons["skip"].isChecked()]
+               and "all" not in w.buttons
+               and "held" in w.buttons and w.buttons["held"].isChecked()]
     assert len(checked) == 1, "the rebuilt row still shows the decision"
 
 
 def test_not_reviewed_leaves_out_rows_the_learner_decided(anki):
     body, _decisions, touched = _filter_body(12, 12)
     bar, stream = _bar(body), _stream(body)
-    _button(body, "Skip").click()
+    _find_decision_cell(body).buttons["held"].click()   # not the filter bar's Later tab
     bar.options.buttons["unreviewed"].click()
     assert _count_line(bar) == "Showing 23 of 24 cards"
     shown = {it[2]["guid"] for it in stream._items if it[0] == "card"}
@@ -2936,7 +3071,7 @@ def test_not_reviewed_leaves_out_rows_the_learner_decided(anki):
 def test_feedback_typed_before_a_filter_is_kept_after_it(anki):
     body, _decisions, _touched = _filter_body(12, 12)
     bar = _bar(body)
-    _button(body, "Skip").click()
+    _button(body, "Never").click()
     _find_feedback_box(body).setPlainText("this one is off")
     bar.options.buttons["held"].click()
     assert _find_feedback_box(body) is None

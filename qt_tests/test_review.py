@@ -84,13 +84,13 @@ def test_review_controls_name_the_card_and_feedback_field():
     caret = next(button for button in buttons
                  if button.text() in (review._CARET_CLOSED, review._CARET_OPEN))
     add_note = next(button for button in buttons if button.text() == "Add note")
-    skip = next(button for button in buttons if button.text() == "Skip")
+    later = next(button for button in buttons if button.text() == "Later")
     box = row.findChildren(QPlainTextEdit)[0]
 
     assert caret.accessibleName() == f"Show card: {card_label}"
     assert add_note.accessibleName() == f"Add note: {card_label}"
     assert box.accessibleName() == f"Feedback note: {card_label}"
-    skip.click()
+    later.click()
     caption = next(label for label in row.findChildren(QLabel)
-                   if label.text() == review._DECLINE_CAPTION["skip"])
+                   if label.text() == review._later_caption("new"))
     assert caption.buddy() is box
