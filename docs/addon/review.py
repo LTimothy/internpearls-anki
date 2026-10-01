@@ -1043,9 +1043,13 @@ _FEEDBACK_PLACEHOLDER = ("Anything to pass on about this card? You'll get a copy
                          "end to paste and send.")
 
 
-def _later_caption(kind):
-    """What Later does, said on the row that chose it. Its default is the row's own."""
+def _later_caption(kind, detail=None):
+    """What Later does, said on the row that chose it. Its default is the row's own. A
+    noted card still waiting for its update says that instead."""
     verb = "Apply" if kind == "changed" else "Import"
+    detail = detail or {}
+    if detail.get("later_wait") and detail.get("later_note_status") == "not_updated":
+        return f"Waiting for this card to be updated. Choose {verb} to take it as it is."
     return (f"Comes back the next time you run Update my decks, set to {verb}. "
             "With a note, it waits until the card is updated.")
 
@@ -1253,7 +1257,8 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     add_note.clicked.connect(_reveal_box)
 
     def _apply_decision_visuals(state, clicked=False):
-        text = _later_caption(kind) if state == "held" else _DECLINE_CAPTION.get(state)
+        text = (_later_caption(kind, detail) if state == "held"
+                else _DECLINE_CAPTION.get(state))
         caption.setVisible(bool(text))
         if text:
             caption.setText(text)

@@ -1992,6 +1992,36 @@ def test_choosing_later_records_it_and_opens_no_note_box(anki):
     assert "With a note, it waits until the card is updated" in texts
 
 
+_WAITING = {"declined_state": "held", "later_wait": True, "later_note": "fix the dose",
+            "later_note_status": "not_updated"}
+
+
+def test_a_row_waiting_on_its_note_says_so_beside_later(anki):
+    body, _boxes, _flush, decisions = _build_body([_new_card_detail(**_WAITING)])
+    assert decisions == {"guid-new-a": "held"}
+    texts = " ".join(t or "" for t in _row_texts(body))
+    assert ("Waiting for this card to be updated. Choose Import to take it as it is."
+            in texts)
+    assert "Comes back the next time" not in texts
+
+
+def test_a_changed_row_waiting_on_its_note_names_apply(anki):
+    body, _boxes, _flush, decisions = _build_body([_changed_card_detail(**_WAITING)])
+    assert decisions == {"guid-changed-a": "held"}
+    texts = " ".join(t or "" for t in _row_texts(body))
+    assert ("Waiting for this card to be updated. Choose Apply to take it as it is."
+            in texts)
+
+
+def test_a_migrated_row_seeded_at_later_keeps_the_general_caption(anki):
+    body, _boxes, _flush, decisions = _build_body([_new_card_detail(
+        declined_state="held", later_wait=True, later_migrated=True)])
+    assert decisions == {"guid-new-a": "held"}
+    texts = " ".join(t or "" for t in _row_texts(body))
+    assert "Comes back the next time you run Update my decks, set to Import." in texts
+    assert "Waiting for this card" not in texts
+
+
 def test_later_on_a_changed_row_says_it_comes_back_set_to_apply(anki):
     body, boxes, flush, decisions = _build_body_with_one_changed_card()
     _find_decision_cell(body).buttons["held"].click()

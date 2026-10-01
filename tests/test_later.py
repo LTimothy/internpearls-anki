@@ -208,6 +208,16 @@ def test_settle_releases_a_retired_held_entry_and_leaves_manifest_decks_alone():
     assert logic.settle_held_outside_manifest(reg, bad, {}) is False
 
 
+def test_settle_tolerates_a_malformed_retired_ledger():
+    for retired in ({"IP::A": None}, {"IP::A": 3}, {"IP::A": [{"guid": "g"}, "g-ok"]},
+                    {"IP::A": {"g-ok": "reason"}}, {"IP::A": ("g-ok", 7)}):
+        manifest = {"decks": [{"name": "IP::A"}], "retired": retired}
+        reg = {"g": _entry(deck="IP::Old"), "g-ok": _entry(deck="IP::Old")}
+        logic.settle_held_outside_manifest(reg, manifest, {})
+        assert "g" in reg, retired
+        assert ("g-ok" in reg) == (retired["IP::A"] in (None, 3)), retired
+
+
 # ------------------------------------------------------------------------- nudge
 def test_later_nudge_is_due_only_when_the_count_grew():
     assert logic.later_nudge_due(3, None) is True
