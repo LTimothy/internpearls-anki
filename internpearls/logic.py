@@ -1078,9 +1078,49 @@ def held_outside_manifest(registry, manifest):
     return [g for g, e in held_entries(registry).items() if e.get("deck") not in names]
 
 
+def migrate_declined(registry):
+    """Turn every old "skip" entry into a held one flagged `migrated`, in place, so the
+    first run after the change returns those cards at Later rather than Import. Returns
+    whether anything changed; a second call changes nothing."""
+    changed = False
+    for entry in (registry.values() if isinstance(registry, dict) else ()):
+        if isinstance(entry, dict) and entry.get("state") == "skip":
+            entry["state"] = "held"
+            entry["migrated"] = True
+            changed = True
+    return changed
+
+
+def later_status(entry, incoming_hash):
+    """What a returning held card's row needs to know about its history, as the detail
+    keys the review screen reads: `later_wait` (the row starts at Later: a noted card
+    whose content has not changed, or a migrated one), `later_note` and
+    `later_note_status` ("not_updated" or "updated") for a noted card, and
+    `later_migrated`. {} for anything that is not a held entry."""
+    if not isinstance(entry, dict) or entry.get("state") != "held":
+        return {}
+    out = {}
+    note = entry.get("note")
+    unchanged = entry.get("hash") == incoming_hash
+    if isinstance(note, str) and note:
+        out["later_note"] = note
+        out["later_note_status"] = "not_updated" if unchanged else "updated"
+    if entry.get("migrated"):
+        out["later_migrated"] = True
+    if (out.get("later_note_status") == "not_updated") or entry.get("migrated"):
+        out["later_wait"] = True
+    return out
+
+
+def later_nudge_due(count, last_seen):
+    """Whether the startup reminder about Later cards should show: only when the count
+    has grown past what the learner was last told."""
+    return count > (last_seen or 0)
+
+
 # The standing declines a row's control can show, by row kind. A registry state outside
 # these (an old Keep on a card that now arrives as new) is not a decision the row carries.
-_ROW_DECLINES = {"new": ("skip", "never"), "changed": ("keep", "frozen")}
+_ROW_DECLINES = {"new": ("never",), "changed": ("keep", "frozen")}
 
 
 def carries_decision(entry, kind):
@@ -1123,7 +1163,7 @@ def unopened_line(card_kinds, reviewed, folded=(), registry=None):
 FILTER_MIN_CARDS = 20
 
 FILTER_MODES = (("all", "All"), ("new", "New"), ("changed", "Changed"),
-                ("held", "Held"), ("unreviewed", "Not reviewed"))
+                ("held", "Later"), ("unreviewed", "Not reviewed"))
 
 
 def group_run(items, start):
@@ -1908,10 +1948,8 @@ def field_preview_html(value, image_html=None):
 
 
 _DECLINE_SNAPSHOT_GROUPS = (
-    ("held", "Held for later"),
     ("never", "Never imported"),
     ("frozen", "Kept yours, no more updates"),
-    ("skip", "Skipped for now"),
     ("keep", "Kept yours"),
 )
 
@@ -1922,13 +1960,17 @@ def _decline_snapshot_lines(registry):
     known = {state for state, _label in _DECLINE_SNAPSHOT_GROUPS}
     grouped = {state: [] for state in known}
     grouped[None] = []
+    later = 0
     for guid, raw in registry.items():
         entry = raw if isinstance(raw, dict) else {}
         state = entry.get("state")
+        if state == "held":
+            later += 1
+            continue
         state = state if isinstance(state, str) and state in known else None
         grouped[state].append((str(guid), entry))
 
-    lines = ["", f"Current standing declines ({len(registry)})"]
+    lines = ["", f"Current standing declines ({len(registry) - later})"]
     for state, label in _DECLINE_SNAPSHOT_GROUPS + ((None, "Other"),):
         items = grouped[state]
         if not items:
@@ -1945,6 +1987,8 @@ def _decline_snapshot_lines(registry):
             if entry.get("decided"):
                 lines.append(f'    decided: {entry["decided"]}')
             lines.append(f"    guid {guid}")
+    if later:
+        lines.append(f"  {plural(later, 'card')} left for later")
     return lines
 
 

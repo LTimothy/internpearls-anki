@@ -683,11 +683,11 @@ def test_declines_are_isolated_per_collection(anki, tmp_path):
     config.save_declined(_declined('never'))
     _profile(anki, tmp_path, 'profile-b')
     assert config.load_declined() == {}
-    config.save_declined(_declined('skip'))
+    config.save_declined(_declined('keep'))
     _profile(anki, tmp_path, 'profile-a')
     assert config.load_declined()['shared-guid']['state'] == 'never'
     _profile(anki, tmp_path, 'profile-b')
-    assert config.load_declined()['shared-guid']['state'] == 'skip'
+    assert config.load_declined()['shared-guid']['state'] == 'keep'
 
 
 def test_declines_are_isolated_per_source(anki, tmp_path):
