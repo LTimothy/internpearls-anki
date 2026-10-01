@@ -1087,9 +1087,10 @@ def settle_held_outside_manifest(registry, manifest, seen):
     anything changed."""
     names = {d.get("name") for d in (manifest or {}).get("decks", [])
              if isinstance(d, dict)}
-    retired = (manifest or {}).get("retired")
-    retired = ({g for per_deck in retired.values() for g in per_deck}
-               if isinstance(retired, dict) else set())
+    ledger = (manifest or {}).get("retired")
+    retired = {g for per_deck in (ledger.values() if isinstance(ledger, dict) else ())
+               if isinstance(per_deck, (list, tuple, dict))
+               for g in per_deck if isinstance(g, str)}
     complete = names <= set(seen)
     changed = False
     for guid in held_outside_manifest(registry, manifest):

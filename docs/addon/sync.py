@@ -46,7 +46,7 @@ from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, held_deck_names, held_entries,
-                    holdable_guids, later_count, later_status,
+                    held_outside_manifest, holdable_guids, later_count, later_status,
                     settle_held_outside_manifest,
                     manifest_needs_newer_addon,
                     note_display_label, note_fields_hash, per_note_for_package,
@@ -2194,20 +2194,21 @@ def update_decks():
                for item in items if item[0] == "card"}
     # A held card filed under a deck the source no longer lists follows its card to
     # the deck it ships in now, read from this run's packages and rows.
-    seen = {}
-    for item in items:
-        if item[0] == "card":
-            seen.setdefault(item[1], set()).add(item[2]["guid"])
-    for d in todo:
-        src = downloaded.get(d["name"])
-        if _is_local(src):
-            try:
-                seen.setdefault(d["name"], set()).update(
-                    g for _r, _f, g in apkg_notes(src))
-            except Exception:
-                seen.pop(d["name"], None)   # unread, so nothing is judged gone
-    if settle_held_outside_manifest(reg, manifest, seen):
-        save_declined(reg)
+    if held_outside_manifest(reg, manifest):
+        seen = {}
+        for item in items:
+            if item[0] == "card":
+                seen.setdefault(item[1], set()).add(item[2]["guid"])
+        for d in todo:
+            src = downloaded.get(d["name"])
+            if _is_local(src):
+                try:
+                    seen.setdefault(d["name"], set()).update(
+                        g for _r, _f, g in apkg_notes(src))
+                except Exception:
+                    seen.pop(d["name"], None)   # unread, so nothing is judged gone
+        if settle_held_outside_manifest(reg, manifest, seen):
+            save_declined(reg)
     # The hold control is built after the body, which seeds `decisions`, so its count
     # leaves out rows that start away from their default.
     hold_refresh = []

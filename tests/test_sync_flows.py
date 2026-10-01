@@ -6695,6 +6695,39 @@ def test_a_renamed_deck_entry_waits_until_its_new_deck_is_read(anki, tmp_path):
     assert entry["state"] == "held" and entry["deck"] == DECK
 
 
+def _count_package_reads(monkeypatch):
+    from internpearls import sync
+    reads = []
+    real = sync.apkg_notes
+    monkeypatch.setattr(sync, "apkg_notes", lambda src: reads.append(src) or real(src))
+    return reads
+
+
+def test_the_preview_reads_no_packages_again_without_a_dropped_deck_entry(
+        anki, tmp_path, monkeypatch):
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-new-b": _held(deck)})
+    reads = _count_package_reads(monkeypatch)
+
+    _update(anki, accept=False)
+
+    assert reads == []
+
+
+def test_the_preview_reads_packages_to_settle_a_dropped_deck_entry(
+        anki, tmp_path, monkeypatch):
+    from internpearls import config
+    _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-new-b": _held("Renamed away::Old")})
+    reads = _count_package_reads(monkeypatch)
+
+    _update(anki, accept=False)
+
+    assert reads
+    assert config.load_declined()["guid-new-b"]["deck"] == DECK
+
+
 def test_a_later_card_whose_deck_left_the_source_is_released(anki, tmp_path):
     from internpearls import config
     _source_with_two_new_cards(anki, tmp_path)
