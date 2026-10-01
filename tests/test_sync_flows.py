@@ -6660,6 +6660,41 @@ def test_a_noted_later_card_filed_under_a_renamed_deck_keeps_waiting(anki, tmp_p
     assert entry["deck"] == DECK and entry["hash"] == same
 
 
+def test_a_renamed_deck_entry_waits_until_its_new_deck_is_read(anki, tmp_path):
+    """The deck the card ships in now has nothing pending, so this run never reads
+    it: the entry cannot be judged gone and stays held. When that deck next ships, the
+    card returns at Later rather than importing."""
+    from internpearls import config, sync
+    other = "Intern Pearls::Intern Custom::Example Group"
+    anki.col.add_note("guid-new-a", _fields("front a"), [TAGS], deck=DECK)
+
+    def source(version):
+        return _write_source(tmp_path, {
+            DECK: (version, [("guid-new-a", _fields("front a"), TAGS),
+                             ("guid-new-b", _fields("front b"), TAGS)], None),
+            other: ("v1", [("guid-r", _fields("front r"), f"{SCOPE}::ExampleGroup")], None)})
+
+    _configure(anki, source("v1"))
+    sync._save_json(sync.INSTALLED, {DECK: "v1"})
+    config.save_declined({
+        "guid-new-b": {"state": "skip", "front": "front b", "deck": "Renamed away::Old",
+                       "decided": "2026-08-01", "hash": "stale-hash-value1"}})
+
+    _update(anki)   # only the other deck is pending
+
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["state"] == "held" and entry["deck"] == "Renamed away::Old"
+    assert "front b" not in _fronts(anki) and "front r" in _fronts(anki)
+
+    _configure(anki, source("v2"))
+    sync._apkg_cache.clear()
+    _update(anki)   # DECK ships; the card's row starts at Later and stays out
+
+    assert "front b" not in _fronts(anki)
+    entry = config.load_declined()["guid-new-b"]
+    assert entry["state"] == "held" and entry["deck"] == DECK
+
+
 def test_a_later_card_whose_deck_left_the_source_is_released(anki, tmp_path):
     from internpearls import config
     _source_with_two_new_cards(anki, tmp_path)

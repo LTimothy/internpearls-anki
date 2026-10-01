@@ -1078,6 +1078,31 @@ def held_outside_manifest(registry, manifest):
     return [g for g, e in held_entries(registry).items() if e.get("deck") not in names]
 
 
+def settle_held_outside_manifest(registry, manifest, seen):
+    """Held entries filed under a deck the source no longer lists, settled by
+    prune_declined's rule: one whose guid is in a package read this run follows it
+    there and stays held; a retired one, or one in no package once every manifest deck
+    was read, is released; any other waits for the deck it ships in to be read. `seen`
+    is {deck: guids} for the decks read this run. Mutates `registry`; returns whether
+    anything changed."""
+    names = {d.get("name") for d in (manifest or {}).get("decks", [])
+             if isinstance(d, dict)}
+    retired = (manifest or {}).get("retired")
+    retired = ({g for per_deck in retired.values() for g in per_deck}
+               if isinstance(retired, dict) else set())
+    complete = names <= set(seen)
+    changed = False
+    for guid in held_outside_manifest(registry, manifest):
+        homes = [d for d, guids in seen.items() if guid in guids]
+        if guid in retired or (complete and not homes):
+            del registry[guid]
+            changed = True
+        elif homes:
+            registry[guid]["deck"] = homes[0]
+            changed = True
+    return changed
+
+
 def migrate_declined(registry):
     """Turn every old "skip" entry into a held one flagged `migrated`, in place, so the
     first run after the change returns those cards at Later rather than Import. Returns
