@@ -121,7 +121,7 @@ class Index:
                  "doc_weight_sum")
 
     def __init__(self, rows, doc_tokens, idf, postings, doc_norm, doc_weight_sum,
-                 doc_marks=None):
+                 doc_marks):
         self.rows = rows
         self.doc_tokens = doc_tokens
         self.doc_marks = doc_marks
@@ -139,13 +139,10 @@ def build_index(rows, checkpoint=None):
     it counts.
     """
     doc_tokens = []
-    doc_marks = []
     for index, (_, text, _, _) in enumerate(rows):
         if checkpoint is not None and index % 25 == 0:
             checkpoint(f"duplicate-index:right:batch:{index // 25 + 1}")
-        plain = normalise(text)
-        doc_tokens.append(tokenize(plain))
-        doc_marks.append(contrast_marks(doc_tokens[-1], plain))
+        doc_tokens.append(tokenize(normalise(text)))
     n = len(rows)
     df = {}
     for index, tokens in enumerate(doc_tokens):
@@ -176,7 +173,7 @@ def build_index(rows, checkpoint=None):
 
     return Index(rows=rows, doc_tokens=doc_tokens, idf=idf, postings=postings,
                 doc_norm=doc_norm, doc_weight_sum=doc_weight_sum,
-                doc_marks=doc_marks)
+                doc_marks=[None] * n)
 
 
 def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
@@ -212,9 +209,8 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
         if checkpoint is not None and li % 25 == 0:
             checkpoint(f"duplicate-index:left:batch:{li // 25 + 1}")
         _, text, _, _ = left
-        plain = normalise(text)
-        tokens = tokenize(plain)
-        marks = contrast_marks(tokens, plain)
+        tokens = tokenize(normalise(text))
+        marks = None
         tf = {}
         for tok in tokens:
             tf[tok] = tf.get(tok, 0) + 1
@@ -243,10 +239,19 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
             if pair_key(left[0], right_rows[ri][0]) in ignored:
                 continue
             cosine = dot / (q_norm * index.doc_norm[ri])
-            if contrasts(marks, index.doc_marks[ri]):
-                cosine *= CONTRAST_FACTOR
             if cosine < threshold:
                 continue
+            # Marks are read only for pairs that already clear the threshold, which
+            # is a small share of the pairs sharing a token.
+            if marks is None:
+                marks = contrast_marks(tokens, normalise(text))
+            if index.doc_marks[ri] is None:
+                index.doc_marks[ri] = contrast_marks(
+                    index.doc_tokens[ri], normalise(index.rows[ri][1]))
+            if contrasts(marks, index.doc_marks[ri]):
+                cosine *= CONTRAST_FACTOR
+                if cosine < threshold:
+                    continue
             if min_shared:
                 shared = contrib.get(ri, {})
                 required = min_shared
