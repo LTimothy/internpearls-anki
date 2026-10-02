@@ -63,10 +63,11 @@ needed either way to load it. Defaults to `false`. Editable in Intern Pearls →
 
 ## auto_sync_decks
 
-When `true`, decks sync automatically in the background: once shortly after Anki
-starts, then again every `auto_sync_interval_minutes` while Anki stays open, without
-asking each time. A backup is still taken first; if it fails, that round is skipped
-instead of importing unprotected. Results show as a brief tooltip, never a blocking
+When `true`, decks sync automatically in the background: once shortly after a profile
+opens, then again every `auto_sync_interval_minutes` while Anki stays open, without
+asking each time. A backup is still taken first; if it fails, or your cards sit in no
+deck the add-on can back up, that round is skipped instead of importing unprotected.
+What it has held back or already told you about is remembered per profile. Results show as a brief tooltip, never a blocking
 dialog, since this can fire mid-review. The check itself runs off the main thread when
 possible, so it stays quick and doesn't freeze Anki even at a short interval. Defaults
 to `false`. Editable in Intern Pearls → Settings, which also restarts the running timer
@@ -76,7 +77,8 @@ immediately so a change here doesn't need an Anki restart to take effect.
 
 How often the background poll checks the source when `auto_sync_decks` is on. Floored
 at 1 minute regardless of what's set here, to keep a typo or a 0 from becoming a busy
-loop. GitHub's request volume at that floor is still trivial: one small `manifest.json`
+loop, and capped at a week. A value that isn't a finite number (text, `Infinity`,
+`NaN`) reads as the default. GitHub's request volume at that floor is still trivial: one small `manifest.json`
 fetch a minute, well under even the unauthenticated 60-per-hour limit. Defaults to `15`.
 Editable in Intern Pearls → Settings.
 
@@ -105,8 +107,8 @@ dropped if it named none), so nobody loses a configured path on upgrade.
 Whether each backend is offered at all, as an object with `claude`, `codex`, and `agy`
 keys (`{"claude": true, "codex": true, "agy": true}`). A backend set to `false` is
 skipped entirely: not detected, not chosen, not shown as a candidate anywhere the
-wizard or the AI Backends window looks. Editable from the AI Backends window's "Use
-this assistant" checkbox, per backend. Defaults to `{"claude": true, "codex": true,
+wizard or the AI Backends window looks. Editable from the AI Backends window's
+"ignore" and "use again" links, per backend. Defaults to `{"claude": true, "codex": true,
 "agy": true}`.
 
 ## ai_model
@@ -165,7 +167,8 @@ the wizard applies to that session and is never written back here.
 ## ai_default_depth
 
 Which depth the wizard should start on: `thorough` (drafts, may verify online, then
-self-reviews) or `quick` (exactly one turn, no web access). Defaults to `auto`, which
+self-reviews) or `quick` (one drafting pass with no fact-checking, which may still search
+the web for card images; how far each backend can reach is in the README's Modes). Defaults to `auto`, which
 lets the material decide: thorough for a source over 1,500 characters or any attachment,
 quick for a short paste. As with the count above, this only seeds the control; picking a
 depth in the wizard applies to that session and is never written back here.
@@ -195,6 +198,24 @@ behaviour. `"content"` dims everything Anki draws in a web view: cards, the deck
 list, the overview, and the editor. Takes effect the next time a screen loads; never
 the menu bar or dialogs. Defaults to `"images"`; an unrecognized value falls back to
 it. Editable in Intern Pearls → Experimental → Night mode dimming.
+
+## dupes_threshold
+
+The Scan for duplicates Sensitivity: `0.6` (Strict), `0.5` (Normal) or `0.4` (Loose).
+Any other value reads as `0.5`. Set by the Sensitivity choice in Intern Pearls →
+Experimental → Scan for duplicates, which remembers it here.
+
+## dupes_excluded_decks
+
+Deck names, or parts of names, that Scan for duplicates leaves out of both sides of the
+comparison, e.g. `["Archive", "Shared"]`. Defaults to `[]`. Set by the scan's Exclude
+decks box.
+
+## dupes_ignored
+
+Pairs you told Scan for duplicates are not duplicates (Ignore pair), so a rescan never
+offers them again. Each entry identifies one pair of notes; remove an entry to have
+that pair offered again. Defaults to `[]`.
 
 ## Not a config.json key: user_files/user_skill.md
 

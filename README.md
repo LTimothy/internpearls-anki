@@ -90,7 +90,12 @@ The same settings are under Tools > Add-ons > Intern Pearls Deck Tools > Config:
 | `excluded_decks` | Decks opted out of syncing. |
 | `export_deck` | The deck the automatic backup and the Backup/Restore/Export actions use (default `Intern Pearls::Intern Custom`). |
 | `auto_sync_decks`, `auto_sync_interval_minutes`, `notify_addon_updates`, `auto_update_addon` | Automation; see Settings and `config.md`. |
-| `dim_images_night_mode`, `dim_images_night_mode_percent` | Night Mode dimming for every deck (0-90%); see Experimental. |
+| `dim_images_night_mode`, `dim_images_night_mode_percent`, `dim_night_mode_scope` | Night Mode dimming for every deck (0-90%, images or whole screens); see Experimental. |
+| `ai_backend`, `ai_cli_path`, `ai_backend_enabled`, `ai_model`, `ai_effort` | The AI wizard's preferred backend and, per backend, its CLI path, whether it is used, and its model and effort; set in AI Backends. |
+| `ai_default_count`, `ai_default_depth` | Starting values for the wizard's card count (0 is automatic) and depth (`auto`, `thorough` or `quick`). |
+| `dupes_threshold`, `dupes_excluded_decks`, `dupes_ignored` | Scan for duplicates' Sensitivity, excluded decks and ignored pairs. |
+
+A numeric setting that isn't a finite number reads as its default. Each key is described in `config.md`.
 
 ### Experimental submenu
 
@@ -183,21 +188,21 @@ Both are schema-neutral, reversible by hand, backed up first, and no-ops when re
 
 **Backup intern pearls deck** makes an on-demand backup of `export_deck` with scheduling, like the automatic one.
 
-**Restore intern pearls deck** re-imports a backup or export with scheduling (the picker opens at the backups folder). Matching cards update in place, and the backup taken first never deletes the file you chose. The decks it restores are re-offered on your next update.
+**Restore intern pearls deck** re-imports a backup or export with scheduling (the picker opens at the backups folder). Matching cards update in place, wherever you keep them, and the decks they sit in are backed up first; that backup never deletes the file you chose. The decks it restores are re-offered on your next update, and restored cards get back the shipped-field baselines saved with their backup, so that update tells the source's older text from your own edits.
 
 **Export intern pearls deck** writes a standalone `.apkg` of `export_deck` with history, options and media, wherever you choose.
 
-**Backup full collection** takes a whole-collection backup on demand, kept per Anki's own backup settings.
+**Backup full collection** takes a whole-collection backup on demand, kept per Anki's own backup settings. If nothing has changed since the last one, it says that backup is already up to date.
 
 **Restore full collection** opens Anki's backup picker. It replaces your entire collection, and every managed deck is re-offered on your next update. Cancelling the picker changes nothing.
 
-**Check for add-on updates** compares your version with the repo's `version.json` and offers to install a newer one (restart required). It reads GitHub's API without a token, limited to 60 requests an hour per IP address; when that's exhausted it says so and when it resets. Setting a GitHub token in Manage decks (any repo, read access) raises the limit to 5,000.
+**Check for add-on updates** compares your version with the repo's `version.json` and offers to install a newer one (restart required). If Anki refuses the downloaded package, it says so and the installed version stays. It reads GitHub's API without a token, limited to 60 requests an hour per IP address; when that's exhausted it says so and when it resets. Setting a GitHub token in Manage decks (any repo, read access) raises the limit to 5,000.
 
 ### Settings
 
 How automatic the add-on is, kept apart from Manage decks (which decks, which fields, from where):
 
-- **Sync decks automatically when updates are available**, off by default. Checks the source in the background and applies changed decks, backing up first. It never applies a change that forces a full AnkiWeb sync (a template or a format change): that deck is held for the rest of the session with a tooltip pointing to Sync decks. A check that was already running when you change the source, turn auto-sync off or uncheck a deck applies nothing. It never archives or relocates; Reconcile my decks shows the backlog instead.
+- **Sync decks automatically when updates are available**, off by default. Checks the source in the background, first shortly after a profile opens, and applies changed decks, backing up first. It never applies a change that forces a full AnkiWeb sync (a template or a format change): that deck is held for the rest of the session with a tooltip pointing to Sync decks. A check that was already running when you change the source, turn auto-sync off or uncheck a deck applies nothing. It never archives or relocates; Reconcile my decks shows the backlog instead. What it held back and what it already told you are kept per profile, so switching profiles never hides an update from the other one.
 - **Check every N minutes**, default 15, from 1 minute to a week. Checks run off the main thread and fail fast if the source is unreachable.
 - **Notify me when a new add-on version is out**, on by default, checked once per launch.
 - **Install add-on updates automatically**, off by default. Installs during that check; a restart loads it.
@@ -230,7 +235,7 @@ Run Update my decks, or turn on automatic sync in Settings so content applies on
 
 **Scope.** The snapshot and matching cover only cards under `scope_tag` (default `InternPearls`); everything else is ignored. The backup is always a real Anki export.
 
-**State.** Synced versions, shipped-field baselines, declined and Later cards, unsent card notes, the deck source's consented skill and backups live in the add-on's `user_files/` folder, which survives add-on updates but not an uninstall, so export anything you want to keep before removing the add-on. They are separated by collection path and source under `user_files/collections/`, so two profiles, or two sources, never share decisions. Older unscoped synced versions and baselines are left on disk but not trusted, so the next sync may re-offer decks; an older declined-cards file, skill or unsent notes move to the first collection and source that opens them. Backup filenames carry the full deck identity and a unique suffix. Restoring a backup clears the matching sync records (Restore full collection clears them all; Restore intern pearls deck clears only the decks in the file), so what came back is re-offered rather than reported up to date.
+**State.** Synced versions, shipped-field baselines, declined and Later cards, unsent card notes, the deck source's consented skill and backups (each with the shipped-field baselines it was taken with) live in the add-on's `user_files/` folder, which survives add-on updates but not an uninstall, so export anything you want to keep before removing the add-on. They are separated by collection path and source under `user_files/collections/`, so two profiles, or two sources, never share decisions. Older unscoped synced versions and baselines are left on disk but not trusted, so the next sync may re-offer decks; an older declined-cards file, skill or unsent notes move to the first collection and source that opens them. Backup filenames carry the full deck identity and a unique suffix. Restoring a backup clears the matching sync records (Restore full collection clears them all; Restore intern pearls deck clears only the decks in the file), so what came back is re-offered rather than reported up to date. A file the add-on did not back up itself carries no baselines, so restoring it drops those cards' baselines and keeps every non-blank restored value as yours. The AI wizard's own rules (`user_skill.md`), its 7-day usage log and run durations (`ai_usage.json`) and the last failed run's output (`ai_last_run.log`) live there too, shared by every profile.
 
 **Generated cards** sit outside all of this: their fresh local GUIDs never match anything a source ships, so no update, reconcile or cleanup ever touches them.
 
@@ -277,7 +282,7 @@ Pure Python with no `aqt`/`anki` imports lives in `internpearls/logic.py` (apkg 
 Everything that touches Anki is split by concern:
 
 - `__init__.py`: menu and startup wiring only.
-- `config.py`: constants (including `ADDON_VERSION`), config access, and state under `user_files/`: `installed.json`, `card_feedback.json`, `shipped_fields.json`, `deck_skill.json`, `later_seen.json` (how many Later cards the last Update my decks run left), `state.json`, and the declined-card registry `declined.json` (`{guid: {state, front, deck, decided, hash}}`, where Later is state `held` and may carry a `note`; entries from the old Skip choice are converted on load). All but `state.json` are kept per collection and source.
+- `config.py`: constants (including `ADDON_VERSION`), config access, and state under `user_files/`: `installed.json`, `card_feedback.json`, `shipped_fields.json`, `deck_skill.json`, `later_seen.json` (how many Later cards the last Update my decks run left), `state.json`, and the declined-card registry `declined.json` (`{guid: {state, front, deck, decided, hash}}`, where Later is state `held` and may carry a `note`; entries from the old Skip choice are converted on load). All but `state.json` are kept per collection and source, as are `deck_backups/` and the baselines saved beside them in `deck_backup_baselines/`. The AI files `user_skill.md`, `ai_usage.json` and `ai_last_run.log` are not.
 - `ui.py`: the `_info` / `_warn` / `_ask` / `_prompt` dialog wrappers, the `_safe` / `_bg_safe` error decorators, and styling helpers.
 - `palette.py`: every colour, in a light and a dark set.
 - `platform.py`: background work and timers. Work runs on a worker thread and delivers on the main thread; timers are parented to the widget that owns them.
