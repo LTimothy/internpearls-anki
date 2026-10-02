@@ -484,3 +484,17 @@ def test_invalid_roman_forms_are_not_numerals():
                  "type mix of cells"):
         assert contrast_marks([], text)[0] == frozenset(), text
     assert contrast_label("Type iiii", "Type 4") == ""
+
+
+def test_search_reuses_one_index_for_many_queries():
+    from internpearls.dupes import DEFAULT_MIN_SHARED, DEFAULT_THRESHOLD, search
+    right = [(2, "fenoldopam is a selective D1 receptor agonist", "Theirs", "Basic"),
+             (3, "propofol induction causes dose dependent hypotension", "Theirs", "Basic")]
+    left_a = [(1, "fenoldopam selective D1 receptor agonist mechanism", "Ours", "Basic")]
+    left_b = [(1, "propofol induction dose dependent hypotension", "Ours", "Basic")]
+    index = build_index(right)
+    assert search(index, left_a) == find_candidates(left_a, right)
+    assert search(index, left_b) == find_candidates(left_b, right)
+    assert [r[2][0] for r in search(index, left_a + left_b)] in ([2, 3], [3, 2])
+    # The scan's own Normal sensitivity is the default here too.
+    assert (DEFAULT_THRESHOLD, DEFAULT_MIN_SHARED) == (0.5, 2)

@@ -267,8 +267,13 @@ def build_index(rows, checkpoint=None):
                 doc_marks=[None] * n)
 
 
-def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
-                    ignored=(), checkpoint=None):
+# The scan's Normal sensitivity: its default, and what the card wizard checks drafts at.
+DEFAULT_THRESHOLD = 0.5
+DEFAULT_MIN_SHARED = 2
+
+
+def find_candidates(left_rows, right_rows, threshold=DEFAULT_THRESHOLD, top=3,
+                    min_shared=DEFAULT_MIN_SHARED, ignored=(), checkpoint=None):
     """For each row on the left, the best `top` rows on the right at cosine
     similarity >= `threshold`, as `[(score, left_row, right_row, shares)]` sorted by
     score descending (ties broken by left row order, then right row order). `shares`
@@ -295,6 +300,15 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
     so later candidates replenish ignored results instead of being hidden by them.
     """
     index = build_index(right_rows, checkpoint=checkpoint)
+    return search(index, left_rows, threshold=threshold, top=top, min_shared=min_shared,
+                  ignored=ignored, checkpoint=checkpoint)
+
+
+def search(index, left_rows, threshold=DEFAULT_THRESHOLD, top=3,
+           min_shared=DEFAULT_MIN_SHARED, ignored=(), checkpoint=None):
+    """`find_candidates` against an `Index` already built over the right pool, so a
+    pool indexed once can answer many queries."""
+    right_rows = index.rows
     out = []
     for li, left in enumerate(left_rows):
         if checkpoint is not None and li % 25 == 0:
