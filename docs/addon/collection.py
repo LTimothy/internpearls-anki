@@ -1722,6 +1722,10 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
     appended to its Why field, else Back, else Back Extra. It never resolves or
     fetches an image itself.
 
+    "Basic" and "Cloze" resolve through ai_logic.find_core_notetype, so a collection
+    whose stock types carry translated names takes them too: each field is written
+    under the name that type gives it.
+
     Every note gets a fresh iplocal- GUID (ai_logic.generated_guid()), so it can never
     match (and a later deck sync's remap_cards/_reconcile_pending can never touch)
     a real synced card. Nothing here reads or modifies an existing note; this only adds.
@@ -1746,12 +1750,15 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
     col = mw.col
     _ensure_notetypes()   # a one-time, separate step; not part of this import's undo
 
-    models, unknown = {}, set()
+    models, field_maps, unknown = {}, {}, set()
     for card in cards:
         ntype = card["note_type"]
         if ntype in models or ntype in unknown:
             continue
-        model = col.models.by_name(ntype) if ntype in _GENERATED_ALLOWED_TYPES else None
+        if ntype in ai_logic.CORE_NOTE_TYPES:
+            model, field_maps[ntype] = ai_logic.find_core_notetype(col.models.all(), ntype)
+        else:
+            model = col.models.by_name(ntype) if ntype in _GENERATED_ALLOWED_TYPES else None
         if model:
             models[ntype] = model
         else:
@@ -1786,9 +1793,10 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
         tag = f"{scope_tag}::{ai_logic.GENERATED_TAG_LEAF}"
         for pos, card in enumerate(cards):
             note = col.new_note(models[card["note_type"]])
+            fmap = field_maps.get(card["note_type"], {})
             for name, value in card["fields"].items():
-                if name in note:
-                    note[name] = value
+                if fmap.get(name, name) in note:
+                    note[fmap.get(name, name)] = value
             files = card.get("_media_files", [])
             credits = card.get("_media_credits") or []
             credit_lines = [ai_logic.image_credit_html(credits[k] if k < len(credits) else "")
@@ -1803,12 +1811,14 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
                 if in_image_field:
                     target = "Image"
                 else:
-                    target = ai_logic.PRIMARY_FIELD.get(
+                    primary = ai_logic.PRIMARY_FIELD.get(
                         card["note_type"], next(iter(card["fields"])))
+                    target = fmap.get(primary, primary)
                 note[target] = (note[target] + imgs) if note[target] else imgs
             extra = ("" if in_image_field else "".join(credit_lines)) + ai_logic.sources_html(
                 card.get("_sources"))
-            explain = next((n for n in ("Why", "Back", "Back Extra") if n in note), None)
+            explain = next((fmap.get(n, n) for n in ("Why", "Back", "Back Extra")
+                            if fmap.get(n, n) in note), None)
             if extra and explain:
                 note[explain] = note[explain] + extra
             note.guid = ai_logic.generated_guid()

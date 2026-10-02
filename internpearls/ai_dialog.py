@@ -1286,8 +1286,12 @@ class _GenerateDialog(QDialog):
             # add_generated_notes rejects the entire batch: see collection.py's
             # _GENERATED_ALLOWED_TYPES check. Shown disabled rather than omitted,
             # so it's clear the type exists and *why* it isn't offered yet, not
-            # just silently missing from the list.
-            available = bool(mw.col.models.by_name(name))
+            # just silently missing from the list. Basic and Cloze are found by
+            # shape too, the way import resolves them, so translated names count.
+            if name in ai_logic.CORE_NOTE_TYPES:
+                available = bool(ai_logic.find_core_notetype(mw.col.models.all(), name)[0])
+            else:
+                available = bool(mw.col.models.by_name(name))
             box = QCheckBox(name if available else f"{name} (sync your decks first)")
             box.setChecked(available)
             box.setEnabled(available)
@@ -3235,8 +3239,8 @@ class _GenerateDialog(QDialog):
         for card in cards:
             card["fields"].update({k: ai_logic.sanitize_field_html(v)
                                    for k, v in card["fields"].items()})
-        # add_generated_notes can raise (e.g. Basic/Cloze missing or renamed on a
-        # non-English profile). Cleanup waits until AFTER a successful import:
+        # add_generated_notes can raise (e.g. a note type missing from this
+        # collection). Cleanup waits until AFTER a successful import:
         # if this raises, the scratch dir must still be there for a retry.
         try:
             n = collection.add_generated_notes(cards, media, s.deck_name,

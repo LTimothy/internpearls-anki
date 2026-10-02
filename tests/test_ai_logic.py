@@ -1734,6 +1734,15 @@ def test_shape_ties_break_on_the_recorded_stock_kind_then_the_oldest():
     assert ai_logic.find_core_notetype([cloze_a, cloze_b], "Cloze")[0] is cloze_b
 
 
+def test_a_core_type_found_by_name_maps_only_the_fields_it_has():
+    text_only = _model("Cloze", ["Text"], "{{cloze:Text}}", "{{cloze:Text}}", mtype=1)
+    assert ai_logic.find_core_notetype([text_only], "Cloze") == (text_only, {"Text": "Text"})
+    renamed = _model("Basic", ["Vorderseite", "Rückseite"], "{{Vorderseite}}",
+                     "{{FrontSide}}{{Rückseite}}")
+    assert ai_logic.find_core_notetype([renamed], "Basic") == (
+        renamed, {"Front": "Vorderseite", "Back": "Rückseite"})
+
+
 def test_a_type_named_cloze_that_is_not_a_cloze_type_is_not_taken():
     fake = _model("Cloze", ["Text", "Back Extra"], "{{Text}}", "{{Back Extra}}", mtype=0)
     model, _ = ai_logic.find_core_notetype([fake, _JAPANESE_CLOZE], "Cloze")
