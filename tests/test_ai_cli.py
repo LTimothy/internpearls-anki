@@ -1551,3 +1551,30 @@ def test_run_log_redacts_double_escaped_and_upper_case_echoes():
     for echoed in (twice, upper, json.dumps(upper)[1:-1]):
         line = json.dumps({"type": "x"})[:-1] + ', "text": "' + echoed + '"}'
         assert ai_cli._contains_needle(line, needles), echoed
+
+
+
+@pytest.mark.parametrize("launcher", ["agy.cmd.", "agy.bat ", "agy.CMD. ."])
+def test_windows_agy_launcher_with_trailing_dots_or_spaces_is_still_caught(
+        monkeypatch, tmp_path, launcher):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    monkeypatch.setattr(ai_cli.sys, "platform", "win32")
+    with pytest.raises(ai_cli.GenerationError, match="script launcher"):
+        ai_cli.build_argv("agy", str(tmp_path / launcher), "quick", "/tmp/s", [],
+                          prompt="hello")
+
+
+def test_windows_codex_gets_attachment_names_safe_for_a_launcher(monkeypatch, tmp_path):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    monkeypatch.setattr(ai_cli.sys, "platform", "win32")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (scratch / "figure-1a2b.png").write_bytes(b"\x89PNG")
+    odd = tmp_path / "100% & more.png"
+    odd.write_bytes(b"\x89PNG odd")
+    argv, _ = ai_cli.build_argv("codex", "codex.cmd", "quick", str(scratch),
+                                [str(scratch / "figure-1a2b.png"), str(odd)])
+    images = [argv[i + 1] for i, a in enumerate(argv) if a == "--image"]
+    assert images == ["figure-1a2b.png", "attached-image-1.png"]
+    assert (scratch / "attached-image-1.png").read_bytes() == b"\x89PNG odd"
+    assert not any("%" in a or "&" in a for a in argv)
