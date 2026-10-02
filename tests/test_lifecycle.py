@@ -300,7 +300,9 @@ def test_auto_sync_skips_a_round_when_export_deck_is_missing(anki, tmp_path):
     background._auto_sync_check()
 
     assert anki.col.imports == []
-    assert any("couldn't create a backup" in t for t in anki.gui.tooltips)
+    assert anki.gui.tooltips == [
+        "Intern Pearls: auto-sync skipped a round because the new decks have nothing "
+        "to back up yet. Run Update my decks."]
 
 
 def test_auto_sync_first_sync_with_nothing_to_back_up_still_runs(anki, tmp_path):
@@ -393,21 +395,23 @@ def test_an_unanswered_question_fails_the_test_even_inside_a_safe_flow(anki, tmp
 
 
 def test_a_refused_install_names_the_reason_in_plain_words(anki, monkeypatch, tmp_path):
+    """Keyed by the codes Anki's addonManager.install really returns. Each reason is a
+    whole clause, and a code this add-on doesn't know still reads as a sentence."""
+    import pytest
     from internpearls import updates
-    monkeypatch.setattr(anki.mw.addonManager, "install",
-                        lambda path: mock_anki.types.SimpleNamespace(errmsg="zip"))
-    try:
-        updates._install_package(str(tmp_path / "x.ankiaddon"))
-    except RuntimeError as e:
-        assert "not a valid add-on package" in str(e) and "zip" not in str(e)
-    else:
-        raise AssertionError("a refused install did not raise")
-    monkeypatch.setattr(anki.mw.addonManager, "install",
-                        lambda path: mock_anki.types.SimpleNamespace(errmsg="manifest"))
-    try:
-        updates._install_package(str(tmp_path / "x.ankiaddon"))
-    except RuntimeError as e:
-        assert "manifest" not in str(e)
+    expected = {
+        "zip": "the download isn't a valid add-on package",
+        "manifest": "the download is missing the details Anki needs to install it",
+        "invalid package": "the download names an add-on Anki won't accept",
+        "something new": "Anki refused to install the download",
+    }
+    for code, reason in expected.items():
+        monkeypatch.setattr(anki.mw.addonManager, "install",
+                            lambda path, code=code: mock_anki.types.SimpleNamespace(
+                                errmsg=code))
+        with pytest.raises(RuntimeError) as raised:
+            updates._install_package(str(tmp_path / "x.ankiaddon"))
+        assert str(raised.value) == reason
 
 
 def test_restore_resets_baselines_only_for_notes_the_import_wrote(anki, tmp_path,

@@ -8495,6 +8495,50 @@ def test_import_deck_refuses_a_member_larger_than_it_declares(anki, tmp_path):
     assert not anki.col.imports
 
 
+
+def test_import_deck_refuses_a_bad_file_before_taking_a_backup(anki, tmp_path):
+    import struct
+    from internpearls import collection
+    anki.col.add_note("g1", _fields("Front one"), [TAGS], deck=DECK)
+    src = str(tmp_path / "liar.apkg")
+    make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
+    data = bytearray(open(src, "rb").read())
+    data[22:26] = struct.pack("<L", 1000)
+    cd = data.find(b"PK\x01\x02")
+    data[cd + 24:cd + 28] = struct.pack("<L", 1000)
+    open(src, "wb").write(bytes(data))
+    folder = collection._deck_backup_folder()
+    before = set(os.listdir(folder)) if os.path.isdir(folder) else set()
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert anki.gui.warnings and anki.gui.warnings[0].startswith("Import failed")
+    after = set(os.listdir(folder)) if os.path.isdir(folder) else set()
+    assert after == before
+
+
+def test_import_deck_reoffers_restored_decks_even_when_the_baseline_reset_fails(
+        anki, tmp_path, monkeypatch):
+    from internpearls import collection
+    from internpearls.config import INSTALLED, _load_json, _save_json
+    from test_logic import _legacy_apkg
+
+    src = _legacy_apkg(tmp_path / "one.apkg", [f"{DECK}::1. Basics"])
+    _save_json(INSTALLED, {DECK: "v1"})
+
+    def broken(*_a, **_k):
+        raise OSError("disk full")
+    monkeypatch.setattr(collection, "_reset_baseline", broken)
+    anki.gui.file_picks.append(str(src))
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert _load_json(INSTALLED, {}) == {}
+
+
 # ------------------------------------------- special files and older skill consents
 def test_a_local_manifest_that_is_a_fifo_is_refused_without_blocking(anki, tmp_path):
     folder = _write_source(tmp_path, {
@@ -8581,6 +8625,7 @@ def test_an_older_unclean_consent_is_cleaned_in_place_without_asking(
     assert stored["consented_on"] == "2026-01-01" and stored["enabled"] is enabled
     assert not any(hidden in s or "\U000e006f" in s
                    for s in ai_logic.active_skills(dict(stored, enabled=True)))
+
 
 
 def test_a_clean_older_consent_is_not_asked_again(anki, tmp_path):
