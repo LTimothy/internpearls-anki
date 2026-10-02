@@ -29,6 +29,8 @@ PAIRS = (("dosing_fg", "dosing_bg"), ("new_fg", "new_bg"), ("updated_fg", "updat
 # implicit, so the completeness test below stays an honest check of every role in
 # palette.py rather than a silent pass on anything absent from ON_WINDOW and PAIRS.
 NON_TEXT_ROLES = ("row_rule", "cell_rule", "panel_rule")
+# The dimming preview's canvas: checked against the ink drawn on it, further down.
+CANVAS_ROLES = ("sample_bg",)
 # The separation a rule needs from its window to be a line rather than a suggestion of
 # one. Below this the list it divides reads as one undifferentiated block.
 RULE_SEPARATION = 1.25
@@ -176,7 +178,7 @@ def test_every_role_is_covered_by_a_contrast_check():
     missing from all three fails loudly here instead of quietly passing everywhere
     else.
     """
-    covered = set(ON_WINDOW) | set(NON_TEXT_ROLES)
+    covered = set(ON_WINDOW) | set(NON_TEXT_ROLES) | set(CANVAS_ROLES)
     for fg, bg in PAIRS:
         covered.add(fg)
         covered.add(bg)
@@ -218,3 +220,28 @@ def test_ankis_own_theme_outranks_the_fallback(monkeypatch):
     assert palette.is_dark() is False
     theme.theme_manager.night_mode = True
     assert palette.is_dark() is True
+
+
+def test_no_module_but_the_palette_holds_a_colour_literal():
+    """Colours live in palette.py, in a light and a dark set, and nowhere else."""
+    import os
+    import re
+    folder = os.path.dirname(palette.__file__)
+    pattern = re.compile(r"""["']#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})["']""")
+    found = {}
+    for name in sorted(os.listdir(folder)):
+        if name.endswith(".py") and name != "palette.py":
+            with open(os.path.join(folder, name), encoding="utf8") as fh:
+                hits = pattern.findall(fh.read())
+            if hits:
+                found[name] = hits
+    assert not found, f"colour literals outside palette.py: {found}"
+
+
+def test_the_dimming_sample_ink_reads_on_its_canvas_in_both_themes():
+    """The Night mode dimming preview draws light-theme ink on a canvas that is white
+    in both themes on purpose: white is what the feature exists to tone down."""
+    for colors in _sets().values():
+        for role in ("caret", "accent"):
+            got = contrast(palette.LIGHT[role], colors["sample_bg"])
+            assert got >= AA, f"{role} on sample_bg: {got:.2f}:1"
