@@ -8,6 +8,7 @@ import binascii
 import hashlib
 import html as _html
 import json
+import math
 import os
 import re
 import shutil
@@ -777,11 +778,19 @@ def _activity_text(kind, name, params=None):
     return template.format(basename=basename)
 
 
+def _finite(v):
+    """True for a plain int or float that is not NaN or infinite."""
+    return (isinstance(v, (int, float)) and not isinstance(v, bool)
+            and math.isfinite(v))
+
+
 def _num(v, cast):
-    """Coerce a value pulled out of untrusted vendor JSON, or fall back to 0."""
+    """Coerce a value pulled out of untrusted vendor JSON, or fall back to 0. JSON's
+    NaN and Infinity count as absent."""
     try:
-        return cast(v)
-    except (TypeError, ValueError):
+        out = cast(v)
+        return out if math.isfinite(out) else cast(0)
+    except (TypeError, ValueError, OverflowError):
         return cast(0)
 
 
@@ -977,10 +986,10 @@ def _usage_runs(reg, kind):
         if not isinstance(r, dict):
             continue
         ts = r.get("ts")
-        if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+        if not _finite(ts):
             continue
         tokens = r.get("tokens", 0)
-        if not isinstance(tokens, (int, float)) or isinstance(tokens, bool):
+        if not _finite(tokens):
             tokens = 0
         out.append({"ts": float(ts), "tokens": int(tokens)})
     return out
@@ -1020,7 +1029,7 @@ def _duration_runs(reg, key):
         return []
     out = []
     for v in runs:
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if _finite(v):
             out.append(float(v))
     return out
 
