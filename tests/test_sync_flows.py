@@ -807,6 +807,7 @@ def test_import_single_keeps_the_learners_own_tags(anki, tmp_path):
     make_apkg(src, [("g1", _fields("Front one", back="new back"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     note = anki.col.note_by_guid("g1")
@@ -4450,6 +4451,7 @@ def test_import_single_accepted_still_fixes_note_types_first(anki, tmp_path):
     make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     assert "Dosing" in [f["name"] for f in anki.col.models.all()[0]["flds"]]
@@ -4827,6 +4829,7 @@ def test_import_single_backs_up_the_decks_the_chosen_file_lands_in(anki, tmp_pat
     make_apkg(src, [("g1", _fields("Front one", back="new"), TAGS)], deck=outside)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     assert "Other Root" in _backed_up_decks(anki)
@@ -4867,6 +4870,7 @@ def test_every_collection_writing_action_holds_the_manual_guard(anki, tmp_path,
     src = str(tmp_path / "hand.apkg")
     make_apkg(src, [("dup1", _fields("A shared front"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
+    anki.gui.answers += [True, True]       # Import, then Choose a backup
     collection.import_deck()
     collection.restore_from_backup()
     drive(anki, collection.remove_empty_cards, _click_duplicate_button(accept=True))
@@ -5640,11 +5644,12 @@ def test_the_backup_skip_question_names_its_buttons_and_defaults_to_cancelling(a
     the reader agreeing to the risky half by pressing Return."""
     from internpearls import collection
     _existing_card(anki, "g1", "Front one")   # something in the collection to lose
+    anki.gui.answers.append(True)          # Continue without a backup
 
     proceed, backed_up = collection._pre_sync_backup_or_confirm_skip(
         "A Deck That Isn't Here", None, SCOPE)
 
-    assert (proceed, backed_up) == (True, False)   # answers default to yes in tests
+    assert (proceed, backed_up) == (True, False)
     assert anki.gui.ask_buttons[-1] == ("Continue without a backup", "Cancel")
     assert anki.gui.ask_defaults[-1] == "Cancel"
 
@@ -5672,6 +5677,7 @@ def test_every_consequential_question_defaults_to_its_declining_button(anki, tmp
     make_apkg(src, [("g1", _fields("Front one", back="new"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers += [True, True]       # Import without it, then Import now
     sync.import_single()
 
     assert [b for _y, b in anki.gui.ask_buttons] == anki.gui.ask_defaults
@@ -7701,6 +7707,7 @@ def test_import_single_offers_the_conversion_and_keeps_the_history(anki, tmp_pat
               model=_cloze_model(), deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers += [True, True]       # Import now, then move to the new format
     sync.import_single()
 
     assert any("changed format" in a for a in anki.gui.asks), anki.gui.asks
@@ -7737,6 +7744,7 @@ def test_import_single_keeps_a_card_losing_conversion_beside(anki, tmp_path):
     make_apkg(src, [("g1", _fields("What are one and two?"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     (confirm,) = [a for a in anki.gui.asks if "changed format" in a]
