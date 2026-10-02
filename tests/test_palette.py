@@ -223,18 +223,26 @@ def test_ankis_own_theme_outranks_the_fallback(monkeypatch):
 
 
 def test_no_module_but_the_palette_holds_a_colour_literal():
-    """Colours live in palette.py, in a light and a dark set, and nowhere else."""
+    """Colours live in palette.py, in a light and a dark set, and nowhere else. Every
+    string in every other module is searched, so a colour inside a stylesheet counts."""
+    import io
     import os
     import re
+    import tokenize
     folder = os.path.dirname(palette.__file__)
-    pattern = re.compile(r"""["']#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})["']""")
+    pattern = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+    # From Python 3.12 an f-string's text arrives as FSTRING_MIDDLE, not STRING.
+    string_types = {tokenize.STRING, getattr(tokenize, "FSTRING_MIDDLE", tokenize.STRING)}
     found = {}
     for name in sorted(os.listdir(folder)):
-        if name.endswith(".py") and name != "palette.py":
-            with open(os.path.join(folder, name), encoding="utf8") as fh:
-                hits = pattern.findall(fh.read())
-            if hits:
-                found[name] = hits
+        if not name.endswith(".py") or name == "palette.py":
+            continue
+        with open(os.path.join(folder, name), encoding="utf8") as fh:
+            tokens = tokenize.generate_tokens(io.StringIO(fh.read()).readline)
+            hits = [m for t in tokens if t.type in string_types
+                    for m in pattern.findall(t.string)]
+        if hits:
+            found[name] = hits
     assert not found, f"colour literals outside palette.py: {found}"
 
 
