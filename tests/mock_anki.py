@@ -3150,7 +3150,7 @@ def install():
     aqt.mw = mw
     aqt.gui_hooks = types.SimpleNamespace(main_window_did_init=[], card_will_show=[],
                                           webview_will_set_content=[], state_did_undo=[],
-                                          profile_will_close=[])
+                                          profile_will_close=[], profile_did_open=[])
 
     aqt_qt = types.ModuleType("aqt.qt")
 
@@ -3324,6 +3324,7 @@ def install():
         turn that poll into unbounded recursion the first time a test touched it.
         """
         registry = []    # every timer built this process; a test fires them by hand
+        single_shots = []   # (ms, fn) for each singleShot, recorded and never fired
 
         def __init__(self, parent=None):
             self.started = None
@@ -3356,7 +3357,8 @@ def install():
 
         @staticmethod
         def singleShot(ms, fn):
-            pass   # tests and the demo call background checks directly
+            # Recorded, not run: tests and the demo call background checks directly.
+            _QTimer.single_shots.append((ms, fn))
 
     class _QProgressDialog:
         """Stands in for cancellable_progress()'s real QProgressDialog. Never

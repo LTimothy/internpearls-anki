@@ -235,6 +235,15 @@ def source_identity():
             conf.get("decks_dir", ""), conf.get("scope_tag", "InternPearls"))
 
 
+def collection_key():
+    """The open collection and the deck source, for state kept per collection in
+    memory rather than on disk."""
+    col = getattr(mw, "col", None)
+    path = getattr(col, "path", None)
+    where = os.path.realpath(path) if isinstance(path, str) and path else id(col)
+    return where, source_identity()
+
+
 # Files kept per collection and source. The first group never adopts a legacy unscoped
 # file (its owner is unknown); the second moves it to whichever collection and source
 # reads it first, so existing decisions survive the upgrade without a second profile
