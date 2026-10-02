@@ -39,6 +39,7 @@ def _populate(mock):
 def _build_dialog(mock):
     from internpearls import dupes_dialog
     dlg = dupes_dialog._DuplicateScanDialog("InternPearls")
+    dlg._wait_for_backends()
     dlg._wait_for_scan()
     return dlg
 
@@ -517,7 +518,7 @@ def test_row_actions_are_visible_while_collapsed():
     harness.app()
     _populate(mock)
     dlg = _build_dialog(mock)
-    row = dlg._rows_layout.itemAt(0).widget()
+    row = dlg._list.rows()[0]
     header = row.layout().itemAt(0).widget()
     body = row.layout().itemAt(1).widget()
     assert not body.isVisible()
@@ -551,7 +552,7 @@ def test_caret_accessible_name_identifies_pair_and_expand_state():
     pair = dlg._pairs[0]
     left_front, _ = dupes_dialog._note_texts(pair["left"][0])
     right_front, _ = dupes_dialog._note_texts(pair["right"][0])
-    row = dlg._rows_layout.itemAt(0).widget()
+    row = dlg._list.rows()[0]
     header = row.layout().itemAt(0).widget()
     body = row.layout().itemAt(1).widget()
     caret = header.layout().itemAt(0).widget()
@@ -580,7 +581,7 @@ def test_ours_label_starts_at_row_text_indent():
     dlg.resize(800, 560)
     dlg.show()
     harness.app().processEvents()
-    row = dlg._rows_layout.itemAt(0).widget()
+    row = dlg._list.rows()[0]
     header = row.layout().itemAt(0).widget()
     primary = header.layout().itemAt(2).widget()
     x = primary.mapTo(row, q.QPoint(0, 0)).x()
@@ -601,8 +602,7 @@ def test_collapsed_row_height_matches_content():
     dlg.resize(800, 560)
     dlg.show()
     harness.app().processEvents()
-    rows = [dlg._rows_layout.itemAt(i).widget()
-            for i in range(0, dlg._rows_layout.count(), 2)]
+    rows = dlg._list.rows()[::2]
     row = min(rows, key=lambda r: r.height())
     fm = QFontMetrics(row.font())
     # Four text lines' worth of height (the "ours:"/"theirs:"/"shares:" trio plus
@@ -737,7 +737,7 @@ def test_row_shows_shares_line():
     dlg = _build_dialog(mock)
     pair = dlg._pairs[0]
     assert pair["shares"]
-    row = dlg._rows_layout.itemAt(0).widget()
+    row = dlg._list.rows()[0]
     header = row.layout().itemAt(0).widget()
     primary = header.layout().itemAt(2).widget()
     assert "shares:" in primary.text()
