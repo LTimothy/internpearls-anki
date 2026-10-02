@@ -544,8 +544,76 @@ def run_conversion_keeps_every_card_contract():
             sync._ask, sync._info = ask, info
 
 
+def run_identical_first_sync_baseline_contract():
+    """A first sync over notes the learner already has with identical content and the
+    same mtime still records a shipped baseline, so the next source correction to a
+    protected field applies, and a learner's own edit is still reported as one."""
+    v1 = {'Front': 'Q one', 'Back': 'back v1', 'Dosing': 'dose v1', 'Notes': 'note v1'}
+    v2 = {'Front': 'Q one', 'Back': 'back v2', 'Dosing': 'dose v2', 'Notes': 'note v2'}
+    with tempfile.TemporaryDirectory(prefix='ip-first-sync-baseline-') as tmp:
+        root = Path(tmp)
+        _learner_state_env(root)
+        publisher = Collection(str(root / 'publisher.anki2'))
+        try:
+            n = publisher.new_note(model(publisher, 'Basic'))
+            n.guid, n.tags = 'one', ['InternPearls']
+            for k, v in v1.items():
+                n[k] = v
+            publisher.add_note(n, publisher.decks.id('Synthetic'))
+            world.mw.col = publisher
+            first = str(root / 'v1.apkg')
+            addon._export_deck_to(first, 'Synthetic')
+            n = publisher.get_note(n.id)
+            for k, v in v2.items():
+                n[k] = v
+            publisher.update_note(n)
+            publisher.db.execute('update notes set mod=mod+5 where id=?', n.id)
+            second = str(root / 'v2.apkg')
+            addon._export_deck_to(second, 'Synthetic')
+        finally:
+            publisher.close()
+
+        def sync_to(path, version):
+            manifest = {'decks': [{'name': 'Synthetic', 'version': version}],
+                        'note_protected_fields': {'one': ['Dosing']}}
+            cfg = config._cfg()
+            cfg['protected'] = ['Notes']
+            return sync._run_sync(cfg, manifest, lambda d: path, manifest['decks'])
+
+        for edited in (False, True):
+            _learner_state_env(root)
+            config._save_json(sync.SHIPPED, {})
+            config._save_json(sync.INSTALLED, {})
+            reader = Collection(str(root / f'reader-{edited}.anki2'))
+            try:
+                world.mw.col = reader
+                addon._import_apkg(first)   # already there, no baseline yet
+                if edited:
+                    note = _note(reader, 'one')
+                    mod = note.mod
+                    note['Notes'] = 'my own note'
+                    reader.update_note(note)
+                    reader.db.execute('update notes set mod=? where guid=?', mod, 'one')
+                sync_to(first, 'v1')
+                shipped = config._load_json(sync.SHIPPED, {})
+                assert shipped.get('one') == {'Notes': 'note v1', 'Dosing': 'dose v1'}, shipped
+                out = sync_to(second, 'v2')
+                note = _note(reader, 'one')
+                got = (note['Back'], note['Dosing'], note['Notes'])
+                if edited:
+                    assert got == ('back v2', 'dose v2', 'my own note'), got
+                    assert out[5] == [('one', 'Notes')], out[5]
+                else:
+                    assert got == ('back v2', 'dose v2', 'note v2'), got
+                    assert out[5] == [], out[5]
+            finally:
+                reader.close()
+    print('PASS real first sync over identical notes records the shipped baseline')
+
+
 if __name__ == '__main__':
     run_legacy_notetype_contract()
     run_conversion_keeps_every_card_contract()
     run()
     run_learner_state_contract()
+    run_identical_first_sync_baseline_contract()
