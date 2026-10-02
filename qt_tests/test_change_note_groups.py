@@ -298,6 +298,22 @@ def test_an_open_groups_members_sit_indented_under_its_note():
     assert members[0] > plain and members[0] > note, (members[0], plain, note)
 
 
+def test_a_group_members_text_starts_one_member_indent_right_of_a_plain_rows():
+    """The one place rows leave the shared text column: a group's members, on purpose,
+    by exactly review._GROUP_MEMBER_INDENT."""
+    from internpearls import review
+    _, q = harness.bootstrap()
+    shot = harness.render("confirm", group_size=3, second_deck=True, size=(880, 800))
+
+    def text_x(marker):
+        found = [l for l in _visible_labels(shot.dialog, q) if marker in l.text()]
+        assert len(found) == 1, marker
+        return widget_rect(shot.dialog, found[0]).left()
+
+    assert (text_x(_member_marker(0))
+            == text_x("Second deck's first pending card?") + review._GROUP_MEMBER_INDENT)
+
+
 def test_a_folded_groups_members_sit_as_far_in_from_its_note_as_an_open_groups():
     _, q = harness.bootstrap()
     shot = harness.render("confirm", group_size=3, size=(880, 800))
