@@ -149,6 +149,23 @@ def _addon_update_work(auto_update, token=None):
     return {"info": info, "package_path": package_path}
 
 
+# What addonManager.install's error codes mean, in the learner's words.
+_INSTALL_ERRORS = {"zip": "not a valid add-on package",
+                   "manifest": "missing the details Anki needs to install it",
+                   "invalid addon name": "for a different add-on"}
+
+
+def _install_package(path):
+    """Install a downloaded package, raising when Anki refuses it. install() reports a
+    refusal by returning an error rather than raising, and leaves the installed
+    version in place."""
+    result = mw.addonManager.install(path)
+    errmsg = getattr(result, "errmsg", None)
+    if errmsg:
+        reason = _INSTALL_ERRORS.get(errmsg, "Anki refused it")
+        raise RuntimeError(f"the download is {reason}")
+
+
 @_safe
 def check_updates():
     """Compare our version to version.json in the public add-on repo; offer to update."""
@@ -168,7 +185,7 @@ def check_updates():
                 yes_label="Install now", no_label="Not now"):
         return
     try:
-        mw.addonManager.install(_download_addon_package(
+        _install_package(_download_addon_package(
             token=token, expected=latest["version"]))
         _info("Updated. Please restart Anki.")
     except Exception as e:

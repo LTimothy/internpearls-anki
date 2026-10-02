@@ -626,6 +626,7 @@ def test_import_single_note_protected_field_survives_when_the_note_matches_only_
              deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     assert anki.col.note_by_guid("learner-own-guid")["Dosing"] == "learner's own dose note"
@@ -760,7 +761,7 @@ def test_undoing_a_deck_update_makes_that_deck_pending_again(anki, tmp_path):
     assert sync._load_json(sync.SHIPPED, {}) == {**before, "g1": {"Notes": "", "Back": "v2"}}
     assert [d["name"] for d in sync.decks_to_update(
         manifest, sync._load_json(sync.INSTALLED, {}))] == [OTHER]
-    assert (OTHER, "v2") in sync.undone_updates
+    assert (sync.collection_key(), OTHER, "v2") in sync.undone_updates
 
 
 def test_auto_sync_leaves_an_undone_update_for_a_manual_run(anki, tmp_path):
@@ -768,7 +769,7 @@ def test_auto_sync_leaves_an_undone_update_for_a_manual_run(anki, tmp_path):
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
     anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
-    sync.undone_updates.add((DECK, "v1"))
+    sync.undone_updates.add((sync.collection_key(), DECK, "v1"))
 
     background._auto_sync_check()
 
@@ -795,7 +796,7 @@ def test_the_undo_hook_is_registered_with_anki():
     import sys
     from internpearls import sync
     mock_anki.load_addon_init()
-    assert sync.restore_pending_after_undo in sys.modules["aqt"].gui_hooks.state_did_undo
+    assert sync.restore_pending_after_undo in sys.modules["aqt"].gui_hooks.state_did_undo._hooks
 
 
 def test_import_single_keeps_the_learners_own_tags(anki, tmp_path):
@@ -807,6 +808,7 @@ def test_import_single_keeps_the_learners_own_tags(anki, tmp_path):
     make_apkg(src, [("g1", _fields("Front one", back="new back"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     note = anki.col.note_by_guid("g1")
@@ -4498,6 +4500,7 @@ def test_import_single_accepted_still_fixes_note_types_first(anki, tmp_path):
     make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     assert "Dosing" in [f["name"] for f in anki.col.models.all()[0]["flds"]]
@@ -4513,6 +4516,7 @@ def test_import_single_writes_its_personalized_copy_outside_the_source_file(anki
     make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     assert not os.path.exists(src + ".sync.apkg")
@@ -4531,6 +4535,7 @@ def test_import_single_filters_a_never_declined_card(anki, tmp_path):
     make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     fronts = {n.fields[0] for n in anki.col._notes.values()}
@@ -4875,6 +4880,7 @@ def test_import_single_backs_up_the_decks_the_chosen_file_lands_in(anki, tmp_pat
     make_apkg(src, [("g1", _fields("Front one", back="new"), TAGS)], deck=outside)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     assert "Other Root" in _backed_up_decks(anki)
@@ -4915,6 +4921,7 @@ def test_every_collection_writing_action_holds_the_manual_guard(anki, tmp_path,
     src = str(tmp_path / "hand.apkg")
     make_apkg(src, [("dup1", _fields("A shared front"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
+    anki.gui.answers += [True, True]       # Import, then Choose a backup
     collection.import_deck()
     collection.restore_from_backup()
     drive(anki, collection.remove_empty_cards, _click_duplicate_button(accept=True))
@@ -5688,11 +5695,12 @@ def test_the_backup_skip_question_names_its_buttons_and_defaults_to_cancelling(a
     the reader agreeing to the risky half by pressing Return."""
     from internpearls import collection
     _existing_card(anki, "g1", "Front one")   # something in the collection to lose
+    anki.gui.answers.append(True)          # Continue without a backup
 
     proceed, backed_up = collection._pre_sync_backup_or_confirm_skip(
         "A Deck That Isn't Here", None, SCOPE)
 
-    assert (proceed, backed_up) == (True, False)   # answers default to yes in tests
+    assert (proceed, backed_up) == (True, False)
     assert anki.gui.ask_buttons[-1] == ("Continue without a backup", "Cancel")
     assert anki.gui.ask_defaults[-1] == "Cancel"
 
@@ -5720,6 +5728,7 @@ def test_every_consequential_question_defaults_to_its_declining_button(anki, tmp
     make_apkg(src, [("g1", _fields("Front one", back="new"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers += [True, True]       # Import without it, then Import now
     sync.import_single()
 
     assert [b for _y, b in anki.gui.ask_buttons] == anki.gui.ask_defaults
@@ -7749,6 +7758,7 @@ def test_import_single_offers_the_conversion_and_keeps_the_history(anki, tmp_pat
               model=_cloze_model(), deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers += [True, True]       # Import now, then move to the new format
     sync.import_single()
 
     assert any("changed format" in a for a in anki.gui.asks), anki.gui.asks
@@ -7771,6 +7781,7 @@ def test_import_single_says_so_when_there_is_no_note_type_to_convert_onto(anki,
               model=_cloze_model(), deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     assert not any("you'll be asked" in a for a in anki.gui.asks), anki.gui.asks
@@ -7785,6 +7796,7 @@ def test_import_single_keeps_a_card_losing_conversion_beside(anki, tmp_path):
     make_apkg(src, [("g1", _fields("What are one and two?"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     (confirm,) = [a for a in anki.gui.asks if "changed format" in a]
@@ -7985,22 +7997,30 @@ def test_startup_nudge_is_wrapped(anki):
 
 
 # --------------------------------------------- restore, filtered decks, cancelled restore
-def _backups_at_the_keep_limit(collection, export):
-    import time
-    paths = []
-    for _ in range(collection.DECK_BACKUPS_KEEP):
-        paths.append(collection._backup_deck(export, export))
-        time.sleep(1.05)
-    return paths
+def _backups_at_the_keep_limit(collection, export, monkeypatch):
+    """DECK_BACKUPS_KEEP backups a second apart on a clock that advances per backup,
+    so their order never depends on how fast the test runs."""
+    import datetime
+    start = datetime.datetime(2026, 9, 9, 12, 0, 0)
+    ticks = iter(range(10 ** 6))
+
+    class Clock(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return start + datetime.timedelta(seconds=next(ticks))
+
+    monkeypatch.setattr(collection.datetime, "datetime", Clock)
+    return [collection._backup_deck(export, export)
+            for _ in range(collection.DECK_BACKUPS_KEEP)]
 
 
-def test_restoring_the_oldest_kept_backup_does_not_prune_it_first(anki):
+def test_restoring_the_oldest_kept_backup_does_not_prune_it_first(anki, monkeypatch):
     """The backup taken before a restore prunes the oldest file, which is the file the
     learner chose when it is the oldest one kept."""
     from internpearls import collection
     export = collection._cfg()["export_deck"]
     _existing_card(anki, "g1", "Front one", deck=export)
-    oldest = _backups_at_the_keep_limit(collection, export)[0]
+    oldest = _backups_at_the_keep_limit(collection, export, monkeypatch)[0]
     anki.gui.file_picks.append(oldest)
     anki.gui.answers.append(True)
 
@@ -8010,11 +8030,11 @@ def test_restoring_the_oldest_kept_backup_does_not_prune_it_first(anki):
     assert not anki.gui.warnings
 
 
-def test_a_backup_never_prunes_the_file_it_was_told_to_keep(anki):
+def test_a_backup_never_prunes_the_file_it_was_told_to_keep(anki, monkeypatch):
     from internpearls import collection
     export = collection._cfg()["export_deck"]
     _existing_card(anki, "g1", "Front one", deck=export)
-    paths = _backups_at_the_keep_limit(collection, export)
+    paths = _backups_at_the_keep_limit(collection, export, monkeypatch)
 
     newest = collection._backup_deck(export, export, keep=paths[0])
 
@@ -8044,7 +8064,7 @@ def test_cancelled_backup_restore_leaves_installed_state_alone(anki, monkeypatch
     collection.restore_from_backup()
 
     assert _load_json(INSTALLED, {}) == {DECK: "v1"}
-    assert aqt.gui_hooks.profile_will_close == []
+    assert aqt.gui_hooks.profile_will_close.count() == 0
 
 
 def test_an_accepted_backup_restore_clears_installed_state(anki):
@@ -8057,7 +8077,7 @@ def test_an_accepted_backup_restore_clears_installed_state(anki):
     collection.restore_from_backup()
 
     assert _load_json(INSTALLED, {}) == {}
-    assert aqt.gui_hooks.profile_will_close == []
+    assert aqt.gui_hooks.profile_will_close.count() == 0
 
 
 # ------------------------------------------------- what a deck source may point at

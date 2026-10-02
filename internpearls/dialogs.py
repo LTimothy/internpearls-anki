@@ -7,7 +7,7 @@ collection or the network live in sync.py / collection.py and are called from he
 from aqt import mw
 from aqt.qt import (QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QFileDialog,
                     QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton,
-                    QScrollArea, QSpinBox, Qt, QVBoxLayout, QWidget)
+                    QScrollArea, QSizePolicy, QSpinBox, Qt, QVBoxLayout, QWidget)
 
 from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
 from .collection import installed_matching_collection, invalidate_installed
@@ -20,12 +20,12 @@ from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
 from .logic import (deck_status, manifest_scope_suggestion, night_mode_dim_factor,
                     parse_fields, plural, version_at_least)
 from .palette import DARK, LIGHT, colors
-from .review import _scrolled, append_rows, build_list_body
+from .review import append_rows, build_list_body
 from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _safe, _warn,
                  hint_label, link_button, muted_label, section_label, section_rule,
                  title_label, wait_cursor)
-from .widgets import chip_cell
+from .widgets import StreamingList, chip_cell
 
 
 def _field_label(text, field, *, section=False, top_margin=0):
@@ -765,9 +765,8 @@ def _decline_group(entry):
     state = entry.get("state") if isinstance(entry, dict) else None
     return "held" if state == "skip" else state
 
-# The cap review._scrolled stops the list growing the dialog past, once it holds more
-# rows than fit. Unlike _SCOPE_DIALOG_H above, this sets no floor: a short list stays
-# short rather than being padded out to any minimum.
+# The height the list stops growing the dialog past, once it holds more rows than fit.
+# Unlike _SCOPE_DIALOG_H above, this sets no floor: a short list stays short.
 _DECLINED_LIST_H = 340
 
 
@@ -794,11 +793,14 @@ class _DeclinedDialog(QDialog):
         outer.setSpacing(10)
         outer.addWidget(title_label("Declined cards"))
 
-        holder = QWidget()
-        self._list_lay = QVBoxLayout(holder)
-        self._list_lay.setContentsMargins(0, 0, 6, 0)
-        self._list_lay.setSpacing(8)
-        outer.addWidget(_scrolled(holder, _DECLINED_LIST_H), 1)
+        # Streamed like the update list: thousands of entries used to mean seconds of
+        # row building before the dialog appeared, and again on every Offer again.
+        self._list = StreamingList(self._build_item, [])
+        self._list.setFrameShape(QFrame.Shape.NoFrame)
+        self._list.setMaximumHeight(_DECLINED_LIST_H)
+        self._list.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                 QSizePolicy.Policy.Preferred)
+        outer.addWidget(self._list, 1)
 
         bb = QDialogButtonBox()
         close = bb.addButton("Close", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -807,13 +809,20 @@ class _DeclinedDialog(QDialog):
 
         self._rebuild()
 
+    def _build_item(self, item):
+        if item[0] == "heading":
+            return section_label(item[1], top_margin=8)
+        if item[0] == "empty":
+            return muted_label("You haven't declined any cards.")
+        return self._row(*item[1:])
+
     def _row(self, guid, entry, show_state=False):
         # A non-dict entry (a hand-edited file) has no fields to read; it renders off
         # an empty dict, which leaves the guid as the row's only name for itself.
         entry = entry if isinstance(entry, dict) else {}
         row = QWidget()
         h = QHBoxLayout(row)
-        h.setContentsMargins(0, 0, 0, 0)
+        h.setContentsMargins(0, 4, 0, 4)
         primary = QLabel(entry.get("front") or guid)
         primary.setWordWrap(True)
         h.addWidget(primary, 1)
@@ -845,18 +854,6 @@ class _DeclinedDialog(QDialog):
         self._rebuild()
 
     def _rebuild(self):
-        while self._list_lay.count():
-            item = self._list_lay.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                # takeAt only detaches the widget from the layout, not from the
-                # dialog's own widget tree, and deleteLater's actual removal is
-                # deferred past this call: without hiding it explicitly, a taken-out
-                # row still paints (and still answers isVisible()) until Qt gets
-                # around to the deferred delete.
-                w.setVisible(False)
-                w.deleteLater()
-
         reg = load_declined()
         # Every entry renders somewhere: a recognized state under its own heading,
         # anything else under Other, including a non-dict value from a hand-edited
@@ -867,24 +864,30 @@ class _DeclinedDialog(QDialog):
         for guid, entry in reg.items():
             grouped.setdefault(_decline_group(entry), []).append((guid, entry))
 
+        items = []
         known_states = {state for state, _ in _DECLINE_GROUPS}
         for state, heading in _DECLINE_GROUPS:
             rows = grouped.get(state)
-            if not rows:
-                continue
-            self._list_lay.addWidget(section_label(heading, top_margin=8))
-            for guid, entry in rows:
-                self._list_lay.addWidget(self._row(guid, entry))
+            if rows:
+                items.append(("heading", heading))
+                items += [("row", guid, entry) for guid, entry in rows]
 
         other = [pair for state, pairs in grouped.items()
                 for pair in pairs if state not in known_states]
         if other:
-            self._list_lay.addWidget(section_label("Other", top_margin=8))
-            for guid, entry in other:
-                self._list_lay.addWidget(self._row(guid, entry, show_state=True))
+            items.append(("heading", "Other"))
+            items += [("row", guid, entry, True) for guid, entry in other]
 
         if not reg:
-            self._list_lay.addWidget(muted_label("You haven't declined any cards."))
+            items.append(("empty",))
+        # Offer again rebuilds the list; build back down to where the reader was and
+        # put the scroll position back, so the next row is where they left it.
+        bar = self._list.verticalScrollBar()
+        position, shown = bar.value(), self._list.shown()
+        self._list.reset(items)
+        while self._list.shown() < min(shown, self._list.total()):
+            self._list._extend()
+        bar.setValue(position)
 
 
 @_safe
@@ -1027,16 +1030,16 @@ _SAMPLE_PANE_SIZE = (150, 100)
 
 def _sample_card_image():
     """The preview's stand-in for "a bright image on a card": two labelled shapes and
-    the lines between them, on a white background. White is deliberate and not a
-    themed colour: it's the exact background this feature exists to tone down, so
-    the reference has to start from it, the same as a real card figure would. The ink
+    the lines between them, on a white background. White is deliberate and the same in
+    both themes: it's the exact background this feature exists to tone down, so the
+    reference has to start from it, the same as a real card figure would. The ink
     colours come from palette.LIGHT (not colors(), which would pick DARK's ink, made
-    for a dark surface, on this always-white canvas) rather than a bare hex literal.
+    for a dark surface, on this always-white canvas).
     """
     from aqt.qt import QColor, QImage, QPainter, QPen
     w, h = _SAMPLE_PANE_SIZE
     image = QImage(w, h, QImage.Format.Format_RGB32)
-    image.fill(QColor("#ffffff"))
+    image.fill(QColor(LIGHT["sample_bg"]))
     painter = QPainter(image)
     try:
         ink = QColor(LIGHT["caret"])

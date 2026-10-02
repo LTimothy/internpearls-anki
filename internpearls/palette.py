@@ -36,6 +36,7 @@ LIGHT = {
     "accept_fg":  "#274d12",
     "decline_bg": "#f2cfca",
     "decline_fg": "#6d1f15",
+    "sample_bg":  "#ffffff",
 }
 
 DARK = {
@@ -62,6 +63,8 @@ DARK = {
     "accept_fg":  "#d6ecc2",
     "decline_bg": "#5e2822",
     "decline_fg": "#f6d5d0",
+    # White in both themes: the dimming preview's canvas stands for a bright card image.
+    "sample_bg":  "#ffffff",
 }
 
 

@@ -19,8 +19,8 @@ from aqt.utils import getFile, getSaveFile
 
 from . import ai_logic
 from .config import (DECK_BACKUPS_KEEP, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_TAG_LEAF,
-                     TARGET_FIELDS, _USER_FILES, _cfg, _collection_state_path, _load_json,
-                     _save_json)
+                     SHIPPED, TARGET_FIELDS, _USER_FILES, _cfg, _collection_state_path,
+                     _load_json, _save_json)
 from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
                     cards_lost_in_conversion, changed_templates, check_apkg_limits,
                     copy_apkg_checked, declined_drop,
@@ -101,17 +101,17 @@ def _backup_collection():
     """Take a real, timestamped WHOLE-COLLECTION backup (every deck, not just ours).
 
     Uses the same mechanism Anki runs on its own (a .colpkg in the profile's backup
-    folder). Returns the backup folder path on success, None if it failed for any
-    reason.
+    folder). Returns (folder, written), or (None, False) if it failed. Even when forced,
+    Anki writes nothing when the collection is unchanged since its last backup, so
+    `written` False with a folder means the latest backup is already current.
     """
     try:
         folder = mw.pm.backupFolder()
-        if mw.col.create_backup(backup_folder=folder, force=True,
-                                 wait_for_completion=True):
-            return folder
+        written = mw.col.create_backup(backup_folder=folder, force=True,
+                                       wait_for_completion=True)
+        return folder, bool(written)
     except Exception:
-        pass
-    return None
+        return None, False
 
 
 def _deck_backup_folder():
@@ -239,6 +239,10 @@ def _backup_deck(deck_name, label=None, keep=None):
         _export_deck_to(path, deck_name)
     except Exception:
         return None
+    try:
+        _save_json(_baseline_path(path), _load_json(SHIPPED, {}))
+    except Exception:
+        pass   # a restore without it keeps the restored values, see _reset_baseline
     kept = os.path.realpath(keep) if keep else None
     backups = sorted((f for f in os.listdir(folder)
                       if f.startswith(_BACKUP_PREFIX) and f.endswith(".apkg")
@@ -249,11 +253,20 @@ def _backup_deck(deck_name, label=None, keep=None):
                                     os.stat(os.path.join(folder, f)).st_mtime_ns),
                      reverse=True)
     for old in backups[DECK_BACKUPS_KEEP:]:
-        try:
-            os.remove(os.path.join(folder, old))
-        except OSError:
-            pass
+        for victim in (os.path.join(folder, old), _baseline_path(old)):
+            try:
+                os.remove(victim)
+            except OSError:
+                pass
     return path
+
+
+def _baseline_path(backup):
+    """Where the shipped-field baseline a deck backup was taken with is kept: a sibling
+    folder, so the backup folder holds only backups."""
+    folder = os.path.join(os.path.dirname(_deck_backup_folder()), "deck_backup_baselines")
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, os.path.basename(backup)[:-len(".apkg")] + ".json")
 
 
 def _backup_targets(deck_name, decks):
@@ -328,7 +341,7 @@ def _pre_sync_backup_or_confirm_skip(deck_name, decks=None, scope_tag=None, keep
     return True, False   # nothing in the collection to back up yet, e.g. a first sync
 
 
-def _pre_sync_backup_or_skip_silently(deck_name, decks=None):
+def _pre_sync_backup_or_skip_silently(deck_name, decks=None, scope_tag=None):
     """Background counterpart to `_pre_sync_backup_or_confirm_skip`: never blocks with a
     dialog. If a backup is needed and fails, the safe default is to abort the auto-sync
     rather than import unprotected — there's no one watching to answer a prompt, so the
@@ -345,7 +358,10 @@ def _pre_sync_backup_or_skip_silently(deck_name, decks=None):
     targets = [d for d in _backup_targets(deck_name, decks)
                if mw.col.decks.id_for_name(d) is not None]
     if not targets:
-        return True   # nothing to back up yet, e.g. this deck's very first sync
+        # Nothing to back up on a first sync. Cards under `scope_tag` with no deck to
+        # export are what the interactive path asks about, so skip the round instead.
+        return not (scope_tag and mw.col.find_notes(
+            f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'))
     saved = [_backup_deck(d, d) for d in targets]
     return all(saved)
 
@@ -532,9 +548,9 @@ def _restore(snap, baseline=None, touched=None):
 
 # -------------------------------------------------------------------- apkg helpers
 def _import_apkg(path, with_scheduling=False):
-    """with_scheduling=False for a spec-authored deck matched onto existing cards (the
-    learner's own scheduling should win); True for reimporting our own previously
-    exported/backed-up package, where the file's scheduling IS the thing being restored.
+    """with_scheduling=False for a spec-authored deck; True for reimporting our own
+    exported or backed-up package. Either way Anki applies a file's scheduling only to
+    cards the import creates, so a matched card keeps its own.
     """
     from anki.collection import ImportAnkiPackageRequest, ImportAnkiPackageOptions
     check_apkg_limits(path)
@@ -1431,7 +1447,10 @@ def import_deck():
                 "as new. A backup is taken automatically first.",
                 yes_label="Import", no_label="Cancel"):
         return
-    if not _pre_sync_backup_or_confirm_skip(_cfg()["export_deck"], keep=src)[0]:
+    cfg = _cfg()
+    if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"],
+                                            _restore_decks(src),
+                                            cfg["scope_tag"], keep=src)[0]:
         return
     # Anki's importer reads each member's stream and ignores the size the file declares
     # for it, so it imports a copy made through zipfile, which holds to those sizes.
@@ -1439,7 +1458,7 @@ def import_deck():
         platform_owner_id(mw), "deck-import", ".apkg")
     try:
         copy_apkg_checked(src, checked)
-        _import_apkg(checked, with_scheduling=True)
+        result = _import_apkg(checked, with_scheduling=True)
     except Exception as e:
         _warn(f"Import failed: {e}")
         return
@@ -1448,6 +1467,7 @@ def import_deck():
             os.remove(checked)
         except OSError:
             pass
+    _reset_baseline(src, getattr(result, "log", None))
     # The imported file holds older cards than the source does, so whatever it restored
     # has to be re-offered. Scope that to the decks actually in the file, falling back to
     # all of them if it cannot be read: a redundant re-offer is recoverable, a missed one
@@ -1464,6 +1484,49 @@ def import_deck():
         invalidate_installed()
     mw.reset()
     _info(f"Imported <code>{os.path.basename(src)}</code>.")
+
+
+def _restore_decks(src):
+    """The decks a restore of `src` rewrites: wherever its notes sit now, scope tag or
+    not, since the importer matches them by GUID across the whole collection. None when
+    the file can't be read."""
+    try:
+        guids = {guid for _rid, _fields, guid in apkg_notes(src)}
+    except Exception:
+        return None
+    found = {guid: mw.col.db.scalar("select id from notes where guid = ?", guid)
+             for guid in guids}
+    return decks_holding(guids, {g: nid for g, nid in found.items() if nid})
+
+
+def _reset_baseline(src, log=None):
+    """Give each restored note the shipped-field baseline its backup was taken with, so
+    the next update reads restored source text as the source's rather than as the
+    learner's edit. A file with no saved baseline drops those notes' baselines, which
+    keeps every non-blank restored value, annotations included.
+
+    Limited to the notes Anki's import `log` says it added or changed: a note it matched
+    unchanged still holds what its current baseline describes. Without a log, every
+    note in the file counts."""
+    try:
+        if log is not None:
+            guids = {mw.col.get_note(row.id.nid).guid
+                     for row in list(log.new) + list(log.updated)}
+        else:
+            guids = {guid for _rid, _fields, guid in apkg_notes(src)}
+    except Exception:
+        return
+    own = os.path.dirname(os.path.realpath(src)) == os.path.realpath(_deck_backup_folder())
+    saved = _load_json(_baseline_path(src), {}) if own and src.endswith(".apkg") else {}
+    saved = saved if isinstance(saved, dict) else {}
+    shipped = _load_json(SHIPPED, {})
+    shipped = shipped if isinstance(shipped, dict) else {}
+    for guid in guids:
+        if isinstance(saved.get(guid), dict):
+            shipped[guid] = saved[guid]
+        else:
+            shipped.pop(guid, None)
+    _save_json(SHIPPED, shipped)
 
 
 @_safe
@@ -1486,9 +1549,13 @@ def backup_collection_now():
     automatically before every sync. Kept available for anyone who wants that broader
     protection on top of the faster, deck-scoped default.
     """
-    folder = _backup_collection()
+    folder, written = _backup_collection()
     if not folder:
         _warn("Couldn't create a collection backup.")
+        return
+    if not written:
+        _info("Nothing has changed since your last collection backup, so it's already "
+              f"up to date in:<br><code>{folder}</code>")
         return
     _info(f"Backed up your whole collection (every deck) to:<br><code>{folder}</code>")
 

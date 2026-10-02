@@ -297,10 +297,19 @@ def test_phase_chip_maps_phase_text_to_the_right_stage():
     assert ai_dialog._phase_chip(None) == "working"
 
 
+def _frozen_clock(monkeypatch, elapsed):
+    """Pin the platform clock `elapsed` seconds after the run started, so the elapsed
+    figure never depends on how long the test itself took."""
+    from internpearls.platform import platform
+    now = platform().monotonic()
+    monkeypatch.setattr(platform(), "monotonic", lambda: now)
+    return now - elapsed
+
+
 def test_progress_detail_omits_what_is_not_yet_known(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._phase_text = None
-    dlg._t0 = time.monotonic()
+    dlg._t0 = _frozen_clock(monkeypatch, 0)
     dlg._duration_estimate = None
     dlg.session.cards = []
     text = dlg._progress_detail_text()
@@ -311,7 +320,7 @@ def test_progress_detail_omits_what_is_not_yet_known(anki, monkeypatch):
 def test_progress_detail_states_revising_count_once_known(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._phase_text = "Verifying doses against sources"
-    dlg._t0 = time.monotonic() - 5
+    dlg._t0 = _frozen_clock(monkeypatch, 5)
     dlg._duration_estimate = None
     dlg.session.cards = [{}] * 11
     text = dlg._progress_detail_text()
@@ -323,7 +332,7 @@ def test_progress_detail_states_revising_count_once_known(anki, monkeypatch):
 def test_progress_detail_joins_learned_estimate_with_a_comma(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._phase_text = "Verifying doses against sources"
-    dlg._t0 = time.monotonic() - 48
+    dlg._t0 = _frozen_clock(monkeypatch, 48)
     dlg._duration_estimate = "your recent Thorough runs averaged 1m 40s"
     dlg.session.cards = []
     text = dlg._progress_detail_text()

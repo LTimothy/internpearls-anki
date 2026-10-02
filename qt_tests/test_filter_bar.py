@@ -1,6 +1,5 @@
 """The filter and search bar over a long Update my decks list, against real widgets."""
 import os
-import time
 
 import harness
 
@@ -18,18 +17,13 @@ def _list(dialog):
     return dialog.findChild(widgets.StreamingList)
 
 
-def _pump(seconds=0.4):
-    """Run the event loop long enough for the search box's typing delay to elapse."""
-    app = harness.app()
-    end = time.monotonic() + seconds
-    while time.monotonic() < end:
-        app.processEvents()
-        time.sleep(0.01)
-
-
 def _search(bar, text):
+    """Type `text`, then let the typing delay run out. Fired directly rather than
+    waited for, so a busy machine cannot outlast a fixed wait."""
     bar.search.setText(text)
-    _pump()
+    assert bar._timer.is_active(), "typing did not arm the search delay"
+    bar._timer._fire()
+    harness.app().processEvents()
 
 
 def _pick(bar, mode):
