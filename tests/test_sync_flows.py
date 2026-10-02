@@ -7643,9 +7643,9 @@ def test_a_swept_preview_download_does_not_double_count_its_conversions(
 
 
 # ------------------------------------ preview counts vs. what actually imports
-def test_deck_summary_does_not_count_an_old_skip_as_new(anki, tmp_path):
-    """An old skip comes back waiting at Later, so the update will not import it
-    unless the learner changes the row: the deck summary must not count it as new."""
+def test_deck_summary_counts_a_waiting_later_row_and_names_it(anki, tmp_path):
+    """An old skip comes back waiting at Later: its row is in the list, so the deck
+    summary counts it, and says it is waiting rather than pitching it as an import."""
     from internpearls import config
     deck = _source_with_two_new_cards(anki, tmp_path)
     config.save_declined({
@@ -7654,8 +7654,30 @@ def test_deck_summary_does_not_count_an_old_skip_as_new(anki, tmp_path):
 
     texts = _all_text(_snapshot_update_confirmation(anki))
 
-    assert "1 new" in texts
-    assert "2 new" not in texts
+    assert "0 kept · 2 new (1 waiting at Later)" in texts
+
+
+def test_deck_summary_counts_a_held_row_that_does_not_wait_as_plain_new(anki, tmp_path):
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-new-b": _held(deck)})
+
+    texts = _all_text(_snapshot_update_confirmation(anki))
+
+    assert "0 kept · 2 new" in texts and "waiting at Later" not in texts
+
+
+def test_deck_summary_counts_a_waiting_changed_row_and_names_it(anki, tmp_path):
+    from internpearls import config, logic
+    deck = _source_updating_card_a(anki, tmp_path)
+    same = logic.note_fields_hash(_fields("front a, revised"))
+    config.save_declined({"guid-a": {
+        "state": "held", "front": "front a", "deck": deck, "decided": "2026-08-01",
+        "hash": same, "note": "check the wording first"}})
+
+    texts = _all_text(_snapshot_update_confirmation(anki))
+
+    assert "1 kept (1 changing, 1 of them waiting at Later) · 0 new" in texts
 
 
 def test_deck_summary_counts_exclude_a_standing_keep(anki, tmp_path):

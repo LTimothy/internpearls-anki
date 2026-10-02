@@ -2052,9 +2052,9 @@ def update_decks():
     declined = declined_guids(reg)
     # Held cards default to Import on this screen, so they count as pending, except
     # one that returns waiting at Later (a noted card not yet updated, or an old Skip).
-    counted_out = declined - {
-        g for g, e in held_entries(reg).items()
-        if not later_status(e, incoming_hashes.get(g)).get("later_wait")}
+    waiting = {g for g, e in held_entries(reg).items()
+               if later_status(e, incoming_hashes.get(g)).get("later_wait")}
+    counted_out = declined - (set(held_entries(reg)) - waiting)
     existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
     aliases = manifest.get("front_aliases", {})
     for d in todo:
@@ -2089,9 +2089,12 @@ def update_decks():
     # "N changing" and then dropped, so the preview said "1 new" and the result said
     # none. A new card's guid reads straight off its deck's preview; a changed card's
     # guid only exists in `changed_cards`, so those are tallied per deck here.
-    suppressed_changed = {}
+    # A waiting Later row is still a row on the list, so it is counted, and named.
+    suppressed_changed, waiting_changed = {}, {}
     for deck_name, _label, g in changed_cards:
-        if g in counted_out:
+        if g in waiting:
+            waiting_changed[deck_name] = waiting_changed.get(deck_name, 0) + 1
+        elif g in counted_out:
             suppressed_changed[deck_name] = suppressed_changed.get(deck_name, 0) + 1
 
     def _deck_summary_row(d, folded=0):
@@ -2112,10 +2115,16 @@ def update_decks():
             # preview" reads as "this deck is being skipped", which it isn't.
             return ("deck", _text(short), "couldn't preview · still imports")
         changing = len(pc[3]) - suppressed_changed.get(d["name"], 0)
-        kept = f"{pc[0]} kept" + (f" ({changing} changing)" if changing else "")
-        new_count = sum(1 for _rid, _fields, g in pc[2] if g not in counted_out)
+        held_back = waiting_changed.get(d["name"], 0)
+        of_them = f", {held_back} of them waiting at Later" if held_back else ""
+        kept = f"{pc[0]} kept" + (f" ({changing} changing{of_them})" if changing else "")
+        new_count = sum(1 for _rid, _fields, g in pc[2]
+                        if g not in counted_out or g in waiting)
+        new_waiting = sum(1 for _rid, _fields, g in pc[2] if g in waiting)
+        new = f"{new_count} new" + (f" ({new_waiting} waiting at Later)"
+                                    if new_waiting else "")
         tail = f" · {folded} in folded groups" if folded else ""
-        return ("deck", _text(short), f"{kept} · {new_count} new{tail}")
+        return ("deck", _text(short), f"{kept} · {new}{tail}")
 
     muted = colors()["muted"]
     sections = []
