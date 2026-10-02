@@ -110,18 +110,24 @@ def _https_parts(url):
     return parts.hostname, parts.port or 443, target
 
 
-def _read_capped(r, max_bytes):
+def _read_capped(r, max_bytes, deadline=None):
+    """The body, at most `max_bytes`, read in whatever pieces arrive (read1 returns a
+    short read rather than waiting to fill a chunk) with the deadline checked after
+    each one."""
+    read = getattr(r, "read1", None) or r.read
     buf = bytearray()
     while True:
-        chunk = r.read(_CHUNK)
+        chunk = read(_CHUNK)
         if not chunk:
             return bytes(buf)
         buf += chunk
         if len(buf) > max_bytes:
             raise RuntimeError("image is too large")
+        if deadline is not None and time.monotonic() > deadline:
+            raise _timed_out()
 
 
-def _image_from(r, max_bytes):
+def _image_from(r, max_bytes, deadline=None):
     ctype = (r.getheader("Content-Type") or "").split(";")[0].strip().lower()
     if ctype not in _IMAGE_TYPES:
         raise RuntimeError(f"not an image ({ctype or 'no content type'})")
@@ -134,7 +140,7 @@ def _image_from(r, max_bytes):
             declared = None
         if declared is not None and declared > max_bytes:
             raise RuntimeError("image is too large")
-    data = _read_capped(r, max_bytes)
+    data = _read_capped(r, max_bytes, deadline)
     try:
         ai_logic.check_image_bytes(f"image.{ext}", data)
     except ValueError as e:
@@ -142,11 +148,15 @@ def _image_from(r, max_bytes):
     return data, ext
 
 
-def _connect_any(host, ips, port, timeout):
-    """A connection to the first of `ips` that accepts one."""
+def _connect_any(host, ips, port, timeout, deadline):
+    """A connection to the first of `ips` that accepts one, each attempt given
+    whatever time is left before `deadline`."""
     last = None
     for ip in ips:
-        conn = _open_connection(host, ip, port, timeout)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _timed_out()
+        conn = _open_connection(host, ip, port, max(0.1, min(timeout, remaining)))
         try:
             conn.connect()
             return conn
@@ -176,22 +186,27 @@ def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT,
             raise _timed_out()
         ips = checked_addresses(host, port, remaining)
         conn = None
+        raw = []
         expired = threading.Event()
 
         def expire():
+            # The socket captured at connect: http.client drops conn.sock once a
+            # close-delimited response starts, but the reader still holds this one.
             expired.set()
-            sock = getattr(conn, "sock", None)
-            if sock is not None:
+            for sock in raw:
                 try:
                     sock.shutdown(socket.SHUT_RDWR)
-                except OSError:
+                except (OSError, ValueError):
                     pass
         watchdog = threading.Timer(max(0.0, deadline - time.monotonic()), expire)
         watchdog.daemon = True
         watchdog.start()
         try:
-            conn = _connect_any(host, ips, port,
-                                max(0.1, min(timeout, deadline - time.monotonic())))
+            conn = _connect_any(host, ips, port, timeout, deadline)
+            if getattr(conn, "sock", None) is not None:
+                raw.append(conn.sock)
+            if expired.is_set():
+                expire()
             conn.request("GET", target, headers={"User-Agent": _USER_AGENT,
                                                  "Accept": "image/*"})
             r = conn.getresponse()
@@ -207,7 +222,7 @@ def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT,
             if r.status != 200:
                 raise HttpStatusError(f"server returned HTTP {r.status}", r.status)
             try:
-                result = _image_from(r, max_bytes)
+                result = _image_from(r, max_bytes, deadline)
             except RuntimeError:
                 if expired.is_set():
                     raise _timed_out() from None
@@ -221,6 +236,11 @@ def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT,
             if expired.is_set():
                 raise _timed_out() from e
             raise TransportError(f"couldn't download the image ({e})") from e
+        except ValueError as e:
+            # A read on a socket the deadline already shut down.
+            if expired.is_set():
+                raise _timed_out() from e
+            raise
         finally:
             watchdog.cancel()
             if conn is not None:

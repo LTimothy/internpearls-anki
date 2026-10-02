@@ -268,3 +268,70 @@ def test_the_deadline_covers_every_hop(monkeypatch):
     with pytest.raises(RuntimeError, match="timed out"):
         ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.5)
     assert len(web.connected) < 4
+
+
+def test_a_close_delimited_trickle_on_a_real_socket_stops_at_the_deadline(monkeypatch):
+    """HTTP/1.0 with Connection: close and no length: http.client lets go of
+    conn.sock once the response starts, so the deadline has to reach the socket
+    it captured at connect and the reader has to check it between pieces."""
+    import http.client
+    import time
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = server.accept()
+        try:
+            conn.sendall(b"HTTP/1.0 200 OK\r\nContent-Type: image/png\r\n"
+                         b"Connection: close\r\n\r\n" + PNG[:8])
+            for _ in range(100):
+                if stop.is_set():
+                    break
+                conn.sendall(b"\x00")
+                time.sleep(0.2)
+        except OSError:
+            pass
+        finally:
+            conn.close()
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    monkeypatch.setattr(ai_fetch, "_resolve", lambda host, p: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", p))])
+    monkeypatch.setattr(
+        ai_fetch, "_open_connection",
+        lambda host, ip, p, timeout: http.client.HTTPConnection(
+            "127.0.0.1", port, timeout=timeout))
+    start = time.monotonic()
+    try:
+        with pytest.raises(RuntimeError, match="timed out"):
+            ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=1.0)
+        assert time.monotonic() - start < 3
+    finally:
+        stop.set()
+        server.close()
+
+
+
+class _ClosedAfterShutdown(_Response):
+    """A read on an SSL socket the deadline shut down raises ValueError."""
+
+    def __init__(self, sock):
+        super().__init__(200, {"Content-Type": "image/png"}, PNG)
+        self.sock = sock
+
+    def read(self, n=-1):
+        import time
+        while not self.sock.down:
+            time.sleep(0.05)
+            return b"\x00"
+        raise ValueError("Read on closed or unwrapped SSL socket.")
+
+
+def test_a_read_on_a_socket_shut_by_the_deadline_reads_as_a_timeout(monkeypatch):
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _ClosedAfterShutdown})
+    with pytest.raises(RuntimeError, match="timed out"):
+        ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.4)
