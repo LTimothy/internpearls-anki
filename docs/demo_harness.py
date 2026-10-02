@@ -470,8 +470,7 @@ def boot():
     empty collection and decorate it with a reviewer's state (intervals, a
     couple of personal annotations)."""
     _install_demo_net()
-    for hook in sys.modules["aqt"].gui_hooks.main_window_did_init:
-        hook()
+    sys.modules["aqt"].gui_hooks.main_window_did_init()
 
     MOCK.mw._config = {"github_decks_repo": config.EXAMPLE_REPO,
                        "scope_tag": config.EXAMPLE_SCOPE_TAG,

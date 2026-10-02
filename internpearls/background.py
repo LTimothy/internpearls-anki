@@ -446,8 +446,9 @@ def _schedule_background_checks():
     QTimer.singleShot(2000, _check_addon_updates_background)
     QTimer.singleShot(3000, _sweep_ai_scratch_background)
     QTimer.singleShot(5000, _held_cards_nudge)
-    if _on_profile_open not in gui_hooks.profile_did_open:
-        gui_hooks.profile_did_open.append(_on_profile_open)
+    # Anki's hooks offer no membership test; remove() ignores an absent callback.
+    gui_hooks.profile_did_open.remove(_on_profile_open)
+    gui_hooks.profile_did_open.append(_on_profile_open)
     cfg = _cfg()
     if cfg["auto_sync_decks"]:
         # Anki opens the profile after this runs; until then the first check is armed

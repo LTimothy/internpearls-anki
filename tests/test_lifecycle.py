@@ -11,8 +11,7 @@ def _open_profile(anki, path):
     col = mock_anki.MockCollection()
     col.path = path
     anki.mw.col = col
-    for hook in list(sys.modules["aqt"].gui_hooks.profile_did_open):
-        hook()
+    sys.modules["aqt"].gui_hooks.profile_did_open()
     return col
 
 
@@ -89,7 +88,10 @@ def test_auto_sync_first_check_is_armed_by_profile_open(anki, tmp_path):
     import aqt.qt as aqt_qt
     from internpearls import background
     anki.mw._config = {"auto_sync_decks": True, "auto_sync_interval_minutes": 60}
+    background._stop_auto_sync_timer()
     _profile_hooks_registered(anki)
+    assert background._auto_sync_timer is not None, "the poll was never started"
+    assert background._auto_sync_timer.started == 60 * 60 * 1000
     assert not [fn for _ms, fn in aqt_qt.QTimer.single_shots
                 if fn is background._auto_sync_check]
 
@@ -114,8 +116,7 @@ def test_profile_open_hook_is_registered_once(anki):
     from internpearls import background
     _profile_hooks_registered(anki)
     _profile_hooks_registered(anki)
-    hooks = sys.modules["aqt"].gui_hooks.profile_did_open
-    assert hooks.count(background._on_profile_open) == 1
+    assert sys.modules["aqt"].gui_hooks.profile_did_open.count() == 1
 
 
 # ------------------------------------------------------- full collection backup
