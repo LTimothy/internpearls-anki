@@ -962,6 +962,21 @@ def test_settings_interval_range_preserves_the_supported_weekly_limit(anki):
         config.AUTO_SYNC_INTERVAL_FLOOR_MIN
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_config_reads_a_non_finite_number_as_its_default(anki, bad):
+    """Python's json parses Infinity and NaN from a hand-edited config.json; every
+    numeric setting must read as its default rather than raise or leak through."""
+    from internpearls import config
+
+    anki.mw._config = {"auto_sync_interval_minutes": bad,
+                       "dim_images_night_mode_percent": bad,
+                       "ai_default_count": bad}
+    cfg = config._cfg()
+    assert cfg["auto_sync_interval_minutes"] == config.AUTO_SYNC_INTERVAL_DEFAULT_MIN
+    assert cfg["dim_images_night_mode_percent"] == config.NIGHT_MODE_DIM_PERCENT_DEFAULT
+    assert cfg["ai_default_count"] == 0
+
+
 def test_settings_spin_controls_have_accessible_names(anki):
     from internpearls import dialogs
 
