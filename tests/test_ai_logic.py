@@ -1743,6 +1743,16 @@ def test_a_core_type_found_by_name_maps_only_the_fields_it_has():
         renamed, {"Front": "Vorderseite", "Back": "Rückseite"})
 
 
+def test_a_named_core_type_with_another_second_field_maps_it_by_shape():
+    cloze = _model("Cloze", ["Text", "Extra"], "{{cloze:Text}}",
+                   "{{cloze:Text}}<br>{{Extra}}", mtype=1)
+    assert ai_logic.find_core_notetype([cloze], "Cloze") == (
+        cloze, {"Text": "Text", "Back Extra": "Extra"})
+    basic = _model("Basic", ["Front", "Answer"], "{{Front}}", "{{FrontSide}}{{Answer}}")
+    assert ai_logic.find_core_notetype([basic], "Basic") == (
+        basic, {"Front": "Front", "Back": "Answer"})
+
+
 def test_a_type_named_cloze_that_is_not_a_cloze_type_is_not_taken():
     fake = _model("Cloze", ["Text", "Back Extra"], "{{Text}}", "{{Back Extra}}", mtype=0)
     model, _ = ai_logic.find_core_notetype([fake, _JAPANESE_CLOZE], "Cloze")

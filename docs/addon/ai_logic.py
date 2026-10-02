@@ -87,20 +87,24 @@ def _stock_shape(model, kind):
 
 def find_core_notetype(models, kind):
     """(model, {prompt field: model field}) for the collection's stock `kind`
-    ("Basic" or "Cloze"): the note type called that, else the one shaped like it, so
-    a collection whose stock types carry translated names still works. The one called
-    that needs only its first field; a field it lacks is left out of the mapping. Among
-    several shaped alike, one Anki recorded as created from that stock kind wins, then
-    the oldest (lowest id). (None, {}) when there is none."""
+    ("Basic" or "Cloze"): the note type called that when it has every field the
+    prompt uses, else the one shaped like it, so a collection whose stock types carry
+    translated names still works. Among several shaped alike, one Anki recorded as
+    created from that stock kind wins, then the oldest (lowest id). With nothing
+    shaped, the type called that is still taken if it has the first field, mapping
+    only the fields it has. (None, {}) when there is none."""
     model_type, ours = CORE_NOTE_TYPES[kind]
     models = list(models or [])
     named = next((m for m in models if m.get("name") == kind), None)
+    names = []
     if named is not None and named.get("type", 0) == model_type:
         names = [f.get("name") for f in named.get("flds") or []]
-        if ours[0] in names:
-            return named, {n: n for n in ours if n in names}
+        if all(n in names for n in ours):
+            return named, {n: n for n in ours}
     shaped = [m for m in models if _stock_shape(m, kind)]
     if not shaped:
+        if ours[0] in names:
+            return named, {n: n for n in ours if n in names}
         return None, {}
     model = min(shaped, key=lambda m: (m.get("originalStockKind") != _STOCK_KIND[kind],
                                        m.get("id", float("inf"))))
