@@ -462,3 +462,25 @@ def test_a_class_label_has_one_entry_per_class_value():
     assert contrast_marks([], "type 2 or type ii")[0] == frozenset({"type 2"})
     # a bare numeral nests inside the same class written as a phrase
     assert contrast_label("Type II", "Type 2") == ""
+
+
+def test_roman_class_values_run_past_ten():
+    for a, b in (("Factor XII deficiency prolongs the aPTT", "Factor 12 deficiency prolongs the aPTT"),
+                 ("Factor XIII stabilises fibrin clot", "Factor 13 stabilises fibrin clot"),
+                 ("Cranial nerve XII moves the tongue", "CN 12 moves the tongue")):
+        assert contrast_label(a, b) == "", (a, contrast_label(a, b))
+    assert contrast_label("Factor XII deficiency", "Factor XIII deficiency") == (
+        "Differs: factor XII vs factor XIII")
+    assert contrast_label("Factor XIII deficiency", "Factor 12 deficiency") == (
+        "Differs: factor XIII vs factor 12")
+
+
+def test_invalid_roman_forms_are_not_numerals():
+    from internpearls.dupes import _roman_value
+    assert [_roman_value(r) for r in ("iv", "xiv", "xxxix")] == [4, 14, 39]
+    for bad in ("iiii", "ic", "vv", "xxxx", "mix", "in", ""):
+        assert _roman_value(bad) is None, bad
+    for text in ("type iiii reaction", "type ic reaction", "lead in the circuit",
+                 "type mix of cells"):
+        assert contrast_marks([], text)[0] == frozenset(), text
+    assert contrast_label("Type iiii", "Type 4") == ""
