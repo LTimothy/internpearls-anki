@@ -2382,3 +2382,26 @@ def test_hand_edited_fields_are_cleaned_like_generated_ones(anki, monkeypatch):
     monkeypatch.setattr(ai_dialog, "_EditCardDialog", _Edit)
     dlg._edit_card(0)
     assert dlg.session.cards[0]["fields"]["Front"] == 'q <img src="x">'
+
+
+# === assistant text is shown as plain text =================================
+
+def test_a_failed_run_shows_assistant_text_as_plain_text(anki, monkeypatch):
+    shown = []
+    monkeypatch.setattr(ai_dialog, "_warn",
+                        lambda text, **kw: shown.append((text, kw.get("textFormat"))))
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="link_error")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    assert shown and "evil.example" in shown[0][0]
+    assert shown[0][1] == "plain"
+
+
+def test_status_lines_that_carry_assistant_text_are_plain_text(anki, monkeypatch):
+    from aqt.qt import Qt
+    from internpearls import ai_setup
+    dlg = _ready_dialog(anki, monkeypatch)
+    assert dlg.backend_test_status._format == Qt.TextFormat.PlainText
+    backends = ai_setup._AIBackendsDialog(anki.mw)
+    assert backends.panel.test_status._format == Qt.TextFormat.PlainText
+    assert backends.overall._format == Qt.TextFormat.PlainText

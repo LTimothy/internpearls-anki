@@ -424,6 +424,7 @@ class _SettingsPanel(QWidget):
         self.test_btn = QPushButton("Test connection")
         self.test_btn.setAccessibleName(f"Test connection: {meta['label']}")
         self.test_status = _wrapped_hint("Not tested yet")
+        self.test_status.setTextFormat(Qt.TextFormat.PlainText)
         self._path_box = path_box
         self._test_box = test_box = QWidget()
         test_lay = QHBoxLayout(test_box)
@@ -603,6 +604,7 @@ class _AIBackendsDialog(QDialog):
         brow = QHBoxLayout()
         self.recheck_btn = link_button("Re-check", on_click=lambda: self._guard(self.recheck))
         self.overall = _wrapped_hint("")
+        self.overall.setTextFormat(Qt.TextFormat.PlainText)
         brow.addWidget(self.recheck_btn)
         brow.addWidget(self.overall, 1)
         lay.addLayout(brow)

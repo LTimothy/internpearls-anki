@@ -881,7 +881,7 @@ class _GenerateDialog(QDialog):
             return fn(*args, **kwargs)
         except Exception as e:
             print(traceback.format_exc())
-            _warn(f"Something went wrong: {e}")
+            _warn(f"Something went wrong: {e}", textFormat="plain")
 
     def _guard_completion(self, fn, *args, **kwargs):
         """Like _guard, but for the two QTimer callbacks that drive generation to
@@ -929,7 +929,7 @@ class _GenerateDialog(QDialog):
             # Warned only now that the run is stopped. The warning is modal, so
             # warning first left the assistant running for as long as it stayed
             # open, and let the modal's event loop re-enter the still-live poll.
-            _warn(f"Something went wrong: {e}")
+            _warn(f"Something went wrong: {e}", textFormat="plain")
             try:
                 self._return_to_input_or_review()
             except Exception:
@@ -1060,6 +1060,7 @@ class _GenerateDialog(QDialog):
         # sentence rather than folded into it: it is written by a background
         # poll that knows nothing about the rest of the row.
         self.backend_test_status = _wrapped_hint("Not tested yet")
+        self.backend_test_status.setTextFormat(Qt.TextFormat.PlainText)
         self.backend_row.body_lay.addWidget(self.backend_test_status)
         content_lay.addWidget(self.backend_row)
 
@@ -1496,7 +1497,7 @@ class _GenerateDialog(QDialog):
                 return False
             path = os.path.join(scratch, name)
             if os.path.dirname(os.path.realpath(path)) != scratch_real:
-                _warn(f"Could not remove attachment {name}: its path changed. Close the wizard to discard the session.")
+                _warn(f"Could not remove attachment {name}: its path changed. Close the wizard to discard the session.", textFormat="plain")
                 return False
             try:
                 os.remove(path)
@@ -1504,7 +1505,7 @@ class _GenerateDialog(QDialog):
                 pass
             except OSError as e:
                 removed = False
-                _warn(f"Could not remove attachment {name}: {e}. It is still attached; retry removal before generating.")
+                _warn(f"Could not remove attachment {name}: {e}. It is still attached; retry removal before generating.", textFormat="plain")
         return removed
 
     def _commit_attachment_outputs(self, attachments):
@@ -1540,7 +1541,7 @@ class _GenerateDialog(QDialog):
                         os.remove(os.path.join(s.scratch, name))
                     except OSError:
                         pass
-                _warn(f"Could not attach {os.path.basename(path)}: {e}")
+                _warn(f"Could not attach {os.path.basename(path)}: {e}", textFormat="plain")
                 continue
             updated = dict(meta)
             updated["images"] = moved
@@ -1725,7 +1726,7 @@ class _GenerateDialog(QDialog):
             committed = self._commit_attachment_outputs(self._attach_results)
             self.session.attachments.extend(committed)
             for unexpected, message in self._attach_failures:
-                _warn(f"Something went wrong: {message}" if unexpected else message)
+                _warn(f"Something went wrong: {message}" if unexpected else message, textFormat="plain")
         shutil.rmtree(self._attach_extract_dir, ignore_errors=True)
         self._attach_extract_dir = None
         self.attach_btn.setEnabled(True)
@@ -2271,11 +2272,11 @@ class _GenerateDialog(QDialog):
                  "pick a lower-effort model in AI Backends (for "
                  "Antigravity, an id ending in -low), or use another "
                  "assistant. The full stream is in ai_last_run.log inside "
-                 "the add-on's user_files folder.")
+                 "the add-on's user_files folder.", textFormat="plain")
             self._return_to_input_or_review()
             return
         if err or not res:
-            _warn(f"Generation failed: {err}")
+            _warn(f"Generation failed: {err}", textFormat="plain")
             self._return_to_input_or_review()
             return
         if s.check:
@@ -2289,7 +2290,7 @@ class _GenerateDialog(QDialog):
                                        extra_error=errors)
                 return
             _warn("The assistant's reply still could not be used after a "
-                  "retry:\n" + "\n".join(errors[:5]))
+                  "retry:\n" + "\n".join(errors[:5]), textFormat="plain")
             self._return_to_input_or_review()
             return
         s.tokens_last_run = res["tokens"]
@@ -2350,7 +2351,7 @@ class _GenerateDialog(QDialog):
                                        extra_error=errors)
                 return
             _warn("The assistant's fact-check reply still could not be used "
-                  "after a retry:\n" + "\n".join(errors[:5]))
+                  "after a retry:\n" + "\n".join(errors[:5]), textFormat="plain")
             self._return_to_input_or_review()
             return
         s.tokens_last_run = res["tokens"]
@@ -3178,7 +3179,7 @@ class _GenerateDialog(QDialog):
                     # it (and, per I2, already did: this is the fallback for
                     # a card the user included anyway).
                     _warn(f"Skipping an image on card {pos + 1}: "
-                          f"{(res or {}).get('error', 'not resolved')}")
+                          f"{(res or {}).get('error', 'not resolved')}", textFormat="plain")
                     continue
                 if res["kind"] == "svg":
                     name = f"generated-{svg_index}.svg"
@@ -3213,7 +3214,7 @@ class _GenerateDialog(QDialog):
             _warn(f"The import stopped part-way ({partial.__cause__}). "
                   f"Added: {plural(landed, 'card')}. Not added: "
                   f"{plural(len(pairs) - landed, 'card')}. Import again adds only "
-                  "the rest, and Edit > Undo removes the cards already added.")
+                  "the rest, and Edit > Undo removes the cards already added.", textFormat="plain")
             return 0
         # add_generated_notes only writes the collection; nothing about that tells
         # Anki's main window a new undo entry exists or that the deck list changed

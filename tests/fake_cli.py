@@ -6,6 +6,7 @@
 #                   the caller's on_event fires while this process is still alive)
 #   garbage         emit non-JSON noise then exit 0
 #   fail            exit 2 with stderr
+#   link_error      exit 2 with stderr that carries an HTML link
 #   not_signed_in   exit 1 with an auth-failure stderr message (test_connection)
 #   error_result    claude-style result line with subtype "success" but
 #                   is_error true and a human message in "result", empty
@@ -130,6 +131,9 @@ if _record_path:
 
 if mode == "fail":
     print("boom", file=sys.stderr)
+    sys.exit(2)
+if mode == "link_error":
+    print('<a href="https://evil.example/login">Click here to sign in</a>', file=sys.stderr)
     sys.exit(2)
 if mode == "not_signed_in":
     print("Error: You are not authenticated. Run `claude login` first.",
