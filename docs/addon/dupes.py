@@ -198,12 +198,6 @@ def contrast_label(text_a, text_b):
     return f"Differs: {'; '.join(parts)}" if parts else ""
 
 
-# A contrasting pair keeps only this share of its cosine score. It sits strictly below the
-# lowest threshold that applies the evidence gate (Normal, 0.5), so such a pair can appear
-# only at Loose sensitivity and never reads as an exact duplicate.
-CONTRAST_FACTOR = 0.45
-
-
 class Index:
     """An inverted index over a pool of rows, with IDF weights and per-document
     weight vectors, built once and reused for every query against that pool."""
@@ -270,6 +264,10 @@ def build_index(rows, checkpoint=None):
 # The scan's Normal sensitivity: its default, and what the card wizard checks drafts at.
 DEFAULT_THRESHOLD = 0.5
 DEFAULT_MIN_SHARED = 2
+# A contrasting pair scores no higher than this, just under the Normal threshold: it never
+# reads as an exact duplicate, never shows at Normal or Strict, and shows at Loose
+# whenever its own score passes Loose.
+CONTRAST_CAP = round(DEFAULT_THRESHOLD - 0.01, 2)
 
 
 def find_candidates(left_rows, right_rows, threshold=DEFAULT_THRESHOLD, top=3,
@@ -289,9 +287,9 @@ def find_candidates(left_rows, right_rows, threshold=DEFAULT_THRESHOLD, top=3,
     40% of the shorter side's own token weight. A pair that fails either check is
     dropped outright, whatever its cosine score says.
 
-    A pair whose texts disagree on a type, class or number token, or on whether
-    anything is negated (see `contrasts`), keeps only `CONTRAST_FACTOR` of its cosine
-    score before the threshold applies, so it never scores as an exact duplicate.
+    A pair whose texts disagree on a class-like token, or on whether anything is
+    negated (see `contrasts`), scores at most `CONTRAST_CAP`, so it never scores as an
+    exact duplicate and appears only at Loose sensitivity.
 
     Builds one `Index` over `right_rows` and queries it once per left row, walking
     only the postings lists for tokens the query actually has (an inverted index),
@@ -354,7 +352,7 @@ def search(index, left_rows, threshold=DEFAULT_THRESHOLD, top=3,
                 index.doc_marks[ri] = contrast_marks(
                     index.doc_tokens[ri], normalise(index.rows[ri][1]))
             if contrasts(marks, index.doc_marks[ri]):
-                cosine *= CONTRAST_FACTOR
+                cosine = min(cosine, CONTRAST_CAP)
                 if cosine < threshold:
                     continue
             if min_shared:

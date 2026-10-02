@@ -1934,6 +1934,14 @@ def test_a_paraphrased_draft_matches_the_existing_card():
     assert near[texts[0]][0] == 10 and near[texts[0]][2] == "Pharm::Pressors"
 
 
+def test_a_short_contrasting_draft_is_not_a_duplicate():
+    from internpearls import dupes
+    index = dupes.build_index([(1, "Low free T3 with an elevated TSH suggests "
+                                   "primary hypothyroidism", "Endo", "Basic")])
+    text = "Low free T4 with an elevated TSH suggests primary hypothyroidism"
+    assert ai_logic.near_duplicates([text], index) == {text: None}
+
+
 def test_a_contrasting_draft_is_not_a_duplicate():
     text = ai_logic.draft_text(
         _draft("Which thyroid hormone is more potent at the nuclear receptor?", "T4"))

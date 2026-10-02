@@ -1,7 +1,7 @@
 import random
 import time
 
-from internpearls.dupes import (CONTRAST_FACTOR, build_index, contrast_label,
+from internpearls.dupes import (CONTRAST_CAP, build_index, contrast_label,
                                 contrast_marks, find_candidates, normalise, pair_key, tokenize)
 
 
@@ -351,8 +351,38 @@ _LONG_T3 = ("T3 raises basal metabolic rate and heart rate through nuclear recep
 _LONG_T4 = _LONG_T3.replace("T3", "T4")
 
 
-def test_contrast_factor_sits_below_the_normal_threshold():
-    assert CONTRAST_FACTOR < 0.5
+def test_contrast_cap_sits_just_below_the_normal_threshold():
+    assert CONTRAST_CAP == 0.49
+
+
+_SHORT_T3 = "Low free T3 with an elevated TSH suggests primary hypothyroidism"
+_SHORT_T4 = _SHORT_T3.replace("T3", "T4")
+
+
+def test_a_short_contrasting_pair_shows_at_loose_only_at_its_capped_score():
+    raw = _score(_SHORT_T3, _SHORT_T4.replace("T4", "T3"), threshold=0.0)
+    assert raw > 0.99
+    assert _score(_SHORT_T3, _SHORT_T4, threshold=0.6, min_shared=2) is None
+    assert _score(_SHORT_T3, _SHORT_T4, threshold=0.5, min_shared=2) is None
+    loose = _score(_SHORT_T3, _SHORT_T4, threshold=0.4, min_shared=0)
+    assert loose == CONTRAST_CAP
+    # a contrast never lifts a pair: one already below Loose stays out
+    assert _score(_SHORT_T3, "Hypothyroidism after surgery, T4", threshold=0.4,
+                  min_shared=0) is None
+
+
+def test_the_cap_only_lowers_a_contrasting_pair_and_never_lifts_one(monkeypatch):
+    from internpearls import dupes
+    a = _SHORT_T3
+    high = "Low free T4 with an elevated TSH suggests hypothyroidism in the older adult"
+    low = "Low free T4 and an elevated TSH in an older adult"
+    monkeypatch.setattr(dupes, "CONTRAST_CAP", 1.0)
+    raw_high = _score(a, high, threshold=0.3, min_shared=0)
+    raw_low = _score(a, low, threshold=0.3, min_shared=0)
+    monkeypatch.undo()
+    assert raw_high > CONTRAST_CAP > raw_low > 0.3
+    assert _score(a, high, threshold=0.3, min_shared=0) == CONTRAST_CAP
+    assert _score(a, low, threshold=0.3, min_shared=0) == raw_low
 
 
 def test_contrasting_pairs_appear_only_at_loose_sensitivity():
