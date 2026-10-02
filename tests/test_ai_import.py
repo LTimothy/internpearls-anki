@@ -337,3 +337,15 @@ def test_without_a_recorded_stock_kind_the_oldest_shape_match_wins(anki):
     collection.add_generated_notes([_card("Q1", note_type="Basic")], media={},
                                    deck_name=DECK, scope_tag=SCOPE)
     assert next(iter(anki.col._notes.values())).model is einfach
+
+
+def test_sources_land_on_the_second_field_of_a_cloze_named_type_with_another_name(anki):
+    cloze = _stock("Cloze", ("Text", "Extra"), mtype=1, mid=4)
+    anki.col.models._models.append(cloze)
+    card = {"note_type": "Cloze", "fields": {"Text": "{{c1::x}}", "Back Extra": "more"},
+            "tags": [], "images": [], "rationale": "",
+            "_sources": [{"title": "Ref", "url": "https://example.com"}]}
+    collection.add_generated_notes([card], media={}, deck_name=DECK, scope_tag=SCOPE)
+    note = next(iter(anki.col._notes.values()))
+    assert note.model is cloze
+    assert note["Extra"].startswith("more<div") and "example.com" in note["Extra"]
