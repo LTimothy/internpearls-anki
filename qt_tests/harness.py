@@ -919,8 +919,8 @@ def _scene_declined(mock, opts):
 
 
 def _ai_backend_available(kind_available="claude"):
-    """Patch ai_cli detection so the wizard's __init__ (which runs _detect
-    synchronously) lands on the requested page without a real CLI on disk.
+    """Patch ai_cli detection so the wizard lands on the requested page once its
+    detection settles (render() waits for it) without a real CLI on disk.
     Set directly on the module rather than through pytest's monkeypatch,
     which isn't available here (this is a render tool, not a test); every
     scene that needs a particular state sets these explicitly, so no scene

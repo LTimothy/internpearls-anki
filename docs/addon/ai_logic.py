@@ -41,6 +41,8 @@ _SVG_RECT_PAIR_RE = re.compile(r"<rect\b[^>]*?>.*?</rect>", re.S)
 _SVG_RECT_SELF_RE = re.compile(r"<rect\b[^>]*?/>", re.S)
 PRIMARY_FIELD = {"Study Deck - Basic": "Front", "Study Deck - Cloze": "Text",
                  "Study Deck - Image ID": "Image", "Basic": "Front", "Cloze": "Text"}
+# Anki's two stock note types, by the names and fields the prompt uses for them.
+CORE_NOTE_TYPES = {"Basic": (0, ("Front", "Back")), "Cloze": (1, ("Text", "Back Extra"))}
 LONG_ANSWER_WORDS = 60
 AUTO_COUNT_CEILING = 40
 AUTO_DEPTH_CHARS = 1500
@@ -63,6 +65,43 @@ def _count_instruction(count):
                 f"{AUTO_COUNT_CEILING} testable points, keep the ones most likely to be "
                 f"tested. State the count first as {{\"count\": N, \"cards\": [...]}}.")
     return f"Make exactly {int(count)} cards."
+
+
+def _stock_shape(model, kind):
+    """True when `model` has the shape of Anki's stock note type `kind`, whatever
+    language its names are in: the same type, two fields, and the stock template."""
+    model_type, _ = CORE_NOTE_TYPES[kind]
+    flds = sorted(model.get("flds") or [], key=lambda f: f.get("ord", 0))
+    tmpls = model.get("tmpls") or []
+    if model.get("type", 0) != model_type or len(flds) != 2 or len(tmpls) != 1:
+        return False
+    first, second = (f.get("name", "") for f in flds)
+    qfmt = " ".join((tmpls[0].get("qfmt") or "").split())
+    afmt = tmpls[0].get("afmt") or ""
+    if kind == "Cloze":
+        return qfmt == f"{{{{cloze:{first}}}}}" and f"{{{{{second}}}}}" in afmt
+    return (qfmt == f"{{{{{first}}}}}" and "{{FrontSide}}" in afmt
+            and f"{{{{{second}}}}}" in afmt)
+
+
+def find_core_notetype(models, kind):
+    """(model, {prompt field: model field}) for the collection's stock `kind`
+    ("Basic" or "Cloze"): the note type called that, else the one shaped like it, so
+    a collection whose stock types carry translated names still works. (None, {})
+    when there is none, or when several translated candidates leave it ambiguous."""
+    _, ours = CORE_NOTE_TYPES[kind]
+    models = list(models or [])
+    named = next((m for m in models if m.get("name") == kind), None)
+    if named is not None:
+        names = [f.get("name") for f in named.get("flds") or []]
+        if all(n in names for n in ours):
+            return named, {n: n for n in ours}
+    shaped = [m for m in models if _stock_shape(m, kind)]
+    if len(shaped) != 1:
+        return None, {}
+    model = shaped[0]
+    theirs = [f["name"] for f in sorted(model["flds"], key=lambda f: f.get("ord", 0))]
+    return model, dict(zip(ours, theirs))
 
 
 def generated_guid():

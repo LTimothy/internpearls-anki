@@ -1681,3 +1681,44 @@ def test_non_finite_numbers_in_saved_usage_are_dropped():
         "Today via this add-on: 2 runs, ~0k tokens"
     assert ai_logic.median_duration(reg, "codex", "quick") == 30.0
     assert ai_logic.duration_estimate_line(reg, "codex", "quick").endswith("30s")
+
+
+# === stock note types are found by shape, not only by English name ==========
+
+def _model(name, fields, qfmt, afmt, mtype=0):
+    return {"name": name, "type": mtype,
+            "flds": [{"name": f, "ord": i} for i, f in enumerate(fields)],
+            "tmpls": [{"name": "Karte 1", "qfmt": qfmt, "afmt": afmt, "ord": 0}]}
+
+
+_GERMAN_BASIC = _model("Einfach", ["Vorderseite", "Rückseite"], "{{Vorderseite}}",
+                       "{{FrontSide}}\n\n<hr id=answer>\n\n{{Rückseite}}")
+_JAPANESE_CLOZE = _model("穴埋め", ["テキスト", "裏面追加"],
+                         "{{cloze:テキスト}}",
+                         "{{cloze:テキスト}}<br>\n{{裏面追加}}", mtype=1)
+_STUDY_BASIC = _model("Study Deck - Basic", ["Front", "Back", "Why"], "{{Front}}",
+                      "{{FrontSide}}<hr id=answer>{{Back}}")
+
+
+def test_core_basic_is_found_by_english_name_first():
+    english = _model("Basic", ["Front", "Back"], "{{Front}}", "{{FrontSide}}{{Back}}")
+    model, fields = ai_logic.find_core_notetype([_GERMAN_BASIC, english], "Basic")
+    assert model is english and fields == {"Front": "Front", "Back": "Back"}
+
+
+def test_core_basic_in_a_german_collection_maps_its_fields():
+    model, fields = ai_logic.find_core_notetype([_STUDY_BASIC, _GERMAN_BASIC], "Basic")
+    assert model is _GERMAN_BASIC
+    assert fields == {"Front": "Vorderseite", "Back": "Rückseite"}
+
+
+def test_core_cloze_in_a_japanese_collection_maps_its_fields():
+    model, fields = ai_logic.find_core_notetype([_GERMAN_BASIC, _JAPANESE_CLOZE], "Cloze")
+    assert model is _JAPANESE_CLOZE
+    assert fields == {"Text": "テキスト", "Back Extra": "裏面追加"}
+
+
+def test_no_core_type_or_an_ambiguous_one_finds_nothing():
+    assert ai_logic.find_core_notetype([_STUDY_BASIC], "Basic") == (None, {})
+    other = _model("Grund", ["A", "B"], "{{A}}", "{{FrontSide}}{{B}}")
+    assert ai_logic.find_core_notetype([_GERMAN_BASIC, other], "Basic") == (None, {})
