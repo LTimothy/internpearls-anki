@@ -830,3 +830,76 @@ def test_a_deck_path_is_quoted_into_the_contents_url(monkeypatch):
     assert seen[0][0].full_url == (
         "https://api.github.com/repos/owner/repo/contents/"
         "decks/A%20deck%3Fref%3Devil%23x.apkg?ref=main")
+
+
+def _trickle(h, head, line, forever=100):
+    """Send `head` at once, then `line` over and over, slowly."""
+    import time
+    try:
+        h.wfile.write(head)
+        h.wfile.flush()
+        for _ in range(forever):
+            h.wfile.write(line)
+            h.wfile.flush()
+            time.sleep(0.05)
+    except OSError:
+        pass
+
+
+@pytest.mark.parametrize("head,line", [
+    # A chunk-size line that never ends: urllib is inside readline, after the headers.
+    (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", b"0"),
+    # The last chunk, then trailer lines that never stop.
+    (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n",
+     b"X-Trailer: y\r\n"),
+])
+def test_a_stall_inside_a_chunked_body_is_cut_off_at_the_deadline(head, line):
+    """Once the headers are read urllib drops its own reference to the socket, so the
+    deadline has to reach the socket it recorded when the connection opened."""
+    import time
+    from internpearls import net
+    base, _seen, server = _serve(lambda h: _trickle(h, head, line))
+    start = time.monotonic()
+    try:
+        with pytest.raises(net.TransportError, match="took too long"):
+            net._http_get(base + "/deck.apkg", timeout=5, deadline=0.5)
+    finally:
+        server.shutdown()
+    assert time.monotonic() - start < 3
+
+
+def test_a_redirect_with_a_malformed_port_drops_the_token():
+    from internpearls import net
+    assert net._keeps_credentials("https://api.github.com/a",
+                                  "https://api.github.com:99999999/b") is False
+    assert net._keeps_credentials("https://api.github.com:x/a",
+                                  "https://api.github.com/b") is False
+
+
+def test_a_fetch_made_inside_another_leaves_the_outer_deadline_in_place(monkeypatch):
+    """A progress callback pumps the event loop, which can start another fetch on the
+    same thread; the outer fetch's watch must still be the current one afterwards."""
+    from internpearls import net
+    inner_base, _s, server = _serve(lambda h: _reply(h, b"inner"))
+    outer = []
+
+    def on_chunk(_n):
+        before = net._current.watch
+        net._http_get(inner_base + "/x")
+        outer.append(net._current.watch is before and before is not None)
+        return True
+
+    base, _s2, server2 = _serve(lambda h: _reply(h, b"outer"))
+    try:
+        assert net._http_get(base + "/y", on_chunk=on_chunk) == b"outer"
+    finally:
+        server.shutdown()
+        server2.shutdown()
+    assert outer == [True]
+
+
+@pytest.mark.parametrize("deadline,words", [(1, "over 1 second)"), (30, "over 30 seconds)"),
+                                            (1800, "over 30 minutes)")])
+def test_the_deadline_message_counts_in_words(deadline, words):
+    from internpearls import net
+    assert words in str(net._too_slow(deadline))
