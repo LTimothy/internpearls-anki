@@ -25,12 +25,22 @@ class _Response:
         return out
 
 
+class _Sock:
+    def __init__(self):
+        self.down = False
+
+    def shutdown(self, how):
+        self.down = True
+
+
 class _Web:
     """Stands in for DNS and the network: `hosts` maps a name to the addresses it
     resolves to, `pages` maps (host, target) to the response served there."""
 
     def __init__(self, monkeypatch, hosts, pages):
         self.hosts, self.pages, self.connected = hosts, pages, []
+        self.refusing, self.refused = set(), []
+        self.sock_factory = _Sock
         monkeypatch.setattr(ai_fetch, "_resolve", self.resolve)
         monkeypatch.setattr(ai_fetch, "_open_connection", self.open)
 
@@ -44,9 +54,19 @@ class _Web:
         web = self
 
         class _Conn:
-            def request(self, method, target, headers=None):
+            sock = None
+
+            def connect(self):
+                if ip in web.refusing:
+                    web.refused.append(ip)
+                    raise ConnectionRefusedError("refused")
                 web.connected.append((host, ip))
+                self.sock = web.sock_factory()
+
+            def request(self, method, target, headers=None):
                 self.response = web.pages[(host, target)]
+                if callable(self.response):
+                    self.response = self.response(self.sock)
 
             def getresponse(self):
                 return self.response
@@ -179,3 +199,72 @@ def test_a_loopback_server_is_never_contacted():
         t.join()
         server.close()
     assert contacted == []
+
+
+# === deadline, slow lookups, and every address tried ========================
+
+def test_each_public_address_is_tried_in_turn(monkeypatch):
+    web = _Web(monkeypatch, {"img.example": ["93.184.216.34", "93.184.216.35"]},
+               {("img.example", "/a.png"): _png()})
+    web.refusing = {"93.184.216.34"}
+    assert ai_fetch.fetch_card_image("https://img.example/a.png") == (PNG, "png")
+    assert web.refused == ["93.184.216.34"]
+    assert web.connected == [("img.example", "93.184.216.35")]
+
+
+def test_a_lookup_that_hangs_is_abandoned_at_the_deadline(monkeypatch):
+    import time
+    web = _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+               {("img.example", "/a.png"): _png()})
+    real = web.resolve
+
+    def slow(host, port):
+        time.sleep(2)
+        return real(host, port)
+    monkeypatch.setattr(ai_fetch, "_resolve", slow)
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="timed out"):
+        ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.3)
+    assert time.monotonic() - start < 1.5
+    assert web.connected == []
+
+
+class _Trickle(_Response):
+    """A body that arrives a few bytes at a time until its socket is shut down."""
+
+    def __init__(self, sock):
+        super().__init__(200, {"Content-Type": "image/png"}, PNG)
+        self.sock = sock
+
+    def read(self, n=-1):
+        import time
+        while not self.sock.down:
+            time.sleep(0.05)
+            return b"\x00"
+        return b""
+
+
+def test_a_trickling_download_is_cut_off_at_the_deadline(monkeypatch):
+    import time
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _Trickle})
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="timed out"):
+        ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.5)
+    assert time.monotonic() - start < 2
+
+
+def test_the_deadline_covers_every_hop(monkeypatch):
+    import time
+    web = _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+               {("img.example", "/a.png"): _Response(302, {"Location": "/b.png"}),
+                ("img.example", "/b.png"): _Response(302, {"Location": "/a.png"})})
+    real = web.resolve
+
+    def slowish(host, port):
+        time.sleep(0.2)
+        return real(host, port)
+    monkeypatch.setattr(ai_fetch, "_resolve", slowish)
+    with pytest.raises(RuntimeError, match="timed out"):
+        ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.5)
+    assert len(web.connected) < 4
