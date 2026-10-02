@@ -12,7 +12,7 @@ part is unaffected by this and isn't the part that could hang.
 import tempfile
 import traceback
 
-from aqt import mw
+from aqt import gui_hooks, mw
 from aqt.qt import QTimer
 from aqt.utils import tooltip
 
@@ -22,7 +22,7 @@ from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_CEILING_MIN,
                      AUTO_SYNC_INTERVAL_DEFAULT_MIN,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, INSTALLED, STATE,
                      SUPPORTED_MANIFEST_SCHEMA, _cfg, _load_json, _save_json,
-                     load_declined, load_later_seen, source_identity)
+                     collection_key, load_declined, load_later_seen, source_identity)
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
                     decks_to_update, later_count, later_nudge_due,
                     manifest_needs_newer_addon, plural)
@@ -119,37 +119,37 @@ def _check_addon_updates_background():
 
 
 _auto_sync_in_progress = False
-# (deck name, version) pairs auto-sync has already said "template update pending, needs
-# a manual sync" about, so the repeating poll doesn't re-announce them every interval.
-# Session-scoped on purpose: a restart is allowed to remind once more. Keyed by version
-# as well as name, like _deferred_decks below and for the same reason: a deck deferred
-# at one version, dealt with by hand, and deferred again at the next was never
-# announced the second time, so the only sign of it was the menu label.
-_tpl_deferred_notified = set()
-# Manifest schema values auto-sync has already told the user require an add-on update.
-# Same session-scoped-once pattern as _tpl_deferred_notified — otherwise a schema
-# mismatch would re-nag every poll interval until the add-on is updated.
-_schema_blocked_notified = set()
-# The reconcile-pending count (retired + relocated cards) auto-sync last nagged about
-# by tooltip, so it only speaks up when that count first appears or grows — not every
-# poll, and not again once it's already been mentioned at its current size. Auto-sync
-# never archives or relocates on its own (see sync.py's _reconcile_action comment for
-# why), so this tooltip plus the persistent "Reconcile my decks (N pending)" menu
-# label it points at are the only things standing between a real backlog and it
-# silently piling up unnoticed.
-_last_reconcile_notified = 0
-# (deck name, version) pairs auto-sync has already held back for a template or
-# note-type change this session. A deferred deck stays pending forever, so without
-# this every single poll re-downloaded its whole .apkg and took a fresh deck backup to
-# reach the same decision it reached the first time, for as long as Anki stayed open.
-# Keyed by version as well as name, so a source that pushes a fix mid-session is
-# picked up rather than skipped along with the version that was deferred.
-_deferred_decks = set()
-# Whether the "couldn't create a backup" tooltip has already been shown this session.
-# A backup that fails once usually fails every time (a deck that can't be exported, a
-# full disk), and the same nag every poll interval is the pattern _tpl_deferred_notified
-# exists to avoid. Cleared again by a tick whose backup succeeds.
-_backup_failure_notified = False
+
+
+class _Memory:
+    """What auto-sync has already decided or said this session, for one collection
+    and deck source. Kept per collection so a deck one profile held back, or a nudge
+    one profile already gave, never silences another profile. Session-scoped on
+    purpose: a restart is allowed to remind once more."""
+
+    def __init__(self):
+        # (deck, version) held back for a template or note-type change. A deferred
+        # deck stays pending, so without this every poll re-downloaded and re-backed-up
+        # to reach the same decision. Keyed by version so a mid-session fix is not
+        # skipped along with the version that was deferred.
+        self.deferred = set()
+        # (deck, version) already announced as needing a manual sync.
+        self.tpl_notified = set()
+        # Manifest schemas already announced as needing an add-on update.
+        self.schema_notified = set()
+        # The reconcile-pending count last nudged about: the tooltip speaks only when
+        # the count first appears or grows, and the watermark follows it down.
+        self.reconcile_notified = 0
+        # Whether the backup-failure tooltip was shown; a backup that fails once
+        # usually keeps failing. Cleared by a tick whose backup succeeds.
+        self.backup_failure_notified = False
+
+
+_memories = {}
+
+
+def _memory():
+    return _memories.setdefault(collection_key(), _Memory())
 
 
 @_bg_safe
@@ -188,6 +188,8 @@ def _auto_sync_check():
     # close, and applying then would import this profile's decks into another one.
     col = mw.col
     source = source_identity()
+    memory = _memory()
+    deferred_before = set(memory.deferred)
 
     # Reconciled here, on the main thread, before any work is handed to the background
     # thread below — installed_matching_collection touches mw.col, which _fetch_work
@@ -217,9 +219,9 @@ def _auto_sync_check():
         # Decks already held back this session are dropped here, before any of the work
         # a pending deck costs: they are pending precisely because only a manual sync
         # can decide about them, so re-downloading and re-backing-up for them every
-        # poll bought nothing at all (see _deferred_decks).
+        # poll bought nothing at all (see _Memory.deferred).
         todo = [d for d in decks_to_update(manifest, installed, cfg["excluded"])
-                if (d["name"], d.get("version")) not in _deferred_decks
+                if (d["name"], d.get("version")) not in deferred_before
                 and (d["name"], d.get("version")) not in undone_updates]
         # Always returned (even with todo empty) rather than bailing to None here: a
         # retirement or reorg can ship without bumping any deck's version, so this is
@@ -250,7 +252,6 @@ def _auto_sync_check():
             _auto_sync_in_progress = False
 
     def _apply_work(result, error):
-        global _last_reconcile_notified, _backup_failure_notified
         if error or not result:
             return   # offline, misconfigured, or unreachable — stay quiet
         if mw.col is None or mw.col is not col:
@@ -262,8 +263,8 @@ def _auto_sync_check():
             return
         if "schema_blocked" in result:
             schema = result["schema_blocked"]
-            if schema not in _schema_blocked_notified:
-                _schema_blocked_notified.add(schema)
+            if schema not in memory.schema_notified:
+                memory.schema_notified.add(schema)
                 tooltip(
                     "Intern Pearls: the deck source needs a newer add-on version — "
                     "auto-sync is paused until you update. Advanced → Check for add-on "
@@ -284,19 +285,16 @@ def _auto_sync_check():
         # nudged about at all.
         pending = len(fresh) + len(moves) + len(stranded)
         _refresh_reconcile_action_label(pending)
-        # Only on first appearance or growth, which is what the comment on
-        # _last_reconcile_notified has always described. A plain inequality also fired
-        # on a SHRINK, so partly tidying up a backlog re-nagged about the smaller one
-        # that was left. The watermark still follows the count down, so growing again
-        # after a partial tidy-up does speak up.
-        if pending > _last_reconcile_notified:
+        # Only on first appearance or growth: a plain inequality also fired on a
+        # shrink, so partly tidying up a backlog re-nagged about what was left.
+        if pending > memory.reconcile_notified:
             tooltip(
                 f"Intern Pearls: {plural(pending, 'card')} "
                 f"{'is' if pending == 1 else 'are'} ready to tidy up (retired, "
                 "reworded, or moved by a deck update) — Advanced → Reconcile my "
                 "decks.",
                 period=8000, parent=mw)
-        _last_reconcile_notified = pending
+        memory.reconcile_notified = pending
 
         todo = [d for d in result["todo"] if d["name"] not in live["excluded"]]
         if not todo:
@@ -324,12 +322,12 @@ def _auto_sync_check():
             # Once per session, not once per poll: a backup that fails usually keeps
             # failing, and the same tooltip every interval is noise around a message
             # that has already been read.
-            if not _backup_failure_notified:
-                _backup_failure_notified = True
+            if not memory.backup_failure_notified:
+                memory.backup_failure_notified = True
                 tooltip("Intern Pearls: auto-sync skipped, couldn't create a backup "
                        "first.", period=6000, parent=mw)
             return
-        _backup_failure_notified = False
+        memory.backup_failure_notified = False
 
         def _already_fetched(d):
             v = result["downloaded"][d["name"]]
@@ -350,9 +348,9 @@ def _auto_sync_check():
         versions = {d["name"]: d.get("version") for d in todo}
         deferred_keys = [(n, versions.get(n)) for n in deferred]
         deferred_new = [n for n, v in deferred_keys
-                        if (n, v) not in _tpl_deferred_notified]
-        _tpl_deferred_notified.update(deferred_keys)
-        _deferred_decks.update(deferred_keys)
+                        if (n, v) not in memory.tpl_notified]
+        memory.tpl_notified.update(deferred_keys)
+        memory.deferred.update(deferred_keys)
         if not (ok or fail or deferred_new):
             return
         msg = (f"Intern Pearls: auto-synced {plural(ok, 'deck')} "
@@ -447,7 +445,21 @@ def _schedule_background_checks():
     QTimer.singleShot(2000, _check_addon_updates_background)
     QTimer.singleShot(3000, _sweep_ai_scratch_background)
     QTimer.singleShot(5000, _held_cards_nudge)
+    if _on_profile_open not in gui_hooks.profile_did_open:
+        gui_hooks.profile_did_open.append(_on_profile_open)
     cfg = _cfg()
     if cfg["auto_sync_decks"]:
-        QTimer.singleShot(4000, _auto_sync_check)
+        # Anki opens the profile after this runs; until then the first check is armed
+        # by _on_profile_open, or it would find no collection and wait a full interval.
+        if mw.col is not None:
+            QTimer.singleShot(4000, _auto_sync_check)
         _restart_auto_sync_timer(cfg["auto_sync_interval_minutes"])
+
+
+@_bg_safe
+def _on_profile_open():
+    """A profile opened: drop the previous profile's reconcile count from the menu and
+    check this one's decks shortly, rather than a full interval from now."""
+    _refresh_reconcile_action_label(0)
+    if _cfg()["auto_sync_decks"]:
+        QTimer.singleShot(4000, _auto_sync_check)
