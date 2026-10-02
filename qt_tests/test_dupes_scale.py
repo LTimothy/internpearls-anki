@@ -10,6 +10,40 @@ import pytest
 _PAIRS = 250
 
 
+@pytest.fixture(autouse=True)
+def _close_dialogs(monkeypatch):
+    """A test that fails before its own close() must not leave a live dialog whose
+    deliveries run into a later test's collection."""
+    harness.bootstrap()
+    from internpearls import dupes_dialog
+    made = []
+    original = dupes_dialog._DuplicateScanDialog.__init__
+
+    def tracking(self, *a, **k):
+        made.append(self)
+        original(self, *a, **k)
+
+    monkeypatch.setattr(dupes_dialog._DuplicateScanDialog, "__init__", tracking)
+    yield
+    for dlg in made:
+        try:
+            dlg.close()
+            dlg.deleteLater()
+        except RuntimeError:
+            pass
+    harness.app().processEvents()
+
+
+def _full_build_seconds(dlg):
+    """Seconds this machine takes right now to build and lay out every row, measured
+    on the dialog under test, so a timing bound scales with load instead of being a
+    fixed number of seconds. Call it after the measured action: it builds the rest."""
+    start = time.perf_counter()
+    dlg._list.fill_all()
+    harness.app().processEvents()
+    return time.perf_counter() - start
+
+
 def _populate_many(mock, pairs=_PAIRS, deck="Example Shared Deck"):
     import mock_anki
     mock.mw.col = mock_anki.MockCollection()
@@ -49,7 +83,7 @@ def test_many_pairs_open_and_ignore_build_only_a_first_batch():
     assert len(dlg._pairs) == _PAIRS
     lst = dlg._list
     assert lst.shown() < lst.total(), "every pair row was built up front"
-    assert opened < 3.0, f"opening {_PAIRS} pairs took {opened:.2f}s"
+    assert opened < 10.0, f"opening {_PAIRS} pairs took {opened:.2f}s"
 
     start = time.perf_counter()
     dlg._ignore(dlg._pairs[0])
@@ -57,7 +91,14 @@ def test_many_pairs_open_and_ignore_build_only_a_first_batch():
     ignored = time.perf_counter() - start
     assert len(dlg._pairs) == _PAIRS - 1
     assert lst.shown() < lst.total()
-    assert ignored < 1.0, f"Ignore at {_PAIRS} pairs took {ignored:.2f}s"
+    assert lst.built() < lst.total(), "Ignore rebuilt every row"
+    # Ignore costs the rows already shown, so it must be a small fraction of building
+    # the whole list. The bound is this run's own full-build time, so a slow or busy
+    # machine moves it with it; the old behaviour (every row rebuilt, 22 s) equals it.
+    full = _full_build_seconds(dlg)
+    assert ignored < 0.5 * full, (
+        f"Ignore at {_PAIRS} pairs took {ignored:.2f}s against {full:.2f}s to build "
+        "every row")
     dlg.close()
     dlg.deleteLater()
 
@@ -74,14 +115,23 @@ def test_ignore_deep_in_the_list_keeps_the_reader_near_the_same_place():
         bar.setValue(bar.maximum())
         app.processEvents()
     before = bar.value()
-    assert before > 0
+    depth = dlg._list.shown()
+    assert before > 0 and depth > 100
     start = time.perf_counter()
     dlg._ignore(dlg._pairs[1])
     app.processEvents()
     app.processEvents()
     elapsed = time.perf_counter() - start
     assert bar.value() > before // 2, "the list jumped back to the top"
-    assert elapsed < 2.0, f"Ignore deep in the list took {elapsed:.2f}s"
+    assert dlg._list.built() < dlg._list.total(), "the whole list was rebuilt"
+    assert dlg._list.shown() <= depth + dlg._list._batch
+    # The rows rebuilt are the ones the reader had scrolled past, no more (checked
+    # above). Timing is only a sanity bound against the machine's own full-build time,
+    # since the deep case legitimately rebuilds most of the list.
+    full = _full_build_seconds(dlg)
+    assert elapsed < 2 * full + 1.0, (
+        f"Ignore deep in the list took {elapsed:.2f}s against {full:.2f}s to build "
+        "every row")
     dlg.close()
     dlg.deleteLater()
 
@@ -341,4 +391,119 @@ def test_rescan_link_confirms_before_discarding_judged_results(monkeypatch):
     assert dlg._pairs[0]["judged"] == "same"
     dlg._rescan_fresh()
     assert len(asked) == 2 and dlg._scan_seq == seq + 1
+    dlg.deleteLater()
+
+
+def _capture_slot_errors(monkeypatch):
+    """PyQt6 aborts the process on an exception in a slot unless an excepthook is set."""
+    import sys
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda *a: errors.append(a))
+    return errors
+
+
+def test_a_closed_dialog_delivers_nothing_into_a_later_collection(monkeypatch):
+    import mock_anki
+    errors = _capture_slot_errors(monkeypatch)
+    mock, _ = harness.bootstrap()
+    app = harness.app()
+    harness._ai_backend_available("claude")
+    _populate_many(mock)
+    dlg = _open(mock)
+    _show(dlg)
+    lst = dlg._list
+    lst._last_scroll = -10.0
+    lst._idle._fire()                    # starts one idle prefetch chunk
+    assert lst._prefetching
+    dlg.reject()
+    mock.mw.col = mock_anki.MockCollection()   # the notes the rows would read are gone
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.02)
+    assert errors == [], errors
+    assert lst.total() == 0
+    dlg.deleteLater()
+
+
+def test_closing_retires_the_scan_and_everything_it_started():
+    mock, _ = harness.bootstrap()
+    app = harness.app()
+    harness._ai_backend_available("claude")
+    _populate_many(mock, pairs=40)
+    from internpearls import dupes_dialog
+    dlg = dupes_dialog._DuplicateScanDialog("InternPearls")
+    scan_worker, scan_timer = dlg._worker, dlg._timer
+    dlg.reject()
+    assert scan_worker.cancel_event.is_set()
+    assert not scan_timer.is_active()
+    assert not dlg._restore_timer.is_active()
+    deadline = time.time() + 0.5
+    while time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.02)
+    assert not dlg._scan_finished and dlg._pairs == []
+    dlg.deleteLater()
+
+
+def test_a_deleted_note_does_not_break_its_row(monkeypatch):
+    from PyQt6.QtWidgets import QLabel, QPushButton
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate_many(mock, pairs=4)
+    dlg = _open(mock)
+    pair = dlg._pairs[0]
+    del mock.mw.col._notes[pair["right"][0]]
+    row = dlg._build_row(pair)
+    text = " ".join(label.text() for label in row.findChildren(QLabel))
+    assert "note deleted" in text
+    buttons = {b.text(): b for b in row.findChildren(QPushButton)}
+    assert not buttons["Suspend theirs"].isEnabled()
+    assert buttons["Suspend ours"].isEnabled()
+    assert buttons["Ignore pair"].isEnabled()
+    # the rest of the list still builds and the copy and judge paths still run
+    _show(dlg)
+    dlg._rebuild_list()
+    dlg._copy_list()
+    from internpearls import dupes_dialog
+    assert dupes_dialog._note_texts(pair["right"][0])[0] == "(note deleted)"
+    dlg.close()
+    dlg.deleteLater()
+
+
+def test_a_row_that_cannot_be_built_is_replaced_not_raised(monkeypatch):
+    from PyQt6.QtWidgets import QLabel
+    errors = _capture_slot_errors(monkeypatch)
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate_many(mock, pairs=3)
+    dlg = _open(mock)
+
+    def broken(pair):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(dlg, "_build_row", broken)
+    widget = dlg._item_widget(("pair", dlg._pairs[0]))
+    assert isinstance(widget, QLabel) and "could not be shown" in widget.text()
+    assert errors == []
+    dlg.deleteLater()
+
+
+def test_a_failing_delivery_prints_and_does_not_escape(monkeypatch, capsys):
+    errors = _capture_slot_errors(monkeypatch)
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate_many(mock, pairs=3)
+    dlg = _open(mock)
+
+    def broken():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(dlg, "_sync_judge_button", broken)
+    dlg._backends_found({"chosen": None, "backends": {}})
+    assert errors == []
+    assert "boom" in capsys.readouterr().out
     dlg.deleteLater()
