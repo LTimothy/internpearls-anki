@@ -451,8 +451,16 @@ class NativePlatform:
         except ImportError:     # the lightweight Qt mock models no QObject
             return None
         owner = None
-        for entries in self._weak_owner_ids.values():
-            for owner_ref, entry_id in entries:
+        for _attempt in range(5):
+            try:
+                # A collected owner's weakref callback edits this registry, and can
+                # run in the middle of a copy; a retry sees the settled registry.
+                registry = list(self._weak_owner_ids.values())
+                break
+            except RuntimeError:
+                registry = []
+        for entries in registry:
+            for owner_ref, entry_id in list(entries):
                 if entry_id == owner_id:
                     owner = owner_ref()
         for stored_owner, entry_id in self._strong_owner_ids:
