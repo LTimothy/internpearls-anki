@@ -1,7 +1,8 @@
 import random
 import time
 
-from internpearls.dupes import build_index, find_candidates, normalise, pair_key
+from internpearls.dupes import (build_index, find_candidates, normalise, pair_key,
+                                tokenize)
 
 
 def test_normalise_strips_html_entities_and_sound():
@@ -209,3 +210,96 @@ def test_find_candidates_timing_small_pool_is_fast():
     find_candidates(left, right, threshold=0.5, top=3)
     elapsed = time.monotonic() - start
     assert elapsed < 1.0
+
+
+def _score(left_text, right_text, **kw):
+    left = [(1, left_text, "Ours", "Basic")]
+    right = [(2, right_text, "Theirs", "Basic")]
+    kw.setdefault("threshold", 0.1)
+    kw.setdefault("min_shared", 2)
+    found = find_candidates(left, right, **kw)
+    return found[0][0] if found else None
+
+
+def test_tokenize_keeps_short_tokens_that_carry_meaning():
+    toks = tokenize(normalise("T3 and T4, Type II, Factor V, D1 and S2, 5 mg"))
+    for kept in ("t3", "t4", "ii", "d1", "s2", "5", "type"):
+        assert kept in toks
+    assert "v" in toks
+    assert "mg" not in toks
+
+
+def test_tokenize_spells_greek_letters_and_keeps_unicode_words():
+    assert tokenize(normalise("\u03b12 agonist")) == ["alpha", "2", "agonist"]
+    assert tokenize(normalise("\u03b2-blocker")) == ["beta", "blocker"]
+    assert tokenize(normalise("Der Blutdruck f\u00e4llt unter an\u00e4sthesie")) == [
+        "der", "blutdruck", "f\u00e4llt", "unter", "an\u00e4sthesie"]
+    assert "\u9ebb\u9189" in tokenize(normalise("\u5168\u8eab\u9ebb\u9189\u8584"))
+
+
+def test_non_english_cards_match_each_other():
+    left = "Der Blutdruck f\u00e4llt unter Propofol Narkose stark"
+    right = "Unter Propofol Narkose f\u00e4llt der Blutdruck stark ab"
+    assert _score(left, right, threshold=0.5) is not None
+
+
+def test_cjk_cards_match_each_other():
+    left = "\u5168\u8eab\u9ebb\u9189\u7684\u8bf1\u5bfc\u836f\u7269"
+    right = "\u5168\u8eab\u9ebb\u9189\u8bf1\u5bfc\u836f\u7269\u5265\u8131"
+    assert _score(left, right, threshold=0.3, min_shared=0) is not None
+
+
+def test_differing_class_or_number_token_is_not_an_exact_duplicate():
+    pairs = [
+        ("T3 raises the basal metabolic rate", "T4 raises the basal metabolic rate"),
+        ("alpha-2 agonist lowers the MAC of volatile agents",
+         "beta-2 agonist lowers the MAC of volatile agents"),
+        ("\u03b12 agonist lowers the MAC of volatile agents",
+         "\u03b22 agonist lowers the MAC of volatile agents"),
+        ("Type I hypersensitivity is mediated by IgE antibodies",
+         "Type II hypersensitivity is mediated by IgE antibodies"),
+        ("Phase 1 block shows fade on train of four",
+         "Phase 2 block shows fade on train of four"),
+    ]
+    for a, b in pairs:
+        identical = _score(a, a)
+        assert identical is not None and identical > 0.99
+        score = _score(a, b)
+        assert score is None or score < 0.7, (a, b, score)
+
+
+def test_differing_negation_is_not_an_exact_duplicate():
+    a = "Succinylcholine is contraindicated in malignant hyperthermia history"
+    b = "Succinylcholine is not contraindicated in malignant hyperthermia history"
+    score = _score(a, b)
+    assert score is None or score < 0.7
+    c = "Nitrous oxide never causes diffusion hypoxia during induction"
+    d = "Nitrous oxide causes diffusion hypoxia during induction"
+    score = _score(c, d)
+    assert score is None or score < 0.7
+
+
+def test_same_negation_and_same_numbers_still_score_high():
+    a = "Succinylcholine is not safe in hyperkalemia with 5 mEq elevation"
+    b = "In hyperkalemia with 5 mEq elevation succinylcholine is not safe"
+    assert _score(a, b) > 0.95
+    c = "Type II error is not the same as a type I error in statistics"
+    d = "A type I error is not the same as a type II error in statistics"
+    assert _score(c, d) > 0.95
+
+
+def test_a_number_missing_from_one_side_is_not_a_contrast():
+    a = "Ketamine induction dose is 1 to 2 mg per kg intravenously"
+    b = "Ketamine induction dose is 1 to 2 mg per kg intravenously, max 5 total"
+    assert _score(a, b) > 0.8
+    c = "Ketamine induction dose per kg intravenously"
+    assert _score(a, c, threshold=0.3) is not None
+    assert _score(a, c, threshold=0.3) > 0.5
+
+
+def test_contrast_pairs_do_not_flood_a_strict_scan():
+    left = [(1, "T3 raises the basal metabolic rate", "Ours", "Basic")]
+    right = [(i + 2, f"T{i % 5 + 4} raises the basal metabolic rate", "Theirs", "Basic")
+             for i in range(5)]
+    found = find_candidates(left, right, threshold=0.6, top=3, min_shared=2)
+    assert all(r[2][0] != 2 for r in found)

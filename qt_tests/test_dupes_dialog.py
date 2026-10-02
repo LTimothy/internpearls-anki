@@ -601,7 +601,9 @@ def test_collapsed_row_height_matches_content():
     dlg.resize(800, 560)
     dlg.show()
     harness.app().processEvents()
-    row = dlg._rows_layout.itemAt(0).widget()
+    rows = [dlg._rows_layout.itemAt(i).widget()
+            for i in range(0, dlg._rows_layout.count(), 2)]
+    row = min(rows, key=lambda r: r.height())
     fm = QFontMetrics(row.font())
     # Four text lines' worth of height (the "ours:"/"theirs:"/"shares:" trio plus
     # headroom for wrapping), plus the row's own outer margins, is generous slack for
