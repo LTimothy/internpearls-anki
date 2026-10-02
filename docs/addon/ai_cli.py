@@ -15,6 +15,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -23,6 +24,8 @@ import warnings
 from .ai_logic import parse_stream_event, format_duration
 
 _WINDOWS = os.name == "nt"
+# A console CLI started from Anki on Windows would otherwise flash its own window.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if _WINDOWS else 0
 
 # "install_url" is where the AI Backends window's install-guide link sends a
 # reader who does not have this CLI yet: the tool's own documentation, never a
@@ -215,14 +218,16 @@ def _help_text(path, subcommand):
     text = ""
     try:
         r = subprocess.run([path, "--help"], capture_output=True,
-                           text=True, timeout=10)
+                           text=True, encoding="utf-8", errors="replace",
+                           timeout=10, creationflags=_NO_WINDOW)
         text += (r.stdout or "") + (r.stderr or "")
     except Exception:
         pass
     if subcommand:
         try:
             r = subprocess.run([path, subcommand, "--help"], capture_output=True,
-                               text=True, timeout=10)
+                               text=True, encoding="utf-8", errors="replace",
+                               timeout=10, creationflags=_NO_WINDOW)
             text += (r.stdout or "") + (r.stderr or "")
         except Exception:
             pass
@@ -262,10 +267,48 @@ def supports_flag(path, flag, subcommand=None):
     return result
 
 
+def claude_reads_confined(path):
+    """Whether this claude binary can keep its file tools inside the scratch folder."""
+    return supports_flag(path, "--restricted")
+
+
+# What the wizard and AI Backends say about claude when its binary has no
+# --restricted, so they never claim a confinement build_argv cannot apply.
+_CLAUDE_UNCONFINED = {
+    "safety": "File tools not confined to the scratch folder, web read-only, no shell",
+    "modes": {
+        "thorough": "Thorough: drafts, may search the web to verify facts and read "
+                    "or write files, then self-reviews (up to 15 turns, 1 to 3 min)",
+        "quick": "Quick draft: one pass with no fact-checking, but it may search the "
+                 "web for card images (up to 6 turns). If you attach files, it can "
+                 "read them (15 s to 1 min)"},
+}
+
+
+# What is said about claude before its binary has been checked: no claim either way.
+_CLAUDE_UNCHECKED = dict(
+    _CLAUDE_UNCONFINED,
+    safety="File tools kept to the scratch folder if supported, web read-only, no shell")
+
+
+def backend_wording(kind, path=None):
+    """{"safety": ..., "modes": {...}} as shown for `kind`, true for the installed
+    binary at `path`. With no checked binary, claude's wording claims nothing about
+    confinement."""
+    meta = BACKENDS[kind]
+    if kind == "claude":
+        if not path:
+            return _CLAUDE_UNCHECKED
+        if not claude_reads_confined(path):
+            return _CLAUDE_UNCONFINED
+    return {"safety": meta["safety"], "modes": meta["modes"]}
+
+
 def probe(kind, path):
     try:
         r = subprocess.run([path, "--version"], capture_output=True,
-                           text=True, timeout=10)
+                           text=True, encoding="utf-8", errors="replace",
+                           timeout=10, creationflags=_NO_WINDOW)
     except Exception as e:
         return {"ok": False, "detail": str(e)}
     out = (r.stdout or r.stderr or "").strip().splitlines()
@@ -273,30 +316,70 @@ def probe(kind, path):
             "detail": out[0] if out else f"exit {r.returncode}"}
 
 
-def detect_backends(cfg):
+def detect_backends(cfg, warm=False):
     """Everything both dialogs need to know about the three CLIs in one pass:
     per backend, whether it is enabled, where it was found (honouring that
     backend's own path override), and whether --version runs. "chosen" is the
     preferred backend when it is enabled and working, else the first enabled
     working one in BACKENDS order, else None. A cheap, free check: never a
-    model call (that is test_connection, on demand only)."""
+    model call (that is test_connection, on demand only). Every probe runs at
+    once, so one hung CLI costs its own timeout, not the sum; `warm` also reads
+    each found CLI's --help alongside, so later supports_flag calls on the
+    main thread read the cache rather than start the CLI."""
+    located = _locate(cfg)
+    preferred = cfg.get("ai_backend", "")
+    out, results, jobs = {}, {}, []
+    for kind, info in located["backends"].items():
+        out[kind] = dict(info)
+        if not info["path"]:
+            continue
+
+        def run_probe(kind=kind, path=info["path"]):
+            results[kind] = probe(kind, path)
+        jobs.append(run_probe)
+        if warm:
+            jobs.append(lambda path=info["path"]: _help_text(path, None))
+            if kind == "codex":
+                jobs.append(lambda path=info["path"]: _help_text(path, "exec"))
+    threads = [threading.Thread(target=job, daemon=True) for job in jobs]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    chosen = None
+    for kind in BACKENDS:
+        if kind in results:
+            res = results[kind]
+            out[kind].update(ok=res["ok"], detail=res["detail"])
+        elif out[kind]["ok"] is None:
+            out[kind].update(ok=False, detail="no answer")
+        if out[kind]["ok"] and (chosen is None or preferred == kind):
+            chosen = kind
+    return {"backends": out, "chosen": chosen}
+
+
+def locate_backends(cfg):
+    """detect_backends' shape from file lookups alone, no process started: a found
+    backend reads "checking" (ok None) until detect_backends has run it. "chosen" is
+    the backend detection would pick if every found one answers."""
+    return _locate(cfg)
+
+
+def _locate(cfg):
     enabled = cfg.get("ai_backend_enabled") or {}
     overrides = cfg.get("ai_cli_path") or {}
     preferred = cfg.get("ai_backend", "")
     out, chosen = {}, None
     for kind in BACKENDS:
-        on = bool(enabled.get(kind, True))
-        if not on:
+        if not enabled.get(kind, True):
             out[kind] = {"path": None, "ok": False, "detail": "disabled", "enabled": False}
             continue
         override = overrides.get(kind, "") if isinstance(overrides, dict) else ""
         path = find_cli(kind, override)
-        if path:
-            res = probe(kind, path)
-            out[kind] = {"path": path, "ok": res["ok"], "detail": res["detail"], "enabled": True}
-        else:
-            out[kind] = {"path": None, "ok": False, "detail": "not found", "enabled": True}
-        if out[kind]["ok"] and (chosen is None or preferred == kind):
+        out[kind] = ({"path": path, "ok": None, "detail": "checking", "enabled": True}
+                     if path else
+                     {"path": None, "ok": False, "detail": "not found", "enabled": True})
+        if path and (chosen is None or preferred == kind):
             chosen = kind
     return {"backends": out, "chosen": chosen}
 
@@ -404,6 +487,77 @@ def model_effort_line(kind, cfg_model="", cfg_effort="", path=None):
 # near this size is a pasted book, not a lecture excerpt, so refuse it with a
 # sentence rather than letting exec fail with a bare OSError.
 _MAX_ARG_PROMPT = 200000
+# Tighter system limits on the same argument: Linux caps any single argument at
+# 128 KiB (MAX_ARG_STRLEN), Windows caps the whole command line at 32,767 UTF-16
+# units.
+_LINUX_MAX_ARG_BYTES = 128 * 1024 - 1
+_WINDOWS_MAX_CMDLINE = 32767 - 1
+
+
+def _utf16_len(text):
+    return len(text.encode("utf-16-le")) // 2
+
+
+def prompt_arg_limit(argv, prompt, plat=None):
+    """None when `argv`, whose last element is `prompt`, can be started on this
+    system (or `plat`), else roughly how many characters the prompt may have."""
+    plat = plat or sys.platform
+    if plat == "win32":
+        prefix = _utf16_len(subprocess.list2cmdline(argv[:-1]))
+        if _utf16_len(subprocess.list2cmdline(argv)) <= _WINDOWS_MAX_CMDLINE:
+            return None
+        return max(0, min(_MAX_ARG_PROMPT, _WINDOWS_MAX_CMDLINE - prefix - 3))
+    if plat.startswith("linux"):
+        if (len(prompt) <= _MAX_ARG_PROMPT
+                and len(prompt.encode("utf-8")) <= _LINUX_MAX_ARG_BYTES):
+            return None
+        return min(_MAX_ARG_PROMPT, _LINUX_MAX_ARG_BYTES)
+    return None if len(prompt) <= _MAX_ARG_PROMPT else _MAX_ARG_PROMPT
+
+
+def _is_launcher_script(path):
+    """True on Windows for a .cmd or .bat file, which Windows also runs when the name
+    carries trailing dots or spaces."""
+    return (sys.platform == "win32"
+            and path.rstrip(" .").lower().endswith((".cmd", ".bat")))
+
+
+_SAFE_ARG_NAME_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,5}")
+
+
+def _image_args(scratch, image_paths):
+    """On Windows, each picture as a plain name inside scratch (the run's working
+    folder), copied there under a safe name when it is not one already, so nothing
+    a launcher script's cmd.exe would re-read reaches the command line. Elsewhere
+    the paths are passed as given."""
+    if sys.platform != "win32":
+        return list(image_paths)
+    out = []
+    for i, p in enumerate(image_paths):
+        name = os.path.basename(p)
+        inside = os.path.dirname(os.path.abspath(p)) == os.path.abspath(scratch)
+        if not (inside and _SAFE_ARG_NAME_RE.fullmatch(name)):
+            ext = os.path.splitext(name)[1].lower()
+            ext = ext if re.fullmatch(r"\.[a-z0-9]{1,5}", ext) else ".img"
+            name = f"attached-image-{i}{ext}"
+            shutil.copyfile(p, os.path.join(scratch, name))
+        out.append(name)
+    return out
+
+
+def _agy_program(path):
+    """On Windows, the agy executable to start: a .cmd or .bat launcher would hand the
+    prompt to cmd.exe, which re-parses it and stops at 8,191 characters, so the .exe
+    beside it is used instead, or the run is refused."""
+    if not _is_launcher_script(path):
+        return path
+    exe = os.path.splitext(path.rstrip(" ."))[0] + ".exe"
+    if os.path.isfile(exe):
+        return exe
+    raise GenerationError(
+        f"Antigravity is installed here as a script launcher ({os.path.basename(path)}), "
+        "which cannot be handed the prompt safely; set its Executable path in AI "
+        "Backends to the agy program itself")
 
 
 def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
@@ -436,17 +590,17 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
         if supports_flag(path, "--include-partial-messages"):
             argv += ["--include-partial-messages"]
         tools = []
-        if mode == "thorough":
+        if mode == "thorough" or image_paths:
             # --restricted removes Bash and confines the file tools below to
             # the working directories named by --add-dir; without it a named
             # file tool can still reach outside the scratch folder.
-            if supports_flag(path, "--restricted"):
+            if claude_reads_confined(path):
                 argv += ["--restricted"]
             argv += ["--add-dir", scratch]
+        if mode == "thorough":
             tools += ["Read", "Glob", "Grep", "Write", "WebSearch", "WebFetch"]
         elif image_paths:
             tools.append("Read")
-            argv += ["--add-dir", scratch]
         if mode != "thorough":
             # Quick searches only to find card images; the prompt says so.
             tools += ["WebSearch", "WebFetch"]
@@ -471,15 +625,11 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
                                   "--skip-git-repo-check", "-C", scratch]
         if model and supports_flag(path, "--model", subcommand="exec"):
             argv += ["--model", model]
-        for p in image_paths:
+        for p in _image_args(scratch, image_paths):
             argv += ["--image", p]
         return argv, True
     if kind == "agy":
-        if len(prompt) > _MAX_ARG_PROMPT:
-            raise GenerationError(
-                "that source material is too long to send to Antigravity "
-                f"({len(prompt):,} characters, the limit is "
-                f"{_MAX_ARG_PROMPT:,}); shorten it or split it into two runs")
+        path = _agy_program(path)
         # --add-dir makes the scratch dir readable, which is how agy views an
         # attached image (view_file); writes stay off, headlessly auto-denied.
         argv = [path, "--output-format", "stream-json", "--add-dir", scratch]
@@ -507,6 +657,12 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
         # flag's value, so anything appended after it would be read as argv
         # noise rather than as an option.
         argv += ["-p", prompt]
+        limit = prompt_arg_limit(argv, prompt)
+        if limit is not None:
+            raise GenerationError(
+                "that source material is too long to send to Antigravity "
+                f"({len(prompt):,} characters, the limit on this system is about "
+                f"{limit:,}); shorten it or split it into two runs")
         return argv, False
     raise ValueError(kind)
 
@@ -587,7 +743,43 @@ def _redact_needles(prompt, redact_texts=()):
         for n in _body_needles(text, include_windows=True):
             if n not in needles:
                 needles.append(n)
-    return needles
+    return _with_escaped_forms(needles)
+
+
+def _escaped_forms(needle):
+    """`needle` as a JSON string body can carry it: escaped quotes, backslashes and
+    control characters, \\uXXXX for non-ASCII or for <, > and &, and an escaped /."""
+    forms = []
+    for ascii_only in (True, False):
+        body = json.dumps(needle, ensure_ascii=ascii_only)[1:-1]
+        html_safe = (body.replace("<", "\\u003c").replace(">", "\\u003e")
+                     .replace("&", "\\u0026"))
+        for form in (body, html_safe, body.replace("/", "\\/"),
+                     html_safe.replace("/", "\\/")):
+            if form != needle and form not in forms:
+                forms.append(form)
+    return forms
+
+
+_UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-f]{4})")
+
+
+def _with_escaped_forms(needles):
+    """`needles` plus their JSON-escaped forms, those forms escaped once more (a
+    stream event carrying another event as a string), and each with upper-case
+    \\uXXXX digits."""
+    out = list(needles)
+
+    def add(form):
+        for f in (form, _UNICODE_ESCAPE_RE.sub(lambda m: "\\u" + m.group(1).upper(), form)):
+            if f not in out:
+                out.append(f)
+    for n in needles:
+        for once in _escaped_forms(n):
+            add(once)
+            for twice in _escaped_forms(once):
+                add(twice)
+    return out
 
 
 def _contains_needle(text, needles):
@@ -695,7 +887,8 @@ def _run_argv(argv, kind, prompt, on_event=None, cancel=None, timeout=120,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, cwd=cwd,
                                 encoding="utf-8", errors="replace",
-                                start_new_session=True)
+                                start_new_session=True,
+                                creationflags=_NO_WINDOW)
     except OSError as e:
         raise GenerationError(f"could not start the assistant: {e}") from e
     result, tokens, rate_limits, error_msg = None, 0, None, None
@@ -894,7 +1087,7 @@ def _kill(proc):
         if _WINDOWS:
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                            capture_output=True, timeout=10,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                           creationflags=_NO_WINDOW)
         else:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except Exception:

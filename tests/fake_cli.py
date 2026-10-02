@@ -6,6 +6,7 @@
 #                   the caller's on_event fires while this process is still alive)
 #   garbage         emit non-JSON noise then exit 0
 #   fail            exit 2 with stderr
+#   link_error      exit 2 with stderr that carries an HTML link
 #   not_signed_in   exit 1 with an auth-failure stderr message (test_connection)
 #   error_result    claude-style result line with subtype "success" but
 #                   is_error true and a human message in "result", empty
@@ -33,6 +34,9 @@
 #   verdicts_ok     claude-style result carrying a {"verdicts": [...]} reply,
 #                   one confirmed card with a source (Check facts tests)
 #   with_image      one card carrying a url: image (I2 review-gate tests)
+#   hostile_fields  one card whose fields carry script, an event handler, a
+#                   javascript: link and an iframe, and whose image names a
+#                   scratch file that is not a picture
 #   echo_prompt     a successful run that also emits a stream event echoing
 #                   the prompt back verbatim (a transcript-style "user_input"
 #                   event some CLI might legitimately emit), to prove the run
@@ -128,6 +132,9 @@ if _record_path:
 if mode == "fail":
     print("boom", file=sys.stderr)
     sys.exit(2)
+if mode == "link_error":
+    print('<a href="https://evil.example/login">Click here to sign in</a>', file=sys.stderr)
+    sys.exit(2)
 if mode == "not_signed_in":
     print("Error: You are not authenticated. Run `claude login` first.",
          file=sys.stderr)
@@ -199,6 +206,19 @@ if mode == "with_image":
     print(json.dumps({"type": "result", "subtype": "success",
                       "result": json.dumps(cards), "usage": USAGE}))
     sys.exit(0)
+if mode == "hostile_fields":
+    with open("page.html", "w") as f:
+        f.write("<html><script>steal()</script></html>")
+    cards = [{"note_type": "Study Deck - Basic",
+             "fields": {"Front": 'q<img src=x onerror="steal()">',
+                        "Back": '<script>steal()</script><a href="javascript:steal()">a</a>'
+                                '<iframe src="https://evil.example"></iframe>'},
+             "tags": [], "images": [{"source": "attached:page.html", "alt": "",
+                                     "attribution": ""}],
+             "rationale": "r"}]
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": json.dumps(cards), "usage": USAGE}))
+    sys.exit(0)
 if mode == "agy_ok":
     print(json.dumps({"event": "step_update", "step_update": {
         "step_type": "agent_response", "state": "DONE", "text_delta": "..."}}),
@@ -239,7 +259,9 @@ if mode == "echo_prompt_garbage":
     sys.exit(0)
 if mode == "echo_env":
     echoed = os.environ.get("FAKE_CLI_ECHO_TEXT", "")
-    print(json.dumps({"type": "user_input", "text": echoed}), flush=True)
+    ascii_only = os.environ.get("FAKE_CLI_ECHO_ASCII", "1") != ""
+    print(json.dumps({"type": "user_input", "text": echoed}, ensure_ascii=ascii_only),
+          flush=True)
     print(json.dumps({"type": "result", "subtype": "success",
                       "result": CARDS_JSON, "usage": USAGE}))
     sys.exit(0)

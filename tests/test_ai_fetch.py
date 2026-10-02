@@ -1,0 +1,337 @@
+"""Card-picture downloads: https on every hop, no private or local addresses."""
+import socket
+import threading
+
+import pytest
+
+from internpearls import ai_fetch
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+
+class _Response:
+    def __init__(self, status, headers=None, body=b""):
+        self.status = status
+        self._headers = {k.lower(): v for k, v in (headers or {}).items()}
+        self._body = body
+
+    def getheader(self, name, default=None):
+        return self._headers.get(name.lower(), default)
+
+    def read(self, n=-1):
+        if n is None or n < 0:
+            n = len(self._body)
+        out, self._body = self._body[:n], self._body[n:]
+        return out
+
+
+class _Sock:
+    def __init__(self):
+        self.down = False
+
+    def shutdown(self, how):
+        self.down = True
+
+
+class _Web:
+    """Stands in for DNS and the network: `hosts` maps a name to the addresses it
+    resolves to, `pages` maps (host, target) to the response served there."""
+
+    def __init__(self, monkeypatch, hosts, pages):
+        self.hosts, self.pages, self.connected = hosts, pages, []
+        self.refusing, self.refused = set(), []
+        self.sock_factory = _Sock
+        monkeypatch.setattr(ai_fetch, "_resolve", self.resolve)
+        monkeypatch.setattr(ai_fetch, "_open_connection", self.open)
+
+    def resolve(self, host, port):
+        if host not in self.hosts:
+            raise socket.gaierror("unknown host")
+        return [(socket.AF_INET6 if ":" in a else socket.AF_INET, socket.SOCK_STREAM,
+                 6, "", (a, port)) for a in self.hosts[host]]
+
+    def open(self, host, ip, port, timeout):
+        web = self
+
+        class _Conn:
+            sock = None
+
+            def connect(self):
+                if ip in web.refusing:
+                    web.refused.append(ip)
+                    raise ConnectionRefusedError("refused")
+                web.connected.append((host, ip))
+                self.sock = web.sock_factory()
+
+            def request(self, method, target, headers=None):
+                self.response = web.pages[(host, target)]
+                if callable(self.response):
+                    self.response = self.response(self.sock)
+
+            def getresponse(self):
+                return self.response
+
+            def close(self):
+                pass
+        return _Conn()
+
+
+def _png():
+    return _Response(200, {"Content-Type": "image/png"}, PNG)
+
+
+def test_a_public_image_downloads(monkeypatch):
+    web = _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+               {("img.example", "/a.png?x=1"): _png()})
+    assert ai_fetch.fetch_card_image("https://img.example/a.png?x=1") == (PNG, "png")
+    assert web.connected == [("img.example", "93.184.216.34")]
+
+
+@pytest.mark.parametrize("address", [
+    "127.0.0.1", "10.1.2.3", "172.16.0.5", "192.168.1.1", "169.254.169.254",
+    "100.64.0.1", "0.0.0.0", "224.0.0.1", "::1", "fe80::1", "fd00::1",
+    "::ffff:127.0.0.1", "2002:7f00:1::1",
+])
+def test_a_host_on_a_private_or_local_address_is_refused_before_connecting(
+        monkeypatch, address):
+    web = _Web(monkeypatch, {"img.example": [address]},
+               {("img.example", "/a.png"): _png()})
+    with pytest.raises(RuntimeError, match="private or local"):
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+    assert web.connected == []
+
+
+def test_a_host_with_any_private_address_is_refused(monkeypatch):
+    web = _Web(monkeypatch, {"img.example": ["93.184.216.34", "10.0.0.1"]},
+               {("img.example", "/a.png"): _png()})
+    with pytest.raises(RuntimeError, match="private or local"):
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+    assert web.connected == []
+
+
+def test_a_redirect_to_plain_http_is_refused(monkeypatch):
+    web = _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+               {("img.example", "/a.png"): _Response(
+                   302, {"Location": "http://img.example/a.png"})})
+    with pytest.raises(RuntimeError, match="https"):
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+    assert web.connected == [("img.example", "93.184.216.34")]
+
+
+def test_a_redirect_to_a_private_address_is_refused_before_connecting(monkeypatch):
+    web = _Web(monkeypatch,
+               {"img.example": ["93.184.216.34"], "router.example": ["192.168.0.1"]},
+               {("img.example", "/a.png"): _Response(
+                   301, {"Location": "https://router.example/admin.png"}),
+                ("router.example", "/admin.png"): _png()})
+    with pytest.raises(RuntimeError, match="private or local"):
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+    assert web.connected == [("img.example", "93.184.216.34")]
+
+
+def test_a_public_redirect_is_followed(monkeypatch):
+    web = _Web(monkeypatch,
+               {"img.example": ["93.184.216.34"], "cdn.example": ["151.101.1.1"]},
+               {("img.example", "/a.png"): _Response(
+                   308, {"Location": "https://cdn.example/b.png"}),
+                ("cdn.example", "/b.png"): _png()})
+    assert ai_fetch.fetch_card_image("https://img.example/a.png") == (PNG, "png")
+    assert [h for h, _ in web.connected] == ["img.example", "cdn.example"]
+
+
+def test_endless_redirects_stop(monkeypatch):
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _Response(302, {"Location": "/a.png"})})
+    with pytest.raises(RuntimeError, match="redirects"):
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+
+
+def test_an_image_whose_bytes_are_not_that_image_is_refused(monkeypatch):
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _Response(
+             200, {"Content-Type": "image/png"}, b"<html><script>x()</script>")})
+    with pytest.raises(RuntimeError, match="not an image"):
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+
+
+def test_an_oversize_image_is_refused(monkeypatch):
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _Response(
+             200, {"Content-Type": "image/png"}, PNG + b"\x00" * 100)})
+    with pytest.raises(RuntimeError, match="too large"):
+        ai_fetch.fetch_card_image("https://img.example/a.png", max_bytes=50)
+
+
+def test_a_404_names_the_address_not_the_deck_source(monkeypatch):
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _Response(404)})
+    with pytest.raises(RuntimeError) as exc:
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+    assert "no image at that address" in str(exc.value)
+    assert "repo" not in str(exc.value)
+
+
+def test_a_loopback_server_is_never_contacted():
+    """The real resolver and socket path: a server listening on this machine must
+    see no connection at all."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    server.settimeout(0.5)
+    port = server.getsockname()[1]
+    contacted = []
+
+    def accept():
+        try:
+            conn, _ = server.accept()
+            contacted.append(True)
+            conn.close()
+        except OSError:
+            pass
+    t = threading.Thread(target=accept)
+    t.start()
+    try:
+        for url in (f"https://127.0.0.1:{port}/a.png", f"https://localhost:{port}/a.png",
+                    f"https://0x7f000001:{port}/a.png"):
+            with pytest.raises(RuntimeError):
+                ai_fetch.fetch_card_image(url, timeout=1)
+    finally:
+        t.join()
+        server.close()
+    assert contacted == []
+
+
+# === deadline, slow lookups, and every address tried ========================
+
+def test_each_public_address_is_tried_in_turn(monkeypatch):
+    web = _Web(monkeypatch, {"img.example": ["93.184.216.34", "93.184.216.35"]},
+               {("img.example", "/a.png"): _png()})
+    web.refusing = {"93.184.216.34"}
+    assert ai_fetch.fetch_card_image("https://img.example/a.png") == (PNG, "png")
+    assert web.refused == ["93.184.216.34"]
+    assert web.connected == [("img.example", "93.184.216.35")]
+
+
+def test_a_lookup_that_hangs_is_abandoned_at_the_deadline(monkeypatch):
+    import time
+    web = _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+               {("img.example", "/a.png"): _png()})
+    real = web.resolve
+
+    def slow(host, port):
+        time.sleep(2)
+        return real(host, port)
+    monkeypatch.setattr(ai_fetch, "_resolve", slow)
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="timed out"):
+        ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.3)
+    assert time.monotonic() - start < 1.5
+    assert web.connected == []
+
+
+class _Trickle(_Response):
+    """A body that arrives a few bytes at a time until its socket is shut down."""
+
+    def __init__(self, sock):
+        super().__init__(200, {"Content-Type": "image/png"}, PNG)
+        self.sock = sock
+
+    def read(self, n=-1):
+        import time
+        while not self.sock.down:
+            time.sleep(0.05)
+            return b"\x00"
+        return b""
+
+
+def test_a_trickling_download_is_cut_off_at_the_deadline(monkeypatch):
+    import time
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _Trickle})
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="timed out"):
+        ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.5)
+    assert time.monotonic() - start < 2
+
+
+def test_the_deadline_covers_every_hop(monkeypatch):
+    import time
+    web = _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+               {("img.example", "/a.png"): _Response(302, {"Location": "/b.png"}),
+                ("img.example", "/b.png"): _Response(302, {"Location": "/a.png"})})
+    real = web.resolve
+
+    def slowish(host, port):
+        time.sleep(0.2)
+        return real(host, port)
+    monkeypatch.setattr(ai_fetch, "_resolve", slowish)
+    with pytest.raises(RuntimeError, match="timed out"):
+        ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.5)
+    assert len(web.connected) < 4
+
+
+def test_a_close_delimited_trickle_on_a_real_socket_stops_at_the_deadline(monkeypatch):
+    """HTTP/1.0 with Connection: close and no length: http.client lets go of
+    conn.sock once the response starts, so the deadline has to reach the socket
+    it captured at connect and the reader has to check it between pieces."""
+    import http.client
+    import time
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = server.accept()
+        try:
+            conn.sendall(b"HTTP/1.0 200 OK\r\nContent-Type: image/png\r\n"
+                         b"Connection: close\r\n\r\n" + PNG[:8])
+            for _ in range(100):
+                if stop.is_set():
+                    break
+                conn.sendall(b"\x00")
+                time.sleep(0.2)
+        except OSError:
+            pass
+        finally:
+            conn.close()
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    monkeypatch.setattr(ai_fetch, "_resolve", lambda host, p: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", p))])
+    monkeypatch.setattr(
+        ai_fetch, "_open_connection",
+        lambda host, ip, p, timeout: http.client.HTTPConnection(
+            "127.0.0.1", port, timeout=timeout))
+    start = time.monotonic()
+    try:
+        with pytest.raises(RuntimeError, match="timed out"):
+            ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=1.0)
+        assert time.monotonic() - start < 3
+    finally:
+        stop.set()
+        server.close()
+
+
+
+class _ClosedAfterShutdown(_Response):
+    """A read on an SSL socket the deadline shut down raises ValueError."""
+
+    def __init__(self, sock):
+        super().__init__(200, {"Content-Type": "image/png"}, PNG)
+        self.sock = sock
+
+    def read(self, n=-1):
+        import time
+        while not self.sock.down:
+            time.sleep(0.05)
+            return b"\x00"
+        raise ValueError("Read on closed or unwrapped SSL socket.")
+
+
+def test_a_read_on_a_socket_shut_by_the_deadline_reads_as_a_timeout(monkeypatch):
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _ClosedAfterShutdown})
+    with pytest.raises(RuntimeError, match="timed out"):
+        ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.4)

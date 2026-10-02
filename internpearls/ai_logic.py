@@ -8,10 +8,15 @@ import binascii
 import hashlib
 import html as _html
 import json
+import math
 import os
 import re
 import shutil
 import time
+import urllib.parse
+import ipaddress
+import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 
 GUID_PREFIX = "iplocal-"
 GENERATED_TAG_LEAF = "Generated"
@@ -21,23 +26,22 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
 _CLOZE_OK_RE = re.compile(r"\{\{c\d+::[^{}]+?\}\}")
 _CLOZE_OPEN_RE = re.compile(r"\{\{c\d+")
-# svg_to_media's reject list: a <script> element, an on*= event-handler attribute
-# (whitespace before "=" and any case), or a javascript: URI. \bon\w+ requires "on" to
-# start a word, so it doesn't false-positive on ordinary attribute/value text like
-# "none" or "font-size".
-_SVG_SCRIPT_RE = re.compile(r"<script", re.I)
-_SVG_EVENT_ATTR_RE = re.compile(r"\bon\w+\s*=", re.I)
-_SVG_JS_URI_RE = re.compile(r"javascript\s*:", re.I)
 # A hotlinked picture typed into a field instead of listed under "images": it would
 # skip the download checks and fail offline, so the images list is the only path.
 _REMOTE_IMG_RE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*[\"']?https?://[^>]*>", re.I)
-_SVG_PROLOGUE_RE = re.compile(r"^(?:\s|<\?xml[^>]*\?>|<!DOCTYPE[^>]*>)+", re.I)
+# An XML declaration, or a DOCTYPE naming an external DTD with no internal subset
+# (expat never fetches it); anything that could declare an entity is refused instead.
+_SVG_PROLOGUE_RE = re.compile(r"^(?:\s|<\?xml[^>]*\?>|<!DOCTYPE[^>\[]*>)+", re.I)
 _SVG_OPEN_TAG_RE = re.compile(r"<svg\b[^>]*>", re.S)
 _SVG_ATTR_RE = re.compile(r'([\w:-]+)\s*=\s*"([^"]*)"|([\w:-]+)\s*=\s*\'([^\']*)\'')
 _SVG_RECT_PAIR_RE = re.compile(r"<rect\b[^>]*?>.*?</rect>", re.S)
 _SVG_RECT_SELF_RE = re.compile(r"<rect\b[^>]*?/>", re.S)
 PRIMARY_FIELD = {"Study Deck - Basic": "Front", "Study Deck - Cloze": "Text",
                  "Study Deck - Image ID": "Image", "Basic": "Front", "Cloze": "Text"}
+# Anki's two stock note types, by the names and fields the prompt uses for them.
+CORE_NOTE_TYPES = {"Basic": (0, ("Front", "Back")), "Cloze": (1, ("Text", "Back Extra"))}
+# Anki's StockNotetype.Kind for each, as a note type's "originalStockKind" records it.
+_STOCK_KIND = {"Basic": 0, "Cloze": 4}
 LONG_ANSWER_WORDS = 60
 AUTO_COUNT_CEILING = 40
 AUTO_DEPTH_CHARS = 1500
@@ -60,6 +64,45 @@ def _count_instruction(count):
                 f"{AUTO_COUNT_CEILING} testable points, keep the ones most likely to be "
                 f"tested. State the count first as {{\"count\": N, \"cards\": [...]}}.")
     return f"Make exactly {int(count)} cards."
+
+
+def _stock_shape(model, kind):
+    """True when `model` has the shape of Anki's stock note type `kind`, whatever
+    language its names are in: the same type, two fields, and the stock template."""
+    model_type, _ = CORE_NOTE_TYPES[kind]
+    flds = sorted(model.get("flds") or [], key=lambda f: f.get("ord", 0))
+    tmpls = model.get("tmpls") or []
+    if model.get("type", 0) != model_type or len(flds) != 2 or len(tmpls) != 1:
+        return False
+    first, second = (f.get("name", "") for f in flds)
+    qfmt = " ".join((tmpls[0].get("qfmt") or "").split())
+    afmt = tmpls[0].get("afmt") or ""
+    if kind == "Cloze":
+        return qfmt == f"{{{{cloze:{first}}}}}" and f"{{{{{second}}}}}" in afmt
+    return (qfmt == f"{{{{{first}}}}}" and "{{FrontSide}}" in afmt
+            and f"{{{{{second}}}}}" in afmt)
+
+
+def find_core_notetype(models, kind):
+    """(model, {prompt field: model field}) for the collection's stock `kind`
+    ("Basic" or "Cloze"): the note type called that, else the one shaped like it, so
+    a collection whose stock types carry translated names still works. Among several
+    shaped alike, one Anki recorded as created from that stock kind wins, then the
+    oldest (lowest id). (None, {}) when there is none."""
+    model_type, ours = CORE_NOTE_TYPES[kind]
+    models = list(models or [])
+    named = next((m for m in models if m.get("name") == kind), None)
+    if named is not None and named.get("type", 0) == model_type:
+        names = [f.get("name") for f in named.get("flds") or []]
+        if all(n in names for n in ours):
+            return named, {n: n for n in ours}
+    shaped = [m for m in models if _stock_shape(m, kind)]
+    if not shaped:
+        return None, {}
+    model = min(shaped, key=lambda m: (m.get("originalStockKind") != _STOCK_KIND[kind],
+                                       m.get("id", float("inf"))))
+    theirs = [f["name"] for f in sorted(model["flds"], key=lambda f: f.get("ord", 0))]
+    return model, dict(zip(ours, theirs))
 
 
 def generated_guid():
@@ -154,7 +197,7 @@ def parse_cards_json(text, allowed_types, field_map):
             images = [images]
         cards.append({
             "note_type": ntype,
-            "fields": {k: _REMOTE_IMG_RE.sub("", str(fields.get(k, "")))
+            "fields": {k: sanitize_field_html(_REMOTE_IMG_RE.sub("", str(fields.get(k, ""))))
                        for k in field_map[ntype]},
             "tags": [str(t) for t in (raw.get("tags") or [])],
             "images": [_image_entry(im) for im in images],
@@ -193,6 +236,207 @@ def sources_html(sources):
         title = str(src.get("title") or url)
         links.append(f'<a href="{_html.escape(url, quote=True)}">{_html.escape(title)}</a>')
     return _SMALL_LINE.format("Sources: " + ", ".join(links)) if links else ""
+
+
+# What a generated field may carry: the formatting cards use, local pictures, and
+# http(s) links. Any other tag loses the tag and keeps its text; the contents of
+# _DROPPED_ELEMENTS go entirely; any attribute not listed goes.
+_FIELD_TAGS = frozenset({
+    "a", "b", "strong", "i", "em", "u", "s", "sub", "sup", "small", "span", "font",
+    "br", "p", "div", "hr", "ul", "ol", "li", "code", "pre", "blockquote",
+    "table", "thead", "tbody", "tfoot", "tr", "th", "td", "img", "caption", "col",
+    "colgroup", "ruby", "rt", "rp", "h1", "h2", "h3", "h4", "h5", "h6", "dl", "dt",
+    "dd", "mark", "del", "ins", "kbd",
+})
+_VOID_TAGS = frozenset({"br", "hr", "img", "col"})
+_DROPPED_ELEMENTS = frozenset({
+    "script", "style", "iframe", "frame", "frameset", "object", "embed", "applet",
+    "noscript", "noembed", "noframes", "template", "svg", "math", "textarea",
+    "select", "title", "head", "xmp", "plaintext", "audio", "video", "canvas",
+})
+_COMMON_ATTRS = frozenset({"style", "class", "title"})
+_TAG_ATTRS = {
+    "a": {"href"},
+    "img": {"src", "alt", "width", "height"},
+    "font": {"color", "size", "face"},
+    "td": {"colspan", "rowspan", "align", "valign"},
+    "th": {"colspan", "rowspan", "align", "valign"},
+    "table": {"align"}, "tr": {"align", "valign"},
+    "p": {"align"}, "div": {"align"}, "ol": {"start", "type"},
+    "col": {"span"}, "colgroup": {"span"},
+}
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x20\x7f]+")
+# Inline style a field may keep: layout and text properties only, never anything that
+# can fetch (url(), image-set()) or place content over the card (position).
+_STYLE_PROPS = frozenset({
+    "color", "background-color", "opacity", "text-align", "text-decoration",
+    "text-indent", "vertical-align", "line-height", "white-space", "overflow-wrap",
+    "word-break", "display", "width", "height", "min-width", "max-width",
+    "min-height", "max-height", "table-layout", "border-collapse", "border-spacing",
+    "list-style-type", "list-style-position",
+})
+_STYLE_PREFIXES = ("font-", "border", "padding", "margin")
+_STYLE_VALUE_RE = re.compile(r"[#%.,\w\s()-]*")
+_STYLE_FUNC_RE = re.compile(r"([A-Za-z-]*)\s*\(")
+_STYLE_FUNCS = frozenset({"rgb", "rgba", "hsl", "hsla"})
+
+
+def _style_prop_ok(prop, extra=frozenset()):
+    return prop in _STYLE_PROPS or prop in extra or prop.startswith(_STYLE_PREFIXES)
+
+
+def safe_style(value, extra=frozenset()):
+    """`value` keeping only allowlisted declarations whose value is plain: no quotes,
+    backslashes or comments, and parentheses only for rgb(), rgba(), hsl(), hsla()."""
+    kept, total = [], 0
+    for decl in str(value or "").split(";"):
+        if not decl.strip():
+            continue
+        total += 1
+        if ":" not in decl:
+            continue
+        prop, val = decl.split(":", 1)
+        prop, val = prop.strip().lower(), val.strip()
+        if not val or not _style_prop_ok(prop, extra):
+            continue
+        if "/*" in val or not _STYLE_VALUE_RE.fullmatch(val):
+            continue
+        if any(f.lower() not in _STYLE_FUNCS for f in _STYLE_FUNC_RE.findall(val)):
+            continue
+        if val.count("(") != len(_STYLE_FUNC_RE.findall(val)):
+            continue
+        kept.append(decl.strip())
+    return str(value).strip() if len(kept) == total else "; ".join(kept)
+
+
+def _safe_href(value):
+    """True for an https link to a named host: not an address, not localhost."""
+    v = _CONTROL_CHARS_RE.sub("", value)
+    if not v.lower().startswith("https://") or "\\" in v:
+        return False
+    try:
+        parts = urllib.parse.urlsplit(v)
+        host = (parts.hostname or "").rstrip(".").lower()
+    except ValueError:
+        return False
+    if "@" in parts.netloc:
+        return False
+    if not host or host == "localhost" or host.endswith(".localhost"):
+        return False
+    if all(re.fullmatch(r"0x[0-9a-f]*|[0-9]+", label) for label in host.split(".")):
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        return True
+
+
+def _local_src(value):
+    v = _CONTROL_CHARS_RE.sub("", value)
+    return bool(v) and ":" not in v and not v.startswith(("/", "\\"))
+
+
+class _FieldSanitizer(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out = []
+        self.dropping = []
+
+    def _attrs(self, tag, attrs):
+        allowed = _COMMON_ATTRS | _TAG_ATTRS.get(tag, set())
+        kept = []
+        for name, value in attrs:
+            name = name.lower()
+            value = value or ""
+            if name not in allowed:
+                continue
+            if name == "style":
+                value = safe_style(value)
+                if not value:
+                    continue
+            if name == "href" and not _safe_href(value):
+                continue
+            kept.append(f' {name}="{_html.escape(value, quote=True)}"')
+        return "".join(kept)
+
+    def handle_starttag(self, tag, attrs):
+        if self.dropping:
+            if tag in _DROPPED_ELEMENTS and tag not in _VOID_TAGS:
+                self.dropping.append(tag)
+            return
+        if tag in _DROPPED_ELEMENTS:
+            self.dropping.append(tag)
+            return
+        if tag not in _FIELD_TAGS:
+            return
+        if tag == "img" and not _local_src(dict(attrs).get("src") or ""):
+            return
+        self.out.append(f"<{tag}{self._attrs(tag, attrs)}>")
+
+    def handle_startendtag(self, tag, attrs):
+        if tag in _VOID_TAGS:
+            self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        if self.dropping:
+            if tag in self.dropping:
+                while self.dropping.pop() != tag:
+                    pass
+            return
+        if tag in _FIELD_TAGS and tag not in _VOID_TAGS:
+            self.out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if not self.dropping:
+            self.out.append(_html.escape(data, quote=False).replace("\xa0", "&nbsp;"))
+
+
+# MathJax commands that link out, load extensions or style output. Anki typesets TeX
+# in a field, so these are dropped from it; the rest of the TeX is left alone.
+_TEX_ACTIVE_RE = re.compile(
+    r"\\(?:href|url|require|style|class|cssId|mmlToken|data)\b\s*(?:\[[^\]]*\]\s*)?"
+    r"(?:\{[^{}]*\}\s*(?:\[[^\]]*\])?)?")
+# \bbox keeps its content; only the command and its CSS options go.
+_TEX_BBOX_RE = re.compile(r"\\bbox\b\s*(?:\[[^\]]*\])?")
+# Any other command's [options] carrying "key=value" or CSS ("prop: value").
+_TEX_OPTIONS_RE = re.compile(r"(\\[A-Za-z]+\s*)\[[^\]]*[:=][^\]]*\]")
+
+
+def sanitize_field_html(value):
+    """`value` reduced to markup that is safe to import into a card field: no
+    scripts, frames, event handlers, non-https or local links, remote pictures,
+    fetching styles or MathJax links, so what the review preview shows is what the
+    card will carry."""
+    parser = _FieldSanitizer()
+    parser.feed(str(value or ""))
+    parser.close()
+    out = _TEX_ACTIVE_RE.sub("", "".join(parser.out))
+    out = _TEX_BBOX_RE.sub("", out)
+    return _TEX_OPTIONS_RE.sub(r"\1", out)
+
+
+_ANCHOR_RE = re.compile(r'<a\b([^>]*)>(.*?)</a>', re.I | re.S)
+_HREF_ATTR_RE = re.compile(r'\bhref="([^"]*)"')
+
+
+def show_link_hosts(value):
+    """A sanitized field with each link's host written after its text, so a preview
+    that drops the link itself still shows where it points."""
+    def one(m):
+        href = _HREF_ATTR_RE.search(m.group(1))
+        if not href:
+            return m.group(0)
+        target = _html.unescape(href.group(1)).replace("\\", "/")
+        try:
+            parts = urllib.parse.urlsplit(target)
+            host = None if "@" in parts.netloc else parts.hostname
+        except ValueError:
+            host = None
+        if not host:
+            return m.group(0)
+        return f"<a{m.group(1)}>{m.group(2)} ({_html.escape(host)})</a>"
+    return _ANCHOR_RE.sub(one, value or "")
 
 
 def primary_is_blank(card):
@@ -497,9 +741,11 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
                 continue
             stripped = {k: _REMOTE_IMG_RE.sub("", str(v)) for k, v in correction.items()}
             removed = stripped != {k: str(v) for k, v in correction.items()}
-            correction = stripped
-            if removed and not any(v.strip() for v in correction.values()):
-                correction = None
+            cleaned = {k: sanitize_field_html(v) for k, v in stripped.items()}
+            if (cleaned != {k: str(v) for k, v in correction.items()}
+                    and not any(v.strip() for v in cleaned.values())):
+                cleaned = None
+            correction = cleaned
         sources = []
         for src in raw.get("sources") or []:
             if not isinstance(src, dict):
@@ -512,8 +758,8 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
         if removed:
             note += (" A web picture in the suggested text was left out; "
                      "pictures are added through the card's images.")
-            if correction is None and verdict == "corrected":
-                verdict = "unverified"
+        if correction is None and verdict == "corrected" and raw.get("correction") is not None:
+            verdict = "unverified"
         if verdict == "confirmed" and not web:
             verdict = "unverified"
             note = "no web access, from recall only: " + note
@@ -672,11 +918,19 @@ def _activity_text(kind, name, params=None):
     return template.format(basename=basename)
 
 
+def _finite(v):
+    """True for a plain int or float that is not NaN or infinite."""
+    return (isinstance(v, (int, float)) and not isinstance(v, bool)
+            and math.isfinite(v))
+
+
 def _num(v, cast):
-    """Coerce a value pulled out of untrusted vendor JSON, or fall back to 0."""
+    """Coerce a value pulled out of untrusted vendor JSON, or fall back to 0. JSON's
+    NaN and Infinity count as absent."""
     try:
-        return cast(v)
-    except (TypeError, ValueError):
+        out = cast(v)
+        return out if math.isfinite(out) else cast(0)
+    except (TypeError, ValueError, OverflowError):
         return cast(0)
 
 
@@ -872,10 +1126,10 @@ def _usage_runs(reg, kind):
         if not isinstance(r, dict):
             continue
         ts = r.get("ts")
-        if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+        if not _finite(ts):
             continue
         tokens = r.get("tokens", 0)
-        if not isinstance(tokens, (int, float)) or isinstance(tokens, bool):
+        if not _finite(tokens):
             tokens = 0
         out.append({"ts": float(ts), "tokens": int(tokens)})
     return out
@@ -915,7 +1169,7 @@ def _duration_runs(reg, key):
         return []
     out = []
     for v in runs:
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if _finite(v):
             out.append(float(v))
     return out
 
@@ -1259,17 +1513,153 @@ def svg_to_media(markup, index):
     rect (sized against Qt's default viewport, not the viewBox) is replaced with a
     proper full-size one. An XML declaration or doctype before the root is dropped
     first."""
-    m = _SVG_PROLOGUE_RE.sub("", (markup or "").strip())
-    if not m.startswith("<svg"):
-        raise ValueError("not svg markup")
-    if _SVG_SCRIPT_RE.search(m):
-        raise ValueError("svg with a <script> element rejected")
-    if _SVG_EVENT_ATTR_RE.search(m):
-        raise ValueError("svg with an event-handler attribute rejected")
-    if _SVG_JS_URI_RE.search(m):
-        raise ValueError("svg with a javascript: URI rejected")
+    m = _checked_svg(markup)
     m = _normalize_svg(m)
     return f"generated-{int(index)}.svg", m.encode("utf8")
+
+
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+# What a drawn figure is made of. Anything else is dropped; a script vector or content
+# from another namespace rejects the whole picture.
+_SVG_ELEMENTS = frozenset({
+    "svg", "g", "defs", "title", "desc", "symbol", "use", "path", "rect", "circle",
+    "ellipse", "line", "polyline", "polygon", "text", "tspan", "textPath", "marker",
+    "linearGradient", "radialGradient", "stop", "clipPath", "mask", "pattern",
+})
+_SVG_REJECTED = frozenset({"script", "foreignObject", "iframe", "embed",
+                           "object", "set", "animate", "animateTransform",
+                           "animateMotion", "handler", "listener", "image", "a"})
+_SVG_REJECTED_LOWER = frozenset(n.lower() for n in _SVG_REJECTED)
+_SVG_ATTRS = frozenset({
+    "id", "class", "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry",
+    "fx", "fy", "width", "height", "d", "points", "transform", "viewBox",
+    "preserveAspectRatio", "version", "fill", "fill-opacity", "fill-rule", "stroke",
+    "stroke-width", "stroke-opacity", "stroke-linecap", "stroke-linejoin",
+    "stroke-dasharray", "stroke-dashoffset", "stroke-miterlimit", "opacity",
+    "font-family", "font-size", "font-weight", "font-style", "text-anchor",
+    "dominant-baseline", "alignment-baseline", "baseline-shift", "letter-spacing",
+    "word-spacing", "text-decoration", "dx", "dy", "rotate", "textLength",
+    "lengthAdjust", "offset", "stop-color", "stop-opacity", "gradientUnits",
+    "gradientTransform", "spreadMethod", "markerWidth", "markerHeight", "refX",
+    "refY", "orient", "markerUnits", "marker-start", "marker-mid", "marker-end",
+    "clip-path", "clip-rule", "clipPathUnits", "mask", "maskUnits",
+    "maskContentUnits", "patternUnits", "patternContentUnits", "patternTransform",
+    "visibility", "display", "href", "style", "startOffset", "pathLength",
+})
+_SVG_STYLE_PROPS = frozenset({
+    "fill", "fill-opacity", "fill-rule", "stroke", "stroke-width", "stroke-opacity",
+    "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset",
+    "stroke-miterlimit", "text-anchor", "dominant-baseline", "letter-spacing",
+    "stop-color", "stop-opacity", "visibility",
+})
+_SVG_MAX_DEPTH = 64
+_SVG_URL_RE = re.compile(r"url\(\s*#[\w.-]+\s*\)")
+
+
+def _local(tag):
+    return tag.rsplit("}", 1)[-1]
+
+
+def _ns(tag):
+    return tag[1:].split("}", 1)[0] if tag.startswith("{") else ""
+
+
+def _clean_svg_element(el):
+    for child in list(el):
+        ns, name = _ns(child.tag), _local(child.tag)
+        if ns not in ("", _SVG_NS):
+            raise ValueError("svg with content from another namespace rejected")
+        if name.lower() in _SVG_REJECTED_LOWER:
+            raise ValueError(f"svg element <{name}> rejected")
+        if name not in _SVG_ELEMENTS:
+            el.remove(child)
+            continue
+        _clean_svg_element(child)
+    for key in list(el.attrib):
+        ns, name = _ns(key), _local(key)
+        value = el.attrib.pop(key)
+        if name.lower().startswith("on"):
+            raise ValueError("svg with an event-handler attribute rejected")
+        if ns not in ("", _XLINK_NS) or name not in _SVG_ATTRS:
+            continue
+        if name == "href":
+            if not _CONTROL_CHARS_RE.sub("", value).startswith("#"):
+                raise ValueError("svg with a link outside the picture rejected")
+            el.set("{%s}href" % _XLINK_NS if ns else "href", value)
+            continue
+        if name == "style":
+            value = safe_style(value, _SVG_STYLE_PROPS)
+            if not value:
+                continue
+        elif "(" in value and not (name == "transform" or _SVG_URL_RE.fullmatch(
+                value.strip()) or re.fullmatch(r"[\w\s#.,%-]*(rgba?|hsla?)\([\d\s.,%]*\)",
+                                              value.strip())):
+            continue
+        if name == "transform" and not re.fullmatch(r"[\w\s().,-]*", value):
+            continue
+        el.set(key, value)
+    el.tag = "{%s}%s" % (_SVG_NS, _local(el.tag))
+
+
+def _checked_svg(markup):
+    """The SVG markup rebuilt from its parsed tree, keeping only allowlisted elements
+    and attributes, or ValueError if it isn't well-formed SVG, declares a DOCTYPE or
+    entities, or carries a script vector: a script, style or foreign element, an event
+    handler, or a link anywhere but inside the picture."""
+    m = _SVG_PROLOGUE_RE.sub("", (markup or "").strip())
+    if re.search(r"<!\s*(?:DOCTYPE|ENTITY)", m, re.I):
+        raise ValueError("svg with a DOCTYPE or entity declaration rejected")
+    try:
+        root = ET.fromstring(m)
+    except ET.ParseError as e:
+        raise ValueError(f"svg is not well-formed ({e})") from None
+    if _local(root.tag) != "svg" or _ns(root.tag) not in ("", _SVG_NS):
+        raise ValueError("not svg markup")
+    stack = [(root, 1)]
+    while stack:
+        el, depth = stack.pop()
+        if depth > _SVG_MAX_DEPTH:
+            raise ValueError("svg is nested too deeply")
+        stack.extend((child, depth + 1) for child in el)
+    _clean_svg_element(root)
+    ET.register_namespace("", _SVG_NS)
+    ET.register_namespace("xlink", _XLINK_NS)
+    return ET.tostring(root, encoding="unicode")
+
+
+_RASTER_MAGIC = {
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".jpg": (b"\xff\xd8\xff",),
+    ".jpeg": (b"\xff\xd8\xff",),
+    ".gif": (b"GIF87a", b"GIF89a"),
+}
+
+
+def check_image_bytes(name, data):
+    """The bytes to store for `name`, or ValueError unless `data` really is the
+    picture its extension says: a PNG, JPEG, GIF or WebP by its signature (returned
+    as is), or an SVG that passes svg_to_media's checks (returned rebuilt from its
+    tree). Anki serves a media file by its name, so a file that only claims to be a
+    picture never reaches the media folder."""
+    ext = os.path.splitext(name or "")[1].lower()
+    data = bytes(data or b"")
+    if ext == ".svg":
+        try:
+            text = data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise ValueError("svg is not text") from None
+        return _checked_svg(text).encode("utf-8")
+    if ext == ".webp":
+        if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            return data
+        raise ValueError("not a WebP picture")
+    if ext not in _RASTER_MAGIC:
+        raise ValueError("not a PNG, JPEG, GIF, WebP or SVG picture")
+    if not data.startswith(_RASTER_MAGIC[ext]):
+        raise ValueError("not a {} picture".format("GIF" if ext == ".gif" else
+                                                   "PNG" if ext == ".png" else "JPEG"))
+    return data
 
 
 SCRATCH_PREFIX = "ip-aigen-"

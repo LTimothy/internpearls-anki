@@ -1,6 +1,8 @@
 """Pure-logic tests for AI card generation. No Anki install needed."""
 import os
 
+import pytest
+
 from internpearls import ai_logic
 
 
@@ -1207,7 +1209,7 @@ def test_extract_pdf_broken_pypdf_import_raises_valueerror(tmp_path, monkeypatch
 
 def test_svg_to_media_and_script_rejection():
     import pytest
-    name, data = ai_logic.svg_to_media("<svg xmlns='x'><rect/></svg>", 2)
+    name, data = ai_logic.svg_to_media("<svg xmlns='http://www.w3.org/2000/svg'><rect/></svg>", 2)
     assert name == "generated-2.svg" and data.startswith(b"<svg")
     with pytest.raises(ValueError):
         ai_logic.svg_to_media("<svg><script>alert(1)</script></svg>", 0)
@@ -1257,7 +1259,8 @@ def test_svg_to_media_rejects_javascript_uri():
 def test_svg_to_media_accepts_a_real_diagram():
     """The rejection checks must not catch the shapes, text, groups, and styling a
     model-drawn diagram is actually made of. Absolute width/height on the root
-    keeps normalization a no-op, so the bytes still round-trip exactly."""
+    keeps normalization a no-op, so the drawing comes back as it was drawn, rebuilt
+    from its parsed tree."""
     markup = (
         '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" '
         'viewBox="0 0 100 100">'
@@ -1272,7 +1275,7 @@ def test_svg_to_media_accepts_a_real_diagram():
     )
     name, data = ai_logic.svg_to_media(markup, 1)
     assert name == "generated-1.svg"
-    assert data == markup.encode("utf8")
+    assert data == markup.replace('"/>', '" />').encode("utf8")
 
 
 # --- svg_to_media: normalizing a percent-sized root and its 100%/100% rect ---
@@ -1305,14 +1308,14 @@ def test_svg_to_media_leaves_an_absolute_sized_svg_alone():
     markup = ('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" '
              'viewBox="0 0 40 40"><rect width="40" height="40" fill="blue"/></svg>')
     _, data = ai_logic.svg_to_media(markup, 0)
-    assert data == markup.encode("utf8")
+    assert data == markup.replace('"/>', '" />').encode("utf8")
 
 
 def test_svg_to_media_leaves_a_viewbox_less_svg_alone():
     # nothing to compute an absolute size from, so normalization is a no-op
     markup = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="3"/></svg>'
     _, data = ai_logic.svg_to_media(markup, 0)
-    assert data == markup.encode("utf8")
+    assert data == markup.replace('"/>', '" />').encode("utf8")
 
 
 # === Stale scratch sweep. The wizard removes its own mkdtemp dir when it
@@ -1562,3 +1565,322 @@ def test_web_image_rules_require_a_found_image_for_a_visual_card():
         assert "incomplete without one" in p
     p = _flat(ai_logic.build_prompt(**_PROMPT_KW, mode="quick", web=False))
     assert "incomplete without one" not in p
+
+
+# === generated fields carry only safe markup ================================
+
+_HOSTILE_FIELD = ('<b>Dose</b> <script>steal()</script><img src=x onerror="steal()">'
+                  '<iframe src="https://evil.example"></iframe>'
+                  '<a href="javascript:steal()">ref</a> '
+                  '<a href=" jav&#x61;script:steal()">two</a> '
+                  '<div onclick="steal()" style="color:red">box</div>'
+                  '<svg><script>steal()</script></svg>'
+                  '<img src="data:image/png;base64,AAAA">')
+
+
+def test_parse_cards_strips_active_content_from_every_field():
+    text = _json.dumps([{"note_type": "Basic",
+                         "fields": {"Front": "q " + _HOSTILE_FIELD, "Back": _HOSTILE_FIELD},
+                         "tags": [], "images": []}])
+    cards, errors = ai_logic.parse_cards_json(text, ALLOWED, FIELD_MAP)
+    assert not errors
+    for value in cards[0]["fields"].values():
+        low = value.lower()
+        for bad in ("<script", "steal", "<iframe", "onerror", "onclick",
+                    "javascript", "data:", "<svg"):
+            assert bad not in low, (bad, value)
+        assert "<b>Dose</b>" in value
+        assert '<img src="x">' in value
+        assert '<div style="color:red">box</div>' in value
+        assert "<a>ref</a>" in value
+
+
+def test_sanitized_field_keeps_card_formatting_and_text():
+    value = ('<ul><li>MAP &lt;65</li></ul><table><tr><td colspan="2">x</td></tr></table>'
+             '{{c1::lipid}} 1.5&nbsp;mL/kg <a href="https://example.com/r">ref</a>'
+             '<img src="generated-0.svg"><br>')
+    assert ai_logic.sanitize_field_html(value) == value
+
+
+def test_sanitized_field_escapes_bare_angle_text():
+    assert ai_logic.sanitize_field_html("MAP <65 and HR >100") == "MAP &lt;65 and HR &gt;100"
+
+
+def test_correction_is_sanitized_like_a_card_field():
+    text = _corrected({"Back": 'new <script>x()</script><b onmouseover="x()">dose</b>'})
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert not errors
+    assert verdicts[0]["correction"] == {"Back": "new <b>dose</b>"}
+
+
+def test_correction_left_empty_by_sanitizing_is_dropped():
+    text = _corrected({"Back": "<script>x()</script>"})
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert not errors
+    assert verdicts[0]["correction"] is None
+    assert verdicts[0]["verdict"] == "unverified"
+
+
+# === scratch pictures are checked by content ================================
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+
+def test_check_image_bytes_accepts_real_signatures():
+    ai_logic.check_image_bytes("a.png", PNG)
+    ai_logic.check_image_bytes("a.jpg", b"\xff\xd8\xff\xe0rest")
+    ai_logic.check_image_bytes("a.jpeg", b"\xff\xd8\xff\xe0rest")
+    ai_logic.check_image_bytes("a.gif", b"GIF89a rest")
+    ai_logic.check_image_bytes("a.webp", b"RIFF\x00\x00\x00\x00WEBPVP8 ")
+    ai_logic.check_image_bytes("a.svg", b'<?xml version="1.0"?><svg></svg>')
+
+
+@pytest.mark.parametrize("name, data", [
+    ("a.png", b"<html><script>steal()</script></html>"),
+    ("a.jpg", PNG),
+    ("a.html", b"<html></html>"),
+    ("a.js", b"steal()"),
+    ("a.webp", b"RIFF0000WAVE"),
+    ("a.svg", b"<svg><script>steal()</script></svg>"),
+    ("a.svg", b'<svg><a href="jav&#x61;script:steal()">x</a></svg>'),
+    ("a.svg", b"<svg><foreignObject><iframe></iframe></foreignObject></svg>"),
+    ("a.svg", b"<html><body>not svg</body></html>"),
+    ("a.svg", b"\xff\xfe\x00bad"),
+])
+def test_check_image_bytes_refuses_what_is_not_that_picture(name, data):
+    with pytest.raises(ValueError):
+        ai_logic.check_image_bytes(name, data)
+
+
+def test_svg_to_media_refuses_an_entity_encoded_javascript_uri():
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media('<svg><a href="&#106;avascript:x()">x</a></svg>', 0)
+
+
+# === NaN and Infinity from a stream count as absent =========================
+
+def test_codex_nan_and_infinity_figures_are_treated_as_absent():
+    # Python's json writes and reads NaN/Infinity literals, as a vendor stream can.
+    line = ('{"type": "token_count", "info": {"total_tokens": Infinity}, '
+            '"rate_limits": {"primary": {"used_percent": NaN}, '
+            '"secondary": {"used_percent": -Infinity}}}')
+    evt = ai_logic.parse_stream_event("codex", line)
+    assert evt["primary_pct"] == 0.0 and evt["secondary_pct"] == 0.0
+    assert evt.get("tokens", 0) == 0
+    assert ai_logic.rate_limit_line(evt) == "5h window 100% left, week 100% left"
+    usage = ('{"type": "item.completed", "text": "[]", '
+             '"usage": {"input_tokens": NaN, "output_tokens": 7}}')
+    assert ai_logic.parse_stream_event("codex", usage)["tokens"] == 7
+
+
+def test_non_finite_numbers_in_saved_usage_are_dropped():
+    reg = {"codex": [{"ts": float("nan"), "tokens": 5},
+                     {"ts": 100.0, "tokens": float("inf")},
+                     {"ts": 100.0, "tokens": 3}],
+           "durations": {"codex-quick": [float("nan"), float("inf"), 30.0]}}
+    assert ai_logic.usage_line(reg, "codex", now=200.0) == \
+        "Today via this add-on: 2 runs, ~0k tokens"
+    assert ai_logic.median_duration(reg, "codex", "quick") == 30.0
+    assert ai_logic.duration_estimate_line(reg, "codex", "quick").endswith("30s")
+
+
+# === stock note types are found by shape, not only by English name ==========
+
+def _model(name, fields, qfmt, afmt, mtype=0):
+    return {"name": name, "type": mtype,
+            "flds": [{"name": f, "ord": i} for i, f in enumerate(fields)],
+            "tmpls": [{"name": "Karte 1", "qfmt": qfmt, "afmt": afmt, "ord": 0}]}
+
+
+_GERMAN_BASIC = _model("Einfach", ["Vorderseite", "Rückseite"], "{{Vorderseite}}",
+                       "{{FrontSide}}\n\n<hr id=answer>\n\n{{Rückseite}}")
+_JAPANESE_CLOZE = _model("穴埋め", ["テキスト", "裏面追加"],
+                         "{{cloze:テキスト}}",
+                         "{{cloze:テキスト}}<br>\n{{裏面追加}}", mtype=1)
+_STUDY_BASIC = _model("Study Deck - Basic", ["Front", "Back", "Why"], "{{Front}}",
+                      "{{FrontSide}}<hr id=answer>{{Back}}")
+
+
+def test_core_basic_is_found_by_english_name_first():
+    english = _model("Basic", ["Front", "Back"], "{{Front}}", "{{FrontSide}}{{Back}}")
+    model, fields = ai_logic.find_core_notetype([_GERMAN_BASIC, english], "Basic")
+    assert model is english and fields == {"Front": "Front", "Back": "Back"}
+
+
+def test_core_basic_in_a_german_collection_maps_its_fields():
+    model, fields = ai_logic.find_core_notetype([_STUDY_BASIC, _GERMAN_BASIC], "Basic")
+    assert model is _GERMAN_BASIC
+    assert fields == {"Front": "Vorderseite", "Back": "Rückseite"}
+
+
+def test_core_cloze_in_a_japanese_collection_maps_its_fields():
+    model, fields = ai_logic.find_core_notetype([_GERMAN_BASIC, _JAPANESE_CLOZE], "Cloze")
+    assert model is _JAPANESE_CLOZE
+    assert fields == {"Text": "テキスト", "Back Extra": "裏面追加"}
+
+
+def test_no_core_type_finds_nothing():
+    assert ai_logic.find_core_notetype([_STUDY_BASIC], "Basic") == (None, {})
+
+
+def test_shape_ties_break_on_the_recorded_stock_kind_then_the_oldest():
+    older = dict(_model("Grund", ["A", "B"], "{{A}}", "{{FrontSide}}{{B}}"), id=5)
+    newer = dict(_GERMAN_BASIC, id=9)
+    assert ai_logic.find_core_notetype([newer, older], "Basic")[0] is older
+    stock = dict(_GERMAN_BASIC, id=20, originalStockKind=0)
+    assert ai_logic.find_core_notetype([older, stock], "Basic")[0] is stock
+    cloze_a = dict(_JAPANESE_CLOZE, id=7)
+    cloze_b = dict(_JAPANESE_CLOZE, id=3, name="other")
+    assert ai_logic.find_core_notetype([cloze_a, cloze_b], "Cloze")[0] is cloze_b
+
+
+def test_a_type_named_cloze_that_is_not_a_cloze_type_is_not_taken():
+    fake = _model("Cloze", ["Text", "Back Extra"], "{{Text}}", "{{Back Extra}}", mtype=0)
+    model, _ = ai_logic.find_core_notetype([fake, _JAPANESE_CLOZE], "Cloze")
+    assert model is _JAPANESE_CLOZE
+
+
+
+# === review fixes: SVG parsed and rebuilt, styles allowlisted ===============
+
+_SVG = 'xmlns="http://www.w3.org/2000/svg"'
+_XLINK = 'xmlns:xlink="http://www.w3.org/1999/xlink"'
+
+
+@pytest.mark.parametrize("markup", [
+    f'<svg {_SVG} xmlns:s="http://www.w3.org/2000/svg"><s:script>x()</s:script></svg>',
+    f'<svg {_SVG} xmlns:h="http://www.w3.org/1999/xhtml"><h:script>x()</h:script></svg>',
+    f'<svg {_SVG} {_XLINK}><use xlink:href="java&#9;script:x()"/></svg>',
+    f'<svg {_SVG}><use href="javas&#x0A;cript:x()"/></svg>',
+    f'<svg {_SVG}><use href="https://evil.example/s.svg#a"/></svg>',
+    f'<svg {_SVG}><set attributeName="onmouseover" to="x()"/></svg>',
+    f'<svg {_SVG}><animate attributeName="href" to="javascript:x()"/></svg>',
+    f'<svg {_SVG}><image href="data:image/svg+xml;base64,PHN2Zz4="/></svg>',
+    f'<svg {_SVG}><rect onclick="x()"/></svg>',
+    f'<svg {_SVG}><foreignObject><div/></foreignObject></svg>',
+    '<!DOCTYPE svg [<!ENTITY e "x">]><svg>&e;</svg>',
+    '<svg><rect></svg>',
+])
+def test_scripted_or_linked_svg_is_refused(markup):
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media(markup, 0)
+    with pytest.raises(ValueError):
+        ai_logic.check_image_bytes("a.svg", markup.encode())
+
+
+def test_svg_is_stored_as_rebuilt_from_its_tree():
+    markup = (f'<svg {_SVG} width="10" height="10"><g><rect fill="url(#g)" '
+              'style="fill:red; background:url(https://evil.example/x)" '
+              'data-x="1"/><unknown><circle r="2"/></unknown>'
+              '<use href="#g"/></g></svg>')
+    out = ai_logic.check_image_bytes("a.svg", markup.encode()).decode()
+    assert 'fill="url(#g)"' in out and 'href="#g"' in out
+    assert "evil" not in out and "data-x" not in out and "unknown" not in out
+    assert 'style="fill:red"' in out
+
+
+@pytest.mark.parametrize("style", [
+    "background:u\\72l(https://evil.example/x)",
+    "background-image:image-set('https://evil.example/x' 1x)",
+    "background-image:-webkit-image-set(url(https://evil.example/x) 1x)",
+    "position:fixed; top:0; left:0",
+    "color:red /* x */",
+    'font-family:"x"',
+    "width:calc(100% - 1px)",
+])
+def test_fetching_or_overlaying_styles_are_dropped(style):
+    out = ai_logic.sanitize_field_html(f'<div style="{style}">x</div>')
+    assert out == "<div>x</div>"
+
+
+def test_the_inline_styles_cards_use_survive():
+    for style in ("text-align: center", "padding-left: 1.2em; margin: 0",
+                  "display: inline-block; max-width: 100%", "color: rgb(38, 38, 38)",
+                  "border: 1px solid #ccc; border-collapse: collapse",
+                  "font-weight: bold; table-layout: fixed; overflow-wrap: anywhere"):
+        value = f'<table style="{style}"><tr><td style="{style}">x</td></tr></table>'
+        assert ai_logic.sanitize_field_html(value) == value
+
+
+@pytest.mark.parametrize("href", [
+    "http://example.com/", "https://127.0.0.1/x", "https://localhost/x",
+    "https://a.localhost/", "https://0x7f000001/", "https://2130706433/",
+    "https://[::1]/", "https://10.0.0.1/",
+])
+def test_links_go_only_to_named_https_hosts(href):
+    out = ai_logic.sanitize_field_html(f'<a href="{href}">x</a>')
+    assert out == "<a>x</a>"
+    assert ai_logic.sanitize_field_html('<a href="https://cafe.de/p">x</a>') == \
+        '<a href="https://cafe.de/p">x</a>'
+
+
+def test_harmless_structure_is_kept():
+    value = ('<ruby>漢<rp>(</rp><rt>kan</rt><rp>)</rp></ruby><h2>T</h2>'
+             '<dl><dt>a</dt><dd>b</dd></dl><mark>m</mark><del>d</del><ins>i</ins>'
+             '<kbd>k</kbd><table><caption>c</caption><colgroup><col></colgroup>'
+             '<tr><td>x</td></tr></table>')
+    assert ai_logic.sanitize_field_html(value) == value
+
+
+def test_mathjax_links_and_extensions_are_neutralised():
+    value = (r"\(\href{https://evil.example}{x^2}\) \[\url{https://evil.example}\] "
+             r"\(\require{html}\style{color:red}{y} \class{c}{z} \cssId{i}{w}\) \(a+b\)")
+    out = ai_logic.sanitize_field_html(value)
+    for word in ("href", "url", "require", "style", "class", "cssId", "evil"):
+        assert word not in out
+    assert r"\(a+b\)" in out and "x^2" in out
+
+
+def test_preview_text_shows_where_a_link_points():
+    value = ai_logic.sanitize_field_html('<a href="https://example.com/p">ref</a>')
+    assert ai_logic.show_link_hosts(value) == \
+        '<a href="https://example.com/p">ref (example.com)</a>'
+
+
+
+# === re-review fixes ========================================================
+
+@pytest.mark.parametrize("href", [
+    "https://phish.example\\@uptodate.com/x",
+    "https://127.0.0.1\\@example.com/",
+    "https://user@example.com/",
+    "https://example.com\\evil.example/",
+])
+def test_links_with_a_backslash_or_userinfo_are_refused(href):
+    out = ai_logic.sanitize_field_html(f'<a href="{href}">x</a>')
+    assert out == "<a>x</a>"
+
+
+def test_link_host_shown_is_the_one_a_browser_would_visit():
+    shown = ai_logic.show_link_hosts('<a href="https://phish.example\\@uptodate.com/x">t</a>')
+    assert "(phish.example)" in shown and "uptodate" not in shown.split(">t")[1]
+
+
+def test_more_mathjax_linking_commands_are_neutralised():
+    value = (r"\(\mmlToken{mi}[href='https://evil.example']{x} "
+             r"\bbox[background:url(https://evil.example)]{y} \data{k=v}{z} "
+             r"\color[style=evil]{red}{w} \sqrt[3]{q}\)")
+    out = ai_logic.sanitize_field_html(value)
+    for word in ("mmlToken", "bbox", "data", "evil", "href", "style="):
+        assert word not in out
+    assert "{x}" in out and "{y}" in out and r"\sqrt[3]{q}" in out
+
+
+def test_a_deeply_nested_svg_is_refused_not_crashed():
+    markup = f'<svg {_SVG}>' + "<g>" * 5000 + "</g>" * 5000 + "</svg>"
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media(markup, 0)
+
+
+def test_a_drawn_figure_with_a_style_element_keeps_its_drawing():
+    markup = (f'<svg {_SVG} width="10" height="10"><style>@import url(https://evil.example/x.css);'
+              'rect { fill: red }</style><rect width="5" height="5" '
+              'style="fill:blue; background:url(https://evil.example/y)"/></svg>')
+    out = ai_logic.check_image_bytes("a.svg", markup.encode()).decode()
+    assert "<rect" in out and 'style="fill:blue"' in out
+    assert "evil" not in out and "<style" not in out
+
+
+def test_col_keeps_its_span():
+    value = '<table><colgroup span="2"><col span="2"></colgroup><tr><td>x</td></tr></table>'
+    assert ai_logic.sanitize_field_html(value) == value

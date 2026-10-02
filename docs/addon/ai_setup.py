@@ -29,7 +29,7 @@ LABEL_W = 108
 # leading state chip is measured against the four words it can actually say, and
 # widening that gutter to fit PREFERRED (which never appears in it) would indent
 # every row's text for nothing. See widgets.chip_column_width.
-_STATE_CHIPS = ("found", "notfound", "notresponding", "ignored")
+_STATE_CHIPS = ("found", "notfound", "notresponding", "ignored", "checking")
 _PREFERRED_CHIPS = ("preferred",)
 
 # A second name a reader may know a backend by, shown muted beside its executable.
@@ -307,12 +307,16 @@ class _BackendRow(QWidget):
         caps_lay.addStretch()
         body_lay.addWidget(caps)
 
+        # A binary still being checked is not asked about its flags here: that
+        # runs it, on the main thread.
+        probed = info["path"] if info["ok"] is not None else None
         self.model_line = _wrapped_hint(ai_cli.model_effort_line(
             kind, cfg["ai_model"][kind], cfg["ai_effort"][kind],
-            path=info["path"]))
+            path=probed))
         body_lay.addWidget(self.model_line)
 
-        detail_text = f"Works with a {meta['subscription']}. {meta['safety']}."
+        safety = ai_cli.backend_wording(kind, probed)["safety"]
+        detail_text = f"Works with a {meta['subscription']}. {safety}."
         shutdown_note = _SHUTDOWN_NOTE.get(kind)
         if shutdown_note:
             detail_text += f" {shutdown_note}"
@@ -357,6 +361,8 @@ def _state_chip(info):
     a detection result and must not read as one."""
     if not info["enabled"]:
         return "ignored"
+    if info["ok"] is None:
+        return "checking"
     if info["ok"]:
         return "found"
     if info["path"]:
@@ -424,6 +430,7 @@ class _SettingsPanel(QWidget):
         self.test_btn = QPushButton("Test connection")
         self.test_btn.setAccessibleName(f"Test connection: {meta['label']}")
         self.test_status = _wrapped_hint("Not tested yet")
+        self.test_status.setTextFormat(Qt.TextFormat.PlainText)
         self._path_box = path_box
         self._test_box = test_box = QWidget()
         test_lay = QHBoxLayout(test_box)
@@ -501,6 +508,31 @@ class _SettingsPanel(QWidget):
         model, effort = self.model.values()
         _write_map("ai_model", self.kind, model)
         _write_map("ai_effort", self.kind, effort)
+
+
+def start_backend_detection(owner, cfg, on_result):
+    """Run ai_cli.detect_backends off the main thread, then read each found
+    backend's --help so later flag checks are cached. `on_result(res)` runs on the
+    main thread; a failure reports every found backend as not responding."""
+    def work(context):
+        context.checkpoint("connection:start")
+        res = ai_cli.detect_backends(cfg, warm=True)
+        context.checkpoint("connection:complete")
+        return res
+
+    def on_error(error):
+        res = ai_cli.locate_backends(cfg)
+        for info in res["backends"].values():
+            if info["ok"] is None:
+                info.update(ok=False, detail=f"check failed: {error}")
+        res["chosen"] = None
+        on_result(res)
+
+    request = new_work_request(owner, "connection", "ai.detect",
+                               inputs={"backends": len(ai_cli.BACKENDS)})
+    handle = platform().start_work(request, work, on_result, on_error)
+    handle.start()
+    return handle
 
 
 def run_connection_test_async(owner, kind, path, on_status, on_done=None,
@@ -603,6 +635,7 @@ class _AIBackendsDialog(QDialog):
         brow = QHBoxLayout()
         self.recheck_btn = link_button("Re-check", on_click=lambda: self._guard(self.recheck))
         self.overall = _wrapped_hint("")
+        self.overall.setTextFormat(Qt.TextFormat.PlainText)
         brow.addWidget(self.recheck_btn)
         brow.addWidget(self.overall, 1)
         lay.addLayout(brow)
@@ -673,12 +706,30 @@ class _AIBackendsDialog(QDialog):
 
     def _set_overall(self, res):
         ch = res["chosen"]
+        if any(info["ok"] is None for info in res["backends"].values()):
+            self.overall.setText("Checking which assistants answer.")
+            return
         self.overall.setText(f"Ready: {ai_cli.BACKENDS[ch]['label']} will be used." if ch
                              else "No usable assistant detected yet.")
 
     def recheck(self):
+        """Show what a file lookup finds at once, each found backend "checking",
+        then the probe results when they arrive off the main thread. A result
+        from an earlier recheck is dropped."""
         cfg = _cfg()
-        res = ai_cli.detect_backends(cfg)
+        self._detect_gen = getattr(self, "_detect_gen", 0) + 1
+        gen = self._detect_gen
+        res = ai_cli.locate_backends(cfg)
+        self._render(cfg, res)
+        if any(info["ok"] is None for info in res["backends"].values()):
+            self._detect_work = start_backend_detection(
+                self, cfg, lambda done: self._guard(self._detected, gen, cfg, done))
+
+    def _detected(self, gen, cfg, res):
+        if gen == self._detect_gen:
+            self._render(cfg, res)
+
+    def _render(self, cfg, res):
         preferred = self._preferred_kind(cfg, res)
         _clear(self._rows_lay)
         self.rows = {}
@@ -711,7 +762,7 @@ class _AIBackendsDialog(QDialog):
 
     # --- test connection ---------------------------------------------------
     def _test(self, kind):
-        path = ai_cli.detect_backends(_cfg())["backends"][kind]["path"]
+        path = ai_cli.locate_backends(_cfg())["backends"][kind]["path"]
         if not path or kind in self._testing:
             return
         self._testing.add(kind)
