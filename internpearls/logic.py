@@ -1296,10 +1296,7 @@ def settle_held_outside_manifest(registry, manifest, seen):
     anything changed."""
     names = {d.get("name") for d in (manifest or {}).get("decks", [])
              if isinstance(d, dict)}
-    ledger = (manifest or {}).get("retired")
-    retired = {g for per_deck in (ledger.values() if isinstance(ledger, dict) else ())
-               if isinstance(per_deck, (list, tuple, dict))
-               for g in per_deck if isinstance(g, str)}
+    retired = manifest_retired_guids(manifest)
     complete = names <= set(seen)
     changed = False
     for guid in held_outside_manifest(registry, manifest):
@@ -1311,6 +1308,15 @@ def settle_held_outside_manifest(registry, manifest, seen):
             registry[guid]["deck"] = homes[0]
             changed = True
     return changed
+
+
+def manifest_retired_guids(manifest):
+    """Every guid in a manifest's retired ledger ({deck: {guid: ...}} or {deck: [guid]}),
+    skipping whatever in it is not that shape."""
+    ledger = manifest.get("retired") if isinstance(manifest, dict) else None
+    return {g for per_deck in (ledger.values() if isinstance(ledger, dict) else ())
+            if isinstance(per_deck, (list, tuple, dict))
+            for g in per_deck if isinstance(g, str)}
 
 
 def migrate_declined(registry):
@@ -1348,12 +1354,12 @@ def later_status(entry, incoming_hash):
     return out
 
 
-def later_count(registry, excluded):
+def later_count(registry, excluded, retired=()):
     """How many Later cards Update my decks can still offer: held entries outside the
-    decks named in `excluded`."""
-    excluded = set(excluded or ())
-    return sum(1 for e in held_entries(registry).values()
-               if e.get("deck") not in excluded)
+    decks named in `excluded`, leaving out the `retired` guids the next run releases."""
+    excluded, retired = set(excluded or ()), set(retired or ())
+    return sum(1 for g, e in held_entries(registry).items()
+               if e.get("deck") not in excluded and g not in retired)
 
 
 def later_migration_line(n):

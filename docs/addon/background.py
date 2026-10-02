@@ -25,12 +25,12 @@ from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_CEILING_MIN,
                      collection_key, load_declined, load_later_seen, source_identity)
 from .logic import (clamp_interval_minutes, decide_addon_update_action,
                     decks_to_update, later_count, later_nudge_due,
-                    manifest_needs_newer_addon, plural)
+                    manifest_needs_newer_addon, manifest_retired_guids, plural)
 from .net import _BG_TIMEOUT, _DOWNLOAD_TIMEOUT
 from .platform import new_work_request, platform, wait_for_mock_work
 from .sync import (_cached_fetch, _content_backup_decks, _fetch_manifest, _is_local,
                    _live_cards_loader, _reconcile_pending, _refresh_reconcile_action_label,
-                   _run_sync, undone_updates)
+                   _run_sync, local_manifest, undone_updates)
 from .ui import _bg_safe, manual_sync_in_progress
 from .updates import _addon_update_work, _install_package, _refresh_update_action_label
 
@@ -423,12 +423,15 @@ def _held_cards_nudge():
     """Once per launch: remind the learner of cards left for later, which only come
     back when Update my decks runs, and only when there are more of them than the last
     run left. A Later card in a deck the learner has since excluded in Manage decks
-    can't come back that way, so it is not counted here either."""
+    can't come back that way, so it is not counted here either, and neither is one a
+    local source has retired, which that run releases."""
     if mw.col is None:
         # Later cards are kept per collection, so wait for a profile to open.
         QTimer.singleShot(10000, _held_cards_nudge)
         return
-    n = later_count(load_declined(), _cfg()["excluded"])
+    cfg = _cfg()
+    retired = manifest_retired_guids(local_manifest(cfg))
+    n = later_count(load_declined(), cfg["excluded"], retired)
     if later_nudge_due(n, load_later_seen()):
         tooltip(f"Intern Pearls: {plural(n, 'card')} waiting for later. Run Update my "
                 f"decks to finish {'it' if n == 1 else 'them'}.", period=8000, parent=mw)
