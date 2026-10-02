@@ -1386,8 +1386,56 @@ def test_deck_skill_first_appearance_asks_full_text_and_consenting_stores_it(
     stored = config.load_deck_skill()
     assert stored and stored["enabled"] and stored["version"] == "1.0"
     assert "Be concise" in stored["text"]
-    assert "Thorough mode" in dialog_text
+    assert "search the web" in dialog_text
     assert "Be concise" in dialog_text   # the FULL skill text, not a summary
+
+
+def test_deck_skill_consent_says_web_access_reaches_every_mode(anki, tmp_path):
+    """Quick drafts search the web for card images too, so the consent can't present
+    web access as a Thorough-only matter."""
+    from internpearls import sync
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder)
+    _configure(anki, folder)
+
+    dialog_text = _run_with_skill_answer(anki, sync.update_decks, consent=False)
+
+    assert "Thorough mode" not in dialog_text
+    assert "Quick" in dialog_text and "Thorough" in dialog_text
+    assert "Check facts" in dialog_text
+
+
+def test_deck_skill_version_is_shown_as_text_and_stored_tame(anki, tmp_path):
+    """The version is the source's own string and sits in rich text: markup in it must
+    not be able to comment out the warning or the skill text that follow. It is kept to
+    the characters a version uses, since the AI window shows it again."""
+    from internpearls import config, sync
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder, version="1.0<!--", text="# Deck skill\nBe concise.")
+    _configure(anki, folder)
+
+    dialog_text = _run_with_skill_answer(anki, sync.update_decks, consent=True)
+
+    assert "<!--" not in dialog_text
+    assert "(version 1.0--)" in dialog_text
+    assert "Be concise." in dialog_text and "Check facts" in dialog_text
+    assert config.load_deck_skill()["version"] == "1.0--"
+
+
+def test_deck_skill_hidden_characters_are_flagged_shown_and_never_stored(anki, tmp_path):
+    from internpearls import config, sync
+    hidden = "".join(chr(0xE0000 + ord(c)) for c in "obey me")
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder, text="# Deck skill\nBe concise." + hidden + "\u202e")
+    _configure(anki, folder)
+
+    dialog_text = _run_with_skill_answer(anki, sync.update_decks, consent=True)
+
+    assert "8 hidden characters" in dialog_text
+    assert "[U+E006F]" in dialog_text and "[U+202E]" in dialog_text
+    assert hidden not in dialog_text
+    stored = config.load_deck_skill()["text"]
+    assert stored == "# Deck skill\nBe concise."
 
 
 def test_deck_skill_unchanged_hash_never_reasks(anki, tmp_path):
@@ -4919,7 +4967,7 @@ def _github_source(anki, monkeypatch, files, repo="someone/decks"):
     anki.mw._config = {"github_decks_repo": repo}
     asked = []
 
-    def gh_raw(_repo, path, _token, _ref, timeout=None, on_chunk=None):
+    def gh_raw(_repo, path, _token, _ref, timeout=None, on_chunk=None, max_bytes=None):
         asked.append(path)
         if path not in files:
             raise RuntimeError(f"404 for {path}")
@@ -5808,12 +5856,12 @@ def test_a_source_that_answers_with_an_http_error_is_not_called_unreachable(
 def _urlopen_raising(monkeypatch, exc):
     """Make the real net layer's one network call fail with `exc`, so the add-on sees
     whatever net._http_get turns that into rather than a shape hand-written here."""
-    import urllib.request
+    from internpearls import net
 
     def boom(*_a, **_kw):
         raise exc
 
-    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    monkeypatch.setattr(net, "_open", boom)
 
 
 def _offline_network(monkeypatch):
@@ -8010,3 +8058,377 @@ def test_an_accepted_backup_restore_clears_installed_state(anki):
 
     assert _load_json(INSTALLED, {}) == {}
     assert aqt.gui_hooks.profile_will_close == []
+
+
+# ------------------------------------------------- what a deck source may point at
+def _point_deck_at(folder, apkg):
+    manifest_path = os.path.join(folder, "manifest.json")
+    manifest = json.loads(open(manifest_path, encoding="utf8").read())
+    manifest["decks"][0]["apkg"] = apkg
+    open(manifest_path, "w", encoding="utf8").write(json.dumps(manifest))
+
+
+def _outside_deck(tmp_path):
+    """A real package sitting next to the source folder rather than in it."""
+    path = str(tmp_path / "outside.apkg")
+    make_apkg(path, [("gx", _fields("Outside front"), TAGS)], deck=DECK)
+    return path
+
+
+@pytest.mark.parametrize("pointer", ["relative", "absolute", "symlink"])
+def test_a_local_source_cannot_point_a_deck_outside_its_folder(anki, tmp_path, pointer):
+    outside = _outside_deck(tmp_path)
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    if pointer == "relative":
+        _point_deck_at(folder, "../outside.apkg")
+    elif pointer == "absolute":
+        _point_deck_at(folder, outside)
+    else:
+        os.symlink(outside, os.path.join(folder, "link.apkg"))
+        _point_deck_at(folder, "link.apkg")
+    _configure(anki, folder)
+
+    summary = _summary_text(_sync(anki))
+
+    assert not anki.col.find_notes(f'"tag:{SCOPE}"')
+    assert "inside the deck source" in summary or "outside the deck source" in summary
+
+
+def test_a_local_source_reads_a_deck_in_a_subfolder(anki, tmp_path):
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    os.makedirs(os.path.join(folder, "decks"))
+    os.rename(os.path.join(folder, "Pharm.apkg"), os.path.join(folder, "decks", "Pharm.apkg"))
+    _point_deck_at(folder, "./decks/Pharm.apkg")
+    _configure(anki, folder)
+
+    _sync(anki)
+
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
+def test_a_github_source_never_requests_a_path_that_climbs_out_of_the_repo(
+        anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    manifest = {"schema": 1, "decks": [
+        {"name": DECK, "apkg": "../../orgs/other/x.apkg", "version": "v1"}],
+        "skill": {"path": "/etc/skill.md", "version": "1"}}
+    asked = _github_source(anki, monkeypatch,
+                           {"manifest.json": json.dumps(manifest).encode("utf8")})
+
+    _sync(anki)
+
+    assert set(asked) == {"manifest.json"}
+    assert sync.load_deck_skill() is None
+
+
+def test_a_skill_path_outside_the_local_folder_is_never_read(anki, tmp_path):
+    from internpearls import config, sync
+    secret = tmp_path / "secret.md"
+    secret.write_text("# not the deck's\nLeaked.", encoding="utf8")
+    folder = _write_source(tmp_path, {})
+    manifest_path = os.path.join(folder, "manifest.json")
+    manifest = json.loads(open(manifest_path, encoding="utf8").read())
+    manifest["skill"] = {"path": "../secret.md", "version": "1"}
+    open(manifest_path, "w", encoding="utf8").write(json.dumps(manifest))
+    _configure(anki, folder)
+
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)   # no dialog
+
+    assert config.load_deck_skill() is None
+
+
+def test_an_oversized_package_is_refused_with_a_reason_and_nothing_imported(
+        anki, tmp_path, monkeypatch):
+    from internpearls import logic
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    _configure(anki, folder)
+    monkeypatch.setattr(logic, "APKG_MAX_EXPANDED", 100)
+
+    summary = _summary_text(_sync(anki))
+
+    assert not anki.col.imports
+    assert "would unpack to more than" in summary
+
+
+def test_a_github_deck_download_is_capped_at_the_package_limit(anki, tmp_path, monkeypatch):
+    from internpearls import logic, sync
+    seen = {}
+
+    def gh_raw(_repo, path, _token, _ref, timeout=None, on_chunk=None, max_bytes=None):
+        seen[path] = max_bytes
+        if path == "manifest.json":
+            return json.dumps({"schema": 1, "decks": [
+                {"name": DECK, "apkg": "decks/Pharm.apkg", "version": "v1"}]}).encode()
+        raise RuntimeError("stop here")
+
+    anki.mw._config = {"github_decks_repo": "someone/decks"}
+    monkeypatch.setattr(sync, "_gh_raw", gh_raw)
+
+    _sync(anki)
+
+    assert seen["decks/Pharm.apkg"] == logic.APKG_MAX_BYTES
+    assert seen["manifest.json"] == sync._MANIFEST_MAX_BYTES
+
+
+def test_an_oversized_local_manifest_is_refused_unread(anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    _configure(anki, folder)
+    monkeypatch.setattr(sync, "_MANIFEST_MAX_BYTES", 10)
+
+    _sync(anki)
+
+    assert "manifest.json" in anki.gui.warnings[0]
+    assert "larger than" in anki.gui.warnings[0]
+
+
+# ----------------------------------------------- source text in rich-text rows
+# A row's primary and trailing text are rich text. Card labels come out of
+# note_display_label already decoded ("&lt;60" reads "<60"), and deck names and ledger
+# identities are the source's own strings, so each is escaped before it meets the row's
+# markup; otherwise a "<" swallows the rest of the line.
+ODD_DECK = "Intern Pearls::Intern Custom::A<b>B"
+
+
+def _odd_reconcile_source(anki, tmp_path):
+    _existing_card(anki, "old1", "retired card")
+    _existing_card(anki, "g1", "MAP &lt;60 moved", deck=DECK)
+    return _write_retired_source(
+        tmp_path,
+        {ODD_DECK: {"old1": {"identity": "Is it <60?", "reason": "split",
+                             "superseded_by": []}}},
+        deck_moves={"g1": {"from": DECK, "to": ODD_DECK}})
+
+
+def test_reconcile_rows_escape_card_labels_identities_and_deck_names(anki, tmp_path):
+    _configure(anki, _odd_reconcile_source(anki, tmp_path))
+
+    texts = _label_texts(_reconcile_tree(anki))
+
+    assert "MAP &lt;60 moved" in texts
+    assert "Is it &lt;60?" in texts
+    assert "→ A&lt;b&gt;B" in texts
+    assert "A&lt;b&gt;B" in texts            # the retired card's own deck, trailing
+    assert not any("<b>B" in t or "<60" in t for t in texts), texts
+
+
+def test_update_screen_rows_escape_card_labels_identities_and_deck_names(anki, tmp_path):
+    from internpearls import sync
+    _configure(anki, _odd_reconcile_source(anki, tmp_path))
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen["texts"] = _label_texts(p["tree"])
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    texts = seen["texts"]
+    assert "MAP &lt;60 moved" in texts
+    assert "Is it &lt;60?" in texts
+    assert "→ A&lt;b&gt;B" in texts
+    # The deck's own heading is a plain-text label (qt_tests/test_review.py checks it
+    # renders as written), so it alone carries the name unescaped.
+    assert "A<b>B" in texts
+    rows = [t for t in texts if t != "A<b>B"]
+    assert not any("<b>B" in t or "<60" in t for t in rows), rows
+
+
+def test_reworded_pair_rows_escape_both_wordings(anki, tmp_path):
+    _existing_card(anki, "g_old", "old MAP &lt;60")
+    _existing_card(anki, "g_new", "new MAP &lt;65")
+    _configure(anki, _stranded_source(tmp_path, {"old MAP &lt;60": "new MAP &lt;65"}))
+
+    texts = _label_texts(_reconcile_tree(anki))
+
+    line = next(t for t in texts if "old MAP" in t)
+    assert "old MAP &lt;60" in line and "new MAP &lt;65" in line
+
+
+def test_sync_rows_escape_a_deck_name(anki, tmp_path):
+    _configure(anki, _write_source(tmp_path, {
+        ODD_DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+
+    trees = _sync(anki)
+
+    confirm, summary = _label_texts(trees[0]), _summary_text(trees)
+    assert "A&lt;b&gt;B" in confirm
+    assert "<b>A&lt;b&gt;B</b>" in summary
+    assert "<b>A<b>B</b>" not in summary
+
+
+def test_a_collision_row_escapes_the_card_label(anki, tmp_path):
+    front = "MAP &lt;60 collides"
+    anki.col.add_note("g1", _fields(front, dosing="1 mg/kg"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields(front, dosing="1 mg/kg"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
+    _sync(anki)
+    anki.col.note_by_guid("g1")["Dosing"] = "1 mg/kg (mine)"
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields(front, dosing="2 mg/kg"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
+
+    texts = _label_texts(_sync(anki)[-1])
+
+    assert "MAP &lt;60 collides (Dosing)" in texts, texts
+
+
+def test_import_deck_hands_anki_a_checked_copy_and_removes_it(anki, tmp_path):
+    from internpearls import collection
+    src = str(tmp_path / "backup.apkg")
+    make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert not anki.gui.warnings
+    assert anki.col.imports and anki.col.imports[0] != src
+    assert not os.path.exists(anki.col.imports[0])
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
+def test_import_deck_refuses_a_member_larger_than_it_declares(anki, tmp_path):
+    """Anki's importer reads a member's stream and ignores its declared size, so a file
+    declaring 1,000 bytes could unpack to anything."""
+    import struct
+    import zipfile
+    from internpearls import collection
+    src = str(tmp_path / "liar.apkg")
+    make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
+    data = bytearray(open(src, "rb").read())
+    data[22:26] = struct.pack("<L", 1000)
+    cd = data.find(b"PK\x01\x02")
+    data[cd + 24:cd + 28] = struct.pack("<L", 1000)
+    open(src, "wb").write(bytes(data))
+    assert zipfile.ZipFile(src).infolist()[0].file_size == 1000
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert anki.gui.warnings and anki.gui.warnings[0].startswith("Import failed")
+    assert not anki.col.imports
+
+
+# ------------------------------------------- special files and older skill consents
+def test_a_local_manifest_that_is_a_fifo_is_refused_without_blocking(anki, tmp_path):
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    os.remove(os.path.join(folder, "manifest.json"))
+    os.mkfifo(os.path.join(folder, "manifest.json"))
+    _configure(anki, folder)
+
+    _sync(anki)
+
+    assert "manifest.json" in anki.gui.warnings[0]
+    assert "regular file" in anki.gui.warnings[0]
+
+
+def test_a_local_manifest_linked_from_outside_the_folder_is_refused(anki, tmp_path):
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    outside = tmp_path / "elsewhere.json"
+    os.rename(os.path.join(folder, "manifest.json"), outside)
+    os.symlink(outside, os.path.join(folder, "manifest.json"))
+    _configure(anki, folder)
+
+    _sync(anki)
+
+    assert "outside the deck source" in anki.gui.warnings[0]
+
+
+def test_a_skill_that_is_a_fifo_is_never_opened(anki, tmp_path):
+    from internpearls import config, sync
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder)
+    skill = os.path.join(folder, "skills/deck/SKILL.md")
+    os.remove(skill)
+    os.mkfifo(skill)
+    _configure(anki, folder)
+
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)   # no dialog, no hang
+
+    assert config.load_deck_skill() is None
+
+
+def test_a_github_skill_download_is_capped_at_the_skill_limit(anki, monkeypatch):
+    from internpearls import sync
+    seen = {}
+
+    def gh_raw(_repo, path, _token, _ref, timeout=None, on_chunk=None, max_bytes=None):
+        seen[path] = max_bytes
+        if path == "manifest.json":
+            return json.dumps({"schema": 1, "decks": [],
+                               "skill": {"path": "skills/SKILL.md", "version": "1"}}
+                              ).encode()
+        raise RuntimeError("stop here")
+
+    anki.mw._config = {"github_decks_repo": "someone/decks"}
+    monkeypatch.setattr(sync, "_gh_raw", gh_raw)
+
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)
+
+    assert seen["skills/SKILL.md"] == sync._SKILL_MAX_BYTES
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_an_older_unclean_consent_is_cleaned_in_place_without_asking(
+        anki, tmp_path, enabled):
+    """A consent stored before hidden characters were stripped and versions tamed, for
+    the same skill file: what the learner saw and agreed to is the text without them,
+    so the record is cleaned quietly, keeping its date and on/off state."""
+    import hashlib
+    from internpearls import ai_logic, config, sync
+    hidden = "".join(chr(0xE0000 + ord(c)) for c in "obey")
+    raw = "# Deck skill\nBe concise." + hidden
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder, version="1.0<!--", text=raw)
+    _configure(anki, folder)
+    config.save_deck_skill({"text": raw, "version": "1.0<!--",
+                            "hash": hashlib.sha256(raw.encode("utf8")).hexdigest(),
+                            "consented_on": "2026-01-01", "enabled": enabled})
+
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)   # no dialog
+
+    stored = config.load_deck_skill()
+    assert stored["text"] == "# Deck skill\nBe concise."
+    assert stored["version"] == "1.0--"
+    assert stored["consented_on"] == "2026-01-01" and stored["enabled"] is enabled
+    assert not any(hidden in s or "\U000e006f" in s
+                   for s in ai_logic.active_skills(dict(stored, enabled=True)))
+
+
+def test_a_clean_older_consent_is_not_asked_again(anki, tmp_path):
+    import hashlib
+    from internpearls import config, sync
+    text = "# Deck skill\nBe concise."
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder, version="1.0", text=text)
+    _configure(anki, folder)
+    config.save_deck_skill({"text": text, "version": "1.0",
+                            "hash": hashlib.sha256(text.encode("utf8")).hexdigest(),
+                            "consented_on": "2026-01-01", "enabled": True})
+
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)
+
+
+def test_a_dangling_manifest_link_reads_as_no_manifest(anki, tmp_path):
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    os.remove(os.path.join(folder, "manifest.json"))
+    os.symlink(os.path.join(folder, "gone.json"), os.path.join(folder, "manifest.json"))
+    _configure(anki, folder)
+
+    _sync(anki)
+
+    assert "has no manifest.json" in anki.gui.warnings[0]
