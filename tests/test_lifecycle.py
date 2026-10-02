@@ -390,3 +390,119 @@ def test_an_unanswered_question_fails_the_test_even_inside_a_safe_flow(anki, tmp
     anki.gui.file_picks.append(src)
     with pytest.raises(mock_anki.UnansweredQuestion):
         collection.import_deck()
+
+
+def test_a_refused_install_names_the_reason_in_plain_words(anki, monkeypatch, tmp_path):
+    from internpearls import updates
+    monkeypatch.setattr(anki.mw.addonManager, "install",
+                        lambda path: mock_anki.types.SimpleNamespace(errmsg="zip"))
+    try:
+        updates._install_package(str(tmp_path / "x.ankiaddon"))
+    except RuntimeError as e:
+        assert "not a valid add-on package" in str(e) and "zip" not in str(e)
+    else:
+        raise AssertionError("a refused install did not raise")
+    monkeypatch.setattr(anki.mw.addonManager, "install",
+                        lambda path: mock_anki.types.SimpleNamespace(errmsg="manifest"))
+    try:
+        updates._install_package(str(tmp_path / "x.ankiaddon"))
+    except RuntimeError as e:
+        assert "manifest" not in str(e)
+
+
+def test_restore_resets_baselines_only_for_notes_the_import_wrote(anki, tmp_path,
+                                                                    monkeypatch):
+    """Anki reports which notes an import added or changed; a note it matched without
+    changing still holds what the next update compares against, so its baseline stays."""
+    import types
+    from internpearls import collection
+    one = anki.col.add_note("g1", _fields("Front one"), TAGS.split(), deck=DECK)
+    two = anki.col.add_note("g2", _fields("Front two"), TAGS.split(), deck=DECK)
+    collection._save_json(collection.SHIPPED, {"g1": {"Notes": "old"},
+                                               "g2": {"Notes": "old"}})
+    src = collection._backup_deck(DECK, "manual")
+    collection._save_json(collection.SHIPPED, {"g1": {"Notes": "new"},
+                                               "g2": {"Notes": "new"}})
+    real = collection._import_apkg
+
+    def import_with_log(path, with_scheduling=False):
+        real(path, with_scheduling)
+        row = types.SimpleNamespace(id=types.SimpleNamespace(nid=one.id))
+        other = types.SimpleNamespace(id=types.SimpleNamespace(nid=two.id))
+        return types.SimpleNamespace(log=types.SimpleNamespace(
+            new=[], updated=[row], duplicate=[other]))
+
+    monkeypatch.setattr(collection, "_import_apkg", import_with_log)
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)          # Import
+    collection.import_deck()
+
+    assert collection._load_json(collection.SHIPPED, {}) == {
+        "g1": {"Notes": "old"}, "g2": {"Notes": "new"}}
+
+
+def test_restore_backs_up_a_deck_holding_an_unscoped_copy_of_a_restored_note(anki):
+    """The importer matches GUIDs across the whole collection, not just the scope tag."""
+    from internpearls import collection
+    anki.col.add_note("g1", _fields("Front one"), TAGS.split(), deck=DECK)
+    src = collection._backup_deck(DECK, "manual")
+    note = anki.col.note_by_guid("g1")
+    note.tags = ["untagged"]
+    anki.col.set_deck(note.card_ids(), anki.col.decks.id("Loose"))
+    anki.col.exports.clear()
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)          # Import
+
+    collection.import_deck()
+
+    assert "Loose" in _exported_deck_names(anki)
+
+
+def test_pruning_a_backup_removes_its_saved_baseline(anki, monkeypatch):
+    import datetime
+    import os
+    from internpearls import collection
+    anki.col.add_note("g1", _fields("Front one"), TAGS.split(), deck=DECK)
+    ticks = iter(range(100))
+
+    class Clock(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.datetime(2026, 9, 9) + datetime.timedelta(seconds=next(ticks))
+
+    monkeypatch.setattr(collection.datetime, "datetime", Clock)
+    first = collection._backup_deck(DECK, DECK)
+    assert os.path.exists(collection._baseline_path(first))
+    for _ in range(collection.DECK_BACKUPS_KEEP):
+        collection._backup_deck(DECK, DECK)
+
+    assert not os.path.exists(first)
+    assert not os.path.exists(collection._baseline_path(first))
+    kept = os.listdir(os.path.dirname(collection._baseline_path(first)))
+    assert len(kept) == collection.DECK_BACKUPS_KEEP
+
+
+def test_saved_baselines_are_kept_per_collection(anki, tmp_path):
+    from internpearls import collection
+    anki.col.path = str(tmp_path / "a" / "collection.anki2")
+    first = collection._baseline_path(collection._backup_deck(DECK, DECK) or "x.apkg")
+    anki.col.path = str(tmp_path / "b" / "collection.anki2")
+    second = collection._baseline_path("x.apkg")
+    assert first.rsplit("/", 1)[0] != second.rsplit("/", 1)[0]
+
+
+def test_an_update_undone_in_one_profile_still_auto_syncs_in_another(anki, tmp_path):
+    from internpearls import background, config, sync
+    _profile_hooks_registered(anki)
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+    _open_profile(anki, str(tmp_path / "a" / "collection.anki2"))
+    sync.undone_updates.add((config.collection_key(), DECK, "v1"))
+    background._auto_sync_check()
+    assert not anki.col.imports                 # A leaves it for a manual run
+
+    second = _open_profile(anki, str(tmp_path / "b" / "collection.anki2"))
+    background._auto_sync_check()
+
+    assert second.note_by_guid("g1")["Front"] == "Front one"

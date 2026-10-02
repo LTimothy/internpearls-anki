@@ -1447,15 +1447,15 @@ def import_deck():
         return
     cfg = _cfg()
     if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"],
-                                            _restore_decks(src, cfg["scope_tag"]),
+                                            _restore_decks(src),
                                             cfg["scope_tag"], keep=src)[0]:
         return
     try:
-        _import_apkg(src, with_scheduling=True)
+        result = _import_apkg(src, with_scheduling=True)
     except Exception as e:
         _warn(f"Import failed: {e}")
         return
-    _reset_baseline(src)
+    _reset_baseline(src, getattr(result, "log", None))
     # The imported file holds older cards than the source does, so whatever it restored
     # has to be re-offered. Scope that to the decks actually in the file, falling back to
     # all of them if it cannot be read: a redundant re-offer is recoverable, a missed one
@@ -1474,23 +1474,34 @@ def import_deck():
     _info(f"Imported <code>{os.path.basename(src)}</code>.")
 
 
-def _restore_decks(src, scope_tag):
-    """The decks a restore of `src` rewrites: wherever its notes sit now, since the
-    importer matches them by GUID. None when the file can't be read."""
+def _restore_decks(src):
+    """The decks a restore of `src` rewrites: wherever its notes sit now, scope tag or
+    not, since the importer matches them by GUID across the whole collection. None when
+    the file can't be read."""
     try:
         guids = {guid for _rid, _fields, guid in apkg_notes(src)}
     except Exception:
         return None
-    return decks_holding(guids, _existing_guid_to_nid(scope_tag))
+    found = {guid: mw.col.db.scalar("select id from notes where guid = ?", guid)
+             for guid in guids}
+    return decks_holding(guids, {g: nid for g, nid in found.items() if nid})
 
 
-def _reset_baseline(src):
+def _reset_baseline(src, log=None):
     """Give each restored note the shipped-field baseline its backup was taken with, so
     the next update reads restored source text as the source's rather than as the
     learner's edit. A file with no saved baseline drops those notes' baselines, which
-    keeps every non-blank restored value, annotations included."""
+    keeps every non-blank restored value, annotations included.
+
+    Limited to the notes Anki's import `log` says it added or changed: a note it matched
+    unchanged still holds what its current baseline describes. Without a log, every
+    note in the file counts."""
     try:
-        guids = {guid for _rid, _fields, guid in apkg_notes(src)}
+        if log is not None:
+            guids = {mw.col.get_note(row.id.nid).guid
+                     for row in list(log.new) + list(log.updated)}
+        else:
+            guids = {guid for _rid, _fields, guid in apkg_notes(src)}
     except Exception:
         return
     own = os.path.dirname(os.path.realpath(src)) == os.path.realpath(_deck_backup_folder())
