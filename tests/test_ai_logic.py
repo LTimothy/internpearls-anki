@@ -1753,7 +1753,6 @@ _XLINK = 'xmlns:xlink="http://www.w3.org/1999/xlink"'
     f'<svg {_SVG} {_XLINK}><use xlink:href="java&#9;script:x()"/></svg>',
     f'<svg {_SVG}><use href="javas&#x0A;cript:x()"/></svg>',
     f'<svg {_SVG}><use href="https://evil.example/s.svg#a"/></svg>',
-    f'<svg {_SVG}><style>@import url(https://evil.example/x.css);</style></svg>',
     f'<svg {_SVG}><set attributeName="onmouseover" to="x()"/></svg>',
     f'<svg {_SVG}><animate attributeName="href" to="javascript:x()"/></svg>',
     f'<svg {_SVG}><image href="data:image/svg+xml;base64,PHN2Zz4="/></svg>',
@@ -1836,3 +1835,52 @@ def test_preview_text_shows_where_a_link_points():
     value = ai_logic.sanitize_field_html('<a href="https://example.com/p">ref</a>')
     assert ai_logic.show_link_hosts(value) == \
         '<a href="https://example.com/p">ref (example.com)</a>'
+
+
+
+# === re-review fixes ========================================================
+
+@pytest.mark.parametrize("href", [
+    "https://phish.example\\@uptodate.com/x",
+    "https://127.0.0.1\\@example.com/",
+    "https://user@example.com/",
+    "https://example.com\\evil.example/",
+])
+def test_links_with_a_backslash_or_userinfo_are_refused(href):
+    out = ai_logic.sanitize_field_html(f'<a href="{href}">x</a>')
+    assert out == "<a>x</a>"
+
+
+def test_link_host_shown_is_the_one_a_browser_would_visit():
+    shown = ai_logic.show_link_hosts('<a href="https://phish.example\\@uptodate.com/x">t</a>')
+    assert "(phish.example)" in shown and "uptodate" not in shown.split(">t")[1]
+
+
+def test_more_mathjax_linking_commands_are_neutralised():
+    value = (r"\(\mmlToken{mi}[href='https://evil.example']{x} "
+             r"\bbox[background:url(https://evil.example)]{y} \data{k=v}{z} "
+             r"\color[style=evil]{red}{w} \sqrt[3]{q}\)")
+    out = ai_logic.sanitize_field_html(value)
+    for word in ("mmlToken", "bbox", "data", "evil", "href", "style="):
+        assert word not in out
+    assert "{x}" in out and "{y}" in out and r"\sqrt[3]{q}" in out
+
+
+def test_a_deeply_nested_svg_is_refused_not_crashed():
+    markup = f'<svg {_SVG}>' + "<g>" * 5000 + "</g>" * 5000 + "</svg>"
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media(markup, 0)
+
+
+def test_a_drawn_figure_with_a_style_element_keeps_its_drawing():
+    markup = (f'<svg {_SVG} width="10" height="10"><style>@import url(https://evil.example/x.css);'
+              'rect { fill: red }</style><rect width="5" height="5" '
+              'style="fill:blue; background:url(https://evil.example/y)"/></svg>')
+    out = ai_logic.check_image_bytes("a.svg", markup.encode()).decode()
+    assert "<rect" in out and 'style="fill:blue"' in out
+    assert "evil" not in out and "<style" not in out
+
+
+def test_col_keeps_its_span():
+    value = '<table><colgroup span="2"><col span="2"></colgroup><tr><td>x</td></tr></table>'
+    assert ai_logic.sanitize_field_html(value) == value

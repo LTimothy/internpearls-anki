@@ -263,6 +263,7 @@ _TAG_ATTRS = {
     "th": {"colspan", "rowspan", "align", "valign"},
     "table": {"align"}, "tr": {"align", "valign"},
     "p": {"align"}, "div": {"align"}, "ol": {"start", "type"},
+    "col": {"span"}, "colgroup": {"span"},
 }
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x20\x7f]+")
 # Inline style a field may keep: layout and text properties only, never anything that
@@ -311,11 +312,14 @@ def safe_style(value, extra=frozenset()):
 def _safe_href(value):
     """True for an https link to a named host: not an address, not localhost."""
     v = _CONTROL_CHARS_RE.sub("", value)
-    if not v.lower().startswith("https://"):
+    if not v.lower().startswith("https://") or "\\" in v:
         return False
     try:
-        host = (urllib.parse.urlsplit(v).hostname or "").rstrip(".").lower()
+        parts = urllib.parse.urlsplit(v)
+        host = (parts.hostname or "").rstrip(".").lower()
     except ValueError:
+        return False
+    if "@" in parts.netloc:
         return False
     if not host or host == "localhost" or host.endswith(".localhost"):
         return False
@@ -391,7 +395,12 @@ class _FieldSanitizer(HTMLParser):
 # MathJax commands that link out, load extensions or style output. Anki typesets TeX
 # in a field, so these are dropped from it; the rest of the TeX is left alone.
 _TEX_ACTIVE_RE = re.compile(
-    r"\\(?:href|url|require|style|class|cssId)\b\s*(?:\[[^\]]*\]\s*)?(?:\{[^{}]*\})?")
+    r"\\(?:href|url|require|style|class|cssId|mmlToken|data)\b\s*(?:\[[^\]]*\]\s*)?"
+    r"(?:\{[^{}]*\}\s*(?:\[[^\]]*\])?)?")
+# \bbox keeps its content; only the command and its CSS options go.
+_TEX_BBOX_RE = re.compile(r"\\bbox\b\s*(?:\[[^\]]*\])?")
+# Any other command's [options] carrying "key=value" or CSS ("prop: value").
+_TEX_OPTIONS_RE = re.compile(r"(\\[A-Za-z]+\s*)\[[^\]]*[:=][^\]]*\]")
 
 
 def sanitize_field_html(value):
@@ -402,7 +411,9 @@ def sanitize_field_html(value):
     parser = _FieldSanitizer()
     parser.feed(str(value or ""))
     parser.close()
-    return _TEX_ACTIVE_RE.sub("", "".join(parser.out))
+    out = _TEX_ACTIVE_RE.sub("", "".join(parser.out))
+    out = _TEX_BBOX_RE.sub("", out)
+    return _TEX_OPTIONS_RE.sub(r"\1", out)
 
 
 _ANCHOR_RE = re.compile(r'<a\b([^>]*)>(.*?)</a>', re.I | re.S)
@@ -416,8 +427,10 @@ def show_link_hosts(value):
         href = _HREF_ATTR_RE.search(m.group(1))
         if not href:
             return m.group(0)
+        target = _html.unescape(href.group(1)).replace("\\", "/")
         try:
-            host = urllib.parse.urlsplit(_html.unescape(href.group(1))).hostname
+            parts = urllib.parse.urlsplit(target)
+            host = None if "@" in parts.netloc else parts.hostname
         except ValueError:
             host = None
         if not host:
@@ -1514,7 +1527,7 @@ _SVG_ELEMENTS = frozenset({
     "ellipse", "line", "polyline", "polygon", "text", "tspan", "textPath", "marker",
     "linearGradient", "radialGradient", "stop", "clipPath", "mask", "pattern",
 })
-_SVG_REJECTED = frozenset({"script", "foreignObject", "style", "iframe", "embed",
+_SVG_REJECTED = frozenset({"script", "foreignObject", "iframe", "embed",
                            "object", "set", "animate", "animateTransform",
                            "animateMotion", "handler", "listener", "image", "a"})
 _SVG_REJECTED_LOWER = frozenset(n.lower() for n in _SVG_REJECTED)
@@ -1540,6 +1553,7 @@ _SVG_STYLE_PROPS = frozenset({
     "stroke-miterlimit", "text-anchor", "dominant-baseline", "letter-spacing",
     "stop-color", "stop-opacity", "visibility",
 })
+_SVG_MAX_DEPTH = 64
 _SVG_URL_RE = re.compile(r"url\(\s*#[\w.-]+\s*\)")
 
 
@@ -1602,6 +1616,12 @@ def _checked_svg(markup):
         raise ValueError(f"svg is not well-formed ({e})") from None
     if _local(root.tag) != "svg" or _ns(root.tag) not in ("", _SVG_NS):
         raise ValueError("not svg markup")
+    stack = [(root, 1)]
+    while stack:
+        el, depth = stack.pop()
+        if depth > _SVG_MAX_DEPTH:
+            raise ValueError("svg is nested too deeply")
+        stack.extend((child, depth + 1) for child in el)
     _clean_svg_element(root)
     ET.register_namespace("", _SVG_NS)
     ET.register_namespace("xlink", _XLINK_NS)
