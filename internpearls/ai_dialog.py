@@ -3161,7 +3161,16 @@ class _GenerateDialog(QDialog):
                     if focus is not None and (w is focus or w.isAncestorOf(focus))), None)
         in_note = row is not None and self.note_boxes.get(row) is focus
         cursor = focus.textCursor().position() if in_note else None
+        # A decision button the learner was on is found again by its value.
+        cell = self.decision_cells[row] if (
+            row is not None and row < len(self.decision_cells)) else None
+        decision = next((key for key, button in (cell.buttons if cell else {}).items()
+                         if button is focus), None)
         self._rebuild_review(focus_row=None if in_note else row)
+        if decision is not None:
+            rebuilt = self.decision_cells[row]
+            if rebuilt is not None and decision in rebuilt.buttons:
+                rebuilt.buttons[decision].setFocus()
         box = self.note_boxes.get(row) if in_note else None
         if box is not None:
             box.setFocus()
