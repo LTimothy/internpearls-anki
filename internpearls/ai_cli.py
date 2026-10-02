@@ -515,13 +515,43 @@ def prompt_arg_limit(argv, prompt, plat=None):
     return None if len(prompt) <= _MAX_ARG_PROMPT else _MAX_ARG_PROMPT
 
 
+def _is_launcher_script(path):
+    """True on Windows for a .cmd or .bat file, which Windows also runs when the name
+    carries trailing dots or spaces."""
+    return (sys.platform == "win32"
+            and path.rstrip(" .").lower().endswith((".cmd", ".bat")))
+
+
+_SAFE_ARG_NAME_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,5}")
+
+
+def _image_args(scratch, image_paths):
+    """On Windows, each picture as a plain name inside scratch (the run's working
+    folder), copied there under a safe name when it is not one already, so nothing
+    a launcher script's cmd.exe would re-read reaches the command line. Elsewhere
+    the paths are passed as given."""
+    if sys.platform != "win32":
+        return list(image_paths)
+    out = []
+    for i, p in enumerate(image_paths):
+        name = os.path.basename(p)
+        inside = os.path.dirname(os.path.abspath(p)) == os.path.abspath(scratch)
+        if not (inside and _SAFE_ARG_NAME_RE.fullmatch(name)):
+            ext = os.path.splitext(name)[1].lower()
+            ext = ext if re.fullmatch(r"\.[a-z0-9]{1,5}", ext) else ".img"
+            name = f"attached-image-{i}{ext}"
+            shutil.copyfile(p, os.path.join(scratch, name))
+        out.append(name)
+    return out
+
+
 def _agy_program(path):
     """On Windows, the agy executable to start: a .cmd or .bat launcher would hand the
     prompt to cmd.exe, which re-parses it and stops at 8,191 characters, so the .exe
     beside it is used instead, or the run is refused."""
-    if sys.platform != "win32" or not path.lower().endswith((".cmd", ".bat")):
+    if not _is_launcher_script(path):
         return path
-    exe = os.path.splitext(path)[0] + ".exe"
+    exe = os.path.splitext(path.rstrip(" ."))[0] + ".exe"
     if os.path.isfile(exe):
         return exe
     raise GenerationError(
@@ -595,7 +625,7 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
                                   "--skip-git-repo-check", "-C", scratch]
         if model and supports_flag(path, "--model", subcommand="exec"):
             argv += ["--model", model]
-        for p in image_paths:
+        for p in _image_args(scratch, image_paths):
             argv += ["--image", p]
         return argv, True
     if kind == "agy":
