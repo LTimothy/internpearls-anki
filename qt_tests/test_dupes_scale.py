@@ -118,7 +118,7 @@ def test_opening_does_not_wait_for_a_backend_probe(monkeypatch):
     dlg.deleteLater()
 
 
-def test_backend_found_after_the_scan_finished_enables_judging_once(monkeypatch):
+def test_no_backend_leaves_judging_disabled_with_the_setup_hint(monkeypatch):
     from internpearls import ai_cli
     mock, _ = harness.bootstrap()
     harness.app()
@@ -126,8 +126,113 @@ def test_backend_found_after_the_scan_finished_enables_judging_once(monkeypatch)
     monkeypatch.setattr(ai_cli, "detect_backends", lambda cfg: {
         "chosen": None, "backends": {}})
     dlg = _open(mock)
+    assert dlg._pairs
     assert not dlg.judge_btn.isEnabled()
     assert "Set up an AI backend" in dlg.judge_btn.toolTip()
+    dlg.deleteLater()
+
+
+def test_backend_answering_after_the_scan_enables_judging(monkeypatch):
+    from internpearls import ai_cli, dupes_dialog
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_many(mock, pairs=3)
+    release = threading.Event()
+
+    def late_detect(cfg):
+        release.wait(10)
+        return {"chosen": "claude", "backends": {"claude": {"path": "/bin/true"}}}
+
+    monkeypatch.setattr(ai_cli, "detect_backends", late_detect)
+    dlg = dupes_dialog._DuplicateScanDialog("InternPearls")
+    dlg._wait_for_scan()
+    assert dlg._pairs and not dlg.judge_btn.isEnabled()
+    release.set()
+    dlg._wait_for_backends()
+    assert dlg.judge_btn.isEnabled()
+    assert dlg.judge_btn.toolTip() == ""
+    dlg.deleteLater()
+
+
+def test_backend_answering_while_judging_does_not_reenable_the_button(monkeypatch):
+    from internpearls import ai_cli
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate_many(mock, pairs=3)
+    dlg = _open(mock)
+    dlg._judging = True
+    dlg._backends_found({"chosen": "claude",
+                         "backends": {"claude": {"path": "/bin/true"}}})
+    assert not dlg.judge_btn.isEnabled()
+    dlg._judging = False
+    dlg._sync_judge_button()
+    assert dlg.judge_btn.isEnabled()
+    dlg.deleteLater()
+
+
+def test_closing_cancels_the_backend_probe(monkeypatch):
+    from internpearls import ai_cli, dupes_dialog
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate_many(mock, pairs=2)
+    release = threading.Event()
+    monkeypatch.setattr(ai_cli, "detect_backends",
+                        lambda cfg: release.wait(10) or {"chosen": None, "backends": {}})
+    dlg = dupes_dialog._DuplicateScanDialog("InternPearls")
+    assert not dlg._probe.cancel_event.is_set()
+    dlg._rescan()
+    assert not dlg._probe.cancel_event.is_set(), "a rescan must not cancel the probe"
+    dlg.reject()
+    assert dlg._probe.cancel_event.is_set()
+    release.set()
+    dlg.deleteLater()
+
+
+def test_rebuilds_reuse_one_scroll_restore_timer():
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate_many(mock, pairs=60)
+    dlg = _open(mock)
+    _show(dlg)
+    timer = dlg._restore_timer
+    bar = dlg._list.verticalScrollBar()
+    for i in range(3):
+        bar.setValue(bar.maximum())
+        harness.app().processEvents()
+        dlg._ignore(dlg._pairs[i])
+        harness.app().processEvents()
+        assert dlg._restore_timer is timer
+    dlg.close()
+    dlg.deleteLater()
+
+
+def test_a_contrasting_pair_row_says_what_differs():
+    import mock_anki
+    from PyQt6.QtWidgets import QLabel
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    mock.mw.col = mock_anki.MockCollection()
+    mock.mw._config = {}
+    text = ("raises basal metabolic rate and heart rate through nuclear receptor "
+            "transcription in most tissues including cardiac muscle liver kidney and "
+            "skeletal muscle during prolonged fasting states")
+    mock.mw.col.add_note("a", [f"T3 {text}", "x"], ["InternPearls"], deck="Ours")
+    mock.mw.col.add_note("b", [f"T4 {text}", "x"], ["Other"], deck="Theirs")
+    mock.mw.col.add_note("c", [f"T3 {text} today", "x"], ["Other"], deck="Theirs")
+    from internpearls import dupes_dialog, config
+    config.set_dupes_threshold(0.4)      # Loose: the only level that offers contrasts
+    dlg = _open(mock)
+    differs = {p["right"][1][:2]: p["differs"] for p in dlg._pairs}
+    assert differs["T4"] == "Differs: T3 vs T4"
+    assert differs["T3"] == ""
+    _show(dlg)
+    shown = {w.text() for row in dlg._list.rows()[::2]
+             for w in row.findChildren(QLabel) if "Differs:" in w.text()}
+    assert len(shown) == 1 and "Differs: T3 vs T4" in next(iter(shown))
+    dlg.close()
     dlg.deleteLater()
 
 

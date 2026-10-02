@@ -24,7 +24,7 @@ from . import ai_cli, ai_logic
 from .collection import deck_search, note_rows, suspend_notes, unsuspend_notes
 from .config import (APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks,
                      set_dupes_threshold)
-from .dupes import find_candidates, pair_key
+from .dupes import contrast_label, find_candidates, pair_key
 from .logic import field_preview_text, plain_text
 from .palette import colors
 from .platform import (new_work_request, platform, platform_owner_id,
@@ -309,6 +309,12 @@ class _DuplicateScanDialog(QDialog):
         bb.rejected.connect(self.reject)
         outer.addWidget(bb)
 
+        # Scroll position is restored on the next tick: the scroll range follows the
+        # next layout pass, so setting it right after a rebuild would clamp to the old.
+        self._restore_value = 0
+        self._restore_timer = platform().create_timer(
+            platform_owner_id(self), self._restore_scroll, 0, single_shot=True)
+
         self._start_backend_probe(cfg)
         self._rescan()
 
@@ -317,7 +323,10 @@ class _DuplicateScanDialog(QDialog):
         """Ask which AI backend works, off the main thread: each CLI's --version probe
         can take seconds, or hang. Judge with AI stays disabled until it answers."""
         def work(context):
-            return ai_cli.detect_backends(cfg)
+            context.checkpoint("connection:start")
+            result = ai_cli.detect_backends(cfg)
+            context.checkpoint("connection:complete")
+            return result
 
         def on_error(_error):
             self._backends_found({"chosen": None, "backends": {}})
@@ -569,7 +578,8 @@ class _DuplicateScanDialog(QDialog):
                                "key": key, "judged": None, "note": "",
                                "suspended": suspended,
                                "partly_suspended": partly_suspended,
-                               "suspension_counts": counts, "shares": shares})
+                               "suspension_counts": counts, "shares": shares,
+                               "differs": contrast_label(left[1], right[1])})
         self._sync_judge_button()
         self._rebuild_list()
 
@@ -691,17 +701,11 @@ class _DuplicateScanDialog(QDialog):
         while self._list.shown() < min(depth, self._list.total()):
             self._list._extend()
 
-        def restore():
-            bar.setValue(value)
-
-        # The scroll range follows the next layout pass, so setting it now would clamp
-        # to the old range.
-        previous = getattr(self, "_restore_timer", None)
-        if previous is not None:
-            previous.stop()
-        self._restore_timer = platform().create_timer(
-            platform_owner_id(self), restore, 0, single_shot=True)
+        self._restore_value = value
         self._restore_timer.start()
+
+    def _restore_scroll(self):
+        self._list.verticalScrollBar().setValue(self._restore_value)
 
     def _toggle_fold(self, *_):
         self._fold_open = not self._fold_open
@@ -749,12 +753,16 @@ class _DuplicateScanDialog(QDialog):
         if pair.get("shares"):
             shares_html = (f"<br><span style='color:{c['muted']};'>shares: "
                           f"{_esc(', '.join(pair['shares']))}</span>")
+        differs_html = ""
+        if pair.get("differs"):
+            differs_html = (f"<br><span style='color:{c['muted']};'>"
+                            f"{_esc(pair['differs'])}</span>")
         primary = QLabel(
             f"<b>ours:</b> {_esc(_breakable(left_front))}<br>"
             f"<span style='color:{c['muted']};'>theirs: {_esc(_breakable(right_front))}"
             f" ({_esc(_breakable(pair['right'][2]))}, "
             f"{_esc(_breakable(pair['right'][3]))})</span>"
-            f"{shares_html}")
+            f"{shares_html}{differs_html}")
         primary.setToolTip(f"ours: {left_front}\ntheirs: {right_front} "
                            f"({pair['right'][2]}, {pair['right'][3]})")
         primary.setWordWrap(True)
@@ -958,16 +966,24 @@ class _DuplicateScanDialog(QDialog):
         self._judge_result = None
         self._judge_error = None
 
-    def accept(self):
+    def _retire_all(self):
+        """Closing: stop the judging run and the backend probe, which a rescan must
+        leave running."""
         self._retire_judge()
+        probe = getattr(self, "_probe", None)
+        if probe is not None:
+            probe.cancel()
+
+    def accept(self):
+        self._retire_all()
         super().accept()
 
     def reject(self):
-        self._retire_judge()
+        self._retire_all()
         super().reject()
 
     def closeEvent(self, event):
-        self._retire_judge()
+        self._retire_all()
         super().closeEvent(event)
 
     def _poll_judge(self, seq=None, worker=None, timer=None):
