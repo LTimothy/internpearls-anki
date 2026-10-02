@@ -233,3 +233,34 @@ def test_declined_cards_opens_fast_with_thousands_of_entries(tmp_path, monkeypat
     assert lst.total() == _PENDING + 3
     assert elapsed < _BUDGET_SECONDS, (
         f"Offer again with {_PENDING} entries took {elapsed:.3f}s")
+
+
+def test_offer_again_keeps_the_reader_where_they_were(tmp_path, monkeypatch):
+    import aqt.qt as aqt_qt
+    from internpearls import dialogs
+    from internpearls.widgets import StreamingList
+
+    harness.bootstrap()
+    app = harness.app()
+    _many_declined(tmp_path, monkeypatch, 400)
+    dlg = dialogs._DeclinedDialog(None)
+    dlg.resize(560, 520)
+    dlg.show()
+    app.processEvents()
+    lst = dlg.findChild(StreamingList)
+    bar = lst.verticalScrollBar()
+    for _ in range(4):
+        bar.setValue(bar.maximum())
+        app.processEvents()
+    before = bar.value()
+    assert before > 0
+    viewport_top = lst.viewport().mapToGlobal(lst.viewport().rect().topLeft()).y()
+    button = next(b for b in dlg.findChildren(aqt_qt.QPushButton)
+                  if b.text() == "Offer again" and b.isVisible()
+                  and b.mapToGlobal(b.rect().topLeft()).y() > viewport_top)
+    button.click()
+    app.processEvents()
+    after = bar.value()
+    dlg.close()
+    assert lst.total() == 400 + 3
+    assert abs(after - before) < 200, f"scrolled from {before} to {after}"
