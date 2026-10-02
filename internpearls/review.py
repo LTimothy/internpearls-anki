@@ -1244,6 +1244,15 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     # avoid everywhere else. Add note (below) is what reopens one on a row like that.
     box.setVisible(bool(flags.get(guid)))
     boxes[guid] = box
+    # In the text column, like the note lines above: the caption and box are about the
+    # card. Hidden while both are, so a row without them gains no spacing.
+    decision = QWidget()
+    dlay = QVBoxLayout(decision)
+    dlay.setContentsMargins(indent, 0, 0, 0)
+    dlay.setSpacing(4)
+    dlay.addWidget(caption)
+    dlay.addWidget(box)
+    decision.setVisible(bool(flags.get(guid)))
 
     default = _DEFAULT_DECISION.get(kind)
     never_note = hint_label("won't be offered again")
@@ -1255,6 +1264,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     def _reveal_box(_checked=False):
         box.setVisible(True)
         add_note.setVisible(False)
+        decision.setVisible(True)
     add_note.clicked.connect(_reveal_box)
 
     def _apply_decision_visuals(state, clicked=False):
@@ -1272,6 +1282,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         has_note = bool(flags.get(guid)) or bool(box.toPlainText().strip())
         show_box = has_note or (state in _TURNED_DOWN and clicked)
         box.setVisible(show_box)
+        decision.setVisible(bool(text) or show_box)
         # Offered whenever the box is closed, whatever the row decided: a re-offered
         # decline is not a default row, and gating this on the default left exactly
         # those rows with no way to write a note at all.
@@ -1421,8 +1432,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         blay.addWidget(add_note)
 
     outer.addWidget(body)
-    outer.addWidget(caption)
-    outer.addWidget(box)
+    outer.addWidget(decision)
     return row
 
 
