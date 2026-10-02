@@ -821,7 +821,8 @@ class MockCollection:
         NEVER (2) leaves a matched note alone (IF_NEWER needs modification times the
         mock does not keep, so it is refused); merge_notetypes bumps the schema, as it
         does in Anki; with_scheduling copies the file's card scheduling onto the cards
-        it imports or matches, and without it a matched card keeps its own."""
+        the import creates, and a card already in the collection keeps its own either
+        way, as in Anki."""
         opts = request.options
         if opts is None:
             opts = sys.modules["anki.collection"].ImportAnkiPackageOptions()
@@ -851,15 +852,14 @@ class MockCollection:
                 self._generate_cloze_cards(existing)
                 if deck and not existing.deck:
                     existing.deck = deck
-                note = existing
             else:
                 # add_note files it through decks.id(), which registers the deck and
                 # every ancestor of it, same as real Anki.
                 note = self.add_note(guid, values, tags.split(), model, deck)
-            if options["with_scheduling"] and nid in scheduling and note._card_ids:
-                card = self._cards[note._card_ids[0]]
-                for key, value in scheduling[nid].items():
-                    setattr(card, key, value)
+                if options["with_scheduling"] and nid in scheduling:
+                    card = self._cards[note._card_ids[0]]
+                    for key, value in scheduling[nid].items():
+                        setattr(card, key, value)
 
     def _content_signature(self):
         notes = sorted((nid, n.guid, tuple(n.fields), tuple(n.tags), n.model["name"])
