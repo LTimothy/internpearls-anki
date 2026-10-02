@@ -335,3 +335,23 @@ def test_a_read_on_a_socket_shut_by_the_deadline_reads_as_a_timeout(monkeypatch)
          {("img.example", "/a.png"): _ClosedAfterShutdown})
     with pytest.raises(RuntimeError, match="timed out"):
         ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.4)
+
+
+@pytest.mark.parametrize("ctype", ["image/svg+xml", "text/html", None])
+def test_only_a_raster_image_type_is_accepted(monkeypatch, ctype):
+    """A downloaded SVG would bypass the drawn-SVG checks, and a page is not a
+    picture: both are refused on their declared type."""
+    headers = {"Content-Type": ctype} if ctype else {}
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _Response(200, headers, b"<svg></svg>")})
+    with pytest.raises(RuntimeError, match="not an image"):
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+
+
+def test_a_wikimedia_file_page_is_fetched_as_its_rendered_image(monkeypatch):
+    web = _Web(monkeypatch, {"en.wikipedia.org": ["93.184.216.34"]},
+               {("en.wikipedia.org", "/wiki/Special:FilePath/Capnogram.png?width=1200"):
+                _png()})
+    assert ai_fetch.fetch_card_image(
+        "https://en.wikipedia.org/wiki/File:Capnogram.png") == (PNG, "png")
+    assert web.connected == [("en.wikipedia.org", "93.184.216.34")]

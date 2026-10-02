@@ -257,18 +257,13 @@ def _mb(n):
 
 
 def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=None,
-              on_response=None, max_bytes=None, deadline=None):
+              max_bytes=None, deadline=None):
     """GET `url`, raising a RuntimeError with an actionable message on failure, or a
     TransportError (a RuntimeError too) when the host was never reached at all.
 
     Every network call in this add-on goes through here, so this is the one place that
     needs to turn urllib's exceptions into something a non-technical error dialog can
     show as-is, rather than a Python traceback repr.
-
-    `on_response(r)` is called once the connection is open, before any body is read, with
-    the response object itself (so a caller can check `.headers` or `.geturl()`, e.g. the
-    final URL after a redirect). Raising from inside it propagates unchanged, since
-    whatever it raises isn't one of the exception types handled below.
 
     `on_chunk(bytes_so_far)` is called after each chunk read and
     returns falsy to abort, raising DownloadCancelled. It exists because a deck download
@@ -291,8 +286,8 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
     _current.watch = watch
     timer.start()
     try:
-        return _http_get_watched(url, token, accept, timeout, on_chunk, on_response,
-                                 max_bytes, deadline, watch)
+        return _http_get_watched(url, token, accept, timeout, on_chunk, max_bytes,
+                                 deadline, watch)
     except DownloadCancelled:
         raise
     except Exception as e:
@@ -333,8 +328,8 @@ def _read_body(r, on_chunk, max_bytes, deadline, watch):
     return bytes(buf)
 
 
-def _http_get_watched(url, token, accept, timeout, on_chunk, on_response, max_bytes,
-                      deadline, watch):
+def _http_get_watched(url, token, accept, timeout, on_chunk, max_bytes, deadline,
+                      watch):
     headers = {"User-Agent": _USER_AGENT}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -343,8 +338,6 @@ def _http_get_watched(url, token, accept, timeout, on_chunk, on_response, max_by
     req = urllib.request.Request(url, headers=headers)
     try:
         with _open(req, timeout=timeout) as r:
-            if on_response is not None:
-                on_response(r)
             return _read_body(r, on_chunk, max_bytes, deadline, watch)
     except urllib.error.HTTPError as e:
         if e.code == 403:
@@ -470,55 +463,3 @@ def wikimedia_image_url(url):
         name = m.group(2)
     name = quote(unquote(name).replace(" ", "_"))
     return f"https://{host}/wiki/Special:FilePath/{name}?width=1200"
-
-
-def fetch_card_image(url, max_bytes=5 * 1024 * 1024):
-    """Download a model-suggested card image, the only thing that ever touches the
-    network for it (the model supplies just the URL, never the request). Goes through
-    _http_get so a failure reads like every other network error in this add-on.
-
-    Refuses anything that isn't plainly an image: https only (checked on the request URL
-    and, since urllib follows redirects by default, again on the final URL after any
-    redirect), a known image content-type (ignoring parameters like `; charset=`), and a
-    hard `max_bytes` cap enforced against the bytes actually read as they arrive, not
-    just a Content-Length header the server can lie about or omit. A Wikimedia File:
-    page or original SVG is fetched as its rendered image (see wikimedia_image_url).
-    """
-    if not url.startswith("https://"):
-        raise RuntimeError("image URLs must be https")
-    url = wikimedia_image_url(url)
-    ext = {}
-
-    def on_response(r):
-        final_url = r.geturl() or url
-        if not final_url.startswith("https://"):
-            raise RuntimeError("image must be served over https")
-        ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if ctype not in _IMAGE_TYPES:
-            raise RuntimeError(f"not an image ({ctype or 'no content type'})")
-        ext["value"] = _IMAGE_TYPES[ctype]
-        clen = r.headers.get("Content-Length")
-        if clen:
-            try:
-                declared = int(clen)
-            except ValueError:
-                declared = None
-            if declared is not None and declared > max_bytes:
-                raise RuntimeError("image is too large")
-
-    def on_chunk(so_far):
-        if so_far > max_bytes:
-            raise RuntimeError("image is too large")
-        return True
-
-    try:
-        data = _http_get(url, timeout=_DOWNLOAD_TIMEOUT, on_response=on_response,
-                         on_chunk=on_chunk)
-    except HttpStatusError as e:
-        # _http_get words a 404 for the deck-source repo it mostly serves. An image
-        # address is one the assistant suggested, so repo advice would mislead.
-        if e.code == 404:
-            raise HttpStatusError("no image at that address (the site returned 404)",
-                                  e.code) from e
-        raise
-    return data, ext["value"]
