@@ -15,6 +15,7 @@ import html
 import json
 import os
 import re
+import stat
 import tempfile
 
 from aqt import mw
@@ -169,13 +170,20 @@ def _local_source_file(folder, path):
     """`path` from the manifest, as a file inside the local source `folder`.
 
     safe_source_path refuses an absolute path or '..'; this also follows symlinks, so a
-    link inside the folder that points out of it is refused too.
+    link inside the folder that points out of it is refused too, and requires a regular
+    file, since a FIFO or a device would block the main thread on open.
     """
     full = os.path.join(folder, safe_source_path(path))
     root = os.path.realpath(folder)
-    if os.path.commonpath([os.path.realpath(full), root]) != root:
+    try:
+        inside = os.path.commonpath([os.path.realpath(full), root]) == root
+    except ValueError:      # another drive
+        inside = False
+    if not inside:
         raise RuntimeError(f'"{path}" resolves outside the deck source, so it wasn\'t '
                            "read")
+    if not stat.S_ISREG(os.stat(full).st_mode):
+        raise RuntimeError(f'"{path}" isn\'t a regular file, so it wasn\'t read')
     return full
 
 
@@ -266,11 +274,11 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
             raise RuntimeError(f"the manifest.json in {cfg['gh_repo']} is empty")
         _require_manifest_object(manifest, cfg["gh_repo"])
 
-        def fetch(d, on_chunk=None):
+        def fetch(d, on_chunk=None, max_bytes=APKG_MAX_BYTES):
             path = safe_source_path(d["apkg"])
             data = _gh_raw(cfg["gh_repo"], path, cfg["gh_token"], cfg["gh_ref"],
                            timeout=download_timeout, on_chunk=on_chunk,
-                           max_bytes=APKG_MAX_BYTES)
+                           max_bytes=max_bytes)
             return _write_scratch(f"{cfg['gh_repo']}@{cfg['gh_ref']}/{path}",
                                   data, d.get("version"))
 
@@ -284,10 +292,11 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
                 f"the folder {folder} doesn't exist (check the path, or pick a "
                 "different source)")
         path = os.path.join(folder, "manifest.json")
-        if not os.path.exists(path):
+        if not os.path.lexists(path):
             raise RuntimeError(
                 f"{folder} has no manifest.json (point this at the folder that holds "
                 "the manifest and the .apkg files)")
+        path = _local_source_file(folder, "manifest.json")
         if os.path.getsize(path) > _MANIFEST_MAX_BYTES:
             raise RuntimeError(f"the manifest.json in {folder} is larger than "
                                f"{_MANIFEST_MAX_BYTES // (1024 * 1024)} MB, so it "
@@ -301,7 +310,7 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
             raise RuntimeError(f"the manifest.json in {folder} is empty")
         _require_manifest_object(manifest, folder)
 
-        def fetch(d, on_chunk=None):
+        def fetch(d, on_chunk=None, max_bytes=None):
             return _local_source_file(folder, d["apkg"])
 
         fetch.source_key = ("folder", os.path.realpath(folder))
@@ -356,8 +365,8 @@ def _check_deck_skill(cfg, manifest, fetch):
     enhancement, decks are the product.
 
     Consent is keyed by content hash: unchanged hash is silent (including across
-    a version bump with no text change), any other hash re-asks, showing the full
-    new text. Declining leaves whatever was previously consented to (if anything)
+    a version bump with no text change) unless the stored consent fails
+    _consent_is_clean, and any other hash re-asks, showing the full new text. Declining leaves whatever was previously consented to (if anything)
     exactly as it was, answering "not this version" rather than "forget what I
     agreed to before".
     """
@@ -365,7 +374,8 @@ def _check_deck_skill(cfg, manifest, fetch):
     if not isinstance(entry, dict) or not entry.get("path"):
         return
     try:
-        local = fetch({"apkg": entry["path"], "version": entry.get("version")})
+        local = fetch({"apkg": entry["path"], "version": entry.get("version")},
+                      max_bytes=_SKILL_MAX_BYTES)
         if os.path.getsize(local) > _SKILL_MAX_BYTES:
             return
         with open(local, "rb") as fh:
@@ -374,7 +384,7 @@ def _check_deck_skill(cfg, manifest, fetch):
         return
     digest = hashlib.sha256(raw).hexdigest()
     stored = load_deck_skill()
-    if stored and stored.get("hash") == digest:
+    if stored and stored.get("hash") == digest and _consent_is_clean(stored):
         return
     text = raw.decode("utf-8-sig", "replace")
     version = _skill_version(entry.get("version"))
@@ -384,6 +394,15 @@ def _check_deck_skill(cfg, manifest, fetch):
                          "hash": digest,
                          "consented_on": datetime.date.today().isoformat(),
                          "enabled": True})
+
+
+def _consent_is_clean(stored):
+    """Whether a stored consent already holds only what the consent dialog shows today:
+    no hidden characters in its text and a tamed version. One saved before either rule
+    is asked about again, even for the same skill file."""
+    text = stored.get("text") or ""
+    version = str(stored.get("version") or "")
+    return strip_hidden(text) == text and _skill_version(version) == version
 
 
 def _skill_version(version):

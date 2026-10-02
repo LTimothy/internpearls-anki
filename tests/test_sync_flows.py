@@ -8318,3 +8318,103 @@ def test_import_deck_refuses_a_member_larger_than_it_declares(anki, tmp_path):
 
     assert anki.gui.warnings and anki.gui.warnings[0].startswith("Import failed")
     assert not anki.col.imports
+
+
+# ------------------------------------------- special files and older skill consents
+def test_a_local_manifest_that_is_a_fifo_is_refused_without_blocking(anki, tmp_path):
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    os.remove(os.path.join(folder, "manifest.json"))
+    os.mkfifo(os.path.join(folder, "manifest.json"))
+    _configure(anki, folder)
+
+    _sync(anki)
+
+    assert "manifest.json" in anki.gui.warnings[0]
+    assert "regular file" in anki.gui.warnings[0]
+
+
+def test_a_local_manifest_linked_from_outside_the_folder_is_refused(anki, tmp_path):
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    outside = tmp_path / "elsewhere.json"
+    os.rename(os.path.join(folder, "manifest.json"), outside)
+    os.symlink(outside, os.path.join(folder, "manifest.json"))
+    _configure(anki, folder)
+
+    _sync(anki)
+
+    assert "outside the deck source" in anki.gui.warnings[0]
+
+
+def test_a_skill_that_is_a_fifo_is_never_opened(anki, tmp_path):
+    from internpearls import config, sync
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder)
+    skill = os.path.join(folder, "skills/deck/SKILL.md")
+    os.remove(skill)
+    os.mkfifo(skill)
+    _configure(anki, folder)
+
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)   # no dialog, no hang
+
+    assert config.load_deck_skill() is None
+
+
+def test_a_github_skill_download_is_capped_at_the_skill_limit(anki, monkeypatch):
+    from internpearls import sync
+    seen = {}
+
+    def gh_raw(_repo, path, _token, _ref, timeout=None, on_chunk=None, max_bytes=None):
+        seen[path] = max_bytes
+        if path == "manifest.json":
+            return json.dumps({"schema": 1, "decks": [],
+                               "skill": {"path": "skills/SKILL.md", "version": "1"}}
+                              ).encode()
+        raise RuntimeError("stop here")
+
+    anki.mw._config = {"github_decks_repo": "someone/decks"}
+    monkeypatch.setattr(sync, "_gh_raw", gh_raw)
+
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)
+
+    assert seen["skills/SKILL.md"] == sync._SKILL_MAX_BYTES
+
+
+@pytest.mark.parametrize("stored_text,stored_version", [
+    ("# Deck skill\nBe concise.\U000e0041", "1.0"),
+    ("# Deck skill\nBe concise.", "1.0<!--"),
+])
+def test_an_older_consent_with_hidden_text_or_a_raw_version_is_asked_again(
+        anki, tmp_path, stored_text, stored_version):
+    """A consent stored before hidden characters were stripped and versions tamed is
+    asked again, even though the skill file itself has not changed."""
+    import hashlib
+    from internpearls import config, sync
+    text = "# Deck skill\nBe concise."
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder, version="1.0", text=text)
+    _configure(anki, folder)
+    config.save_deck_skill({"text": stored_text, "version": stored_version,
+                            "hash": hashlib.sha256(text.encode("utf8")).hexdigest(),
+                            "consented_on": "2026-01-01", "enabled": True})
+
+    dialog_text = _run_with_skill_answer(anki, sync.update_decks, consent=True)
+
+    assert "Be concise" in dialog_text
+    stored = config.load_deck_skill()
+    assert stored["text"] == text and stored["version"] == "1.0"
+
+
+def test_a_clean_older_consent_is_not_asked_again(anki, tmp_path):
+    import hashlib
+    from internpearls import config, sync
+    text = "# Deck skill\nBe concise."
+    folder = _write_source(tmp_path, {})
+    _write_skill(folder, version="1.0", text=text)
+    _configure(anki, folder)
+    config.save_deck_skill({"text": text, "version": "1.0",
+                            "hash": hashlib.sha256(text.encode("utf8")).hexdigest(),
+                            "consented_on": "2026-01-01", "enabled": True})
+
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)
