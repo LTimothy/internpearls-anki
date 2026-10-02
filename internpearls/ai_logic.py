@@ -18,6 +18,8 @@ import ipaddress
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 
+from . import dupes
+
 GUID_PREFIX = "iplocal-"
 GENERATED_TAG_LEAF = "Generated"
 GENERATED_DECK_LEAF = "Generated"
@@ -85,19 +87,24 @@ def _stock_shape(model, kind):
 
 def find_core_notetype(models, kind):
     """(model, {prompt field: model field}) for the collection's stock `kind`
-    ("Basic" or "Cloze"): the note type called that, else the one shaped like it, so
-    a collection whose stock types carry translated names still works. Among several
-    shaped alike, one Anki recorded as created from that stock kind wins, then the
-    oldest (lowest id). (None, {}) when there is none."""
+    ("Basic" or "Cloze"): the note type called that when it has every field the
+    prompt uses, else the one shaped like it, so a collection whose stock types carry
+    translated names still works. Among several shaped alike, one Anki recorded as
+    created from that stock kind wins, then the oldest (lowest id). With nothing
+    shaped, the type called that is still taken if it has the first field, mapping
+    only the fields it has. (None, {}) when there is none."""
     model_type, ours = CORE_NOTE_TYPES[kind]
     models = list(models or [])
     named = next((m for m in models if m.get("name") == kind), None)
+    names = []
     if named is not None and named.get("type", 0) == model_type:
         names = [f.get("name") for f in named.get("flds") or []]
         if all(n in names for n in ours):
             return named, {n: n for n in ours}
     shaped = [m for m in models if _stock_shape(m, kind)]
     if not shaped:
+        if ours[0] in names:
+            return named, {n: n for n in ours if n in names}
         return None, {}
     model = min(shaped, key=lambda m: (m.get("originalStockKind") != _STOCK_KIND[kind],
                                        m.get("id", float("inf"))))
@@ -451,7 +458,27 @@ def primary_is_blank(card):
                 or any("<img" in str(v).lower() for v in fields.values()))
 
 
-def mechanical_checks(cards, existing_fronts, image_errors=None):
+def draft_text(card):
+    """A draft as the duplicate scan reads a note: its first two fields."""
+    return " ".join(list(card["fields"].values())[:2])
+
+
+def near_duplicates(texts, index, checkpoint=None):
+    """{text: row or None} for each draft text (see draft_text): the row of `index`
+    (a dupes.Index over the learner's collection) it reads as a likely duplicate of,
+    at the duplicate scan's default sensitivity. A pair that differs on a class or a
+    negation is not a duplicate."""
+    texts = list(dict.fromkeys(texts))
+    found = {}
+    # Best score first, so the first pair kept for a draft is its closest match.
+    for _score, left, right, _shares in dupes.search(
+            index, [(i, t, "", "") for i, t in enumerate(texts)], checkpoint=checkpoint):
+        if left[0] not in found and not dupes.contrast_label(left[1], right[1]):
+            found[left[0]] = right
+    return {t: found.get(i) for i, t in enumerate(texts)}
+
+
+def mechanical_checks(cards, existing_fronts, image_errors=None, near=None):
     """Check drafted cards for duplicates (against the collection and earlier
     cards in the draft), empty fronts, cloze syntax, length, and image
     resolution failures. existing_fronts is {normalized front: original front}
@@ -461,10 +488,13 @@ def mechanical_checks(cards, existing_fronts, image_errors=None):
     ...]}, one entry per image that failed to resolve (download, decode, or
     read): computed by the caller (ai_dialog, which owns the network/disk
     access this module deliberately has none of) and passed in as plain data,
-    so this stays a pure function. Returns one list of check-result dicts
-    (code, level, message, optional "existing") per card.
+    so this stays a pure function. near is {card index: {"front", "deck"}}, the
+    existing card a draft is a likely duplicate of (see near_duplicates), flagged
+    unless the exact-front check already flagged that card. Returns one list of
+    check-result dicts (code, level, message, optional "existing" and "deck") per card.
     """
     image_errors = image_errors or {}
+    near = near or {}
     out = []
     first_seen = {}
     for i, card in enumerate(cards):
@@ -486,6 +516,10 @@ def mechanical_checks(cards, existing_fronts, image_errors=None):
             entries.append({"code": "duplicate", "level": "block",
                             "existing": existing_fronts[norm],
                             "message": "possible duplicate of an existing card"})
+        elif i in near:
+            entries.append({"code": "duplicate", "level": "block",
+                            "existing": near[i]["front"], "deck": near[i]["deck"],
+                            "message": "likely duplicate of an existing card"})
         if norm:
             if norm in first_seen:
                 entries.append({"code": "duplicate", "level": "block",

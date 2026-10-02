@@ -271,3 +271,81 @@ def test_add_generated_notes_media_write_data_fallback_to_add_file(anki, monkeyp
     assert len(stub.added_paths) == 1
     note = next(iter(anki.col._notes.values()))
     assert note["Image"] == '<img src="generated-1.svg">'
+
+
+# === localized stock note types: found by shape, written by mapped field names ===
+
+def _stock(name, fields, mtype=0, mid=None, **extra):
+    first, second = fields
+    if mtype:
+        qfmt, afmt = f"{{{{cloze:{first}}}}}", f"{{{{cloze:{first}}}}}<br>\n{{{{{second}}}}}"
+    else:
+        qfmt, afmt = f"{{{{{first}}}}}", f"{{{{FrontSide}}}}\n\n<hr id=answer>\n\n{{{{{second}}}}}"
+    model = make_model(name=name, fields=list(fields), qfmt=qfmt, afmt=afmt)
+    model["type"] = mtype
+    model["id"] = mid if mid is not None else model["id"]
+    model.update(extra)
+    return model
+
+
+def _german(anki):
+    einfach = _stock("Einfach", ("Vorderseite", "Rückseite"), mid=5)
+    lueckentext = _stock("Lückentext", ("Text", "Rückseite Extra"), mtype=1, mid=6)
+    anki.col.models._models.extend([einfach, lueckentext])
+    return einfach, lueckentext
+
+
+def test_basic_card_lands_on_a_renamed_stock_basic(anki):
+    einfach, _ = _german(anki)
+    card = _card("Q1", note_type="Basic", media_files=["a.png"])
+    card["_sources"] = [{"title": "Ref", "url": "https://example.com"}]
+    collection.add_generated_notes([card], media={"a.png": b"1"},
+                                   deck_name=DECK, scope_tag=SCOPE)
+    note = next(iter(anki.col._notes.values()))
+    assert note.model is einfach
+    assert note["Vorderseite"] == 'Q1<img src="a.png">'
+    assert note["Rückseite"].startswith("A<div") and "example.com" in note["Rückseite"]
+
+
+def test_cloze_card_lands_on_a_renamed_stock_cloze(anki):
+    _, lueckentext = _german(anki)
+    card = {"note_type": "Cloze", "fields": {"Text": "{{c1::x}}", "Back Extra": "more"},
+            "tags": [], "images": [], "rationale": "",
+            "_sources": [{"title": "Ref", "url": "https://example.com"}]}
+    collection.add_generated_notes([card], media={}, deck_name=DECK, scope_tag=SCOPE)
+    note = next(iter(anki.col._notes.values()))
+    assert note.model is lueckentext
+    assert note["Text"] == "{{c1::x}}"
+    assert note["Rückseite Extra"].startswith("more<div")
+
+
+def test_a_clone_of_the_stock_basic_loses_the_tie_to_the_stock_one(anki):
+    einfach, _ = _german(anki)
+    clone = _stock("Einfach-1a2b3", ("Vorderseite", "Rückseite"), mid=2)
+    stock = dict(einfach, originalStockKind=0)
+    anki.col.models._models[:] = [m for m in anki.col.models._models if m is not einfach]
+    anki.col.models._models.extend([clone, stock])
+    collection.add_generated_notes([_card("Q1", note_type="Basic")], media={},
+                                   deck_name=DECK, scope_tag=SCOPE)
+    assert next(iter(anki.col._notes.values())).model is stock
+
+
+def test_without_a_recorded_stock_kind_the_oldest_shape_match_wins(anki):
+    einfach, _ = _german(anki)
+    newer = _stock("Einfach-1a2b3", ("Vorderseite", "Rückseite"), mid=9)
+    anki.col.models._models.append(newer)
+    collection.add_generated_notes([_card("Q1", note_type="Basic")], media={},
+                                   deck_name=DECK, scope_tag=SCOPE)
+    assert next(iter(anki.col._notes.values())).model is einfach
+
+
+def test_sources_land_on_the_second_field_of_a_cloze_named_type_with_another_name(anki):
+    cloze = _stock("Cloze", ("Text", "Extra"), mtype=1, mid=4)
+    anki.col.models._models.append(cloze)
+    card = {"note_type": "Cloze", "fields": {"Text": "{{c1::x}}", "Back Extra": "more"},
+            "tags": [], "images": [], "rationale": "",
+            "_sources": [{"title": "Ref", "url": "https://example.com"}]}
+    collection.add_generated_notes([card], media={}, deck_name=DECK, scope_tag=SCOPE)
+    note = next(iter(anki.col._notes.values()))
+    assert note.model is cloze
+    assert note["Extra"].startswith("more<div") and "example.com" in note["Extra"]

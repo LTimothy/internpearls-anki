@@ -126,11 +126,38 @@ def test_input_page_disables_a_note_type_missing_from_the_collection(anki, monke
         box = dlg.type_boxes[missing]
         assert not box.isEnabled(), f"{missing} isn't in the collection yet"
         assert not box.isChecked()
+    # Syncing adds a managed type; it never adds Anki's own Basic or Cloze.
+    assert dlg.type_boxes["Study Deck - Cloze"]._label.endswith("(sync your decks first)")
+    for core in ("Basic", "Cloze"):
+        box = dlg.type_boxes[core]
+        assert box._label == f"{core} (not in this collection)"
+        assert "Sync" not in box._tooltip and "isn't in this collection" in box._tooltip
 
     # What actually gets sent to the model: only the type that really exists.
     dlg.source_box.setPlainText("some source text")
     note_types = [n for n, b in dlg.type_boxes.items() if b.isChecked()]
     assert note_types == ["Study Deck - Basic"]
+
+
+def test_input_page_offers_basic_and_cloze_under_translated_names(anki, monkeypatch):
+    """A German profile's stock types are "Einfach" and "Lückentext": the same
+    shape as Basic and Cloze, so they are offered, not shown as missing."""
+    from mock_anki import make_model
+    einfach = make_model(name="Einfach", fields=["Vorderseite", "Rückseite"],
+                         qfmt="{{Vorderseite}}", afmt="{{FrontSide}}<hr>{{Rückseite}}")
+    lueckentext = make_model(name="Lückentext", fields=["Text", "Rückseite Extra"],
+                             qfmt="{{cloze:Text}}",
+                             afmt="{{cloze:Text}}<br>{{Rückseite Extra}}")
+    lueckentext["type"] = 1
+    anki.col.models._models.extend([einfach, lueckentext])
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = _settled(ai_dialog._GenerateDialog())
+    for name in ("Basic", "Cloze"):
+        assert dlg.type_boxes[name].isEnabled() and dlg.type_boxes[name].isChecked()
+        assert dlg.type_boxes[name]._label == name
 
 
 def test_input_page_shown_when_backend_found(anki, monkeypatch):
@@ -664,6 +691,7 @@ def test_unreviewed_suggestions_are_noted_near_import_without_blocking_it(anki, 
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
     dlg._wait_for_worker()
+    dlg._wait_for_near()   # its own line says the collection check is still running
     assert not dlg.import_note.isVisible() and dlg.import_note.text() == ""
     dlg.session.verdicts = {
         0: {"verdict": "corrected", "note": "n", "sources": [],
@@ -2496,3 +2524,133 @@ def test_review_preview_shows_where_a_link_points(anki, monkeypatch):
     row = dlg.cards_lay.itemAt(0).widget()
     _caret_widget(row).click()
     assert "the guide (example.com)" in _row_text(row)
+
+
+# === drafts checked against the whole collection, not only exact fronts =====
+
+_FENOLDOPAM = "Which receptor does fenoldopam stimulate as a selective dopamine agonist"
+
+
+def _near_dialog(anki, monkeypatch, echo=_FENOLDOPAM):
+    anki.col.add_note("learner-own", ["Which receptor does fenoldopam stimulate?",
+                                      "Selective D1 dopamine agonist", "", "", "", "", ""],
+                      [], deck="Pharm::Pressors")
+    monkeypatch.setenv("FAKE_CLI_ECHO_TEXT", echo)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="echo_env_in_card")
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    return dlg
+
+
+def test_a_draft_close_to_an_existing_card_is_flagged_once_the_lookup_lands(
+        anki, monkeypatch):
+    dlg = _near_dialog(anki, monkeypatch)
+    s = dlg.session
+    # The row is up before the lookup answers, with nothing claimed yet.
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert s.included == [True]
+    assert all(c["code"] != "duplicate" for c in s.checks[0])
+
+    dlg._wait_for_near()
+    [flag] = [c for c in s.checks[0] if c["code"] == "duplicate"]
+    assert flag["level"] == "block"
+    assert flag["existing"] == "Which receptor does fenoldopam stimulate?"
+    assert flag["deck"] == "Pharm::Pressors"
+    assert s.included == [False]
+    text = _row_text(dlg.cards_lay._children[0])
+    assert "likely duplicate of an existing card" in text
+    assert "Which receptor does fenoldopam stimulate?" in text and "Pharm::Pressors" in text
+
+
+def test_a_late_flag_keeps_a_decision_the_learner_already_made(anki, monkeypatch):
+    dlg = _near_dialog(anki, monkeypatch)
+    dlg.decision_cells[0].buttons["skip"].click()
+    dlg.decision_cells[0].buttons["include"].click()
+    dlg._wait_for_near()
+    assert any(c["code"] == "duplicate" for c in dlg.session.checks[0])
+    assert dlg.session.included == [True]
+
+
+def test_a_contrasting_draft_is_not_flagged_against_the_collection(anki, monkeypatch):
+    anki.col.add_note("learner-thyroid",
+                      ["Which thyroid hormone is more potent at the nuclear receptor?",
+                       "T3", "", "", "", "", ""], [], deck="Endo")
+    dlg = _near_dialog(
+        anki, monkeypatch,
+        echo="Which thyroid hormone is more potent at the nuclear receptor? T4")
+    dlg._wait_for_near()
+    assert all(c["code"] != "duplicate" for c in dlg.session.checks[0])
+    assert dlg.session.included == [True]
+
+
+def test_an_edit_into_a_near_duplicate_is_flagged_after_its_lookup(anki, monkeypatch):
+    dlg = _near_dialog(anki, monkeypatch, echo="Succinylcholine and serum potassium")
+    dlg._wait_for_near()
+    assert dlg.session.included == [True]
+    card = dlg.session.cards[0]
+    _fake_edit(monkeypatch, dict(card["fields"], Front=_FENOLDOPAM), card["tags"])
+    dlg._edit_card(0)
+    dlg._wait_for_near()
+    assert any(c.get("deck") == "Pharm::Pressors" for c in dlg.session.checks[0])
+    assert dlg.session.included == [False]
+
+
+def test_the_collection_is_indexed_once_per_dialog(anki, monkeypatch):
+    from internpearls import dupes
+    builds = []
+    real = dupes.build_index
+    monkeypatch.setattr(dupes, "build_index",
+                        lambda rows, checkpoint=None: builds.append(1) or real(rows))
+    dlg = _near_dialog(anki, monkeypatch)
+    dlg._wait_for_near()
+    dlg._revise_all()
+    dlg._wait_for_worker()
+    dlg._wait_for_near()
+    assert builds == [1]
+
+
+def test_closing_the_wizard_cancels_the_collection_lookup(anki, monkeypatch):
+    dlg = _near_dialog(anki, monkeypatch)
+    worker = dlg._near_worker
+    assert worker is not None
+    dlg._retire_for_delete()
+    assert worker.cancel_event.is_set()
+
+
+def test_a_failed_collection_lookup_leaves_the_exact_check_alone(anki, monkeypatch):
+    from internpearls import dupes
+
+    def broken(rows, checkpoint=None):
+        raise RuntimeError("index failed")
+    monkeypatch.setattr(dupes, "build_index", broken)
+    dlg = _near_dialog(anki, monkeypatch)
+    dlg._wait_for_near()
+    assert dlg._near_worker is None
+    assert dlg.session.included == [True]
+    dlg._refresh_near()
+    assert dlg._near_worker is None   # not retried on every recheck
+
+
+def test_the_review_says_while_the_collection_check_runs_and_what_it_moved(
+        anki, monkeypatch):
+    dlg = _near_dialog(anki, monkeypatch)
+    assert dlg.import_note.text() == "Checking 1 card against your collection"
+    assert dlg.import_note.isVisible()
+    assert dlg.import_btn.isEnabled()
+    dlg._wait_for_near()
+    assert dlg.import_note.text() == "1 card moved to Skip: likely already in your collection"
+    dlg.decision_cells[0].buttons["include"].click()
+    assert dlg.import_note.text() == ""
+    assert not dlg.import_note.isVisible()
+
+
+def test_an_edit_during_a_lookup_is_looked_up_after_it(anki, monkeypatch):
+    dlg = _near_dialog(anki, monkeypatch, echo="Succinylcholine and serum potassium")
+    assert dlg._near_worker is not None   # the first lookup has not been delivered
+    card = dlg.session.cards[0]
+    _fake_edit(monkeypatch, dict(card["fields"], Front=_FENOLDOPAM), card["tags"])
+    dlg._edit_card(0)
+    assert dlg._near_dirty
+    dlg._wait_for_near()
+    assert any(c.get("deck") == "Pharm::Pressors" for c in dlg.session.checks[0])
+    assert dlg.session.included == [False]

@@ -429,105 +429,17 @@ def test_the_addon_fetches_itself_through_the_api_not_the_raw_cdn(monkeypatch):
     assert "raw.githubusercontent.com" not in seen[0][0].full_url
 
 
-# --- fetch_card_image: review-time download of a model-suggested image URL ---
+# --- card pictures: fetched by ai_fetch, which reuses the Wikimedia rewrite here ---
 
 
-def test_fetch_card_image_rejects_http_url():
-    from internpearls import net
-    with pytest.raises(RuntimeError):
-        net.fetch_card_image("http://example.com/x.png")
-
-
-def test_fetch_card_image_checks_content_type(monkeypatch):
-    from internpearls import net
-    _urlopen(monkeypatch, _Response(b"<html>", headers={"Content-Type": "text/html"}))
-    with pytest.raises(RuntimeError):
-        net.fetch_card_image("https://example.com/x.png")
-
-
-def test_fetch_card_image_refuses_svg(monkeypatch):
-    """A downloaded SVG bypasses ai_logic.svg_to_media's script check entirely, so a
-    web image is raster only; a model that wants an SVG draws one instead."""
-    from internpearls import net
-    _urlopen(monkeypatch, _Response(
-        b"<svg></svg>", headers={"Content-Type": "image/svg+xml"}))
-    with pytest.raises(RuntimeError):
-        net.fetch_card_image("https://example.com/x.svg")
-
-
-def test_fetch_card_image_404_does_not_give_deck_source_advice(monkeypatch):
-    """A card image is an address the assistant suggested, so a 404 must not tell
-    the learner to check a repo name, branch and file path. The deck source keeps
-    that advice, since there it is the right thing to check."""
-    from internpearls import net
-    _urlopen(monkeypatch, _http_error(404))
-    with pytest.raises(net.HttpStatusError) as image:
-        net.fetch_card_image("https://example.com/pic.png")
-    assert image.value.code == 404
-    assert "repo" not in str(image.value) and "image" in str(image.value)
-
-    _urlopen(monkeypatch, _http_error(404))
-    with pytest.raises(net.HttpStatusError) as source:
-        net._http_get("https://api.github.com/repos/x/y/contents/manifest.json")
-    assert "check the repo name" in str(source.value)
-
-
-def test_fetch_card_image_happy(monkeypatch):
-    from internpearls import net
-    body = b"\x89PNG\r\n\x1a\n00"
-    _urlopen(monkeypatch, _Response(
-        body, headers={"Content-Type": "image/png", "Content-Length": str(len(body))}))
-    data, ext = net.fetch_card_image("https://example.com/pic.png")
-    assert data == body and ext == "png"
-
-
-def test_fetch_card_image_content_type_with_parameters_is_accepted(monkeypatch):
-    """A server that adds a charset parameter must not be rejected on a bare string
-    mismatch against the bare media type."""
-    from internpearls import net
-    body = b"\x89PNG..."
-    _urlopen(monkeypatch, _Response(
-        body, headers={"Content-Type": "image/png; charset=binary"}))
-    data, ext = net.fetch_card_image("https://example.com/pic.png")
-    assert data == body and ext == "png"
-
-
-def test_fetch_card_image_rejects_oversize_declared_by_content_length(monkeypatch):
-    from internpearls import net
-    _urlopen(monkeypatch, _Response(
-        b"x" * 20, headers={"Content-Type": "image/png", "Content-Length": "20"}))
-    with pytest.raises(RuntimeError):
-        net.fetch_card_image("https://example.com/pic.png", max_bytes=10)
-
-
-def test_fetch_card_image_rejects_oversize_stream_with_no_content_length(monkeypatch):
-    """The header lying or missing entirely must not let bytes past the cap: the
-    running total from the actual read has to be what's enforced."""
-    from internpearls import net
-    _urlopen(monkeypatch, _Response(
-        b"x" * 50, headers={"Content-Type": "image/png"}))
-    with pytest.raises(RuntimeError):
-        net.fetch_card_image("https://example.com/pic.png", max_bytes=10)
-
-
-def test_fetch_card_image_accepts_exactly_the_cap(monkeypatch):
-    from internpearls import net
-    body = b"x" * 10
-    _urlopen(monkeypatch, _Response(body, headers={"Content-Type": "image/png"}))
-    data, ext = net.fetch_card_image("https://example.com/pic.png", max_bytes=10)
-    assert len(data) == 10
-
-
-def test_fetch_card_image_rejects_a_redirect_to_http(monkeypatch):
-    """urllib follows redirects by default; a server that 302s an https URL to a plain
-    http one must not let the download silently succeed over an insecure channel."""
-    from internpearls import net
-    _urlopen(monkeypatch, _Response(
-        b"\x89PNG", headers={"Content-Type": "image/png"},
-        url="http://evil.example.com/pic.png"))
-    with pytest.raises(RuntimeError) as e:
-        net.fetch_card_image("https://example.com/pic.png")
-    assert "https" in str(e.value)
+def test_card_pictures_have_one_fetch_path():
+    """ai_fetch owns the card-picture download; net keeps only the URL rewrite and
+    the type table it shares, so a fix to one fetch path can't miss a second."""
+    import inspect
+    from internpearls import ai_dialog, ai_fetch, net
+    assert not hasattr(net, "fetch_card_image")
+    assert "on_response" not in inspect.signature(net._http_get).parameters
+    assert ai_dialog.fetch_card_image is ai_fetch.fetch_card_image
 
 
 @pytest.mark.parametrize("url, expected", [
@@ -550,16 +462,6 @@ def test_fetch_card_image_rejects_a_redirect_to_http(monkeypatch):
 def test_wikimedia_image_url(url, expected):
     from internpearls import net
     assert net.wikimedia_image_url(url) == expected
-
-
-def test_fetch_card_image_requests_a_wikimedia_file_page_as_its_image(monkeypatch):
-    from internpearls import net
-    seen = []
-    _urlopen(monkeypatch, _Response(b"\x89PNG", headers={"Content-Type": "image/png"}),
-             capture=seen)
-    net.fetch_card_image("https://en.wikipedia.org/wiki/File:Capnogram.png")
-    assert seen[0][0].full_url == (
-        "https://en.wikipedia.org/wiki/Special:FilePath/Capnogram.png?width=1200")
 
 
 def test_requests_name_the_addon_and_its_repo_in_the_user_agent(monkeypatch):
