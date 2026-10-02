@@ -1516,7 +1516,8 @@ class _GenerateDialog(QDialog):
             row = QWidget()
             row_lay = QHBoxLayout(row)
             row_lay.setContentsMargins(0, 0, 0, 0)
-            label = hint_label(html.escape(name))
+            label = hint_label(name)
+            label.setTextFormat(Qt.TextFormat.PlainText)
             label.setAccessibleName(f"Attached file: {name}")
             remove = link_button(
                 "Remove", on_click=lambda _checked=False, p=path: self._guard(

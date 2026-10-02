@@ -528,12 +528,13 @@ def _scene_confirm(mock, opts):
         # "feedback" renders the reviewer-driven group that always stays open.
         # group_kind gives every member that row kind, and with it a decision control.
         n = opts["group_size"]
+        front = opts.get("group_front", "Group member card number {i}?")
         group_note = {"kind": opts.get("group_note_kind", "maintainer"),
                       "note": f"an example reviewer note spanning {n} cards"}
         items.append(("group_note", group_note, n))
         for i in range(n):
             member = {"guid": f"group-card-{i}", "notetype": "Study Deck - Basic",
-                      "fields": [("Front", f"Group member card number {i}?"),
+                      "fields": [("Front", front.format(i=i)),
                                  ("Back", "Answer."), ("Why", ""), ("Image", ""),
                                  ("Tag", ""), ("Dosing", ""), ("Notes", "")]}
             if opts.get("group_kind"):
@@ -1310,6 +1311,20 @@ def plain(text):
     before bootstrap() installs real Qt (see that function's own comment)."""
     from internpearls.ai_dialog import _plain
     return _plain(text)
+
+
+def shown(label):
+    """What a QLabel actually paints, resolved the way Qt resolves it. Unlike
+    `plain`, an entity in a label Qt treats as plain text stays literal here."""
+    _, q = bootstrap()
+    text, fmt = label.text(), label.textFormat()
+    rich = fmt == q.Qt.TextFormat.RichText or (
+        fmt == q.Qt.TextFormat.AutoText and q.Qt.mightBeRichText(text))
+    if not rich:
+        return text
+    doc = q.QTextDocument()
+    doc.setHtml(text)
+    return doc.toPlainText()
 
 
 def texts(dialog):

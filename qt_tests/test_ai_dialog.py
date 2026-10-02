@@ -527,6 +527,21 @@ def test_attachment_only_input_enables_generate_and_can_be_removed(
     assert not dlg.generate_btn.isEnabled()
 
 
+def test_an_attachment_name_paints_quotes_and_ampersands_as_text(monkeypatch):
+    _, q = harness.bootstrap()
+    harness.app()
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo"
+                        if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe",
+                        lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = ai_dialog._GenerateDialog()
+    dlg.session.attachments = [("A&B lecture's notes.pdf", {"images": []})]
+    dlg._refresh_attachment_list()
+    shown = [harness.shown(w) for w in dlg.findChildren(q.QLabel)]
+    assert "A&B lecture's notes.pdf" in shown
+
+
 def test_attachment_worker_keeps_qt_on_gui_thread_and_cancel_discards_result(
         monkeypatch, tmp_path):
     _, q = harness.bootstrap()
