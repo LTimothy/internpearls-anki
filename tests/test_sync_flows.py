@@ -7677,7 +7677,7 @@ def test_deck_summary_counts_a_waiting_changed_row_and_names_it(anki, tmp_path):
 
     texts = _all_text(_snapshot_update_confirmation(anki))
 
-    assert "1 kept (1 changing, 1 of them waiting at Later) · 0 new" in texts
+    assert "1 kept (1 changing, 1 waiting at Later) · 0 new" in texts
 
 
 def test_deck_summary_counts_exclude_a_standing_keep(anki, tmp_path):

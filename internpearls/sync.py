@@ -2127,8 +2127,8 @@ def update_decks():
             return ("deck", _text(short), "couldn't preview · still imports")
         changing = len(pc[3]) - suppressed_changed.get(d["name"], 0)
         held_back = waiting_changed.get(d["name"], 0)
-        of_them = f", {held_back} of them waiting at Later" if held_back else ""
-        kept = f"{pc[0]} kept" + (f" ({changing} changing{of_them})" if changing else "")
+        waits = f", {held_back} waiting at Later" if held_back else ""
+        kept = f"{pc[0]} kept" + (f" ({changing} changing{waits})" if changing else "")
         new_count = sum(1 for _rid, _fields, g in pc[2]
                         if g not in counted_out or g in waiting)
         new_waiting = sum(1 for _rid, _fields, g in pc[2] if g in waiting)
