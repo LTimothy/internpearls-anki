@@ -334,6 +334,38 @@ def detect_backends(cfg):
     return {"backends": out, "chosen": chosen}
 
 
+def locate_backends(cfg):
+    """detect_backends' shape from file lookups alone, no process started: a found
+    backend reads "checking" (ok None) until detect_backends has run it. "chosen" is
+    the backend detection would pick if every found one answers."""
+    enabled = cfg.get("ai_backend_enabled") or {}
+    overrides = cfg.get("ai_cli_path") or {}
+    preferred = cfg.get("ai_backend", "")
+    out, chosen = {}, None
+    for kind in BACKENDS:
+        if not enabled.get(kind, True):
+            out[kind] = {"path": None, "ok": False, "detail": "disabled", "enabled": False}
+            continue
+        override = overrides.get(kind, "") if isinstance(overrides, dict) else ""
+        path = find_cli(kind, override)
+        out[kind] = ({"path": path, "ok": None, "detail": "checking", "enabled": True}
+                     if path else
+                     {"path": None, "ok": False, "detail": "not found", "enabled": True})
+        if path and (chosen is None or preferred == kind):
+            chosen = kind
+    return {"backends": out, "chosen": chosen}
+
+
+def warm_help(res):
+    """Read each found backend's --help now, so the main thread's later
+    supports_flag calls are answered from the cache rather than a subprocess."""
+    for kind, info in res["backends"].items():
+        if info.get("path"):
+            _help_text(info["path"], None)
+            if kind == "codex":
+                _help_text(info["path"], "exec")
+
+
 def resolve_claude_effort(effort):
     """Falls back to claude's own default_effort when `effort` isn't one of its
     recognized effort_levels: a hand-edited config typo (or empty string, "no

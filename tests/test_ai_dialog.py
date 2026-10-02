@@ -9,13 +9,21 @@ from internpearls.platform import NativePlatform, use_platform, wait_for_mock_wo
 from aqt.qt import QFileDialog
 
 
+def _settled(dlg):
+    """`dlg` once its off-thread backend detection has been delivered."""
+    work = getattr(dlg, "_detect_work", None)
+    if work is not None:
+        wait_for_mock_work(work)
+    return dlg
+
+
 def _ready_dialog(monkeypatch):
     monkeypatch.setattr(
         ai_cli, "find_cli",
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    return ai_dialog._GenerateDialog()
+    return _settled(ai_dialog._GenerateDialog())
 
 
 def _finish_attachment_worker(dlg):

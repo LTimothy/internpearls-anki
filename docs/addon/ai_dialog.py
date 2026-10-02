@@ -26,7 +26,8 @@ from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
 
 from . import ai_cli, ai_logic, collection
 from .ai_setup import (LABEL_W, _open_url, _safe_settle, _settle_min_size,
-                       _wrapped_hint, run_connection_test_async)
+                       _wrapped_hint, run_connection_test_async,
+                       start_backend_detection)
 from .config import (AI_LAST_RUN_LOG, APP_NAME, TARGET_FIELDS, _cfg,
                      load_ai_usage, save_ai_usage, load_deck_skill,
                      save_deck_skill, load_user_skill, save_user_skill)
@@ -560,7 +561,8 @@ def _card_body_fields(card):
 
 # The chips the input page's own rows can wear, measured as one column so all
 # four rows start their text at the same x (see widgets.chip_column_width).
-_INPUT_CHIPS = ("ready", "notsetup", "auto", "thorough", "quick", "deck", "skills")
+_INPUT_CHIPS = ("ready", "notsetup", "checking", "auto", "thorough", "quick", "deck",
+                "skills")
 
 # The chips the progress row can wear, its own set (see chip_column_width): a
 # stage word, never one of the input page's or a card row's own vocabulary.
@@ -612,7 +614,7 @@ _MODE_LABELS = {"thorough": "Thorough: ", "quick": "Quick draft: "}
 _TRAILING_TIMING_RE = re.compile(r"\s*\([^()]*\)\s*$")
 
 
-def _depth_clause(backend, mode):
+def _depth_clause(backend, mode, path=None):
     """What a given backend actually does at a given depth, in the Cards and
     depth row's own voice: lower-cased, with the mode label and any trailing
     parenthetical timing (e.g. "(up to 15 turns, 1 to 3 min)") stripped, since
@@ -630,7 +632,7 @@ def _depth_clause(backend, mode):
     """
     if not backend:
         return "verifies claims online where the backend allows" if mode == "thorough" else ""
-    text = ai_cli.BACKENDS[backend]["modes"][mode]
+    text = ai_cli.backend_wording(backend, path)["modes"][mode]
     label = _MODE_LABELS[mode]
     if text.startswith(label):
         text = text[len(label):]
@@ -819,6 +821,7 @@ class _GenerateDialog(QDialog):
         # window, ai_setup.py). Guards against a second click starting a
         # concurrent test that races the first to write the same status label.
         self._testing_kinds = set()
+        self._detecting = False
         cfg = _cfg()
         s.deck_name = cfg["export_deck"] + "::" + ai_logic.GENERATED_DECK_LEAF
 
@@ -958,11 +961,34 @@ class _GenerateDialog(QDialog):
         return page
 
     def _detect(self, cfg):
+        """Show what a file lookup finds at once, then the probe results when they
+        arrive off the main thread. Generate waits for them."""
+        self._detect_gen = getattr(self, "_detect_gen", 0) + 1
+        gen = self._detect_gen
+        res = ai_cli.locate_backends(cfg)
+        self._detecting = any(info["ok"] is None for info in res["backends"].values())
+        self._apply_detection(res)
+        if self._detecting:
+            self._detect_work = start_backend_detection(
+                self, cfg, lambda done: self._guard(self._detected, gen, done))
+
+    def _detected(self, gen, res):
+        if gen != self._detect_gen:
+            return
+        self._detecting = False
+        self._apply_detection(res)
+
+    def _probed_path(self):
+        """The backend's path once detection has run it, else None, so nothing on
+        the main thread starts it to read its flags."""
+        return None if self._detecting else self.session.cli_path
+
+    def _apply_detection(self, res):
         s = self.session
-        res = ai_cli.detect_backends(cfg)
         s.backend = res["chosen"]
         s.cli_path = res["backends"][s.backend]["path"] if s.backend else None
         self.setup_status.setText(
+            "Checking which assistants answer." if self._detecting else
             f"Ready: {ai_cli.BACKENDS[s.backend]['label']} detected." if s.backend
             else "No enabled assistant detected yet. Configure one, then come back.")
         self.stack.setCurrentWidget(self.input_page if s.backend else self.setup_page)
@@ -1375,7 +1401,8 @@ class _GenerateDialog(QDialog):
             else:
                 why = "Quick because the source is short"
         if why:
-            clause = _depth_clause(self.session.backend, mode)
+            clause = _depth_clause(self.session.backend, mode,
+                                   self._probed_path())
             said += f" {why}: {clause}." if clause else f" {why}."
         self.depth_row.set_chip(mode)
         self.depth_row.set_detail(said)
@@ -1441,7 +1468,7 @@ class _GenerateDialog(QDialog):
         has_material = bool(self.source_box.toPlainText().strip()
                             or self.session.attachments)
         self.generate_btn.setEnabled(
-            has_material and bool(self.session.backend)
+            has_material and bool(self.session.backend) and not self._detecting
             and not self._attachment_in_progress())
 
     def _refresh_attachment_list(self):
@@ -1584,18 +1611,21 @@ class _GenerateDialog(QDialog):
             return
         meta = ai_cli.BACKENDS[s.backend]
         cfg = _cfg()
+        probed = self._probed_path()
         summary = ai_cli.model_effort_line(
             s.backend, cfg["ai_model"][s.backend], cfg["ai_effort"][s.backend],
-            path=s.cli_path)
-        self.backend_row.set_chip("ready")
+            path=probed)
+        self.backend_row.set_chip("checking" if self._detecting else "ready")
         self.backend_row.set_primary(
             f"<b>Backend:</b> {html.escape(meta['label'])}, "
             f"{_muted(summary)}")
-        self.backend_row.set_detail(f"{meta['safety']}.")
-        self.backend_test_btn.setVisible(True)
-        self.backend_test_status.setText("Not tested yet")
-        self.thorough_hint.setText(meta["modes"]["thorough"])
-        self.quick_hint.setText(meta["modes"]["quick"])
+        wording = ai_cli.backend_wording(s.backend, probed)
+        self.backend_row.set_detail(
+            "Checking that it answers." if self._detecting else f"{wording['safety']}.")
+        self.backend_test_btn.setVisible(not self._detecting)
+        self.backend_test_status.setText("" if self._detecting else "Not tested yet")
+        self.thorough_hint.setText(wording["modes"]["thorough"])
+        self.quick_hint.setText(wording["modes"]["quick"])
         reg = load_ai_usage()
         self.usage_row.setText(ai_logic.usage_line(
             reg, s.backend, now=platform().wall_now().timestamp(),
