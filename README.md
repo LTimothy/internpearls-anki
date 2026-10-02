@@ -117,7 +117,7 @@ They are not equally sandboxed, and AI Backends says so. All three read attached
 
 - **Backend**: the preferred assistant, model and effort, or NOT SET UP.
 - **Cards and depth**: AUTO, THOROUGH or QUICK. By default the assistant decides the count, one card per point the source teaches, up to 40, and depth is Thorough for 1,500+ characters or any attachment, Quick otherwise. Advanced pins an exact count or a depth for that run only.
-- **Deck**: the destination and the note types in play (Basic and Cloze; Image ID isn't offered, since a generated card can't fill an image-only field). Changed under Advanced.
+- **Deck**: the destination and the note types in play (Basic and Cloze; Image ID isn't offered, since a generated card can't fill an image-only field). Basic and Cloze are recognized by their shape, so a profile in another language uses its own stock types and their field names. Changed under Advanced.
 - **Skills**: what is sent every run (the bundled authoring skill, a consented deck skill, your own rules), with View and Add/Edit my rules links.
 
 **Modes.** Thorough (about 1 to 3 minutes) drafts and then self-reviews; Quick (about 15 seconds to a minute) is one drafting pass that may search only for images. What that means for web access differs by backend, and the Cards and depth row states it for yours:

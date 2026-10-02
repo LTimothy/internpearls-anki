@@ -133,6 +133,27 @@ def test_input_page_disables_a_note_type_missing_from_the_collection(anki, monke
     assert note_types == ["Study Deck - Basic"]
 
 
+def test_input_page_offers_basic_and_cloze_under_translated_names(anki, monkeypatch):
+    """A German profile's stock types are "Einfach" and "Lückentext": the same
+    shape as Basic and Cloze, so they are offered, not shown as missing."""
+    from mock_anki import make_model
+    einfach = make_model(name="Einfach", fields=["Vorderseite", "Rückseite"],
+                         qfmt="{{Vorderseite}}", afmt="{{FrontSide}}<hr>{{Rückseite}}")
+    lueckentext = make_model(name="Lückentext", fields=["Text", "Rückseite Extra"],
+                             qfmt="{{cloze:Text}}",
+                             afmt="{{cloze:Text}}<br>{{Rückseite Extra}}")
+    lueckentext["type"] = 1
+    anki.col.models._models.extend([einfach, lueckentext])
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    dlg = _settled(ai_dialog._GenerateDialog())
+    for name in ("Basic", "Cloze"):
+        assert dlg.type_boxes[name].isEnabled() and dlg.type_boxes[name].isChecked()
+        assert dlg.type_boxes[name]._label == name
+
+
 def test_input_page_shown_when_backend_found(anki, monkeypatch):
     monkeypatch.setattr(
         ai_cli, "find_cli",
