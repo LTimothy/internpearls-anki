@@ -13,6 +13,8 @@ import os
 import re
 import tempfile
 import uuid
+import zipfile
+import zlib
 
 from aqt import gui_hooks, mw
 from aqt.utils import getFile, getSaveFile
@@ -1465,6 +1467,10 @@ def import_deck():
     try:
         try:
             copy_apkg_checked(src, checked)
+        except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError):
+            _warn("This file isn't an Anki deck package (.apkg), so nothing was "
+                  "imported.")
+            return
         except Exception as e:
             _warn(f"Import failed: {e}")
             return

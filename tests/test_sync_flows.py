@@ -8472,6 +8472,9 @@ def test_import_deck_hands_anki_a_checked_copy_and_removes_it(anki, tmp_path):
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
 
 
+_NOT_A_PACKAGE = "This file isn't an Anki deck package (.apkg), so nothing was imported."
+
+
 def test_import_deck_refuses_a_member_larger_than_it_declares(anki, tmp_path):
     """Anki's importer reads a member's stream and ignores its declared size, so a file
     declaring 1,000 bytes could unpack to anything."""
@@ -8491,7 +8494,7 @@ def test_import_deck_refuses_a_member_larger_than_it_declares(anki, tmp_path):
 
     collection.import_deck()
 
-    assert anki.gui.warnings and anki.gui.warnings[0].startswith("Import failed")
+    assert anki.gui.warnings == [_NOT_A_PACKAGE]   # a damaged zip reads the same
     assert not anki.col.imports
 
 
@@ -8514,9 +8517,41 @@ def test_import_deck_refuses_a_bad_file_before_taking_a_backup(anki, tmp_path):
 
     collection.import_deck()
 
-    assert anki.gui.warnings and anki.gui.warnings[0].startswith("Import failed")
+    assert anki.gui.warnings == [_NOT_A_PACKAGE]
     after = set(os.listdir(folder)) if os.path.isdir(folder) else set()
     assert after == before
+
+
+def test_import_deck_says_plainly_that_a_file_is_not_an_apkg(anki, tmp_path):
+    from internpearls import collection
+    src = tmp_path / "notes.apkg"
+    src.write_bytes(os.urandom(4096))
+    folder = collection._deck_backup_folder()
+    before = set(os.listdir(folder)) if os.path.isdir(folder) else set()
+    anki.gui.file_picks.append(str(src))
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert anki.gui.warnings == [_NOT_A_PACKAGE]
+    assert not anki.col.imports
+    after = set(os.listdir(folder)) if os.path.isdir(folder) else set()
+    assert after == before
+
+
+def test_import_deck_says_the_same_for_a_truncated_package(anki, tmp_path):
+    from internpearls import collection
+    src = str(tmp_path / "half.apkg")
+    make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
+    data = open(src, "rb").read()
+    open(src, "wb").write(data[:len(data) // 2])
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert anki.gui.warnings == [_NOT_A_PACKAGE]
+    assert not anki.col.imports
 
 
 def test_import_deck_reoffers_restored_decks_even_when_the_baseline_reset_fails(
