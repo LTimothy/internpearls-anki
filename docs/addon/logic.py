@@ -1627,7 +1627,9 @@ def find_duplicate_groups(existing_notes, canonical_deck_names):
     return out
 
 
-_TAG_RE = re.compile(r"<[^>]+>")
+# A real tag, comment or declaration: "<" then a name, "/", "!" or "?". A "<" followed by
+# anything else ("MAP <65", "1 < 2") is a literal and survives.
+_TAG_RE = re.compile(r"<!--.*?-->|</?[A-Za-z][^>]*>|<[!?][^>]*>", re.S)
 _IMG_SRC_RE = re.compile(r"""<img[^>]*\bsrc\s*=\s*["']([^"']+)["']""", re.I)
 
 
