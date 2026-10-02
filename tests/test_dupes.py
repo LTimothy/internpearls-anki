@@ -1,8 +1,8 @@
 import random
 import time
 
-from internpearls.dupes import (build_index, find_candidates, normalise, pair_key,
-                                tokenize)
+from internpearls.dupes import (CONTRAST_FACTOR, build_index, contrast_label,
+                                contrast_marks, find_candidates, normalise, pair_key, tokenize)
 
 
 def test_normalise_strips_html_entities_and_sound():
@@ -258,8 +258,12 @@ def test_differing_class_or_number_token_is_not_an_exact_duplicate():
          "\u03b22 agonist lowers the MAC of volatile agents"),
         ("Type I hypersensitivity is mediated by IgE antibodies",
          "Type II hypersensitivity is mediated by IgE antibodies"),
-        ("Phase 1 block shows fade on train of four",
-         "Phase 2 block shows fade on train of four"),
+        ("\u03bc-opioid receptors mediate analgesia and respiratory depression",
+         "\u03ba-opioid receptors mediate analgesia and respiratory depression"),
+        ("mu opioid receptors mediate analgesia and respiratory depression",
+         "kappa opioid receptors mediate analgesia and respiratory depression"),
+        ("\u00b5 opioid receptors mediate analgesia and respiratory depression",
+         "\u03ba opioid receptors mediate analgesia and respiratory depression"),
     ]
     for a, b in pairs:
         identical = _score(a, a)
@@ -297,9 +301,88 @@ def test_a_number_missing_from_one_side_is_not_a_contrast():
     assert _score(a, c, threshold=0.3) > 0.5
 
 
+def test_short_greek_names_survive_tokenizing():
+    assert tokenize(normalise("\u03bc-opioid agonist")) == ["mu", "opioid", "agonist"]
+    assert tokenize(normalise("\u00b5g per kg")) == ["mu", "per"]
+    assert tokenize(normalise("nu xi pi receptors")) == ["nu", "xi", "pi", "receptors"]
+
+
+def test_a_differing_bare_number_is_not_a_contrast():
+    a = "Ketamine onset after intravenous dosing is about 30 s with a short duration"
+    b = "Ketamine onset after intravenous dosing is about 60 s with a short duration"
+    assert contrast_label(a, b) == ""
+    assert _score(a, b) > 0.7
+    # a differing dose still scores as an ordinary pair, found at Normal sensitivity
+    dose = _score("Ketamine dose 2 mg per kg", "Ketamine dose 5 mg per kg",
+                  threshold=0.5, min_shared=2)
+    assert dose is not None and dose > 0.5
+
+
+def test_intravenous_is_not_a_roman_class():
+    a = "Ketamine IV bolus produces dissociation within one minute"
+    b = "Ketamine IM bolus produces dissociation within one minute"
+    assert contrast_label(a, b) == ""
+    assert _score(a, b) > 0.7
+    assert contrast_marks(["iv", "ii", "t3"], "")[0] == frozenset({"ii", "t3"})
+
+
+_LONG_T3 = ("T3 raises basal metabolic rate and heart rate through nuclear receptor "
+            "transcription in most tissues including cardiac muscle liver kidney and "
+            "skeletal muscle during prolonged fasting states")
+_LONG_T4 = _LONG_T3.replace("T3", "T4")
+
+
+def test_contrast_factor_sits_below_the_normal_threshold():
+    assert CONTRAST_FACTOR < 0.5
+
+
+def test_contrasting_pairs_appear_only_at_loose_sensitivity():
+    levels = {"strict": (0.6, 2), "normal": (0.5, 2), "loose": (0.4, 0)}
+    for a, b in ((_LONG_T3, _LONG_T4),
+                 ("Succinylcholine is contraindicated in hyperkalemia with burns "
+                  "after major trauma today including crush injuries and denervation "
+                  "syndromes with prolonged immobilization",
+                  "Succinylcholine is not contraindicated in hyperkalemia with burns "
+                  "after major trauma today including crush injuries and denervation "
+                  "syndromes with prolonged immobilization")):
+        raw = _score(a, a, threshold=0.0)
+        assert raw > 0.99
+        found = {name: _score(a, b, threshold=t, min_shared=m)
+                 for name, (t, m) in levels.items()}
+        assert found["strict"] is None, (a, found)
+        assert found["normal"] is None, (a, found)
+        assert found["loose"] is not None and found["loose"] < 0.5, (a, found)
+    # the same pair without a contrast is found at every level
+    for name, (t, m) in levels.items():
+        assert _score(_LONG_T3, _LONG_T3 + " today", threshold=t, min_shared=m)
+
+
+def test_contrast_label_names_what_differs():
+    assert contrast_label(_LONG_T3, _LONG_T4) == "Differs: T3 vs T4"
+    assert contrast_label("Type I error", "Type II error") == "Differs: I vs II"
+    assert contrast_label("alpha-2 agonist", "beta-2 agonist") == "Differs: alpha vs beta"
+    assert contrast_label("Drug is contraindicated here",
+                          "Drug is not contraindicated here") == "Differs: not"
+    assert contrast_label("Drug is contraindicated here",
+                          "Drug isn't contraindicated here") == "Differs: not"
+    assert contrast_label("Never give it", "Give it") == "Differs: never"
+    assert contrast_label("T3 is not active", "T4 is active").count("; ") == 1
+    assert contrast_label("T3 raises rate", "T3 raises rate") == ""
+    assert contrast_label("T3 raises rate", "raises rate") == ""
+
+
+def test_cjk_with_latin_and_digits_keeps_the_latin_tokens():
+    toks = tokenize(normalise("\u5168\u8eab\u9ebb\u9189 propofol 2 mg \u5265\u8131x5"))
+    assert "propofol" in toks
+    assert "2" in toks
+    assert "x5" in toks
+    assert "\u5168\u8eab" in toks
+    assert tokenize(normalise("\u9ebb\u9189propofol")) == ["\u9ebb\u9189", "propofol"]
+
+
 def test_contrast_pairs_do_not_flood_a_strict_scan():
-    left = [(1, "T3 raises the basal metabolic rate", "Ours", "Basic")]
-    right = [(i + 2, f"T{i % 5 + 4} raises the basal metabolic rate", "Theirs", "Basic")
+    left = [(1, _LONG_T3, "Ours", "Basic")]
+    right = [(i + 2, _LONG_T3.replace("T3", f"T{i % 5 + 4}"), "Theirs", "Basic")
              for i in range(5)]
-    found = find_candidates(left, right, threshold=0.6, top=3, min_shared=2)
-    assert all(r[2][0] != 2 for r in found)
+    assert find_candidates(left, right, threshold=0.6, top=3, min_shared=2) == []
+    assert find_candidates(left, right, threshold=0.5, top=3, min_shared=2) == []
