@@ -359,7 +359,7 @@ def test_contrasting_pairs_appear_only_at_loose_sensitivity():
 
 def test_contrast_label_names_what_differs():
     assert contrast_label(_LONG_T3, _LONG_T4) == "Differs: T3 vs T4"
-    assert contrast_label("Type I error", "Type II error") == "Differs: I vs II"
+    assert contrast_label("Type I error", "Type II error") == "Differs: type I vs type II"
     assert contrast_label("alpha-2 agonist", "beta-2 agonist") == "Differs: alpha vs beta"
     assert contrast_label("Drug is contraindicated here",
                           "Drug is not contraindicated here") == "Differs: not"
@@ -386,3 +386,40 @@ def test_contrast_pairs_do_not_flood_a_strict_scan():
              for i in range(5)]
     assert find_candidates(left, right, threshold=0.6, top=3, min_shared=2) == []
     assert find_candidates(left, right, threshold=0.5, top=3, min_shared=2) == []
+
+
+def test_a_number_after_a_classifier_word_is_a_class():
+    pairs = [
+        ("Type 1 diabetes results from autoimmune destruction of pancreatic beta cells",
+         "Type 2 diabetes results from autoimmune destruction of pancreatic beta cells",
+         "Differs: type 1 vs type 2"),
+        ("Type IV renal tubular acidosis causes hyperkalemia with low aldosterone",
+         "Type II renal tubular acidosis causes hyperkalemia with low aldosterone",
+         "Differs: type IV vs type II"),
+        ("Factor VIII deficiency prolongs the aPTT in patients with bleeding history",
+         "Factor IX deficiency prolongs the aPTT in patients with bleeding history",
+         "Differs: factor VIII vs factor IX"),
+        ("Phase 2 block shows fade on train of four stimulation at the adductor",
+         "Phase 3 block shows fade on train of four stimulation at the adductor",
+         "Differs: phase 2 vs phase 3"),
+        ("ST elevation in lead II suggests an inferior wall infarct on the tracing",
+         "ST elevation in lead III suggests an inferior wall infarct on the tracing",
+         "Differs: lead II vs lead III"),
+        ("Cranial nerve VII supplies the muscles of facial expression and taste",
+         "Cranial nerve IX supplies the muscles of facial expression and taste",
+         "Differs: nerve VII vs nerve IX"),
+    ]
+    for a, b, label in pairs:
+        assert contrast_label(a, b) == label, (a, contrast_label(a, b))
+        score = _score(a, b)
+        assert score is None or score < 0.5, (a, score)
+        assert _score(a, a) > 0.99
+
+
+def test_classifier_contrast_needs_the_classifier_word():
+    assert contrast_label("Type 2 block", "type 2 block") == ""
+    assert contrast_label("Type 1 and type 2 block", "Type 1 block") == ""
+    assert contrast_label("Onset 30 s after 2 mg", "Onset 60 s after 5 mg") == ""
+    assert contrast_label("Ketamine IV bolus works fast", "Ketamine IM bolus works fast") == ""
+    assert contrast_label("Give 4 mg IV now", "Give 8 mg IV now") == ""
+    assert contrast_marks([], "type iv reaction")[0] == frozenset({"type iv"})

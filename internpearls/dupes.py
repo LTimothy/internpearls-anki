@@ -37,6 +37,18 @@ _ROMAN = frozenset({"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"}
 # it is usually intravenous, so IV against IM must not read as a class contrast.
 _ROMAN_CLASS = _ROMAN - {"iv"}
 _CLASS_CODE_RE = re.compile(r"[a-z]{1,3}\d+")
+# A number or roman numeral (IV included) right after one of these words names a class
+# ("type 2", "factor viii", "lead ii"); anywhere else a bare number is not one.
+_CLASSIFIERS = {
+    "type": "type", "types": "type", "class": "class", "classes": "class",
+    "grade": "grade", "grades": "grade", "stage": "stage", "stages": "stage",
+    "phase": "phase", "phases": "phase", "factor": "factor", "factors": "factor",
+    "group": "group", "groups": "group", "generation": "generation",
+    "generations": "generation", "degree": "degree", "degrees": "degree",
+    "nerve": "nerve", "cn": "cn", "lead": "lead", "leads": "lead",
+}
+_CLASS_PHRASE_RE = re.compile(
+    r"\b(%s)[\s-]+(\d+[a-z]?|[ivx]{1,4})\b" % "|".join(_CLASSIFIERS))
 
 _GREEK = {
     "\u03b1": "alpha", "\u03b2": "beta", "\u03b3": "gamma", "\u03b4": "delta",
@@ -104,8 +116,11 @@ def contrast_marks(tokens, text):
     the class-like tokens (Greek letters, roman numerals other than IV, and a letter
     code with a number such as T3, S2, D1; a bare number is not one), and the word that
     negates something, or "" when nothing is negated."""
-    ids = frozenset(t for t in tokens if t in _ROMAN_CLASS or t in _GREEK_NAMES
-                    or _CLASS_CODE_RE.fullmatch(t))
+    ids = frozenset(
+        [t for t in tokens if t in _ROMAN_CLASS or t in _GREEK_NAMES
+         or _CLASS_CODE_RE.fullmatch(t)]
+        + [f"{_CLASSIFIERS[m.group(1)]} {m.group(2)}"
+           for m in _CLASS_PHRASE_RE.finditer(text)])
     found = _NEGATION_RE.search(text)
     word = found.group() if found else ""
     negation = word if word in _NEGATION_WORDS or not word else "not"
@@ -125,7 +140,18 @@ def contrasts(a, b):
 
 
 def _shown(token):
+    if " " in token:
+        word, value = token.split(" ")
+        return f"{word} {value.upper()}"
     return token if token in _GREEK_NAMES else token.upper()
+
+
+def _side(own, other):
+    """The tokens only `own` has, as a label shows them: a bare "ii" is left out when
+    "type ii" already says it."""
+    only = own - other
+    named = {t.split(" ")[1] for t in only if " " in t}
+    return " ".join(_shown(t) for t in sorted(only) if " " in t or t not in named)
 
 
 def contrast_label(text_a, text_b):
@@ -138,8 +164,7 @@ def contrast_label(text_a, text_b):
     if bool(a[1]) != bool(b[1]):
         parts.append(a[1] or b[1])
     if _class_conflict(a, b):
-        parts.append(" ".join(_shown(t) for t in sorted(a[0] - b[0])) + " vs "
-                     + " ".join(_shown(t) for t in sorted(b[0] - a[0])))
+        parts.append(f"{_side(a[0], b[0])} vs {_side(b[0], a[0])}")
     return f"Differs: {'; '.join(parts)}" if parts else ""
 
 
