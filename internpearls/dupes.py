@@ -25,7 +25,71 @@ _CLOZE_RE = re.compile(r"\{\{c\d+::(.*?)(?:::.*?)?\}\}", re.S)
 _SOUND_RE = re.compile(r"\[sound:[^\]]*\]", re.I)
 _IMAGE_REF_RE = re.compile(r"\[image:[^\]]*\]", re.I)
 _TAG_RE = re.compile(r"<[^>]+>")
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_TOKEN_RE = re.compile(r"[^\W_]+")
+_CJK_RE = re.compile("[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]+")
+_NEGATION_WORDS = frozenset({"not", "no", "never", "without", "cannot"})
+_NEGATION_RE = re.compile(r"\b(?:%s)\b|n['\u2019]t\b" % "|".join(_NEGATION_WORDS))
+
+# Short tokens that still say which fact a card is about: roman numerals (a type or a
+# factor number) and anything with a digit in it (T3, D1, S2, 5).
+_ROMAN_VALUES = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7,
+                 "viii": 8, "ix": 9, "x": 10}
+_ROMAN = frozenset(_ROMAN_VALUES)
+# Roman numerals that can name a class when two cards differ on them. "iv" is left out:
+# it is usually intravenous, so IV against IM must not read as a class contrast.
+_ROMAN_CLASS = _ROMAN - {"iv"}
+_CLASS_CODE_RE = re.compile(r"[a-z]{1,3}\d+")
+# A number or roman numeral (IV included) right after one of these words names a class
+# ("type 2", "factor viii", "lead ii"); anywhere else a bare number is not one.
+_CLASSIFIERS = {
+    "type": "type", "types": "type", "class": "class", "classes": "class",
+    "grade": "grade", "grades": "grade", "stage": "stage", "stages": "stage",
+    "phase": "phase", "phases": "phase", "factor": "factor", "factors": "factor",
+    "group": "group", "groups": "group", "generation": "generation",
+    "generations": "generation", "degree": "degree", "degrees": "degree",
+    "nerve": "nerve", "cn": "nerve", "lead": "lead", "leads": "lead",
+}
+# A well-formed roman numeral from i to xxxix: iiii, ic and vv are not numerals.
+_ROMAN_PATTERN = r"x{0,3}(?:ix|iv|v?i{0,3})(?<=[ivx])"
+_CLASS_PHRASE_RE = re.compile(
+    r"\b(%s)[\s-]+(\d+[a-z]?|%s)\b" % ("|".join(_CLASSIFIERS), _ROMAN_PATTERN))
+_ROMAN_DIGITS = {"i": 1, "v": 5, "x": 10}
+
+
+def _roman_value(text):
+    """The number a well-formed roman numeral up to xxxix stands for, else None."""
+    if not re.fullmatch(_ROMAN_PATTERN, text):
+        return None
+    total = 0
+    for ch, nxt in zip(text, text[1:] + " "):
+        value = _ROMAN_DIGITS[ch]
+        total += -value if _ROMAN_DIGITS.get(nxt, 0) > value else value
+    return total
+
+
+def _class_phrases(text):
+    """`{id: as written}` for each "<classifier> <value>" in `text`. The id counts a
+    roman value as its number, so "type II" and "type 2" are one class."""
+    out = {}
+    for m in _CLASS_PHRASE_RE.finditer(text):
+        value = m.group(2)
+        number = _roman_value(value)
+        canon = str(number) if number else value.lstrip("0") or "0"
+        out.setdefault(f"{_CLASSIFIERS[m.group(1)]} {canon}",
+                       f"{_CLASSIFIERS[m.group(1)]} {value.upper()}")
+    return out
+
+_GREEK = {
+    "\u03b1": "alpha", "\u03b2": "beta", "\u03b3": "gamma", "\u03b4": "delta",
+    "\u03b5": "epsilon", "\u03b6": "zeta", "\u03b7": "eta", "\u03b8": "theta",
+    "\u03b9": "iota", "\u03ba": "kappa", "\u03bb": "lambda", "\u03bc": "mu",
+    "\u03bd": "nu", "\u03be": "xi", "\u03bf": "omicron", "\u03c0": "pi",
+    "\u03c1": "rho", "\u03c3": "sigma", "\u03c2": "sigma", "\u03c4": "tau",
+    "\u03c5": "upsilon", "\u03c6": "phi", "\u03c7": "chi", "\u03c8": "psi",
+    "\u03c9": "omega", "\u00b5": "mu",   # U+00B5 is the micro sign
+}
+_GREEK_NAMES = frozenset(_GREEK.values())
+_GREEK_TABLE = {ord(ch): f" {name} " for ch, name in _GREEK.items()}
 
 
 def normalise(text):
@@ -48,29 +112,110 @@ def normalise(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _keep(tok):
+    if tok in STOP_WORDS:
+        return False
+    return (len(tok) >= 3 or tok in _ROMAN or tok in _GREEK_NAMES or tok.isdigit()
+            or any(ch.isdigit() for ch in tok))
+
+
 def tokenize(text):
     """Word/number tokens from already-normalised text, dropping function words and
-    anything under three characters unless it's all digits (a dose or a percentage is
-    exactly the kind of short token worth keeping)."""
+    anything under three characters unless it carries meaning: an all-digit or
+    digit-bearing token (a dose, a percentage, T3), a roman numeral, or a Greek letter,
+    which is spelled out so an alpha and a beta never collapse into the same token.
+    Words are Unicode, so accented and non-Latin text tokenises; a run of CJK
+    characters, which has no spaces to split on, becomes overlapping pairs, and any
+    Latin text or digits beside it tokenise as usual."""
     out = []
-    for tok in _TOKEN_RE.findall(text):
-        if tok in STOP_WORDS:
-            continue
-        if len(tok) < 3 and not tok.isdigit():
-            continue
-        out.append(tok)
+    for tok in _TOKEN_RE.findall(text.translate(_GREEK_TABLE)):
+        if _CJK_RE.search(tok):
+            for run in _CJK_RE.findall(tok):
+                out.extend([run] if len(run) < 2 else
+                           [run[i:i + 2] for i in range(len(run) - 1)])
+            out.extend(t for t in _TOKEN_RE.findall(_CJK_RE.sub(" ", tok))
+                       if _keep(t))
+        elif _keep(tok):
+            out.append(tok)
     return out
+
+
+def contrast_marks(tokens, text):
+    """What two otherwise similar cards can differ on while meaning different things:
+    the class-like tokens (Greek letters, roman numerals other than IV, and a letter
+    code with a number such as T3, S2, D1; a bare number is not one), and the word that
+    negates something, or "" when nothing is negated."""
+    ids = frozenset(
+        [t for t in tokens if t in _ROMAN_CLASS or t in _GREEK_NAMES
+         or _CLASS_CODE_RE.fullmatch(t)]
+        + list(_class_phrases(text)))
+    found = _NEGATION_RE.search(text)
+    word = found.group() if found else ""
+    negation = word if word in _NEGATION_WORDS or not word else "not"
+    return ids, negation
+
+
+def _class_conflict(a, b):
+    ids_a, ids_b = a[0], b[0]
+    return bool(ids_a and ids_b) and not (ids_a <= ids_b or ids_b <= ids_a)
+
+
+def contrasts(a, b):
+    """True when two `contrast_marks` disagree: one side negates and the other does not,
+    or both name classes and neither's set contains the other's. A class named on one
+    side only is a paraphrase, not a contrast."""
+    return bool(a[1]) != bool(b[1]) or _class_conflict(a, b)
+
+
+def _side(own, other, written):
+    """The tokens only `own` has, as its label shows them: a class phrase as written
+    ("type II"), and no bare numeral that a phrase already says."""
+    only = own - other
+    named = {t.split(" ")[1] for t in only if " " in t}
+    shown = []
+    for t in sorted(only):
+        if " " in t:
+            shown.append(written.get(t, t))
+        elif str(_ROMAN_VALUES.get(t)) in named:
+            continue
+        else:
+            shown.append(t if t in _GREEK_NAMES else t.upper())
+    return " ".join(shown)
+
+
+def contrast_label(text_a, text_b):
+    """The reason two texts contrast, for a row to show ("Differs: T3 vs T4",
+    "Differs: not"), or "" when they do not."""
+    norm_a, norm_b = normalise(text_a), normalise(text_b)
+    a = contrast_marks(tokenize(norm_a), norm_a)
+    b = contrast_marks(tokenize(norm_b), norm_b)
+    parts = []
+    if bool(a[1]) != bool(b[1]):
+        parts.append(a[1] or b[1])
+    if _class_conflict(a, b):
+        parts.append(f"{_side(a[0], b[0], _class_phrases(norm_a))} vs "
+                     f"{_side(b[0], a[0], _class_phrases(norm_b))}")
+    return f"Differs: {'; '.join(parts)}" if parts else ""
+
+
+# A contrasting pair keeps only this share of its cosine score. It sits strictly below the
+# lowest threshold that applies the evidence gate (Normal, 0.5), so such a pair can appear
+# only at Loose sensitivity and never reads as an exact duplicate.
+CONTRAST_FACTOR = 0.45
 
 
 class Index:
     """An inverted index over a pool of rows, with IDF weights and per-document
     weight vectors, built once and reused for every query against that pool."""
 
-    __slots__ = ("rows", "doc_tokens", "idf", "postings", "doc_norm", "doc_weight_sum")
+    __slots__ = ("rows", "doc_tokens", "doc_marks", "idf", "postings", "doc_norm",
+                 "doc_weight_sum")
 
-    def __init__(self, rows, doc_tokens, idf, postings, doc_norm, doc_weight_sum):
+    def __init__(self, rows, doc_tokens, idf, postings, doc_norm, doc_weight_sum,
+                 doc_marks):
         self.rows = rows
         self.doc_tokens = doc_tokens
+        self.doc_marks = doc_marks
         self.idf = idf
         self.postings = postings
         self.doc_norm = doc_norm
@@ -118,7 +263,8 @@ def build_index(rows, checkpoint=None):
             postings.setdefault(tok, []).append((i, w))
 
     return Index(rows=rows, doc_tokens=doc_tokens, idf=idf, postings=postings,
-                doc_norm=doc_norm, doc_weight_sum=doc_weight_sum)
+                doc_norm=doc_norm, doc_weight_sum=doc_weight_sum,
+                doc_marks=[None] * n)
 
 
 def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
@@ -138,6 +284,10 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
     40% of the shorter side's own token weight. A pair that fails either check is
     dropped outright, whatever its cosine score says.
 
+    A pair whose texts disagree on a type, class or number token, or on whether
+    anything is negated (see `contrasts`), keeps only `CONTRAST_FACTOR` of its cosine
+    score before the threshold applies, so it never scores as an exact duplicate.
+
     Builds one `Index` over `right_rows` and queries it once per left row, walking
     only the postings lists for tokens the query actually has (an inverted index),
     so the cost tracks how many terms actually overlap rather than the size of the
@@ -151,6 +301,7 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
             checkpoint(f"duplicate-index:left:batch:{li // 25 + 1}")
         _, text, _, _ = left
         tokens = tokenize(normalise(text))
+        marks = None
         tf = {}
         for tok in tokens:
             tf[tok] = tf.get(tok, 0) + 1
@@ -181,6 +332,17 @@ def find_candidates(left_rows, right_rows, threshold=0.5, top=3, min_shared=2,
             cosine = dot / (q_norm * index.doc_norm[ri])
             if cosine < threshold:
                 continue
+            # Marks are read only for pairs that already clear the threshold, which
+            # is a small share of the pairs sharing a token.
+            if marks is None:
+                marks = contrast_marks(tokens, normalise(text))
+            if index.doc_marks[ri] is None:
+                index.doc_marks[ri] = contrast_marks(
+                    index.doc_tokens[ri], normalise(index.rows[ri][1]))
+            if contrasts(marks, index.doc_marks[ri]):
+                cosine *= CONTRAST_FACTOR
+                if cosine < threshold:
+                    continue
             if min_shared:
                 shared = contrib.get(ri, {})
                 required = min_shared

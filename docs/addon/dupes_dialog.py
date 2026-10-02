@@ -10,6 +10,7 @@ the same way: one CLI call on a background thread, a busy line with elapsed time
 than the AI wizard's own activity feed, since reusing that feed's session-driven state
 machine here would be a rewrite of this screen for a single optional button.
 """
+import re
 import shutil
 import threading
 import time
@@ -23,13 +24,14 @@ from . import ai_cli, ai_logic
 from .collection import deck_search, note_rows, suspend_notes, unsuspend_notes
 from .config import (APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks,
                      set_dupes_threshold)
-from .dupes import find_candidates, pair_key
+from .dupes import contrast_label, find_candidates, pair_key
 from .logic import field_preview_text, plain_text
 from .palette import colors
 from .platform import (new_work_request, platform, platform_owner_id,
                        wait_for_mock_work)
-from .ui import _safe, copy_to_clipboard, hint_label, link_button, section_label, title_label
-from .widgets import CARET_GAP, CARET_W
+from .ui import (_ask, _safe, copy_to_clipboard, hint_label, link_button,
+                 section_label, title_label)
+from .widgets import CARET_GAP, CARET_W, StreamingList
 
 # This dialog's own chip vocabulary. Unlike widgets.CHIPS, a candidate's label carries
 # its own band and score ("Similar 0.64"), so it can't be one of a fixed finite set of
@@ -175,6 +177,31 @@ def _esc(text):
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _breakable(text):
+    """`text` with line-break opportunities (zero-width spaces) after each "::" and
+    inside any long unbroken run, so a deck path or a pasted token wraps in a row's
+    label instead of pushing the row's action links off the edge."""
+    text = (text or "").replace("::", "::\u200b")
+    return re.sub(r"\S{24}(?=\S)", lambda m: m.group(0) + "\u200b", text)
+
+
+def _link(label, on_click=None, tooltip_text=None, align_left=False):
+    """`ui.link_button` that Enter never activates, Tab reaches, and that shows a
+    ring while focused and a muted colour while disabled: the plain link's own
+    stylesheet pins one colour, so focus and disabled both looked like rest."""
+    btn = link_button(label, on_click, tooltip_text, align_left)
+    c = colors()
+    align = " text-align: left;" if align_left else ""
+    btn.setStyleSheet(
+        f"QPushButton {{ color: {c['accent']}; font-size: 12px;{align}"
+        " border: 1px solid transparent; border-radius: 3px; }"
+        f"QPushButton:focus {{ border: 1px solid {c['accent']}; }}"
+        f"QPushButton:disabled {{ color: {c['muted']}; }}")
+    btn.setAutoDefault(False)
+    btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    return btn
+
+
 class _DuplicateScanDialog(QDialog):
     def __init__(self, scope_tag):
         super().__init__(mw)
@@ -201,6 +228,11 @@ class _DuplicateScanDialog(QDialog):
         self._min_shared = 2
         self._last_scanned_exclude_text = None
         self._judge_seq = 0
+        self._judge_backend = None
+        self._judge_path = None
+        self._judging = False
+        self._backends_ready = False
+        self._scan_finished = False
         self._judge_worker = None
         self._judge_timer = None
         self._judge_cancel = None
@@ -229,7 +261,7 @@ class _DuplicateScanDialog(QDialog):
         outer.addLayout(scope_row)
 
         links_row = QHBoxLayout()
-        links_row.addWidget(link_button("Rescan", self._rescan_fresh))
+        links_row.addWidget(_link("Rescan", self._rescan_fresh))
         cfg = _cfg()
         links_row.addWidget(QLabel("Sensitivity:"))
         self.sensitivity_combo = QComboBox()
@@ -241,13 +273,9 @@ class _DuplicateScanDialog(QDialog):
         self.sensitivity_combo.setCurrentIndex(idx)
         self.sensitivity_combo.currentIndexChanged.connect(self._sensitivity_changed)
         links_row.addWidget(self.sensitivity_combo)
-        chosen = ai_cli.detect_backends(cfg)["chosen"]
-        self._judge_backend = chosen
-        self.judge_btn = link_button("Judge with AI", self._judge_with_ai)
-        self.judge_btn.setEnabled(bool(chosen))
-        if not chosen:
-            self.judge_btn.setToolTip("Set up an AI backend first (Generate cards (AI)"
-                                      " > Setup).")
+        self.judge_btn = _link("Judge with AI", self._judge_with_ai)
+        self.judge_btn.setEnabled(False)
+        self.judge_btn.setToolTip("Checking for an AI backend...")
         links_row.addWidget(self.judge_btn)
         links_row.addStretch()
         outer.addLayout(links_row)
@@ -262,42 +290,77 @@ class _DuplicateScanDialog(QDialog):
         outer.addWidget(self.summary_label)
         outer.addWidget(hint_label(_SCORE_HINT))
 
-        self._rows_container = QWidget()
-        self._rows_layout = QVBoxLayout(self._rows_container)
-        self._rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._rows_layout.setSpacing(0)
-        # Rows sit in their own container, separate from the stretch below it, the same
-        # split StreamingList uses: rebuilding the list only ever touches the rows
-        # layout, so the stretch never needs to be found and re-added. Without it, a
-        # short list has nothing to consume the scroll area's leftover height, so
-        # QScrollArea's widgetResizable stretches the rows themselves to fill it
-        # instead, one row at a time, wider than their own content.
-        rows_body = QWidget()
-        rows_outer = QVBoxLayout(rows_body)
-        rows_outer.setContentsMargins(0, 0, 0, 0)
-        rows_outer.setSpacing(0)
-        rows_outer.addWidget(self._rows_container)
-        rows_outer.addStretch()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        # Always-on vertical, always-off horizontal: a policy-driven scrollbar that
-        # only appears once content overflows narrows the viewport when it shows up,
-        # which reflows these word-wrapped labels taller, which can push content past
-        # the threshold that made the bar appear in the first place, and so on. A
-        # bar that never appears or disappears has nothing left to oscillate.
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setWidget(rows_body)
-        outer.addWidget(scroll, 1)
+        # Rows stream in batches, like the update screen's list: a scan can offer
+        # hundreds of pairs, and building every row on each Ignore, suspension or
+        # verdict cost seconds. Scroll bar policies are fixed rather than automatic: a
+        # bar that appears only on overflow narrows the viewport, which reflows these
+        # word-wrapped labels taller and can push content past the threshold that made
+        # the bar appear, and so on.
+        self._list = StreamingList(self._item_widget, [])
+        self._list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        outer.addWidget(self._list, 1)
 
-        outer.addWidget(link_button("Copy list", self._copy_list, align_left=True))
+        outer.addWidget(_link("Copy list", self._copy_list, align_left=True))
 
         bb = QDialogButtonBox()
-        bb.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
+        close = bb.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
+        close.setAutoDefault(False)
         bb.rejected.connect(self.reject)
         outer.addWidget(bb)
 
+        # Scroll position is restored on the next tick: the scroll range follows the
+        # next layout pass, so setting it right after a rebuild would clamp to the old.
+        self._restore_value = 0
+        self._restore_timer = platform().create_timer(
+            platform_owner_id(self), self._restore_scroll, 0, single_shot=True)
+
+        self._start_backend_probe(cfg)
         self._rescan()
+
+    # --------------------------------------------------------------- backends
+    def _start_backend_probe(self, cfg):
+        """Ask which AI backend works, off the main thread: each CLI's --version probe
+        can take seconds, or hang. Judge with AI stays disabled until it answers."""
+        def work(context):
+            context.checkpoint("connection:start")
+            result = ai_cli.detect_backends(cfg)
+            context.checkpoint("connection:complete")
+            return result
+
+        def on_error(_error):
+            self._backends_found({"chosen": None, "backends": {}})
+
+        request = new_work_request(self, "connection", "dupes.backends")
+        self._probe = platform().start_work(
+            request, work, self._backends_found, on_error)
+        self._probe.start()
+
+    def _backends_found(self, result):
+        chosen = result.get("chosen")
+        self._judge_backend = chosen
+        self._judge_path = ((result.get("backends") or {}).get(chosen) or {}).get(
+            "path") if chosen else None
+        self._backends_ready = True
+        self.judge_btn.setToolTip(
+            "" if chosen else
+            "Set up an AI backend first (Generate cards (AI) > Setup).")
+        self._sync_judge_button()
+
+    def _sync_judge_button(self):
+        self.judge_btn.setEnabled(bool(
+            self._judge_backend and self._pairs and not self._judging))
+
+    def _wait_for_backends(self, timeout=15):
+        """Test helper: let the backend probe finish and deliver, like `_wait_for_scan`."""
+        end = time.time() + timeout
+        probe = self._probe
+        while probe.is_alive() and time.time() < end:
+            time.sleep(0.02)
+        wait_for_mock_work(probe)
+        while not self._backends_ready and time.time() < end:
+            QApplication.processEvents()
+            time.sleep(0.005)
 
     # ------------------------------------------------------------------ scope
     def _excluded_decks(self):
@@ -369,6 +432,11 @@ class _DuplicateScanDialog(QDialog):
         return [r for r in self._all_rows() if r[0] in ids]
 
     def _rescan_fresh(self):
+        # A rescan drops every verdict, and a judging run is paid for.
+        if any(p["judged"] for p in self._pairs) and not _ask(
+                "Rescanning drops the AI verdicts on this list. Rescan anyway?",
+                yes_label="Rescan", no_label="Keep results"):
+            return
         self._rows_cache = None
         self._rescan()
 
@@ -412,7 +480,7 @@ class _DuplicateScanDialog(QDialog):
         # the controls no longer describe.
         self._pairs = []
         self._rebuild_list()
-        self.judge_btn.setEnabled(False)
+        self._sync_judge_button()
         self.summary_label.setText("Scanning...")
         self._scan_result = None
         self._scan_error = None
@@ -510,8 +578,9 @@ class _DuplicateScanDialog(QDialog):
                                "key": key, "judged": None, "note": "",
                                "suspended": suspended,
                                "partly_suspended": partly_suspended,
-                               "suspension_counts": counts, "shares": shares})
-        self.judge_btn.setEnabled(bool(self._judge_backend and self._pairs))
+                               "suspension_counts": counts, "shares": shares,
+                               "differs": contrast_label(left[1], right[1])})
+        self._sync_judge_button()
         self._rebuild_list()
 
     def _wait_for_scan(self, timeout=15):
@@ -593,33 +662,50 @@ class _DuplicateScanDialog(QDialog):
             lines.append(warn)
         return "<br>".join(lines)
 
-    def _rebuild_list(self):
-        self.summary_label.setText(self._summary_text())
-        while self._rows_layout.count():
-            item = self._rows_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-
+    def _list_items(self):
         shown = [p for p in self._pairs if p["judged"] != "different"]
         different = [p for p in self._pairs if p["judged"] == "different"]
-
+        items = []
         for i, pair in enumerate(shown):
             if i:
-                self._rows_layout.addWidget(_row_rule())
-            self._rows_layout.addWidget(self._build_row(pair))
-
+                items.append(("rule",))
+            items.append(("pair", pair))
         if different:
             if shown:
-                self._rows_layout.addWidget(_row_rule())
-            fold = link_button(
-                f"Judged different ({len(different)})", self._toggle_fold,
-                align_left=True)
-            self._rows_layout.addWidget(fold)
+                items.append(("rule",))
+            items.append(("fold", len(different)))
             if self._fold_open:
                 for pair in different:
-                    self._rows_layout.addWidget(_row_rule())
-                    self._rows_layout.addWidget(self._build_row(pair))
+                    items.append(("rule",))
+                    items.append(("pair", pair))
+        return items
+
+    def _item_widget(self, item):
+        if item[0] == "pair":
+            return self._build_row(item[1])
+        if item[0] == "fold":
+            return _link(f"Judged different ({item[1]})", self._toggle_fold,
+                         align_left=True)
+        return _row_rule()
+
+    def _rebuild_list(self):
+        """Replace the list's items. Only the first batch of rows is built, plus as many
+        as the reader had already scrolled through, so an action on a long list costs
+        what the reader has seen rather than what the scan found."""
+        self.summary_label.setText(self._summary_text())
+        bar = self._list.verticalScrollBar()
+        value, depth = bar.value(), self._list.shown()
+        self._list.reset(self._list_items())
+        if not value:
+            return
+        while self._list.shown() < min(depth, self._list.total()):
+            self._list._extend()
+
+        self._restore_value = value
+        self._restore_timer.start()
+
+    def _restore_scroll(self):
+        self._list.verticalScrollBar().setValue(self._restore_value)
 
     def _toggle_fold(self, *_):
         self._fold_open = not self._fold_open
@@ -642,6 +728,9 @@ class _DuplicateScanDialog(QDialog):
 
         caret = QPushButton("▸")
         caret.setFlat(True)
+        caret.setAutoDefault(False)
+        caret.setStyleSheet(
+            f"QPushButton:focus {{ border: 1px solid {c['accent']}; border-radius: 3px; }}")
         caret.setFixedWidth(CARET_W)
         pair_name = f"duplicate pair: ours {left_front}; theirs {right_front}"
         expand_name = f"Expand {pair_name}"
@@ -664,11 +753,18 @@ class _DuplicateScanDialog(QDialog):
         if pair.get("shares"):
             shares_html = (f"<br><span style='color:{c['muted']};'>shares: "
                           f"{_esc(', '.join(pair['shares']))}</span>")
+        differs_html = ""
+        if pair.get("differs"):
+            differs_html = (f"<br><span style='color:{c['muted']};'>"
+                            f"{_esc(pair['differs'])}</span>")
         primary = QLabel(
-            f"<b>ours:</b> {_esc(left_front)}<br>"
-            f"<span style='color:{c['muted']};'>theirs: {_esc(right_front)}"
-            f" ({_esc(pair['right'][2])}, {_esc(pair['right'][3])})</span>"
-            f"{shares_html}")
+            f"<b>ours:</b> {_esc(_breakable(left_front))}<br>"
+            f"<span style='color:{c['muted']};'>theirs: {_esc(_breakable(right_front))}"
+            f" ({_esc(_breakable(pair['right'][2]))}, "
+            f"{_esc(_breakable(pair['right'][3]))})</span>"
+            f"{shares_html}{differs_html}")
+        primary.setToolTip(f"ours: {left_front}\ntheirs: {right_front} "
+                           f"({pair['right'][2]}, {pair['right'][3]})")
         primary.setWordWrap(True)
         primary.setTextFormat(Qt.TextFormat.RichText)
         hl.addWidget(primary, 1)
@@ -706,8 +802,8 @@ class _DuplicateScanDialog(QDialog):
                                f"{count} of {total} currently suspended")
             else:
                 description = f"Suspend all {total} cards on {possessive} note"
-            button = link_button(text, lambda: action(pair, side),
-                                 tooltip_text=description)
+            button = _link(text, lambda: action(pair, side),
+                           tooltip_text=description)
             button.setAccessibleName(description)
             return button
 
@@ -720,9 +816,9 @@ class _DuplicateScanDialog(QDialog):
         tl2 = QHBoxLayout(bottom_links)
         tl2.setContentsMargins(0, 0, 0, 0)
         tl2.setSpacing(CARET_GAP)
-        tl2.addWidget(link_button(
+        tl2.addWidget(_link(
             "Keep both", lambda: self._keep_both(caret, body, expand_name)))
-        tl2.addWidget(link_button("Ignore pair", lambda: self._ignore(pair)))
+        tl2.addWidget(_link("Ignore pair", lambda: self._ignore(pair)))
         tv.addWidget(bottom_links)
         hl.addWidget(trailing, 0, Qt.AlignmentFlag.AlignTop)
 
@@ -796,7 +892,7 @@ class _DuplicateScanDialog(QDialog):
         seq = self._judge_seq
         cfg = _cfg()
         kind = self._judge_backend
-        path = ai_cli.detect_backends(cfg)["backends"][kind]["path"]
+        path = self._judge_path
         payload = []
         judged_pairs = list(self._pairs)
         for p in judged_pairs:
@@ -849,7 +945,8 @@ class _DuplicateScanDialog(QDialog):
             platform_owner_id(self), lambda: self._poll_judge(seq), 200)
         self._judge_worker.start()
         self._judge_timer.start()
-        self.judge_btn.setEnabled(False)
+        self._judging = True
+        self._sync_judge_button()
         self.summary_label.setText("Judging with AI...")
 
     def _cancel_judge(self):
@@ -865,19 +962,28 @@ class _DuplicateScanDialog(QDialog):
     def _retire_judge(self):
         self._judge_seq += 1
         self._cancel_judge()
+        self._judging = False
         self._judge_result = None
         self._judge_error = None
 
-    def accept(self):
+    def _retire_all(self):
+        """Closing: stop the judging run and the backend probe, which a rescan must
+        leave running."""
         self._retire_judge()
+        probe = getattr(self, "_probe", None)
+        if probe is not None:
+            probe.cancel()
+
+    def accept(self):
+        self._retire_all()
         super().accept()
 
     def reject(self):
-        self._retire_judge()
+        self._retire_all()
         super().reject()
 
     def closeEvent(self, event):
-        self._retire_judge()
+        self._retire_all()
         super().closeEvent(event)
 
     def _poll_judge(self, seq=None, worker=None, timer=None):
@@ -900,7 +1006,8 @@ class _DuplicateScanDialog(QDialog):
     def _finish_judge(self, seq=None):
         if seq is not None and seq != self._judge_seq:
             return
-        self.judge_btn.setEnabled(bool(self._judge_backend))
+        self._judging = False
+        self._sync_judge_button()
         if self._judge_error or not self._judge_result:
             self._rebuild_list()
             return
