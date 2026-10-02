@@ -2229,6 +2229,11 @@ def _actions_for(widget):
     return []
 
 
+# Qt's FocusPolicy values, as the contract names them. WheelFocus is StrongFocus plus
+# the wheel, which the contract does not distinguish.
+_FOCUS_POLICY_NAMES = {0: "none", 1: "tab", 2: "click", 11: "strong", 15: "strong"}
+
+
 def _node(widget, kind, **fields):
     """Build one normalized contract node with common state in one place."""
     if kind not in NODE_KINDS:
@@ -2253,7 +2258,8 @@ def _node(widget, kind, **fields):
         "accessible_name": getattr(widget, "_accessible", ""),
         "accessible_description": getattr(widget, "_accessible_description", ""),
         "tooltip": getattr(widget, "_tooltip", ""),
-        "focus_policy": getattr(widget, "_focus_policy", "none"),
+        "focus_policy": _FOCUS_POLICY_NAMES.get(getattr(widget, "_focus_policy", 0),
+                                                "none"),
         "readonly": bool(getattr(widget, "_readonly", False)),
         "style_roles": list(getattr(widget, "_style_roles", [])),
         "actions": _actions_for(widget),

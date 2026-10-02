@@ -399,3 +399,22 @@ def _run_harness_validation_probe(body):
         capture_output=True,
         text=True,
     )
+
+
+def test_a_focus_policy_reaches_the_contract_as_a_schema_name():
+    from aqt.qt import QDialog, QPushButton, Qt, QVBoxLayout
+    allowed = SCHEMA["$defs"]["node"]["properties"]["focus_policy"]["enum"]
+    dialog = QDialog()
+    layout = QVBoxLayout(dialog)
+    strong, never, unset = QPushButton("Strong"), QPushButton("Never"), QPushButton("Unset")
+    strong.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    never.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    for button in (strong, never, unset):
+        layout.addWidget(button)
+
+    nodes = mock_anki.serialize_widget(dialog)["nodes"]
+
+    assert all(node["focus_policy"] in allowed for node in nodes)
+    policy = {node["id"]: node["focus_policy"] for node in nodes}
+    assert policy[strong.wid] == "strong"
+    assert policy[never.wid] == "none"
