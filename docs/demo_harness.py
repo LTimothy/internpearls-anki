@@ -23,6 +23,7 @@ import sqlite3
 import sys
 import tempfile
 import zipfile
+from urllib.parse import unquote
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mock_anki
@@ -395,7 +396,7 @@ def _install_demo_net():
             return fh.read()
 
     def _from_source(url):
-        path = url[len(example):].split("?")[0]
+        path = unquote(url[len(example):].split("?")[0])
         if work_checkpoint("fixture-fetch:start"):
             data = _read(path)
             work_checkpoint("fixture-fetch:complete")
@@ -430,7 +431,7 @@ def _install_demo_net():
     except ImportError:
         # Not under Pyodide (a local smoke test): still serve the example repo
         # from SOURCE; anything else keeps the real urllib path.
-        def _local_get(url, token=None, accept=None, timeout=None, on_chunk=None):
+        def _local_get(url, token=None, accept=None, timeout=None, on_chunk=None, **_kw):
             if url.startswith(example):
                 return _from_source(url)
             if url.startswith(addon_version):
@@ -440,7 +441,7 @@ def _install_demo_net():
         net._http_get = _local_get
         return
 
-    def _http_get(url, token=None, accept=None, timeout=None, on_chunk=None):
+    def _http_get(url, token=None, accept=None, timeout=None, on_chunk=None, **_kw):
         if url.startswith(example):
             return _from_source(url)
         if url.startswith(addon_version):

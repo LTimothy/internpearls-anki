@@ -10,10 +10,12 @@ generous timeout so a big deck on a slow link isn't cut off mid-transfer.
 import http.client
 import re
 import socket
+import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 
 from .config import ANKI_REPO
 
@@ -32,6 +34,13 @@ _DOWNLOAD_TIMEOUT = 60   # seconds; per-read bound for pulling a deck once we're
 # off the main thread (see background._run_in_background), so this bound is about how
 # long an unattended poll may hold its own slot open, not about a frozen UI.
 _BG_TIMEOUT = 3          # seconds; fail-fast bound for unattended background checks
+
+# Whole-fetch bounds. The per-read timeouts above only catch a host that goes silent; one
+# that trickles a byte at a time never trips them, and an unattended poll stuck on it
+# holds auto-sync's slot until Anki restarts. Deck and add-on package downloads (the
+# fetches that pass _DOWNLOAD_TIMEOUT) get the long bound, everything else the short one.
+_FETCH_DEADLINE = 120         # seconds
+_DOWNLOAD_DEADLINE = 30 * 60  # seconds
 
 # How much of a download is read per `on_chunk` call. Small enough that a slow link
 # still pumps the UI several times a second, large enough that a fast one isn't
@@ -132,8 +141,113 @@ def _rate_limit_message(e, token=None):
             ". " + trailer)
 
 
+def _deadline_for(timeout):
+    """The whole-fetch bound that goes with a per-read `timeout`."""
+    return _DOWNLOAD_DEADLINE if timeout >= _DOWNLOAD_TIMEOUT else _FETCH_DEADLINE
+
+
+def _origin(url):
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    port = parts.port or {"https": 443, "http": 80}.get(scheme)
+    return scheme, (parts.hostname or "").lower(), port
+
+
+def _keeps_credentials(old_url, new_url):
+    """Whether a redirect from `old_url` to `new_url` may carry the token: only to the
+    same scheme, host and port. Anywhere else would hand the learner's GitHub token to
+    whoever that host is, or send it in the clear after an https start."""
+    return _origin(old_url) == _origin(new_url)
+
+
+class _CredentialSafeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and not _keeps_credentials(req.full_url, new.full_url):
+            new.remove_header("Authorization")
+        return new
+
+
+class _Watch:
+    """The connections one fetch opens, so its deadline can close them from a timer
+    thread while urllib is blocked reading headers or body."""
+
+    def __init__(self):
+        self.expired = False
+        self._conns = []
+        self._lock = threading.Lock()
+
+    def _cut(self, conn):
+        sock = getattr(conn, "sock", None)
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    def track(self, conn):
+        connect = conn.connect
+
+        def watched_connect():
+            connect()
+            with self._lock:
+                if self.expired:
+                    self._cut(conn)
+        conn.connect = watched_connect
+        with self._lock:
+            self._conns.append(conn)
+
+    def expire(self):
+        with self._lock:
+            self.expired = True
+            for conn in self._conns:
+                self._cut(conn)
+
+
+_current = threading.local()
+
+
+def _watched(handler_cls):
+    class Watched(handler_cls):
+        def do_open(self, http_class, req, **kw):
+            watch = getattr(_current, "watch", None)
+
+            def connection(*a, **k):
+                conn = http_class(*a, **k)
+                if watch is not None:
+                    watch.track(conn)
+                return conn
+            return super().do_open(connection, req, **kw)
+    return Watched
+
+
+_WatchedHTTP = _watched(urllib.request.HTTPHandler)
+_WatchedHTTPS = _watched(urllib.request.HTTPSHandler)
+
+
+def _open(req, timeout):
+    """Open `req`. The one place a request reaches the network, and the seam tests
+    stub."""
+    opener = urllib.request.build_opener(_CredentialSafeRedirect(), _WatchedHTTP(),
+                                         _WatchedHTTPS())
+    return opener.open(req, timeout=timeout)
+
+
+def _too_slow(deadline):
+    minutes = deadline / 60
+    span = (f"{round(minutes)} minutes" if minutes >= 2
+            else f"{max(1, round(deadline))} seconds")
+    return TransportError(
+        f"the source took too long to answer (over {span}). Check your internet "
+        "connection and try again.")
+
+
+def _mb(n):
+    return f"{n / (1024 * 1024):g} MB"
+
+
 def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=None,
-              on_response=None):
+              on_response=None, max_bytes=None, deadline=None):
     """GET `url`, raising a RuntimeError with an actionable message on failure, or a
     TransportError (a RuntimeError too) when the host was never reached at all.
 
@@ -146,14 +260,70 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
     final URL after a redirect). Raising from inside it propagates unchanged, since
     whatever it raises isn't one of the exception types handled below.
 
-    `on_chunk(bytes_so_far)` opts into a chunked read: it is called after each chunk and
+    `on_chunk(bytes_so_far)` is called after each chunk read and
     returns falsy to abort, raising DownloadCancelled. It exists because a deck download
     is one blocking call on Anki's UI thread, so nothing repaints and no click is
     processed for its whole duration, which leaves a progress dialog's Cancel button
     decorative until something pumps the event loop from in here (that something is
-    `ui.cancellable_progress`'s `pump`). Passing nothing keeps the read exactly what it
-    was, a single call, so no existing caller pays for the loop.
+    `ui.cancellable_progress`'s `pump`).
+
+    `max_bytes` refuses a body larger than that, checked against Content-Length first
+    and then against what actually arrives. `deadline` bounds the whole fetch, connect
+    to last byte, in seconds; None takes `_deadline_for(timeout)`. A token is sent only
+    to the URL asked for and to same-origin https redirects (see _keeps_credentials).
     """
+    if deadline is None:
+        deadline = _deadline_for(timeout)
+    watch = _Watch()
+    timer = threading.Timer(deadline, watch.expire)
+    timer.daemon = True
+    _current.watch = watch
+    timer.start()
+    try:
+        return _http_get_watched(url, token, accept, timeout, on_chunk, on_response,
+                                 max_bytes, deadline, watch)
+    except DownloadCancelled:
+        raise
+    except Exception as e:
+        if watch.expired:
+            raise _too_slow(deadline) from e
+        raise
+    finally:
+        timer.cancel()
+        _current.watch = None
+
+
+def _read_body(r, on_chunk, max_bytes, deadline, watch):
+    if max_bytes is not None:
+        try:
+            declared = int((r.headers or {}).get("Content-Length") or -1)
+        except (TypeError, ValueError):
+            declared = -1
+        if declared > max_bytes:
+            raise RuntimeError(f"the file is larger than {_mb(max_bytes)}, so it "
+                               "wasn't downloaded")
+    read = getattr(r, "read1", None) or r.read
+    end = time.monotonic() + deadline
+    buf = bytearray()
+    while True:
+        if watch.expired or time.monotonic() > end:
+            raise _too_slow(deadline)
+        chunk = read(_CHUNK)
+        if not chunk:
+            break
+        buf += chunk
+        if max_bytes is not None and len(buf) > max_bytes:
+            raise RuntimeError(f"the file is larger than {_mb(max_bytes)}, so the "
+                               "download was stopped")
+        if on_chunk is not None and not on_chunk(len(buf)):
+            raise DownloadCancelled("cancelled before anything was imported")
+    if watch.expired:
+        raise _too_slow(deadline)
+    return bytes(buf)
+
+
+def _http_get_watched(url, token, accept, timeout, on_chunk, on_response, max_bytes,
+                      deadline, watch):
     headers = {"User-Agent": _USER_AGENT}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -161,19 +331,10 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
         headers["Accept"] = accept
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _open(req, timeout=timeout) as r:
             if on_response is not None:
                 on_response(r)
-            if on_chunk is None:
-                return r.read()
-            buf = bytearray()
-            while True:
-                chunk = r.read(_CHUNK)
-                if not chunk:
-                    return bytes(buf)
-                buf += chunk
-                if not on_chunk(len(buf)):
-                    raise DownloadCancelled("cancelled before anything was imported")
+            return _read_body(r, on_chunk, max_bytes, deadline, watch)
     except urllib.error.HTTPError as e:
         if e.code == 403:
             rate_limit_msg = _rate_limit_message(e, token=token)
@@ -204,15 +365,18 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
             "connection and try again.") from e
 
 
-def _gh_raw(repo, path, token, ref, timeout=_CONNECT_TIMEOUT, on_chunk=None):
+def _gh_raw(repo, path, token, ref, timeout=_CONNECT_TIMEOUT, on_chunk=None,
+            max_bytes=None):
     """Raw bytes of a file in a (possibly private) repo via the contents API.
 
     `on_chunk` is _http_get's, passed through: this is the deck-download path, the one
-    fetch long enough for the learner to want out of it partway.
+    fetch long enough for the learner to want out of it partway. `path` comes from the
+    deck source's manifest, so it is quoted: a '?' or '#' in it stays part of the path.
     """
-    url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={ref}"
+    url = (f"https://api.github.com/repos/{repo}/contents/{quote(path, safe='/')}"
+           f"?ref={ref}")
     return _http_get(url, token=token, accept="application/vnd.github.raw",
-                     timeout=timeout, on_chunk=on_chunk)
+                     timeout=timeout, on_chunk=on_chunk, max_bytes=max_bytes)
 
 
 def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT, token=None):
