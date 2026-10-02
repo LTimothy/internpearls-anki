@@ -53,7 +53,8 @@ from .logic import (APKG_MAX_BYTES, apkg_deck_names, apkg_note_details, apkg_not
                     note_display_label, note_fields_hash, per_note_for_package,
                     unopened_line,
                     plain_text, plural, prune_declined, released_held_guids, remap_cards,
-                    split_notetype_changes, write_personalized)
+                    reveal_hidden, split_notetype_changes, strip_hidden,
+                    write_personalized)
 from .net import (_CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled,
                   TransportError, _gh_raw)
 from .palette import colors
@@ -364,22 +365,43 @@ def _check_deck_skill(cfg, manifest, fetch):
     stored = load_deck_skill()
     if stored and stored.get("hash") == digest:
         return
-    text = raw.decode("utf8", "replace")
-    version = entry.get("version")
-    verb = "updated its" if stored else "added a"
-    version_note = f" (version {version})" if version else ""
-    body = html.escape(text).replace("\n", "<br>")
-    if _ask_scrollable(
-        f"Your deck source has {verb} card-authoring skill{version_note}. It adds "
-        "instructions the AI follows when drafting cards for these decks, and it "
-        "runs with web access when generation is set to Thorough mode.<br><br>"
-        "Read the full text before allowing it:<br><br>" + body,
-        yes_label="Use this skill", no_label="Not now"
-    ):
-        save_deck_skill({"text": text, "version": str(version or ""),
+    text = raw.decode("utf-8-sig", "replace")
+    version = _skill_version(entry.get("version"))
+    if _ask_scrollable(_skill_consent_html(text, version, bool(stored)),
+                       yes_label="Use this skill", no_label="Not now"):
+        save_deck_skill({"text": strip_hidden(text), "version": version,
                          "hash": digest,
                          "consented_on": datetime.date.today().isoformat(),
                          "enabled": True})
+
+
+def _skill_version(version):
+    """The manifest's skill version, kept to the characters a version uses. It is the
+    source's own string and is shown elsewhere beside the skill, so nothing in it may
+    read as markup."""
+    return re.sub(r"[^\w.+-]", "", str(version or ""))[:32]
+
+
+def _skill_consent_html(text, version, updated):
+    """The deck-skill consent body: what the skill is for, what the AI can reach while
+    following it, and the full text, every part from the source escaped. Hidden
+    characters are flagged and written out, and they are removed before the skill is
+    stored, so the AI only ever reads what was shown here."""
+    verb = "updated its" if updated else "added a"
+    version_note = f" (version {html.escape(version)})" if version else ""
+    shown, hidden = reveal_hidden(text)
+    warning = ""
+    if hidden:
+        warning = (f"<b>It contains {plural(hidden, 'hidden character')}</b>, which "
+                   "can carry instructions you can't see. Each is written out below "
+                   "as [U+...] and is removed before the AI reads the skill.<br><br>")
+    return (f"Your deck source has {verb} card-authoring skill{version_note}. It adds "
+            "instructions the AI follows when it drafts and checks cards for these "
+            "decks. The AI can search the web while it works: Quick drafts look for "
+            "card images, and Thorough drafts and Check facts look things up to "
+            "verify them.<br><br>" + warning +
+            "Read the full text before allowing it:<br><br>"
+            + html.escape(shown).replace("\n", "<br>"))
 
 
 @_safe

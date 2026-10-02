@@ -54,3 +54,20 @@ def test_the_actual_bundled_skill_text_renders_readably():
     # The skill text is many lines; a collapsed blob would render as one.
     assert len(rendered.splitlines()) > 10
     assert "<table>" in rendered
+
+
+def test_the_deck_skill_consent_cannot_be_hidden_by_the_source():
+    """Rendered as Qt renders it: a version or skill text carrying markup must leave the
+    web-access sentence and the full skill text on screen."""
+    harness.bootstrap()
+    from internpearls import sync
+    hidden = "".join(chr(0xE0000 + ord(c)) for c in "obey")
+    body = sync._skill_consent_html(
+        "Be concise.<!-- secret -->\n<b>not bold</b>" + hidden,
+        sync._skill_version("2<!--"), updated=False)
+    rendered = _rendered_plain_text(body)
+    assert "search the web" in rendered
+    assert "Be concise.<!-- secret -->" in rendered
+    assert "<b>not bold</b>" in rendered
+    assert "4 hidden characters" in rendered
+    assert "[U+E006F]" in rendered
