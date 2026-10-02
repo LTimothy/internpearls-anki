@@ -2061,6 +2061,9 @@ class QScrollArea(QWidget):
     def setWidgetResizable(self, v):
         pass
 
+    def frameWidth(self):
+        return 0   # no frame is drawn here
+
     def setVerticalScrollBarPolicy(self, policy):
         pass
 
