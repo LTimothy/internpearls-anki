@@ -3454,17 +3454,24 @@ class _GenerateDialog(QDialog):
         must not fall through to Qt: look in the instance dict, and stop quietly if
         the rest of the cleanup reaches a widget that is gone."""
         own = self.__dict__
+
+        def quietly(call):
+            try:
+                call()
+            except RuntimeError:    # that widget or timer is already gone
+                pass
+
         for _thread, timer in own.get("_conn_test_refs", ()):
-            timer.stop()
+            quietly(timer.stop)
         for name in ("_attach_timer", "_timer", "_img_timer"):
             timer = own.get(name)
             if timer is not None:
-                timer.stop()
+                quietly(timer.stop)
 
         for handle in own.get("_image_workers", ()):
-            handle.cancel()
+            quietly(handle.cancel)
         if own.get("_near_worker") is not None:
-            own["_near_worker"].cancel()
+            quietly(own["_near_worker"].cancel)
 
         try:
             attach_worker = own.get("_attach_worker")
