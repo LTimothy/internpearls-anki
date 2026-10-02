@@ -436,6 +436,30 @@ def _read_apkg(path):
     return rows, models, deck_by_nid
 
 
+# Card scheduling columns a package carries, as the mock reads and writes them.
+_SCHEDULING = ("type", "queue", "due", "ivl", "factor", "reps", "lapses")
+
+
+def _read_apkg_scheduling(path):
+    """{note id: {column: value}} for a package whose cards table carries scheduling,
+    else {}."""
+    with zipfile.ZipFile(path) as z:
+        with tempfile.TemporaryDirectory() as d:
+            z.extract("collection.anki2", d)
+            con = sqlite3.connect(os.path.join(d, "collection.anki2"))
+            try:
+                rows = con.execute(
+                    f"select nid, {', '.join(_SCHEDULING)} from cards").fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            finally:
+                con.close()
+    out = {}
+    for nid, *values in rows:
+        out.setdefault(nid, dict(zip(_SCHEDULING, values)))
+    return out
+
+
 class MockMedia:
     """Stands in for Anki's col.media: writes image bytes into the media folder.
 
@@ -489,6 +513,7 @@ class MockCollection:
         self.db = _Db(self)
         self.media = MockMedia()
         self.imports = []   # paths passed to import_anki_package, for assertions
+        self.import_options = []   # each import's options as a dict, for assertions
         self.exports = []   # (path, options, limit) passed to export_anki_package
         self.updated_cards = []   # nids passed to update_card, for assertions
         self.notetype_changes = []   # note-id batches converted, for assertions
@@ -789,10 +814,26 @@ class MockCollection:
 
     def import_anki_package(self, request):
         """Anki's importer, reduced to what the add-on depends on: match by GUID;
-        a matched note gets EVERY field and its tags overwritten (scheduling is out of
-        scope here); an unmatched note is added as new, tags and deck included."""
+        a matched note gets EVERY field and its tags overwritten; an unmatched note is
+        added as new, tags and deck included.
+
+        The options are honoured, not ignored: update_notes ALWAYS (1) overwrites and
+        NEVER (2) leaves a matched note alone (IF_NEWER needs modification times the
+        mock does not keep, so it is refused); merge_notetypes bumps the schema, as it
+        does in Anki; with_scheduling copies the file's card scheduling onto the cards
+        it imports or matches, and without it a matched card keeps its own."""
+        opts = request.options
+        if opts is None:
+            opts = sys.modules["anki.collection"].ImportAnkiPackageOptions()
+        options = {k: getattr(opts, k) for k in type(opts)._FIELDS}
+        if options["update_notes"] not in (1, 2):
+            raise NotImplementedError("the mock importer models ALWAYS and NEVER only")
         self.imports.append(request.package_path)
+        self.import_options.append(options)
+        if options["merge_notetypes"]:
+            self.scm += 1
         rows, models_by_mid, deck_by_nid = _read_apkg(request.package_path)
+        scheduling = _read_apkg_scheduling(request.package_path)
         self._register_models(models_by_mid)
         by_guid = {n.guid: n for n in self._notes.values()}
         for nid, guid, flds, tags, mid in rows:
@@ -802,16 +843,23 @@ class MockCollection:
             deck = deck_by_nid.get(nid)
             existing = by_guid.get(guid)
             if existing:
+                if options["update_notes"] == 2:
+                    continue
                 existing.fields = list(values)[:len(existing._names)] + \
                     [""] * max(0, len(existing._names) - len(values))
                 existing.tags = tags.split()
                 self._generate_cloze_cards(existing)
                 if deck and not existing.deck:
                     existing.deck = deck
+                note = existing
             else:
                 # add_note files it through decks.id(), which registers the deck and
                 # every ancestor of it, same as real Anki.
-                self.add_note(guid, values, tags.split(), model, deck)
+                note = self.add_note(guid, values, tags.split(), model, deck)
+            if options["with_scheduling"] and nid in scheduling and note._card_ids:
+                card = self._cards[note._card_ids[0]]
+                for key, value in scheduling[nid].items():
+                    setattr(card, key, value)
 
     def _content_signature(self):
         notes = sorted((nid, n.guid, tuple(n.fields), tuple(n.tags), n.model["name"])
@@ -849,7 +897,9 @@ class MockCollection:
         con.execute("create table notes (id integer primary key, guid text, "
                     "flds text, tags text, mid integer)")
         con.execute("create table cards (id integer primary key, nid integer, "
-                    "did integer)")
+                    "did integer, " + ", ".join(f"{k} integer" for k in _SCHEDULING)
+                    + ")")
+        with_scheduling = getattr(options, "with_scheduling", False)
         models = {str(m["id"]): m for m in self.models.all()}
         deck_ids, decks = {}, {}
         for i, (nid, n) in enumerate(sorted(self._notes.items()), 1):
@@ -858,7 +908,11 @@ class MockCollection:
             con.execute("insert into notes values (?, ?, ?, ?, ?)",
                         (nid, n.guid, FS.join(n.fields), " ".join(n.tags),
                          n.model["id"]))
-            con.execute("insert into cards values (?, ?, ?)", (i, nid, did))
+            card = self._cards[n._card_ids[0]] if n._card_ids else None
+            sched = [getattr(card, k, 0) if with_scheduling and card else 0
+                     for k in _SCHEDULING]
+            con.execute(f"insert into cards values (?, ?, ?{', ?' * len(_SCHEDULING)})",
+                        (i, nid, did, *sched))
         con.execute("create table col (models text, decks text)")
         con.execute("insert into col values (?, ?)",
                     (json.dumps(models), json.dumps(decks)))
@@ -935,7 +989,10 @@ class Gui:
             self.payloads.append(payload)
             return False
         if not self.interactive:
-            return self.answers.pop(0) if self.answers else True
+            # No default answer: a test that reaches a question states its answer.
+            if not self.answers:
+                raise AssertionError(f"unanswered question: {text[:200]}")
+            return self.answers.pop(0)
         dialog = QDialog()
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel(text))
@@ -3495,7 +3552,18 @@ def install():
     anki_models.ChangeNotetypeRequest = ChangeNotetypeRequest
 
     class ImportAnkiPackageOptions:
-        pass
+        """Anki's protobuf options: these fields with these defaults, and an unknown
+        field raises, as a protobuf message's does."""
+        _FIELDS = {"merge_notetypes": False, "update_notes": 0, "update_notetypes": 0,
+                   "with_scheduling": False, "with_deck_configs": False}
+
+        def __init__(self):
+            self.__dict__.update(self._FIELDS)
+
+        def __setattr__(self, name, value):
+            if name not in self._FIELDS:
+                raise AttributeError(f"ImportAnkiPackageOptions has no field {name!r}")
+            self.__dict__[name] = value
 
     class ImportAnkiPackageRequest:
         def __init__(self, package_path=None, options=None):

@@ -309,3 +309,63 @@ def test_auto_sync_first_sync_with_nothing_to_back_up_still_runs(anki, tmp_path)
     anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
     background._auto_sync_check()
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
+# ------------------------------------------------------------ import options
+def test_a_sync_imports_without_merging_note_types_or_taking_the_files_scheduling(
+        anki, tmp_path):
+    from test_sync_flows import _sync
+    anki.mw._config = {"decks_dir": _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})}
+    scm = anki.col.scm
+
+    _sync(anki)
+
+    assert anki.col.import_options, "nothing was imported"
+    for opts in anki.col.import_options:
+        assert opts["merge_notetypes"] is False
+        assert opts["with_scheduling"] is False
+        assert opts["update_notes"] == 1          # ALWAYS
+    assert anki.col.scm == scm
+
+
+def test_a_restore_brings_back_the_backups_scheduling(anki, tmp_path):
+    from internpearls import collection
+    note = anki.col.add_note("g1", _fields("Front one"), TAGS.split(), deck=DECK)
+    card = anki.col.get_card(note.card_ids()[0])
+    card.ivl, card.due, card.reps, card.queue, card.type = 12, 90, 4, 2, 2
+    src = collection._backup_deck(DECK, "manual")
+    card.ivl, card.due, card.reps = 1, 3, 9
+
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)          # Import
+    collection.import_deck()
+
+    assert anki.col.import_options[-1]["with_scheduling"] is True
+    assert (card.ivl, card.due, card.reps) == (12, 90, 4)
+
+
+def test_the_mock_importer_honours_its_options(anki, tmp_path):
+    """The mock stands in for Anki's importer, so it must react to the options the
+    add-on passes rather than ignore them."""
+    from anki.collection import ImportAnkiPackageOptions, ImportAnkiPackageRequest
+    from mock_anki import make_apkg
+    note = anki.col.add_note("g1", _fields("Old front"), TAGS.split(), deck=DECK)
+    src = str(tmp_path / "p.apkg")
+    make_apkg(src, [("g1", _fields("New front"), TAGS)], deck=DECK)
+
+    opts = ImportAnkiPackageOptions()
+    opts.update_notes = 2                 # NEVER
+    anki.col.import_anki_package(ImportAnkiPackageRequest(package_path=src, options=opts))
+    assert note["Front"] == "Old front"
+
+    opts = ImportAnkiPackageOptions()
+    opts.update_notes = 1
+    opts.merge_notetypes = True
+    scm = anki.col.scm
+    anki.col.import_anki_package(ImportAnkiPackageRequest(package_path=src, options=opts))
+    assert note["Front"] == "New front" and anki.col.scm == scm + 1
+
+    import pytest
+    with pytest.raises(AttributeError):
+        opts.no_such_option = True
