@@ -337,6 +337,9 @@ def test_failed_attachment_deletion_does_not_claim_removal(anki, monkeypatch, tm
     dlg._remove_attachment("lecture.pdf")
     assert len(dlg.session.attachments) == 1
     assert image.exists()
+    assert anki.gui.warnings == [
+        "Couldn't remove attachment retained.png: cannot delete. It is still attached; "
+        "retry removal before generating."]
 
 
 def test_attachment_only_summary_counts_only_real_sources(anki, monkeypatch):
