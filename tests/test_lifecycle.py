@@ -330,20 +330,29 @@ def test_a_sync_imports_without_merging_note_types_or_taking_the_files_schedulin
     assert anki.col.scm == scm
 
 
-def test_a_restore_brings_back_the_backups_scheduling(anki, tmp_path):
+def test_a_restore_schedules_only_the_cards_it_adds_back(anki, tmp_path):
+    """Anki applies a file's scheduling only to cards the import creates: a card still
+    in the collection keeps its own, and one that was deleted comes back with the
+    file's."""
     from internpearls import collection
-    note = anki.col.add_note("g1", _fields("Front one"), TAGS.split(), deck=DECK)
-    card = anki.col.get_card(note.card_ids()[0])
-    card.ivl, card.due, card.reps, card.queue, card.type = 12, 90, 4, 2, 2
+    kept = anki.col.add_note("g1", _fields("Front one"), TAGS.split(), deck=DECK)
+    gone = anki.col.add_note("g2", _fields("Front two"), TAGS.split(), deck=DECK)
+    for note in (kept, gone):
+        card = anki.col.get_card(note.card_ids()[0])
+        card.ivl, card.due, card.reps, card.queue, card.type = 12, 90, 4, 2, 2
     src = collection._backup_deck(DECK, "manual")
-    card.ivl, card.due, card.reps = 1, 3, 9
+    kept_card = anki.col.get_card(kept.card_ids()[0])
+    kept_card.ivl, kept_card.due, kept_card.reps = 1, 3, 9
+    anki.col.remove_cards_and_orphaned_notes(gone.card_ids())
 
     anki.gui.file_picks.append(src)
     anki.gui.answers.append(True)          # Import
     collection.import_deck()
 
     assert anki.col.import_options[-1]["with_scheduling"] is True
-    assert (card.ivl, card.due, card.reps) == (12, 90, 4)
+    assert (kept_card.ivl, kept_card.due, kept_card.reps) == (1, 3, 9)
+    back = anki.col.get_card(anki.col.note_by_guid("g2").card_ids()[0])
+    assert (back.ivl, back.due, back.reps) == (12, 90, 4)
 
 
 def test_the_mock_importer_honours_its_options(anki, tmp_path):

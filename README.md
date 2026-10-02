@@ -188,7 +188,7 @@ Both are schema-neutral, reversible by hand, backed up first, and no-ops when re
 
 **Backup intern pearls deck** makes an on-demand backup of `export_deck` with scheduling, like the automatic one.
 
-**Restore intern pearls deck** re-imports a backup or export with scheduling (the picker opens at the backups folder). Matching cards update in place, wherever you keep them, and the decks they sit in are backed up first; that backup never deletes the file you chose. The decks it restores are re-offered on your next update, and restored cards get back the shipped-field baselines saved with their backup, so that update tells the source's older text from your own edits.
+**Restore intern pearls deck** re-imports a backup or export (the picker opens at the backups folder). Matching cards take the file's content in place, wherever you keep them, and keep their own scheduling; a card no longer in your collection comes back with the scheduling it had in the file. The decks the matched cards sit in are backed up first, and that backup never deletes the file you chose. The decks it restores are re-offered on your next update, and restored cards get back the shipped-field baselines saved with their backup, so that update tells the source's older text from your own edits.
 
 **Export intern pearls deck** writes a standalone `.apkg` of `export_deck` with history, options and media, wherever you choose.
 

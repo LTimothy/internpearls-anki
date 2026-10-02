@@ -547,9 +547,9 @@ def _restore(snap, baseline=None, touched=None):
 
 # -------------------------------------------------------------------- apkg helpers
 def _import_apkg(path, with_scheduling=False):
-    """with_scheduling=False for a spec-authored deck matched onto existing cards (the
-    learner's own scheduling should win); True for reimporting our own previously
-    exported/backed-up package, where the file's scheduling IS the thing being restored.
+    """with_scheduling=False for a spec-authored deck; True for reimporting our own
+    exported or backed-up package. Either way Anki applies a file's scheduling only to
+    cards the import creates, so a matched card keeps its own.
     """
     from anki.collection import ImportAnkiPackageRequest, ImportAnkiPackageOptions
     opts = ImportAnkiPackageOptions()
