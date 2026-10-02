@@ -1314,6 +1314,16 @@ def test_build_feedback_digest_keeps_literal_comparators_in_notes_and_fronts():
     assert '"HR >100 and MAP <65"' in text
 
 
+def test_build_feedback_digest_keeps_a_note_and_a_decoded_front_verbatim():
+    # Learner notes and standing-decline fronts are already plain text: only their
+    # whitespace is folded, so even something tag-shaped survives.
+    text = logic.build_feedback_digest(
+        [{"deck": "D", "front": "Front", "guid": "g", "note": "a<b, c>d\n  and  more"}],
+        standing_declines={"h": {"state": "keep", "front": "x<b, y>z", "deck": "D"}})
+    assert "> a<b, c>d and more" in text
+    assert '"x<b, y>z"' in text
+
+
 @pytest.mark.parametrize("field, expected", [
     ("a <b>bold</b> word", "a bold word"),
     ("x<br/>y", "x y"),
