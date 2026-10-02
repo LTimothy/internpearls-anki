@@ -891,6 +891,14 @@ class _DeclinedDialog(QDialog):
         while self._list.shown() < min(shown, self._list.total()):
             self._list._extend()
         bar.setValue(position)
+        # The streaming list reports no height of its own, so the dialog would open
+        # about one row tall. A list that fits asks for exactly its content, a longer
+        # one for the full height, and either scrolls inside it.
+        lst = self._list
+        fits = lst.shown() >= lst.total()
+        content = lst._rows_container.sizeHint().height() + 2 * lst.frameWidth()
+        lst.setMinimumHeight(min(_DECLINED_LIST_H, content) if fits
+                             else _DECLINED_LIST_H)
 
 
 @_safe
