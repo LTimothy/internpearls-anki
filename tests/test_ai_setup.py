@@ -98,14 +98,14 @@ def _detected(monkeypatch, detect):
 
 def _none_found(monkeypatch):
     from internpearls import ai_cli
-    _detected(monkeypatch, lambda cfg: {
+    _detected(monkeypatch, lambda cfg, **kw: {
         "backends": {k: {"path": None, "ok": False, "detail": "not found", "enabled": True}
                      for k in ai_cli.BACKENDS}, "chosen": None})
 
 
 def _all_found(monkeypatch):
     from internpearls import ai_cli
-    _detected(monkeypatch, lambda cfg: {
+    _detected(monkeypatch, lambda cfg, **kw: {
         "backends": {k: {"path": "/bin/x", "ok": True, "detail": "1", "enabled": True}
                      for k in ai_cli.BACKENDS}, "chosen": "claude"})
 
@@ -126,7 +126,7 @@ def test_open_ai_backends_builds_one_row_per_backend(anki, monkeypatch):
     for kind, meta in ai_cli.BACKENDS.items():
         text = dlg.rows[kind].text()
         assert meta["label"] in text
-        assert meta["safety"] in text
+        assert ai_cli.backend_wording(kind, None)["safety"] in text
         assert meta["subscription"] in text
         assert meta["exe"] in text
 
@@ -160,7 +160,7 @@ def test_ignore_link_disables_the_backend_and_flips_its_own_wording(anki, monkey
     comes back set aside with the way back out written on it."""
     from internpearls import ai_cli, ai_setup
 
-    def detect(cfg):
+    def detect(cfg, **kw):
         enabled = cfg["ai_backend_enabled"]
         return {"backends": {k: {"path": "/bin/x" if enabled[k] else None,
                                  "ok": enabled[k], "detail": "1",
@@ -181,7 +181,7 @@ def test_ignore_link_disables_the_backend_and_flips_its_own_wording(anki, monkey
     assert dlg.rows["agy"].ignore_link.text() == "ignore"
 
 
-def _detect_honouring_enabled(cfg):
+def _detect_honouring_enabled(cfg, **kw):
     """A detect_backends stand-in that reproduces the real function's own
     chosen-backend rule: skip disabled backends, prefer ai_backend among what
     is left, else the first enabled+found one in BACKENDS order."""

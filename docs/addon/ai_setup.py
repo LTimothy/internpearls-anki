@@ -516,8 +516,7 @@ def start_backend_detection(owner, cfg, on_result):
     main thread; a failure reports every found backend as not responding."""
     def work(context):
         context.checkpoint("connection:start")
-        res = ai_cli.detect_backends(cfg)
-        ai_cli.warm_help(res)
+        res = ai_cli.detect_backends(cfg, warm=True)
         context.checkpoint("connection:complete")
         return res
 

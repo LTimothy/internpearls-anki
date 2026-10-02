@@ -2468,6 +2468,15 @@ def test_ai_backends_rows_read_checking_until_the_probe_answers(anki, monkeypatc
     assert on_main and not any(on_main)
 
 
+def test_mode_hints_claim_no_confinement_while_the_cli_is_checked(anki, monkeypatch):
+    _slow_probes(monkeypatch, delay=0.5)
+    dlg = ai_dialog._GenerateDialog()
+    assert "scratch" not in dlg.thorough_hint.text()
+    assert "exactly those files" not in dlg.quick_hint.text()
+    assert "confined to the scratch" not in dlg.backend_row.text()
+    _settled(dlg)
+
+
 def test_review_preview_shows_where_a_link_points(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
