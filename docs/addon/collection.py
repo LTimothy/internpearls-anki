@@ -22,7 +22,8 @@ from .config import (DECK_BACKUPS_KEEP, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_T
                      TARGET_FIELDS, _USER_FILES, _cfg, _collection_state_path, _load_json,
                      _save_json)
 from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
-                    cards_lost_in_conversion, changed_templates, declined_drop,
+                    cards_lost_in_conversion, changed_templates, check_apkg_limits,
+                    declined_drop,
                     empty_cards_dialog_rows, fields_to_carry_over, manifest_decks_for,
                     merge_learner_tags, model_shape, note_display_label,
                     plan_notetype_changes, plural, protected_for, remap_cards,
@@ -536,6 +537,7 @@ def _import_apkg(path, with_scheduling=False):
     exported/backed-up package, where the file's scheduling IS the thing being restored.
     """
     from anki.collection import ImportAnkiPackageRequest, ImportAnkiPackageOptions
+    check_apkg_limits(path)
     opts = ImportAnkiPackageOptions()
     # merge_notetypes=False on purpose. Merging note types on import rewrites the
     # collection's note types, which bumps Anki's *schema* modification time — and any

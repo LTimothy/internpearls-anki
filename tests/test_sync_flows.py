@@ -4919,7 +4919,7 @@ def _github_source(anki, monkeypatch, files, repo="someone/decks"):
     anki.mw._config = {"github_decks_repo": repo}
     asked = []
 
-    def gh_raw(_repo, path, _token, _ref, timeout=None, on_chunk=None):
+    def gh_raw(_repo, path, _token, _ref, timeout=None, on_chunk=None, max_bytes=None):
         asked.append(path)
         if path not in files:
             raise RuntimeError(f"404 for {path}")
@@ -8010,3 +8010,129 @@ def test_an_accepted_backup_restore_clears_installed_state(anki):
 
     assert _load_json(INSTALLED, {}) == {}
     assert aqt.gui_hooks.profile_will_close == []
+
+
+# ------------------------------------------------- what a deck source may point at
+def _point_deck_at(folder, apkg):
+    manifest_path = os.path.join(folder, "manifest.json")
+    manifest = json.loads(open(manifest_path, encoding="utf8").read())
+    manifest["decks"][0]["apkg"] = apkg
+    open(manifest_path, "w", encoding="utf8").write(json.dumps(manifest))
+
+
+def _outside_deck(tmp_path):
+    """A real package sitting next to the source folder rather than in it."""
+    path = str(tmp_path / "outside.apkg")
+    make_apkg(path, [("gx", _fields("Outside front"), TAGS)], deck=DECK)
+    return path
+
+
+@pytest.mark.parametrize("pointer", ["relative", "absolute", "symlink"])
+def test_a_local_source_cannot_point_a_deck_outside_its_folder(anki, tmp_path, pointer):
+    outside = _outside_deck(tmp_path)
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    if pointer == "relative":
+        _point_deck_at(folder, "../outside.apkg")
+    elif pointer == "absolute":
+        _point_deck_at(folder, outside)
+    else:
+        os.symlink(outside, os.path.join(folder, "link.apkg"))
+        _point_deck_at(folder, "link.apkg")
+    _configure(anki, folder)
+
+    summary = _summary_text(_sync(anki))
+
+    assert not anki.col.find_notes(f'"tag:{SCOPE}"')
+    assert "inside the deck source" in summary or "outside the deck source" in summary
+
+
+def test_a_local_source_reads_a_deck_in_a_subfolder(anki, tmp_path):
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    os.makedirs(os.path.join(folder, "decks"))
+    os.rename(os.path.join(folder, "Pharm.apkg"), os.path.join(folder, "decks", "Pharm.apkg"))
+    _point_deck_at(folder, "./decks/Pharm.apkg")
+    _configure(anki, folder)
+
+    _sync(anki)
+
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
+def test_a_github_source_never_requests_a_path_that_climbs_out_of_the_repo(
+        anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    manifest = {"schema": 1, "decks": [
+        {"name": DECK, "apkg": "../../orgs/other/x.apkg", "version": "v1"}],
+        "skill": {"path": "/etc/skill.md", "version": "1"}}
+    asked = _github_source(anki, monkeypatch,
+                           {"manifest.json": json.dumps(manifest).encode("utf8")})
+
+    _sync(anki)
+
+    assert set(asked) == {"manifest.json"}
+    assert sync.load_deck_skill() is None
+
+
+def test_a_skill_path_outside_the_local_folder_is_never_read(anki, tmp_path):
+    from internpearls import config, sync
+    secret = tmp_path / "secret.md"
+    secret.write_text("# not the deck's\nLeaked.", encoding="utf8")
+    folder = _write_source(tmp_path, {})
+    manifest_path = os.path.join(folder, "manifest.json")
+    manifest = json.loads(open(manifest_path, encoding="utf8").read())
+    manifest["skill"] = {"path": "../secret.md", "version": "1"}
+    open(manifest_path, "w", encoding="utf8").write(json.dumps(manifest))
+    _configure(anki, folder)
+
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)   # no dialog
+
+    assert config.load_deck_skill() is None
+
+
+def test_an_oversized_package_is_refused_with_a_reason_and_nothing_imported(
+        anki, tmp_path, monkeypatch):
+    from internpearls import logic
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    _configure(anki, folder)
+    monkeypatch.setattr(logic, "APKG_MAX_EXPANDED", 100)
+
+    summary = _summary_text(_sync(anki))
+
+    assert not anki.col.imports
+    assert "would unpack to more than" in summary
+
+
+def test_a_github_deck_download_is_capped_at_the_package_limit(anki, tmp_path, monkeypatch):
+    from internpearls import logic, sync
+    seen = {}
+
+    def gh_raw(_repo, path, _token, _ref, timeout=None, on_chunk=None, max_bytes=None):
+        seen[path] = max_bytes
+        if path == "manifest.json":
+            return json.dumps({"schema": 1, "decks": [
+                {"name": DECK, "apkg": "decks/Pharm.apkg", "version": "v1"}]}).encode()
+        raise RuntimeError("stop here")
+
+    anki.mw._config = {"github_decks_repo": "someone/decks"}
+    monkeypatch.setattr(sync, "_gh_raw", gh_raw)
+
+    _sync(anki)
+
+    assert seen["decks/Pharm.apkg"] == logic.APKG_MAX_BYTES
+    assert seen["manifest.json"] == sync._MANIFEST_MAX_BYTES
+
+
+def test_an_oversized_local_manifest_is_refused_unread(anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    _configure(anki, folder)
+    monkeypatch.setattr(sync, "_MANIFEST_MAX_BYTES", 10)
+
+    _sync(anki)
+
+    assert "manifest.json" in anki.gui.warnings[0]
+    assert "larger than" in anki.gui.warnings[0]
