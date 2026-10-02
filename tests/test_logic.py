@@ -1290,6 +1290,33 @@ def test_build_feedback_digest_is_plain_text_not_html():
     assert "SpO 2 <94%" in text
 
 
+def test_build_feedback_digest_keeps_literal_comparators_in_notes_and_fronts():
+    # A learner's note is typed as plain text, and a standing decline's front is stored
+    # already decoded, so a bare "<" or ">" there is a comparator, not a tag.
+    text = logic.build_feedback_digest(
+        [{"deck": "D", "front": "MAP &lt;65?", "guid": "g",
+          "note": "MAP <65 and HR >100 is wrong"}],
+        standing_declines={"h": {"state": "keep", "front": "HR >100 and MAP <65",
+                                 "deck": "D"}})
+    assert "> MAP <65 and HR >100 is wrong" in text
+    assert '"MAP <65?"' in text
+    assert '"HR >100 and MAP <65"' in text
+
+
+@pytest.mark.parametrize("field, expected", [
+    ("a <b>bold</b> word", "a bold word"),
+    ("x<br/>y", "x y"),
+    ("<div class='c'>t</div>", "t"),
+    ("<!-- note -->kept", "kept"),
+    ("MAP <65 and HR >100", "MAP <65 and HR >100"),
+    ("1 < 2 > 0", "1 < 2 > 0"),
+    ("a <= b", "a <= b"),
+    ("&lt;b&gt; stays text", "<b> stays text"),
+])
+def test_plain_text_strips_real_tags_only(field, expected):
+    assert logic.plain_text(field) == expected
+
+
 def test_build_feedback_digest_carries_the_full_current_decline_snapshot():
     """Removing an older standing decline from the export would make a single digest
     look like the learner had accepted that card, even though the registry still blocks
