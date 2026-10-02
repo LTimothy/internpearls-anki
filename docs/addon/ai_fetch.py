@@ -8,6 +8,8 @@ The connection goes to the address that was checked, not to a second lookup.
 import http.client
 import ipaddress
 import socket
+import threading
+import time
 import urllib.parse
 
 from . import ai_logic
@@ -36,13 +38,35 @@ def _resolve(host, port):
     return socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
 
 
-def checked_address(host, port):
-    """The address to connect to for `host`, or RuntimeError when any address it
-    resolves to is private, loopback, link-local or otherwise not public."""
-    try:
-        infos = _resolve(host, port)
-    except OSError as e:
-        raise TransportError(f"couldn't look up {host} ({e})") from e
+def _timed_out():
+    return TransportError("the network isn't responding (timed out). Check your "
+                          "internet connection and try again.")
+
+
+def _resolve_within(host, port, seconds):
+    """_resolve, given up on after `seconds` (the lookup itself cannot be cancelled,
+    so it is left to finish on its own thread)."""
+    box = {}
+
+    def run():
+        try:
+            box["infos"] = _resolve(host, port)
+        except OSError as e:
+            box["error"] = e
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(max(0.0, seconds))
+    if t.is_alive():
+        raise _timed_out()
+    if "error" in box:
+        raise TransportError(f"couldn't look up {host} ({box['error']})") from box["error"]
+    return box["infos"]
+
+
+def checked_addresses(host, port, seconds=_DOWNLOAD_TIMEOUT):
+    """Every address `host` resolves to, in order, or RuntimeError when any of them is
+    private, loopback, link-local or otherwise not public."""
+    infos = _resolve_within(host, port, seconds)
     addrs = []
     for info in infos:
         raw = str(info[4][0]).split("%", 1)[0]
@@ -54,7 +78,7 @@ def checked_address(host, port):
         raise RuntimeError(f"{host} did not resolve to any address")
     if not all(_is_public(ip) for ip in addrs):
         raise RuntimeError("image address points to a private or local network")
-    return str(addrs[0])
+    return list(dict.fromkeys(str(ip) for ip in addrs))
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
@@ -118,20 +142,56 @@ def _image_from(r, max_bytes):
     return data, ext
 
 
-def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT):
+def _connect_any(host, ips, port, timeout):
+    """A connection to the first of `ips` that accepts one."""
+    last = None
+    for ip in ips:
+        conn = _open_connection(host, ip, port, timeout)
+        try:
+            conn.connect()
+            return conn
+        except OSError as e:
+            last = e
+            conn.close()
+    raise TransportError(f"couldn't reach {host} ({last})") from last
+
+
+def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT,
+                     deadline_s=_DOWNLOAD_TIMEOUT):
     """(bytes, extension) for a model-suggested picture. Refuses a non-https address
     or redirect, a host that resolves to a private or local address (checked on every
     hop before connecting), anything not served as a PNG, JPEG, GIF or WebP whose
-    bytes match, and more than `max_bytes`. A Wikimedia File: page or original SVG is
-    fetched as its rendered image (see net.wikimedia_image_url)."""
+    bytes match, and more than `max_bytes`. The whole fetch, every lookup and hop
+    included, stops after `deadline_s`: a slow lookup is abandoned and a trickling
+    connection is shut down. A Wikimedia File: page or original SVG is fetched as its
+    rendered image (see net.wikimedia_image_url)."""
     if not url.startswith("https://"):
         raise RuntimeError("image URLs must be https")
     url = wikimedia_image_url(url)
+    deadline = time.monotonic() + deadline_s
     for _hop in range(_MAX_REDIRECTS + 1):
         host, port, target = _https_parts(url)
-        ip = checked_address(host, port)
-        conn = _open_connection(host, ip, port, timeout)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _timed_out()
+        ips = checked_addresses(host, port, remaining)
+        conn = None
+        expired = threading.Event()
+
+        def expire():
+            expired.set()
+            sock = getattr(conn, "sock", None)
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+        watchdog = threading.Timer(max(0.0, deadline - time.monotonic()), expire)
+        watchdog.daemon = True
+        watchdog.start()
         try:
+            conn = _connect_any(host, ips, port,
+                                max(0.1, min(timeout, deadline - time.monotonic())))
             conn.request("GET", target, headers={"User-Agent": _USER_AGENT,
                                                  "Accept": "image/*"})
             r = conn.getresponse()
@@ -146,13 +206,23 @@ def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT):
                     "no image at that address (the site returned 404)", 404)
             if r.status != 200:
                 raise HttpStatusError(f"server returned HTTP {r.status}", r.status)
-            return _image_from(r, max_bytes)
+            try:
+                result = _image_from(r, max_bytes)
+            except RuntimeError:
+                if expired.is_set():
+                    raise _timed_out() from None
+                raise
+            if expired.is_set():
+                raise _timed_out()
+            return result
         except (TimeoutError, socket.timeout) as e:
-            raise TransportError(
-                "the network isn't responding (timed out). Check your internet "
-                "connection and try again.") from e
+            raise _timed_out() from e
         except (OSError, http.client.HTTPException) as e:
+            if expired.is_set():
+                raise _timed_out() from e
             raise TransportError(f"couldn't download the image ({e})") from e
         finally:
-            conn.close()
+            watchdog.cancel()
+            if conn is not None:
+                conn.close()
     raise RuntimeError("image address redirects too many times")
