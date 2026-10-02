@@ -335,3 +335,46 @@ def test_a_read_on_a_socket_shut_by_the_deadline_reads_as_a_timeout(monkeypatch)
          {("img.example", "/a.png"): _ClosedAfterShutdown})
     with pytest.raises(RuntimeError, match="timed out"):
         ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.4)
+
+
+@pytest.mark.parametrize("ctype", ["image/svg+xml", "text/html", None])
+def test_only_a_raster_image_type_is_accepted(monkeypatch, ctype):
+    """A downloaded SVG would bypass the drawn-SVG checks, and a page is not a
+    picture: both are refused on their declared type."""
+    headers = {"Content-Type": ctype} if ctype else {}
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _Response(200, headers, b"<svg></svg>")})
+    with pytest.raises(RuntimeError, match="not an image"):
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+
+
+def test_a_wikimedia_file_page_is_fetched_as_its_rendered_image(monkeypatch):
+    web = _Web(monkeypatch, {"en.wikipedia.org": ["93.184.216.34"]},
+               {("en.wikipedia.org", "/wiki/Special:FilePath/Capnogram.png?width=1200"):
+                _png()})
+    assert ai_fetch.fetch_card_image(
+        "https://en.wikipedia.org/wiki/File:Capnogram.png") == (PNG, "png")
+    assert web.connected == [("en.wikipedia.org", "93.184.216.34")]
+
+
+def test_a_content_type_with_parameters_is_accepted(monkeypatch):
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _Response(
+             200, {"Content-Type": "image/png; charset=binary"}, PNG)})
+    assert ai_fetch.fetch_card_image("https://img.example/a.png") == (PNG, "png")
+
+
+def test_a_declared_length_over_the_cap_is_refused_before_reading(monkeypatch):
+    """The body here would fit; the declared length alone refuses it."""
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _Response(
+             200, {"Content-Type": "image/png", "Content-Length": "999999"}, PNG)})
+    with pytest.raises(RuntimeError, match="too large"):
+        ai_fetch.fetch_card_image("https://img.example/a.png", max_bytes=len(PNG) + 10)
+
+
+def test_a_body_exactly_at_the_cap_is_accepted(monkeypatch):
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _Response(200, {"Content-Type": "image/png"}, PNG)})
+    assert ai_fetch.fetch_card_image(
+        "https://img.example/a.png", max_bytes=len(PNG)) == (PNG, "png")
