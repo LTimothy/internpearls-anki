@@ -3018,6 +3018,86 @@ def test_group_header_counts_cards_not_a_retired_member(anki, tmp_path, monkeypa
     assert group_notes[0][2] == 2
 
 
+def _sections(items):
+    """{section heading: [item, ...]} for the deck sections of an update list."""
+    out, current = {}, None
+    for item in items:
+        if item[0] == "header":
+            current = out.setdefault(item[1], [])
+        elif current is not None:
+            current.append(item)
+    return out
+
+
+def test_the_same_change_note_in_two_decks_makes_one_group_per_deck(
+        anki, tmp_path, monkeypatch):
+    """Grouping is per deck section: an identical note on cards in two decks, and a
+    retired row in one deck naming a card in the other, never join across decks."""
+    from internpearls.logic import note_fields_hash
+    other = "Intern Pearls::Intern Custom::Other"
+    other_tags = f"{SCOPE}::Other"
+    shared = {"kind": "maintainer", "note": "one sweep across both decks"}
+    decks, change_notes = {}, {}
+    for deck, tags, guids in ((DECK, TAGS, ("a1", "a2")), (other, other_tags, ("b1", "b2"))):
+        rows = []
+        for guid in guids:
+            anki.col.add_note(guid, _fields(f"Front {guid}", back="old"), tags.split())
+            new = _fields(f"Front {guid}", back="new")
+            change_notes[guid] = [dict(shared, hash=note_fields_hash(new))]
+            rows.append((guid, new, tags))
+        decks[deck] = ("v2", rows, None)
+    anki.col.add_note("old-b", _fields("Retired front"), other_tags.split())
+    folder = _write_source(
+        tmp_path, decks, change_notes=change_notes,
+        retired={other: {"old-b": {"identity": "Retired front", "reason": "merged",
+                                   "superseded_by": ["a1"]}}})
+    _configure(anki, folder)
+    captured = _capture_update_items(monkeypatch)
+
+    _update(anki, accept=False)
+
+    sections = _sections(captured[0])
+    for heading, guids in (("Pharm", {"a1", "a2"}), ("Other", {"b1", "b2"})):
+        rows = sections[heading]
+        heads = [i for i in rows if i[0] == "group_note"]
+        assert len(heads) == 1 and heads[0][2] == 2, (heading, heads)
+        assert {i[2]["guid"] for i in rows if i[0] == "card"} == guids
+    other_rows = [i[0] for i in sections["Other"] if i[0] != "sep"]
+    assert other_rows == ["group_note", "card", "card", "retired"], other_rows
+    assert not any(i[0] == "retired" for i in sections["Pharm"])
+
+
+def test_a_retired_row_superseded_by_an_unchanged_card_stands_alone(
+        anki, tmp_path, monkeypatch):
+    """Its replacement ships unchanged, so nothing in the list is that card: the
+    retired row keeps its own reason, joins no other change's group, and the
+    unchanged card gets no row."""
+    from internpearls.logic import note_fields_hash
+    same = _fields("Front kept", back="same answer")
+    anki.col.add_note("kept", same, TAGS.split())
+    anki.col.add_note("g2", _fields("Front two", back="old"), TAGS.split())
+    anki.col.add_note("old1", _fields("Retired front"), TAGS.split())
+    new2 = _fields("Front two", back="new")
+    note = {"kind": "maintainer", "note": "rewrote the answer",
+            "hash": note_fields_hash(new2)}
+    folder = _write_source(
+        tmp_path, {DECK: ("v2", [("kept", same, TAGS), ("g2", new2, TAGS)], None)},
+        change_notes={"g2": [note]},
+        retired={DECK: {"old1": {"identity": "Retired front", "reason": "reworded",
+                                 "superseded_by": ["kept"]}}})
+    _configure(anki, folder)
+    captured = _capture_update_items(monkeypatch)
+
+    _update(anki, accept=False)
+
+    items = captured[0]
+    assert not any(i[0] == "group_note" for i in items)
+    assert _card_detail(items, "kept") is None
+    assert _card_detail(items, "g2")["change_notes"] == [note]
+    retired = [i for i in items if i[0] == "retired"]
+    assert retired == [("retired", "Retired front", "reworded")], retired
+
+
 def test_review_box_starts_empty_with_nothing_summarized(anki, tmp_path):
     """Default: the confirmation previews the incoming cards inline, with a cloze
     note's deletions filled in rather than blanked. A row's feedback box is
@@ -7563,9 +7643,9 @@ def test_a_swept_preview_download_does_not_double_count_its_conversions(
 
 
 # ------------------------------------ preview counts vs. what actually imports
-def test_deck_summary_does_not_count_an_old_skip_as_new(anki, tmp_path):
-    """An old skip comes back waiting at Later, so the update will not import it
-    unless the learner changes the row: the deck summary must not count it as new."""
+def test_deck_summary_counts_a_waiting_later_row_and_names_it(anki, tmp_path):
+    """An old skip comes back waiting at Later: its row is in the list, so the deck
+    summary counts it, and says it is waiting rather than pitching it as an import."""
     from internpearls import config
     deck = _source_with_two_new_cards(anki, tmp_path)
     config.save_declined({
@@ -7574,8 +7654,30 @@ def test_deck_summary_does_not_count_an_old_skip_as_new(anki, tmp_path):
 
     texts = _all_text(_snapshot_update_confirmation(anki))
 
-    assert "1 new" in texts
-    assert "2 new" not in texts
+    assert "0 kept · 2 new (1 waiting at Later)" in texts
+
+
+def test_deck_summary_counts_a_held_row_that_does_not_wait_as_plain_new(anki, tmp_path):
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-new-b": _held(deck)})
+
+    texts = _all_text(_snapshot_update_confirmation(anki))
+
+    assert "0 kept · 2 new" in texts and "waiting at Later" not in texts
+
+
+def test_deck_summary_counts_a_waiting_changed_row_and_names_it(anki, tmp_path):
+    from internpearls import config, logic
+    deck = _source_updating_card_a(anki, tmp_path)
+    same = logic.note_fields_hash(_fields("front a, revised"))
+    config.save_declined({"guid-a": {
+        "state": "held", "front": "front a", "deck": deck, "decided": "2026-08-01",
+        "hash": same, "note": "check the wording first"}})
+
+    texts = _all_text(_snapshot_update_confirmation(anki))
+
+    assert "1 kept (1 changing, 1 waiting at Later) · 0 new" in texts
 
 
 def test_deck_summary_counts_exclude_a_standing_keep(anki, tmp_path):
@@ -7969,6 +8071,59 @@ def test_startup_nudge_skips_a_held_card_in_an_excluded_deck(anki):
 
     assert anki.gui.tooltips == [
         "Intern Pearls: 1 card waiting for later. Run Update my decks to finish it."]
+
+
+def _two_old_skips():
+    from internpearls import config
+    config.save_declined({
+        g: {"state": "skip", "front": g, "deck": DECK, "decided": "2026-08-01",
+            "hash": ""} for g in ("g1", "g2")})
+
+
+def test_startup_nudge_leaves_out_a_card_the_local_source_retired(anki, tmp_path):
+    """The first launch after Skip became Later counted every old skip, including one
+    whose card the source has since retired, which the first run then drops."""
+    from internpearls import background
+    _two_old_skips()
+    _configure(anki, _write_source(
+        tmp_path, {DECK: ("v1", [("g1", _fields("front one"), TAGS)], None)},
+        retired={DECK: {"g2": {"identity": "front two", "reason": "merged",
+                               "superseded_by": []}}}))
+
+    background._held_cards_nudge()
+
+    assert anki.gui.tooltips == [
+        "Intern Pearls: 1 card waiting for later. Run Update my decks to finish it."]
+
+
+def test_startup_nudge_counts_every_held_card_without_a_local_manifest(
+        anki, tmp_path, monkeypatch):
+    """A GitHub source has no copy on disk, and the reminder fetches nothing, so it
+    counts the registry as it stands; so does a local folder it cannot read."""
+    from internpearls import background, sync
+
+    fetched = []
+
+    def recording_fetch(*a, **kw):
+        fetched.append(a)
+        raise RuntimeError("offline")
+    monkeypatch.setattr(sync, "_gh_raw", recording_fetch)
+    folder = _write_source(
+        tmp_path, {DECK: ("v1", [("g1", _fields("front one"), TAGS)], None)},
+        retired={DECK: {"g2": {"identity": "front two", "reason": "merged",
+                               "superseded_by": []}}})
+    for conf in ({"github_decks_repo": "someone/decks", "decks_dir": folder},
+                 {"decks_dir": str(tmp_path / "missing")}):
+        _two_old_skips()
+        anki.mw._config = conf
+        anki.gui.tooltips.clear()
+
+        background._held_cards_nudge()
+
+        assert anki.gui.tooltips == [
+            "Intern Pearls: 2 cards waiting for later. Run Update my decks to finish "
+            "them."], conf
+    assert fetched == []
 
 
 def test_a_held_card_whose_deck_left_the_source_is_released(anki, tmp_path):

@@ -185,7 +185,7 @@ def test_a_wide_deck_label_is_elided_by_pixels_not_by_character_count():
     assert "…" in box.text() and box.toolTip() == f"Root::{name}"
     # The other half of the rule: an ordinary name, which is most of a list, is left
     # exactly as it is.
-    assert dialogs._fit_label("Pharmacology") == "Pharmacology"
+    assert dialogs._fit_label("Example Deck") == "Example Deck"
 
 
 def test_the_source_options_stack_rather_than_share_a_row(shot):

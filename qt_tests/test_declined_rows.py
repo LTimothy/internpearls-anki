@@ -100,3 +100,31 @@ def test_an_expanded_declined_row_lines_its_body_up_with_its_own_text():
     assert (widget_rect(s.dialog, body_line).left()
             == widget_rect(s.dialog, _primary(s.dialog, q, DECLINED)).left()), (
         "an expanded body no longer starts under its own row's text")
+
+
+def test_a_rows_decision_caption_sits_in_its_text_column():
+    """The caption a decision shows (Later's, Keep's) used to start at the row's left
+    edge, under the caret, while the note lines above it sit in the text column."""
+    _, q = harness.bootstrap()
+    s = harness.render("confirm", declined=True, size=(660, 900))
+    for marker, caption in ((DECLINED, "Waiting for this card to be updated."),
+                            (KEPT, "Your card stays as it is.")):
+        primary = widget_rect(s.dialog, _primary(s.dialog, q, marker))
+        line = widget_rect(s.dialog, _primary(s.dialog, q, caption))
+        assert line.left() == primary.left(), (
+            f"{caption!r} starts at x={line.left()}, its row's text at {primary.left()}")
+        assert line.top() > primary.bottom()
+
+
+def test_a_rows_note_box_sits_under_its_caption():
+    _, q = harness.bootstrap()
+    s = harness.render("confirm", declined=True, expand=(0,), size=(660, 900))
+    link = [b for b in s.dialog.findChildren(q.QPushButton)
+            if b.isVisible() and b.text() == "Add note"]
+    assert link, "the expanded row offers no Add note link"
+    link[0].click()
+    harness.app().processEvents()
+    boxes = [b for b in s.dialog.findChildren(q.QPlainTextEdit) if b.isVisible()]
+    assert len(boxes) == 1
+    primary = widget_rect(s.dialog, _primary(s.dialog, q, DECLINED))
+    assert widget_rect(s.dialog, boxes[0]).left() == primary.left()

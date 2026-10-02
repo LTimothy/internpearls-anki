@@ -3,8 +3,8 @@ must not depend on how many cards are pending.
 
 widgets.StreamingList's own docstring has the measured cost this bounds: about 2ms per
 card to build and show a row, offscreen. Building every row for a large first sync
-(nearly 3,000 cards, the largest deck this add-on ships today) up front would freeze the UI for
-5.7 seconds with no feedback and no way out before the dialog even appears. Building
+(about 3,000 cards) up front would freeze the UI for about 6 seconds with no feedback
+and no way out before the dialog even appears. Building
 only the first batch, and the rest only as the reader scrolls near it, is what keeps
 the screen's open time flat regardless of the backlog.
 """
@@ -12,8 +12,8 @@ import time
 
 import harness
 
-# Comfortably past the largest deck this add-on ships today (nearly 3,000 cards), so this
-# guards the property at a scale nothing currently shipped reaches.
+# A large first sync, about 3,000 cards, so this guards the property at a size where
+# building every row up front would plainly freeze the screen.
 _PENDING = 3000
 
 # 250ms is generous over the ~2ms/card measured cost of building only the visible batch
