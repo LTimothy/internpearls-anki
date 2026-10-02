@@ -1886,3 +1886,57 @@ def test_negative_initial_credits_are_rejected():
         ReplayPlatform(checkpoint_credits=-1)
 
     assert error.value.code == "invalid-action"
+
+
+# What the browser demo's Python lacks: no ssl module (so no HTTPSHandler) and no
+# threads. Set up before anything imports urllib or starts a thread.
+_PYODIDE_LIMITS = """
+import sys
+sys.modules["ssl"] = None
+import _thread
+import threading
+
+def _no_threads(*_a, **_k):
+    raise RuntimeError("can't start new thread")
+
+_thread.start_new_thread = _no_threads
+for _name in ("_start_new_thread", "_start_joinable_thread"):
+    if hasattr(threading, _name):
+        setattr(threading, _name, _no_threads)
+"""
+
+
+def test_demo_boots_without_ssl_or_threads(tmp_path):
+    source = tmp_path / "source"
+    (source / "decks").mkdir(parents=True)
+    tag = "ExampleDeck"
+    mock_anki.make_apkg(str(source / "decks" / "one.apkg"), [
+        ("g1", ["Front one", "Back one", ""], tag),
+        ("g2", ["Front two", "Back two", ""], tag),
+    ], deck="Example Decks::One")
+    (source / "manifest.json").write_text(json.dumps({
+        "schema": 1,
+        "decks": [{"name": "Example Decks::One", "apkg": "decks/one.apkg",
+                   "version": "v1", "cards": 2}],
+        "scope_tag": tag, "export_deck": "Example Decks",
+    }), encoding="utf8")
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    environment = dict(os.environ)
+    environment["DEMO_SOURCE"] = str(source)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [os.path.join(root, "docs"), os.path.join(root, "tests"), root,
+         environment.get("PYTHONPATH", "")])
+    probe = subprocess.run(
+        [sys.executable, "-c", _PYODIDE_LIMITS + """
+import json
+import demo_harness as harness
+
+state = json.loads(harness.boot())
+assert sum(len(d["cards"]) for d in state["decks"]) == 2, state
+menu = json.loads(harness.handle_worker_message(
+    json.dumps({"type": "menu", "payload": {}})))
+assert menu["menu"], menu
+"""],
+        cwd=root, env=environment, capture_output=True, text=True)
+
+    assert probe.returncode == 0, probe.stdout + probe.stderr
