@@ -180,6 +180,19 @@ def test_pair_key_format():
     assert pair_key(3, 1) == "1:3"
 
 
+def _reference_seconds():
+    """Time of a small scan on this machine right now. A bound that passes on a quiet
+    machine in absolute seconds may also pass by being a multiple of this, which moves
+    with load (a busy machine slowed the big scan about 10x but the Python loop 2x, so
+    only the same code is a fair yardstick)."""
+    vocab = [f"word{i}" for i in range(5000)]
+    left = _synthetic_rows(400, vocab, seed=5)
+    right = _synthetic_rows(4000, vocab, seed=6)
+    start = time.monotonic()
+    find_candidates(left, right, threshold=0.5, top=3)
+    return time.monotonic() - start
+
+
 def _synthetic_rows(n, vocab, seed):
     rng = random.Random(seed)
     rows = []
@@ -196,20 +209,26 @@ def test_find_candidates_timing_bound():
     vocab = [f"word{i}" for i in range(5000)]
     left = _synthetic_rows(4000, vocab, seed=1)
     right = _synthetic_rows(40000, vocab, seed=2)
+    reference = _reference_seconds()
     start = time.monotonic()
     find_candidates(left, right, threshold=0.5, top=3)
     elapsed = time.monotonic() - start
-    assert elapsed < 10.0
+    # The scan is about 50 times the reference one; a brute-force pass would be far past
+    # 150 times it.
+    assert elapsed < 10.0 or elapsed < 150 * reference, (
+        f"{elapsed:.1f}s against a {reference:.2f}s reference scan")
 
 
 def test_find_candidates_timing_small_pool_is_fast():
     vocab = [f"word{i}" for i in range(5000)]
     left = _synthetic_rows(4000, vocab, seed=3)
     right = _synthetic_rows(800, vocab, seed=4)
+    reference = _reference_seconds()
     start = time.monotonic()
     find_candidates(left, right, threshold=0.5, top=3)
     elapsed = time.monotonic() - start
-    assert elapsed < 1.0
+    assert elapsed < 1.0 or elapsed < 6 * reference, (
+        f"{elapsed:.2f}s against a {reference:.2f}s reference scan")
 
 
 def _score(left_text, right_text, **kw):
