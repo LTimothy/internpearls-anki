@@ -8102,9 +8102,12 @@ def test_startup_nudge_counts_every_held_card_without_a_local_manifest(
     counts the registry as it stands; so does a local folder it cannot read."""
     from internpearls import background, sync
 
-    def no_fetch(*a, **kw):
-        raise AssertionError("the startup reminder must not fetch")
-    monkeypatch.setattr(sync, "_gh_raw", no_fetch)
+    fetched = []
+
+    def recording_fetch(*a, **kw):
+        fetched.append(a)
+        raise RuntimeError("offline")
+    monkeypatch.setattr(sync, "_gh_raw", recording_fetch)
     folder = _write_source(
         tmp_path, {DECK: ("v1", [("g1", _fields("front one"), TAGS)], None)},
         retired={DECK: {"g2": {"identity": "front two", "reason": "merged",
@@ -8120,6 +8123,7 @@ def test_startup_nudge_counts_every_held_card_without_a_local_manifest(
         assert anki.gui.tooltips == [
             "Intern Pearls: 2 cards waiting for later. Run Update my decks to finish "
             "them."], conf
+    assert fetched == []
 
 
 def test_a_held_card_whose_deck_left_the_source_is_released(anki, tmp_path):
