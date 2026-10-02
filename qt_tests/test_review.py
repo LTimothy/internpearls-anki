@@ -94,3 +94,57 @@ def test_review_controls_name_the_card_and_feedback_field():
     caption = next(label for label in row.findChildren(QLabel)
                    if label.text() == review._later_caption("new"))
     assert caption.buddy() is box
+
+
+def _displayed(label):
+    """What a label puts on screen. A label left on AutoText guesses whether its text is
+    markup, and guesses differently for "&lt;" and "&amp;", so any label carrying '<'
+    or '&' must say which it is."""
+    from aqt.qt import QTextDocument, Qt
+    text, fmt = label.text(), label.textFormat()
+    assert not (fmt == Qt.TextFormat.AutoText and ("<" in text or "&" in text)), (
+        f"label left to guess its format: {text!r}")
+    if fmt == Qt.TextFormat.PlainText:
+        return text
+    doc = QTextDocument()
+    doc.setHtml(text)
+    return doc.toPlainText()
+
+
+def test_source_text_on_the_update_screen_reads_as_written():
+    """A deck heading, a moved row, a retired row and a folded group's card names, each
+    carrying '<' or '&' from the deck source, render as those characters."""
+    harness.bootstrap()
+    harness.app()
+    from internpearls import review
+    from internpearls.widgets import StreamingList
+    cards = [("card", "Deck", {"guid": f"g{i}", "kind": "changed",
+                               "fields": [("Front", f"Tom &amp; Jerry &lt;6{i}"),
+                                          ("Back", "b")]})
+             for i in range(6)]
+    members = []
+    for i, card in enumerate(cards):
+        if i:
+            members.append(("sep", "grouped"))
+        members.append(card)
+    items = [("header", "A<b>B & C"),
+             ("moved", "MAP &lt;60 moved", "A&lt;b&gt;B"),
+             ("sep",),
+             ("retired", "Is it &lt;60?", "split <2>"),
+             ("group_note", {"kind": "maintainer", "note": "a shared note"}, 6)
+             ] + members
+    body, _boxes, flush = review.build_update_body(
+        items, {}, {}, {}, {}, "", lambda: "", "safety")
+    body.resize(640, 900)
+    body.show()
+    for stream in body.findChildren(StreamingList):
+        stream.fill_all()
+    harness.app().processEvents()
+    shown = [_displayed(l) for l in body.findChildren(QLabel)]
+    flush()
+    assert "A<b>B & C" in shown
+    assert "MAP <60 moved" in shown
+    assert "→ A<b>B" in shown
+    assert "Is it <60?" in shown
+    assert "split <2>" in shown
+    assert "Tom & Jerry <60" in shown, shown

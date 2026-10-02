@@ -166,12 +166,16 @@ def test_installed_state_is_specific_to_source(anki, tmp_path):
     assert config._load_json(config.INSTALLED, {}) == {}
 
 
-def test_import_explicitly_updates_older_notes_for_sync_and_restore(anki, monkeypatch):
+def test_import_explicitly_updates_older_notes_for_sync_and_restore(anki, tmp_path,
+                                                                   monkeypatch):
     from internpearls import collection
     requests = []
     monkeypatch.setattr(anki.col, 'import_anki_package', requests.append)
-    collection._import_apkg('synthetic.apkg')
-    collection._import_apkg('backup.apkg', with_scheduling=True)
+    synthetic, backup = str(tmp_path / 'synthetic.apkg'), str(tmp_path / 'backup.apkg')
+    for path in (synthetic, backup):
+        mock_anki.make_apkg(path, [('g1', _fields('Question'), TAGS)], deck=DECK)
+    collection._import_apkg(synthetic)
+    collection._import_apkg(backup, with_scheduling=True)
     assert [getattr(r.options, 'update_notes', None) for r in requests] == [1, 1]
     assert all(r.options.merge_notetypes is False for r in requests)
 

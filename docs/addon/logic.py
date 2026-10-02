@@ -11,8 +11,12 @@ import html
 import json
 import os
 import re
+import shutil
 import sqlite3
+import stat
+import struct
 import tempfile
+import unicodedata
 import zipfile
 
 from .ai_logic import is_generated_guid
@@ -494,6 +498,201 @@ def find_stranded_pairs(superseded, existing_front_to_guid, live_guids=(), live_
     return out
 
 
+# What a deck package may be before anything in it is unpacked. Real packages run to about
+# 40 MB for a deck with pictures and about 200 MB and a thousand files for a whole
+# collection export with media, so these leave wide headroom and only stop a package no
+# deck needs: one that would fill the disk or memory on the main thread mid-sync.
+APKG_MAX_BYTES = 512 * 1024 * 1024          # the .apkg file itself
+APKG_MAX_EXPANDED = 2 * 1024 * 1024 * 1024  # every member, unpacked
+APKG_MAX_MEMBER = 1024 * 1024 * 1024        # any one member, unpacked
+APKG_MAX_MEMBERS = 50000
+# Every central directory entry takes at least 46 bytes, so a directory larger than this
+# could list more entries than APKG_MAX_MEMBERS. A real one is tens of KB.
+_ZIP_ENTRY_MIN = 46
+_MEDIA_INDEX_MAX = 32 * 1024 * 1024
+
+
+class PackageLimitError(RuntimeError):
+    """A package refused for its size or shape before anything in it was unpacked."""
+
+
+def _size_text(n):
+    gb = n / (1024 ** 3)
+    return f"{gb:g} GB" if gb >= 1 else f"{n / (1024 ** 2):g} MB"
+
+
+def _zip_directory_size(path):
+    """(entry count, directory bytes) from the archive's end records, or None when there
+    is no end record (zipfile then reports the file as not a zip).
+
+    Read the way zipfile reads them, so the numbers are the ones it will act on: the
+    32-bit end record at the very end when it is there, else the last one in the final
+    64 KB, and a zip64 record whenever a zip64 locator sits in front of it, whatever
+    the 32-bit fields say (a writer may saturate those). zipfile parses as many bytes of
+    directory as the record says, so the directory size is what bounds the work, and a
+    record that undercounts its entries can't hide a large one. Where a zip64 record
+    could be found two ways (next to its locator, or at the offset the locator names)
+    the larger reading wins."""
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        start = max(0, size - (22 + 65535))
+        fh.seek(start)
+        tail = fh.read()
+        i = len(tail) - 22
+        if not (i >= 0 and tail[i:i + 4] == b"PK\x05\x06" and tail[-2:] == b"\0\0"):
+            i = tail.rfind(b"PK\x05\x06")
+        if i < 0 or len(tail) < i + 22:
+            return None
+        entries, cd_size = struct.unpack("<HI", tail[i + 10:i + 16])
+        end_at = start + i
+        if end_at >= 20:
+            fh.seek(end_at - 20)
+            locator = fh.read(20)
+            if len(locator) == 20 and locator[:4] == b"PK\x06\x07":
+                named = struct.unpack("<Q", locator[8:16])[0]
+                found = []
+                for at in {end_at - 20 - 56, named}:
+                    if not 0 <= at <= size - 56:
+                        continue
+                    fh.seek(at)
+                    record = fh.read(56)
+                    if record[:4] == b"PK\x06\x06":
+                        found.append(struct.unpack("<QQ", record[32:48]))
+                if found:
+                    entries = max(e for e, _ in found)
+                    cd_size = max(c for _, c in found)
+        return entries, cd_size
+
+
+def check_apkg_limits(path):
+    """Refuse a package whose size or shape no deck needs, from its zip directory alone.
+
+    Raises PackageLimitError naming what was over; a file that isn't a zip at all raises
+    zipfile.BadZipFile as before. The unpacked sizes are the ones the directory declares.
+    zipfile never writes more than that for a member and checks its CRC, but Anki's own
+    importer reads the stream and ignores them, so a package handed to it directly goes
+    through copy_apkg_checked first.
+    """
+    st = os.stat(path)
+    if not stat.S_ISREG(st.st_mode):
+        raise PackageLimitError("This .apkg isn't a regular file, so it wasn't opened.")
+    if st.st_size > APKG_MAX_BYTES:
+        raise PackageLimitError(f"This .apkg is larger than {_size_text(APKG_MAX_BYTES)}, "
+                                "more than any deck needs, so it wasn't opened.")
+    directory = _zip_directory_size(path)
+    if directory is not None:
+        entries, cd_size = directory
+        if entries > APKG_MAX_MEMBERS:
+            raise PackageLimitError(f"This .apkg holds more than {APKG_MAX_MEMBERS:,} "
+                                    "files, more than any deck needs, so it wasn't "
+                                    "opened.")
+        if cd_size // _ZIP_ENTRY_MIN > APKG_MAX_MEMBERS:
+            raise PackageLimitError("This .apkg's file list is too large, more than any "
+                                    "deck needs, so it wasn't opened.")
+    with zipfile.ZipFile(path) as z:
+        infos = z.infolist()
+    if len(infos) > APKG_MAX_MEMBERS:
+        raise PackageLimitError(f"This .apkg holds more than {APKG_MAX_MEMBERS:,} files, "
+                                "more than any deck needs, so it wasn't opened.")
+    if any(i.file_size > APKG_MAX_MEMBER for i in infos):
+        raise PackageLimitError(f"A file in this .apkg would unpack to more than "
+                                f"{_size_text(APKG_MAX_MEMBER)}, so it wasn't opened.")
+    if sum(i.file_size for i in infos) > APKG_MAX_EXPANDED:
+        raise PackageLimitError(f"This .apkg would unpack to more than "
+                                f"{_size_text(APKG_MAX_EXPANDED)}, more than any deck "
+                                "needs, so it wasn't opened.")
+
+
+def copy_apkg_checked(src, out):
+    """Copy the package at `src` to `out` member by member through zipfile, after
+    check_apkg_limits. zipfile writes no more than each member's declared size and
+    raises zipfile.BadZipFile on a CRC mismatch, so the copy holds exactly what the
+    limits were checked against, whatever the original's streams say."""
+    check_apkg_limits(src)
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED,
+                                                      compresslevel=1) as zout:
+        for info in zin.infolist():
+            if info.is_dir():
+                continue
+            with zin.open(info) as fin, zout.open(info.filename, "w",
+                                                  force_zip64=True) as fout:
+                shutil.copyfileobj(fin, fout, 1024 * 1024)
+
+
+def safe_source_path(path):
+    """`path` from a manifest, as a plain relative path that stays inside the source.
+
+    Absolute paths, drive letters, backslashes, '..' segments and NUL are refused with
+    a RuntimeError; '.' segments and doubled slashes are dropped. A local folder source
+    also checks where the path resolves (sync._local_source_file), since a symlink
+    inside the folder can still point out of it.
+    """
+    shown = repr(path) if not isinstance(path, str) else f'"{path}"'
+    bad = RuntimeError(f"the manifest path {shown} isn't a plain path inside the deck "
+                       "source, so it wasn't read")
+    if not isinstance(path, str) or not path or "\0" in path or "\\" in path:
+        raise bad
+    if path.startswith("/") or re.match(r"^[A-Za-z]:", path):
+        raise bad
+    parts = [p for p in path.split("/") if p not in ("", ".")]
+    if not parts or ".." in parts:
+        raise bad
+    return "/".join(parts)
+
+
+class _CappedWriter:
+    """A file wrapper that refuses to grow past APKG_MAX_MEMBER."""
+
+    def __init__(self, fh):
+        self._fh, self._written = fh, 0
+
+    def write(self, data):
+        self._written += len(data)
+        if self._written > APKG_MAX_MEMBER:
+            raise PackageLimitError("This .apkg's collection would unpack to more than "
+                                    f"{_size_text(APKG_MAX_MEMBER)}, so it wasn't "
+                                    "opened.")
+        return self._fh.write(data)
+
+
+# Unicode's Default_Ignorable_Code_Point ranges: characters a renderer draws as nothing.
+_IGNORABLE = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160),
+              (0x17B4, 0x17B5), (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E),
+              (0x2060, 0x206F), (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF),
+              (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3),
+              (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
+
+
+def _is_hidden(ch):
+    """A character that draws nothing (or reorders what is drawn) but a model still
+    reads: Unicode's default-ignorable code points (zero-width, bidi controls, tags,
+    variation selectors), any other format character, and control characters other
+    than tab and line breaks."""
+    if ch in "\t\n\r":
+        return False
+    o = ord(ch)
+    return (unicodedata.category(ch) in ("Cf", "Cc")
+            or any(lo <= o <= hi for lo, hi in _IGNORABLE))
+
+
+def reveal_hidden(text):
+    """(`text` with every hidden character written as [U+XXXX], how many there were)."""
+    out, count = [], 0
+    for ch in text:
+        if _is_hidden(ch):
+            out.append(f"[U+{ord(ch):04X}]")
+            count += 1
+        else:
+            out.append(ch)
+    return "".join(out), count
+
+
+def strip_hidden(text):
+    """`text` without its hidden characters (see reveal_hidden)."""
+    return "".join(ch for ch in text if not _is_hidden(ch))
+
+
 @contextlib.contextmanager
 def _apkg_db(path):
     """Yield (open sqlite connection, is_newer_format) for an .apkg's real collection.
@@ -511,7 +710,12 @@ def _apkg_db(path):
     zstandard is not stdlib and Anki does not ship it, so on a modern package the
     decode is impossible here and the reader stops with NEWER_APKG_ERROR: a loud
     "re-export this file" beats a silent empty result.
+
+    The package's limits are checked first (check_apkg_limits), and a zstd member is
+    decoded no further than APKG_MAX_MEMBER, since its zip entry can't say how large
+    it decodes to.
     """
+    check_apkg_limits(path)
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         newer = "collection.anki21b" in names
@@ -533,7 +737,7 @@ def _apkg_db(path):
                     raise RuntimeError(NEWER_APKG_ERROR) from None
                 db = os.path.join(d, "decoded.anki2")
                 with open(src, "rb") as fh, open(db, "wb") as out:
-                    zstandard.ZstdDecompressor().copy_stream(fh, out)
+                    zstandard.ZstdDecompressor().copy_stream(fh, _CappedWriter(out))
             else:
                 db = src
             con = sqlite3.connect(db)
@@ -600,11 +804,15 @@ def apkg_media_index(path):
     resolve one at all.
     """
     try:
+        check_apkg_limits(path)
         with zipfile.ZipFile(path) as z:
             if "media" not in z.namelist():
                 return {}
+            if z.getinfo("media").file_size > _MEDIA_INDEX_MAX:
+                return {}
             entries = json.loads(z.read("media").decode("utf8"))
-    except (OSError, zipfile.BadZipFile, ValueError, UnicodeDecodeError):
+    except (OSError, zipfile.BadZipFile, ValueError, UnicodeDecodeError,
+            PackageLimitError):
         return {}
     if not isinstance(entries, dict):
         return {}
@@ -625,6 +833,7 @@ def extract_apkg_media(path, index, names, dest):
     if not wanted:
         return out
     try:
+        check_apkg_limits(path)
         os.makedirs(dest, exist_ok=True)
         with zipfile.ZipFile(path) as z:
             members = set(z.namelist())
@@ -636,7 +845,7 @@ def extract_apkg_media(path, index, names, dest):
                     with z.open(index[name]) as src, open(local, "wb") as fh:
                         fh.write(src.read())
                 out[name] = local
-    except (OSError, zipfile.BadZipFile):
+    except (OSError, zipfile.BadZipFile, PackageLimitError):
         return out
     return out
 
@@ -1377,6 +1586,7 @@ def write_personalized(src, remap, out, drop=frozenset(), prepare_notetypes=None
     needs zstd compression, which nothing here has, so the honest answer is the re-export
     instruction.
     """
+    check_apkg_limits(src)
     with tempfile.TemporaryDirectory() as d:
         with zipfile.ZipFile(src) as z:
             names = z.namelist()

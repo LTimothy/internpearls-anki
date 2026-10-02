@@ -43,7 +43,7 @@ class _Response:
 
 
 def _urlopen(monkeypatch, result, capture=None):
-    """Point net's urlopen at `result`: a response to return, or an exception to raise."""
+    """Point net's opener at `result`: a response to return, or an exception to raise."""
     from internpearls import net
 
     def fake(req, timeout=None):
@@ -53,7 +53,7 @@ def _urlopen(monkeypatch, result, capture=None):
             raise result
         return result
 
-    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(net, "_open", fake)
 
 
 def _http_error(code, headers=None, body=b""):
@@ -187,7 +187,7 @@ def test_gh_public_raw_with_a_bad_token_retries_without_it(monkeypatch):
             raise _http_error(403)
         return _Response(b"{}")
 
-    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(net, "_open", fake)
     data = net._gh_public_raw("version.json", token="badtoken")
     assert data == b"{}"
     assert calls == ["Bearer badtoken", None]
@@ -204,7 +204,7 @@ def test_gh_public_raw_propagates_a_transport_error_on_the_token_attempt_without
         calls.append(req.full_url)
         raise urllib.error.URLError("nodename nor servname provided")
 
-    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(net, "_open", fake)
     with pytest.raises(net.TransportError):
         net._gh_public_raw("version.json", token="t0ken")
     assert len(calls) == 1, "a dead connection must not be retried a second time"
@@ -221,7 +221,7 @@ def test_gh_public_raw_propagates_a_server_error_on_the_token_attempt_without_re
         calls.append(req.full_url)
         raise _http_error(500)
 
-    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(net, "_open", fake)
     with pytest.raises(RuntimeError) as e:
         net._gh_public_raw("version.json", token="t0ken")
     assert "HTTP 500" in str(e.value)
@@ -243,7 +243,7 @@ def test_gh_public_raw_chains_through_token_then_rate_limit_then_cdn(monkeypatch
             raise _http_error(403, headers={"X-RateLimit-Remaining": "0"})
         return _Response(b"cdn bytes")
 
-    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(net, "_open", fake)
     data = net._gh_public_raw("version.json", ref="main", token="badtoken")
     assert data == b"cdn bytes"
     assert seen == [
@@ -268,7 +268,7 @@ def test_gh_public_raw_falls_back_to_the_raw_cdn_when_rate_limited(monkeypatch):
             raise _http_error(403, headers={"X-RateLimit-Remaining": "0"})
         return _Response(b"cdn bytes")
 
-    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(net, "_open", fake)
     data = net._gh_public_raw("version.json", ref="main")
     assert data == b"cdn bytes"
     assert seen_urls == [
@@ -338,13 +338,14 @@ def test_the_configured_timeout_reaches_urlopen(monkeypatch):
     assert seen[0][1] == net._BG_TIMEOUT
 
 
-def test_without_a_callback_the_body_is_read_in_one_call(monkeypatch):
-    """The existing callers' path, unchanged: no chunk loop, no per-chunk cost."""
+def test_without_a_callback_the_whole_body_still_comes_back(monkeypatch):
+    """Read in bounded pieces either way, so the size cap and the deadline apply to
+    every fetch, not only the ones that report progress."""
     from internpearls import net
     response = _Response(b"x" * (net._CHUNK * 3))
     _urlopen(monkeypatch, response)
     assert len(net._http_get("http://example.invalid")) == net._CHUNK * 3
-    assert len(response.reads) == 1
+    assert max(response.reads) <= net._CHUNK
 
 
 def test_a_callback_gets_the_running_total_and_the_whole_body_still_comes_back(monkeypatch):
@@ -641,3 +642,264 @@ def test_a_background_update_with_a_stale_package_installs_nothing(monkeypatch):
     result = updates._addon_update_work(True)
     assert result["info"]["version"] == "99.0.0"
     assert result["package_path"] is None
+
+
+# ------------------------------------------------------------- real local sockets
+# The tests below talk to an HTTP server on 127.0.0.1, because what they check (which
+# headers a redirect carries, a host that trickles bytes) happens inside urllib and the
+# socket, below anything a stubbed urlopen can see.
+
+def _serve(handler_fn):
+    """Start a local HTTP server whose GET is `handler_fn(request_handler)`. Returns
+    (base_url, seen) where `seen` lists (path, Authorization header) per request."""
+    import http.server
+    import threading
+    seen = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append((self.path, self.headers.get("Authorization")))
+            handler_fn(self)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_address[1]}", seen, server
+
+
+def _reply(h, body=b"ok", status=200, headers=()):
+    h.send_response(status)
+    for k, v in headers:
+        h.send_header(k, v)
+    h.send_header("Content-Length", str(len(body)))
+    h.end_headers()
+    h.wfile.write(body)
+
+
+def test_a_redirect_to_another_host_does_not_carry_the_token():
+    from internpearls import net
+    other, other_seen, s2 = _serve(lambda h: _reply(h, b"elsewhere"))
+    base, seen, s1 = _serve(lambda h: _reply(h, b"", 302, [("Location", other + "/x")]))
+    try:
+        assert net._http_get(base + "/start", token="s3cret") == b"elsewhere"
+    finally:
+        s1.shutdown()
+        s2.shutdown()
+    assert seen == [("/start", "Bearer s3cret")]
+    assert other_seen == [("/x", None)]
+
+
+def test_a_redirect_within_the_same_host_keeps_the_token():
+    """GitHub answers a renamed repo with a same-host redirect, which a private repo
+    can only follow with its token."""
+    from internpearls import net
+
+    def handler(h):
+        if h.path == "/old":
+            _reply(h, b"", 301, [("Location", "/new")])
+        else:
+            _reply(h, b"moved")
+
+    base, seen, server = _serve(handler)
+    try:
+        assert net._http_get(base + "/old", token="s3cret") == b"moved"
+    finally:
+        server.shutdown()
+    assert seen == [("/old", "Bearer s3cret"), ("/new", "Bearer s3cret")]
+
+
+@pytest.mark.parametrize("old,new,keeps", [
+    ("https://api.github.com/a", "https://api.github.com/b", True),
+    ("https://api.github.com/a", "https://API.github.com:443/b", True),
+    ("https://api.github.com/a", "http://api.github.com/b", False),
+    ("https://api.github.com/a", "https://evil.example/b", False),
+    ("https://api.github.com/a", "https://api.github.com:8443/b", False),
+    ("https://api.github.com/a", "https://api.github.com.evil.example/b", False),
+])
+def test_only_a_same_origin_https_redirect_keeps_credentials(old, new, keeps):
+    from internpearls import net
+    assert net._keeps_credentials(old, new) is keeps
+
+
+def test_a_host_that_trickles_its_body_is_cut_off_at_the_deadline():
+    """One byte at a time, each well inside the per-read timeout, never finishes on
+    its own; the fetch has to give up on the clock instead."""
+    import time
+    from internpearls import net
+
+    def handler(h):
+        h.send_response(200)
+        h.send_header("Content-Length", "100000")
+        h.end_headers()
+        try:
+            for _ in range(100000):
+                h.wfile.write(b"x")
+                h.wfile.flush()
+                time.sleep(0.05)
+        except OSError:
+            pass
+
+    base, _seen, server = _serve(handler)
+    start = time.monotonic()
+    try:
+        with pytest.raises(net.TransportError, match="took too long"):
+            net._http_get(base + "/deck.apkg", timeout=5, deadline=0.5)
+    finally:
+        server.shutdown()
+    assert time.monotonic() - start < 3
+
+
+def test_a_host_that_trickles_its_headers_is_cut_off_at_the_deadline():
+    """The same stall before the body starts: urllib is still parsing headers, so only
+    closing the socket underneath it ends the wait."""
+    import time
+    from internpearls import net
+
+    def handler(h):
+        try:
+            h.wfile.write(b"HTTP/1.1 200 OK\r\n")
+            for _ in range(10000):
+                h.wfile.write(b"X-Slow: y\r\n")
+                h.wfile.flush()
+                time.sleep(0.05)
+        except OSError:
+            pass
+
+    base, _seen, server = _serve(handler)
+    start = time.monotonic()
+    try:
+        with pytest.raises(net.TransportError, match="took too long"):
+            net._http_get(base + "/manifest.json", timeout=5, deadline=0.5)
+    finally:
+        server.shutdown()
+    assert time.monotonic() - start < 3
+
+
+def test_a_fetch_inside_its_deadline_is_untouched():
+    from internpearls import net
+    base, _seen, server = _serve(lambda h: _reply(h, b"y" * 200000))
+    try:
+        assert net._http_get(base + "/f", deadline=10) == b"y" * 200000
+    finally:
+        server.shutdown()
+
+
+def test_the_deadline_follows_the_kind_of_fetch():
+    """A deck download gets the long bound, a manifest or version check the short one."""
+    from internpearls import net
+    assert net._deadline_for(net._DOWNLOAD_TIMEOUT) == net._DOWNLOAD_DEADLINE
+    assert net._deadline_for(net._CONNECT_TIMEOUT) == net._FETCH_DEADLINE
+    assert net._deadline_for(net._BG_TIMEOUT) == net._FETCH_DEADLINE
+    assert net._FETCH_DEADLINE < net._DOWNLOAD_DEADLINE
+
+
+def test_a_body_over_the_cap_is_refused_as_it_arrives(monkeypatch):
+    from internpearls import net
+    response = _Response(b"x" * (net._CHUNK * 4))
+    _urlopen(monkeypatch, response)
+    with pytest.raises(RuntimeError, match="larger than"):
+        net._http_get("https://example.com/deck.apkg", max_bytes=net._CHUNK * 2)
+    assert sum(response.reads) <= net._CHUNK * 3, "the read must stop near the cap"
+
+
+def test_a_declared_length_over_the_cap_is_refused_before_reading(monkeypatch):
+    from internpearls import net
+    response = _Response(b"x" * 10, headers={"Content-Length": str(10 ** 12)})
+    _urlopen(monkeypatch, response)
+    with pytest.raises(RuntimeError, match="larger than"):
+        net._http_get("https://example.com/deck.apkg", max_bytes=1000)
+    assert response.reads == []
+
+
+def test_a_body_at_the_cap_is_kept(monkeypatch):
+    from internpearls import net
+    _urlopen(monkeypatch, _Response(b"x" * 1000))
+    assert len(net._http_get("https://example.com/f", max_bytes=1000)) == 1000
+
+
+def test_a_deck_path_is_quoted_into_the_contents_url(monkeypatch):
+    """A path is the deck source's own text: a '?' or '#' in it must stay part of the
+    path rather than rewrite the query that picks the branch."""
+    from internpearls import net
+    seen = []
+    _urlopen(monkeypatch, _Response(b""), capture=seen)
+    net._gh_raw("owner/repo", "decks/A deck?ref=evil#x.apkg", None, "main")
+    assert seen[0][0].full_url == (
+        "https://api.github.com/repos/owner/repo/contents/"
+        "decks/A%20deck%3Fref%3Devil%23x.apkg?ref=main")
+
+
+def _trickle(h, head, line, forever=100):
+    """Send `head` at once, then `line` over and over, slowly."""
+    import time
+    try:
+        h.wfile.write(head)
+        h.wfile.flush()
+        for _ in range(forever):
+            h.wfile.write(line)
+            h.wfile.flush()
+            time.sleep(0.05)
+    except OSError:
+        pass
+
+
+@pytest.mark.parametrize("head,line", [
+    # A chunk-size line that never ends: urllib is inside readline, after the headers.
+    (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", b"0"),
+    # The last chunk, then trailer lines that never stop.
+    (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n",
+     b"X-Trailer: y\r\n"),
+])
+def test_a_stall_inside_a_chunked_body_is_cut_off_at_the_deadline(head, line):
+    """Once the headers are read urllib drops its own reference to the socket, so the
+    deadline has to reach the socket it recorded when the connection opened."""
+    import time
+    from internpearls import net
+    base, _seen, server = _serve(lambda h: _trickle(h, head, line))
+    start = time.monotonic()
+    try:
+        with pytest.raises(net.TransportError, match="took too long"):
+            net._http_get(base + "/deck.apkg", timeout=5, deadline=0.5)
+    finally:
+        server.shutdown()
+    assert time.monotonic() - start < 3
+
+
+def test_a_redirect_with_a_malformed_port_drops_the_token():
+    from internpearls import net
+    assert net._keeps_credentials("https://api.github.com/a",
+                                  "https://api.github.com:99999999/b") is False
+    assert net._keeps_credentials("https://api.github.com:x/a",
+                                  "https://api.github.com/b") is False
+
+
+def test_a_fetch_made_inside_another_leaves_the_outer_deadline_in_place(monkeypatch):
+    """A progress callback pumps the event loop, which can start another fetch on the
+    same thread; the outer fetch's watch must still be the current one afterwards."""
+    from internpearls import net
+    inner_base, _s, server = _serve(lambda h: _reply(h, b"inner"))
+    outer = []
+
+    def on_chunk(_n):
+        before = net._current.watch
+        net._http_get(inner_base + "/x")
+        outer.append(net._current.watch is before and before is not None)
+        return True
+
+    base, _s2, server2 = _serve(lambda h: _reply(h, b"outer"))
+    try:
+        assert net._http_get(base + "/y", on_chunk=on_chunk) == b"outer"
+    finally:
+        server.shutdown()
+        server2.shutdown()
+    assert outer == [True]
+
+
+@pytest.mark.parametrize("deadline,words", [(1, "over 1 second)"), (30, "over 30 seconds)"),
+                                            (1800, "over 30 minutes)")])
+def test_the_deadline_message_counts_in_words(deadline, words):
+    from internpearls import net
+    assert words in str(net._too_slow(deadline))
