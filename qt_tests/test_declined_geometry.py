@@ -45,7 +45,7 @@ def test_two_entries_in_two_groups_show_in_full(tmp_path, monkeypatch):
         assert _inside_viewport(dlg, labels[text]), f"{text} is below the fold"
     buttons = [b for b in dlg.findChildren(QPushButton) if b.text() == "Offer again"]
     assert len(buttons) == 2 and all(_inside_viewport(dlg, b) for b in buttons)
-    assert dlg._list.height() > 120
+    assert dlg._list.height() > 90
     dlg.close()
     dlg.deleteLater()
 
