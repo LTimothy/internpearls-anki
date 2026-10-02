@@ -189,6 +189,17 @@ def test_clamp_interval_caps_an_absurd_value():
     assert logic.clamp_interval_minutes(99999999) * 60 * 1000 < 2 ** 31
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_clamp_interval_treats_non_finite_as_invalid(bad):
+    # Python's json reads Infinity and NaN from a hand-edited config.json.
+    assert logic.clamp_interval_minutes(bad, default_minutes=15) == 15
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_clamp_night_mode_dim_percent_treats_non_finite_as_invalid(bad):
+    assert logic.clamp_night_mode_dim_percent(bad, default_percent=30) == 30
+
+
 # ----------------------------------------------------------- decide_addon_update_action
 def test_decide_update_action_none_when_current():
     assert logic.decide_addon_update_action(

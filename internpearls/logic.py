@@ -282,7 +282,7 @@ def clamp_interval_minutes(minutes, floor_minutes=1, default_minutes=15,
     """
     try:
         m = int(minutes)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         m = default_minutes
     return min(ceiling_minutes, max(floor_minutes, m))
 
