@@ -1606,3 +1606,46 @@ def test_generation_completes_on_live_timers_alone(monkeypatch):
     assert dlg.stack.currentWidget() is dlg.review_page
     assert dlg.session.cards
     dlg._retire_for_delete()
+
+
+def test_a_collection_duplicate_flag_lands_on_a_row_already_on_screen():
+    """The review shows before the collection lookup answers; when it does, the
+    row repaints with the reason naming the existing card and its deck, and the
+    decision moves to Skip."""
+    from PyQt6.QtWidgets import QLabel
+    mock, _ = harness.bootstrap()
+    harness.app()
+    from internpearls import ai_dialog
+
+    harness._ai_backend_available()
+    mock.col.add_note("learner-own", ["Which receptor does fenoldopam stimulate?",
+                                      "Selective D1 dopamine agonist", "", "", "", "", ""],
+                      [], deck="Pharm::Pressors")
+    dlg = harness.settled(ai_dialog._GenerateDialog())
+    s = dlg.session
+    s.cards = [{"note_type": "Study Deck - Basic",
+                "fields": {"Front": "Fenoldopam is a selective agonist at which "
+                                    "dopamine receptor?",
+                           "Back": "D1", "Why": "", "Dosing": "", "Notes": ""},
+                "tags": [], "images": [], "rationale": ""}]
+    s.image_data = {}
+    dlg._pending_prev_included = None
+    dlg.show()
+    try:
+        dlg._apply_review_state()
+        assert dlg.stack.currentWidget() is dlg.review_page
+        assert dlg.decision_cells[0].buttons["include"].isChecked()
+
+        dlg._wait_for_near()
+        harness.app().processEvents()
+        reasons = [lab.text() for lab in dlg.cards_scroll.widget().findChildren(QLabel)
+                   if "likely duplicate" in lab.text() and lab.isVisible()]
+        assert len(reasons) == 1
+        assert "Which receptor does fenoldopam stimulate?" in reasons[0]
+        assert "in Pharm::Pressors" in reasons[0]
+        assert dlg.decision_cells[0].buttons["skip"].isChecked()
+        assert s.included == [False]
+    finally:
+        dlg._retire_for_delete()
+        dlg.hide()
+        dlg.deleteLater()

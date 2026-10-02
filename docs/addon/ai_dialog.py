@@ -24,7 +24,7 @@ from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
                     QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
                     QSpinBox, QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
-from . import ai_cli, ai_logic, collection
+from . import ai_cli, ai_logic, collection, dupes
 from .ai_setup import (LABEL_W, _open_url, _safe_settle, _settle_min_size,
                        _wrapped_hint, run_connection_test_async,
                        start_backend_detection)
@@ -472,6 +472,8 @@ def _check_reason_row(entry, indent):
     existing = entry.get("existing")
     if existing:
         msg += f" &middot; existing card: &ldquo;{html.escape(existing)}&rdquo;"
+        if entry.get("deck"):
+            msg += f" in {html.escape(entry['deck'])}"
     role = "decline" if entry.get("level") == "block" else "updated"
     return _accent_row(f"<i>{msg}</i>", role, indent)
 
@@ -818,6 +820,15 @@ class _GenerateDialog(QDialog):
         self._expanded_rows = set()
         self._image_busy = set()
         self._image_workers = []
+        # The collection check: an index built once, off the main thread, and each
+        # draft text's closest existing note (or None) once a lookup has answered.
+        self._near_index = None
+        self._near_cache = {}
+        self._near_labels = {}
+        self._near_worker = None
+        self._near_dirty = False
+        self._near_failed = False
+        self._decided = set()        # review rows the learner set by hand
         self._retried_json = False   # the single-retry budget on malformed model output
         self._reply_chunks = []      # accumulated delta text; reset per _start_generation
         # Backend kinds with a "Test connection" run currently in flight, from
@@ -1967,6 +1978,8 @@ class _GenerateDialog(QDialog):
                 s.cards, s.included, s.notes = [], [], {}
                 s.updated, s.image_data = set(), {}
                 s.revision_shape_mismatch = False
+        # Indexes the collection while the assistant drafts.
+        self._refresh_near()
         # The depth the learner picked if they picked one, else the one the
         # material's own length and attachments imply (ai_logic.default_mode).
         # A check run always runs Thorough, whatever depth the draft used: the
@@ -2498,7 +2511,8 @@ class _GenerateDialog(QDialog):
         image_errors = _image_errors(s)
         s.checks = ai_logic.mechanical_checks(
             s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
-            image_errors)
+            image_errors, self._near_matches())
+        self._decided = set()
         default_included = [not any(c["level"] == "block" for c in per)
                             for per in s.checks]
         prev_included = self._pending_prev_included
@@ -2513,6 +2527,7 @@ class _GenerateDialog(QDialog):
         self._pending_prev_included = None
         self._rebuild_review(keep_place=False)
         self.stack.setCurrentWidget(self.review_page)
+        self._refresh_near()
 
     def _return_to_input_or_review(self):
         """Where a cancelled or failed request lands. A revision (Revise all)
@@ -2929,6 +2944,7 @@ class _GenerateDialog(QDialog):
         """
         s = self.session
         s.included[i] = state == "include"
+        self._decided.add(i)
         box = self.note_boxes.get(i)
         if box is not None:
             show_box = bool(box.toPlainText().strip()) or state == "skip"
@@ -3015,19 +3031,110 @@ class _GenerateDialog(QDialog):
             "Revise all" + (f" ({plural(len(s.notes), 'note')})" if s.notes else ""))
         self.check_btn.setEnabled(bool(s.cards))
 
-    def _recheck(self, i, force=True):
+    def _recheck(self, i, force=True, keep=()):
         """Recompute every card's checks after card i changed. Card i (when
         `force`), and any other card that just became blocked (a draft duplicate
-        of i), is forced to Skip; every other decision is left alone."""
+        of i), is forced to Skip unless it is in `keep`; every other decision is
+        left alone."""
         s = self.session
         was_blocked = [any(c["level"] == "block" for c in per) for per in s.checks]
         s.checks = ai_logic.mechanical_checks(
             s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
-            _image_errors(s))
+            _image_errors(s), self._near_matches())
         for j, per in enumerate(s.checks):
-            if any(c["level"] == "block" for c in per) and (
+            if any(c["level"] == "block" for c in per) and j not in keep and (
                     (force and j == i) or not (j < len(was_blocked) and was_blocked[j])):
                 s.included[j] = False
+        self._refresh_near()
+
+    # === collection duplicate check ===========================================
+    def _near_matches(self):
+        """{card index: {"front", "deck"}} for drafts a finished lookup found close
+        to an existing note. A draft not looked up yet has no entry; its flag
+        arrives with the lookup (see _near_arrived)."""
+        out = {}
+        for i, card in enumerate(self.session.cards):
+            row = self._near_cache.get(ai_logic.draft_text(card))
+            if row is None:
+                continue
+            if row[0] not in self._near_labels:
+                try:
+                    label = note_display_label(mw.col.get_note(row[0]).fields)
+                except Exception:
+                    label = None   # deleted since the index was built
+                self._near_labels[row[0]] = label
+            if self._near_labels[row[0]] is not None:
+                out[i] = {"front": self._near_labels[row[0]], "deck": row[2]}
+        return out
+
+    def _refresh_near(self):
+        """Look up drafts not yet checked against the collection, building the
+        index first if this is the first lookup. Collection rows are read here, on
+        the main thread; indexing and lookups run in the worker, one at a time."""
+        if self._near_failed:
+            return
+        if self._near_worker is not None:
+            self._near_dirty = True
+            return
+        texts = [t for t in (ai_logic.draft_text(c) for c in self.session.cards)
+                 if t not in self._near_cache]
+        index = self._near_index
+        if index is not None and not texts:
+            return
+        rows = None
+        if index is None:
+            try:
+                rows = collection.note_rows(mw.col)
+            except Exception:
+                self._near_failed = True   # the check stays exact-front only
+                return
+
+        def work(context):
+            built = index or dupes.build_index(rows, checkpoint=context.checkpoint)
+            return built, ai_logic.near_duplicates(texts, built, context.checkpoint)
+
+        def on_result(result):
+            self._near_worker = None
+            self._near_index, found = result
+            self._near_cache.update(found)
+            self._guard(self._near_arrived)
+
+        def on_error(_error):
+            self._near_worker = None
+            self._near_failed = True
+
+        request = new_work_request(
+            self, "duplicate-index", "ai.near_duplicates",
+            inputs={"rows": len(rows or ()), "drafts": len(texts)})
+        self._near_worker = platform().start_work(request, work, on_result, on_error)
+        self._near_dirty = False
+        self._near_worker.start()
+
+    def _near_arrived(self):
+        """A lookup answered. A review showing a draft it flags rechecks: a row the
+        learner has not decided moves to Skip, one they have keeps their choice."""
+        s = self.session
+        if self.stack.currentWidget() is not self.review_page or not s.checks:
+            if self._near_dirty:
+                self._refresh_near()
+            return
+        before = [[c for c in per if c["code"] == "duplicate"] for per in s.checks]
+        self._recheck(None, force=False, keep=self._decided)
+        after = [[c for c in per if c["code"] == "duplicate"] for per in s.checks]
+        if after != before:
+            self._rebuild_review()
+
+    def _wait_for_near(self, timeout=15):
+        """Test helper: deliver the duplicate lookup, and any lookup it queued,
+        without a live event loop."""
+        end = time.time() + timeout
+        while self._near_worker is not None and time.time() < end:
+            worker = self._near_worker
+            worker.join(max(0.0, end - time.time()))
+            wait_for_mock_work(worker)
+            if self._near_worker is worker:
+                QApplication.processEvents()
+                time.sleep(0.005)
 
     def _edit_card(self, i):
         """Hand-edit one card's fields and tags, right in the review list, in
@@ -3297,6 +3404,8 @@ class _GenerateDialog(QDialog):
 
         for handle in getattr(self, "_image_workers", ()):
             handle.cancel()
+        if getattr(self, "_near_worker", None) is not None:
+            self._near_worker.cancel()
 
         attach_worker = getattr(self, "_attach_worker", None)
         if (attach_worker is not None
