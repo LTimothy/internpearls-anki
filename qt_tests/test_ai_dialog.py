@@ -80,7 +80,7 @@ def test_wizard_renders_all_pages(monkeypatch):
               redact_texts=(): {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg.show()
     app.processEvents()
     assert dlg.stack.currentWidget() is dlg.input_page   # backend found
@@ -166,7 +166,7 @@ def test_import_enables_real_undo_action_with_the_native_shortcut(monkeypatch):
               redact_texts=(): {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg.show()
     dlg.source_box.setPlainText("Regional block landmarks and needle depths")
     dlg._start_generation()
@@ -214,7 +214,7 @@ def test_review_row_renders_a_real_image_thumbnail(monkeypatch, tmp_path):
     png_bytes = open(png, "rb").read()
     monkeypatch.setattr(ad, "fetch_card_image", lambda url: (png_bytes, "png"))
 
-    dlg = ad._GenerateDialog()
+    dlg = harness.settled(ad._GenerateDialog())
     dlg.source_box.setPlainText("Regional block landmarks and needle depths")
     dlg._start_generation()
     dlg._wait_for_worker(timeout=15)
@@ -261,7 +261,7 @@ def test_review_decision_click_updates_count_and_button_label(monkeypatch):
               redact_texts=(): {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg.show()
     dlg.source_box.setPlainText("Regional block landmarks and needle depths")
     dlg._start_generation()
@@ -308,7 +308,7 @@ def test_import_button_click_shows_dialog_instead_of_raising(monkeypatch):
     monkeypatch.setattr(ai_cli, "probe",
                         lambda kind, path: {"ok": True, "detail": "v1"})
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg.show()
     # A card naming a note type this collection doesn't have: exactly what
     # add_generated_notes' own atomic check rejects (see collection.py).
@@ -365,7 +365,7 @@ def test_completion_timer_exception_shows_dialog_and_recovers_to_input(monkeypat
     warnings = []
     monkeypatch.setattr(ai_dialog, "_warn", lambda text, **kw: warnings.append(text))
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg.show()
     dlg.source_box.setPlainText("Regional block landmarks and needle depths")
     dlg._start_generation()
@@ -401,8 +401,8 @@ def test_mode_radios_render_the_backends_own_text(monkeypatch):
                         if kind == "claude" else None)
     monkeypatch.setattr(ai_cli, "probe",
                         lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
-    modes = ai_cli.BACKENDS["claude"]["modes"]
+    dlg = harness.settled(ai_dialog._GenerateDialog())
+    modes = ai_cli.backend_wording("claude", dlg.session.cli_path)["modes"]
     assert dlg.thorough_radio.text() == "Thorough"
     assert dlg.quick_radio.text() == "Quick draft"
     assert dlg.thorough_hint.text() == modes["thorough"]
@@ -436,7 +436,7 @@ def test_input_page_gates_note_types_against_real_checkboxes(monkeypatch):
     monkeypatch.setattr(ai_cli, "probe",
                         lambda kind, path: {"ok": True, "detail": "v1"})
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg.show()
 
     for missing in ("Study Deck - Basic", "Study Deck - Cloze"):
@@ -481,7 +481,7 @@ def test_attach_warns_once_when_a_pdfs_images_cant_be_decoded(monkeypatch, tmp_p
     warnings = []
     monkeypatch.setattr(ai_dialog, "_warn", lambda text, **kw: warnings.append(text))
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg._attach()
     _wait_for_attachment_worker(dlg)
     assert len(warnings) == 1
@@ -511,7 +511,7 @@ def test_attachment_only_input_enables_generate_and_can_be_removed(
 
     monkeypatch.setattr(ai_dialog.ai_logic, "extract_attachment", extract)
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg.show()
     harness.app().processEvents()
     assert not dlg.attach_status.isVisible()
@@ -551,7 +551,7 @@ def test_attachment_worker_keeps_qt_on_gui_thread_and_cancel_discards_result(
         return {"text": "discard me", "images": [], "images_undecoded": False}
 
     monkeypatch.setattr(ai_dialog.ai_logic, "extract_attachment", extract)
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg.show()
     app.processEvents()
     gui_thread = threading.get_ident()
@@ -628,7 +628,7 @@ def test_progress_page_cancel_link_cancels_the_run(monkeypatch):
               redact_texts=():
             {"text": "[]", "tokens": 0, "duration_s": 0})
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg.show()
     app.processEvents()
     dlg.source_box.setPlainText("Regional block landmarks and needle depths")
@@ -666,7 +666,7 @@ def test_progress_page_escape_cancels_the_run_without_closing(monkeypatch):
               redact_texts=():
             {"text": "[]", "tokens": 0, "duration_s": 0})
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg.show()
     app.processEvents()
     dlg.source_box.setPlainText("Regional block landmarks and needle depths")
@@ -775,7 +775,7 @@ def test_edit_user_skill_persists_after_dialog_closes(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "USER_SKILL", str(tmp_path / "user_skill.md"))
     config.save_user_skill("old rule")
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
 
     original = q.QDialog.exec
 
@@ -951,7 +951,7 @@ def test_advanced_input_stays_resizable_with_large_font_and_footer_visible(
                             if kind == "claude" else None)
         monkeypatch.setattr(ai_cli, "probe",
                             lambda kind, path: {"ok": True, "detail": "v1"})
-        dlg = ai_dialog._GenerateDialog()
+        dlg = harness.settled(ai_dialog._GenerateDialog())
         dlg.source_box.setPlainText("Synthetic study material. " * 100)
         dlg.show()
         app.processEvents()
@@ -1006,7 +1006,7 @@ def _build_review_render_dialog(theme):
     from internpearls import ai_dialog, ai_logic
 
     harness._ai_backend_available()
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     s = dlg.session
     cards = harness._ai_synthetic_cards(3)
     s.cards = cards
@@ -1031,7 +1031,7 @@ def _long_review_dialog(count=14):
     from internpearls import ai_dialog, ai_logic
 
     harness._ai_backend_available()
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     s = dlg.session
     s.cards = harness._ai_synthetic_cards(count)
     s.included = [True] * count
@@ -1162,7 +1162,7 @@ def test_accept_correction_rechecks_and_blocks_a_new_duplicate():
     from internpearls import ai_dialog, ai_logic
 
     harness._ai_backend_available()
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     s = dlg.session
     cards = harness._ai_synthetic_cards(2)
     s.cards = cards
@@ -1260,7 +1260,7 @@ def test_wizard_and_edit_fields_have_labels_and_carets_have_stateful_names():
     _, q = harness.bootstrap()
     harness.app()
     harness._ai_backend_available()
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
 
     assert dlg.source_label.buddy() is dlg.source_box
     assert dlg.focus_label.buddy() is dlg.instructions_box
@@ -1311,7 +1311,7 @@ def test_edit_card_ok_writes_fields_and_tags_and_reruns_checks(monkeypatch):
     from internpearls import ai_dialog, ai_logic
 
     harness._ai_backend_available()
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     s = dlg.session
     cards = harness._ai_synthetic_cards(1)
     cards[0]["tags"] = ["old"]
@@ -1342,7 +1342,7 @@ def test_edit_card_cancel_leaves_the_card_untouched(monkeypatch):
     from internpearls import ai_dialog, ai_logic
 
     harness._ai_backend_available()
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     s = dlg.session
     cards = harness._ai_synthetic_cards(1)
     cards[0]["tags"] = ["old"]
@@ -1509,7 +1509,7 @@ def test_escape_during_image_resolution_goes_back_instead_of_blocking_the_cards(
               redact_texts=(): {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 1.0})
 
-    dlg = ad._GenerateDialog()
+    dlg = harness.settled(ad._GenerateDialog())
     dlg.source_box.setPlainText("Regional block landmarks and needle depths")
     dlg._start_generation()
     end = time.time() + 15
@@ -1555,7 +1555,7 @@ def test_connection_test_result_is_dropped_when_the_backend_changed(monkeypatch)
     monkeypatch.setattr(ad, "run_connection_test_async",
                         lambda *a, **kw: captured.update(kw))
 
-    dlg = ad._GenerateDialog()
+    dlg = harness.settled(ad._GenerateDialog())
     dlg.session.backend, dlg.session.cli_path = "claude", "/bin/echo"
     dlg._test_backend_connection()
     assert dlg._testing_kinds == {"claude"}
@@ -1590,7 +1590,7 @@ def test_generation_completes_on_live_timers_alone(monkeypatch):
               redact_texts=(): {"text": json.dumps(cards), "tokens": 15,
                                           "duration_s": 12.3})
 
-    dlg = ai_dialog._GenerateDialog()
+    dlg = harness.settled(ai_dialog._GenerateDialog())
     dlg.show()
     app.processEvents()
     dlg.source_box.setPlainText("Regional block landmarks and needle depths")

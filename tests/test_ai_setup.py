@@ -65,6 +65,14 @@ class _RecordingPlatform:
         raise AssertionError("not used")
 
 
+def _settled(dlg):
+    """`dlg` once its off-thread backend detection has been delivered."""
+    work = getattr(dlg, "_detect_work", None)
+    if work is not None:
+        wait_for_mock_work(work)
+    return dlg
+
+
 def test_connection_test_starts_typed_platform_work_with_safe_metadata(anki, tmp_path):
     from internpearls import ai_setup
 
@@ -80,16 +88,24 @@ def test_connection_test_starts_typed_platform_work_with_safe_metadata(anki, tmp
                        "path_configured": True})
 
 
+def _detected(monkeypatch, detect):
+    """Detection answers with `detect` both at once and off the main thread, so a
+    test is the same on a machine with real assistants installed."""
+    from internpearls import ai_cli
+    monkeypatch.setattr(ai_cli, "detect_backends", detect)
+    monkeypatch.setattr(ai_cli, "locate_backends", detect)
+
+
 def _none_found(monkeypatch):
     from internpearls import ai_cli
-    monkeypatch.setattr(ai_cli, "detect_backends", lambda cfg: {
+    _detected(monkeypatch, lambda cfg: {
         "backends": {k: {"path": None, "ok": False, "detail": "not found", "enabled": True}
                      for k in ai_cli.BACKENDS}, "chosen": None})
 
 
 def _all_found(monkeypatch):
     from internpearls import ai_cli
-    monkeypatch.setattr(ai_cli, "detect_backends", lambda cfg: {
+    _detected(monkeypatch, lambda cfg: {
         "backends": {k: {"path": "/bin/x", "ok": True, "detail": "1", "enabled": True}
                      for k in ai_cli.BACKENDS}, "chosen": "claude"})
 
@@ -105,7 +121,7 @@ def test_backends_metadata_carries_an_install_url(anki):
 def test_open_ai_backends_builds_one_row_per_backend(anki, monkeypatch):
     from internpearls import ai_cli, ai_setup
     _none_found(monkeypatch)
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     assert set(dlg.rows) == set(ai_cli.BACKENDS)
     for kind, meta in ai_cli.BACKENDS.items():
         text = dlg.rows[kind].text()
@@ -121,7 +137,7 @@ def test_the_preferred_row_is_marked_and_the_others_offer_use(anki, monkeypatch)
     from internpearls import ai_cli, ai_setup
     _all_found(monkeypatch)
     anki.mw._config = {"ai_backend": "codex"}
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     assert dlg.preferred == "codex"
     assert dlg.rows["codex"].use_link is None
     for kind in ("claude", "agy"):
@@ -132,7 +148,7 @@ def test_use_link_writes_the_preferred_backend(anki, monkeypatch):
     from internpearls import ai_setup
     _all_found(monkeypatch)
     anki.mw._config = {"ai_backend": "claude"}
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     dlg.rows["codex"].use_link.clicked.emit()
     assert anki.mw._config["ai_backend"] == "codex"
     assert dlg.preferred == "codex"
@@ -150,9 +166,9 @@ def test_ignore_link_disables_the_backend_and_flips_its_own_wording(anki, monkey
                                  "ok": enabled[k], "detail": "1",
                                  "enabled": enabled[k]} for k in ai_cli.BACKENDS},
                 "chosen": "claude" if enabled["claude"] else None}
-    monkeypatch.setattr(ai_cli, "detect_backends", detect)
+    _detected(monkeypatch, detect)
     anki.mw._config = {"ai_backend": "claude"}
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     assert dlg.rows["agy"].ignore_link.text() == "ignore"
 
     dlg.rows["agy"].ignore_link.clicked.emit()
@@ -189,9 +205,9 @@ def test_ignoring_the_preferred_backend_moves_the_panel_and_chip(anki, monkeypat
     (ignoring is not a preference change), so `use again` puts everything
     right back without having to re-choose claude."""
     from internpearls import ai_cli, ai_setup
-    monkeypatch.setattr(ai_cli, "detect_backends", _detect_honouring_enabled)
+    _detected(monkeypatch, _detect_honouring_enabled)
     anki.mw._config = {"ai_backend": "claude"}
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     assert dlg.preferred == "claude"
     assert dlg.panel.kind == "claude"
     assert dlg.rows["claude"].use_link is None   # preferred: wears the chip, not a Use link
@@ -219,7 +235,7 @@ def test_install_guide_link_opens_that_backends_documentation(anki, monkeypatch)
     from aqt.qt import QDesktopServices
     from internpearls import ai_cli, ai_setup
     _none_found(monkeypatch)
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     QDesktopServices.opened.clear()
     for kind in ai_cli.BACKENDS:
         dlg.rows[kind].guide_link.clicked.emit()
@@ -241,7 +257,7 @@ def test_settings_panel_follows_the_preferred_backend(anki, monkeypatch):
     from internpearls import ai_setup
     _all_found(monkeypatch)
     anki.mw._config = {"ai_backend": "claude"}
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     assert dlg.panel.kind == "claude"
     assert isinstance(dlg.panel.model, ai_setup.ModelEffortControls)
     dlg.rows["agy"].use_link.clicked.emit()
@@ -253,7 +269,7 @@ def test_path_commit_writes_the_preferred_backends_path(anki, monkeypatch):
     from internpearls import ai_setup
     _all_found(monkeypatch)
     anki.mw._config = {"ai_backend": "claude"}
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     dlg.panel.path.setText("/opt/claude")
     dlg.panel._commit_path()
     assert anki.mw._config["ai_cli_path"]["claude"] == "/opt/claude"
@@ -278,7 +294,7 @@ def test_cli_path_flat_string_survives_first_per_backend_save(anki, monkeypatch)
     from internpearls import ai_setup
     _none_found(monkeypatch)
     anki.mw._config = {"ai_backend": "claude", "ai_cli_path": "/opt/claude"}
-    ai_setup._AIBackendsDialog(anki.mw)
+    _settled(ai_setup._AIBackendsDialog(anki.mw))
     # Saved against _write_map itself rather than through the panel's own field:
     # the panel is always about the preferred backend, and switching preference
     # first would re-migrate the legacy string onto the new one (config._cli_path_map
@@ -312,7 +328,7 @@ def _drain_conn_test(dlg, timeout=15):
 def test_connection_button_disabled_until_a_cli_is_found(anki, monkeypatch):
     from internpearls import ai_cli, ai_setup
     monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     assert not dlg.panel.test_btn.isEnabled()
 
 
@@ -326,7 +342,7 @@ def test_connection_reports_working(anki, monkeypatch):
         ai_cli, "build_argv",
         lambda kind, path, mode, scratch, imgs, **kw:
             ([sys.executable, FAKE, "badjson"], True))
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     assert dlg.panel.kind == "claude"
     assert dlg.panel.test_btn.isEnabled()
     dlg._test("claude")
@@ -351,7 +367,7 @@ def test_recheck_mid_test_connection_does_not_reenable_or_double_run(anki, monke
         ai_cli, "build_argv",
         lambda kind, path, mode, scratch, imgs, **kw:
             ([sys.executable, FAKE, "badjson"], True))
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     panel = dlg.panel
     dlg._test("claude")
     assert not panel.test_btn.isEnabled()
@@ -393,7 +409,7 @@ def test_switching_preference_mid_test_does_not_write_to_the_old_panel(anki, mon
     monkeypatch.setattr(ai_cli, "test_connection", blocking_test_connection)
 
     anki.mw._config = {"ai_backend": "claude"}
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     assert dlg.panel.kind == "claude"
     old_panel = dlg.panel
 
@@ -426,7 +442,7 @@ def test_connection_not_signed_in_shows_readable_message(anki, monkeypatch):
         ai_cli, "build_argv",
         lambda kind, path, mode, scratch, imgs, **kw:
             ([sys.executable, FAKE, "not_signed_in"], True))
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     dlg._test("claude")
     _drain_conn_test(dlg)
     text = dlg.panel.test_status.text().lower()
@@ -460,7 +476,7 @@ def test_connection_result_is_dropped_after_the_executable_path_changes(
     monkeypatch.setattr(ai_cli, "test_connection", blocking_test_connection)
     anki.mw._config = {"ai_backend": "claude",
                        "ai_cli_path": {"claude": "/synthetic/old-cli"}}
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     dlg._test("claude")
 
     dlg.panel.path.setText("/synthetic/new-cli")
@@ -500,7 +516,7 @@ def test_connection_result_is_dropped_when_auto_detection_resolves_elsewhere(
     monkeypatch.setattr(ai_cli, "test_connection", blocking_test_connection)
     anki.mw._config = {"ai_backend": "claude",
                        "ai_cli_path": {"claude": ""}}
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     dlg._test("claude")
 
     resolved[0] = "/synthetic/new-cli"
@@ -518,7 +534,7 @@ def test_backend_controls_have_contextual_accessible_names(anki, monkeypatch):
     and backend without relying on nearby visual text."""
     from internpearls import ai_setup
     _all_found(monkeypatch)
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     panel = dlg.panel
 
     assert panel.path._accessible == "Executable path"
@@ -551,8 +567,9 @@ def test_row_chip_reads_as_one_of_the_readmes_three_states(anki, monkeypatch):
 def test_overall_status_names_the_backend_that_will_be_used(anki, monkeypatch):
     from internpearls import ai_setup
     _all_found(monkeypatch)
-    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    dlg = _settled(ai_setup._AIBackendsDialog(anki.mw))
     assert dlg.overall.text() == "Ready: Claude Code will be used."
     _none_found(monkeypatch)
     dlg.recheck()
+    _settled(dlg)
     assert dlg.overall.text() == "No usable assistant detected yet."

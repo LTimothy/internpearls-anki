@@ -139,6 +139,19 @@ THEMES = {
 }
 
 
+def settled(dlg, timeout=10):
+    """`dlg` once its off-thread backend detection has been delivered."""
+    import time
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        work = getattr(dlg, "_detect_work", None)
+        if work is None or getattr(work, "_delivered", True):
+            break
+        app().processEvents()
+        time.sleep(0.005)
+    return dlg
+
+
 def apply_theme(name):
     """Force a palette explicitly.
 
@@ -931,7 +944,7 @@ def _scene_ai_setup(mock, opts):
     ai_cli.find_cli = _find_none
 
     def _open():
-        dlg = ai_dialog._GenerateDialog()
+        dlg = settled(ai_dialog._GenerateDialog())
         dlg.exec()
     return _open
 
@@ -977,7 +990,7 @@ def _scene_ai_input(mock, opts):
         _ai_backend_available()
 
     def _open():
-        dlg = ai_dialog._GenerateDialog()
+        dlg = settled(ai_dialog._GenerateDialog())
         if state == "unset":
             dlg.stack.setCurrentWidget(dlg.input_page)
         else:
@@ -1008,7 +1021,7 @@ def _scene_ai_progress(mock, opts):
     _ai_backend_available()
 
     def _open():
-        dlg = ai_dialog._GenerateDialog()
+        dlg = settled(ai_dialog._GenerateDialog())
         if opts.get("revision"):
             dlg.session.cards = _ai_synthetic_cards(11)
         dlg.progress_row.set_chip("verifying")
@@ -1059,7 +1072,7 @@ def _scene_ai_review(mock, opts):
     n = opts.get("count", 4)
 
     def _open():
-        dlg = ai_dialog._GenerateDialog()
+        dlg = settled(ai_dialog._GenerateDialog())
         s = dlg.session
         cards = _ai_synthetic_cards(n)
         s.cards = cards
@@ -1149,7 +1162,7 @@ def _scene_ai_view_skills(mock, opts):
     ai_dialog.load_user_skill = (lambda: text) if text else _ORIG_LOAD_USER_SKILL
 
     def _open():
-        dlg = ai_dialog._GenerateDialog()
+        dlg = settled(ai_dialog._GenerateDialog())
         dlg._view_skills()
     return _open
 
@@ -1241,6 +1254,7 @@ def render(scene, theme="light", expand=(), size=(640, 560), click_labels=(), **
     shots = []
 
     def fake_exec(self):
+        settled(self)
         self.resize(*size)
         self.show()
         a.processEvents()

@@ -12,6 +12,14 @@ from internpearls.platform import wait_for_mock_work
 FAKE = os.path.join(os.path.dirname(__file__), "fake_cli.py")
 
 
+def _settled(dlg):
+    """`dlg` once its off-thread backend detection has been delivered."""
+    work = getattr(dlg, "_detect_work", None)
+    if work is not None:
+        wait_for_mock_work(work)
+    return dlg
+
+
 def _row_text(row):
     """Every bit of text a review row (or any widget) carries, anywhere in its
     layout tree: flattened, since the row skeleton splits what used to be one
@@ -62,7 +70,7 @@ def _caret_widget(row):
 
 def test_setup_page_shown_when_no_backend(anki, monkeypatch):
     monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     assert dlg.stack.currentWidget() is dlg.setup_page
     # No backend, no per-backend rows here anymore: just the entry point into
     # the AI Backends window (see tests/test_ai_setup.py for those rows) and
@@ -75,7 +83,7 @@ def test_setup_page_shown_when_no_backend(anki, monkeypatch):
 
 def test_setup_page_has_a_close_button(anki, monkeypatch):
     monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     assert dlg.stack.currentWidget() is dlg.setup_page
     anki.gui.answers = []
     dlg.close_btn.clicked.emit()   # a no-backend user's only other way out is window chrome
@@ -90,7 +98,7 @@ def test_image_id_note_type_is_not_offered(anki, monkeypatch):
         ai_cli, "find_cli",
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     assert "Study Deck - Image ID" not in dlg.type_boxes
 
 
@@ -109,7 +117,7 @@ def test_input_page_disables_a_note_type_missing_from_the_collection(anki, monke
         ai_cli, "find_cli",
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
 
     present = dlg.type_boxes["Study Deck - Basic"]
     assert present.isEnabled() and present.isChecked()
@@ -131,7 +139,7 @@ def test_input_page_shown_when_backend_found(anki, monkeypatch):
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     assert dlg.stack.currentWidget() is dlg.input_page
     assert not dlg.generate_btn.isEnabled()   # empty source
     dlg.source_box.setPlainText("some source")
@@ -148,7 +156,7 @@ def test_input_page_shows_a_backends_link_and_no_model_combo(anki, monkeypatch):
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     assert dlg.change_link.text() == "Setup"
     assert ("Backend: Claude Code, Model: sonnet, effort: medium (add-on default)"
             in dlg.backend_row.text())
@@ -163,7 +171,7 @@ def test_input_page_offers_to_add_my_rules_when_none_are_saved(anki, monkeypatch
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     assert dlg.rules_link.text() == "Add my rules"
 
 
@@ -175,7 +183,7 @@ def test_input_page_offers_to_edit_my_rules_once_some_are_saved(anki, monkeypatc
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     assert dlg.rules_link.text() == "Edit my rules"
     assert "my rules" in dlg.skills_row.text()
 
@@ -207,8 +215,8 @@ def test_mode_radio_labels_are_the_backends_own_truthful_text(anki, monkeypatch)
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
-    modes = ai_cli.BACKENDS["claude"]["modes"]
+    dlg = _settled(ai_dialog._GenerateDialog())
+    modes = ai_cli.backend_wording("claude", dlg.session.cli_path)["modes"]
     # The radio itself carries only the short, stable name (see item 8's wrap
     # fix in _refresh_backend_row); the backend's own truthful sentence moves
     # to the hint_label underneath it.
@@ -228,7 +236,7 @@ def _ready_dialog(anki, monkeypatch, cli_mode="ok"):
         ai_cli, "build_argv",
         lambda kind, path, mode, scratch, imgs, **kw:
             ([sys.executable, FAKE, cli_mode], True))
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     dlg.source_box.setPlainText("LAST toxicity source text")
     return dlg
 
@@ -1452,7 +1460,7 @@ def _ready_agy_dialog(anki, monkeypatch, cli_mode):
         ai_cli, "build_argv",
         lambda kind, path, mode, scratch, imgs, **kw:
             ([sys.executable, FAKE, cli_mode], False))
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     assert dlg.session.backend == "agy"
     dlg.source_box.setPlainText("LAST toxicity source text")
     return dlg
@@ -1759,7 +1767,7 @@ def test_revision_with_different_card_count_does_not_claim_per_card_updates(anki
         return [sys.executable, FAKE, cli_mode], True
 
     monkeypatch.setattr(ai_cli, "build_argv", build_argv)
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     dlg.source_box.setPlainText("LAST toxicity source text")
     dlg._start_generation()
     dlg._wait_for_worker()
@@ -1793,7 +1801,7 @@ def _revisable_dialog(anki, monkeypatch, cli_mode_box):
         ai_cli, "build_argv",
         lambda kind, path, mode, scratch, imgs, **kw:
             ([sys.executable, FAKE, cli_mode_box[0]], True))
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     dlg.source_box.setPlainText("LAST toxicity source text")
     return dlg
 
@@ -2010,7 +2018,7 @@ def test_backend_row_reads_ready_with_the_model_and_effort(anki, monkeypatch):
         ai_cli, "find_cli",
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     assert widgets.CHIPS[dlg.backend_row.chip_kind] == "READY"
     assert ("Backend: Claude Code, Model: sonnet, effort: medium (add-on default)"
             in dlg.backend_row.text())
@@ -2019,7 +2027,7 @@ def test_backend_row_reads_ready_with_the_model_and_effort(anki, monkeypatch):
 def test_backend_row_reads_not_set_up_with_the_setup_sentence(anki, monkeypatch):
     from internpearls import widgets
     monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     assert widgets.CHIPS[dlg.backend_row.chip_kind] == "NOT SET UP"
     assert ("No assistant found. Install one, sign in once in a terminal, then "
             "set it up here.") in dlg.backend_row.text()
@@ -2124,7 +2132,7 @@ def test_skills_row_detail_names_each_part_that_is_actually_sent(anki, monkeypat
 
 def test_generate_stays_disabled_until_a_backend_is_ready(anki, monkeypatch):
     monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": None)
-    dlg = ai_dialog._GenerateDialog()
+    dlg = _settled(ai_dialog._GenerateDialog())
     dlg.source_box.setPlainText("plenty of source material")
     assert not dlg.generate_btn.isEnabled()
 
@@ -2405,3 +2413,56 @@ def test_status_lines_that_carry_assistant_text_are_plain_text(anki, monkeypatch
     backends = ai_setup._AIBackendsDialog(anki.mw)
     assert backends.panel.test_status._format == Qt.TextFormat.PlainText
     assert backends.overall._format == Qt.TextFormat.PlainText
+
+
+# === backend probes run off the main thread =================================
+
+def _slow_probes(monkeypatch, delay=1.0):
+    """Every CLI process the add-on starts records whether it ran on the main
+    thread; --version takes `delay` seconds to answer."""
+    import subprocess
+    import threading
+    import types
+    main = threading.current_thread()
+    on_main = []
+
+    def run(argv, **kw):
+        on_main.append(threading.current_thread() is main)
+        if "--version" in argv:
+            time.sleep(delay)
+        return types.SimpleNamespace(stdout="v1 --restricted", stderr="", returncode=0)
+
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": sys.executable if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli.subprocess, "run", run)
+    ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
+    return on_main
+
+
+def test_opening_the_wizard_does_not_wait_for_a_slow_cli(anki, monkeypatch):
+    on_main = _slow_probes(monkeypatch)
+    start = time.monotonic()
+    dlg = ai_dialog._GenerateDialog()
+    assert time.monotonic() - start < 0.5
+    dlg.source_box.setPlainText("source")
+    assert dlg.backend_row.chip_kind == "checking"
+    assert not dlg.generate_btn.isEnabled()
+    _settled(dlg)
+    assert dlg.backend_row.chip_kind == "ready"
+    assert dlg.generate_btn.isEnabled()
+    assert on_main and not any(on_main)
+
+
+def test_ai_backends_rows_read_checking_until_the_probe_answers(anki, monkeypatch):
+    from internpearls import ai_setup
+    on_main = _slow_probes(monkeypatch)
+    start = time.monotonic()
+    dlg = ai_setup._AIBackendsDialog(anki.mw)
+    assert time.monotonic() - start < 0.5
+    assert ai_setup._state_chip(
+        ai_cli.locate_backends(ai_dialog._cfg())["backends"]["claude"]) == "checking"
+    assert "Checking" in dlg.overall.text()
+    _settled(dlg)
+    assert "Ready: Claude Code" in dlg.overall.text()
+    assert on_main and not any(on_main)

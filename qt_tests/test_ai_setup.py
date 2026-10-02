@@ -14,7 +14,7 @@ def _dialog(monkeypatch, found=("claude",)):
                         lambda kind, override="": "/bin/echo" if kind in found else None)
     monkeypatch.setattr(ai_cli, "probe",
                         lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_setup._AIBackendsDialog(None)
+    dlg = harness.settled(ai_setup._AIBackendsDialog(None))
     dlg.show()
     harness.app().processEvents()
     return dlg
@@ -84,7 +84,7 @@ def test_model_set_under_claude_does_not_leak_into_codex(monkeypatch):
                         if kind == "claude" else None)
     monkeypatch.setattr(ai_cli, "probe",
                         lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg1 = ai_setup._AIBackendsDialog(None)
+    dlg1 = harness.settled(ai_setup._AIBackendsDialog(None))
     model1 = dlg1.panel.model
     model1.combo.setCurrentIndex(model1.combo.findText("opus"))
     conf = mw.addonManager.getConfig("internpearls")
@@ -107,7 +107,7 @@ def test_model_set_under_claude_does_not_leak_into_codex(monkeypatch):
         return {"text": "[]", "tokens": 0, "duration_s": 0.1}
     monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)
 
-    dlg2 = ai_dialog._GenerateDialog()
+    dlg2 = harness.settled(ai_dialog._GenerateDialog())
     dlg2.show()
     harness.app().processEvents()
     assert dlg2.session.backend == "codex"
@@ -115,7 +115,7 @@ def test_model_set_under_claude_does_not_leak_into_codex(monkeypatch):
     # Check the UI itself, not just config: a fresh AI Backends window opened
     # now settles on codex as the preferred backend, and its Model field must
     # not be pre-filled with the "opus" set under claude above.
-    dlg3 = ai_setup._AIBackendsDialog(None)
+    dlg3 = harness.settled(ai_setup._AIBackendsDialog(None))
     dlg3.show()
     harness.app().processEvents()
     assert dlg3.panel.kind == "codex"
@@ -172,7 +172,8 @@ def test_every_row_is_one_compact_block_with_its_own_chip(monkeypatch):
     for kind, meta in ai_cli.BACKENDS.items():
         row = dlg.rows[kind]
         assert meta["label"] in row.text()
-        assert meta["safety"] in row.text()
+        path = "/bin/echo" if kind == "claude" else None
+        assert ai_cli.backend_wording(kind, path)["safety"] in row.text()
         pills = [w.text() for w in row.findChildren(type(row.title))]
         assert widgets.CHIPS["found" if kind == "claude" else "notfound"] in pills
 
@@ -348,7 +349,7 @@ def test_ai_backends_rows_dont_clip_on_first_open(monkeypatch):
     monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": "/bin/echo")
     monkeypatch.setattr(ai_cli, "probe",
                         lambda kind, path: {"ok": True, "detail": "v1"})
-    dlg = ai_setup._AIBackendsDialog(None)
+    dlg = harness.settled(ai_setup._AIBackendsDialog(None))
     dlg.resize(726, 500)
     dlg.show()
     harness.app().processEvents()
@@ -404,7 +405,7 @@ def test_ai_backends_window_settles_even_with_a_stale_minimum_hint_read(monkeypa
     with monkeypatch.context() as stale_patch:
         stale_patch.setattr(ai_setup._AIBackendsDialog, "minimumSizeHint",
                             lambda self: stale)
-        dlg = ai_setup._AIBackendsDialog(None)
+        dlg = harness.settled(ai_setup._AIBackendsDialog(None))
         dlg.resize(726, 500)
         dlg.show()
         harness.app().processEvents()
@@ -539,3 +540,28 @@ def test_closed_backends_dialog_is_disposed_while_its_worker_finishes(
         captured["thread"].join(timeout=15)
 
     assert not captured["thread"].is_alive()
+
+
+def test_rows_paint_checking_until_a_slow_cli_answers(monkeypatch):
+    import time
+    from internpearls import widgets
+    harness.bootstrap()
+    harness.app()
+
+    def slow_probe(kind, path):
+        time.sleep(0.5)
+        return {"ok": True, "detail": "v1"}
+    monkeypatch.setattr(ai_cli, "find_cli",
+                        lambda kind, override="": "/bin/echo" if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe", slow_probe)
+    start = time.monotonic()
+    dlg = ai_setup._AIBackendsDialog(None)
+    assert time.monotonic() - start < 0.4
+
+    def pills():
+        row = dlg.rows["claude"]
+        return [w.text() for w in row.findChildren(type(row.title))]
+    assert widgets.CHIPS["checking"] in pills()
+    harness.settled(dlg)
+    assert widgets.CHIPS["found"] in pills()
+    dlg.deleteLater()
