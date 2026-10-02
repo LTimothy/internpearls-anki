@@ -75,11 +75,13 @@ def test_duplicate_dialog_callers_capture_safe_work_requests(monkeypatch):
     native = _RecordingPlatform()
     with use_platform(native):
         dialog = dupes_dialog._DuplicateScanDialog("Scope")
+        dialog._backends_found(ai_cli.detect_backends({}))
         dialog._pairs = [{"left": dialog._left_rows()[0],
                           "right": dialog._right_rows()[0]}]
         dialog._judge_with_ai()
 
     assert [(request.kind, request.inputs) for request in native.requests] == [
+        ("connection", {"action": "dupes.backends"}),
         ("duplicate-index", {"action": "dupes.scan", "left_count": 1,
                              "right_count": 1}),
         ("assistant", {"action": "dupes.judge", "pair_count": 1}),

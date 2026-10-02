@@ -1194,6 +1194,12 @@ class QWidget:
     def setFocus(self, *a):
         self.focused = True
 
+    def setFocusPolicy(self, policy):
+        self._focus_policy = policy
+
+    def focusPolicy(self):
+        return getattr(self, "_focus_policy", 0)
+
     def deleteLater(self):
         """Qt's deferred delete. Nothing here owns C++ memory to free, so this records
         the call: a dialog parented to mw leaks in real Anki unless something asks for
@@ -1361,6 +1367,12 @@ class QPushButton(QWidget):
 
     def setFlat(self, v):
         pass
+
+    def setAutoDefault(self, v):
+        self._auto_default = bool(v)
+
+    def autoDefault(self):
+        return getattr(self, "_auto_default", True)
 
     def setDefault(self, v):
         # Real QPushButton's "activated by a bare Return": nothing here reads it
@@ -3175,6 +3187,10 @@ def install():
         class ScrollBarPolicy:
             ScrollBarAlwaysOff = 1
             ScrollBarAlwaysOn = 2
+
+        class FocusPolicy:
+            NoFocus = 0               # Qt's own values
+            StrongFocus = 11
 
     class _QFileDialog:
         """The native directory picker configure_source opens for a local folder.
