@@ -126,6 +126,12 @@ def test_input_page_disables_a_note_type_missing_from_the_collection(anki, monke
         box = dlg.type_boxes[missing]
         assert not box.isEnabled(), f"{missing} isn't in the collection yet"
         assert not box.isChecked()
+    # Syncing adds a managed type; it never adds Anki's own Basic or Cloze.
+    assert dlg.type_boxes["Study Deck - Cloze"]._label.endswith("(sync your decks first)")
+    for core in ("Basic", "Cloze"):
+        box = dlg.type_boxes[core]
+        assert box._label == f"{core} (not in this collection)"
+        assert "Sync" not in box._tooltip and "isn't in this collection" in box._tooltip
 
     # What actually gets sent to the model: only the type that really exists.
     dlg.source_box.setPlainText("some source text")
@@ -685,6 +691,7 @@ def test_unreviewed_suggestions_are_noted_near_import_without_blocking_it(anki, 
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
     dlg._wait_for_worker()
+    dlg._wait_for_near()   # its own line says the collection check is still running
     assert not dlg.import_note.isVisible() and dlg.import_note.text() == ""
     dlg.session.verdicts = {
         0: {"verdict": "corrected", "note": "n", "sources": [],
@@ -2622,3 +2629,28 @@ def test_a_failed_collection_lookup_leaves_the_exact_check_alone(anki, monkeypat
     assert dlg.session.included == [True]
     dlg._refresh_near()
     assert dlg._near_worker is None   # not retried on every recheck
+
+
+def test_the_review_says_while_the_collection_check_runs_and_what_it_moved(
+        anki, monkeypatch):
+    dlg = _near_dialog(anki, monkeypatch)
+    assert dlg.import_note.text() == "Checking 1 card against your collection"
+    assert dlg.import_note.isVisible()
+    assert dlg.import_btn.isEnabled()
+    dlg._wait_for_near()
+    assert dlg.import_note.text() == "1 card moved to Skip: likely already in your collection"
+    dlg.decision_cells[0].buttons["include"].click()
+    assert dlg.import_note.text() == ""
+    assert not dlg.import_note.isVisible()
+
+
+def test_an_edit_during_a_lookup_is_looked_up_after_it(anki, monkeypatch):
+    dlg = _near_dialog(anki, monkeypatch, echo="Succinylcholine and serum potassium")
+    assert dlg._near_worker is not None   # the first lookup has not been delivered
+    card = dlg.session.cards[0]
+    _fake_edit(monkeypatch, dict(card["fields"], Front=_FENOLDOPAM), card["tags"])
+    dlg._edit_card(0)
+    assert dlg._near_dirty
+    dlg._wait_for_near()
+    assert any(c.get("deck") == "Pharm::Pressors" for c in dlg.session.checks[0])
+    assert dlg.session.included == [False]

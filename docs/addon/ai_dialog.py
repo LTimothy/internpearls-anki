@@ -828,6 +828,7 @@ class _GenerateDialog(QDialog):
         self._near_worker = None
         self._near_dirty = False
         self._near_failed = False
+        self._near_moved = set()     # rows a late flag moved to Skip
         self._decided = set()        # review rows the learner set by hand
         self._retried_json = False   # the single-retry budget on malformed model output
         self._reply_chunks = []      # accumulated delta text; reset per _start_generation
@@ -1299,14 +1300,19 @@ class _GenerateDialog(QDialog):
             # so it's clear the type exists and *why* it isn't offered yet, not
             # just silently missing from the list. Basic and Cloze are found by
             # shape too, the way import resolves them, so translated names count.
-            if name in ai_logic.CORE_NOTE_TYPES:
+            core = name in ai_logic.CORE_NOTE_TYPES
+            if core:
                 available = bool(ai_logic.find_core_notetype(mw.col.models.all(), name)[0])
             else:
                 available = bool(mw.col.models.by_name(name))
-            box = QCheckBox(name if available else f"{name} (sync your decks first)")
+            missing = "(not in this collection)" if core else "(sync your decks first)"
+            box = QCheckBox(name if available else f"{name} {missing}")
             box.setChecked(available)
             box.setEnabled(available)
-            if not available:
+            if not available and core:
+                box.setToolTip(f'"{name}" isn\'t in this collection, under that name '
+                               "or another.")
+            elif not available:
                 box.setToolTip(
                     f'"{name}" isn\'t in this collection yet. Sync your Intern '
                     "Pearls decks at least once to add it, or generate onto "
@@ -2513,6 +2519,7 @@ class _GenerateDialog(QDialog):
             s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
             image_errors, self._near_matches())
         self._decided = set()
+        self._near_moved = set()
         default_included = [not any(c["level"] == "block" for c in per)
                             for per in s.checks]
         prev_included = self._pending_prev_included
@@ -2525,9 +2532,9 @@ class _GenerateDialog(QDialog):
         else:
             s.included = default_included
         self._pending_prev_included = None
+        self._refresh_near()
         self._rebuild_review(keep_place=False)
         self.stack.setCurrentWidget(self.review_page)
-        self._refresh_near()
 
     def _return_to_input_or_review(self):
         """Where a cancelled or failed request lands. A revision (Revise all)
@@ -3022,10 +3029,19 @@ class _GenerateDialog(QDialog):
         self.review_footer.setVisible(bool(footer))
 
         pending = _pending_corrections(s.verdicts)
-        self.import_note.setText(
-            f"{pending} suggested correction{'' if pending == 1 else 's'} not reviewed"
-            if pending else "")
-        self.import_note.setVisible(bool(pending))
+        notes = []
+        if pending:
+            notes.append(f"{pending} suggested correction{'' if pending == 1 else 's'} "
+                         "not reviewed")
+        unchecked = self._near_unchecked()
+        if unchecked:
+            notes.append(f"Checking {plural(unchecked, 'card')} against your collection")
+        moved = sum(1 for i in self._near_moved if i < len(s.included) and not s.included[i])
+        if moved:
+            notes.append(f"{plural(moved, 'card')} moved to Skip: likely already in "
+                         "your collection")
+        self.import_note.setText(" · ".join(notes))
+        self.import_note.setVisible(bool(notes))
         self.import_btn.setText(f"Import {plural(n_inc, 'card')}")
         self.revise_btn.setText(
             "Revise all" + (f" ({plural(len(s.notes), 'note')})" if s.notes else ""))
@@ -3067,6 +3083,13 @@ class _GenerateDialog(QDialog):
                 out[i] = {"front": self._near_labels[row[0]], "deck": row[2]}
         return out
 
+    def _near_unchecked(self):
+        """How many drafts are waiting on a collection lookup now running."""
+        if self._near_worker is None:
+            return 0
+        return sum(1 for c in self.session.cards
+                   if ai_logic.draft_text(c) not in self._near_cache)
+
     def _refresh_near(self):
         """Look up drafts not yet checked against the collection, building the
         index first if this is the first lookup. Collection rows are read here, on
@@ -3102,6 +3125,8 @@ class _GenerateDialog(QDialog):
         def on_error(_error):
             self._near_worker = None
             self._near_failed = True
+            if self.stack.currentWidget() is self.review_page:
+                self._guard(self._update_review_summary)
 
         request = new_work_request(
             self, "duplicate-index", "ai.near_duplicates",
@@ -3119,10 +3144,28 @@ class _GenerateDialog(QDialog):
                 self._refresh_near()
             return
         before = [[c for c in per if c["code"] == "duplicate"] for per in s.checks]
+        included = list(s.included)
         self._recheck(None, force=False, keep=self._decided)
         after = [[c for c in per if c["code"] == "duplicate"] for per in s.checks]
-        if after != before:
-            self._rebuild_review()
+        self._near_moved |= {i for i, inc in enumerate(included)
+                             if inc and not s.included[i]}
+        if after == before:
+            self._update_review_summary()
+            return
+        # The rebuild replaces every row widget, so focus goes back to the row
+        # (or the note box, with its cursor) the learner was on.
+        focus = self.focusWidget() if hasattr(self, "focusWidget") else None
+        row = next((i for i, w in self._row_widgets.items()
+                    if focus is not None and (w is focus or w.isAncestorOf(focus))), None)
+        in_note = row is not None and self.note_boxes.get(row) is focus
+        cursor = focus.textCursor().position() if in_note else None
+        self._rebuild_review(focus_row=None if in_note else row)
+        box = self.note_boxes.get(row) if in_note else None
+        if box is not None:
+            box.setFocus()
+            text_cursor = box.textCursor()
+            text_cursor.setPosition(min(cursor, len(box.toPlainText())))
+            box.setTextCursor(text_cursor)
 
     def _wait_for_near(self, timeout=15):
         """Test helper: deliver the duplicate lookup, and any lookup it queued,

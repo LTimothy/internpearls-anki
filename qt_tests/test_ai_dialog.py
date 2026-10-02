@@ -1649,3 +1649,82 @@ def test_a_collection_duplicate_flag_lands_on_a_row_already_on_screen():
         dlg._retire_for_delete()
         dlg.hide()
         dlg.deleteLater()
+
+
+def _near_review(mock, monkeypatch):
+    """A two-card review whose collection lookup waits on the returned event, so
+    a test can put focus somewhere before the flag lands."""
+    from internpearls import ai_dialog, ai_logic
+    gate = threading.Event()
+    real = ai_logic.near_duplicates
+
+    def gated(*args, **kwargs):
+        gate.wait(10)
+        return real(*args, **kwargs)
+    monkeypatch.setattr(ai_logic, "near_duplicates", gated)
+    harness._ai_backend_available()
+    mock.col.add_note("learner-own", ["Which receptor does fenoldopam stimulate?",
+                                      "Selective D1 dopamine agonist", "", "", "", "", ""],
+                      [], deck="Pharm::Pressors")
+    dlg = harness.settled(ai_dialog._GenerateDialog())
+    s = dlg.session
+    fronts = ["Fenoldopam is a selective agonist at which dopamine receptor?",
+              "How is malignant hyperthermia treated?"]
+    s.cards = [{"note_type": "Study Deck - Basic",
+                "fields": {"Front": front, "Back": "D1" if not i else "Dantrolene",
+                           "Why": "", "Dosing": "", "Notes": ""},
+                "tags": [], "images": [], "rationale": ""} for i, front in enumerate(fronts)]
+    s.image_data = {}
+    dlg._pending_prev_included = None
+    dlg.show()
+    dlg.activateWindow()
+    dlg._apply_review_state()
+    _settle()
+    return dlg, gate
+
+
+def test_a_late_flag_keeps_focus_on_the_row_the_learner_is_on(monkeypatch):
+    mock, _ = harness.bootstrap()
+    harness.app()
+    dlg, gate = _near_review(mock, monkeypatch)
+    try:
+        dlg._row_carets[1].setFocus()
+        _settle()
+        assert dlg._row_widgets[1].isAncestorOf(dlg.focusWidget())
+        gate.set()
+        dlg._wait_for_near()
+        _settle()
+        assert dlg.session.included == [False, True]
+        focus = dlg.focusWidget()
+        assert focus is not None and dlg._row_widgets[1].isAncestorOf(focus)
+    finally:
+        gate.set()
+        dlg._retire_for_delete()
+        dlg.hide()
+        dlg.deleteLater()
+
+
+def test_a_late_flag_keeps_the_cursor_in_a_note_being_typed(monkeypatch):
+    mock, _ = harness.bootstrap()
+    harness.app()
+    dlg, gate = _near_review(mock, monkeypatch)
+    try:
+        dlg.decision_cells[1].buttons["skip"].click()
+        box = dlg.note_boxes[1]
+        box.setFocus()
+        box.insertPlainText("shorter")
+        _settle()
+        assert dlg.focusWidget() is box
+        gate.set()
+        dlg._wait_for_near()
+        _settle()
+        assert dlg.session.included == [False, False]
+        box = dlg.note_boxes[1]
+        assert dlg.focusWidget() is box
+        assert box.toPlainText() == "shorter"
+        assert box.textCursor().position() == len("shorter")
+    finally:
+        gate.set()
+        dlg._retire_for_delete()
+        dlg.hide()
+        dlg.deleteLater()
