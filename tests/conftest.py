@@ -88,7 +88,7 @@ def anki(tmp_path, monkeypatch):
     background._memories.clear()   # session-scoped auto-sync memory, same reason
     sync.undone_updates.clear()
     aqt_qt.QTimer.single_shots.clear()
-    sys.modules["aqt"].gui_hooks.profile_did_open.clear()
+    sys.modules["aqt"].gui_hooks.profile_did_open = mock_anki.Hook()
     sync._reconcile_action = None   # a prior test's registered stub must not leak in
     sync._apkg_cache.clear()        # preview-download cache must not leak across tests
     return _mock

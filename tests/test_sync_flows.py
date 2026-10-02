@@ -795,7 +795,7 @@ def test_the_undo_hook_is_registered_with_anki():
     import sys
     from internpearls import sync
     mock_anki.load_addon_init()
-    assert sync.restore_pending_after_undo in sys.modules["aqt"].gui_hooks.state_did_undo
+    assert sync.restore_pending_after_undo in sys.modules["aqt"].gui_hooks.state_did_undo._hooks
 
 
 def test_import_single_keeps_the_learners_own_tags(anki, tmp_path):
@@ -8012,7 +8012,7 @@ def test_cancelled_backup_restore_leaves_installed_state_alone(anki, monkeypatch
     collection.restore_from_backup()
 
     assert _load_json(INSTALLED, {}) == {DECK: "v1"}
-    assert aqt.gui_hooks.profile_will_close == []
+    assert aqt.gui_hooks.profile_will_close.count() == 0
 
 
 def test_an_accepted_backup_restore_clears_installed_state(anki):
@@ -8025,4 +8025,4 @@ def test_an_accepted_backup_restore_clears_installed_state(anki):
     collection.restore_from_backup()
 
     assert _load_json(INSTALLED, {}) == {}
-    assert aqt.gui_hooks.profile_will_close == []
+    assert aqt.gui_hooks.profile_will_close.count() == 0

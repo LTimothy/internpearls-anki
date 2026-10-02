@@ -2891,8 +2891,7 @@ class MockMW:
     def onOpenBackup(self):
         """An accepted restore: Anki unloads the profile, which fires this hook."""
         self._gui.tooltips.append("(Anki's own backup picker would open here)")
-        for hook in list(sys.modules["aqt"].gui_hooks.profile_will_close):
-            hook()
+        sys.modules["aqt"].gui_hooks.profile_will_close()
 
 
 class MockAnki:
@@ -3220,13 +3219,39 @@ class Runner:
         raise AssertionError("dialog flow did not converge")
 
 
+class Hook:
+    """One of aqt.gui_hooks' hook objects. Like Anki's, it offers append, remove (which
+    ignores a callback it does not hold), count and call, and nothing else: no `in`, no
+    iteration, no clear(), so code relying on a list would fail here as it does there."""
+
+    def __init__(self):
+        self._hooks = []
+
+    def append(self, callback):
+        self._hooks.append(callback)
+
+    def remove(self, callback):
+        if callback in self._hooks:
+            self._hooks.remove(callback)
+
+    def count(self):
+        return len(self._hooks)
+
+    def __call__(self, *args):
+        for hook in list(self._hooks):
+            try:
+                hook(*args)
+            except BaseException:
+                self._hooks.remove(hook)   # Anki drops a hook that raises
+                raise
+
+
 def load_addon_init():
     """Import the real internpearls/__init__.py under these stubs, fire the
     main-window hook it registers, and return the recorded top-level QMenu."""
     aqt = sys.modules["aqt"]
     importlib.import_module("internpearls.__init__")
-    for hook in aqt.gui_hooks.main_window_did_init:
-        hook()
+    aqt.gui_hooks.main_window_did_init()
     return aqt.mw._menus[0]
 
 
@@ -3238,9 +3263,9 @@ def install():
 
     aqt = types.ModuleType("aqt")
     aqt.mw = mw
-    aqt.gui_hooks = types.SimpleNamespace(main_window_did_init=[], card_will_show=[],
-                                          webview_will_set_content=[], state_did_undo=[],
-                                          profile_will_close=[], profile_did_open=[])
+    aqt.gui_hooks = types.SimpleNamespace(**{name: Hook() for name in (
+        "main_window_did_init", "card_will_show", "webview_will_set_content",
+        "state_did_undo", "profile_will_close", "profile_did_open")})
 
     aqt_qt = types.ModuleType("aqt.qt")
 
