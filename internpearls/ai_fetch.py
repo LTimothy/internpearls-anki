@@ -182,7 +182,7 @@ def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT,
     connection is shut down. A Wikimedia File: page or original SVG is fetched as its
     rendered image (see net.wikimedia_image_url)."""
     if not url.startswith("https://"):
-        raise RuntimeError("image URLs must be https")
+        raise RuntimeError("image must be served over https")
     url = wikimedia_image_url(url)
     deadline = time.monotonic() + deadline_s
     for _hop in range(_MAX_REDIRECTS + 1):

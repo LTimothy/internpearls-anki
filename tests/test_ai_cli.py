@@ -1502,8 +1502,12 @@ def test_windows_agy_launcher_script_is_never_handed_the_prompt(monkeypatch, tmp
     monkeypatch.setattr(ai_cli.sys, "platform", "win32")
     path = tmp_path / launcher
     path.write_text("@echo off")
-    with pytest.raises(ai_cli.GenerationError, match="script launcher"):
+    with pytest.raises(ai_cli.GenerationError) as raised:
         ai_cli.build_argv("agy", str(path), "quick", "/tmp/s", [], prompt="hello")
+    assert str(raised.value) == (
+        f"Antigravity is installed here as a script launcher ({launcher}), which can't "
+        "be handed the prompt safely. Set its Executable path in AI Backends to the agy "
+        "program itself.")
 
 
 def test_windows_agy_launcher_uses_the_program_beside_it(monkeypatch, tmp_path):

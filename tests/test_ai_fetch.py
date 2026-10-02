@@ -113,9 +113,16 @@ def test_a_redirect_to_plain_http_is_refused(monkeypatch):
     web = _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
                {("img.example", "/a.png"): _Response(
                    302, {"Location": "http://img.example/a.png"})})
-    with pytest.raises(RuntimeError, match="https"):
+    with pytest.raises(RuntimeError) as raised:
         ai_fetch.fetch_card_image("https://img.example/a.png")
+    assert str(raised.value) == "image must be served over https"
     assert web.connected == [("img.example", "93.184.216.34")]
+
+
+def test_a_plain_http_address_is_refused_in_the_same_words_as_a_redirect():
+    with pytest.raises(RuntimeError) as raised:
+        ai_fetch.fetch_card_image("http://img.example/a.png")
+    assert str(raised.value) == "image must be served over https"
 
 
 def test_a_redirect_to_a_private_address_is_refused_before_connecting(monkeypatch):

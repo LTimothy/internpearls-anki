@@ -556,8 +556,8 @@ def _agy_program(path):
         return exe
     raise GenerationError(
         f"Antigravity is installed here as a script launcher ({os.path.basename(path)}), "
-        "which cannot be handed the prompt safely; set its Executable path in AI "
-        "Backends to the agy program itself")
+        "which can't be handed the prompt safely. Set its Executable path in AI "
+        "Backends to the agy program itself.")
 
 
 def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",

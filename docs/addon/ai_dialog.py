@@ -1552,7 +1552,7 @@ class _GenerateDialog(QDialog):
                 return False
             path = os.path.join(scratch, name)
             if os.path.dirname(os.path.realpath(path)) != scratch_real:
-                _warn(f"Could not remove attachment {name}: its path changed. Close the wizard to discard the session.", textFormat="plain")
+                _warn(f"Couldn't remove attachment {name}: its path changed. Close the wizard to discard the session.", textFormat="plain")
                 return False
             try:
                 os.remove(path)
@@ -1560,7 +1560,7 @@ class _GenerateDialog(QDialog):
                 pass
             except OSError as e:
                 removed = False
-                _warn(f"Could not remove attachment {name}: {e}. It is still attached; retry removal before generating.", textFormat="plain")
+                _warn(f"Couldn't remove attachment {name}: {e}. It is still attached; retry removal before generating.", textFormat="plain")
         return removed
 
     def _commit_attachment_outputs(self, attachments):
@@ -1596,7 +1596,7 @@ class _GenerateDialog(QDialog):
                         os.remove(os.path.join(s.scratch, name))
                     except OSError:
                         pass
-                _warn(f"Could not attach {os.path.basename(path)}: {e}", textFormat="plain")
+                _warn(f"Couldn't attach {os.path.basename(path)}: {e}", textFormat="plain")
                 continue
             updated = dict(meta)
             updated["images"] = moved
