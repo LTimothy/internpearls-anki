@@ -3018,6 +3018,86 @@ def test_group_header_counts_cards_not_a_retired_member(anki, tmp_path, monkeypa
     assert group_notes[0][2] == 2
 
 
+def _sections(items):
+    """{section heading: [item, ...]} for the deck sections of an update list."""
+    out, current = {}, None
+    for item in items:
+        if item[0] == "header":
+            current = out.setdefault(item[1], [])
+        elif current is not None:
+            current.append(item)
+    return out
+
+
+def test_the_same_change_note_in_two_decks_makes_one_group_per_deck(
+        anki, tmp_path, monkeypatch):
+    """Grouping is per deck section: an identical note on cards in two decks, and a
+    retired row in one deck naming a card in the other, never join across decks."""
+    from internpearls.logic import note_fields_hash
+    other = "Intern Pearls::Intern Custom::Other"
+    other_tags = f"{SCOPE}::Other"
+    shared = {"kind": "maintainer", "note": "one sweep across both decks"}
+    decks, change_notes = {}, {}
+    for deck, tags, guids in ((DECK, TAGS, ("a1", "a2")), (other, other_tags, ("b1", "b2"))):
+        rows = []
+        for guid in guids:
+            anki.col.add_note(guid, _fields(f"Front {guid}", back="old"), tags.split())
+            new = _fields(f"Front {guid}", back="new")
+            change_notes[guid] = [dict(shared, hash=note_fields_hash(new))]
+            rows.append((guid, new, tags))
+        decks[deck] = ("v2", rows, None)
+    anki.col.add_note("old-b", _fields("Retired front"), other_tags.split())
+    folder = _write_source(
+        tmp_path, decks, change_notes=change_notes,
+        retired={other: {"old-b": {"identity": "Retired front", "reason": "merged",
+                                   "superseded_by": ["a1"]}}})
+    _configure(anki, folder)
+    captured = _capture_update_items(monkeypatch)
+
+    _update(anki, accept=False)
+
+    sections = _sections(captured[0])
+    for heading, guids in (("Pharm", {"a1", "a2"}), ("Other", {"b1", "b2"})):
+        rows = sections[heading]
+        heads = [i for i in rows if i[0] == "group_note"]
+        assert len(heads) == 1 and heads[0][2] == 2, (heading, heads)
+        assert {i[2]["guid"] for i in rows if i[0] == "card"} == guids
+    other_rows = [i[0] for i in sections["Other"] if i[0] != "sep"]
+    assert other_rows == ["group_note", "card", "card", "retired"], other_rows
+    assert not any(i[0] == "retired" for i in sections["Pharm"])
+
+
+def test_a_retired_row_superseded_by_an_unchanged_card_stands_alone(
+        anki, tmp_path, monkeypatch):
+    """Its replacement ships unchanged, so nothing in the list is that card: the
+    retired row keeps its own reason, joins no other change's group, and the
+    unchanged card gets no row."""
+    from internpearls.logic import note_fields_hash
+    same = _fields("Front kept", back="same answer")
+    anki.col.add_note("kept", same, TAGS.split())
+    anki.col.add_note("g2", _fields("Front two", back="old"), TAGS.split())
+    anki.col.add_note("old1", _fields("Retired front"), TAGS.split())
+    new2 = _fields("Front two", back="new")
+    note = {"kind": "maintainer", "note": "rewrote the answer",
+            "hash": note_fields_hash(new2)}
+    folder = _write_source(
+        tmp_path, {DECK: ("v2", [("kept", same, TAGS), ("g2", new2, TAGS)], None)},
+        change_notes={"g2": [note]},
+        retired={DECK: {"old1": {"identity": "Retired front", "reason": "reworded",
+                                 "superseded_by": ["kept"]}}})
+    _configure(anki, folder)
+    captured = _capture_update_items(monkeypatch)
+
+    _update(anki, accept=False)
+
+    items = captured[0]
+    assert not any(i[0] == "group_note" for i in items)
+    assert _card_detail(items, "kept") is None
+    assert _card_detail(items, "g2")["change_notes"] == [note]
+    retired = [i for i in items if i[0] == "retired"]
+    assert retired == [("retired", "Retired front", "reworded")], retired
+
+
 def test_review_box_starts_empty_with_nothing_summarized(anki, tmp_path):
     """Default: the confirmation previews the incoming cards inline, with a cloze
     note's deletions filled in rather than blanked. A row's feedback box is
