@@ -26,12 +26,13 @@ from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
 
 from . import ai_cli, ai_logic, collection
 from .ai_setup import (LABEL_W, _open_url, _safe_settle, _settle_min_size,
-                       _wrapped_hint, run_connection_test_async)
+                       _wrapped_hint, run_connection_test_async,
+                       start_backend_detection)
 from .config import (AI_LAST_RUN_LOG, APP_NAME, TARGET_FIELDS, _cfg,
                      load_ai_usage, save_ai_usage, load_deck_skill,
                      save_deck_skill, load_user_skill, save_user_skill)
 from .logic import cloze_filled_html, field_preview_html, note_display_label, plural
-from .net import fetch_card_image
+from .ai_fetch import fetch_card_image
 from .palette import colors
 from .platform import (new_work_request, platform, platform_owner_id,
                        wait_for_mock_work)
@@ -273,6 +274,10 @@ def _scratch_image(scratch, name, kind, ext=None):
         return bad(f"{kind} image not found in scratch")
     with open(real_path, "rb") as fh:
         data = fh.read()
+    try:
+        data = ai_logic.check_image_bytes(name, data)
+    except ValueError as e:
+        return bad(str(e))
     return {"state": "ok", "kind": kind, "bytes": data, "name": name,
             "path": path}
 
@@ -523,6 +528,11 @@ def _card_image_names(card):
     return names
 
 
+def _field_preview(value):
+    """field_preview_html for a generated field, with each link's host kept visible."""
+    return field_preview_html(ai_logic.show_link_hosts(value))
+
+
 def _card_primary_html(card):
     """The row's bold collapsed line: the front, or a cloze note's text with its
     deletions filled in: the fact under review lives in the deletions, so it is
@@ -531,7 +541,7 @@ def _card_primary_html(card):
     carries."""
     ntype = card["note_type"]
     primary_field = ai_logic.PRIMARY_FIELD.get(ntype, "Front")
-    text = field_preview_html(card["fields"].get(primary_field, ""))
+    text = _field_preview(card["fields"].get(primary_field, ""))
     if primary_field == "Text":
         text = cloze_filled_html(text, escape=False)
     names = _card_image_names(card)
@@ -556,7 +566,8 @@ def _card_body_fields(card):
 
 # The chips the input page's own rows can wear, measured as one column so all
 # four rows start their text at the same x (see widgets.chip_column_width).
-_INPUT_CHIPS = ("ready", "notsetup", "auto", "thorough", "quick", "deck", "skills")
+_INPUT_CHIPS = ("ready", "notsetup", "checking", "auto", "thorough", "quick", "deck",
+                "skills")
 
 # The chips the progress row can wear, its own set (see chip_column_width): a
 # stage word, never one of the input page's or a card row's own vocabulary.
@@ -608,7 +619,7 @@ _MODE_LABELS = {"thorough": "Thorough: ", "quick": "Quick draft: "}
 _TRAILING_TIMING_RE = re.compile(r"\s*\([^()]*\)\s*$")
 
 
-def _depth_clause(backend, mode):
+def _depth_clause(backend, mode, path=None):
     """What a given backend actually does at a given depth, in the Cards and
     depth row's own voice: lower-cased, with the mode label and any trailing
     parenthetical timing (e.g. "(up to 15 turns, 1 to 3 min)") stripped, since
@@ -626,7 +637,7 @@ def _depth_clause(backend, mode):
     """
     if not backend:
         return "verifies claims online where the backend allows" if mode == "thorough" else ""
-    text = ai_cli.BACKENDS[backend]["modes"][mode]
+    text = ai_cli.backend_wording(backend, path)["modes"][mode]
     label = _MODE_LABELS[mode]
     if text.startswith(label):
         text = text[len(label):]
@@ -815,6 +826,7 @@ class _GenerateDialog(QDialog):
         # window, ai_setup.py). Guards against a second click starting a
         # concurrent test that races the first to write the same status label.
         self._testing_kinds = set()
+        self._detecting = False
         cfg = _cfg()
         s.deck_name = cfg["export_deck"] + "::" + ai_logic.GENERATED_DECK_LEAF
 
@@ -877,7 +889,7 @@ class _GenerateDialog(QDialog):
             return fn(*args, **kwargs)
         except Exception as e:
             print(traceback.format_exc())
-            _warn(f"Something went wrong: {e}")
+            _warn(f"Something went wrong: {e}", textFormat="plain")
 
     def _guard_completion(self, fn, *args, **kwargs):
         """Like _guard, but for the two QTimer callbacks that drive generation to
@@ -925,7 +937,7 @@ class _GenerateDialog(QDialog):
             # Warned only now that the run is stopped. The warning is modal, so
             # warning first left the assistant running for as long as it stayed
             # open, and let the modal's event loop re-enter the still-live poll.
-            _warn(f"Something went wrong: {e}")
+            _warn(f"Something went wrong: {e}", textFormat="plain")
             try:
                 self._return_to_input_or_review()
             except Exception:
@@ -954,11 +966,34 @@ class _GenerateDialog(QDialog):
         return page
 
     def _detect(self, cfg):
+        """Show what a file lookup finds at once, then the probe results when they
+        arrive off the main thread. Generate waits for them."""
+        self._detect_gen = getattr(self, "_detect_gen", 0) + 1
+        gen = self._detect_gen
+        res = ai_cli.locate_backends(cfg)
+        self._detecting = any(info["ok"] is None for info in res["backends"].values())
+        self._apply_detection(res)
+        if self._detecting:
+            self._detect_work = start_backend_detection(
+                self, cfg, lambda done: self._guard(self._detected, gen, done))
+
+    def _detected(self, gen, res):
+        if gen != self._detect_gen:
+            return
+        self._detecting = False
+        self._apply_detection(res)
+
+    def _probed_path(self):
+        """The backend's path once detection has run it, else None, so nothing on
+        the main thread starts it to read its flags."""
+        return None if self._detecting else self.session.cli_path
+
+    def _apply_detection(self, res):
         s = self.session
-        res = ai_cli.detect_backends(cfg)
         s.backend = res["chosen"]
         s.cli_path = res["backends"][s.backend]["path"] if s.backend else None
         self.setup_status.setText(
+            "Checking which assistants answer." if self._detecting else
             f"Ready: {ai_cli.BACKENDS[s.backend]['label']} detected." if s.backend
             else "No enabled assistant detected yet. Configure one, then come back.")
         self.stack.setCurrentWidget(self.input_page if s.backend else self.setup_page)
@@ -1056,6 +1091,7 @@ class _GenerateDialog(QDialog):
         # sentence rather than folded into it: it is written by a background
         # poll that knows nothing about the rest of the row.
         self.backend_test_status = _wrapped_hint("Not tested yet")
+        self.backend_test_status.setTextFormat(Qt.TextFormat.PlainText)
         self.backend_row.body_lay.addWidget(self.backend_test_status)
         content_lay.addWidget(self.backend_row)
 
@@ -1370,7 +1406,8 @@ class _GenerateDialog(QDialog):
             else:
                 why = "Quick because the source is short"
         if why:
-            clause = _depth_clause(self.session.backend, mode)
+            clause = _depth_clause(self.session.backend, mode,
+                                   self._probed_path())
             said += f" {why}: {clause}." if clause else f" {why}."
         self.depth_row.set_chip(mode)
         self.depth_row.set_detail(said)
@@ -1436,7 +1473,7 @@ class _GenerateDialog(QDialog):
         has_material = bool(self.source_box.toPlainText().strip()
                             or self.session.attachments)
         self.generate_btn.setEnabled(
-            has_material and bool(self.session.backend)
+            has_material and bool(self.session.backend) and not self._detecting
             and not self._attachment_in_progress())
 
     def _refresh_attachment_list(self):
@@ -1492,7 +1529,7 @@ class _GenerateDialog(QDialog):
                 return False
             path = os.path.join(scratch, name)
             if os.path.dirname(os.path.realpath(path)) != scratch_real:
-                _warn(f"Could not remove attachment {name}: its path changed. Close the wizard to discard the session.")
+                _warn(f"Could not remove attachment {name}: its path changed. Close the wizard to discard the session.", textFormat="plain")
                 return False
             try:
                 os.remove(path)
@@ -1500,7 +1537,7 @@ class _GenerateDialog(QDialog):
                 pass
             except OSError as e:
                 removed = False
-                _warn(f"Could not remove attachment {name}: {e}. It is still attached; retry removal before generating.")
+                _warn(f"Could not remove attachment {name}: {e}. It is still attached; retry removal before generating.", textFormat="plain")
         return removed
 
     def _commit_attachment_outputs(self, attachments):
@@ -1536,7 +1573,7 @@ class _GenerateDialog(QDialog):
                         os.remove(os.path.join(s.scratch, name))
                     except OSError:
                         pass
-                _warn(f"Could not attach {os.path.basename(path)}: {e}")
+                _warn(f"Could not attach {os.path.basename(path)}: {e}", textFormat="plain")
                 continue
             updated = dict(meta)
             updated["images"] = moved
@@ -1579,18 +1616,21 @@ class _GenerateDialog(QDialog):
             return
         meta = ai_cli.BACKENDS[s.backend]
         cfg = _cfg()
+        probed = self._probed_path()
         summary = ai_cli.model_effort_line(
             s.backend, cfg["ai_model"][s.backend], cfg["ai_effort"][s.backend],
-            path=s.cli_path)
-        self.backend_row.set_chip("ready")
+            path=probed)
+        self.backend_row.set_chip("checking" if self._detecting else "ready")
         self.backend_row.set_primary(
             f"<b>Backend:</b> {html.escape(meta['label'])}, "
             f"{_muted(summary)}")
-        self.backend_row.set_detail(f"{meta['safety']}.")
-        self.backend_test_btn.setVisible(True)
-        self.backend_test_status.setText("Not tested yet")
-        self.thorough_hint.setText(meta["modes"]["thorough"])
-        self.quick_hint.setText(meta["modes"]["quick"])
+        wording = ai_cli.backend_wording(s.backend, probed)
+        self.backend_row.set_detail(
+            "Checking that it answers." if self._detecting else f"{wording['safety']}.")
+        self.backend_test_btn.setVisible(not self._detecting)
+        self.backend_test_status.setText("" if self._detecting else "Not tested yet")
+        self.thorough_hint.setText(wording["modes"]["thorough"])
+        self.quick_hint.setText(wording["modes"]["quick"])
         reg = load_ai_usage()
         self.usage_row.setText(ai_logic.usage_line(
             reg, s.backend, now=platform().wall_now().timestamp(),
@@ -1721,7 +1761,7 @@ class _GenerateDialog(QDialog):
             committed = self._commit_attachment_outputs(self._attach_results)
             self.session.attachments.extend(committed)
             for unexpected, message in self._attach_failures:
-                _warn(f"Something went wrong: {message}" if unexpected else message)
+                _warn(f"Something went wrong: {message}" if unexpected else message, textFormat="plain")
         shutil.rmtree(self._attach_extract_dir, ignore_errors=True)
         self._attach_extract_dir = None
         self.attach_btn.setEnabled(True)
@@ -2267,11 +2307,11 @@ class _GenerateDialog(QDialog):
                  "pick a lower-effort model in AI Backends (for "
                  "Antigravity, an id ending in -low), or use another "
                  "assistant. The full stream is in ai_last_run.log inside "
-                 "the add-on's user_files folder.")
+                 "the add-on's user_files folder.", textFormat="plain")
             self._return_to_input_or_review()
             return
         if err or not res:
-            _warn(f"Generation failed: {err}")
+            _warn(f"Generation failed: {err}", textFormat="plain")
             self._return_to_input_or_review()
             return
         if s.check:
@@ -2285,7 +2325,7 @@ class _GenerateDialog(QDialog):
                                        extra_error=errors)
                 return
             _warn("The assistant's reply still could not be used after a "
-                  "retry:\n" + "\n".join(errors[:5]))
+                  "retry:\n" + "\n".join(errors[:5]), textFormat="plain")
             self._return_to_input_or_review()
             return
         s.tokens_last_run = res["tokens"]
@@ -2346,7 +2386,7 @@ class _GenerateDialog(QDialog):
                                        extra_error=errors)
                 return
             _warn("The assistant's fact-check reply still could not be used "
-                  "after a retry:\n" + "\n".join(errors[:5]))
+                  "after a retry:\n" + "\n".join(errors[:5]), textFormat="plain")
             self._return_to_input_or_review()
             return
         s.tokens_last_run = res["tokens"]
@@ -2717,7 +2757,7 @@ class _GenerateDialog(QDialog):
         blay.setSpacing(4)
 
         for name, value in _card_body_fields(card):
-            html_value = field_preview_html(value)
+            html_value = _field_preview(value)
             if not html_value:
                 continue
             if name == "Why":
@@ -3000,7 +3040,8 @@ class _GenerateDialog(QDialog):
         dlg = _EditCardDialog(self, card)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        new_fields = dlg.fields()
+        new_fields = {k: ai_logic.sanitize_field_html(v)
+                      for k, v in dlg.fields().items()}
         if any(card["fields"].get(k, "") != v for k, v in new_fields.items()):
             if s.verdicts.pop(i, None) is not None:
                 s.edited_since_check.add(i)
@@ -3073,8 +3114,8 @@ class _GenerateDialog(QDialog):
         lay.setSpacing(2)
         updated_fg = colors()["updated_fg"]
         for field, new_value in verdict["correction"].items():
-            current = field_preview_html(card["fields"].get(field, ""))
-            proposed = field_preview_html(new_value)
+            current = _field_preview(card["fields"].get(field, ""))
+            proposed = _field_preview(new_value)
             lay.addWidget(_rich_label(
                 f"<b>{html.escape(field)}</b>: {current} &rarr; "
                 f"<span style='color:{updated_fg}'>{proposed}</span>"))
@@ -3173,7 +3214,7 @@ class _GenerateDialog(QDialog):
                     # it (and, per I2, already did: this is the fallback for
                     # a card the user included anyway).
                     _warn(f"Skipping an image on card {pos + 1}: "
-                          f"{(res or {}).get('error', 'not resolved')}")
+                          f"{(res or {}).get('error', 'not resolved')}", textFormat="plain")
                     continue
                 if res["kind"] == "svg":
                     name = f"generated-{svg_index}.svg"
@@ -3191,6 +3232,9 @@ class _GenerateDialog(QDialog):
             cited = verdict and _verdict_state(verdict) in ("confirmed", "applied")
             card["_sources"] = (verdict.get("sources") or []) if cited else []
         cards = [c for _, c in pairs]
+        for card in cards:
+            card["fields"].update({k: ai_logic.sanitize_field_html(v)
+                                   for k, v in card["fields"].items()})
         # add_generated_notes can raise (e.g. Basic/Cloze missing or renamed on a
         # non-English profile). Cleanup waits until AFTER a successful import:
         # if this raises, the scratch dir must still be there for a retry.
@@ -3205,7 +3249,7 @@ class _GenerateDialog(QDialog):
             _warn(f"The import stopped part-way ({partial.__cause__}). "
                   f"Added: {plural(landed, 'card')}. Not added: "
                   f"{plural(len(pairs) - landed, 'card')}. Import again adds only "
-                  "the rest, and Edit > Undo removes the cards already added.")
+                  "the rest, and Edit > Undo removes the cards already added.", textFormat="plain")
             return 0
         # add_generated_notes only writes the collection; nothing about that tells
         # Anki's main window a new undo entry exists or that the deck list changed

@@ -45,6 +45,16 @@ def _state_digest(anki, media_root):
     return hashlib.sha256(repr((notes, media)).encode()).hexdigest()
 
 
+def _claude_answered(cfg, **kw):
+    """Detection as delivered: claude found and answering, nothing else."""
+    from internpearls import ai_cli
+    backends = {kind: {"path": None, "ok": False, "detail": "not found", "enabled": True}
+                for kind in ai_cli.BACKENDS}
+    backends["claude"] = {"path": "/usr/bin/x", "ok": True, "detail": "v1",
+                          "enabled": True}
+    return {"backends": backends, "chosen": "claude"}
+
+
 def _ready_generate_dialog(monkeypatch):
     from internpearls import ai_cli, ai_dialog
 
@@ -53,6 +63,8 @@ def _ready_generate_dialog(monkeypatch):
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    # Detection already delivered: these flows are about what follows it.
+    monkeypatch.setattr(ai_cli, "locate_backends", _claude_answered)
     return ai_dialog._GenerateDialog()
 
 
@@ -131,7 +143,7 @@ def test_rejected_batch_rolls_back_to_last_acknowledged_frontier(
         anki, monkeypatch):
     from internpearls import ai_cli, ai_setup
 
-    def detect(cfg):
+    def detect(cfg, **kw):
         configured = cfg["ai_cli_path"]
         backends = {
             kind: {"path": configured[kind] or None,
@@ -142,6 +154,7 @@ def test_rejected_batch_rolls_back_to_last_acknowledged_frontier(
         return {"backends": backends, "chosen": "claude"}
 
     monkeypatch.setattr(ai_cli, "detect_backends", detect)
+    monkeypatch.setattr(ai_cli, "locate_backends", detect)
     runner = mock_anki.Runner(anki)
 
     def flow():
@@ -369,6 +382,8 @@ def test_ordered_batch_edits_source_before_generate_activation(
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    # Detection already delivered: these flows are about what follows it.
+    monkeypatch.setattr(ai_cli, "locate_backends", _claude_answered)
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda *args, **kwargs: {"text": "[]", "tokens": 0, "duration_s": 0})
@@ -405,6 +420,8 @@ def test_disabled_generate_validation_bypasses_production_safe_wrapper(
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    # Detection already delivered: these flows are about what follows it.
+    monkeypatch.setattr(ai_cli, "locate_backends", _claude_answered)
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda *args, **kwargs: {"text": "[]", "tokens": 0, "duration_s": 0})
@@ -450,6 +467,8 @@ def test_nested_file_frontier_rejects_unconsumed_action_suffix(
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    # Detection already delivered: these flows are about what follows it.
+    monkeypatch.setattr(ai_cli, "locate_backends", _claude_answered)
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda *args, **kwargs: {"text": "[]", "tokens": 0, "duration_s": 0})
@@ -508,6 +527,8 @@ def test_production_generate_replay_keeps_work_and_cancel_leaves_progress(
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    # Detection already delivered: these flows are about what follows it.
+    monkeypatch.setattr(ai_cli, "locate_backends", _claude_answered)
 
     def generate(*args, **kwargs):
         kwargs["on_event"]({"type": "phase", "phase": "Working"})
@@ -577,6 +598,8 @@ def test_replay_active_close_uses_no_native_cleanup_threads(
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    # Detection already delivered: these flows are about what follows it.
+    monkeypatch.setattr(ai_cli, "locate_backends", _claude_answered)
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda *args, **kwargs: {"text": "[]", "tokens": 0, "duration_s": 0})
@@ -1606,6 +1629,8 @@ def test_repeated_edits_drive_production_widgets_without_work_credit(
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    # Detection already delivered: these flows are about what follows it.
+    monkeypatch.setattr(ai_cli, "locate_backends", _claude_answered)
     generation_calls = []
 
     def generate(*args, **kwargs):
@@ -1678,6 +1703,8 @@ def test_production_generate_import_commits_exactly_once(
         lambda kind, override="": "/usr/bin/x" if kind == "claude" else None)
     monkeypatch.setattr(
         ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    # Detection already delivered: these flows are about what follows it.
+    monkeypatch.setattr(ai_cli, "locate_backends", _claude_answered)
     monkeypatch.setattr(
         ai_cli, "run_generation",
         lambda *args, **kwargs: {
