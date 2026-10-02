@@ -14,6 +14,7 @@ import re
 import sqlite3
 import struct
 import tempfile
+import unicodedata
 import zipfile
 
 from .ai_logic import is_generated_guid
@@ -607,6 +608,35 @@ class _CappedWriter:
                                     f"{_size_text(APKG_MAX_MEMBER)}, so it wasn't "
                                     "opened.")
         return self._fh.write(data)
+
+
+def _is_hidden(ch):
+    """A character that draws nothing (or reorders what is drawn) but a model still
+    reads: format characters (zero-width, bidi controls, Unicode tags), variation
+    selectors, and control characters other than tab and line breaks."""
+    o = ord(ch)
+    if ch in "\t\n\r":
+        return False
+    return (unicodedata.category(ch) in ("Cf", "Cc")
+            or 0xFE00 <= o <= 0xFE0F or 0xE0100 <= o <= 0xE01EF
+            or o in (0x115F, 0x1160, 0x3164, 0xFFA0))
+
+
+def reveal_hidden(text):
+    """(`text` with every hidden character written as [U+XXXX], how many there were)."""
+    out, count = [], 0
+    for ch in text:
+        if _is_hidden(ch):
+            out.append(f"[U+{ord(ch):04X}]")
+            count += 1
+        else:
+            out.append(ch)
+    return "".join(out), count
+
+
+def strip_hidden(text):
+    """`text` without its hidden characters (see reveal_hidden)."""
+    return "".join(ch for ch in text if not _is_hidden(ch))
 
 
 @contextlib.contextmanager
