@@ -100,17 +100,17 @@ def _backup_collection():
     """Take a real, timestamped WHOLE-COLLECTION backup (every deck, not just ours).
 
     Uses the same mechanism Anki runs on its own (a .colpkg in the profile's backup
-    folder). Returns the backup folder path on success, None if it failed for any
-    reason.
+    folder). Returns (folder, written), or (None, False) if it failed. Even when forced,
+    Anki writes nothing when the collection is unchanged since its last backup, so
+    `written` False with a folder means the latest backup is already current.
     """
     try:
         folder = mw.pm.backupFolder()
-        if mw.col.create_backup(backup_folder=folder, force=True,
-                                 wait_for_completion=True):
-            return folder
+        written = mw.col.create_backup(backup_folder=folder, force=True,
+                                       wait_for_completion=True)
+        return folder, bool(written)
     except Exception:
-        pass
-    return None
+        return None, False
 
 
 def _deck_backup_folder():
@@ -1474,9 +1474,13 @@ def backup_collection_now():
     automatically before every sync. Kept available for anyone who wants that broader
     protection on top of the faster, deck-scoped default.
     """
-    folder = _backup_collection()
+    folder, written = _backup_collection()
     if not folder:
         _warn("Couldn't create a collection backup.")
+        return
+    if not written:
+        _info("Nothing has changed since your last collection backup, so it's already "
+              f"up to date in:<br><code>{folder}</code>")
         return
     _info(f"Backed up your whole collection (every deck) to:<br><code>{folder}</code>")
 

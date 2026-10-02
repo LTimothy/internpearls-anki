@@ -813,6 +813,24 @@ class MockCollection:
                 # every ancestor of it, same as real Anki.
                 self.add_note(guid, values, tags.split(), model, deck)
 
+    def _content_signature(self):
+        notes = sorted((nid, n.guid, tuple(n.fields), tuple(n.tags), n.model["name"])
+                       for nid, n in self._notes.items())
+        cards = sorted((cid, c.nid, c.did, c.queue, c.ivl, c.due, c.reps)
+                       for cid, c in self._cards.items())
+        return repr((notes, cards, self.scm))
+
+    def create_backup(self, *, backup_folder, force, wait_for_completion):
+        """Anki's col.create_backup: True when a backup was written. Even with
+        force=True it writes nothing and returns False when the collection has not
+        changed since the last backup."""
+        signature = self._content_signature()
+        if not force or signature == getattr(self, "_backup_signature", None):
+            return False
+        self._backup_signature = signature
+        self.backups = getattr(self, "backups", []) + [backup_folder]
+        return True
+
     def export_anki_package(self, out_path, options, limit):
         """A real (minimal) .apkg of the whole mock collection, so a backup made
         here can actually be re-imported through import_anki_package.
@@ -2769,7 +2787,8 @@ class MockMW:
         self.addonManager = types.SimpleNamespace(
             getConfig=lambda pkg: dict(self._config),
             writeConfig=lambda pkg, cfg: (self._config.clear(),
-                                          self._config.update(cfg)))
+                                          self._config.update(cfg)),
+            install=self._install_addon, installed=[])
         self.progress = types.SimpleNamespace(
             start=lambda **kw: None, update=lambda **kw: None,
             finish=lambda: None)
@@ -2785,6 +2804,20 @@ class MockMW:
             menuTools=types.SimpleNamespace(addMenu=self._menus.append),
             actionUndo=QAction())
         self.update_undo_actions()
+
+    def _install_addon(self, path):
+        """addonManager.install: returns InstallError for a package it refuses rather
+        than raising, leaving the installed version alone, and InstallOk otherwise."""
+        try:
+            with zipfile.ZipFile(path) as z:
+                manifest = json.loads(z.read("manifest.json"))
+        except zipfile.BadZipFile:
+            return types.SimpleNamespace(errmsg="zip")
+        except (KeyError, ValueError):
+            return types.SimpleNamespace(errmsg="manifest")
+        self.addonManager.installed.append(path)
+        return types.SimpleNamespace(name=manifest.get("name", ""), conflicts=set(),
+                                     compatible=True)
 
     def reset(self):
         self.reset_count += 1
