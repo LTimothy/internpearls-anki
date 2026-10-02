@@ -194,11 +194,17 @@ class _NativeTimerHandle:
 
     def start(self):
         self._active = True
-        self._timer.start()
+        try:
+            self._timer.start()
+        except RuntimeError:    # its owner was deleted, and the QTimer with it
+            self._active = False
 
     def stop(self):
         self._active = False
-        self._timer.stop()
+        try:
+            self._timer.stop()
+        except RuntimeError:    # its owner was deleted, and the QTimer with it
+            pass
 
     def is_active(self):
         return self._active
