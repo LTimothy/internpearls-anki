@@ -79,16 +79,16 @@ def anki(tmp_path, monkeypatch):
     # under the add-on's own user_files/ rather than under tmp_path.
     monkeypatch.setattr(review, "FEEDBACK", str(user_files / "card_feedback.json"))
     monkeypatch.setattr(sync, "SHIPPED", str(user_files / "shipped_fields.json"))
+    monkeypatch.setattr(collection, "SHIPPED", str(user_files / "shipped_fields.json"))
     monkeypatch.setattr(config, "DECLINED", str(user_files / "declined.json"))
     monkeypatch.setattr(config, "DECK_SKILL", str(user_files / "deck_skill.json"))
     monkeypatch.setattr(config, "AI_USAGE", str(user_files / "ai_usage.json"))
     monkeypatch.setattr(config, "LATER_SEEN", str(user_files / "later_seen.json"))
     monkeypatch.setattr(config, "USER_SKILL", str(user_files / "user_skill.md"))
-    background._tpl_deferred_notified.clear()
-    background._deferred_decks.clear()   # session-scoped skip list, same reason
+    background._memories.clear()   # session-scoped auto-sync memory, same reason
     sync.undone_updates.clear()
-    background._backup_failure_notified = False
-    background._last_reconcile_notified = 0
+    aqt_qt.QTimer.single_shots.clear()
+    sys.modules["aqt"].gui_hooks.profile_did_open = mock_anki.Hook()
     sync._reconcile_action = None   # a prior test's registered stub must not leak in
     sync._apkg_cache.clear()        # preview-download cache must not leak across tests
     return _mock

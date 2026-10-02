@@ -286,7 +286,7 @@ def clamp_interval_minutes(minutes, floor_minutes=1, default_minutes=15,
     """
     try:
         m = int(minutes)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         m = default_minutes
     return min(ceiling_minutes, max(floor_minutes, m))
 
@@ -1837,7 +1837,9 @@ def find_duplicate_groups(existing_notes, canonical_deck_names):
     return out
 
 
-_TAG_RE = re.compile(r"<[^>]+>")
+# A real tag, comment or declaration: "<" then a name, "/", "!" or "?". A "<" followed by
+# anything else ("MAP <65", "1 < 2") is a literal and survives.
+_TAG_RE = re.compile(r"<!--.*?-->|</?[A-Za-z][^>]*>|<[!?][^>]*>", re.S)
 _IMG_SRC_RE = re.compile(r"""<img[^>]*\bsrc\s*=\s*["']([^"']+)["']""", re.I)
 
 
@@ -2215,6 +2217,12 @@ _DECLINE_SNAPSHOT_GROUPS = (
 )
 
 
+def _one_line(text):
+    """Plain text with its whitespace folded onto one line. For a learner's note and a
+    standing decline's front, which are stored as plain text already."""
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
 def _decline_snapshot_lines(registry, excluded=()):
     """Render the current sparse decline registry for a feedback digest. Later cards
     are one count line, counted as later_count does (outside `excluded` decks)."""
@@ -2245,7 +2253,7 @@ def _decline_snapshot_lines(registry, excluded=()):
                                          str(item[1].get("front", "")), item[0])):
             front = entry.get("front")
             display_front = front if isinstance(front, str) and front else guid
-            lines.append(f'    "{plain_text(display_front)}"')
+            lines.append(f'    "{_one_line(display_front)}"')
             if entry.get("deck"):
                 lines.append(f'    deck: {str(entry["deck"]).split("::")[-1]}')
             if entry.get("decided"):
@@ -2268,8 +2276,9 @@ def build_feedback_digest(entries, version="", date="", standing_declines=None,
 
     The guid line is what makes this worth more than the learner describing a card from
     memory: it names the exact spec note, so the fix doesn't start with hunting for
-    which card the learner meant. Fronts are stored as HTML, so they go through plain_text on
-    the way out.
+    which card the learner meant. A flagged card's front is HTML, so it goes through
+    plain_text on the way out; notes and standing-decline fronts are plain text already
+    and only have their whitespace folded.
 
     `standing_declines`, when supplied, is the current declined-card registry. It is
     rendered after the run's entries as a complete state snapshot; content hashes stay
@@ -2300,7 +2309,7 @@ def build_feedback_digest(entries, version="", date="", standing_declines=None,
             if e.get("guid"):
                 lines.append(f'  guid {e["guid"]}')
             if e.get("note"):
-                lines.append(f'  > {plain_text(e.get("note"))}')
+                lines.append(f'  > {_one_line(e.get("note"))}')
             lines.append("")
     if standing_declines is not None:
         lines.extend(_decline_snapshot_lines(standing_declines, excluded))

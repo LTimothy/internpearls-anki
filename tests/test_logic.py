@@ -189,6 +189,17 @@ def test_clamp_interval_caps_an_absurd_value():
     assert logic.clamp_interval_minutes(99999999) * 60 * 1000 < 2 ** 31
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_clamp_interval_treats_non_finite_as_invalid(bad):
+    # Python's json reads Infinity and NaN from a hand-edited config.json.
+    assert logic.clamp_interval_minutes(bad, default_minutes=15) == 15
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_clamp_night_mode_dim_percent_treats_non_finite_as_invalid(bad):
+    assert logic.clamp_night_mode_dim_percent(bad, default_percent=30) == 30
+
+
 # ----------------------------------------------------------- decide_addon_update_action
 def test_decide_update_action_none_when_current():
     assert logic.decide_addon_update_action(
@@ -1288,6 +1299,43 @@ def test_build_feedback_digest_is_plain_text_not_html():
     assert "<sub>" not in text
     assert "&lt;" not in text
     assert "SpO 2 <94%" in text
+
+
+def test_build_feedback_digest_keeps_literal_comparators_in_notes_and_fronts():
+    # A learner's note is typed as plain text, and a standing decline's front is stored
+    # already decoded, so a bare "<" or ">" there is a comparator, not a tag.
+    text = logic.build_feedback_digest(
+        [{"deck": "D", "front": "MAP &lt;65?", "guid": "g",
+          "note": "MAP <65 and HR >100 is wrong"}],
+        standing_declines={"h": {"state": "keep", "front": "HR >100 and MAP <65",
+                                 "deck": "D"}})
+    assert "> MAP <65 and HR >100 is wrong" in text
+    assert '"MAP <65?"' in text
+    assert '"HR >100 and MAP <65"' in text
+
+
+def test_build_feedback_digest_keeps_a_note_and_a_decoded_front_verbatim():
+    # Learner notes and standing-decline fronts are already plain text: only their
+    # whitespace is folded, so even something tag-shaped survives.
+    text = logic.build_feedback_digest(
+        [{"deck": "D", "front": "Front", "guid": "g", "note": "a<b, c>d\n  and  more"}],
+        standing_declines={"h": {"state": "keep", "front": "x<b, y>z", "deck": "D"}})
+    assert "> a<b, c>d and more" in text
+    assert '"x<b, y>z"' in text
+
+
+@pytest.mark.parametrize("field, expected", [
+    ("a <b>bold</b> word", "a bold word"),
+    ("x<br/>y", "x y"),
+    ("<div class='c'>t</div>", "t"),
+    ("<!-- note -->kept", "kept"),
+    ("MAP <65 and HR >100", "MAP <65 and HR >100"),
+    ("1 < 2 > 0", "1 < 2 > 0"),
+    ("a <= b", "a <= b"),
+    ("&lt;b&gt; stays text", "<b> stays text"),
+])
+def test_plain_text_strips_real_tags_only(field, expected):
+    assert logic.plain_text(field) == expected
 
 
 def test_build_feedback_digest_carries_the_full_current_decline_snapshot():

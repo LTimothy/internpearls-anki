@@ -10,7 +10,8 @@ import tempfile
 
 from aqt import mw
 
-from .logic import clamp_night_mode_dim_percent, migrate_declined
+from .logic import (clamp_interval_minutes, clamp_night_mode_dim_percent,
+                    migrate_declined)
 
 ADDON_VERSION = "0.77.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
@@ -167,7 +168,7 @@ def _default_count(value):
     automatic rather than as a number nothing here could honour."""
     try:
         n = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
     return n if 0 < n <= AI_COUNT_CEILING else 0
 
@@ -186,8 +187,10 @@ def _cfg():
         "notify_addon_updates": c.get("notify_addon_updates", True),
         "auto_update_addon":    c.get("auto_update_addon", False),
         "auto_sync_decks":      c.get("auto_sync_decks", False),
-        "auto_sync_interval_minutes": c.get("auto_sync_interval_minutes",
-                                            AUTO_SYNC_INTERVAL_DEFAULT_MIN),
+        "auto_sync_interval_minutes": clamp_interval_minutes(
+            c.get("auto_sync_interval_minutes", AUTO_SYNC_INTERVAL_DEFAULT_MIN),
+            AUTO_SYNC_INTERVAL_FLOOR_MIN, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
+            AUTO_SYNC_INTERVAL_CEILING_MIN),
         "dim_images_night_mode": c.get("dim_images_night_mode", False),
         "dim_images_night_mode_percent": clamp_night_mode_dim_percent(
             c.get("dim_images_night_mode_percent", NIGHT_MODE_DIM_PERCENT_DEFAULT),
@@ -230,6 +233,15 @@ def source_identity():
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
     return (conf.get("github_decks_repo", ""), conf.get("github_ref", "main"),
             conf.get("decks_dir", ""), conf.get("scope_tag", "InternPearls"))
+
+
+def collection_key():
+    """The open collection and the deck source, for state kept per collection in
+    memory rather than on disk."""
+    col = getattr(mw, "col", None)
+    path = getattr(col, "path", None)
+    where = os.path.realpath(path) if isinstance(path, str) and path else id(col)
+    return where, source_identity()
 
 
 # Files kept per collection and source. The first group never adopts a legacy unscoped
