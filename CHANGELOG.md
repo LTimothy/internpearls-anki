@@ -3,6 +3,74 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.78.0
+
+Safer deck sources and AI output, a smarter and faster Scan for duplicates, and fixes to
+restore, auto-sync and Update my decks.
+
+- A deck package is checked before anything in it is unpacked. One over 512 MB, holding
+  more than 50,000 files, or that would unpack to more than 2 GB (1 GB for any one file)
+  is refused with a message saying why. Restore intern pearls deck checks the file you
+  pick the same way, before taking its backup.
+- Deck and skill paths in a manifest must stay inside the deck source, and a local folder
+  source reads only regular files inside that folder. A suggested scope tag with quotes,
+  spaces or a wildcard is refused.
+- Your GitHub token is sent only to the address it was meant for, never on a redirect to
+  another host. Every download has an overall time limit, so a connection that stalls no
+  longer keeps auto-sync stuck until you restart Anki.
+- The deck skill question shows the skill's text and version exactly as written, says
+  when the AI can search the web (Quick drafts for card images, Thorough drafts and Check
+  facts to verify), and points out hidden characters, which are removed before the AI
+  reads the skill. A skill you allowed earlier is cleaned the same way without asking.
+- Deck names, card labels and messages from the deck source show as written, so a "<" in
+  a front or deck name no longer cuts the line short.
+- Generate cards (AI) keeps only ordinary card formatting in what the assistant writes.
+  Scripts, frames, links that aren't https and web pictures inside a field are removed
+  before review, so the preview shows exactly what will be imported, and a link shows the
+  site it points to. Your edits and accepted corrections are cleaned the same way.
+- A web card picture is downloaded over https on every step, never from a private or
+  local network address, within one time limit, and only if it really is an image. It
+  does not use a system proxy. Drawn and attached pictures are checked by content before
+  they reach your media.
+- Each draft is checked against every card in your collection the way Scan for
+  duplicates checks at Normal. A likely copy of a card you have is flagged with that
+  card's front and deck and set to Skip, unless you already chose for that row. The check
+  runs in the background, and a line beside Import says while it is still running.
+- Basic and Cloze are recognized by their shape, so a profile in another language
+  generates onto its own stock note types.
+- The wizard and AI Backends open at once and show each assistant as checking until it
+  answers. Messages from an assistant show as plain text.
+- Claude's file access stays inside the wizard's scratch folder in every mode that reads
+  files, including Quick with an attached picture.
+- On Windows, assistants start without a console window, an Antigravity .cmd or .bat
+  launcher is swapped for the agy program beside it, and a prompt too long for the
+  command line is refused with a clear message.
+- Scan for duplicates counts short tokens that carry meaning (T3, Type II, alpha-2,
+  Greek letters, a number after type, grade, stage, factor or nerve) and compares words
+  in any language. Two cards that differ on one of those, or on whether they negate,
+  show only at Loose, with a Differs line naming the difference.
+- Scan for duplicates opens quickly with long lists and loads as you scroll. Long deck
+  paths wrap, links show keyboard focus, Enter no longer starts a Rescan, and Rescan asks
+  before dropping AI verdicts.
+- A deck's summary line in Update my decks counts cards waiting at Later and names them,
+  for example "8 new (1 waiting at Later)". A card's decision and note box line up with
+  its text, and a change group's cards are indented under its note.
+- The startup reminder about waiting cards leaves out cards a local folder source has
+  retired, and the feedback digest keeps a literal "<" or ">" ("MAP <65 and HR >100").
+- Manage decks > Declined cards opens quickly with thousands of entries and keeps your
+  place after Offer again.
+- Restore intern pearls deck backs up every deck it changes, and restored cards get back
+  the field baselines saved with their backup, so the next update tells the source's
+  older text from your own edits. Backups made by earlier versions carry none.
+- Auto-sync checks shortly after a profile opens, keeps what it held back, what it told
+  you and updates you undid per profile, and says so when it skips a round because new
+  decks have nothing to back up yet.
+- Backup full collection says when your latest backup is already up to date. Check for
+  add-on updates says in plain words when Anki refuses the download, and keeps the version
+  you have. A setting that isn't a finite number reads as its default.
+
+Restart Anki after updating.
+
 ## v0.77.1
 
 Card text shows apostrophes, ampersands and quotes as themselves.
