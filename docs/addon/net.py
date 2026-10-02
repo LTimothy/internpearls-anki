@@ -147,9 +147,13 @@ def _deadline_for(timeout):
 
 
 def _origin(url):
+    """(scheme, host, port) of `url`, or None when the port can't be read."""
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
-    port = parts.port or {"https": 443, "http": 80}.get(scheme)
+    try:
+        port = parts.port or {"https": 443, "http": 80}.get(scheme)
+    except ValueError:
+        return None
     return scheme, (parts.hostname or "").lower(), port
 
 
@@ -157,7 +161,8 @@ def _keeps_credentials(old_url, new_url):
     """Whether a redirect from `old_url` to `new_url` may carry the token: only to the
     same scheme, host and port. Anywhere else would hand the learner's GitHub token to
     whoever that host is, or send it in the clear after an https start."""
-    return _origin(old_url) == _origin(new_url)
+    old = _origin(old_url)
+    return old is not None and old == _origin(new_url)
 
 
 class _CredentialSafeRedirect(urllib.request.HTTPRedirectHandler):
@@ -169,39 +174,43 @@ class _CredentialSafeRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class _Watch:
-    """The connections one fetch opens, so its deadline can close them from a timer
-    thread while urllib is blocked reading headers or body."""
+    """The sockets one fetch opens, so its deadline can shut them from a timer thread
+    while urllib is blocked reading headers or body.
+
+    The socket objects themselves are kept, not the connections: urllib drops the
+    connection's reference once the headers are read, while the response goes on
+    reading the same socket. A socket already closed has no descriptor left, so a late
+    timer can't reach whatever later request reuses its number."""
 
     def __init__(self):
         self.expired = False
-        self._conns = []
+        self._socks = []
         self._lock = threading.Lock()
 
-    def _cut(self, conn):
-        sock = getattr(conn, "sock", None)
-        if sock is not None:
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+    @staticmethod
+    def _cut(sock):
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
     def track(self, conn):
         connect = conn.connect
 
         def watched_connect():
             connect()
+            sock = conn.sock
             with self._lock:
+                self._socks.append(sock)
                 if self.expired:
-                    self._cut(conn)
+                    self._cut(sock)
         conn.connect = watched_connect
-        with self._lock:
-            self._conns.append(conn)
 
     def expire(self):
         with self._lock:
             self.expired = True
-            for conn in self._conns:
-                self._cut(conn)
+            for sock in self._socks:
+                self._cut(sock)
 
 
 _current = threading.local()
@@ -235,8 +244,9 @@ def _open(req, timeout):
 
 def _too_slow(deadline):
     minutes = deadline / 60
+    seconds = max(1, round(deadline))
     span = (f"{round(minutes)} minutes" if minutes >= 2
-            else f"{max(1, round(deadline))} seconds")
+            else f"{seconds} second{'' if seconds == 1 else 's'}")
     return TransportError(
         f"the source took too long to answer (over {span}). Check your internet "
         "connection and try again.")
@@ -277,6 +287,7 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
     watch = _Watch()
     timer = threading.Timer(deadline, watch.expire)
     timer.daemon = True
+    outer = getattr(_current, "watch", None)
     _current.watch = watch
     timer.start()
     try:
@@ -290,7 +301,7 @@ def _http_get(url, token=None, accept=None, timeout=_CONNECT_TIMEOUT, on_chunk=N
         raise
     finally:
         timer.cancel()
-        _current.watch = None
+        _current.watch = outer
 
 
 def _read_body(r, on_chunk, max_bytes, deadline, watch):
