@@ -806,6 +806,9 @@ def open_ai_backends(parent=None):
         # A connection worker writes only to its private result box, so it can finish
         # safely after this window closes. Stop its parented poll first: no completion
         # callback may reach a widget tree that is now scheduled for deletion.
-        for _thread, timer in getattr(dlg, "_conn_test_refs", ()):
+        for _thread, timer in dlg.__dict__.get("_conn_test_refs", ()):
             timer.stop()
-        dlg.deleteLater()
+        try:
+            dlg.deleteLater()
+        except RuntimeError:    # Anki quitting already deleted it
+            pass

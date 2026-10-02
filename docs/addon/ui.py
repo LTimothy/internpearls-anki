@@ -19,6 +19,7 @@ headings, hints, and link-style buttons share one look defined here, instead of 
 dialog carrying its own copy of the stylesheet strings.
 """
 import functools
+import sys
 import traceback
 from contextlib import contextmanager
 
@@ -395,6 +396,22 @@ def _prompt(text, **kw):
     return value if ok else None
 
 
+def _window_alive():
+    """False once Anki's main window is gone or the application is quitting, when
+    showing a dialog would only raise again."""
+    try:
+        closing = getattr(QApplication, "closingDown", None)
+        if closing is not None and closing():
+            return False
+        if mw is not None:
+            mw.isVisible()
+    except RuntimeError:
+        return False
+    except AttributeError:
+        pass
+    return mw is not None
+
+
 def _safe(fn):
     """Wrap a menu action so a bug here shows a plain warning dialog instead of
     Anki's raw traceback box. The full traceback still goes to stdout (visible in
@@ -407,6 +424,10 @@ def _safe(fn):
             return fn(*args, **kwargs)
         except Exception as e:
             print(traceback.format_exc())
+            if not _window_alive():
+                print(f"Intern Pearls: something went wrong while Anki was closing: {e}",
+                      file=sys.stderr)
+                return None
             _warn(f"Something went wrong: {e}<br><br>"
                   "If a backup was taken before this ran, Advanced has tools to "
                   "revert to it: Restore intern pearls deck or Restore full collection.")
@@ -426,6 +447,8 @@ def _bg_safe(fn):
             return fn(*args, **kwargs)
         except Exception as e:
             print(traceback.format_exc())
+            if not _window_alive():
+                return None
             try:
                 tooltip(f"Intern Pearls: background check failed ({e})",
                        period=4000, parent=mw)
