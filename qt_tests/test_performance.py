@@ -183,3 +183,53 @@ def test_filtering_after_the_prefetch_has_built_everything_stays_quick():
     dlg.close()
     assert elapsed < 2.0, (
         f"filtering after a full prefetch took {elapsed:.3f}s")
+
+
+def _many_declined(tmp_path, monkeypatch, n):
+    import json
+    from internpearls import config
+    states = ("held", "never", "frozen", "keep")
+    path = tmp_path / "declined.json"
+    path.write_text(json.dumps({
+        f"g{i}": {"state": states[i % 4], "front": f"Declined card {i}",
+                  "deck": "Example Deck", "decided": "2026-08-01", "hash": ""}
+        for i in range(n)}), encoding="utf8")
+    monkeypatch.setattr(config, "DECLINED", str(path))
+
+
+def test_declined_cards_opens_fast_with_thousands_of_entries(tmp_path, monkeypatch):
+    """Declined cards used to build a row per entry before it could open."""
+    import aqt.qt as aqt_qt
+    from internpearls import dialogs
+    from internpearls.widgets import StreamingList
+
+    harness.bootstrap()
+    app = harness.app()
+    aqt_qt.QLabel("warm").deleteLater()
+    _many_declined(tmp_path, monkeypatch, _PENDING)
+
+    start = time.perf_counter()
+    dlg = dialogs._DeclinedDialog(None)
+    dlg.resize(560, 520)
+    dlg.show()
+    app.processEvents()
+    elapsed = time.perf_counter() - start
+
+    lst = dlg.findChild(StreamingList)
+    assert lst is not None, "expected Declined cards to stream its rows"
+    assert lst.total() == _PENDING + 4      # four group headings
+    assert lst.shown() < lst.total()
+    assert elapsed < _BUDGET_SECONDS, (
+        f"opening Declined cards with {_PENDING} entries took {elapsed:.3f}s, over "
+        f"the {_BUDGET_SECONDS}s budget")
+
+    start = time.perf_counter()
+    button = next(b for b in dlg.findChildren(aqt_qt.QPushButton)
+                  if b.text() == "Offer again" and b.isVisible())
+    button.click()
+    app.processEvents()
+    elapsed = time.perf_counter() - start
+    dlg.close()
+    assert lst.total() == _PENDING + 3
+    assert elapsed < _BUDGET_SECONDS, (
+        f"Offer again with {_PENDING} entries took {elapsed:.3f}s")
