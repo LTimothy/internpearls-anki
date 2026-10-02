@@ -179,6 +179,17 @@ def _local_source_file(folder, path):
     return full
 
 
+def _text(value):
+    """`value` as text for a rich-text label: deck names, card labels and messages carry
+    the source's own characters, and a bare "<" would swallow the rest of the line."""
+    return html.escape(str(value), quote=False)
+
+
+def _card_html(fields, max_len=90):
+    """A card's display label (note_display_label), escaped for a rich-text row."""
+    return _text(note_display_label(fields, max_len=max_len))
+
+
 def _require_manifest_object(manifest, where):
     """Refuse a manifest that parsed as valid JSON but isn't an object.
 
@@ -208,11 +219,11 @@ def _source_warning(e):
     follows the same split, since the two need opposite next steps.
     """
     if isinstance(e, TransportError):
-        _warn(f"Couldn't reach the deck source: {e}<br><br>"
+        _warn(f"Couldn't reach the deck source: {_text(e)}<br><br>"
               "Check your internet connection and try again. If the source itself has "
               "moved, open <b>Intern Pearls → Manage decks</b> and use Change source.")
         return
-    _warn(f"The deck source couldn't be used: {e}.<br><br>"
+    _warn(f"The deck source couldn't be used: {_text(e)}.<br><br>"
           "Open <b>Intern Pearls → Manage decks</b> and use Change source to check "
           "your GitHub token or local folder.")
 
@@ -434,7 +445,7 @@ def sync_decks():
         short = d["name"].split("::")[-1]
         cards = d.get("cards")
         kind = "changed" if d["name"] in installed else "new"
-        return ("row", kind, short,
+        return ("row", kind, _text(short),
                 f"{plural(cards, 'card')} in deck" if cards is not None else "")
 
     items = [("header", "Update these decks?")]
@@ -525,8 +536,8 @@ def _collision_items(collisions):
     for guid, field in collisions[:10]:
         nid = mw.col.db.scalar("select id from notes where guid = ?", guid)
         if nid:
-            label = note_display_label(mw.col.get_note(nid).fields, max_len=70)
-            fronts.append(f"{label} ({field})")
+            label = _card_html(mw.col.get_note(nid).fields, max_len=70)
+            fronts.append(f"{label} ({_text(field)})")
     if len(collisions) > len(fronts):
         fronts.append(f"<i>and {len(collisions) - len(fronts)} more</i>")
     items = [("note",
@@ -746,6 +757,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
         conversion_undo = None
         forked_guids = set()
         short = d["name"].split("::")[-1]
+        name = _text(short)
         try:
             if on_progress and not on_progress(i, len(todo), short):
                 cancelled = True
@@ -788,7 +800,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 # look change that isn't in this deck at all.
                 what = " and ".join(x for x in ("card-template" if tpl else None,
                                                 "note-type format" if nt else None) if x)
-                results.append(f"• <b>{short}</b>: includes a {what} update, "
+                results.append(f"• <b>{name}</b>: includes a {what} update, "
                                "waiting for a manual Sync decks")
                 continue
             if nt and d["name"] in undisclosed_conversions:
@@ -797,7 +809,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 # rather than imported with the conversion declined on the learner's
                 # behalf: the deck stays pending and the next run asks about it up front.
                 deferred.append(d["name"])
-                results.append(f"• <b>{short}</b>: includes a note-type format update "
+                results.append(f"• <b>{name}</b>: includes a note-type format update "
                                "this run couldn't check in time, waiting for the next "
                                "update")
                 continue
@@ -873,14 +885,15 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 # first report of this read as an error and the run that completed it
                 # as luck, when that second run is the designed fix.
                 results.append(
-                    f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new. "
+                    f"✓ <b>{name}</b>: {in_place} kept history, {as_new} new. "
                     "One more pass needed: your collection had no "
-                    f"{', '.join(missing)} note type until this import added it, so "
+                    f"{_text(', '.join(missing))} note type until this import added "
+                    "it, so "
                     "this deck stays pending. Run <b>Update my decks</b> again to "
                     "finish moving your existing cards to the new format.")
                 continue
             applied[d["name"]] = d["version"]
-            results.append(f"✓ <b>{short}</b>: {in_place} kept history, {as_new} new")
+            results.append(f"✓ <b>{name}</b>: {in_place} kept history, {as_new} new")
         except DownloadCancelled:
             # The learner clicked Cancel while this deck was still downloading, so
             # nothing of it has been imported. Same branch as a Cancel between decks
@@ -897,9 +910,9 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
             if isinstance(e, NoteTypeFieldsRequired):
                 deferred.append(d["name"])
-                results.append(f"• <b>{short}</b>: {e}")
+                results.append(f"• <b>{name}</b>: {_text(e)}")
             else:
-                results.append(f"✗ <b>{short}</b>: {e}")
+                results.append(f"✗ <b>{name}</b>: {_text(e)}")
     # Merged into whatever is on disk now, not written back wholesale: a caller's own
     # view of installed.json is taken before the fetch phase, which can be minutes old
     # by the time a multi-deck run gets here, and saving that as-is would revert any
@@ -929,7 +942,7 @@ def _offer_template_changes(tpl_changes):
     """
     if not tpl_changes:
         return []
-    names = ", ".join(f"<b>{n}</b>" for n in sorted(tpl_changes))
+    names = ", ".join(f"<b>{_text(n)}</b>" for n in sorted(tpl_changes))
     if _ask(
         f"This update also changes how some cards look (template or styling) for: "
         f"{names}.<br><br>Apply the new look now? Anki treats this as a schema "
@@ -1202,8 +1215,8 @@ def _stranded_lines(stranded):
     changed card's does.
     """
     muted = colors()["muted"]
-    return [f"{note_display_label([p['front']])} <span style='color:{muted};'>→ "
-            f"{note_display_label([p['successor_front']])}</span>"
+    return [f"{_card_html([p['front']])} <span style='color:{muted};'>→ "
+            f"{_card_html([p['successor_front']])}</span>"
             for p in stranded]
 
 
@@ -1399,8 +1412,8 @@ def reconcile_decks():
                       "separately, so "
                       f"{'it just duplicates' if len(fresh) == 1 else 'these just duplicate'} "
                       f"your reviews now.{already_note}"))
-        append_rows(items, [("row", "retired", r["identity"],
-                             r["deck"].split("::")[-1]) for r in fresh])
+        append_rows(items, [("row", "retired", _card_html([r["identity"]]),
+                             _text(r["deck"].split("::")[-1])) for r in fresh])
         if missing:
             items.append(("note",
                           f"<b>Note:</b> {missing} of these don't have their "
@@ -1423,8 +1436,8 @@ def reconcile_decks():
         # and a cloze as its own braces.
         append_rows(items, [
             ("row", "moved",
-             note_display_label(mw.col.get_note(existing_nids[m["guid"]]).fields),
-             f"→ {m['to'].split('::')[-1]}") for m in moves])
+             _card_html(mw.col.get_note(existing_nids[m["guid"]]).fields),
+             f"→ {_text(m['to'].split('::')[-1])}") for m in moves])
 
     safety_note = (
         "Nothing is deleted. Archived cards keep their review history and can "
@@ -1463,7 +1476,8 @@ def reconcile_decks():
     if n_archived:
         result_lines.append(
             f"Archived <b>{plural(n_archived, 'retired card')}</b> to "
-            f"<b>{retired_deck}</b>: suspended and tagged <code>{tag}</code>, review "
+            f"<b>{_text(retired_deck)}</b>: suspended and tagged "
+            f"<code>{_text(tag)}</code>, review "
             "history kept"
             + (f" ({plural(carried, 'personal note')} carried over to the replacement)"
                if carried else "") + ". Bring any back by unsuspending it or moving "
@@ -1564,7 +1578,8 @@ def clean_up_duplicates():
                    "<br><br>(No backup was taken this time: nothing to back up yet, or "
                    "it failed and you chose to continue.)")
     _info(f"Archived <b>{plural(n_archived, 'duplicate card')}</b> to "
-          f"<b>{retired_deck}</b>: suspended and tagged <code>{tag}</code>, review "
+          f"<b>{_text(retired_deck)}</b>: suspended and tagged "
+          f"<code>{_text(tag)}</code>, review "
           "history kept"
           + (f" ({plural(carried, 'personal note')} carried over to the kept copy)"
              if carried else "") + ". Bring any back by unsuspending it or moving "
@@ -1782,8 +1797,8 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
             key = (note.get("kind"), note.get("note"), note.get("on")) if note else None
             for m in members:
                 if id(m) in retired_ids:
-                    rows.append((("retired", m["identity"], m.get("reason", "")),
-                                 header))
+                    rows.append((("retired", _card_html([m["identity"]]),
+                                  m.get("reason", "")), header))
                     continue
                 if header:
                     cn = m.get("change_notes") or []
@@ -1793,7 +1808,7 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
                         m = dict(m, change_notes=kept)
                 rows.append((("card", deck_name, m), header))
         for m in moved_raw:
-            rows.append((("moved", m["front"], m["to"]), False))
+            rows.append((("moved", _text(m["front"]), _text(m["to"])), False))
         return rows
 
     for d in todo:
@@ -1805,7 +1820,7 @@ def _gather_pending_items(todo, preview, downloaded, extra=None, registry=None,
                 rids = [r for r, _, _ in pc[2]] + list(pc[3])
                 fetched = apkg_note_details(src, rids)
             except Exception as e:
-                failed.append(f"{d['name'].split('::')[-1]} ({e})")
+                failed.append(_text(f"{d['name'].split('::')[-1]} ({e})"))
                 fetched = []
             new_rids = {r for r, _, _ in pc[2]}
             for detail in fetched:
@@ -2071,12 +2086,12 @@ def update_decks():
             # Say what happens anyway: the download failed here, but the deck is still
             # in this run and Update still tries to import it, so a bare "couldn't
             # preview" reads as "this deck is being skipped", which it isn't.
-            return ("deck", short, "couldn't preview · still imports")
+            return ("deck", _text(short), "couldn't preview · still imports")
         changing = len(pc[3]) - suppressed_changed.get(d["name"], 0)
         kept = f"{pc[0]} kept" + (f" ({changing} changing)" if changing else "")
         new_count = sum(1 for _rid, _fields, g in pc[2] if g not in counted_out)
         tail = f" · {folded} in folded groups" if folded else ""
-        return ("deck", short, f"{kept} · {new_count} new{tail}")
+        return ("deck", _text(short), f"{kept} · {new_count} new{tail}")
 
     muted = colors()["muted"]
     sections = []
@@ -2228,7 +2243,7 @@ def update_decks():
     if tpl_choice:
         sections.append(
             "This update also changes how some cards look (template or styling) for: "
-            + ", ".join(f"<b>{n}</b>" for n in sorted(pending_templates))
+            + ", ".join(f"<b>{_text(n)}</b>" for n in sorted(pending_templates))
             + ". Your review history and card content are unaffected either way.")
 
     # The catch-up note reads as the first of these blocks rather than carrying its own
@@ -2677,7 +2692,8 @@ def import_single():
             per_note = manifest.get("note_protected_fields", {})
     except Exception as e:
         if not _ask(f"Couldn't fetch the reworded-front list from your deck source "
-                    f"({e}).<br><br>Without it, any card whose front text changed there "
+                    f"({_text(e)}).<br><br>Without it, any card whose front text "
+                    "changed there "
                     "will be treated as new instead of matching your existing card, "
                     "so its history won't carry over, and per-card field protection "
                     "will be off for this import. Continue anyway?",
@@ -2714,7 +2730,7 @@ def import_single():
     elif nt:
         format_line = (f" {plural(len(nt), 'card')} changed format {_FORMAT_CHANGE}, "
                        "and your collection has no "
-                       f"{', '.join(missing)} note type yet, so the history on "
+                       f"{_text(', '.join(missing))} note type yet, so the history on "
                        f"{'that one' if len(nt) == 1 else 'those'} can't carry over "
                        "this time.")
     else:

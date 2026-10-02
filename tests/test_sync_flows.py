@@ -8184,3 +8184,99 @@ def test_an_oversized_local_manifest_is_refused_unread(anki, tmp_path, monkeypat
 
     assert "manifest.json" in anki.gui.warnings[0]
     assert "larger than" in anki.gui.warnings[0]
+
+
+# ----------------------------------------------- source text in rich-text rows
+# A row's primary and trailing text are rich text. Card labels come out of
+# note_display_label already decoded ("&lt;60" reads "<60"), and deck names and ledger
+# identities are the source's own strings, so each is escaped before it meets the row's
+# markup; otherwise a "<" swallows the rest of the line.
+ODD_DECK = "Intern Pearls::Intern Custom::A<b>B"
+
+
+def _odd_reconcile_source(anki, tmp_path):
+    _existing_card(anki, "old1", "retired card")
+    _existing_card(anki, "g1", "MAP &lt;60 moved", deck=DECK)
+    return _write_retired_source(
+        tmp_path,
+        {ODD_DECK: {"old1": {"identity": "Is it <60?", "reason": "split",
+                             "superseded_by": []}}},
+        deck_moves={"g1": {"from": DECK, "to": ODD_DECK}})
+
+
+def test_reconcile_rows_escape_card_labels_identities_and_deck_names(anki, tmp_path):
+    _configure(anki, _odd_reconcile_source(anki, tmp_path))
+
+    texts = _label_texts(_reconcile_tree(anki))
+
+    assert "MAP &lt;60 moved" in texts
+    assert "Is it &lt;60?" in texts
+    assert "→ A&lt;b&gt;B" in texts
+    assert "A&lt;b&gt;B" in texts            # the retired card's own deck, trailing
+    assert not any("<b>B" in t or "<60" in t for t in texts), texts
+
+
+def test_update_screen_rows_escape_card_labels_identities_and_deck_names(anki, tmp_path):
+    from internpearls import sync
+    _configure(anki, _odd_reconcile_source(anki, tmp_path))
+    anki.gui.interactive = True
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen["texts"] = _label_texts(p["tree"])
+        return {"events": [{"id": _find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+
+    texts = seen["texts"]
+    assert "MAP &lt;60 moved" in texts
+    assert "Is it &lt;60?" in texts
+    assert "→ A&lt;b&gt;B" in texts
+    # The deck's own heading is a plain-text label (qt_tests/test_review.py checks it
+    # renders as written), so it alone carries the name unescaped.
+    assert "A<b>B" in texts
+    rows = [t for t in texts if t != "A<b>B"]
+    assert not any("<b>B" in t or "<60" in t for t in rows), rows
+
+
+def test_reworded_pair_rows_escape_both_wordings(anki, tmp_path):
+    _existing_card(anki, "g_old", "old MAP &lt;60")
+    _existing_card(anki, "g_new", "new MAP &lt;65")
+    _configure(anki, _stranded_source(tmp_path, {"old MAP &lt;60": "new MAP &lt;65"}))
+
+    texts = _label_texts(_reconcile_tree(anki))
+
+    line = next(t for t in texts if "old MAP" in t)
+    assert "old MAP &lt;60" in line and "new MAP &lt;65" in line
+
+
+def test_sync_rows_escape_a_deck_name(anki, tmp_path):
+    _configure(anki, _write_source(tmp_path, {
+        ODD_DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+
+    trees = _sync(anki)
+
+    confirm, summary = _label_texts(trees[0]), _summary_text(trees)
+    assert "A&lt;b&gt;B" in confirm
+    assert "<b>A&lt;b&gt;B</b>" in summary
+    assert "<b>A<b>B</b>" not in summary
+
+
+def test_a_collision_row_escapes_the_card_label(anki, tmp_path):
+    front = "MAP &lt;60 collides"
+    anki.col.add_note("g1", _fields(front, dosing="1 mg/kg"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields(front, dosing="1 mg/kg"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
+    _sync(anki)
+    anki.col.note_by_guid("g1")["Dosing"] = "1 mg/kg (mine)"
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields(front, dosing="2 mg/kg"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
+
+    texts = _label_texts(_sync(anki)[-1])
+
+    assert "MAP &lt;60 collides (Dosing)" in texts, texts
