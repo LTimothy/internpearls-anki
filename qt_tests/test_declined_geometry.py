@@ -84,3 +84,41 @@ def test_offer_again_shrinks_the_minimum_back_for_a_short_list(tmp_path, monkeyp
     assert 0 < dlg._list.minimumHeight() < two
     dlg.close()
     dlg.deleteLater()
+
+
+def test_a_front_that_wraps_at_the_dialog_width_is_not_cut(tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QLabel, QPushButton
+    harness.bootstrap()
+    long_front = ("A deliberately long prompt, written to run well past the dialog's "
+                  "width so that the label wraps onto a second and a third line " * 2)
+    entries = {"a": _entry("held", 1), "b": _entry("never", 2)}
+    entries["b"]["front"] = long_front
+    _registry(tmp_path, monkeypatch, entries)
+    app, dlg = _open()
+    for _ in range(3):
+        app.processEvents()
+    wrapped = next(w for w in dlg.findChildren(QLabel) if w.text() == long_front)
+    assert wrapped.height() > 2 * wrapped.fontMetrics().height(), "the front did not wrap"
+    assert dlg._list.verticalScrollBar().maximum() == 0, "the list scrolls for two rows"
+    for button in (b for b in dlg.findChildren(QPushButton) if b.text() == "Offer again"):
+        assert _inside_viewport(dlg, button)
+    assert _inside_viewport(dlg, wrapped)
+    dlg.close()
+    dlg.deleteLater()
+
+
+def test_widening_the_dialog_shrinks_the_list_back(tmp_path, monkeypatch):
+    harness.bootstrap()
+    long_front = ("A deliberately long prompt, written to run well past the dialog's "
+                  "width so that the label wraps onto a second and a third line " * 2)
+    entries = {"a": _entry("held", 1), "b": _entry("never", 2)}
+    entries["b"]["front"] = long_front
+    _registry(tmp_path, monkeypatch, entries)
+    app, dlg = _open()
+    narrow = dlg._list.minimumHeight()
+    dlg.resize(1600, dlg.height())
+    for _ in range(3):
+        app.processEvents()
+    assert dlg._list.minimumHeight() < narrow
+    dlg.close()
+    dlg.deleteLater()

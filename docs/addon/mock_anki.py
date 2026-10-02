@@ -1351,6 +1351,9 @@ class QWidget:
     def setSizePolicy(self, *a):
         pass
 
+    def width(self):
+        return 0    # no real geometry here, same as height() below
+
     def height(self):
         # No real layout engine here, so no real geometry either: always 0, same as a
         # freshly constructed, never-shown real widget. qt_tests/ (real Qt, offscreen)
@@ -1913,6 +1916,17 @@ class _Layout:
     def setContentsMargins(self, *a):
         self._margins = tuple(a) if len(a) == 4 else self._margins
 
+    def contentsMargins(self):
+        left, top, right, bottom = self._margins
+        return types.SimpleNamespace(left=lambda: left, top=lambda: top,
+                                     right=lambda: right, bottom=lambda: bottom)
+
+    def hasHeightForWidth(self):
+        return False    # no text metrics here, so nothing wraps
+
+    def totalSizeHint(self):
+        return types.SimpleNamespace(width=lambda: 0, height=lambda: 0)
+
     def setSizeConstraint(self, c):
         pass
 
@@ -2073,6 +2087,9 @@ class QScrollArea(QWidget):
     def setWidget(self, w):
         self._widget = w
         w._parent_widget = self
+
+    def widget(self):
+        return self._widget
 
     def verticalScrollBar(self):
         return self._vbar
