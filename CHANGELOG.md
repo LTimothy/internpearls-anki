@@ -57,8 +57,13 @@ restore, auto-sync and Update my decks.
   its text, and a change group's cards are indented under its note.
 - The startup reminder about waiting cards leaves out cards a local folder source has
   retired, and the feedback digest keeps a literal "<" or ">" ("MAP <65 and HR >100").
-- Manage decks > Declined cards opens quickly with thousands of entries and keeps your
-  place after Offer again.
+- Manage decks > Declined cards opens quickly with thousands of entries, shows a short
+  list in full, and keeps your place after Offer again.
+- Scan for duplicates shows a card you deleted while the list is open as "(note deleted)"
+  instead of failing, and a closed scan never touches your collection afterwards.
+- Restore intern pearls deck says plainly when a file isn't an Anki deck package.
+- Quitting Anki with Generate cards, AI Backends or Scan for duplicates open no longer
+  logs errors.
 - Restore intern pearls deck backs up every deck it changes, and restored cards get back
   the field baselines saved with their backup, so the next update tells the source's
   older text from your own edits. Backups made by earlier versions carry none.
