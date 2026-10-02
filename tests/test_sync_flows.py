@@ -8280,3 +8280,41 @@ def test_a_collision_row_escapes_the_card_label(anki, tmp_path):
     texts = _label_texts(_sync(anki)[-1])
 
     assert "MAP &lt;60 collides (Dosing)" in texts, texts
+
+
+def test_import_deck_hands_anki_a_checked_copy_and_removes_it(anki, tmp_path):
+    from internpearls import collection
+    src = str(tmp_path / "backup.apkg")
+    make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert not anki.gui.warnings
+    assert anki.col.imports and anki.col.imports[0] != src
+    assert not os.path.exists(anki.col.imports[0])
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
+
+
+def test_import_deck_refuses_a_member_larger_than_it_declares(anki, tmp_path):
+    """Anki's importer reads a member's stream and ignores its declared size, so a file
+    declaring 1,000 bytes could unpack to anything."""
+    import struct
+    import zipfile
+    from internpearls import collection
+    src = str(tmp_path / "liar.apkg")
+    make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
+    data = bytearray(open(src, "rb").read())
+    data[22:26] = struct.pack("<L", 1000)
+    cd = data.find(b"PK\x01\x02")
+    data[cd + 24:cd + 28] = struct.pack("<L", 1000)
+    open(src, "wb").write(bytes(data))
+    assert zipfile.ZipFile(src).infolist()[0].file_size == 1000
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert anki.gui.warnings and anki.gui.warnings[0].startswith("Import failed")
+    assert not anki.col.imports
