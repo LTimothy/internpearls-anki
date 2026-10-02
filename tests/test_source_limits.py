@@ -317,3 +317,14 @@ def test_a_zip64_record_wins_over_saturated_32_bit_fields(tmp_path):
         fh.write(body + record + locator + end)
     assert len(zipfile.ZipFile(path).infolist()) == 10
     logic.check_apkg_limits(path)
+
+
+def test_a_path_on_another_drive_reads_as_outside_the_source(monkeypatch, tmp_path):
+    """On Windows commonpath raises for two drives; that is still outside."""
+    from internpearls import sync
+
+    def two_drives(paths):
+        raise ValueError("Paths don't have the same drive")
+    monkeypatch.setattr(sync.os.path, "commonpath", two_drives)
+    with pytest.raises(RuntimeError, match="outside the deck source"):
+        sync._local_source_file(str(tmp_path), "deck.apkg")
