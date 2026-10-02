@@ -5808,12 +5808,12 @@ def test_a_source_that_answers_with_an_http_error_is_not_called_unreachable(
 def _urlopen_raising(monkeypatch, exc):
     """Make the real net layer's one network call fail with `exc`, so the add-on sees
     whatever net._http_get turns that into rather than a shape hand-written here."""
-    import urllib.request
+    from internpearls import net
 
     def boom(*_a, **_kw):
         raise exc
 
-    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    monkeypatch.setattr(net, "_open", boom)
 
 
 def _offline_network(monkeypatch):
