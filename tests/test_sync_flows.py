@@ -8073,6 +8073,55 @@ def test_startup_nudge_skips_a_held_card_in_an_excluded_deck(anki):
         "Intern Pearls: 1 card waiting for later. Run Update my decks to finish it."]
 
 
+def _two_old_skips():
+    from internpearls import config
+    config.save_declined({
+        g: {"state": "skip", "front": g, "deck": DECK, "decided": "2026-08-01",
+            "hash": ""} for g in ("g1", "g2")})
+
+
+def test_startup_nudge_leaves_out_a_card_the_local_source_retired(anki, tmp_path):
+    """The first launch after Skip became Later counted every old skip, including one
+    whose card the source has since retired, which the first run then drops."""
+    from internpearls import background
+    _two_old_skips()
+    _configure(anki, _write_source(
+        tmp_path, {DECK: ("v1", [("g1", _fields("front one"), TAGS)], None)},
+        retired={DECK: {"g2": {"identity": "front two", "reason": "merged",
+                               "superseded_by": []}}}))
+
+    background._held_cards_nudge()
+
+    assert anki.gui.tooltips == [
+        "Intern Pearls: 1 card waiting for later. Run Update my decks to finish it."]
+
+
+def test_startup_nudge_counts_every_held_card_without_a_local_manifest(
+        anki, tmp_path, monkeypatch):
+    """A GitHub source has no copy on disk, and the reminder fetches nothing, so it
+    counts the registry as it stands; so does a local folder it cannot read."""
+    from internpearls import background, sync
+
+    def no_fetch(*a, **kw):
+        raise AssertionError("the startup reminder must not fetch")
+    monkeypatch.setattr(sync, "_gh_raw", no_fetch)
+    folder = _write_source(
+        tmp_path, {DECK: ("v1", [("g1", _fields("front one"), TAGS)], None)},
+        retired={DECK: {"g2": {"identity": "front two", "reason": "merged",
+                               "superseded_by": []}}})
+    for conf in ({"github_decks_repo": "someone/decks", "decks_dir": folder},
+                 {"decks_dir": str(tmp_path / "missing")}):
+        _two_old_skips()
+        anki.mw._config = conf
+        anki.gui.tooltips.clear()
+
+        background._held_cards_nudge()
+
+        assert anki.gui.tooltips == [
+            "Intern Pearls: 2 cards waiting for later. Run Update my decks to finish "
+            "them."], conf
+
+
 def test_a_held_card_whose_deck_left_the_source_is_released(anki, tmp_path):
     """A deck the source stopped listing can never be offered again, so its held
     cards would otherwise sit in the registry and keep the startup reminder going

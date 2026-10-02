@@ -319,6 +319,17 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
     return None, None, None
 
 
+def local_manifest(cfg):
+    """The manifest of a local-folder source, read without fetching anything, or None
+    for a GitHub source (it keeps no copy on disk) or a folder that can't be read."""
+    if cfg["gh_repo"] or not cfg["decks_dir"]:
+        return None
+    try:
+        return _fetch_manifest(cfg)[0]
+    except Exception:
+        return None
+
+
 def _fetch_manifest_gated(cfg):
     """_fetch_manifest, plus the "you need a newer add-on" schema gate, plus the
     unreachable/unconfigured warnings — all three callers that need a gated fetch
