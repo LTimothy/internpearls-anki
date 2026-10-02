@@ -10,7 +10,7 @@ import pytest
 _PAIRS = 250
 
 
-def _populate_many(mock, pairs=_PAIRS, deck="Ankisthesia"):
+def _populate_many(mock, pairs=_PAIRS, deck="Example Shared Deck"):
     import mock_anki
     mock.mw.col = mock_anki.MockCollection()
     mock.mw._config = {}

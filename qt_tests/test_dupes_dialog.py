@@ -19,21 +19,21 @@ def _populate(mock):
                  ["InternPearls"], deck="Intern Custom")
     col.add_note("g2", ["Fenoldopam is a selective D1 receptor agonist drug",
                         "Acts on renal dopamine receptors in hypertensive emergencies"],
-                 ["Other"], deck="Ankisthesia")
+                 ["Other"], deck="Example Shared Deck")
 
     col.add_note("g3", ["Ketamine induction dose one to two mg per kilogram IV",
                         "Dissociative anesthetic"],
                  ["InternPearls"], deck="Intern Custom")
     col.add_note("g4", ["The induction dose of ketamine is one to two mg per kilogram",
                         "Given intravenously"],
-                 ["Other"], deck="Ankisthesia")
+                 ["Other"], deck="Example Shared Deck")
 
     col.add_note("g5", ["Metoclopramide increases lower esophageal sphincter tone",
                         "Promotes gastric emptying"],
                  ["InternPearls"], deck="Intern Custom")
     col.add_note("g6", ["Metoclopramide increases gastroesophageal sphincter tone",
                         "Promotes gastric emptying as a prokinetic agent"],
-                 ["Other"], deck="Ankisthesia")
+                 ["Other"], deck="Example Shared Deck")
 
 
 def _build_dialog(mock):
@@ -774,7 +774,7 @@ def _populate_with_left_side_reference_deck(mock):
                  ["InternPearls"], deck="Reference decks")
     col.add_note("g8", ["Sugammadex reverses rocuronium blockade through encapsulation",
                         "Chelates rocuronium and vecuronium molecules"],
-                 ["Other"], deck="Ankisthesia")
+                 ["Other"], deck="Example Shared Deck")
 
 
 def test_exclude_decks_applies_to_the_left_side_too():
@@ -809,7 +809,7 @@ def test_sensitivity_strict_drops_a_single_shared_word_pair():
     col.add_note("w1", ["Phenylephrine phenylephrine bolus", ""],
                  ["InternPearls"], deck="Intern Custom")
     col.add_note("w2", ["Phenylephrine phenylephrine allergy", ""],
-                 ["Other"], deck="Ankisthesia")
+                 ["Other"], deck="Example Shared Deck")
 
     dlg = _build_dialog(mock)
     dlg.sensitivity_combo.setCurrentIndex(0)   # Strict
@@ -967,7 +967,7 @@ def test_the_same_deck_on_both_sides_never_pairs_a_note_with_itself():
     harness.app()
     _populate(mock)
     dlg = _build_dialog(mock)
-    deck = "Ankisthesia"
+    deck = "Example Shared Deck"
     dlg.left_combo.setCurrentIndex(dlg._deck_names.index(deck) + 1)
     dlg.right_combo.setCurrentIndex(
         len(dlg._right_fixed) + dlg._deck_names.index(deck))
