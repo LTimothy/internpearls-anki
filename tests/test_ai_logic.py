@@ -1209,7 +1209,7 @@ def test_extract_pdf_broken_pypdf_import_raises_valueerror(tmp_path, monkeypatch
 
 def test_svg_to_media_and_script_rejection():
     import pytest
-    name, data = ai_logic.svg_to_media("<svg xmlns='x'><rect/></svg>", 2)
+    name, data = ai_logic.svg_to_media("<svg xmlns='http://www.w3.org/2000/svg'><rect/></svg>", 2)
     assert name == "generated-2.svg" and data.startswith(b"<svg")
     with pytest.raises(ValueError):
         ai_logic.svg_to_media("<svg><script>alert(1)</script></svg>", 0)
@@ -1259,7 +1259,8 @@ def test_svg_to_media_rejects_javascript_uri():
 def test_svg_to_media_accepts_a_real_diagram():
     """The rejection checks must not catch the shapes, text, groups, and styling a
     model-drawn diagram is actually made of. Absolute width/height on the root
-    keeps normalization a no-op, so the bytes still round-trip exactly."""
+    keeps normalization a no-op, so the drawing comes back as it was drawn, rebuilt
+    from its parsed tree."""
     markup = (
         '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" '
         'viewBox="0 0 100 100">'
@@ -1274,7 +1275,7 @@ def test_svg_to_media_accepts_a_real_diagram():
     )
     name, data = ai_logic.svg_to_media(markup, 1)
     assert name == "generated-1.svg"
-    assert data == markup.encode("utf8")
+    assert data == markup.replace('"/>', '" />').encode("utf8")
 
 
 # --- svg_to_media: normalizing a percent-sized root and its 100%/100% rect ---
@@ -1307,14 +1308,14 @@ def test_svg_to_media_leaves_an_absolute_sized_svg_alone():
     markup = ('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" '
              'viewBox="0 0 40 40"><rect width="40" height="40" fill="blue"/></svg>')
     _, data = ai_logic.svg_to_media(markup, 0)
-    assert data == markup.encode("utf8")
+    assert data == markup.replace('"/>', '" />').encode("utf8")
 
 
 def test_svg_to_media_leaves_a_viewbox_less_svg_alone():
     # nothing to compute an absolute size from, so normalization is a no-op
     markup = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="3"/></svg>'
     _, data = ai_logic.svg_to_media(markup, 0)
-    assert data == markup.encode("utf8")
+    assert data == markup.replace('"/>', '" />').encode("utf8")
 
 
 # === Stale scratch sweep. The wizard removes its own mkdtemp dir when it
@@ -1718,7 +1719,120 @@ def test_core_cloze_in_a_japanese_collection_maps_its_fields():
     assert fields == {"Text": "テキスト", "Back Extra": "裏面追加"}
 
 
-def test_no_core_type_or_an_ambiguous_one_finds_nothing():
+def test_no_core_type_finds_nothing():
     assert ai_logic.find_core_notetype([_STUDY_BASIC], "Basic") == (None, {})
-    other = _model("Grund", ["A", "B"], "{{A}}", "{{FrontSide}}{{B}}")
-    assert ai_logic.find_core_notetype([_GERMAN_BASIC, other], "Basic") == (None, {})
+
+
+def test_shape_ties_break_on_the_recorded_stock_kind_then_the_oldest():
+    older = dict(_model("Grund", ["A", "B"], "{{A}}", "{{FrontSide}}{{B}}"), id=5)
+    newer = dict(_GERMAN_BASIC, id=9)
+    assert ai_logic.find_core_notetype([newer, older], "Basic")[0] is older
+    stock = dict(_GERMAN_BASIC, id=20, originalStockKind=0)
+    assert ai_logic.find_core_notetype([older, stock], "Basic")[0] is stock
+    cloze_a = dict(_JAPANESE_CLOZE, id=7)
+    cloze_b = dict(_JAPANESE_CLOZE, id=3, name="other")
+    assert ai_logic.find_core_notetype([cloze_a, cloze_b], "Cloze")[0] is cloze_b
+
+
+def test_a_type_named_cloze_that_is_not_a_cloze_type_is_not_taken():
+    fake = _model("Cloze", ["Text", "Back Extra"], "{{Text}}", "{{Back Extra}}", mtype=0)
+    model, _ = ai_logic.find_core_notetype([fake, _JAPANESE_CLOZE], "Cloze")
+    assert model is _JAPANESE_CLOZE
+
+
+
+# === review fixes: SVG parsed and rebuilt, styles allowlisted ===============
+
+_SVG = 'xmlns="http://www.w3.org/2000/svg"'
+_XLINK = 'xmlns:xlink="http://www.w3.org/1999/xlink"'
+
+
+@pytest.mark.parametrize("markup", [
+    f'<svg {_SVG} xmlns:s="http://www.w3.org/2000/svg"><s:script>x()</s:script></svg>',
+    f'<svg {_SVG} xmlns:h="http://www.w3.org/1999/xhtml"><h:script>x()</h:script></svg>',
+    f'<svg {_SVG} {_XLINK}><use xlink:href="java&#9;script:x()"/></svg>',
+    f'<svg {_SVG}><use href="javas&#x0A;cript:x()"/></svg>',
+    f'<svg {_SVG}><use href="https://evil.example/s.svg#a"/></svg>',
+    f'<svg {_SVG}><style>@import url(https://evil.example/x.css);</style></svg>',
+    f'<svg {_SVG}><set attributeName="onmouseover" to="x()"/></svg>',
+    f'<svg {_SVG}><animate attributeName="href" to="javascript:x()"/></svg>',
+    f'<svg {_SVG}><image href="data:image/svg+xml;base64,PHN2Zz4="/></svg>',
+    f'<svg {_SVG}><rect onclick="x()"/></svg>',
+    f'<svg {_SVG}><foreignObject><div/></foreignObject></svg>',
+    '<!DOCTYPE svg [<!ENTITY e "x">]><svg>&e;</svg>',
+    '<svg><rect></svg>',
+])
+def test_scripted_or_linked_svg_is_refused(markup):
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media(markup, 0)
+    with pytest.raises(ValueError):
+        ai_logic.check_image_bytes("a.svg", markup.encode())
+
+
+def test_svg_is_stored_as_rebuilt_from_its_tree():
+    markup = (f'<svg {_SVG} width="10" height="10"><g><rect fill="url(#g)" '
+              'style="fill:red; background:url(https://evil.example/x)" '
+              'data-x="1"/><unknown><circle r="2"/></unknown>'
+              '<use href="#g"/></g></svg>')
+    out = ai_logic.check_image_bytes("a.svg", markup.encode()).decode()
+    assert 'fill="url(#g)"' in out and 'href="#g"' in out
+    assert "evil" not in out and "data-x" not in out and "unknown" not in out
+    assert 'style="fill:red"' in out
+
+
+@pytest.mark.parametrize("style", [
+    "background:u\\72l(https://evil.example/x)",
+    "background-image:image-set('https://evil.example/x' 1x)",
+    "background-image:-webkit-image-set(url(https://evil.example/x) 1x)",
+    "position:fixed; top:0; left:0",
+    "color:red /* x */",
+    'font-family:"x"',
+    "width:calc(100% - 1px)",
+])
+def test_fetching_or_overlaying_styles_are_dropped(style):
+    out = ai_logic.sanitize_field_html(f'<div style="{style}">x</div>')
+    assert out == "<div>x</div>"
+
+
+def test_the_inline_styles_cards_use_survive():
+    for style in ("text-align: center", "padding-left: 1.2em; margin: 0",
+                  "display: inline-block; max-width: 100%", "color: rgb(38, 38, 38)",
+                  "border: 1px solid #ccc; border-collapse: collapse",
+                  "font-weight: bold; table-layout: fixed; overflow-wrap: anywhere"):
+        value = f'<table style="{style}"><tr><td style="{style}">x</td></tr></table>'
+        assert ai_logic.sanitize_field_html(value) == value
+
+
+@pytest.mark.parametrize("href", [
+    "http://example.com/", "https://127.0.0.1/x", "https://localhost/x",
+    "https://a.localhost/", "https://0x7f000001/", "https://2130706433/",
+    "https://[::1]/", "https://10.0.0.1/",
+])
+def test_links_go_only_to_named_https_hosts(href):
+    out = ai_logic.sanitize_field_html(f'<a href="{href}">x</a>')
+    assert out == "<a>x</a>"
+    assert ai_logic.sanitize_field_html('<a href="https://cafe.de/p">x</a>') == \
+        '<a href="https://cafe.de/p">x</a>'
+
+
+def test_harmless_structure_is_kept():
+    value = ('<ruby>漢<rp>(</rp><rt>kan</rt><rp>)</rp></ruby><h2>T</h2>'
+             '<dl><dt>a</dt><dd>b</dd></dl><mark>m</mark><del>d</del><ins>i</ins>'
+             '<kbd>k</kbd><table><caption>c</caption><colgroup><col></colgroup>'
+             '<tr><td>x</td></tr></table>')
+    assert ai_logic.sanitize_field_html(value) == value
+
+
+def test_mathjax_links_and_extensions_are_neutralised():
+    value = (r"\(\href{https://evil.example}{x^2}\) \[\url{https://evil.example}\] "
+             r"\(\require{html}\style{color:red}{y} \class{c}{z} \cssId{i}{w}\) \(a+b\)")
+    out = ai_logic.sanitize_field_html(value)
+    for word in ("href", "url", "require", "style", "class", "cssId", "evil"):
+        assert word not in out
+    assert r"\(a+b\)" in out and "x^2" in out
+
+
+def test_preview_text_shows_where_a_link_points():
+    value = ai_logic.sanitize_field_html('<a href="https://example.com/p">ref</a>')
+    assert ai_logic.show_link_hosts(value) == \
+        '<a href="https://example.com/p">ref (example.com)</a>'

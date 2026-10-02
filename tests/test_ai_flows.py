@@ -2138,12 +2138,12 @@ def test_generate_stays_disabled_until_a_backend_is_ready(anki, monkeypatch):
 
 
 def test_resolve_one_image_file_reads_svg_from_scratch(tmp_path):
-    (tmp_path / "diagram.svg").write_text("<svg></svg>")
+    (tmp_path / "diagram.svg").write_text("<svg><rect/></svg>")
     res = ai_dialog._resolve_one_image({"source": "file:diagram.svg"}, str(tmp_path))
     assert res["state"] == "ok"
     assert res["kind"] == "file"
     assert res["name"] == "diagram.svg"
-    assert res["bytes"] == b"<svg></svg>"
+    assert res["bytes"] == b'<svg xmlns="http://www.w3.org/2000/svg"><rect /></svg>'
 
 
 def test_resolve_one_image_refuses_a_file_source_that_is_not_svg(tmp_path):
@@ -2207,7 +2207,7 @@ def test_resolve_one_image_file_accepts_a_real_file_in_scratch(tmp_path):
     (tmp_path / "ok.svg").write_text("<svg>ok</svg>")
     res = ai_dialog._resolve_one_image({"source": "file:ok.svg"}, str(tmp_path))
     assert res["state"] == "ok"
-    assert res["bytes"] == b"<svg>ok</svg>"
+    assert res["bytes"] == b'<svg xmlns="http://www.w3.org/2000/svg">ok</svg>'
 
 
 def test_attached_image_refuses_a_symlink_pointing_out_of_scratch(tmp_path):
@@ -2466,3 +2466,15 @@ def test_ai_backends_rows_read_checking_until_the_probe_answers(anki, monkeypatc
     _settled(dlg)
     assert "Ready: Claude Code" in dlg.overall.text()
     assert on_main and not any(on_main)
+
+
+def test_review_preview_shows_where_a_link_points(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.session.cards[0]["fields"]["Back"] = ai_logic.sanitize_field_html(
+        '<a href="https://example.com/guide">the guide</a>')
+    dlg._rebuild_review()
+    row = dlg.cards_lay.itemAt(0).widget()
+    _caret_widget(row).click()
+    assert "the guide (example.com)" in _row_text(row)
