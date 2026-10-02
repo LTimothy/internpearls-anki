@@ -39,7 +39,8 @@ from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, load_declined, load_deck_skill,
                      save_declined, save_deck_skill, save_later_seen)
-from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes_for,
+from .logic import (APKG_MAX_BYTES, apkg_deck_names, apkg_note_details, apkg_notes,
+                    change_notes_for, safe_source_path,
                     source_label_for, group_change_notes, sort_source_groups,
                     declined_drop, declined_guids,
                     decks_to_update, feedback_entries, merge_saved_feedback,
@@ -157,6 +158,26 @@ def _write_scratch(apkg_path, data, version=None):
         raise
 
 
+# A manifest is a list of decks and a few ledgers: a large source's is about 500 KB.
+_MANIFEST_MAX_BYTES = 32 * 1024 * 1024
+# A deck skill is a page of instructions for the AI, sent with every run.
+_SKILL_MAX_BYTES = 1024 * 1024
+
+
+def _local_source_file(folder, path):
+    """`path` from the manifest, as a file inside the local source `folder`.
+
+    safe_source_path refuses an absolute path or '..'; this also follows symlinks, so a
+    link inside the folder that points out of it is refused too.
+    """
+    full = os.path.join(folder, safe_source_path(path))
+    root = os.path.realpath(folder)
+    if os.path.commonpath([os.path.realpath(full), root]) != root:
+        raise RuntimeError(f'"{path}" resolves outside the deck source, so it wasn\'t '
+                           "read")
+    return full
+
+
 def _require_manifest_object(manifest, where):
     """Refuse a manifest that parsed as valid JSON but isn't an object.
 
@@ -220,7 +241,7 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
     """
     if cfg["gh_repo"]:
         raw = _gh_raw(cfg["gh_repo"], "manifest.json", cfg["gh_token"], cfg["gh_ref"],
-                      timeout=timeout)
+                      timeout=timeout, max_bytes=_MANIFEST_MAX_BYTES)
         try:
             manifest = json.loads(raw)
         except Exception as e:
@@ -234,9 +255,11 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
         _require_manifest_object(manifest, cfg["gh_repo"])
 
         def fetch(d, on_chunk=None):
-            data = _gh_raw(cfg["gh_repo"], d["apkg"], cfg["gh_token"], cfg["gh_ref"],
-                           timeout=download_timeout, on_chunk=on_chunk)
-            return _write_scratch(f"{cfg['gh_repo']}@{cfg['gh_ref']}/{d['apkg']}",
+            path = safe_source_path(d["apkg"])
+            data = _gh_raw(cfg["gh_repo"], path, cfg["gh_token"], cfg["gh_ref"],
+                           timeout=download_timeout, on_chunk=on_chunk,
+                           max_bytes=APKG_MAX_BYTES)
+            return _write_scratch(f"{cfg['gh_repo']}@{cfg['gh_ref']}/{path}",
                                   data, d.get("version"))
 
         fetch.source_key = ("github", cfg["gh_repo"], cfg["gh_ref"])
@@ -253,6 +276,10 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
             raise RuntimeError(
                 f"{folder} has no manifest.json (point this at the folder that holds "
                 "the manifest and the .apkg files)")
+        if os.path.getsize(path) > _MANIFEST_MAX_BYTES:
+            raise RuntimeError(f"the manifest.json in {folder} is larger than "
+                               f"{_MANIFEST_MAX_BYTES // (1024 * 1024)} MB, so it "
+                               "wasn't read")
         try:
             manifest = _load_json(path, None, strict=True)
         except Exception as e:
@@ -263,7 +290,7 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
         _require_manifest_object(manifest, folder)
 
         def fetch(d, on_chunk=None):
-            return os.path.join(folder, d["apkg"])
+            return _local_source_file(folder, d["apkg"])
 
         fetch.source_key = ("folder", os.path.realpath(folder))
         return manifest, fetch, "local folder"
@@ -327,6 +354,8 @@ def _check_deck_skill(cfg, manifest, fetch):
         return
     try:
         local = fetch({"apkg": entry["path"], "version": entry.get("version")})
+        if os.path.getsize(local) > _SKILL_MAX_BYTES:
+            return
         with open(local, "rb") as fh:
             raw = fh.read()
     except Exception:
