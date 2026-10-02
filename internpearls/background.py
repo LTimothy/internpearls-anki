@@ -318,7 +318,8 @@ def _auto_sync_check():
                 [d["name"] for d in todo]
                 + _content_backup_decks(
                     [v for v in result["downloaded"].values() if _is_local(v)],
-                    result["manifest"].get("front_aliases", {}), live["scope_tag"])):
+                    result["manifest"].get("front_aliases", {}), live["scope_tag"]),
+                live["scope_tag"]):
             # Once per session, not once per poll: a backup that fails usually keeps
             # failing, and the same tooltip every interval is noise around a message
             # that has already been read.
