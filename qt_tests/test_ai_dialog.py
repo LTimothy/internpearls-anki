@@ -1719,6 +1719,28 @@ def test_a_late_flag_keeps_focus_on_the_row_the_learner_is_on(monkeypatch):
         dlg.deleteLater()
 
 
+def test_a_late_flag_keeps_focus_on_the_same_control_in_the_row(monkeypatch):
+    mock, _ = harness.bootstrap()
+    harness.app()
+    dlg, gate = _near_review(mock, monkeypatch)
+    try:
+        include = dlg.decision_cells[1].buttons["include"]
+        include.setFocus()
+        _settle()
+        assert dlg.focusWidget() is include
+        gate.set()
+        dlg._wait_for_near()
+        _settle()
+        assert dlg.session.included == [False, True]
+        assert dlg.focusWidget() is dlg.decision_cells[1].buttons["include"]
+        assert dlg.focusWidget() is not include      # the row was rebuilt
+    finally:
+        gate.set()
+        dlg._retire_for_delete()
+        dlg.hide()
+        dlg.deleteLater()
+
+
 def test_a_late_flag_keeps_the_cursor_in_a_note_being_typed(monkeypatch):
     mock, _ = harness.bootstrap()
     harness.app()
