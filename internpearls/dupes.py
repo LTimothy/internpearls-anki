@@ -27,11 +27,16 @@ _IMAGE_REF_RE = re.compile(r"\[image:[^\]]*\]", re.I)
 _TAG_RE = re.compile(r"<[^>]+>")
 _TOKEN_RE = re.compile(r"[^\W_]+")
 _CJK_RE = re.compile("[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]+")
-_NEGATION_RE = re.compile(r"\b(?:not|no|never|without|cannot)\b|n['\u2019]t\b")
+_NEGATION_WORDS = frozenset({"not", "no", "never", "without", "cannot"})
+_NEGATION_RE = re.compile(r"\b(?:%s)\b|n['\u2019]t\b" % "|".join(_NEGATION_WORDS))
 
 # Short tokens that still say which fact a card is about: roman numerals (a type or a
 # factor number) and anything with a digit in it (T3, D1, S2, 5).
 _ROMAN = frozenset({"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"})
+# Roman numerals that can name a class when two cards differ on them. "iv" is left out:
+# it is usually intravenous, so IV against IM must not read as a class contrast.
+_ROMAN_CLASS = _ROMAN - {"iv"}
+_CLASS_CODE_RE = re.compile(r"[a-z]{1,3}\d+")
 
 _GREEK = {
     "\u03b1": "alpha", "\u03b2": "beta", "\u03b3": "gamma", "\u03b4": "delta",
@@ -40,7 +45,7 @@ _GREEK = {
     "\u03bd": "nu", "\u03be": "xi", "\u03bf": "omicron", "\u03c0": "pi",
     "\u03c1": "rho", "\u03c3": "sigma", "\u03c2": "sigma", "\u03c4": "tau",
     "\u03c5": "upsilon", "\u03c6": "phi", "\u03c7": "chi", "\u03c8": "psi",
-    "\u03c9": "omega",
+    "\u03c9": "omega", "\u00b5": "mu",   # U+00B5 is the micro sign
 }
 _GREEK_NAMES = frozenset(_GREEK.values())
 _GREEK_TABLE = {ord(ch): f" {name} " for ch, name in _GREEK.items()}
@@ -66,51 +71,82 @@ def normalise(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _keep(tok):
+    if tok in STOP_WORDS:
+        return False
+    return (len(tok) >= 3 or tok in _ROMAN or tok in _GREEK_NAMES or tok.isdigit()
+            or any(ch.isdigit() for ch in tok))
+
+
 def tokenize(text):
     """Word/number tokens from already-normalised text, dropping function words and
     anything under three characters unless it carries meaning: an all-digit or
     digit-bearing token (a dose, a percentage, T3), a roman numeral, or a Greek letter,
     which is spelled out so an alpha and a beta never collapse into the same token.
     Words are Unicode, so accented and non-Latin text tokenises; a run of CJK
-    characters, which has no spaces to split on, becomes overlapping pairs."""
+    characters, which has no spaces to split on, becomes overlapping pairs, and any
+    Latin text or digits beside it tokenise as usual."""
     out = []
     for tok in _TOKEN_RE.findall(text.translate(_GREEK_TABLE)):
         if _CJK_RE.search(tok):
             for run in _CJK_RE.findall(tok):
                 out.extend([run] if len(run) < 2 else
                            [run[i:i + 2] for i in range(len(run) - 1)])
-            continue
-        if tok in STOP_WORDS:
-            continue
-        if (len(tok) < 3 and tok not in _ROMAN and not tok.isdigit()
-                and not any(ch.isdigit() for ch in tok)):
-            continue
-        out.append(tok)
+            out.extend(t for t in _TOKEN_RE.findall(_CJK_RE.sub(" ", tok))
+                       if _keep(t))
+        elif _keep(tok):
+            out.append(tok)
     return out
 
 
 def contrast_marks(tokens, text):
     """What two otherwise similar cards can differ on while meaning different things:
-    the tokens that name a type, class or number (digits, roman numerals, Greek
-    letters), and whether the text negates anything."""
-    ids = frozenset(t for t in tokens if t in _ROMAN or t in _GREEK_NAMES
-                    or any(ch.isdigit() for ch in t))
-    return ids, bool(_NEGATION_RE.search(text))
+    the class-like tokens (Greek letters, roman numerals other than IV, and a letter
+    code with a number such as T3, S2, D1; a bare number is not one), and the word that
+    negates something, or "" when nothing is negated."""
+    ids = frozenset(t for t in tokens if t in _ROMAN_CLASS or t in _GREEK_NAMES
+                    or _CLASS_CODE_RE.fullmatch(t))
+    found = _NEGATION_RE.search(text)
+    word = found.group() if found else ""
+    negation = word if word in _NEGATION_WORDS or not word else "not"
+    return ids, negation
+
+
+def _class_conflict(a, b):
+    ids_a, ids_b = a[0], b[0]
+    return bool(ids_a and ids_b) and not (ids_a <= ids_b or ids_b <= ids_a)
 
 
 def contrasts(a, b):
     """True when two `contrast_marks` disagree: one side negates and the other does not,
-    or both name types or numbers and neither's set contains the other's. A number
-    present on one side only is a paraphrase, not a contrast."""
-    (ids_a, neg_a), (ids_b, neg_b) = a, b
-    if neg_a != neg_b:
-        return True
-    return bool(ids_a and ids_b) and not (ids_a <= ids_b or ids_b <= ids_a)
+    or both name classes and neither's set contains the other's. A class named on one
+    side only is a paraphrase, not a contrast."""
+    return bool(a[1]) != bool(b[1]) or _class_conflict(a, b)
 
 
-# A contrasting pair keeps only this share of its cosine score, so it can never read as
-# an exact duplicate and drops below the stricter sensitivities.
-CONTRAST_FACTOR = 0.5
+def _shown(token):
+    return token if token in _GREEK_NAMES else token.upper()
+
+
+def contrast_label(text_a, text_b):
+    """The reason two texts contrast, for a row to show ("Differs: T3 vs T4",
+    "Differs: not"), or "" when they do not."""
+    norm_a, norm_b = normalise(text_a), normalise(text_b)
+    a = contrast_marks(tokenize(norm_a), norm_a)
+    b = contrast_marks(tokenize(norm_b), norm_b)
+    parts = []
+    if bool(a[1]) != bool(b[1]):
+        parts.append(a[1] or b[1])
+    if _class_conflict(a, b):
+        parts.append(" ".join(_shown(t) for t in sorted(a[0] - b[0])) + " vs "
+                     + " ".join(_shown(t) for t in sorted(b[0] - a[0])))
+    return f"Differs: {'; '.join(parts)}" if parts else ""
+
+
+# A contrasting pair keeps only this share of its cosine score. It sits strictly below the
+# lowest threshold that applies the evidence gate (Normal, 0.5), so such a pair can appear
+# only at Loose sensitivity and never reads as an exact duplicate.
+CONTRAST_FACTOR = 0.45
 
 
 class Index:
