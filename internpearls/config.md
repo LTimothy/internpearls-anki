@@ -67,20 +67,21 @@ When `true`, decks sync automatically in the background: once shortly after a pr
 opens, then again every `auto_sync_interval_minutes` while Anki stays open, without
 asking each time. A backup is still taken first; if it fails, or your cards sit in no
 deck the add-on can back up, that round is skipped instead of importing unprotected.
-What it has held back or already told you about is remembered per profile. Results show as a brief tooltip, never a blocking
-dialog, since this can fire mid-review. The check itself runs off the main thread when
-possible, so it stays quick and doesn't freeze Anki even at a short interval. Defaults
-to `false`. Editable in Intern Pearls → Settings, which also restarts the running timer
-immediately so a change here doesn't need an Anki restart to take effect.
+What it has held back or already told you about is remembered per profile. Results show
+as a brief tooltip, never a blocking dialog, since this can fire mid-review. The check
+itself runs off the main thread when possible, so it stays quick and doesn't freeze Anki
+even at a short interval. Defaults to `false`. Editable in Intern Pearls → Settings,
+which also restarts the running timer immediately so a change here doesn't need an Anki
+restart to take effect.
 
 ## auto_sync_interval_minutes
 
-How often the background poll checks the source when `auto_sync_decks` is on. Floored
-at 1 minute regardless of what's set here, to keep a typo or a 0 from becoming a busy
-loop, and capped at a week. A value that isn't a finite number (text, `Infinity`,
-`NaN`) reads as the default. GitHub's request volume at that floor is still trivial: one small `manifest.json`
-fetch a minute, well under even the unauthenticated 60-per-hour limit. Defaults to `15`.
-Editable in Intern Pearls → Settings.
+How often the background poll checks the source when `auto_sync_decks` is on. Floored at
+1 minute regardless of what's set here, to keep a typo or a 0 from becoming a busy loop,
+and capped at a week. A value that isn't a finite number (text, `Infinity`, `NaN`) reads
+as the default. GitHub's request volume at that floor is still trivial: one small
+`manifest.json` fetch a minute, well under even the unauthenticated 60-per-hour limit.
+Defaults to `15`. Editable in Intern Pearls → Settings.
 
 ## ai_backend
 
@@ -106,10 +107,10 @@ dropped if it named none), so nobody loses a configured path on upgrade.
 
 Whether each backend is offered at all, as an object with `claude`, `codex`, and `agy`
 keys (`{"claude": true, "codex": true, "agy": true}`). A backend set to `false` is
-skipped entirely: not detected, not chosen, not shown as a candidate anywhere the
-wizard or the AI Backends window looks. Editable from the AI Backends window's
-"ignore" and "use again" links, per backend. Defaults to `{"claude": true, "codex": true,
-"agy": true}`.
+skipped entirely: not detected, not chosen, not shown as a candidate anywhere the wizard
+or the AI Backends window looks. Editable from the AI Backends window's "ignore" and
+"use again" links, per backend. Defaults to `{"claude": true, "codex": true, "agy":
+true}`.
 
 ## ai_model
 
@@ -167,11 +168,12 @@ the wizard applies to that session and is never written back here.
 ## ai_default_depth
 
 Which depth the wizard should start on: `thorough` (drafts, may verify online, then
-self-reviews) or `quick` (one drafting pass with no fact-checking, which may still search
-the web for card images; how far each backend can reach is in the README's Modes). Defaults to `auto`, which
-lets the material decide: thorough for a source over 1,500 characters or any attachment,
-quick for a short paste. As with the count above, this only seeds the control; picking a
-depth in the wizard applies to that session and is never written back here.
+self-reviews) or `quick` (one drafting pass with no fact-checking, which may still
+search the web for card images; how far each backend can reach is in the README's
+Modes). Defaults to `auto`, which lets the material decide: thorough for a source over
+1,500 characters or any attachment, quick for a short paste. As with the count above,
+this only seeds the control; picking a depth in the wizard applies to that session and
+is never written back here.
 
 ## dim_images_night_mode
 
