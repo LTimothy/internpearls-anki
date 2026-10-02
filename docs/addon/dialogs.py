@@ -891,14 +891,33 @@ class _DeclinedDialog(QDialog):
         while self._list.shown() < min(shown, self._list.total()):
             self._list._extend()
         bar.setValue(position)
-        # The streaming list reports no height of its own, so the dialog would open
-        # about one row tall. A list that fits asks for exactly its content, a longer
-        # one for the full height, and either scrolls inside it.
+        self._fit_list()
+
+    def _fit_list(self):
+        """The streaming list reports no height of its own, so the dialog would open
+        about one row tall. A list that fits asks for exactly its content at the width
+        it really has (a wrapped front takes more than one line), a longer one for the
+        full height, and either scrolls inside it."""
         lst = self._list
-        fits = lst.shown() >= lst.total()
-        content = lst._rows_container.sizeHint().height() + 2 * lst.frameWidth()
-        lst.setMinimumHeight(min(_DECLINED_LIST_H, content) if fits
-                             else _DECLINED_LIST_H)
+        if lst.shown() < lst.total():
+            lst.setMinimumHeight(_DECLINED_LIST_H)
+            return
+        # StreamingList keeps a right gutter between its rows and the scroll bar.
+        width = lst.viewport().width() - lst.widget().layout().contentsMargins().right()
+        content = 2 * lst.frameWidth()
+        for page in lst._pages:
+            lay = page.layout()
+            content += (lay.totalHeightForWidth(width) if lay.hasHeightForWidth()
+                        else lay.totalSizeHint().height())
+        lst.setMinimumHeight(min(_DECLINED_LIST_H, content))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_list()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_list()
 
 
 @_safe
