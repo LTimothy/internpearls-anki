@@ -273,6 +273,10 @@ def _scratch_image(scratch, name, kind, ext=None):
         return bad(f"{kind} image not found in scratch")
     with open(real_path, "rb") as fh:
         data = fh.read()
+    try:
+        ai_logic.check_image_bytes(name, data)
+    except ValueError as e:
+        return bad(str(e))
     return {"state": "ok", "kind": kind, "bytes": data, "name": name,
             "path": path}
 
@@ -3000,7 +3004,8 @@ class _GenerateDialog(QDialog):
         dlg = _EditCardDialog(self, card)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        new_fields = dlg.fields()
+        new_fields = {k: ai_logic.sanitize_field_html(v)
+                      for k, v in dlg.fields().items()}
         if any(card["fields"].get(k, "") != v for k, v in new_fields.items()):
             if s.verdicts.pop(i, None) is not None:
                 s.edited_since_check.add(i)
@@ -3191,6 +3196,9 @@ class _GenerateDialog(QDialog):
             cited = verdict and _verdict_state(verdict) in ("confirmed", "applied")
             card["_sources"] = (verdict.get("sources") or []) if cited else []
         cards = [c for _, c in pairs]
+        for card in cards:
+            card["fields"].update({k: ai_logic.sanitize_field_html(v)
+                                   for k, v in card["fields"].items()})
         # add_generated_notes can raise (e.g. Basic/Cloze missing or renamed on a
         # non-English profile). Cleanup waits until AFTER a successful import:
         # if this raises, the scratch dir must still be there for a retry.

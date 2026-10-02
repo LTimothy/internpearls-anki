@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import time
+from html.parser import HTMLParser
 
 GUID_PREFIX = "iplocal-"
 GENERATED_TAG_LEAF = "Generated"
@@ -28,6 +29,7 @@ _CLOZE_OPEN_RE = re.compile(r"\{\{c\d+")
 _SVG_SCRIPT_RE = re.compile(r"<script", re.I)
 _SVG_EVENT_ATTR_RE = re.compile(r"\bon\w+\s*=", re.I)
 _SVG_JS_URI_RE = re.compile(r"javascript\s*:", re.I)
+_SVG_EMBED_RE = re.compile(r"<\s*(?:foreignObject|iframe|embed|object)\b", re.I)
 # A hotlinked picture typed into a field instead of listed under "images": it would
 # skip the download checks and fail offline, so the images list is the only path.
 _REMOTE_IMG_RE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*[\"']?https?://[^>]*>", re.I)
@@ -154,7 +156,7 @@ def parse_cards_json(text, allowed_types, field_map):
             images = [images]
         cards.append({
             "note_type": ntype,
-            "fields": {k: _REMOTE_IMG_RE.sub("", str(fields.get(k, "")))
+            "fields": {k: sanitize_field_html(_REMOTE_IMG_RE.sub("", str(fields.get(k, ""))))
                        for k in field_map[ntype]},
             "tags": [str(t) for t in (raw.get("tags") or [])],
             "images": [_image_entry(im) for im in images],
@@ -193,6 +195,107 @@ def sources_html(sources):
         title = str(src.get("title") or url)
         links.append(f'<a href="{_html.escape(url, quote=True)}">{_html.escape(title)}</a>')
     return _SMALL_LINE.format("Sources: " + ", ".join(links)) if links else ""
+
+
+# What a generated field may carry: the formatting cards use, local pictures, and
+# http(s) links. Any other tag loses the tag and keeps its text; the contents of
+# _DROPPED_ELEMENTS go entirely; any attribute not listed goes.
+_FIELD_TAGS = frozenset({
+    "a", "b", "strong", "i", "em", "u", "s", "sub", "sup", "small", "span", "font",
+    "br", "p", "div", "hr", "ul", "ol", "li", "code", "pre", "blockquote",
+    "table", "thead", "tbody", "tfoot", "tr", "th", "td", "img",
+})
+_VOID_TAGS = frozenset({"br", "hr", "img"})
+_DROPPED_ELEMENTS = frozenset({
+    "script", "style", "iframe", "frame", "frameset", "object", "embed", "applet",
+    "noscript", "noembed", "noframes", "template", "svg", "math", "textarea",
+    "select", "title", "head", "xmp", "plaintext", "audio", "video", "canvas",
+})
+_COMMON_ATTRS = frozenset({"style", "class", "title"})
+_TAG_ATTRS = {
+    "a": {"href"},
+    "img": {"src", "alt", "width", "height"},
+    "font": {"color", "size", "face"},
+    "td": {"colspan", "rowspan", "align", "valign"},
+    "th": {"colspan", "rowspan", "align", "valign"},
+    "table": {"align"}, "tr": {"align", "valign"},
+    "p": {"align"}, "div": {"align"}, "ol": {"start", "type"},
+}
+_UNSAFE_STYLE_RE = re.compile(r"url\s*\(|expression|javascript|@import|behavior", re.I)
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x20\x7f]+")
+
+
+def _safe_href(value):
+    v = _CONTROL_CHARS_RE.sub("", value).lower()
+    return v.startswith(("http://", "https://"))
+
+
+def _local_src(value):
+    v = _CONTROL_CHARS_RE.sub("", value)
+    return bool(v) and ":" not in v and not v.startswith(("/", "\\"))
+
+
+class _FieldSanitizer(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out = []
+        self.dropping = []
+
+    def _attrs(self, tag, attrs):
+        allowed = _COMMON_ATTRS | _TAG_ATTRS.get(tag, set())
+        kept = []
+        for name, value in attrs:
+            name = name.lower()
+            value = value or ""
+            if name not in allowed:
+                continue
+            if name == "style" and _UNSAFE_STYLE_RE.search(value):
+                continue
+            if name == "href" and not _safe_href(value):
+                continue
+            kept.append(f' {name}="{_html.escape(value, quote=True)}"')
+        return "".join(kept)
+
+    def handle_starttag(self, tag, attrs):
+        if self.dropping:
+            if tag in _DROPPED_ELEMENTS and tag not in _VOID_TAGS:
+                self.dropping.append(tag)
+            return
+        if tag in _DROPPED_ELEMENTS:
+            self.dropping.append(tag)
+            return
+        if tag not in _FIELD_TAGS:
+            return
+        if tag == "img" and not _local_src(dict(attrs).get("src") or ""):
+            return
+        self.out.append(f"<{tag}{self._attrs(tag, attrs)}>")
+
+    def handle_startendtag(self, tag, attrs):
+        if tag in _VOID_TAGS:
+            self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        if self.dropping:
+            if tag in self.dropping:
+                while self.dropping.pop() != tag:
+                    pass
+            return
+        if tag in _FIELD_TAGS and tag not in _VOID_TAGS:
+            self.out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if not self.dropping:
+            self.out.append(_html.escape(data, quote=False).replace("\xa0", "&nbsp;"))
+
+
+def sanitize_field_html(value):
+    """`value` reduced to markup that is safe to import into a card field: no
+    scripts, frames, event handlers, javascript: links, or remote pictures, so what
+    the review preview shows is what the card will carry."""
+    parser = _FieldSanitizer()
+    parser.feed(str(value or ""))
+    parser.close()
+    return "".join(parser.out)
 
 
 def primary_is_blank(card):
@@ -497,9 +600,11 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
                 continue
             stripped = {k: _REMOTE_IMG_RE.sub("", str(v)) for k, v in correction.items()}
             removed = stripped != {k: str(v) for k, v in correction.items()}
-            correction = stripped
-            if removed and not any(v.strip() for v in correction.values()):
-                correction = None
+            cleaned = {k: sanitize_field_html(v) for k, v in stripped.items()}
+            if (cleaned != {k: str(v) for k, v in correction.items()}
+                    and not any(v.strip() for v in cleaned.values())):
+                cleaned = None
+            correction = cleaned
         sources = []
         for src in raw.get("sources") or []:
             if not isinstance(src, dict):
@@ -512,8 +617,8 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
         if removed:
             note += (" A web picture in the suggested text was left out; "
                      "pictures are added through the card's images.")
-            if correction is None and verdict == "corrected":
-                verdict = "unverified"
+        if correction is None and verdict == "corrected" and raw.get("correction") is not None:
+            verdict = "unverified"
         if verdict == "confirmed" and not web:
             verdict = "unverified"
             note = "no web access, from recall only: " + note
@@ -1259,6 +1364,14 @@ def svg_to_media(markup, index):
     rect (sized against Qt's default viewport, not the viewBox) is replaced with a
     proper full-size one. An XML declaration or doctype before the root is dropped
     first."""
+    m = _checked_svg(markup)
+    m = _normalize_svg(m)
+    return f"generated-{int(index)}.svg", m.encode("utf8")
+
+
+def _checked_svg(markup):
+    """The SVG markup without its prologue, or ValueError if it isn't SVG or carries
+    a script vector (also when hidden behind character references)."""
     m = _SVG_PROLOGUE_RE.sub("", (markup or "").strip())
     if not m.startswith("<svg"):
         raise ValueError("not svg markup")
@@ -1266,10 +1379,44 @@ def svg_to_media(markup, index):
         raise ValueError("svg with a <script> element rejected")
     if _SVG_EVENT_ATTR_RE.search(m):
         raise ValueError("svg with an event-handler attribute rejected")
-    if _SVG_JS_URI_RE.search(m):
+    if _SVG_JS_URI_RE.search(m) or _SVG_JS_URI_RE.search(_html.unescape(m)):
         raise ValueError("svg with a javascript: URI rejected")
-    m = _normalize_svg(m)
-    return f"generated-{int(index)}.svg", m.encode("utf8")
+    if _SVG_EMBED_RE.search(m):
+        raise ValueError("svg with embedded content rejected")
+    return m
+
+
+_RASTER_MAGIC = {
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".jpg": (b"\xff\xd8\xff",),
+    ".jpeg": (b"\xff\xd8\xff",),
+    ".gif": (b"GIF87a", b"GIF89a"),
+}
+
+
+def check_image_bytes(name, data):
+    """Raise ValueError unless `data` really is the picture `name`'s extension says:
+    a PNG, JPEG, GIF or WebP by its signature, or an SVG that passes svg_to_media's
+    checks. Anki serves a media file by its name, so a file that only claims to be a
+    picture never reaches the media folder."""
+    ext = os.path.splitext(name or "")[1].lower()
+    data = bytes(data or b"")
+    if ext == ".svg":
+        try:
+            text = data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise ValueError("svg is not text") from None
+        _checked_svg(text)
+        return
+    if ext == ".webp":
+        if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            return
+        raise ValueError("not a WebP picture")
+    if ext not in _RASTER_MAGIC:
+        raise ValueError("not a PNG, JPEG, GIF, WebP or SVG picture")
+    if not data.startswith(_RASTER_MAGIC[ext]):
+        raise ValueError("not a {} picture".format("GIF" if ext == ".gif" else
+                                                   "PNG" if ext == ".png" else "JPEG"))
 
 
 SCRATCH_PREFIX = "ip-aigen-"

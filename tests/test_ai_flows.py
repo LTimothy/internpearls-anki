@@ -1246,7 +1246,7 @@ def test_remove_drops_the_image_and_its_block(anki, monkeypatch):
 def test_replace_attaches_a_local_picture_for_that_image(anki, monkeypatch, tmp_path):
     dlg = _failed_image_dialog(anki, monkeypatch)
     picture = tmp_path / "chosen.png"
-    picture.write_bytes(b"PNGDATA")
+    picture.write_bytes(b"\x89PNG\r\n\x1a\nPNGDATA")
     anki.gui.file_picks = [str(picture)]
     dlg._replace_image(0, 0)
     _finish_recovery(dlg)
@@ -2234,12 +2234,24 @@ def test_attached_image_refuses_a_name_that_is_not_a_bare_basename(tmp_path):
 def test_attached_image_reads_a_real_file_sitting_in_scratch(tmp_path):
     scratch = tmp_path / "scratch"
     scratch.mkdir()
-    (scratch / "photo.png").write_bytes(b"\x89PNG the real attachment")
+    (scratch / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n the real attachment")
     res = ai_dialog._resolve_one_image(
         {"source": "attached:photo.png"}, str(scratch))
     assert res["state"] == "ok"
-    assert res["bytes"] == b"\x89PNG the real attachment"
+    assert res["bytes"] == b"\x89PNG\r\n\x1a\n the real attachment"
     assert res["name"] == "photo.png"
+
+
+def test_attached_image_that_is_not_a_picture_is_refused(tmp_path):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (scratch / "photo.png").write_bytes(b"<html><script>steal()</script></html>")
+    (scratch / "page.html").write_bytes(b"<html></html>")
+    (scratch / "drawing.svg").write_bytes(b"<svg><script>steal()</script></svg>")
+    for source in ("attached:photo.png", "attached:page.html", "file:drawing.svg",
+                   "attached:drawing.svg"):
+        res = ai_dialog._resolve_one_image({"source": source}, str(scratch))
+        assert res["state"] == "error", source
 
 
 def test_saved_image_must_still_be_an_svg(tmp_path):
@@ -2326,3 +2338,47 @@ def test_completion_guard_stops_the_run_before_it_warns(anki, monkeypatch):
     assert at_warning == {"cancelled": True, "gen_done": True,
                           "poll_timer_active": False}
     dlg._wait_for_worker(timeout=15)
+
+
+# === active content never reaches the collection ============================
+
+def test_hostile_fields_are_cleaned_before_review_and_import(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="hostile_fields")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    card = dlg.session.cards[0]
+    assert card["fields"]["Front"] == 'q<img src="x">'
+    assert card["fields"]["Back"] == "<a>a</a>"
+    # The model named a scratch file that is not a picture: refused by content.
+    assert dlg.session.image_data[0][0]["state"] == "error"
+    assert any(c["code"] == "image" for c in dlg.session.checks[0])
+    dlg.session.included = [True]
+    dlg._do_import()
+    note = next(n for n in anki.col._notes.values() if n.guid.startswith("iplocal-"))
+    stored = " ".join(note[k] for k in note.keys()).lower()
+    for bad in ("script", "steal", "onerror", "javascript", "iframe"):
+        assert bad not in stored
+    assert not any(name.endswith(".html") for name in anki.col.media._files)
+
+
+def test_hand_edited_fields_are_cleaned_like_generated_ones(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+
+    class _Edit:
+        def __init__(self, parent, card):
+            pass
+
+        def exec(self):
+            return ai_dialog.QDialog.DialogCode.Accepted
+
+        def fields(self):
+            return {"Front": 'q <img src=x onerror="steal()">', "Back": "a"}
+
+        def tags(self):
+            return []
+
+    monkeypatch.setattr(ai_dialog, "_EditCardDialog", _Edit)
+    dlg._edit_card(0)
+    assert dlg.session.cards[0]["fields"]["Front"] == 'q <img src="x">'

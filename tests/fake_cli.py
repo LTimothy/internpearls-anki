@@ -33,6 +33,9 @@
 #   verdicts_ok     claude-style result carrying a {"verdicts": [...]} reply,
 #                   one confirmed card with a source (Check facts tests)
 #   with_image      one card carrying a url: image (I2 review-gate tests)
+#   hostile_fields  one card whose fields carry script, an event handler, a
+#                   javascript: link and an iframe, and whose image names a
+#                   scratch file that is not a picture
 #   echo_prompt     a successful run that also emits a stream event echoing
 #                   the prompt back verbatim (a transcript-style "user_input"
 #                   event some CLI might legitimately emit), to prove the run
@@ -195,6 +198,19 @@ if mode == "with_image":
              "fields": {"Front": "q", "Back": "a"},
              "tags": [], "images": [{"source": "url:https://example.com/pic.png",
                                      "alt": "", "attribution": ""}],
+             "rationale": "r"}]
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": json.dumps(cards), "usage": USAGE}))
+    sys.exit(0)
+if mode == "hostile_fields":
+    with open("page.html", "w") as f:
+        f.write("<html><script>steal()</script></html>")
+    cards = [{"note_type": "Study Deck - Basic",
+             "fields": {"Front": 'q<img src=x onerror="steal()">',
+                        "Back": '<script>steal()</script><a href="javascript:steal()">a</a>'
+                                '<iframe src="https://evil.example"></iframe>'},
+             "tags": [], "images": [{"source": "attached:page.html", "alt": "",
+                                     "attribution": ""}],
              "rationale": "r"}]
     print(json.dumps({"type": "result", "subtype": "success",
                       "result": json.dumps(cards), "usage": USAGE}))
