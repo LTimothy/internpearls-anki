@@ -570,8 +570,8 @@ class StreamingList(QScrollArea):
     """A scroll area that builds its rows in batches instead of all at once.
 
     Measured offscreen, building a card row costs about half a millisecond, so building
-    a 3000-card first sync up front is over a second of dead time with no feedback
-    before the dialog even appears, and far more once the rows are laid out. Building only the first `batch` rows up front, and
+    a first sync of about 3,000 cards up front is over a second of dead time with no
+    feedback before the dialog even appears, and far more once the rows are laid out. Building only the first `batch` rows up front, and
     the next batch only once the reader has actually scrolled near the bottom, is what
     turns that multi-second freeze into a screen that opens in roughly the time one
     batch costs, whatever is still pending.
