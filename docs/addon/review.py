@@ -870,7 +870,8 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
     play.setContentsMargins(11, 0, 0, 0)
     play.setSpacing(1)
     for d in cards[:_GROUP_PREVIEW]:
-        line = QLabel(html.escape(_card_label(d)))
+        line = QLabel(_card_label(d))
+        line.setTextFormat(Qt.TextFormat.PlainText)
         line.setStyleSheet(f"color: {c['dim']};")
         play.addWidget(line)
     if len(cards) > _GROUP_PREVIEW:

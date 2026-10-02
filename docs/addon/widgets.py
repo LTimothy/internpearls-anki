@@ -469,8 +469,13 @@ def section_header(text):
     top_margin matches the spacing review.py already uses between one deck's rows and
     the next section's heading, so a screen built on this module lines up with the one
     it was extracted from.
+
+    Plain text: a heading is a deck name or a sentence, never markup, and a deck name
+    is the source's own string.
     """
-    return section_label(text, top_margin=14)
+    label = section_label(text, top_margin=14)
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    return label
 
 
 def simple_row(chip_kind, primary_html, trailing_html="", card_columns=True,
