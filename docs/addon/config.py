@@ -14,7 +14,7 @@ from .dupes import DEFAULT_THRESHOLD as DUPES_DEFAULT_THRESHOLD
 from .logic import (clamp_interval_minutes, clamp_night_mode_dim_percent,
                     migrate_declined, skill_version, strip_hidden)
 
-ADDON_VERSION = "0.77.1"   # MAJOR.MINOR.PATCH, see README "Versioning"
+ADDON_VERSION = "0.78.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # own notes); when it does, an add-on release that understands the new shape must bump
