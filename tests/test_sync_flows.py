@@ -761,7 +761,7 @@ def test_undoing_a_deck_update_makes_that_deck_pending_again(anki, tmp_path):
     assert sync._load_json(sync.SHIPPED, {}) == {**before, "g1": {"Notes": "", "Back": "v2"}}
     assert [d["name"] for d in sync.decks_to_update(
         manifest, sync._load_json(sync.INSTALLED, {}))] == [OTHER]
-    assert (OTHER, "v2") in sync.undone_updates
+    assert (sync.collection_key(), OTHER, "v2") in sync.undone_updates
 
 
 def test_auto_sync_leaves_an_undone_update_for_a_manual_run(anki, tmp_path):
@@ -769,7 +769,7 @@ def test_auto_sync_leaves_an_undone_update_for_a_manual_run(anki, tmp_path):
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
     anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
-    sync.undone_updates.add((DECK, "v1"))
+    sync.undone_updates.add((sync.collection_key(), DECK, "v1"))
 
     background._auto_sync_check()
 

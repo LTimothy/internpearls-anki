@@ -190,6 +190,8 @@ def _auto_sync_check():
     source = source_identity()
     memory = _memory()
     deferred_before = set(memory.deferred)
+    key = collection_key()
+    undone = {(name, version) for k, name, version in undone_updates if k == key}
 
     # Reconciled here, on the main thread, before any work is handed to the background
     # thread below — installed_matching_collection touches mw.col, which _fetch_work
@@ -222,7 +224,7 @@ def _auto_sync_check():
         # poll bought nothing at all (see _Memory.deferred).
         todo = [d for d in decks_to_update(manifest, installed, cfg["excluded"])
                 if (d["name"], d.get("version")) not in deferred_before
-                and (d["name"], d.get("version")) not in undone_updates]
+                and (d["name"], d.get("version")) not in undone]
         # Always returned (even with todo empty) rather than bailing to None here: a
         # retirement or reorg can ship without bumping any deck's version, so this is
         # the only place that would ever notice one between manual checks — _apply

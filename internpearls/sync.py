@@ -37,7 +37,7 @@ from .collection import (NoteTypeFieldsRequired, _apply_deck, _apply_template_ch
                          installed_matching_collection, invalidate_installed)
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
-                     _load_json, _save_json, load_declined, load_deck_skill,
+                     _load_json, _save_json, collection_key, load_declined, load_deck_skill,
                      save_declined, save_deck_skill, save_later_seen)
 from .logic import (apkg_deck_names, apkg_note_details, apkg_notes, change_notes_for,
                     source_label_for, group_change_notes, sort_source_groups,
@@ -588,8 +588,9 @@ UPDATE_UNDO_NAME = "Intern Pearls deck update"
 # version the step applied). Anki's undo stack lives only as long as the open
 # collection, so memory is enough.
 _update_undo_steps = {}
-# (deck, version) updates the learner undid this session: auto-sync leaves them for a
-# manual Update my decks rather than applying them again unasked.
+# (collection key, deck, version) updates the learner undid this session: auto-sync
+# leaves them for a manual Update my decks rather than applying them again unasked.
+# Keyed per collection so an undo in one profile never holds back another.
 undone_updates = set()
 
 
@@ -604,7 +605,7 @@ def restore_pending_after_undo(changes):
         if step is None:
             return
         name, prior_version, prior_shipped, undone_version = step
-        undone_updates.add((name, undone_version))
+        undone_updates.add((collection_key(), name, undone_version))
         installed = _load_json(INSTALLED, {})
         installed = installed if isinstance(installed, dict) else {}
         if prior_version is None:
