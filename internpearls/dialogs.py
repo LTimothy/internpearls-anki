@@ -1023,16 +1023,16 @@ _SAMPLE_PANE_SIZE = (150, 100)
 
 def _sample_card_image():
     """The preview's stand-in for "a bright image on a card": two labelled shapes and
-    the lines between them, on a white background. White is deliberate and not a
-    themed colour: it's the exact background this feature exists to tone down, so
-    the reference has to start from it, the same as a real card figure would. The ink
+    the lines between them, on a white background. White is deliberate and the same in
+    both themes: it's the exact background this feature exists to tone down, so the
+    reference has to start from it, the same as a real card figure would. The ink
     colours come from palette.LIGHT (not colors(), which would pick DARK's ink, made
-    for a dark surface, on this always-white canvas) rather than a bare hex literal.
+    for a dark surface, on this always-white canvas).
     """
     from aqt.qt import QColor, QImage, QPainter, QPen
     w, h = _SAMPLE_PANE_SIZE
     image = QImage(w, h, QImage.Format.Format_RGB32)
-    image.fill(QColor("#ffffff"))
+    image.fill(QColor(LIGHT["sample_bg"]))
     painter = QPainter(image)
     try:
         ink = QColor(LIGHT["caret"])
