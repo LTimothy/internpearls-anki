@@ -10,6 +10,7 @@ import tempfile
 
 from aqt import mw
 
+from .dupes import DEFAULT_THRESHOLD as DUPES_DEFAULT_THRESHOLD
 from .logic import (clamp_interval_minutes, clamp_night_mode_dim_percent,
                     migrate_declined, skill_version, strip_hidden)
 
@@ -223,7 +224,8 @@ def _cfg():
         # Duplicate-scan cosine threshold, set via the Sensitivity combo (Strict
         # 0.6 / Normal 0.5 / Loose 0.4). See `set_dupes_threshold`.
         "dupes_threshold": (c.get("dupes_threshold")
-                            if c.get("dupes_threshold") in (0.6, 0.5, 0.4) else 0.5),
+                            if c.get("dupes_threshold") in (0.6, 0.5, 0.4)
+                            else DUPES_DEFAULT_THRESHOLD),
     }
 
 

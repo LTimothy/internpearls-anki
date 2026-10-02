@@ -498,3 +498,10 @@ def test_search_reuses_one_index_for_many_queries():
     assert [r[2][0] for r in search(index, left_a + left_b)] in ([2, 3], [3, 2])
     # The scan's own Normal sensitivity is the default here too.
     assert (DEFAULT_THRESHOLD, DEFAULT_MIN_SHARED) == (0.5, 2)
+
+
+def test_normal_sensitivity_and_the_stored_default_are_the_scan_defaults(anki):
+    from internpearls import config, dupes, dupes_dialog
+    normal = dict((label, (t, m)) for label, t, m in dupes_dialog._SENSITIVITY_LEVELS)
+    assert normal["Normal"] == (dupes.DEFAULT_THRESHOLD, dupes.DEFAULT_MIN_SHARED)
+    assert config._cfg()["dupes_threshold"] == dupes.DEFAULT_THRESHOLD
