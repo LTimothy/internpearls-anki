@@ -870,7 +870,8 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
     play.setContentsMargins(11, 0, 0, 0)
     play.setSpacing(1)
     for d in cards[:_GROUP_PREVIEW]:
-        line = QLabel(html.escape(_card_label(d)))
+        line = QLabel(_card_label(d))
+        line.setTextFormat(Qt.TextFormat.PlainText)
         line.setStyleSheet(f"color: {c['dim']};")
         play.addWidget(line)
     if len(cards) > _GROUP_PREVIEW:
@@ -959,7 +960,7 @@ def _chip_with_source(detail, chips):
     questions reads as two small lines rather than one overflowing the column.
 
     The string is the deck source's, rendered as plain text: never parsed here, and
-    escaped rather than trusted, since it arrives from a fetched manifest.
+    never read as markup, since it arrives from a fetched manifest.
     """
     cell = chip_cell(_row_chip(detail), chips)
     label = (detail.get("card_source") or "").strip()
@@ -972,7 +973,8 @@ def _chip_with_source(detail, chips):
     lay.addWidget(cell)
     dim = colors()["dim"]
     for ref in label.split():
-        tag = QLabel(html.escape(ref))
+        tag = QLabel(ref)
+        tag.setTextFormat(Qt.TextFormat.PlainText)
         tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tag.setStyleSheet(f"color: {dim}; font-size: 11px;")
         lay.addWidget(tag)

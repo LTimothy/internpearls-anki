@@ -94,3 +94,12 @@ def test_review_controls_name_the_card_and_feedback_field():
     caption = next(label for label in row.findChildren(QLabel)
                    if label.text() == review._later_caption("new"))
     assert caption.buddy() is box
+
+
+def test_a_card_source_tag_paints_quotes_and_ampersands_as_text():
+    harness.bootstrap()
+    harness.app()
+    cell = review._chip_with_source({"guid": "g", "kind": "new",
+                                     "card_source": "[A&B] [Q's-2]"}, None)
+    shown = [harness.shown(w) for w in cell.findChildren(QLabel)]
+    assert "[A&B]" in shown and "[Q's-2]" in shown, shown
