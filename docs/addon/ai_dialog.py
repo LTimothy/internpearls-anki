@@ -3439,30 +3439,37 @@ class _GenerateDialog(QDialog):
             self.session.scratch = None
 
     def _retire_for_delete(self):
-        """Stop Qt callbacks and hand live-worker cleanup to a background reaper."""
-        for _thread, timer in getattr(self, "_conn_test_refs", ()):
+        """Stop Qt callbacks and hand live-worker cleanup to a background reaper.
+
+        Anki quitting deletes the dialog's C++ object first, so a missing attribute
+        must not fall through to Qt: look in the instance dict, and stop quietly if
+        the rest of the cleanup reaches a widget that is gone."""
+        own = self.__dict__
+        for _thread, timer in own.get("_conn_test_refs", ()):
             timer.stop()
         for name in ("_attach_timer", "_timer", "_img_timer"):
-            timer = getattr(self, name, None)
+            timer = own.get(name)
             if timer is not None:
                 timer.stop()
 
-        for handle in getattr(self, "_image_workers", ()):
+        for handle in own.get("_image_workers", ()):
             handle.cancel()
-        if getattr(self, "_near_worker", None) is not None:
-            self._near_worker.cancel()
+        if own.get("_near_worker") is not None:
+            own["_near_worker"].cancel()
 
-        attach_worker = getattr(self, "_attach_worker", None)
-        if (attach_worker is not None
-                and (attach_worker.is_alive() or self._attachment_in_progress())):
-            self._cancel_running_attachment()
+        try:
+            attach_worker = own.get("_attach_worker")
+            if (attach_worker is not None
+                    and (attach_worker.is_alive() or self._attachment_in_progress())):
+                self._cancel_running_attachment()
+                return
+            workers = [w for w in (own.get("_worker"), own.get("_img_worker")) if w]
+            if self._generation_in_progress() or any(w.is_alive() for w in workers):
+                self._cancel_running_generation()
+                return
+            self._cleanup_scratch()
+        except RuntimeError:
             return
-        workers = [w for w in (getattr(self, "_worker", None),
-                               getattr(self, "_img_worker", None)) if w]
-        if self._generation_in_progress() or any(w.is_alive() for w in workers):
-            self._cancel_running_generation()
-            return
-        self._cleanup_scratch()
 
     def keyPressEvent(self, event):
         """On the progress page, Escape must take the same path as the
@@ -3529,4 +3536,7 @@ def generate_cards():
     finally:
         if finished or not getattr(platform(), "reconstructing", False):
             dlg._retire_for_delete()
-            dlg.deleteLater()
+            try:
+                dlg.deleteLater()
+            except RuntimeError:    # Anki quitting already deleted it
+                pass

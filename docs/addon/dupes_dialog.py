@@ -1118,4 +1118,7 @@ def open_duplicate_scan():
     """Experimental > Scan for duplicates."""
     dlg = _DuplicateScanDialog(_cfg()["scope_tag"])
     dlg.exec()
-    dlg.deleteLater()
+    try:
+        dlg.deleteLater()
+    except RuntimeError:    # Anki quitting already deleted it
+        pass
