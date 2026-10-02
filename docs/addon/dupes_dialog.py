@@ -24,7 +24,8 @@ from . import ai_cli, ai_logic
 from .collection import deck_search, note_rows, suspend_notes, unsuspend_notes
 from .config import (APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks,
                      set_dupes_threshold)
-from .dupes import contrast_label, find_candidates, pair_key
+from .dupes import (DEFAULT_MIN_SHARED, DEFAULT_THRESHOLD, contrast_label,
+                    find_candidates, pair_key)
 from .logic import field_preview_text, plain_text
 from .palette import colors
 from .platform import (new_work_request, platform, platform_owner_id,
@@ -51,7 +52,9 @@ _CHIP_LABELS = ("Likely duplicate 0.00", "DUPLICATE", "OVERLAPS",
 # an index round-trips straight into this list. Strict and Normal both apply the full
 # evidence gate (see find_candidates), with different cosine thresholds; Loose is 0,
 # which disables the gate entirely and falls back to the raw cosine threshold.
-_SENSITIVITY_LEVELS = (("Strict", 0.6, 2), ("Normal", 0.5, 2), ("Loose", 0.4, 0))
+_SENSITIVITY_LEVELS = (("Strict", 0.6, 2),
+                       ("Normal", DEFAULT_THRESHOLD, DEFAULT_MIN_SHARED),
+                       ("Loose", 0.4, 0))
 
 # chip_column_width()'s answer, measured once: not computed at import, since these
 # modules load before a QApplication exists and font metrics before that point are
