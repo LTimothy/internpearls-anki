@@ -285,12 +285,22 @@ _CLAUDE_UNCONFINED = {
 }
 
 
+# What is said about claude before its binary has been checked: no claim either way.
+_CLAUDE_UNCHECKED = dict(
+    _CLAUDE_UNCONFINED,
+    safety="File tools kept to the scratch folder if supported, web read-only, no shell")
+
+
 def backend_wording(kind, path=None):
     """{"safety": ..., "modes": {...}} as shown for `kind`, true for the installed
-    binary at `path` when one is known."""
+    binary at `path`. With no checked binary, claude's wording claims nothing about
+    confinement."""
     meta = BACKENDS[kind]
-    if kind == "claude" and path and not claude_reads_confined(path):
-        return _CLAUDE_UNCONFINED
+    if kind == "claude":
+        if not path:
+            return _CLAUDE_UNCHECKED
+        if not claude_reads_confined(path):
+            return _CLAUDE_UNCONFINED
     return {"safety": meta["safety"], "modes": meta["modes"]}
 
 
@@ -306,29 +316,43 @@ def probe(kind, path):
             "detail": out[0] if out else f"exit {r.returncode}"}
 
 
-def detect_backends(cfg):
+def detect_backends(cfg, warm=False):
     """Everything both dialogs need to know about the three CLIs in one pass:
     per backend, whether it is enabled, where it was found (honouring that
     backend's own path override), and whether --version runs. "chosen" is the
     preferred backend when it is enabled and working, else the first enabled
     working one in BACKENDS order, else None. A cheap, free check: never a
-    model call (that is test_connection, on demand only)."""
-    enabled = cfg.get("ai_backend_enabled") or {}
-    overrides = cfg.get("ai_cli_path") or {}
+    model call (that is test_connection, on demand only). Every probe runs at
+    once, so one hung CLI costs its own timeout, not the sum; `warm` also reads
+    each found CLI's --help alongside, so later supports_flag calls on the
+    main thread read the cache rather than start the CLI."""
+    located = _locate(cfg)
     preferred = cfg.get("ai_backend", "")
-    out, chosen = {}, None
-    for kind in BACKENDS:
-        on = bool(enabled.get(kind, True))
-        if not on:
-            out[kind] = {"path": None, "ok": False, "detail": "disabled", "enabled": False}
+    out, results, jobs = {}, {}, []
+    for kind, info in located["backends"].items():
+        out[kind] = dict(info)
+        if not info["path"]:
             continue
-        override = overrides.get(kind, "") if isinstance(overrides, dict) else ""
-        path = find_cli(kind, override)
-        if path:
-            res = probe(kind, path)
-            out[kind] = {"path": path, "ok": res["ok"], "detail": res["detail"], "enabled": True}
-        else:
-            out[kind] = {"path": None, "ok": False, "detail": "not found", "enabled": True}
+
+        def run_probe(kind=kind, path=info["path"]):
+            results[kind] = probe(kind, path)
+        jobs.append(run_probe)
+        if warm:
+            jobs.append(lambda path=info["path"]: _help_text(path, None))
+            if kind == "codex":
+                jobs.append(lambda path=info["path"]: _help_text(path, "exec"))
+    threads = [threading.Thread(target=job, daemon=True) for job in jobs]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    chosen = None
+    for kind in BACKENDS:
+        if kind in results:
+            res = results[kind]
+            out[kind].update(ok=res["ok"], detail=res["detail"])
+        elif out[kind]["ok"] is None:
+            out[kind].update(ok=False, detail="no answer")
         if out[kind]["ok"] and (chosen is None or preferred == kind):
             chosen = kind
     return {"backends": out, "chosen": chosen}
@@ -338,6 +362,10 @@ def locate_backends(cfg):
     """detect_backends' shape from file lookups alone, no process started: a found
     backend reads "checking" (ok None) until detect_backends has run it. "chosen" is
     the backend detection would pick if every found one answers."""
+    return _locate(cfg)
+
+
+def _locate(cfg):
     enabled = cfg.get("ai_backend_enabled") or {}
     overrides = cfg.get("ai_cli_path") or {}
     preferred = cfg.get("ai_backend", "")
@@ -354,16 +382,6 @@ def locate_backends(cfg):
         if path and (chosen is None or preferred == kind):
             chosen = kind
     return {"backends": out, "chosen": chosen}
-
-
-def warm_help(res):
-    """Read each found backend's --help now, so the main thread's later
-    supports_flag calls are answered from the cache rather than a subprocess."""
-    for kind, info in res["backends"].items():
-        if info.get("path"):
-            _help_text(info["path"], None)
-            if kind == "codex":
-                _help_text(info["path"], "exec")
 
 
 def resolve_claude_effort(effort):
@@ -497,6 +515,21 @@ def prompt_arg_limit(argv, prompt, plat=None):
     return None if len(prompt) <= _MAX_ARG_PROMPT else _MAX_ARG_PROMPT
 
 
+def _agy_program(path):
+    """On Windows, the agy executable to start: a .cmd or .bat launcher would hand the
+    prompt to cmd.exe, which re-parses it and stops at 8,191 characters, so the .exe
+    beside it is used instead, or the run is refused."""
+    if sys.platform != "win32" or not path.lower().endswith((".cmd", ".bat")):
+        return path
+    exe = os.path.splitext(path)[0] + ".exe"
+    if os.path.isfile(exe):
+        return exe
+    raise GenerationError(
+        f"Antigravity is installed here as a script launcher ({os.path.basename(path)}), "
+        "which cannot be handed the prompt safely; set its Executable path in AI "
+        "Backends to the agy program itself")
+
+
 def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
                prompt=""):
     """Returns (argv, prompt_via_stdin). claude and codex read the prompt on
@@ -566,6 +599,7 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
             argv += ["--image", p]
         return argv, True
     if kind == "agy":
+        path = _agy_program(path)
         # --add-dir makes the scratch dir readable, which is how agy views an
         # attached image (view_file); writes stay off, headlessly auto-denied.
         argv = [path, "--output-format", "stream-json", "--add-dir", scratch]
@@ -697,10 +731,24 @@ def _escaped_forms(needle):
     return forms
 
 
+_UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-f]{4})")
+
+
 def _with_escaped_forms(needles):
+    """`needles` plus their JSON-escaped forms, those forms escaped once more (a
+    stream event carrying another event as a string), and each with upper-case
+    \\uXXXX digits."""
     out = list(needles)
+
+    def add(form):
+        for f in (form, _UNICODE_ESCAPE_RE.sub(lambda m: "\\u" + m.group(1).upper(), form)):
+            if f not in out:
+                out.append(f)
     for n in needles:
-        out.extend(f for f in _escaped_forms(n) if f not in out)
+        for once in _escaped_forms(n):
+            add(once)
+            for twice in _escaped_forms(once):
+                add(twice)
     return out
 
 

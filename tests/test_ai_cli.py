@@ -1491,3 +1491,63 @@ def test_run_log_elides_a_json_escaped_echo_of_the_source(monkeypatch, tmp_path,
     assert echoed not in text
     assert "visual halos" not in text
     assert "<line containing the prompt elided," in text
+
+
+# === review fixes ===========================================================
+
+@pytest.mark.parametrize("launcher", ["agy.cmd", "AGY.BAT"])
+def test_windows_agy_launcher_script_is_never_handed_the_prompt(monkeypatch, tmp_path,
+                                                                launcher):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    monkeypatch.setattr(ai_cli.sys, "platform", "win32")
+    path = tmp_path / launcher
+    path.write_text("@echo off")
+    with pytest.raises(ai_cli.GenerationError, match="script launcher"):
+        ai_cli.build_argv("agy", str(path), "quick", "/tmp/s", [], prompt="hello")
+
+
+def test_windows_agy_launcher_uses_the_program_beside_it(monkeypatch, tmp_path):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    monkeypatch.setattr(ai_cli.sys, "platform", "win32")
+    (tmp_path / "agy.cmd").write_text("@echo off")
+    (tmp_path / "agy.exe").write_bytes(b"MZ")
+    argv, _ = ai_cli.build_argv("agy", str(tmp_path / "agy.cmd"), "quick", "/tmp/s", [],
+                                prompt="hello")
+    assert argv[0] == str(tmp_path / "agy.exe")
+    assert argv[-1] == "hello"
+
+
+def test_claude_wording_claims_nothing_before_its_binary_is_checked():
+    wording = ai_cli.backend_wording("claude", None)
+    assert "confined to the scratch" not in wording["safety"]
+    assert "exactly those files" not in wording["modes"]["quick"]
+    assert "scratch folder" not in wording["modes"]["thorough"]
+
+
+def test_a_hung_cli_does_not_hold_up_the_others(monkeypatch):
+    def probe(kind, path):
+        time.sleep(0.6)
+        return {"ok": True, "detail": kind}
+
+    def help_text(path, subcommand):
+        time.sleep(0.6)
+        return ""
+    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="": "/x/" + kind)
+    monkeypatch.setattr(ai_cli, "probe", probe)
+    monkeypatch.setattr(ai_cli, "_help_text", help_text)
+    start = time.monotonic()
+    res = ai_cli.detect_backends({}, warm=True)
+    assert time.monotonic() - start < 1.2
+    assert res["chosen"] == "claude"
+    assert all(info["ok"] for info in res["backends"].values())
+
+
+def test_run_log_redacts_double_escaped_and_upper_case_echoes():
+    source = 'Patient "A" has café au lait spots and SpO2 <90%'
+    needles = ai_cli._redact_needles("prompt", (source,))
+    once = json.dumps(source)[1:-1]
+    twice = json.dumps(once)[1:-1]
+    upper = once.replace("\\u00e9", "\\u00E9")
+    for echoed in (twice, upper, json.dumps(upper)[1:-1]):
+        line = json.dumps({"type": "x"})[:-1] + ', "text": "' + echoed + '"}'
+        assert ai_cli._contains_needle(line, needles), echoed
