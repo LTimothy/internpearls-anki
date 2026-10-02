@@ -275,7 +275,7 @@ def _scratch_image(scratch, name, kind, ext=None):
     with open(real_path, "rb") as fh:
         data = fh.read()
     try:
-        ai_logic.check_image_bytes(name, data)
+        data = ai_logic.check_image_bytes(name, data)
     except ValueError as e:
         return bad(str(e))
     return {"state": "ok", "kind": kind, "bytes": data, "name": name,
@@ -528,6 +528,11 @@ def _card_image_names(card):
     return names
 
 
+def _field_preview(value):
+    """field_preview_html for a generated field, with each link's host kept visible."""
+    return field_preview_html(ai_logic.show_link_hosts(value))
+
+
 def _card_primary_html(card):
     """The row's bold collapsed line: the front, or a cloze note's text with its
     deletions filled in: the fact under review lives in the deletions, so it is
@@ -536,7 +541,7 @@ def _card_primary_html(card):
     carries."""
     ntype = card["note_type"]
     primary_field = ai_logic.PRIMARY_FIELD.get(ntype, "Front")
-    text = field_preview_html(card["fields"].get(primary_field, ""))
+    text = _field_preview(card["fields"].get(primary_field, ""))
     if primary_field == "Text":
         text = cloze_filled_html(text, escape=False)
     names = _card_image_names(card)
@@ -2752,7 +2757,7 @@ class _GenerateDialog(QDialog):
         blay.setSpacing(4)
 
         for name, value in _card_body_fields(card):
-            html_value = field_preview_html(value)
+            html_value = _field_preview(value)
             if not html_value:
                 continue
             if name == "Why":
@@ -3109,8 +3114,8 @@ class _GenerateDialog(QDialog):
         lay.setSpacing(2)
         updated_fg = colors()["updated_fg"]
         for field, new_value in verdict["correction"].items():
-            current = field_preview_html(card["fields"].get(field, ""))
-            proposed = field_preview_html(new_value)
+            current = _field_preview(card["fields"].get(field, ""))
+            proposed = _field_preview(new_value)
             lay.addWidget(_rich_label(
                 f"<b>{html.escape(field)}</b>: {current} &rarr; "
                 f"<span style='color:{updated_fg}'>{proposed}</span>"))
