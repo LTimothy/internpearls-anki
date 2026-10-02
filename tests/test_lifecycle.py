@@ -379,3 +379,14 @@ def test_the_mock_importer_honours_its_options(anki, tmp_path):
     import pytest
     with pytest.raises(AttributeError):
         opts.no_such_option = True
+
+
+def test_an_unanswered_question_fails_the_test_even_inside_a_safe_flow(anki, tmp_path):
+    """A flow wrapped in _safe turns an ordinary exception into a warning, so the
+    mock's unanswered question has to escape it."""
+    import pytest
+    from internpearls import collection
+    src = collection._backup_deck(DECK, "manual") or str(tmp_path / "missing.apkg")
+    anki.gui.file_picks.append(src)
+    with pytest.raises(mock_anki.UnansweredQuestion):
+        collection.import_deck()
