@@ -231,14 +231,18 @@ def _watched(handler_cls):
 
 
 _WatchedHTTP = _watched(urllib.request.HTTPHandler)
-_WatchedHTTPS = _watched(urllib.request.HTTPSHandler)
+# urllib has no HTTPSHandler in a Python built without ssl, such as the browser demo's.
+_WatchedHTTPS = (_watched(urllib.request.HTTPSHandler)
+                 if hasattr(urllib.request, "HTTPSHandler") else None)
 
 
 def _open(req, timeout):
     """Open `req`. The one place a request reaches the network, and the seam tests
     stub."""
-    opener = urllib.request.build_opener(_CredentialSafeRedirect(), _WatchedHTTP(),
-                                         _WatchedHTTPS())
+    handlers = [_CredentialSafeRedirect(), _WatchedHTTP()]
+    if _WatchedHTTPS is not None:
+        handlers.append(_WatchedHTTPS())
+    opener = urllib.request.build_opener(*handlers)
     return opener.open(req, timeout=timeout)
 
 

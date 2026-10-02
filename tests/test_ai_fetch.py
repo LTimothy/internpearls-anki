@@ -378,3 +378,9 @@ def test_a_body_exactly_at_the_cap_is_accepted(monkeypatch):
          {("img.example", "/a.png"): _Response(200, {"Content-Type": "image/png"}, PNG)})
     assert ai_fetch.fetch_card_image(
         "https://img.example/a.png", max_bytes=len(PNG)) == (PNG, "png")
+
+
+def test_without_https_support_a_picture_fails_as_a_transport_error(monkeypatch):
+    monkeypatch.setattr(ai_fetch, "_HTTPSConnection", None)
+    with pytest.raises(ai_fetch.TransportError):
+        ai_fetch._open_connection("example.org", "93.184.216.34", 443, 5)

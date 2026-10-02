@@ -81,22 +81,28 @@ def checked_addresses(host, port, seconds=_DOWNLOAD_TIMEOUT):
     return list(dict.fromkeys(str(ip) for ip in addrs))
 
 
-class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    """An https connection to an address checked beforehand, verified against the
-    host name the address was looked up for."""
+# Absent in a Python built without ssl, such as the browser demo's.
+_HTTPSConnection = getattr(http.client, "HTTPSConnection", None)
 
-    def __init__(self, host, ip, port, timeout):
-        import ssl
-        super().__init__(host, port, timeout=timeout,
-                         context=ssl.create_default_context())
-        self._ip = ip
+if _HTTPSConnection is not None:
+    class _PinnedHTTPSConnection(_HTTPSConnection):
+        """An https connection to an address checked beforehand, verified against the
+        host name the address was looked up for."""
 
-    def connect(self):
-        sock = socket.create_connection((self._ip, self.port), self.timeout)
-        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        def __init__(self, host, ip, port, timeout):
+            import ssl
+            super().__init__(host, port, timeout=timeout,
+                             context=ssl.create_default_context())
+            self._ip = ip
+
+        def connect(self):
+            sock = socket.create_connection((self._ip, self.port), self.timeout)
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
 def _open_connection(host, ip, port, timeout):
+    if _HTTPSConnection is None:
+        raise TransportError("https isn't available here")
     return _PinnedHTTPSConnection(host, ip, port, timeout)
 
 
