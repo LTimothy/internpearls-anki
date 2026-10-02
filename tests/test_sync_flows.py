@@ -7945,22 +7945,30 @@ def test_startup_nudge_is_wrapped(anki):
 
 
 # --------------------------------------------- restore, filtered decks, cancelled restore
-def _backups_at_the_keep_limit(collection, export):
-    import time
-    paths = []
-    for _ in range(collection.DECK_BACKUPS_KEEP):
-        paths.append(collection._backup_deck(export, export))
-        time.sleep(1.05)
-    return paths
+def _backups_at_the_keep_limit(collection, export, monkeypatch):
+    """DECK_BACKUPS_KEEP backups a second apart on a clock that advances per backup,
+    so their order never depends on how fast the test runs."""
+    import datetime
+    start = datetime.datetime(2026, 9, 9, 12, 0, 0)
+    ticks = iter(range(10 ** 6))
+
+    class Clock(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return start + datetime.timedelta(seconds=next(ticks))
+
+    monkeypatch.setattr(collection.datetime, "datetime", Clock)
+    return [collection._backup_deck(export, export)
+            for _ in range(collection.DECK_BACKUPS_KEEP)]
 
 
-def test_restoring_the_oldest_kept_backup_does_not_prune_it_first(anki):
+def test_restoring_the_oldest_kept_backup_does_not_prune_it_first(anki, monkeypatch):
     """The backup taken before a restore prunes the oldest file, which is the file the
     learner chose when it is the oldest one kept."""
     from internpearls import collection
     export = collection._cfg()["export_deck"]
     _existing_card(anki, "g1", "Front one", deck=export)
-    oldest = _backups_at_the_keep_limit(collection, export)[0]
+    oldest = _backups_at_the_keep_limit(collection, export, monkeypatch)[0]
     anki.gui.file_picks.append(oldest)
     anki.gui.answers.append(True)
 
@@ -7970,11 +7978,11 @@ def test_restoring_the_oldest_kept_backup_does_not_prune_it_first(anki):
     assert not anki.gui.warnings
 
 
-def test_a_backup_never_prunes_the_file_it_was_told_to_keep(anki):
+def test_a_backup_never_prunes_the_file_it_was_told_to_keep(anki, monkeypatch):
     from internpearls import collection
     export = collection._cfg()["export_deck"]
     _existing_card(anki, "g1", "Front one", deck=export)
-    paths = _backups_at_the_keep_limit(collection, export)
+    paths = _backups_at_the_keep_limit(collection, export, monkeypatch)
 
     newest = collection._backup_deck(export, export, keep=paths[0])
 
