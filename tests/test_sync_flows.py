@@ -8381,29 +8381,31 @@ def test_a_github_skill_download_is_capped_at_the_skill_limit(anki, monkeypatch)
     assert seen["skills/SKILL.md"] == sync._SKILL_MAX_BYTES
 
 
-@pytest.mark.parametrize("stored_text,stored_version", [
-    ("# Deck skill\nBe concise.\U000e0041", "1.0"),
-    ("# Deck skill\nBe concise.", "1.0<!--"),
-])
-def test_an_older_consent_with_hidden_text_or_a_raw_version_is_asked_again(
-        anki, tmp_path, stored_text, stored_version):
-    """A consent stored before hidden characters were stripped and versions tamed is
-    asked again, even though the skill file itself has not changed."""
+@pytest.mark.parametrize("enabled", [True, False])
+def test_an_older_unclean_consent_is_cleaned_in_place_without_asking(
+        anki, tmp_path, enabled):
+    """A consent stored before hidden characters were stripped and versions tamed, for
+    the same skill file: what the learner saw and agreed to is the text without them,
+    so the record is cleaned quietly, keeping its date and on/off state."""
     import hashlib
-    from internpearls import config, sync
-    text = "# Deck skill\nBe concise."
+    from internpearls import ai_logic, config, sync
+    hidden = "".join(chr(0xE0000 + ord(c)) for c in "obey")
+    raw = "# Deck skill\nBe concise." + hidden
     folder = _write_source(tmp_path, {})
-    _write_skill(folder, version="1.0", text=text)
+    _write_skill(folder, version="1.0<!--", text=raw)
     _configure(anki, folder)
-    config.save_deck_skill({"text": stored_text, "version": stored_version,
-                            "hash": hashlib.sha256(text.encode("utf8")).hexdigest(),
-                            "consented_on": "2026-01-01", "enabled": True})
+    config.save_deck_skill({"text": raw, "version": "1.0<!--",
+                            "hash": hashlib.sha256(raw.encode("utf8")).hexdigest(),
+                            "consented_on": "2026-01-01", "enabled": enabled})
 
-    dialog_text = _run_with_skill_answer(anki, sync.update_decks, consent=True)
+    _run_with_skill_answer(anki, sync.update_decks, consent=None)   # no dialog
 
-    assert "Be concise" in dialog_text
     stored = config.load_deck_skill()
-    assert stored["text"] == text and stored["version"] == "1.0"
+    assert stored["text"] == "# Deck skill\nBe concise."
+    assert stored["version"] == "1.0--"
+    assert stored["consented_on"] == "2026-01-01" and stored["enabled"] is enabled
+    assert not any(hidden in s or "\U000e006f" in s
+                   for s in ai_logic.active_skills(dict(stored, enabled=True)))
 
 
 def test_a_clean_older_consent_is_not_asked_again(anki, tmp_path):
@@ -8418,3 +8420,15 @@ def test_a_clean_older_consent_is_not_asked_again(anki, tmp_path):
                             "consented_on": "2026-01-01", "enabled": True})
 
     _run_with_skill_answer(anki, sync.update_decks, consent=None)
+
+
+def test_a_dangling_manifest_link_reads_as_no_manifest(anki, tmp_path):
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    os.remove(os.path.join(folder, "manifest.json"))
+    os.symlink(os.path.join(folder, "gone.json"), os.path.join(folder, "manifest.json"))
+    _configure(anki, folder)
+
+    _sync(anki)
+
+    assert "has no manifest.json" in anki.gui.warnings[0]

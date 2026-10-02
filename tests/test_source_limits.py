@@ -237,7 +237,7 @@ def test_an_end_record_that_undercounts_its_entries_is_refused_by_directory_size
     def no_parse(*a, **k):
         raise AssertionError("the zip directory was parsed")
     monkeypatch.setattr(logic.zipfile, "ZipFile", no_parse)
-    with pytest.raises(logic.PackageLimitError, match="more than 50 files"):
+    with pytest.raises(logic.PackageLimitError, match="file list is too large"):
         logic.check_apkg_limits(path)
 
 
@@ -292,6 +292,7 @@ def test_a_checked_copy_keeps_every_member(tmp_path):
     logic.copy_apkg_checked(path, out)
     with zipfile.ZipFile(out) as z:
         assert sorted((n, z.read(n)) for n in z.namelist()) == sorted(members)
+        assert {i.compress_type for i in z.infolist()} == {zipfile.ZIP_DEFLATED}
 
 
 @pytest.mark.parametrize("ch", [
