@@ -208,3 +208,112 @@ def test_ordinary_text_is_left_alone():
     text = "Line one\n\tIndented: SpO₂ < 94%, µg/kg, café, → next\r\n"
     assert logic.reveal_hidden(text) == (text, 0)
     assert logic.strip_hidden(text) == text
+
+
+# ------------------------------------------------- end records that lie about size
+def _directory(path):
+    """(central directory offset, size, bytes before the end record) of a plain zip."""
+    data = open(path, "rb").read()
+    end = data[-22:]
+    assert end[:4] == b"PK\x05\x06"
+    _sig, _d, _ds, _n1, _n2, cd_size, cd_offset, _c = __import__("struct").unpack(
+        "<4s4H2LH", end)
+    return cd_offset, cd_size, data[:-22]
+
+
+def test_an_end_record_that_undercounts_its_entries_is_refused_by_directory_size(
+        tmp_path, monkeypatch):
+    """The 32-bit end record claims one entry while the directory it points at holds
+    hundreds; zipfile parses the whole directory, so its byte size is what counts."""
+    import struct
+    monkeypatch.setattr(logic, "APKG_MAX_MEMBERS", 50)
+    path = _zip(tmp_path / "liar.apkg", [(str(i), b"") for i in range(300)])
+    cd_offset, cd_size, body = _directory(path)
+    with open(path, "wb") as fh:
+        fh.write(body + struct.pack("<4s4H2LH", b"PK\x05\x06", 0, 0, 1, 1,
+                                    cd_size, cd_offset, 0))
+    assert len(zipfile.ZipFile(path).infolist()) == 300   # what zipfile would build
+
+    def no_parse(*a, **k):
+        raise AssertionError("the zip directory was parsed")
+    monkeypatch.setattr(logic.zipfile, "ZipFile", no_parse)
+    with pytest.raises(logic.PackageLimitError, match="more than 50 files"):
+        logic.check_apkg_limits(path)
+
+
+def test_a_zip64_record_behind_honest_looking_fields_is_still_read(tmp_path, monkeypatch):
+    """zipfile follows a zip64 locator whenever there is one, whatever the 32-bit fields
+    say, so the limits have to read the same record."""
+    import struct
+    monkeypatch.setattr(logic, "APKG_MAX_MEMBERS", 50)
+    path = _zip(tmp_path / "z64liar.apkg", [(str(i), b"") for i in range(300)])
+    cd_offset, cd_size, body = _directory(path)
+    record_at = len(body)
+    record = struct.pack("<4sQ2H2L4Q", b"PK\x06\x06", 44, 45, 45, 0, 0, 300, 300,
+                         cd_size, cd_offset)
+    locator = struct.pack("<4sLQL", b"PK\x06\x07", 0, record_at, 1)
+    end = struct.pack("<4s4H2LH", b"PK\x05\x06", 0, 0, 1, 1, 46, cd_offset, 0)
+    with open(path, "wb") as fh:
+        fh.write(body + record + locator + end)
+    assert len(zipfile.ZipFile(path).infolist()) == 300   # zipfile took the zip64 one
+    assert logic._zip_directory_size(path) == (300, cd_size)
+    with pytest.raises(logic.PackageLimitError, match="more than 50 files"):
+        logic.check_apkg_limits(path)
+
+
+def test_a_special_file_is_refused_without_reading_it(tmp_path):
+    fifo = tmp_path / "pipe.apkg"
+    os.mkfifo(fifo)
+    with pytest.raises(logic.PackageLimitError, match="isn't a regular file"):
+        logic.check_apkg_limits(str(fifo))
+
+
+def test_a_copy_through_zipfile_refuses_members_bigger_than_declared(tmp_path):
+    """Anki's importer trusts the stream, not the declared size; zipfile stops at the
+    declared size and checks the CRC, so a copy made through it cannot carry more."""
+    import struct
+    path = _zip(tmp_path / "under.apkg", [("collection.anki2", b"\0" * 77824)],
+                zipfile.ZIP_DEFLATED)
+    data = bytearray(open(path, "rb").read())
+    # Declared uncompressed size 1,000 in the local header and the directory entry.
+    data[22:26] = struct.pack("<L", 1000)
+    cd = data.rfind(b"PK\x01\x02")
+    data[cd + 24:cd + 28] = struct.pack("<L", 1000)
+    open(path, "wb").write(bytes(data))
+    logic.check_apkg_limits(path)            # the declared sizes look harmless
+    with pytest.raises(zipfile.BadZipFile):
+        logic.copy_apkg_checked(path, str(tmp_path / "out.apkg"))
+
+
+def test_a_checked_copy_keeps_every_member(tmp_path):
+    members = [("collection.anki2", os.urandom(5000)), ("media", b"{}"), ("0", b"png")]
+    path = _zip(tmp_path / "ok.apkg", members, zipfile.ZIP_DEFLATED)
+    out = str(tmp_path / "copy.apkg")
+    logic.copy_apkg_checked(path, out)
+    with zipfile.ZipFile(out) as z:
+        assert sorted((n, z.read(n)) for n in z.namelist()) == sorted(members)
+
+
+@pytest.mark.parametrize("ch", [
+    "͏", "឴", "឵", "᠋", "᠌", "᠍", "᠏", "⁥",
+    "￰", "￸", "\U000e0080", "\U000e0fff", "\U0001bca0", "\U0001d173",
+])
+def test_every_default_ignorable_code_point_is_hidden(ch):
+    assert logic.reveal_hidden(f"a{ch}b")[1] == 1
+
+
+def test_a_zip64_record_wins_over_saturated_32_bit_fields(tmp_path):
+    """A writer may fill every 32-bit field with its maximum once it writes zip64; the
+    zip64 numbers are the real ones."""
+    import struct
+    path = _zip(tmp_path / "sat.apkg", [(str(i), b"") for i in range(10)])
+    cd_offset, cd_size, body = _directory(path)
+    record = struct.pack("<4sQ2H2L4Q", b"PK\x06\x06", 44, 45, 45, 0, 0, 10, 10,
+                         cd_size, cd_offset)
+    locator = struct.pack("<4sLQL", b"PK\x06\x07", 0, len(body), 1)
+    end = struct.pack("<4s4H2LH", b"PK\x05\x06", 0, 0, 0xFFFF, 0xFFFF, 0xFFFFFFFF,
+                      0xFFFFFFFF, 0)
+    with open(path, "wb") as fh:
+        fh.write(body + record + locator + end)
+    assert len(zipfile.ZipFile(path).infolist()) == 10
+    logic.check_apkg_limits(path)

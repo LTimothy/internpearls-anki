@@ -23,7 +23,7 @@ from .config import (DECK_BACKUPS_KEEP, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_T
                      _save_json)
 from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
                     cards_lost_in_conversion, changed_templates, check_apkg_limits,
-                    declined_drop,
+                    copy_apkg_checked, declined_drop,
                     empty_cards_dialog_rows, fields_to_carry_over, manifest_decks_for,
                     merge_learner_tags, model_shape, note_display_label,
                     plan_notetype_changes, plural, protected_for, remap_cards,
@@ -1433,11 +1433,21 @@ def import_deck():
         return
     if not _pre_sync_backup_or_confirm_skip(_cfg()["export_deck"], keep=src)[0]:
         return
+    # Anki's importer reads each member's stream and ignores the size the file declares
+    # for it, so it imports a copy made through zipfile, which holds to those sizes.
+    checked = platform().allocate_temporary_file(
+        platform_owner_id(mw), "deck-import", ".apkg")
     try:
-        _import_apkg(src, with_scheduling=True)
+        copy_apkg_checked(src, checked)
+        _import_apkg(checked, with_scheduling=True)
     except Exception as e:
         _warn(f"Import failed: {e}")
         return
+    finally:
+        try:
+            os.remove(checked)
+        except OSError:
+            pass
     # The imported file holds older cards than the source does, so whatever it restored
     # has to be re-offered. Scope that to the decks actually in the file, falling back to
     # all of them if it cannot be read: a redundant re-offer is recoverable, a missed one
