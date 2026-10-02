@@ -75,6 +75,16 @@ def test_a_five_member_group_hides_its_members_and_shows_its_header():
         "Show 5 cards: an example reviewer note spanning 5 cards")
 
 
+def test_a_folded_groups_preview_shows_quotes_and_ampersands_as_text():
+    """The field holds a raw apostrophe and an encoded ampersand; the preview must
+    paint both as characters, not as `&#x27;` or `&amp;`."""
+    _, q = harness.bootstrap()
+    shot = harness.render("confirm", group_size=5, size=(880, 800),
+                          group_front="The agent's vapor, hot &amp; dry {i}")
+    shown = [harness.shown(w) for w in _visible_labels(shot.dialog, q)]
+    assert "The agent's vapor, hot & dry 0" in shown, [s for s in shown if "agent" in s]
+
+
 def test_a_feedback_group_never_folds():
     """Cards changed because of reviewer feedback are the ones most worth checking,
     so their group stays open however big it is."""

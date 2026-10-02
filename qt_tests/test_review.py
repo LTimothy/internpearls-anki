@@ -148,3 +148,12 @@ def test_source_text_on_the_update_screen_reads_as_written():
     assert "Is it <60?" in shown
     assert "split <2>" in shown
     assert "Tom & Jerry <60" in shown, shown
+
+
+def test_a_card_source_tag_paints_quotes_and_ampersands_as_text():
+    harness.bootstrap()
+    harness.app()
+    cell = review._chip_with_source({"guid": "g", "kind": "new",
+                                     "card_source": "[A&B] [Q's-2]"}, None)
+    shown = [harness.shown(w) for w in cell.findChildren(QLabel)]
+    assert "[A&B]" in shown and "[Q's-2]" in shown, shown

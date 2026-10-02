@@ -1163,10 +1163,15 @@ def test_a_card_source_shows_on_a_changed_row_too():
     assert any("[T4Q11]" in t for t in _text_nodes(detail))
 
 
-def test_a_card_source_is_escaped_rather_than_trusted():
+def test_a_card_source_is_shown_as_text_not_markup():
+    from aqt.qt import QLabel, Qt
     detail = dict(_basic_note_detail(), guid="g4", kind="new",
                   card_source="<b>T10Q2</b>")
-    assert any("&lt;b&gt;" in t for t in _text_nodes(detail))
+    row = review._card_row(detail, {}, {}, {}, _no_decide)
+    tags = [w for w in _walk_widgets(row)
+            if isinstance(w, QLabel) and w.text() == "<b>T10Q2</b>"]
+    assert len(tags) == 1
+    assert tags[0]._format == Qt.TextFormat.PlainText
 
 
 # ------------------------------------------------- a note on a turned-down card
