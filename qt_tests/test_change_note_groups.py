@@ -12,6 +12,7 @@ test_declined_rows.py already use.
 import os
 
 import harness
+from sampling import widget_rect
 
 
 def _visible_labels(dialog, q):
@@ -267,3 +268,59 @@ def test_a_folded_group_builds_none_of_its_members_until_expanded():
     harness.app().processEvents()
     assert carets(visible_only=True) == []
     assert len(built()) == n, "collapsing again must keep the rows, not rebuild them"
+
+
+def _caret(dialog, q, marker):
+    found = [b for b in dialog.findChildren(q.QPushButton)
+             if b.isVisible() and b.accessibleName() == f"Show card: {marker}"]
+    assert len(found) == 1, marker
+    return widget_rect(dialog, found[0])
+
+
+def _note_label(dialog, q, size):
+    found = [l for l in _visible_labels(dialog, q)
+             if f"an example reviewer note spanning {size} cards" in l.text()
+             and "<i>" in l.text()]
+    assert len(found) == 1
+    return widget_rect(dialog, found[0])
+
+
+def test_an_open_groups_members_sit_indented_under_its_note():
+    """Members used to start at the same x as the rows around them, so nothing but a
+    hairline said where the group ended."""
+    _, q = harness.bootstrap()
+    shot = harness.render("confirm", group_size=3, second_deck=True, size=(880, 800))
+    d = shot.dialog
+    members = [_caret(d, q, _member_marker(i)).left() for i in range(3)]
+    plain = _caret(d, q, "Second deck's first pending card?").left()
+    note = _note_label(d, q, 3).left()
+    assert len(set(members)) == 1, members
+    assert members[0] > plain and members[0] > note, (members[0], plain, note)
+
+
+def test_a_group_members_text_starts_one_member_indent_right_of_a_plain_rows():
+    """The one place rows leave the shared text column: a group's members, on purpose,
+    by exactly review._GROUP_MEMBER_INDENT."""
+    from internpearls import review
+    _, q = harness.bootstrap()
+    shot = harness.render("confirm", group_size=3, second_deck=True, size=(880, 800))
+
+    def text_x(marker):
+        found = [l for l in _visible_labels(shot.dialog, q) if marker in l.text()]
+        assert len(found) == 1, marker
+        return widget_rect(shot.dialog, found[0]).left()
+
+    assert (text_x(_member_marker(0))
+            == text_x("Second deck's first pending card?") + review._GROUP_MEMBER_INDENT)
+
+
+def test_a_folded_groups_members_sit_as_far_in_from_its_note_as_an_open_groups():
+    _, q = harness.bootstrap()
+    shot = harness.render("confirm", group_size=3, size=(880, 800))
+    open_delta = (_caret(shot.dialog, q, _member_marker(0)).left()
+                  - _note_label(shot.dialog, q, 3).left())
+    shot = harness.render("confirm", group_size=5, size=(880, 800),
+                          click_labels=("Show 5 cards",))
+    folded_delta = (_caret(shot.dialog, q, _member_marker(0)).left()
+                    - _note_label(shot.dialog, q, 5).left())
+    assert open_delta == folded_delta > 0, (open_delta, folded_delta)

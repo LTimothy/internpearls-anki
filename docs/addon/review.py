@@ -66,6 +66,10 @@ _GROUP_COLLAPSE_MIN = 5
 # is inside it before anyone opens it.
 _GROUP_PREVIEW = 3
 
+# How far a group's members sit in from its note: the note's 3px bar and 8px padding,
+# so a member's caret starts under the note's text.
+_GROUP_MEMBER_INDENT = 11
+
 # Matches the deck's own CSS so review looks like study: the same green why rule,
 # grey dosing block, and blue cloze fill. Every colour below is asked for by role from
 # palette.colors(), which picks the light or dark set from Anki's own theme at the
@@ -755,6 +759,28 @@ def _fold_groups(items):
     return out
 
 
+def _open_group_members(items):
+    """ids of the items under a group header whose members are not folded inside it,
+    so the list can indent them. A folded group indents its own as it builds them."""
+    out, i = set(), 0
+    while i < len(items):
+        item = items[i]
+        i += 1
+        if item[0] == "group_note" and len(item) <= 3:
+            members, i = group_run(items, i)
+            out.update(id(m) for m in members)
+    return out
+
+
+def _member_row(row):
+    wrap = QWidget()
+    lay = QVBoxLayout(wrap)
+    lay.setContentsMargins(_GROUP_MEMBER_INDENT, 0, 0, 0)
+    lay.setSpacing(0)
+    lay.addWidget(row)
+    return wrap
+
+
 def folded_guids(items):
     """{guid: deck_name} for every card that sits inside a folded group, for the
     caller's own counts of what the reader cannot see without opening something."""
@@ -867,7 +893,7 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
 
     preview = QWidget()
     play = QVBoxLayout(preview)
-    play.setContentsMargins(11, 0, 0, 0)
+    play.setContentsMargins(_GROUP_MEMBER_INDENT, 0, 0, 0)
     play.setSpacing(1)
     for d in cards[:_GROUP_PREVIEW]:
         line = QLabel(_card_label(d))
@@ -1244,6 +1270,15 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     # avoid everywhere else. Add note (below) is what reopens one on a row like that.
     box.setVisible(bool(flags.get(guid)))
     boxes[guid] = box
+    # In the text column, like the note lines above: the caption and box are about the
+    # card. Hidden while both are, so a row without them gains no spacing.
+    decision = QWidget()
+    dlay = QVBoxLayout(decision)
+    dlay.setContentsMargins(indent, 0, 0, 0)
+    dlay.setSpacing(4)
+    dlay.addWidget(caption)
+    dlay.addWidget(box)
+    decision.setVisible(bool(flags.get(guid)))
 
     default = _DEFAULT_DECISION.get(kind)
     never_note = hint_label("won't be offered again")
@@ -1255,6 +1290,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     def _reveal_box(_checked=False):
         box.setVisible(True)
         add_note.setVisible(False)
+        decision.setVisible(True)
     add_note.clicked.connect(_reveal_box)
 
     def _apply_decision_visuals(state, clicked=False):
@@ -1272,6 +1308,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         has_note = bool(flags.get(guid)) or bool(box.toPlainText().strip())
         show_box = has_note or (state in _TURNED_DOWN and clicked)
         box.setVisible(show_box)
+        decision.setVisible(bool(text) or show_box)
         # Offered whenever the box is closed, whatever the row decided: a re-offered
         # decline is not a default row, and gating this on the default left exactly
         # those rows with no way to write a note at all.
@@ -1421,8 +1458,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         blay.addWidget(add_note)
 
     outer.addWidget(body)
-    outer.addWidget(caption)
-    outer.addWidget(box)
+    outer.addWidget(decision)
     return row
 
 
@@ -1671,10 +1707,17 @@ def build_update_body(items, sources, flags, new_index, decisions,
     # given the same chip set or the column stops lining up.
     chips = _chip_kinds(items)
 
+    open_members = set()
+
     def _row(item):
+        built = _build_row(item)
+        return _member_row(built) if id(item) in open_members else built
+
+    def _build_row(item):
         if item[0] == "group_note":
             return _group_note_row(item[1], item[2] if len(item) > 2 else 0,
-                                   item[3] if len(item) > 3 else (), _row, group_ctx)
+                                   item[3] if len(item) > 3 else (),
+                                   lambda m: _member_row(_build_row(m)), group_ctx)
         if item[0] in ("header", "note", "sep"):
             return _list_row(item, chips=chips)
         if item[0] == "deck":
@@ -1699,6 +1742,7 @@ def build_update_body(items, sources, flags, new_index, decisions,
 
     if items:
         folded = _fold_groups(items)
+        open_members.update(_open_group_members(folded))
         stream = StreamingList(_row, folded)
         total = count_cards(items)
         if total >= FILTER_MIN_CARDS:
@@ -1709,6 +1753,8 @@ def build_update_body(items, sources, flags, new_index, decisions,
                 boxes.clear()
                 setters.clear()
                 listeners.clear()
+                open_members.clear()
+                open_members.update(_open_group_members(shown))
                 stream.reset(shown)
                 active = mode != "all" or bool(query.strip())
                 bar.set_count(f"Showing {count_cards(shown)} of {total} cards"

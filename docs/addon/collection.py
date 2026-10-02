@@ -1211,6 +1211,11 @@ def _prepare_import_notetypes(con, allow_field_additions=True):
         if local is not None and getattr(local, 'mod', None) is not None:
             # Anki skips equal modification timestamps even with ALWAYS. Changing
             # only this scratch timestamp lets same-second source edits update too.
+            # It also keeps matched notes out of log.duplicate, which _apply_deck
+            # leaves out of `touched`: without it a first sync over identical notes
+            # records no shipped baseline. Pinned by
+            # run_identical_first_sync_baseline_contract in
+            # tests/real_anki_audit_contracts.py.
             con.execute("update notes set mod=mod-1 where id=? and mod=?",
                         (rid, local.mod))
         target = local.note_type() if local else existing.get(mid, by_name.get(family))

@@ -253,3 +253,17 @@ def test_later_count_counts_held_entries_outside_excluded_decks():
     assert logic.later_count(reg, ["IP::Gone"]) == 2
     assert logic.later_count({}, ()) == 0
     assert logic.later_count(None, ()) == 0
+
+
+def test_later_count_leaves_out_retired_guids():
+    reg = {"a": _entry("held"), "b": _entry("held"), "c": _entry("held", deck="IP::Gone")}
+    assert logic.later_count(reg, (), {"b"}) == 2
+    assert logic.later_count(reg, ["IP::Gone"], {"b"}) == 1
+
+
+def test_manifest_retired_guids_reads_the_ledger_and_tolerates_junk():
+    assert logic.manifest_retired_guids(_MANIFEST) == {"g-retired"}
+    assert logic.manifest_retired_guids(
+        {"retired": {"A": {"g1": {"reason": "x"}}, "B": ["g2", 7], "C": None}}) == {"g1", "g2"}
+    for bad in (None, {}, {"retired": ["g"]}, {"retired": "g"}, "manifest"):
+        assert logic.manifest_retired_guids(bad) == set(), bad

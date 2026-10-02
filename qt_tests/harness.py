@@ -510,8 +510,9 @@ def _scene_confirm(mock, opts):
         # The group's own header already shows this note, so the member card no
         # longer carries it, the same stripping _grouped_rows does in sync.py.
         card0, card1 = details[0], dict(details[1], change_notes=[])
-        items += [("group_note", group_note),
-                  ("card", "Example Deck", card0), ("sep",),
+        # The ("sep", "grouped") hairlines mark the two members, as sync._section does.
+        items += [("group_note", group_note), ("sep", "grouped"),
+                  ("card", "Example Deck", card0), ("sep", "grouped"),
                   ("card", "Example Deck", card1), ("sep",),
                   ("card", "Example Deck", details[2]), ("sep",),
                   ("retired", "An older phrasing of a since-split card",
