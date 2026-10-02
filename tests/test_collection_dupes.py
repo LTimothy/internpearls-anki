@@ -31,11 +31,11 @@ def test_note_rows_no_filter_returns_everything(anki):
 
 def test_note_rows_resolves_filtered_deck_to_home_deck(anki):
     n = anki.col.add_note("g1", ["Front one", "Back one"], ["InternPearls"],
-                          deck="Ankisthesia")
-    anki.col.file_in_filtered_deck(n.id, "Filtered Deck", "Ankisthesia")
+                          deck="Example Shared Deck")
+    anki.col.file_in_filtered_deck(n.id, "Filtered Deck", "Example Shared Deck")
     rows = note_rows(anki.col, scope_tag="InternPearls")
-    assert rows[0][2] == "Ankisthesia"
-    deck_rows = note_rows(anki.col, deck_name="Ankisthesia")
+    assert rows[0][2] == "Example Shared Deck"
+    deck_rows = note_rows(anki.col, deck_name="Example Shared Deck")
     assert len(deck_rows) == 1
 
 
@@ -65,7 +65,7 @@ def test_note_rows_sql_path_matches_the_per_note_path(anki):
     from internpearls import collection
     col = anki.mw.col
     col.add_note("g1", ["Front one", "Back one"], ["InternPearls"], deck="Intern Custom")
-    col.add_note("g2", ["Front two", "Back two"], ["Other"], deck="Ankisthesia")
+    col.add_note("g2", ["Front two", "Back two"], ["Other"], deck="Example Shared Deck")
     fast = collection.note_rows(col)
     assert len(fast) == 2 and fast[0][1] == "Front one Back one"
     nids = {r[0] for r in fast}
@@ -76,7 +76,7 @@ def test_note_rows_sql_path_matches_the_per_note_path(anki):
                      collection._home_deck_name(col, note), note.note_type()["name"]))
     assert fast == slow
     assert collection.note_rows(col, scope_tag="InternPearls") == [fast[0]]
-    assert collection.note_rows(col, deck_name="Ankisthesia") == [fast[1]]
+    assert collection.note_rows(col, deck_name="Example Shared Deck") == [fast[1]]
 
 
 def test_deck_search_escapes_anki_search_syntax():
