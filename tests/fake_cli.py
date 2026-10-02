@@ -255,7 +255,9 @@ if mode == "echo_prompt_garbage":
     sys.exit(0)
 if mode == "echo_env":
     echoed = os.environ.get("FAKE_CLI_ECHO_TEXT", "")
-    print(json.dumps({"type": "user_input", "text": echoed}), flush=True)
+    ascii_only = os.environ.get("FAKE_CLI_ECHO_ASCII", "1") != ""
+    print(json.dumps({"type": "user_input", "text": echoed}, ensure_ascii=ascii_only),
+          flush=True)
     print(json.dumps({"type": "result", "subtype": "success",
                       "result": CARDS_JSON, "usage": USAGE}))
     sys.exit(0)

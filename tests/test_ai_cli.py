@@ -1,6 +1,7 @@
 # tests/test_ai_cli.py
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -1366,3 +1367,127 @@ def test_kill_on_windows_ends_the_whole_process_tree(monkeypatch):
                         lambda argv, **kw: calls.append(argv))
     ai_cli._kill(_Proc())
     assert calls[0] == ["taskkill", "/F", "/T", "/PID", "4242"]
+
+
+# === claude's file reads are confined in every mode that has them =========
+
+def test_build_argv_claude_quick_with_an_attached_image_is_confined(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick",
+                                "/tmp/scratch", ["/tmp/scratch/a.png"])
+    assert "--restricted" in argv
+    assert argv[argv.index("--add-dir") + 1] == "/tmp/scratch"
+    assert argv[argv.index("--tools") + 1] == "Read,WebSearch,WebFetch"
+
+
+def test_help_with_an_undecodable_byte_still_detects_restricted(monkeypatch):
+    monkeypatch.setenv("FAKE_HELP_BAD_BYTE", "1")
+    monkeypatch.setenv("FAKE_HELP_TOP", "--restricted  run restricted")
+    ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
+    argv, _ = ai_cli.build_argv("claude", FAKE_HELP, "quick", "/tmp/s", ["/tmp/s/a.png"])
+    assert "--restricted" in argv
+
+
+def test_wording_does_not_claim_confinement_a_claude_build_cannot_apply(monkeypatch):
+    monkeypatch.setenv("FAKE_HELP_TOP", "--model <M>  the model")
+    ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
+    wording = ai_cli.backend_wording("claude", FAKE_HELP)
+    assert "not confined" in wording["safety"]
+    assert "scratch" not in wording["modes"]["quick"]
+    assert "scratch" not in wording["modes"]["thorough"]
+
+    monkeypatch.setenv("FAKE_HELP_TOP", "--restricted  run restricted")
+    ai_cli._flag_support_cache.clear()
+    ai_cli._help_text_cache.clear()
+    confined = ai_cli.backend_wording("claude", FAKE_HELP)
+    assert confined["safety"] == ai_cli.BACKENDS["claude"]["safety"]
+    assert confined["modes"] == ai_cli.BACKENDS["claude"]["modes"]
+
+
+# === Windows: no console windows, and the agy argument fits the system ====
+
+def test_probes_and_runs_ask_windows_for_no_console(monkeypatch):
+    monkeypatch.setattr(ai_cli, "_NO_WINDOW", 0x08000000)
+    seen = []
+
+    def fake_run(argv, **kw):
+        seen.append(kw.get("creationflags"))
+        raise OSError("not started")
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            seen.append(kw.get("creationflags"))
+            raise OSError("not started")
+
+    monkeypatch.setattr(ai_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(ai_cli.subprocess, "Popen", FakePopen)
+    ai_cli._help_text_cache.clear()
+    ai_cli._flag_support_cache.clear()
+    ai_cli.probe("claude", "/x/claude")
+    ai_cli.supports_flag("/x/claude", "--restricted", subcommand="exec")
+    with pytest.raises(ai_cli.GenerationError):
+        ai_cli._run_argv(["/x/claude"], "claude", "prompt")
+    assert seen == [0x08000000] * 4
+
+
+@pytest.mark.parametrize("plat, prompt_len, fits", [
+    ("win32", 30000, True), ("win32", 33000, False),
+    ("linux", 130000, True), ("linux", 140000, False),
+    ("darwin", 190000, True), ("darwin", 210000, False),
+])
+def test_agy_prompt_limit_follows_the_platform(plat, prompt_len, fits):
+    prompt = "x" * prompt_len
+    argv = ["/usr/bin/agy", "--output-format", "stream-json", "-p", prompt]
+    limit = ai_cli.prompt_arg_limit(argv, prompt, plat)
+    assert (limit is None) == fits
+    if not fits:
+        assert 0 < limit < prompt_len
+
+
+def test_linux_limit_counts_bytes_not_characters():
+    prompt = "é" * 70000   # 140,000 bytes in UTF-8
+    assert ai_cli.prompt_arg_limit(["agy", "-p", prompt], prompt, "linux") is not None
+
+
+def test_agy_prompt_over_the_system_limit_is_refused_with_a_sentence(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    monkeypatch.setattr(ai_cli.sys, "platform", "win32")
+    with pytest.raises(ai_cli.GenerationError, match="too long to send to Antigravity"):
+        ai_cli.build_argv("agy", "/usr/bin/agy", "quick", "/tmp/s", [],
+                          prompt="x" * 40000)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux argument cap")
+def test_linux_really_refuses_an_argument_the_old_guard_allowed():
+    with pytest.raises(OSError):
+        subprocess.run([sys.executable, "-c", "pass", "x" * 150000])
+
+
+# === run log: JSON-escaped echoes are redacted too ==========================
+
+_ESCAPED_SOURCE = (
+    'Patient "A": SpO₂ <90% & falling\n'
+    "Digoxin toxicity classically presents with “visual halos” and "
+    "dysrhythmias; check K⁺ and Mg²⁺ before any level.")
+
+
+@pytest.mark.parametrize("ascii_only", [True, False])
+def test_run_log_elides_a_json_escaped_echo_of_the_source(monkeypatch, tmp_path,
+                                                          ascii_only):
+    import json as _json
+    echoed = _json.dumps(_ESCAPED_SOURCE, ensure_ascii=ascii_only)[1:-1]
+    monkeypatch.setenv("FAKE_CLI_ECHO_TEXT", _ESCAPED_SOURCE)
+    monkeypatch.setenv("FAKE_CLI_ECHO_ASCII", "1" if ascii_only else "")
+    monkeypatch.setattr(ai_cli, "build_argv",
+                        lambda kind, path, mode, scratch, imgs, **kw:
+                            (FAKE + ["echo_env"], True))
+    log_path = tmp_path / "ai_last_run.log"
+    ai_cli.run_generation(
+        "claude", "/usr/bin/claude", "a prompt that is short", "quick",
+        str(tmp_path), log_path=str(log_path), redact_texts=(_ESCAPED_SOURCE,))
+    text = log_path.read_text(encoding="utf8")
+    assert echoed not in text
+    assert "visual halos" not in text
+    assert "<line containing the prompt elided," in text
