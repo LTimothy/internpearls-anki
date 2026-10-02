@@ -354,16 +354,20 @@ def _pre_sync_backup_or_skip_silently(deck_name, decks=None, scope_tag=None):
     Any target that can't be backed up aborts the whole tick rather than importing the
     rest, which is the same fail-closed answer this has always given for the one deck it
     used to cover: the next poll retries, and a manual Sync decks can ask.
+
+    Returns "ok" to proceed, "no-deck" when cards exist but no deck holding them does
+    yet, or "failed" when a backup couldn't be written.
     """
     targets = [d for d in _backup_targets(deck_name, decks)
                if mw.col.decks.id_for_name(d) is not None]
     if not targets:
         # Nothing to back up on a first sync. Cards under `scope_tag` with no deck to
         # export are what the interactive path asks about, so skip the round instead.
-        return not (scope_tag and mw.col.find_notes(
-            f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'))
+        if scope_tag and mw.col.find_notes(f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'):
+            return "no-deck"
+        return "ok"
     saved = [_backup_deck(d, d) for d in targets]
-    return all(saved)
+    return "ok" if all(saved) else "failed"
 
 
 # ----------------------------------------------------------------- notes snapshot
@@ -1453,26 +1457,31 @@ def import_deck():
                 yes_label="Import", no_label="Cancel"):
         return
     cfg = _cfg()
-    if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"],
-                                            _restore_decks(src),
-                                            cfg["scope_tag"], keep=src)[0]:
-        return
     # Anki's importer reads each member's stream and ignores the size the file declares
     # for it, so it imports a copy made through zipfile, which holds to those sizes.
+    # Made first, so a file refused here costs no backup.
     checked = platform().allocate_temporary_file(
         platform_owner_id(mw), "deck-import", ".apkg")
     try:
-        copy_apkg_checked(src, checked)
-        result = _import_apkg(checked, with_scheduling=True)
-    except Exception as e:
-        _warn(f"Import failed: {e}")
-        return
+        try:
+            copy_apkg_checked(src, checked)
+        except Exception as e:
+            _warn(f"Import failed: {e}")
+            return
+        if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"],
+                                                _restore_decks(src),
+                                                cfg["scope_tag"], keep=src)[0]:
+            return
+        try:
+            result = _import_apkg(checked, with_scheduling=True)
+        except Exception as e:
+            _warn(f"Import failed: {e}")
+            return
     finally:
         try:
             os.remove(checked)
         except OSError:
             pass
-    _reset_baseline(src, getattr(result, "log", None))
     # The imported file holds older cards than the source does, so whatever it restored
     # has to be re-offered. Scope that to the decks actually in the file, falling back to
     # all of them if it cannot be read: a redundant re-offer is recoverable, a missed one
@@ -1481,12 +1490,14 @@ def import_deck():
     # None) also clears everything rather than nothing: if the decks were renamed before
     # this backup was taken, the file's deck names won't map to anything current, yet the
     # import did roll back a tracked deck, so clearing all is correct here, not merely a
-    # conservative fallback.
+    # conservative fallback. Done before the baseline reset, so a failure there can't
+    # leave restored cards reading as current.
     try:
         names = manifest_decks_for(apkg_deck_names(src), list(_load_json(INSTALLED, {})))
         invalidate_installed(names or None)
     except Exception:
         invalidate_installed()
+    _reset_baseline(src, getattr(result, "log", None))
     mw.reset()
     _info(f"Imported <code>{os.path.basename(src)}</code>.")
 

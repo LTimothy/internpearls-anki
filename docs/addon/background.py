@@ -315,20 +315,24 @@ def _auto_sync_check():
         # filed outside it unprotected. The packages are already on disk from the fetch
         # phase, so reading which of the learner's notes each one matches costs no
         # network.
-        if not _pre_sync_backup_or_skip_silently(
-                live["export_deck"],
-                [d["name"] for d in todo]
-                + _content_backup_decks(
-                    [v for v in result["downloaded"].values() if _is_local(v)],
-                    result["manifest"].get("front_aliases", {}), live["scope_tag"]),
-                live["scope_tag"]):
+        backup = _pre_sync_backup_or_skip_silently(
+            live["export_deck"],
+            [d["name"] for d in todo]
+            + _content_backup_decks(
+                [v for v in result["downloaded"].values() if _is_local(v)],
+                result["manifest"].get("front_aliases", {}), live["scope_tag"]),
+            live["scope_tag"])
+        if backup != "ok":
             # Once per session, not once per poll: a backup that fails usually keeps
             # failing, and the same tooltip every interval is noise around a message
             # that has already been read.
             if not memory.backup_failure_notified:
                 memory.backup_failure_notified = True
-                tooltip("Intern Pearls: auto-sync skipped, couldn't create a backup "
-                       "first.", period=6000, parent=mw)
+                tooltip("Intern Pearls: auto-sync skipped a round because the new decks "
+                        "have nothing to back up yet. Run Update my decks."
+                        if backup == "no-deck" else
+                        "Intern Pearls: auto-sync skipped, couldn't create a backup "
+                        "first.", period=6000, parent=mw)
             return
         memory.backup_failure_notified = False
 

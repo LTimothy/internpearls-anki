@@ -150,9 +150,11 @@ def _addon_update_work(auto_update, token=None):
 
 
 # What addonManager.install's error codes mean, in the learner's words.
-_INSTALL_ERRORS = {"zip": "not a valid add-on package",
-                   "manifest": "missing the details Anki needs to install it",
-                   "invalid addon name": "for a different add-on"}
+_INSTALL_ERRORS = {
+    "zip": "the download isn't a valid add-on package",
+    "manifest": "the download is missing the details Anki needs to install it",
+    "invalid package": "the download names an add-on Anki won't accept",
+}
 
 
 def _install_package(path):
@@ -162,8 +164,8 @@ def _install_package(path):
     result = mw.addonManager.install(path)
     errmsg = getattr(result, "errmsg", None)
     if errmsg:
-        reason = _INSTALL_ERRORS.get(errmsg, "Anki refused it")
-        raise RuntimeError(f"the download is {reason}")
+        raise RuntimeError(_INSTALL_ERRORS.get(
+            errmsg, "Anki refused to install the download"))
 
 
 @_safe
