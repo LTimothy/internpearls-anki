@@ -11,7 +11,7 @@ import tempfile
 from aqt import mw
 
 from .logic import (clamp_interval_minutes, clamp_night_mode_dim_percent,
-                    migrate_declined)
+                    migrate_declined, skill_version, strip_hidden)
 
 ADDON_VERSION = "0.77.1"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # Highest manifest.json `schema` value this add-on version knows how to read. The
@@ -420,8 +420,20 @@ DECK_SKILL = os.path.join(_USER_FILES, "deck_skill.json")
 
 
 def load_deck_skill():
+    """The consented deck skill, or None. Its text is read without hidden characters
+    and its version tamed, and a record stored before either was done is saved back
+    clean: what the learner saw and agreed to is the text without them."""
     d = _load_json(DECK_SKILL, None)
-    return d if isinstance(d, dict) else None
+    if not isinstance(d, dict):
+        return None
+    clean = dict(d)
+    if "text" in d:
+        clean["text"] = strip_hidden(d["text"] if isinstance(d["text"], str) else "")
+    if "version" in d:
+        clean["version"] = skill_version(d["version"])
+    if clean != d:
+        save_deck_skill(clean)
+    return clean
 
 
 def save_deck_skill(d):

@@ -68,3 +68,11 @@ def test_clicking_offer_again_removes_the_row_and_shows_the_empty_state(shot):
         "the row is still showing after Offer again was clicked")
     assert any("You haven't declined any cards." in t for t in texts), (
         "removing the last entry did not show the empty state")
+
+
+def test_a_declined_card_front_is_plain_text(shot):
+    """The front is the card's own text, so markup in it is shown, never rendered."""
+    _, q = harness.bootstrap()
+    s = shot("declined")
+    fronts = [w for w in _visible_labels(s.dialog, q) if "in one short line" in w.text()]
+    assert fronts and all(w.textFormat() == q.Qt.TextFormat.PlainText for w in fronts)

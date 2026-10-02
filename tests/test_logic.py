@@ -2036,6 +2036,15 @@ def test_manifest_scope_suggestion_ignores_missing_or_junk_values():
     assert logic.manifest_scope_suggestion(junk, "A", "B") == (None, None)
 
 
+
+@pytest.mark.parametrize("tag", ['Bad"Tag', "Bad'Tag", "Two words", "Tab\tTag", "Star*"])
+def test_manifest_scope_suggestion_refuses_a_tag_that_breaks_a_search(tag):
+    """A scope tag is quoted into every collection search, so a quote, a space or a
+    wildcard in one would match the wrong cards or none."""
+    assert logic.manifest_scope_suggestion(
+        {"scope_tag": tag, "export_deck": "Cardio"}, "A", "B") == (None, "Cardio")
+
+
 # ------------------------------------------------------------------- apkg_deck_names
 def test_apkg_notes_prefers_anki21_over_anki2(tmp_path):
     apkg = _make_dual_legacy_apkg(

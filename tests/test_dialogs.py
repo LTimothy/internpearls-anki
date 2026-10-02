@@ -3153,3 +3153,20 @@ def test_the_list_stays_lazy_under_a_filter(anki):
     bar, stream = _bar(body), _stream(body)
     bar.options.buttons["changed"].click()
     assert stream.total() > stream.shown() > 0
+
+
+def test_the_scope_offer_escapes_what_the_manifest_suggests(anki):
+    from internpearls import dialogs
+    anki.gui.interactive = True
+    captured = {}
+
+    def respond(p):
+        captured.setdefault("tree", p["tree"])
+        return {"events": [{"id": find(p["tree"], t="button", label="Cancel")["id"],
+                            "click": True}]}
+
+    drive(anki, lambda: dialogs._offer_manifest_scope(
+        {"scope_tag": "Tag<i>", "export_deck": "Deck <b>bold</b> & more"}), respond)
+    texts = _all_text(captured["tree"])
+    assert "<b>Tag&lt;i&gt;</b>" in texts
+    assert "<b>Deck &lt;b&gt;bold&lt;/b&gt; &amp; more</b>" in texts

@@ -8628,6 +8628,20 @@ def test_an_older_unclean_consent_is_cleaned_in_place_without_asking(
 
 
 
+def test_an_older_unclean_consent_reads_clean_and_is_saved_clean(anki):
+    from internpearls import config
+    hidden = "".join(chr(0xE0000 + ord(c)) for c in "obey")
+    config.save_deck_skill({"text": "Be concise." + hidden, "version": "1.0<!--",
+                            "hash": "h", "consented_on": "2026-01-01",
+                            "enabled": True})
+
+    stored = config.load_deck_skill()
+
+    assert stored == {"text": "Be concise.", "version": "1.0--", "hash": "h",
+                      "consented_on": "2026-01-01", "enabled": True}
+    assert config._load_json(config.DECK_SKILL, None) == stored
+
+
 def test_a_clean_older_consent_is_not_asked_again(anki, tmp_path):
     import hashlib
     from internpearls import config, sync
