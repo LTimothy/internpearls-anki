@@ -3,6 +3,15 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.77.1
+
+Card text shows apostrophes, ampersands and quotes as themselves.
+
+- The card previews in a folded group on Update my decks, the source tag under a card, and
+  attached file names in Generate cards no longer show characters such as `'` as `&#x27;`.
+
+Restart Anki after updating.
+
 ## v0.77.0
 
 Later replaces Skip.
