@@ -79,6 +79,7 @@ def anki(tmp_path, monkeypatch):
     # under the add-on's own user_files/ rather than under tmp_path.
     monkeypatch.setattr(review, "FEEDBACK", str(user_files / "card_feedback.json"))
     monkeypatch.setattr(sync, "SHIPPED", str(user_files / "shipped_fields.json"))
+    monkeypatch.setattr(collection, "SHIPPED", str(user_files / "shipped_fields.json"))
     monkeypatch.setattr(config, "DECLINED", str(user_files / "declined.json"))
     monkeypatch.setattr(config, "DECK_SKILL", str(user_files / "deck_skill.json"))
     monkeypatch.setattr(config, "AI_USAGE", str(user_files / "ai_usage.json"))

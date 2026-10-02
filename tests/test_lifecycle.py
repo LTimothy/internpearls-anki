@@ -200,3 +200,112 @@ def test_self_update_installs_a_good_package(anki, monkeypatch, tmp_path):
     assert anki.mw.addonManager.installed == [str(good)]
     assert any("Updated" in i for i in anki.gui.infos)
 
+
+# ------------------------------------------------------------------- restore
+def _exported_deck_names(anki):
+    return [anki.col.decks.name(limit.deck_id) for _p, _o, limit in anki.col.exports]
+
+
+def _newest_backup(collection):
+    import os
+    folder = collection._deck_backup_folder()
+    files = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith(".apkg")]
+    return max(files, key=os.path.getmtime)
+
+
+def test_restore_backs_up_every_deck_it_will_change(anki, tmp_path):
+    """A restore rewrites each matched note wherever the learner keeps it, so the
+    backup taken first has to cover those decks, not export_deck alone."""
+    from internpearls import collection
+    anki.col.add_note("g1", _fields("Front one"), TAGS.split(), deck=DECK)
+    anki.col.add_note("g2", _fields("Front two"), TAGS.split(), deck="Elsewhere::Mine")
+    src = collection._backup_deck("Elsewhere", "Elsewhere")
+    anki.col.exports.clear()
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)          # Import
+
+    collection.import_deck()
+
+    assert not anki.gui.warnings
+    assert "Elsewhere" in _exported_deck_names(anki)
+
+
+def test_restore_puts_back_the_baseline_the_backup_was_taken_with(anki, tmp_path):
+    """Restoring an older backup puts older source text back into a preserved field.
+    The next update has to see that text as the source's, not as the learner's own
+    edit, or the correction never arrives; the learner's own note must still stay."""
+    from internpearls import collection
+    from test_sync_flows import _sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", dosing="1 mg"), TAGS)], None)})
+    anki.mw._config = {"decks_dir": folder, "protected_fields": ["Notes", "Dosing"]}
+    _sync(anki)
+    anki.col.note_by_guid("g1")["Notes"] = "my own note"
+
+    _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", dosing="2 mg"), TAGS)], None)})
+    _sync(anki)                            # backs up v1 first, then applies v2
+    assert anki.col.note_by_guid("g1")["Dosing"] == "2 mg"
+
+    anki.gui.file_picks.append(_newest_backup(collection))
+    anki.gui.answers.append(True)          # Import
+    collection.import_deck()
+    assert anki.col.note_by_guid("g1")["Dosing"] == "1 mg"
+
+    _sync(anki)                            # v2 is offered again
+
+    note = anki.col.note_by_guid("g1")
+    assert note["Dosing"] == "2 mg"
+    assert note["Notes"] == "my own note"
+
+
+def test_restore_without_a_saved_baseline_keeps_annotations(anki, tmp_path):
+    """A file the add-on did not back up itself has no baseline beside it. Dropping
+    the restored notes' baselines then falls back to keeping every non-blank value,
+    so an annotation in the file is never overwritten by the next update."""
+    import shutil
+    from internpearls import collection
+    from test_sync_flows import _sync
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    anki.mw._config = {"decks_dir": folder}
+    _sync(anki)
+    anki.col.note_by_guid("g1")["Notes"] = "my own note"
+    exported = collection._backup_deck(DECK, "manual")
+    plain = str(tmp_path / "shared.apkg")
+    shutil.copy(exported, plain)
+    anki.col.note_by_guid("g1")["Notes"] = ""
+
+    anki.gui.file_picks.append(plain)
+    anki.gui.answers.append(True)
+    collection.import_deck()
+    _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="new back"), TAGS)], None)})
+    _sync(anki)
+
+    note = anki.col.note_by_guid("g1")
+    assert note["Back"] == "new back" and note["Notes"] == "my own note"
+
+
+def test_auto_sync_skips_a_round_when_export_deck_is_missing(anki, tmp_path):
+    """The interactive path asks before importing over cards it could not back up.
+    Unattended there is no one to ask, so the round is skipped."""
+    from internpearls import background
+    anki.col.add_note("g1", _fields("Front one"), TAGS.split(), deck="Somewhere else")
+    folder = _write_source(tmp_path, {
+        DECK: ("v2", [("g9", _fields("A new card"), TAGS)], None)})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+
+    background._auto_sync_check()
+
+    assert anki.col.imports == []
+    assert any("couldn't create a backup" in t for t in anki.gui.tooltips)
+
+
+def test_auto_sync_first_sync_with_nothing_to_back_up_still_runs(anki, tmp_path):
+    from internpearls import background
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
+    anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
+    background._auto_sync_check()
+    assert anki.col.note_by_guid("g1")["Front"] == "Front one"
