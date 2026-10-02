@@ -10,10 +10,12 @@ the same way: one CLI call on a background thread, a busy line with elapsed time
 than the AI wizard's own activity feed, since reusing that feed's session-driven state
 machine here would be a rewrite of this screen for a single optional button.
 """
+import functools
 import re
 import shutil
 import threading
 import time
+import traceback
 
 from aqt import mw
 from aqt.qt import (QApplication, QComboBox, QDialog, QDialogButtonBox, QFrame,
@@ -163,10 +165,25 @@ def _row_rule():
     return line
 
 
+_GONE = "(note deleted)"
+
+
+def _note_or_none(nid):
+    """The note, or None once it no longer exists: the learner can delete a note while
+    the list is open."""
+    try:
+        return mw.col.get_note(nid)
+    except Exception:
+        return None
+
+
 def _note_texts(nid):
     """A note's front and back as plain text. A front that is only a picture
-    (an image-identification note) is named rather than left blank."""
-    note = mw.col.get_note(nid)
+    (an image-identification note) is named rather than left blank. A note deleted
+    since the scan reads as a placeholder."""
+    note = _note_or_none(nid)
+    if note is None:
+        return _GONE, ""
     fields = list(note.fields)
     front = field_preview_text(fields[0]) if fields else ""
     if not front.strip():
@@ -205,9 +222,30 @@ def _link(label, on_click=None, tooltip_text=None, align_left=False):
     return btn
 
 
+def _delivery(fn):
+    """For a method the platform or a timer calls into: nothing runs once the dialog is
+    closed, and an exception is printed and shown on the summary line instead of
+    escaping into Qt, where PyQt aborts the process."""
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        if self._closed:
+            return None
+        try:
+            return fn(self, *args, **kwargs)
+        except Exception as error:
+            print(traceback.format_exc())
+            try:
+                self.summary_label.setText(f"Something went wrong: {_esc(str(error))}")
+            except Exception:
+                pass
+            return None
+    return wrapper
+
+
 class _DuplicateScanDialog(QDialog):
     def __init__(self, scope_tag):
         super().__init__(mw)
+        self._closed = False
         self._scope_tag = scope_tag
         self.setWindowTitle(f"{APP_NAME}: Scan for duplicates")
         # Wide enough for the per-row action links (Suspend ours/theirs, Keep both,
@@ -339,6 +377,7 @@ class _DuplicateScanDialog(QDialog):
             request, work, self._backends_found, on_error)
         self._probe.start()
 
+    @_delivery
     def _backends_found(self, result):
         chosen = result.get("chosen")
         self._judge_backend = chosen
@@ -379,6 +418,7 @@ class _DuplicateScanDialog(QDialog):
             self._any_excluded = True
         return filtered
 
+    @_safe
     def _exclude_edited(self):
         """editingFinished fires on any focus loss, not just a real edit, so clicking
         into the candidate list after typing used to rescan and rebuild the rows
@@ -391,6 +431,7 @@ class _DuplicateScanDialog(QDialog):
         set_dupes_excluded_decks(self._excluded_decks())
         self._rescan()
 
+    @_safe
     def _sensitivity_changed(self, index):
         set_dupes_threshold(_SENSITIVITY_LEVELS[index][1])
         self._rescan()
@@ -434,6 +475,7 @@ class _DuplicateScanDialog(QDialog):
         ids = set(mw.col.find_notes(search))
         return [r for r in self._all_rows() if r[0] in ids]
 
+    @_safe
     def _rescan_fresh(self):
         # A rescan drops every verdict, and a judging run is paid for.
         if any(p["judged"] for p in self._pairs) and not _ask(
@@ -536,6 +578,7 @@ class _DuplicateScanDialog(QDialog):
         self._worker.start()
         self._timer.start()
 
+    @_delivery
     def _poll_scan(self):
         # Latched like ai_dialog's _gen_done: on_result drives this poll directly as
         # soon as the platform delivers, so the timer tick that follows (or the one
@@ -560,8 +603,8 @@ class _DuplicateScanDialog(QDialog):
 
         def suspension_count(nid):
             if nid not in suspension_cache:
-                note = mw.col.get_note(nid)
-                card_ids = note.card_ids()
+                note = _note_or_none(nid)
+                card_ids = note.card_ids() if note is not None else []
                 suspension_cache[nid] = (
                     sum(mw.col.get_card(cid).queue == -1 for cid in card_ids),
                     len(card_ids))
@@ -685,7 +728,11 @@ class _DuplicateScanDialog(QDialog):
 
     def _item_widget(self, item):
         if item[0] == "pair":
-            return self._build_row(item[1])
+            try:
+                return self._build_row(item[1])
+            except Exception:
+                print(traceback.format_exc())
+                return hint_label("This pair could not be shown.")
         if item[0] == "fold":
             return _link(f"Judged different ({item[1]})", self._toggle_fold,
                          align_left=True)
@@ -707,9 +754,11 @@ class _DuplicateScanDialog(QDialog):
         self._restore_value = value
         self._restore_timer.start()
 
+    @_delivery
     def _restore_scroll(self):
         self._list.verticalScrollBar().setValue(self._restore_value)
 
+    @_safe
     def _toggle_fold(self, *_):
         self._fold_open = not self._fold_open
         self._rebuild_list()
@@ -717,6 +766,7 @@ class _DuplicateScanDialog(QDialog):
     def _build_row(self, pair):
         left_front, left_back = _note_texts(pair["left"][0])
         right_front, right_back = _note_texts(pair["right"][0])
+        gone = {side: _note_or_none(pair[side][0]) is None for side in ("left", "right")}
         c = colors()
 
         row = QWidget()
@@ -805,9 +855,12 @@ class _DuplicateScanDialog(QDialog):
                                f"{count} of {total} currently suspended")
             else:
                 description = f"Suspend all {total} cards on {possessive} note"
+            if gone[side]:
+                description = "This note was deleted"
             button = _link(text, lambda: action(pair, side),
                            tooltip_text=description)
             button.setAccessibleName(description)
+            button.setEnabled(not gone[side])
             return button
 
         tl1.addWidget(suspension_button(
@@ -853,6 +906,7 @@ class _DuplicateScanDialog(QDialog):
         caret.setText("▸")
         caret.setAccessibleName(accessible_name)
 
+    @_safe
     def _suspend(self, pair, side):
         row = pair["left"] if side == "left" else pair["right"]
         suspend_notes(mw.col, [row[0]])
@@ -862,6 +916,7 @@ class _DuplicateScanDialog(QDialog):
         pair.setdefault("suspension_counts", {})[side] = (total, total)
         self._rebuild_list()
 
+    @_safe
     def _unsuspend(self, pair, side):
         row = pair["left"] if side == "left" else pair["right"]
         unsuspend_notes(mw.col, [row[0]])
@@ -871,11 +926,13 @@ class _DuplicateScanDialog(QDialog):
         pair.setdefault("suspension_counts", {})[side] = (0, total)
         self._rebuild_list()
 
+    @_safe
     def _ignore(self, pair):
         add_dupes_ignored(pair["key"])
         self._pairs.remove(pair)
         self._rebuild_list()
 
+    @_safe
     def _copy_list(self, *_):
         lines = []
         for p in self._pairs:
@@ -897,7 +954,11 @@ class _DuplicateScanDialog(QDialog):
         kind = self._judge_backend
         path = self._judge_path
         payload = []
-        judged_pairs = list(self._pairs)
+        judged_pairs = [p for p in self._pairs
+                        if _note_or_none(p["left"][0]) is not None
+                        and _note_or_none(p["right"][0]) is not None]
+        if not judged_pairs:
+            return
         for p in judged_pairs:
             left_front, left_back = _note_texts(p["left"][0])
             right_front, right_back = _note_texts(p["right"][0])
@@ -970,12 +1031,20 @@ class _DuplicateScanDialog(QDialog):
         self._judge_error = None
 
     def _retire_all(self):
-        """Closing: stop the judging run and the backend probe, which a rescan must
-        leave running."""
+        """Closing: stop the judging run, the scan, the backend probe (which a rescan
+        must leave running) and the list's own background building."""
+        self._closed = True
         self._retire_judge()
-        probe = getattr(self, "_probe", None)
-        if probe is not None:
-            probe.cancel()
+        for handle in (getattr(self, "_probe", None), getattr(self, "_worker", None)):
+            if handle is not None:
+                handle.cancel()
+        for timer in (getattr(self, "_timer", None), self._restore_timer):
+            if timer is not None:
+                timer.stop()
+        self._scan_seq = getattr(self, "_scan_seq", 0) + 1
+        # Resetting the list drops its rows and retires any prefetch still in flight,
+        # so nothing builds a row from the collection after this.
+        self._list.reset([])
 
     def accept(self):
         self._retire_all()
@@ -989,6 +1058,7 @@ class _DuplicateScanDialog(QDialog):
         self._retire_all()
         super().closeEvent(event)
 
+    @_delivery
     def _poll_judge(self, seq=None, worker=None, timer=None):
         seq = self._judge_seq if seq is None else seq
         worker = self._judge_worker if worker is None else worker
