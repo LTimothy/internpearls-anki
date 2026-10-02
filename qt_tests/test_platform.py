@@ -140,3 +140,26 @@ def test_work_whose_owner_dies_mid_flight_is_released_not_delivered():
 
     assert delivered == []
     assert native._live_work == []
+
+
+def test_finding_an_owner_survives_a_weakref_callback_changing_the_registry():
+    """A collected owner's weakref callback removes its registry entry, and the garbage
+    collector can run it in the middle of a lookup iterating that registry."""
+    harness.bootstrap()
+    _mock, q = harness.bootstrap()
+    native = NativePlatform()
+    owner = q.QObject()
+    owner_id = native.owner_id(owner)
+
+    class Racing(dict):
+        calls = 0
+
+        def values(self):
+            Racing.calls += 1
+            if Racing.calls == 1:
+                raise RuntimeError("dictionary changed size during iteration")
+            return super().values()
+
+    native._weak_owner_ids = Racing(native._weak_owner_ids)
+    assert native._qt_owner(owner_id) is owner
+    assert Racing.calls == 2
