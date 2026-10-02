@@ -880,7 +880,14 @@ class _DeclinedDialog(QDialog):
 
         if not reg:
             items.append(("empty",))
+        # Offer again rebuilds the list; build back down to where the reader was and
+        # put the scroll position back, so the next row is where they left it.
+        bar = self._list.verticalScrollBar()
+        position, shown = bar.value(), self._list.shown()
         self._list.reset(items)
+        while self._list.shown() < min(shown, self._list.total()):
+            self._list._extend()
+        bar.setValue(position)
 
 
 @_safe
