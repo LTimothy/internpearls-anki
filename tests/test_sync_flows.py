@@ -626,6 +626,7 @@ def test_import_single_note_protected_field_survives_when_the_note_matches_only_
              deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     assert anki.col.note_by_guid("learner-own-guid")["Dosing"] == "learner's own dose note"
@@ -4467,6 +4468,7 @@ def test_import_single_writes_its_personalized_copy_outside_the_source_file(anki
     make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     assert not os.path.exists(src + ".sync.apkg")
@@ -4485,6 +4487,7 @@ def test_import_single_filters_a_never_declined_card(anki, tmp_path):
     make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     fronts = {n.fields[0] for n in anki.col._notes.values()}
@@ -7730,6 +7733,7 @@ def test_import_single_says_so_when_there_is_no_note_type_to_convert_onto(anki,
               model=_cloze_model(), deck=DECK)
     anki.gui.file_picks = [src]
 
+    anki.gui.answers.append(True)          # Import now
     sync.import_single()
 
     assert not any("you'll be asked" in a for a in anki.gui.asks), anki.gui.asks

@@ -113,6 +113,11 @@ def _new_persistent_wid(w):
     return wid
 
 
+class UnansweredQuestion(BaseException):
+    """A non-interactive test reached a question without queuing an answer. A
+    BaseException so the add-on's _safe wrappers cannot turn it into a warning."""
+
+
 class NeedInteraction(BaseException):
     """The flow needs the user. BaseException so the add-on's _safe/_bg_safe
     decorators (which catch Exception) let it propagate to the driver."""
@@ -991,7 +996,7 @@ class Gui:
         if not self.interactive:
             # No default answer: a test that reaches a question states its answer.
             if not self.answers:
-                raise AssertionError(f"unanswered question: {text[:200]}")
+                raise UnansweredQuestion(text[:200])
             return self.answers.pop(0)
         dialog = QDialog()
         layout = QVBoxLayout(dialog)
