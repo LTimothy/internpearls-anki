@@ -1125,6 +1125,7 @@ class _GenerateDialog(QDialog):
             "skills", "<b>Skills</b>", "Sent in that order on every run.",
             links=(("View", lambda: self._guard(self._view_skills)),
                    (rules_label, lambda: self._guard(self._edit_user_skill))))
+        self.skills_row.detail.setTextFormat(Qt.TextFormat.PlainText)
         self.skills_link = self.skills_row.links["View"]
         self.rules_link = self.skills_row.links[rules_label]
         content_lay.addWidget(self.skills_row)

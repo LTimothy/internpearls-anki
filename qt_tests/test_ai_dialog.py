@@ -1743,3 +1743,10 @@ def test_a_late_flag_keeps_the_cursor_in_a_note_being_typed(monkeypatch):
         dlg._retire_for_delete()
         dlg.hide()
         dlg.deleteLater()
+
+
+def test_the_skills_row_detail_is_plain_text(shot):
+    """It names the deck skill's version, which comes from the deck source."""
+    _, q = harness.bootstrap()
+    dlg = shot("ai-input", state="ready").dialog
+    assert dlg.skills_row.detail.textFormat() == q.Qt.TextFormat.PlainText

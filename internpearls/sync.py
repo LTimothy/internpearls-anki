@@ -52,7 +52,7 @@ from .logic import (APKG_MAX_BYTES, apkg_deck_names, apkg_note_details, apkg_not
                     settle_held_outside_manifest,
                     manifest_needs_newer_addon,
                     note_display_label, note_fields_hash, per_note_for_package,
-                    unopened_line,
+                    skill_version, unopened_line,
                     plain_text, plural, prune_declined, released_held_guids, remap_cards,
                     reveal_hidden, split_notetype_changes, strip_hidden,
                     write_personalized)
@@ -377,9 +377,8 @@ def _check_deck_skill(cfg, manifest, fetch):
 
     Consent is keyed by content hash: unchanged hash is silent (including across
     a version bump with no text change), and any other hash re-asks, showing the
-    full new text. A consent stored before hidden characters were stripped and
-    versions tamed is cleaned in place for the same hash, with no question: the
-    stripped text is what the learner saw. Declining leaves whatever was
+    full new text. load_deck_skill reads a stored consent clean of hidden
+    characters and with its version tamed. Declining leaves whatever was
     previously consented to (if anything) exactly as it was, answering "not this
     version" rather than "forget what I agreed to before".
     """
@@ -398,33 +397,15 @@ def _check_deck_skill(cfg, manifest, fetch):
     digest = hashlib.sha256(raw).hexdigest()
     stored = load_deck_skill()
     if stored and stored.get("hash") == digest:
-        if not _consent_is_clean(stored):
-            save_deck_skill(dict(stored, text=strip_hidden(stored.get("text") or ""),
-                                 version=_skill_version(stored.get("version"))))
         return
     text = raw.decode("utf-8-sig", "replace")
-    version = _skill_version(entry.get("version"))
+    version = skill_version(entry.get("version"))
     if _ask_scrollable(_skill_consent_html(text, version, bool(stored)),
                        yes_label="Use this skill", no_label="Not now"):
         save_deck_skill({"text": strip_hidden(text), "version": version,
                          "hash": digest,
                          "consented_on": datetime.date.today().isoformat(),
                          "enabled": True})
-
-
-def _consent_is_clean(stored):
-    """Whether a stored consent already holds only what the consent dialog shows today:
-    no hidden characters in its text and a tamed version."""
-    text = stored.get("text") or ""
-    version = str(stored.get("version") or "")
-    return strip_hidden(text) == text and _skill_version(version) == version
-
-
-def _skill_version(version):
-    """The manifest's skill version, kept to the characters a version uses. It is the
-    source's own string and is shown elsewhere beside the skill, so nothing in it may
-    read as markup."""
-    return re.sub(r"[^\w.+-]", "", str(version or ""))[:32]
 
 
 def _skill_consent_html(text, version, updated):

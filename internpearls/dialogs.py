@@ -4,6 +4,8 @@ dimming, and About.
 Everything here is presentation plus config writes; the flows that touch the
 collection or the network live in sync.py / collection.py and are called from here.
 """
+import html
+
 from aqt import mw
 from aqt.qt import (QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QFileDialog,
                     QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton,
@@ -297,11 +299,11 @@ def _offer_manifest_scope(manifest):
         return
     changes = []
     if scope_tag:
-        changes.append(f"Scope tag: <b>{scope_tag}</b> (which cards this add-on "
-                       "manages and protects)")
+        changes.append(f"Scope tag: <b>{html.escape(scope_tag)}</b> (which cards this "
+                       "add-on manages and protects)")
     if export_deck:
-        changes.append(f"Backup deck: <b>{export_deck}</b> (what the automatic "
-                       "pre-sync backup covers)")
+        changes.append(f"Backup deck: <b>{html.escape(export_deck)}</b> (what the "
+                       "automatic pre-sync backup covers)")
     # Two settings, both the same kind of thing, so neither is chipped and neither has
     # anything to line up against: card_columns declined (see widgets.simple_row).
     items = []
@@ -824,6 +826,7 @@ class _DeclinedDialog(QDialog):
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 4, 0, 4)
         primary = QLabel(entry.get("front") or guid)
+        primary.setTextFormat(Qt.TextFormat.PlainText)
         primary.setWordWrap(True)
         h.addWidget(primary, 1)
         parts = [p for p in ((entry.get("deck") or "").split("::")[-1],

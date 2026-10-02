@@ -169,13 +169,17 @@ def manifest_scope_suggestion(manifest, scope_tag, export_deck):
     to the Intern Pearls deck's: without matching them, a subscriber to someone else's
     deck gets no protected-fields snapshot and mis-scoped backups. A value is
     suggested only when it's a non-empty string that differs from what's configured
-    now; the caller asks before applying anything.
+    now; the caller asks before applying anything. A scope tag is quoted into every
+    collection search, so one holding a quote, whitespace or `*` is never offered.
     """
     def pick(key, current):
         v = (manifest or {}).get(key)
         return v if isinstance(v, str) and v and v != current else None
 
-    return pick("scope_tag", scope_tag), pick("export_deck", export_deck)
+    tag = pick("scope_tag", scope_tag)
+    if tag and re.search(r"[\s\"'*]", tag):
+        tag = None
+    return tag, pick("export_deck", export_deck)
 
 
 def parse_fields(text, default=("Notes",)):
@@ -691,6 +695,13 @@ def reveal_hidden(text):
 def strip_hidden(text):
     """`text` without its hidden characters (see reveal_hidden)."""
     return "".join(ch for ch in text if not _is_hidden(ch))
+
+
+def skill_version(version):
+    """A deck skill's version, kept to the characters a version uses. It is the
+    source's own string and is shown beside the skill, so nothing in it may read as
+    markup."""
+    return re.sub(r"[^\w.+-]", "", str(version or ""))[:32]
 
 
 @contextlib.contextmanager

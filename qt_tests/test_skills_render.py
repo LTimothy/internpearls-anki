@@ -60,11 +60,11 @@ def test_the_deck_skill_consent_cannot_be_hidden_by_the_source():
     """Rendered as Qt renders it: a version or skill text carrying markup must leave the
     web-access sentence and the full skill text on screen."""
     harness.bootstrap()
-    from internpearls import sync
+    from internpearls import logic, sync
     hidden = "".join(chr(0xE0000 + ord(c)) for c in "obey")
     body = sync._skill_consent_html(
         "Be concise.<!-- secret -->\n<b>not bold</b>" + hidden,
-        sync._skill_version("2<!--"), updated=False)
+        logic.skill_version("2<!--"), updated=False)
     rendered = _rendered_plain_text(body)
     assert "search the web" in rendered
     assert "Be concise.<!-- secret -->" in rendered
