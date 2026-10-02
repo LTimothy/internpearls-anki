@@ -1654,3 +1654,30 @@ def test_check_image_bytes_refuses_what_is_not_that_picture(name, data):
 def test_svg_to_media_refuses_an_entity_encoded_javascript_uri():
     with pytest.raises(ValueError):
         ai_logic.svg_to_media('<svg><a href="&#106;avascript:x()">x</a></svg>', 0)
+
+
+# === NaN and Infinity from a stream count as absent =========================
+
+def test_codex_nan_and_infinity_figures_are_treated_as_absent():
+    # Python's json writes and reads NaN/Infinity literals, as a vendor stream can.
+    line = ('{"type": "token_count", "info": {"total_tokens": Infinity}, '
+            '"rate_limits": {"primary": {"used_percent": NaN}, '
+            '"secondary": {"used_percent": -Infinity}}}')
+    evt = ai_logic.parse_stream_event("codex", line)
+    assert evt["primary_pct"] == 0.0 and evt["secondary_pct"] == 0.0
+    assert evt.get("tokens", 0) == 0
+    assert ai_logic.rate_limit_line(evt) == "5h window 100% left, week 100% left"
+    usage = ('{"type": "item.completed", "text": "[]", '
+             '"usage": {"input_tokens": NaN, "output_tokens": 7}}')
+    assert ai_logic.parse_stream_event("codex", usage)["tokens"] == 7
+
+
+def test_non_finite_numbers_in_saved_usage_are_dropped():
+    reg = {"codex": [{"ts": float("nan"), "tokens": 5},
+                     {"ts": 100.0, "tokens": float("inf")},
+                     {"ts": 100.0, "tokens": 3}],
+           "durations": {"codex-quick": [float("nan"), float("inf"), 30.0]}}
+    assert ai_logic.usage_line(reg, "codex", now=200.0) == \
+        "Today via this add-on: 2 runs, ~0k tokens"
+    assert ai_logic.median_duration(reg, "codex", "quick") == 30.0
+    assert ai_logic.duration_estimate_line(reg, "codex", "quick").endswith("30s")
