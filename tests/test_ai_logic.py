@@ -1,6 +1,8 @@
 """Pure-logic tests for AI card generation. No Anki install needed."""
 import os
 
+import pytest
+
 from internpearls import ai_logic
 
 
@@ -1562,3 +1564,93 @@ def test_web_image_rules_require_a_found_image_for_a_visual_card():
         assert "incomplete without one" in p
     p = _flat(ai_logic.build_prompt(**_PROMPT_KW, mode="quick", web=False))
     assert "incomplete without one" not in p
+
+
+# === generated fields carry only safe markup ================================
+
+_HOSTILE_FIELD = ('<b>Dose</b> <script>steal()</script><img src=x onerror="steal()">'
+                  '<iframe src="https://evil.example"></iframe>'
+                  '<a href="javascript:steal()">ref</a> '
+                  '<a href=" jav&#x61;script:steal()">two</a> '
+                  '<div onclick="steal()" style="color:red">box</div>'
+                  '<svg><script>steal()</script></svg>'
+                  '<img src="data:image/png;base64,AAAA">')
+
+
+def test_parse_cards_strips_active_content_from_every_field():
+    text = _json.dumps([{"note_type": "Basic",
+                         "fields": {"Front": "q " + _HOSTILE_FIELD, "Back": _HOSTILE_FIELD},
+                         "tags": [], "images": []}])
+    cards, errors = ai_logic.parse_cards_json(text, ALLOWED, FIELD_MAP)
+    assert not errors
+    for value in cards[0]["fields"].values():
+        low = value.lower()
+        for bad in ("<script", "steal", "<iframe", "onerror", "onclick",
+                    "javascript", "data:", "<svg"):
+            assert bad not in low, (bad, value)
+        assert "<b>Dose</b>" in value
+        assert '<img src="x">' in value
+        assert '<div style="color:red">box</div>' in value
+        assert "<a>ref</a>" in value
+
+
+def test_sanitized_field_keeps_card_formatting_and_text():
+    value = ('<ul><li>MAP &lt;65</li></ul><table><tr><td colspan="2">x</td></tr></table>'
+             '{{c1::lipid}} 1.5&nbsp;mL/kg <a href="https://example.com/r">ref</a>'
+             '<img src="generated-0.svg"><br>')
+    assert ai_logic.sanitize_field_html(value) == value
+
+
+def test_sanitized_field_escapes_bare_angle_text():
+    assert ai_logic.sanitize_field_html("MAP <65 and HR >100") == "MAP &lt;65 and HR &gt;100"
+
+
+def test_correction_is_sanitized_like_a_card_field():
+    text = _corrected({"Back": 'new <script>x()</script><b onmouseover="x()">dose</b>'})
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert not errors
+    assert verdicts[0]["correction"] == {"Back": "new <b>dose</b>"}
+
+
+def test_correction_left_empty_by_sanitizing_is_dropped():
+    text = _corrected({"Back": "<script>x()</script>"})
+    verdicts, errors = ai_logic.parse_verdicts_json(text, 1, _CHECK_FIELD_MAP)
+    assert not errors
+    assert verdicts[0]["correction"] is None
+    assert verdicts[0]["verdict"] == "unverified"
+
+
+# === scratch pictures are checked by content ================================
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+
+def test_check_image_bytes_accepts_real_signatures():
+    ai_logic.check_image_bytes("a.png", PNG)
+    ai_logic.check_image_bytes("a.jpg", b"\xff\xd8\xff\xe0rest")
+    ai_logic.check_image_bytes("a.jpeg", b"\xff\xd8\xff\xe0rest")
+    ai_logic.check_image_bytes("a.gif", b"GIF89a rest")
+    ai_logic.check_image_bytes("a.webp", b"RIFF\x00\x00\x00\x00WEBPVP8 ")
+    ai_logic.check_image_bytes("a.svg", b'<?xml version="1.0"?><svg></svg>')
+
+
+@pytest.mark.parametrize("name, data", [
+    ("a.png", b"<html><script>steal()</script></html>"),
+    ("a.jpg", PNG),
+    ("a.html", b"<html></html>"),
+    ("a.js", b"steal()"),
+    ("a.webp", b"RIFF0000WAVE"),
+    ("a.svg", b"<svg><script>steal()</script></svg>"),
+    ("a.svg", b'<svg><a href="jav&#x61;script:steal()">x</a></svg>'),
+    ("a.svg", b"<svg><foreignObject><iframe></iframe></foreignObject></svg>"),
+    ("a.svg", b"<html><body>not svg</body></html>"),
+    ("a.svg", b"\xff\xfe\x00bad"),
+])
+def test_check_image_bytes_refuses_what_is_not_that_picture(name, data):
+    with pytest.raises(ValueError):
+        ai_logic.check_image_bytes(name, data)
+
+
+def test_svg_to_media_refuses_an_entity_encoded_javascript_uri():
+    with pytest.raises(ValueError):
+        ai_logic.svg_to_media('<svg><a href="&#106;avascript:x()">x</a></svg>', 0)
