@@ -583,11 +583,13 @@ def check_apkg_limits(path):
     directory = _zip_directory_size(path)
     if directory is not None:
         entries, cd_size = directory
-        if (entries > APKG_MAX_MEMBERS
-                or cd_size // _ZIP_ENTRY_MIN > APKG_MAX_MEMBERS):
+        if entries > APKG_MAX_MEMBERS:
             raise PackageLimitError(f"This .apkg holds more than {APKG_MAX_MEMBERS:,} "
                                     "files, more than any deck needs, so it wasn't "
                                     "opened.")
+        if cd_size // _ZIP_ENTRY_MIN > APKG_MAX_MEMBERS:
+            raise PackageLimitError("This .apkg's file list is too large, more than any "
+                                    "deck needs, so it wasn't opened.")
     with zipfile.ZipFile(path) as z:
         infos = z.infolist()
     if len(infos) > APKG_MAX_MEMBERS:
@@ -608,7 +610,8 @@ def copy_apkg_checked(src, out):
     raises zipfile.BadZipFile on a CRC mismatch, so the copy holds exactly what the
     limits were checked against, whatever the original's streams say."""
     check_apkg_limits(src)
-    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as zout:
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED,
+                                                      compresslevel=1) as zout:
         for info in zin.infolist():
             if info.is_dir():
                 continue
