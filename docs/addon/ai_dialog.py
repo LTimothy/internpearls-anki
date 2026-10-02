@@ -31,7 +31,7 @@ from .config import (AI_LAST_RUN_LOG, APP_NAME, TARGET_FIELDS, _cfg,
                      load_ai_usage, save_ai_usage, load_deck_skill,
                      save_deck_skill, load_user_skill, save_user_skill)
 from .logic import cloze_filled_html, field_preview_html, note_display_label, plural
-from .net import fetch_card_image
+from .ai_fetch import fetch_card_image
 from .palette import colors
 from .platform import (new_work_request, platform, platform_owner_id,
                        wait_for_mock_work)
