@@ -32,7 +32,9 @@ _NEGATION_RE = re.compile(r"\b(?:%s)\b|n['\u2019]t\b" % "|".join(_NEGATION_WORDS
 
 # Short tokens that still say which fact a card is about: roman numerals (a type or a
 # factor number) and anything with a digit in it (T3, D1, S2, 5).
-_ROMAN = frozenset({"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"})
+_ROMAN_VALUES = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7,
+                 "viii": 8, "ix": 9, "x": 10}
+_ROMAN = frozenset(_ROMAN_VALUES)
 # Roman numerals that can name a class when two cards differ on them. "iv" is left out:
 # it is usually intravenous, so IV against IM must not read as a class contrast.
 _ROMAN_CLASS = _ROMAN - {"iv"}
@@ -48,7 +50,22 @@ _CLASSIFIERS = {
     "nerve": "nerve", "cn": "cn", "lead": "lead", "leads": "lead",
 }
 _CLASS_PHRASE_RE = re.compile(
-    r"\b(%s)[\s-]+(\d+[a-z]?|[ivx]{1,4})\b" % "|".join(_CLASSIFIERS))
+    r"\b(%s)[\s-]+(\d+[a-z]?|%s)\b" % (
+        "|".join(_CLASSIFIERS),
+        "|".join(sorted(_ROMAN_VALUES, key=lambda r: -len(r)))))
+
+
+def _class_phrases(text):
+    """`{id: as written}` for each "<classifier> <value>" in `text`. The id counts a
+    roman value as its number, so "type II" and "type 2" are one class."""
+    out = {}
+    for m in _CLASS_PHRASE_RE.finditer(text):
+        value = m.group(2)
+        number = _ROMAN_VALUES.get(value)
+        canon = str(number) if number else value.lstrip("0") or "0"
+        out.setdefault(f"{_CLASSIFIERS[m.group(1)]} {canon}",
+                       f"{_CLASSIFIERS[m.group(1)]} {value.upper()}")
+    return out
 
 _GREEK = {
     "\u03b1": "alpha", "\u03b2": "beta", "\u03b3": "gamma", "\u03b4": "delta",
@@ -119,8 +136,7 @@ def contrast_marks(tokens, text):
     ids = frozenset(
         [t for t in tokens if t in _ROMAN_CLASS or t in _GREEK_NAMES
          or _CLASS_CODE_RE.fullmatch(t)]
-        + [f"{_CLASSIFIERS[m.group(1)]} {m.group(2)}"
-           for m in _CLASS_PHRASE_RE.finditer(text)])
+        + list(_class_phrases(text)))
     found = _NEGATION_RE.search(text)
     word = found.group() if found else ""
     negation = word if word in _NEGATION_WORDS or not word else "not"
@@ -139,19 +155,20 @@ def contrasts(a, b):
     return bool(a[1]) != bool(b[1]) or _class_conflict(a, b)
 
 
-def _shown(token):
-    if " " in token:
-        word, value = token.split(" ")
-        return f"{word} {value.upper()}"
-    return token if token in _GREEK_NAMES else token.upper()
-
-
-def _side(own, other):
-    """The tokens only `own` has, as a label shows them: a bare "ii" is left out when
-    "type ii" already says it."""
+def _side(own, other, written):
+    """The tokens only `own` has, as its label shows them: a class phrase as written
+    ("type II"), and no bare numeral that a phrase already says."""
     only = own - other
     named = {t.split(" ")[1] for t in only if " " in t}
-    return " ".join(_shown(t) for t in sorted(only) if " " in t or t not in named)
+    shown = []
+    for t in sorted(only):
+        if " " in t:
+            shown.append(written.get(t, t))
+        elif str(_ROMAN_VALUES.get(t)) in named:
+            continue
+        else:
+            shown.append(t if t in _GREEK_NAMES else t.upper())
+    return " ".join(shown)
 
 
 def contrast_label(text_a, text_b):
@@ -164,7 +181,8 @@ def contrast_label(text_a, text_b):
     if bool(a[1]) != bool(b[1]):
         parts.append(a[1] or b[1])
     if _class_conflict(a, b):
-        parts.append(f"{_side(a[0], b[0])} vs {_side(b[0], a[0])}")
+        parts.append(f"{_side(a[0], b[0], _class_phrases(norm_a))} vs "
+                     f"{_side(b[0], a[0], _class_phrases(norm_b))}")
     return f"Differs: {'; '.join(parts)}" if parts else ""
 
 

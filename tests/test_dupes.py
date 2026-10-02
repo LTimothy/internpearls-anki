@@ -422,4 +422,43 @@ def test_classifier_contrast_needs_the_classifier_word():
     assert contrast_label("Onset 30 s after 2 mg", "Onset 60 s after 5 mg") == ""
     assert contrast_label("Ketamine IV bolus works fast", "Ketamine IM bolus works fast") == ""
     assert contrast_label("Give 4 mg IV now", "Give 8 mg IV now") == ""
-    assert contrast_marks([], "type iv reaction")[0] == frozenset({"type iv"})
+    assert contrast_marks([], "type iv reaction")[0] == frozenset({"type 4"})
+
+
+def test_one_class_in_two_numeral_systems_is_not_a_contrast():
+    pairs = [
+        ("Type 2 diabetes results from insulin resistance with relative deficiency",
+         "Type II diabetes results from insulin resistance with relative deficiency"),
+        ("Grade 3 hypertensive retinopathy shows papilledema and cotton wool spots",
+         "Grade III hypertensive retinopathy shows papilledema and cotton wool spots"),
+        ("Class 2 obesity is defined by a body mass index between 35 and 39.9",
+         "Class II obesity is defined by a body mass index between 35 and 39.9"),
+        ("Factor V Leiden causes resistance to activated protein C and thrombosis",
+         "Factor 5 Leiden causes resistance to activated protein C and thrombosis"),
+        ("Cranial nerve 5 supplies sensation to the face and the muscles of mastication",
+         "Cranial nerve V supplies sensation to the face and the muscles of mastication"),
+    ]
+    for a, b in pairs:
+        assert contrast_label(a, b) == "", (a, contrast_label(a, b))
+        assert _score(a, b) > 0.7, (a, _score(a, b))
+
+
+def test_different_classes_in_mixed_numeral_systems_still_contrast():
+    assert contrast_label("Type 1 diabetes", "Type II diabetes") == (
+        "Differs: type 1 vs type II")
+    assert contrast_label("Factor VIII deficiency", "Factor 9 deficiency") == (
+        "Differs: factor VIII vs factor 9")
+    a = "Type 1 diabetes mellitus results from autoimmune destruction of beta cells"
+    b = "Type II diabetes mellitus results from autoimmune destruction of beta cells"
+    score = _score(a, b)
+    assert score is None or score < 0.5
+
+
+def test_a_class_label_has_one_entry_per_class_value():
+    assert contrast_label("Type 2 (type II) block", "Type 3 block") == (
+        "Differs: type 2 vs type 3")
+    assert contrast_label("Type 1 and type II block", "Type 3 block") == (
+        "Differs: type 1 type II vs type 3")
+    assert contrast_marks([], "type 2 or type ii")[0] == frozenset({"type 2"})
+    # a bare numeral nests inside the same class written as a phrase
+    assert contrast_label("Type II", "Type 2") == ""
