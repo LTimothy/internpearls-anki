@@ -47,12 +47,24 @@ _CLASSIFIERS = {
     "phase": "phase", "phases": "phase", "factor": "factor", "factors": "factor",
     "group": "group", "groups": "group", "generation": "generation",
     "generations": "generation", "degree": "degree", "degrees": "degree",
-    "nerve": "nerve", "cn": "cn", "lead": "lead", "leads": "lead",
+    "nerve": "nerve", "cn": "nerve", "lead": "lead", "leads": "lead",
 }
+# A well-formed roman numeral from i to xxxix: iiii, ic and vv are not numerals.
+_ROMAN_PATTERN = r"x{0,3}(?:ix|iv|v?i{0,3})(?<=[ivx])"
 _CLASS_PHRASE_RE = re.compile(
-    r"\b(%s)[\s-]+(\d+[a-z]?|%s)\b" % (
-        "|".join(_CLASSIFIERS),
-        "|".join(sorted(_ROMAN_VALUES, key=lambda r: -len(r)))))
+    r"\b(%s)[\s-]+(\d+[a-z]?|%s)\b" % ("|".join(_CLASSIFIERS), _ROMAN_PATTERN))
+_ROMAN_DIGITS = {"i": 1, "v": 5, "x": 10}
+
+
+def _roman_value(text):
+    """The number a well-formed roman numeral up to xxxix stands for, else None."""
+    if not re.fullmatch(_ROMAN_PATTERN, text):
+        return None
+    total = 0
+    for ch, nxt in zip(text, text[1:] + " "):
+        value = _ROMAN_DIGITS[ch]
+        total += -value if _ROMAN_DIGITS.get(nxt, 0) > value else value
+    return total
 
 
 def _class_phrases(text):
@@ -61,7 +73,7 @@ def _class_phrases(text):
     out = {}
     for m in _CLASS_PHRASE_RE.finditer(text):
         value = m.group(2)
-        number = _ROMAN_VALUES.get(value)
+        number = _roman_value(value)
         canon = str(number) if number else value.lstrip("0") or "0"
         out.setdefault(f"{_CLASSIFIERS[m.group(1)]} {canon}",
                        f"{_CLASSIFIERS[m.group(1)]} {value.upper()}")
