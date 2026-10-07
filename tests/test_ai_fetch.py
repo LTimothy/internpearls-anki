@@ -1,6 +1,7 @@
 """Card-picture downloads: https on every hop, no private or local addresses."""
 import socket
 import threading
+import urllib.request
 
 import pytest
 
@@ -391,3 +392,272 @@ def test_without_https_support_a_picture_fails_as_a_transport_error(monkeypatch)
     monkeypatch.setattr(ai_fetch, "_HTTPSConnection", None)
     with pytest.raises(ai_fetch.TransportError):
         ai_fetch._open_connection("example.org", "93.184.216.34", 443, 5)
+
+
+def _proxy_settings(monkeypatch, url, bypass=()):
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {"https": url})
+    monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: host in bypass)
+
+
+class _ProxyWeb(_Web):
+    def __init__(self, monkeypatch, hosts, pages):
+        super().__init__(monkeypatch, hosts, pages)
+        self.tunnels, self.requests = [], []
+        self.connect_error = None
+        web = self
+
+        class _Conn:
+            sock = None
+
+            def __init__(self, host, port, timeout, context):
+                self.proxy_host, self.proxy_port = host, port
+                self.timeout, self.context = timeout, context
+
+            def set_tunnel(self, host, port, headers=None):
+                self.host, self.port, self.headers = host, port, headers or {}
+
+            def connect(self):
+                web.tunnels.append(self)
+                if web.connect_error is not None:
+                    raise web.connect_error
+                self.sock = web.sock_factory()
+
+            def request(self, method, target, headers=None):
+                web.requests.append((self.host, method, target, headers))
+                self.response = web.pages[(self.host, target)]
+                if callable(self.response):
+                    self.response = self.response(self.sock)
+
+            def getresponse(self):
+                self.sock = None
+                return self.response
+
+            def close(self):
+                pass
+        monkeypatch.setattr(ai_fetch, "_HTTPSConnection", _Conn)
+
+
+@pytest.mark.parametrize("port", [443, 8443])
+def test_a_picture_uses_the_https_proxy_and_tunnels_by_name(monkeypatch, port):
+    import ssl
+    _proxy_settings(monkeypatch, "http://10.0.0.2:8080")
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _png()})
+    assert ai_fetch.fetch_card_image(f"https://img.example:{port}/a.png") == (PNG, "png")
+    assert web.connected == []
+    assert len(web.tunnels) == 1
+    tunnel = web.tunnels[0]
+    assert (tunnel.proxy_host, tunnel.proxy_port) == ("10.0.0.2", 8080)
+    assert (tunnel.host, tunnel.port) == ("img.example", port)
+    assert tunnel.context.check_hostname
+    assert tunnel.context.verify_mode == ssl.CERT_REQUIRED
+    assert 0 < tunnel.timeout <= ai_fetch._DOWNLOAD_TIMEOUT
+
+
+@pytest.mark.parametrize("proxy, host, port, headers", [
+    ("proxy.corp:8080", "proxy.corp", 8080, {}),
+    ("10.0.0.5:3128", "10.0.0.5", 3128, {}),
+    ("user:p%40ss@proxy.corp:8080", "proxy.corp", 8080,
+     {"Proxy-Authorization": "Basic dXNlcjpwQHNz"}),
+])
+def test_a_proxy_without_a_scheme_tunnels_through_its_host_and_port(
+        monkeypatch, proxy, host, port, headers):
+    _proxy_settings(monkeypatch, proxy)
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _png()})
+    assert ai_fetch.fetch_card_image("https://img.example/a.png") == (PNG, "png")
+    assert web.connected == []
+    assert len(web.tunnels) == 1
+    tunnel = web.tunnels[0]
+    assert (tunnel.proxy_host, tunnel.proxy_port) == (host, port)
+    assert (tunnel.host, tunnel.port) == ("img.example", 443)
+    assert tunnel.headers == headers
+    assert "Proxy-Authorization" not in web.requests[0][3]
+
+
+def test_a_proxy_without_a_scheme_is_bypassed_for_a_bypassed_host(monkeypatch):
+    _proxy_settings(monkeypatch, "proxy.corp:8080", bypass=("img.example",))
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _png()})
+    assert ai_fetch.fetch_card_image("https://img.example/a.png") == (PNG, "png")
+    assert web.connected == [("img.example", "93.184.216.34")]
+    assert web.tunnels == []
+
+
+@pytest.mark.parametrize("addresses", [["127.0.0.1"], ["93.184.216.34", "10.0.0.1"]])
+def test_a_proxy_does_not_allow_a_private_target(monkeypatch, addresses):
+    _proxy_settings(monkeypatch, "http://10.0.0.2:8080")
+    web = _ProxyWeb(monkeypatch, {"img.example": addresses}, {})
+    with pytest.raises(RuntimeError, match="private or local"):
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+    assert web.tunnels == []
+    assert web.connected == []
+
+
+def test_a_proxy_does_not_skip_the_target_lookup(monkeypatch):
+    _proxy_settings(monkeypatch, "http://10.0.0.2:8080")
+    web = _ProxyWeb(monkeypatch, {}, {})
+    with pytest.raises(ai_fetch.TransportError, match="couldn't look up img.example"):
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+    assert web.tunnels == []
+    assert web.connected == []
+
+
+def test_a_host_on_the_proxy_bypass_list_connects_directly(monkeypatch):
+    _proxy_settings(monkeypatch, "http://10.0.0.2:8080", bypass=("img.example",))
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _png()})
+    assert ai_fetch.fetch_card_image("https://img.example/a.png") == (PNG, "png")
+    assert web.connected == [("img.example", "93.184.216.34")]
+    assert web.tunnels == []
+
+
+def test_proxy_credentials_are_decoded_and_only_sent_on_connect(monkeypatch):
+    _proxy_settings(monkeypatch, "http://user%20name:p%40ss@10.0.0.2:8080")
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _png()})
+    assert ai_fetch.fetch_card_image("https://img.example/a.png") == (PNG, "png")
+    assert web.tunnels[0].headers == {
+        "Proxy-Authorization": "Basic dXNlciBuYW1lOnBAc3M="}
+    assert "Proxy-Authorization" not in web.requests[0][3]
+
+
+@pytest.mark.parametrize("scheme", ["socks5", "https"])
+def test_an_unsupported_proxy_scheme_is_a_transport_error(monkeypatch, scheme):
+    _proxy_settings(monkeypatch, f"{scheme}://user:secret@10.0.0.2:8080")
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _png()})
+    with pytest.raises(ai_fetch.TransportError, match=scheme) as raised:
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+    assert "secret" not in str(raised.value)
+    assert "user" not in str(raised.value)
+    assert web.tunnels == []
+    assert web.connected == []
+
+
+@pytest.mark.parametrize("status", [407, 403])
+def test_a_proxy_refusal_is_a_transport_error_without_credentials(monkeypatch, status):
+    import traceback
+    _proxy_settings(monkeypatch, "http://user%20name:p%40ss@10.0.0.2:8080")
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _png()})
+    web.connect_error = OSError(f"Tunnel connection failed: {status} user name:p@ss")
+    with pytest.raises(ai_fetch.TransportError, match="proxy.*refused") as raised:
+        ai_fetch.fetch_card_image("https://img.example/a.png")
+    message = "".join(traceback.format_exception(
+        type(raised.value), raised.value, raised.value.__traceback__))
+    for credential in ("user name", "p@ss", "user%20name", "p%40ss"):
+        assert credential not in message
+    assert web.connected == []
+
+
+@pytest.mark.parametrize("bypass", [("img.example",), ("cdn.example",)])
+def test_a_redirect_reads_the_proxy_for_the_new_host(monkeypatch, bypass):
+    _proxy_settings(monkeypatch, "http://10.0.0.2:8080", bypass=bypass)
+    reads = []
+
+    def proxies():
+        reads.append(True)
+        return {"https": f"http://10.0.0.{len(reads) + 1}:8080"}
+    monkeypatch.setattr(urllib.request, "getproxies", proxies)
+    web = _ProxyWeb(monkeypatch,
+                    {"img.example": ["93.184.216.34"], "cdn.example": ["151.101.1.1"]},
+                    {("img.example", "/a.png"): _Response(
+                        302, {"Location": "https://cdn.example/b.png"}),
+                     ("cdn.example", "/b.png"): _png()})
+    assert ai_fetch.fetch_card_image("https://img.example/a.png") == (PNG, "png")
+    assert len(reads) == 2
+    assert [host for host, _ in web.connected] == list(bypass)
+    tunnel = web.tunnels[0]
+    if bypass == ("img.example",):
+        assert (tunnel.host, tunnel.proxy_host) == ("cdn.example", "10.0.0.3")
+    else:
+        assert (tunnel.host, tunnel.proxy_host) == ("img.example", "10.0.0.2")
+
+
+def test_a_real_proxy_receives_connect_by_name_and_407_is_a_transport_error(monkeypatch):
+    import re
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    server.settimeout(2)
+    port = server.getsockname()[1]
+    requests = []
+    errors = []
+
+    def serve():
+        try:
+            conn, _ = server.accept()
+            with conn:
+                conn.settimeout(2)
+                request = b""
+                while b"\r\n\r\n" not in request:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    request += chunk
+                requests.append(request)
+                conn.sendall(b"HTTP/1.1 407 Proxy Authentication Required\r\n"
+                             b"Content-Length: 0\r\n\r\n")
+        except OSError as e:
+            errors.append(e)
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    _proxy_settings(monkeypatch, f"http://user%20name:p%40ss@127.0.0.1:{port}")
+    monkeypatch.setattr(ai_fetch, "_open_connection", lambda *args: pytest.fail(
+        "a configured proxy must not connect directly"))
+    monkeypatch.setattr(ai_fetch, "_resolve", lambda host, p: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", p))])
+    try:
+        with pytest.raises(ai_fetch.TransportError, match="proxy.*refused") as raised:
+            ai_fetch.fetch_card_image("https://img.example/a.png", timeout=1, deadline_s=2)
+        assert "p@ss" not in str(raised.value)
+        assert "p%40ss" not in str(raised.value)
+    finally:
+        thread.join(3)
+        server.close()
+    assert not thread.is_alive()
+    assert errors == []
+    assert len(requests) == 1
+    lines = requests[0].decode("ascii").split("\r\n")
+    assert re.fullmatch(r"CONNECT img\.example:443 HTTP/1\.[01]", lines[0])
+    assert "Proxy-Authorization: Basic dXNlciBuYW1lOnBAc3M=" in lines[1:]
+
+
+def test_a_proxy_download_still_shuts_down_a_trickling_socket(monkeypatch):
+    import time
+
+    class _BlockedUntilShutdown(_Response):
+        def __init__(self, sock):
+            super().__init__(200, {"Content-Type": "image/png"}, PNG)
+            self.sock = sock
+
+        def read(self, n=-1):
+            while not self.sock.down:
+                time.sleep(0.01)
+            raise ValueError("Read on closed or unwrapped SSL socket.")
+
+    _proxy_settings(monkeypatch, "http://10.0.0.2:8080")
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _BlockedUntilShutdown})
+    sockets = []
+
+    def sock():
+        sockets.append(_Sock())
+        return sockets[-1]
+    web.sock_factory = sock
+    start = time.monotonic()
+    with pytest.raises(ai_fetch.TransportError, match="timed out"):
+        ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.4)
+    assert time.monotonic() - start < 2
+    assert len(web.tunnels) == 1
+    assert sockets[0].down
+
+
+def test_a_proxy_fetch_without_https_support_is_a_transport_error(monkeypatch):
+    _proxy_settings(monkeypatch, "http://10.0.0.2:8080")
+    _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+         {("img.example", "/a.png"): _png()})
+    monkeypatch.setattr(ai_fetch, "_HTTPSConnection", None)
+    with pytest.raises(ai_fetch.TransportError, match="https isn't available here"):
+        ai_fetch.fetch_card_image("https://img.example/a.png")
