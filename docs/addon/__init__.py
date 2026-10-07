@@ -26,31 +26,31 @@ This file is only the menu and startup wiring. The work lives in focused modules
 - background.py  worker dispatch, the startup update check, the auto-sync poll
 - dialogs.py     Manage decks, Settings, Night mode dimming, About, source configuration
 """
+from importlib import import_module
+
 from aqt import gui_hooks, mw
 from aqt.qt import QAction, QMenu
 
-from .ai_dialog import generate_cards
 from .background import _schedule_background_checks
-from .collection import (backup_collection_now, backup_deck_now, export_deck,
-                         import_deck, remove_empty_cards, restore_from_backup,
-                         update_notetypes)
-from .dialogs import about, manage_decks, open_night_mode_dimming, open_settings
-from .dupes_dialog import open_duplicate_scan
 from .nightmode import dim_images_in_night_mode, dim_webviews_in_night_mode
-from .review import flush_update_notes, open_recent_feedback
-from .sync import (clean_up_duplicates, import_single, reconcile_decks,
-                   register_reconcile_action, restore_pending_after_undo, sync_decks,
-                   update_decks)
-from .updates import check_updates, register_update_action
+from .review import flush_update_notes
+from .sync import register_reconcile_action, restore_pending_after_undo
+from .ui import _safe
+from .updates import register_update_action
+
+
+@_safe
+def _lazy(module, name):
+    return getattr(import_module("." + module, __package__), name)()
 
 
 def _menu():
     menu = QMenu("&Intern Pearls", mw)
 
-    def add(target, label, fn):
+    def add(target, label, module, name):
         act = QAction(label, mw)
         act.setMenuRole(QAction.MenuRole.NoRole)  # macOS Qt auto-moves items whose label
-        act.triggered.connect(lambda checked=False, fn=fn: fn())  # Qt's triggered signal passes a
+        act.triggered.connect(lambda checked=False: _lazy(module, name))  # Qt's triggered signal passes a
                                                    # checked bool; discard it since these all take
                                                    # no args and Qt can't introspect through _safe's
                                                    # *args wrapper to know that.
@@ -67,8 +67,8 @@ def _menu():
     # "Update my decks" is the recommended front door (sync + reconcile in one consented
     # flow, see sync.update_decks); Sync decks and Reconcile my decks stay under Advanced
     # as escape hatches for anyone who wants just one half on its own.
-    add(menu, "Update my decks", update_decks)
-    add(menu, "Manage decks", manage_decks)
+    add(menu, "Update my decks", "sync", "update_decks")
+    add(menu, "Manage decks", "dialogs", "manage_decks")
     menu.addSeparator()
     adv = menu.addMenu("Advanced")
     # Four groups below, though the backup/restore group is itself two
@@ -76,39 +76,39 @@ def _menu():
     # source (run either half of Update on its own, or pull one deck in manually),
     # repair the collection itself, back up and restore (deck-scoped, then
     # whole-collection, its own block each), and the add-on's own update check.
-    add(adv, "Sync decks", sync_decks)
+    add(adv, "Sync decks", "sync", "sync_decks")
     # register_reconcile_action lets this item's own label show a pending count (e.g.
     # "Reconcile my decks (3 pending)") set by the auto-sync poll, since that poll only
     # ever applies content on its own — see sync.py's comment by _reconcile_action.
-    register_reconcile_action(add(adv, "Reconcile my decks", reconcile_decks))
-    add(adv, "Import single deck (manual)", import_single)
-    add(adv, "Recent card feedback", open_recent_feedback)
+    register_reconcile_action(add(adv, "Reconcile my decks", "sync", "reconcile_decks"))
+    add(adv, "Import single deck (manual)", "sync", "import_single")
+    add(adv, "Recent card feedback", "review", "open_recent_feedback")
     adv.addSeparator()
-    add(adv, "Clean up duplicate cards", clean_up_duplicates)
-    add(adv, "Remove empty cards", remove_empty_cards)
-    add(adv, "Fix note types", update_notetypes)
+    add(adv, "Clean up duplicate cards", "sync", "clean_up_duplicates")
+    add(adv, "Remove empty cards", "collection", "remove_empty_cards")
+    add(adv, "Fix note types", "collection", "update_notetypes")
     adv.addSeparator()
-    add(adv, "Backup intern pearls deck", backup_deck_now)
-    add(adv, "Restore intern pearls deck", import_deck)
-    add(adv, "Export intern pearls deck", export_deck)
+    add(adv, "Backup intern pearls deck", "collection", "backup_deck_now")
+    add(adv, "Restore intern pearls deck", "collection", "import_deck")
+    add(adv, "Export intern pearls deck", "collection", "export_deck")
     adv.addSeparator()
-    add(adv, "Backup full collection", backup_collection_now)
-    add(adv, "Restore full collection", restore_from_backup)
+    add(adv, "Backup full collection", "collection", "backup_collection_now")
+    add(adv, "Restore full collection", "collection", "restore_from_backup")
     adv.addSeparator()
     # register_update_action lets this item's own label show a known-available update
     # (e.g. "Check for add-on updates (v0.24.0 available)") so that news survives past
     # the startup tooltip's 8 seconds, instead of only living in a notice you can miss.
-    register_update_action(add(adv, "Check for add-on updates", check_updates))
+    register_update_action(add(adv, "Check for add-on updates", "updates", "check_updates"))
     # Experimental, a sibling of Advanced: features that are new or still settling, not
     # yet trusted enough to sit at the top level or inside Advanced's own established
     # groups.
     exp = menu.addMenu("Experimental")
-    add(exp, "Generate cards (AI)", generate_cards)
-    add(exp, "Night mode dimming", open_night_mode_dimming)
-    add(exp, "Scan for duplicates", open_duplicate_scan)
+    add(exp, "Generate cards (AI)", "ai_dialog", "generate_cards")
+    add(exp, "Night mode dimming", "dialogs", "open_night_mode_dimming")
+    add(exp, "Scan for duplicates", "dupes_dialog", "open_duplicate_scan")
     menu.addSeparator()
-    add(menu, "Settings", open_settings)
-    add(menu, "About", about)
+    add(menu, "Settings", "dialogs", "open_settings")
+    add(menu, "About", "dialogs", "about")
 
     try:
         mw.form.menubar.insertMenu(mw.form.menuHelp.menuAction(), menu)

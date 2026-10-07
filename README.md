@@ -285,7 +285,7 @@ Pure Python with no `aqt`/`anki` imports lives in `internpearls/logic.py` (apkg 
 
 Everything that touches Anki is split by concern:
 
-- `__init__.py`: menu and startup wiring only.
+- `__init__.py`: menu and startup wiring only. Menu actions import their target on click. Modules needed by startup hooks load eagerly; the AI wizard, AI setup, duplicate scan and general dialogs load when first opened.
 - `config.py`: constants (including `ADDON_VERSION`), config access, and state under `user_files/`: `installed.json`, `card_feedback.json`, `shipped_fields.json`, `deck_skill.json`, `later_seen.json` (how many Later cards the last Update my decks run left), `state.json`, and the declined-card registry `declined.json` (`{guid: {state, front, deck, decided, hash}}`, where Later is state `held` and may carry a `note`; entries from the old Skip choice are converted on load). All but `state.json` are kept per collection and source, as are `feedback_digests/`, `deck_backups/` and the baselines saved beside them in `deck_backup_baselines/`. The AI files `user_skill.md`, `ai_usage.json` and `ai_last_run.log` are not.
 - `ui.py`: the `_info` / `_warn` / `_ask` / `_prompt` dialog wrappers, the `_safe` / `_bg_safe` error decorators, and styling helpers.
 - `palette.py`: every colour, in a light and a dark set.

@@ -8,6 +8,10 @@ widgets by label, script clicks and edits), append it, and re-run. Flows are
 deterministic, so the replay is exact.
 """
 import json
+import os
+import subprocess
+import sys
+import textwrap
 
 import mock_anki
 import pytest
@@ -113,6 +117,99 @@ def _write_source(tmp_path, deck="Intern Pearls::Intern Custom::Pharm", version=
 
 
 # ------------------------------------------------------------------------ menu
+def _run_menu_probe(script, *args):
+    bootstrap = """
+import os
+import shutil
+import sys
+import types
+sys.path.insert(0, 'tests')
+import mock_anki
+anki = mock_anki.install()
+pkg = types.ModuleType('internpearls')
+pkg.__path__ = [os.path.abspath('internpearls')]
+sys.modules['internpearls'] = pkg
+shutil.which = lambda *a, **kw: None
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(bootstrap) + textwrap.dedent(script),
+         *args],
+        cwd=os.path.join(os.path.dirname(__file__), ".."),
+        capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_addon_startup_defers_menu_only_modules():
+    _run_menu_probe("""
+        mock_anki.load_addon_init()
+        deferred = ('ai_dialog', 'ai_setup', 'ai_cli', 'ai_fetch',
+                    'dupes_dialog', 'dialogs')
+        assert not [name for name in deferred
+                    if 'internpearls.' + name in sys.modules]
+        from aqt import gui_hooks
+        assert gui_hooks.card_will_show.count() == 1
+        assert gui_hooks.webview_will_set_content.count() == 1
+        assert gui_hooks.state_did_undo.count() == 1
+        assert gui_hooks.profile_will_close.count() == 1
+        assert gui_hooks.main_window_did_init.count() == 2
+        assert gui_hooks.profile_did_open.count() == 1
+    """)
+
+
+@pytest.mark.parametrize("module, label, title", [
+    ("ai_dialog", "Generate cards (AI)", "Generate cards with AI"),
+    ("dupes_dialog", "Scan for duplicates", "Scan for duplicates"),
+    ("dialogs", "Settings", "Settings"),
+])
+def test_menu_click_imports_and_opens_dialog(module, label, title):
+    _run_menu_probe("""
+        module, label, title = sys.argv[1:]
+        menu = mock_anki.load_addon_init()
+        assert 'internpearls.' + module not in sys.modules
+        items = []
+        for node in menu.tree():
+            items.extend(node['items'] if node['t'] == 'menu' else [node])
+        action = next(node for node in items if node.get('label') == label)
+        anki.gui.interactive = True
+        try:
+            mock_anki.trigger_action(action['id'])
+        except mock_anki.NeedInteraction as needed:
+            assert needed.payload['kind'] == 'dialog'
+            assert title in needed.payload['title']
+        else:
+            raise AssertionError('menu action did not open a dialog')
+        assert 'internpearls.' + module in sys.modules
+        if module == 'ai_dialog':
+            assert 'internpearls.ai_setup' in sys.modules
+            assert 'internpearls.ai_cli' in sys.modules
+            assert 'internpearls.ai_fetch' in sys.modules
+    """, module, label, title)
+
+
+def test_lazy_menu_import_error_shows_plain_warning():
+    _run_menu_probe("""
+        menu = mock_anki.load_addon_init()
+        sys.modules.pop('internpearls.ai_dialog', None)
+        class BrokenImport:
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == 'internpearls.ai_dialog':
+                    raise ImportError('<unavailable> & missing')
+        sys.meta_path.insert(0, BrokenImport())
+        experimental = next(node for node in menu.tree()
+                            if node.get('label') == 'Experimental')
+        action = next(node for node in experimental['items']
+                      if node.get('label') == 'Generate cards (AI)')
+        try:
+            mock_anki.trigger_action(action['id'])
+        except mock_anki.NeedInteraction:
+            pass
+        assert len(anki.gui.warnings) == 1
+        assert ('Something went wrong: &lt;unavailable&gt; &amp; missing'
+                in anki.gui.warnings[0])
+        assert '<unavailable>' not in anki.gui.warnings[0]
+    """)
+
+
 def _advanced_labels(anki):
     """Build the real menu and return just the Advanced submenu's item labels,
     in order."""
