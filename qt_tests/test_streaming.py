@@ -97,8 +97,8 @@ def test_a_list_shorter_than_its_viewport_builds_every_row_and_stops():
 
 
 def test_idle_prefetch_builds_the_backlog_hidden_and_reveals_it_on_scroll():
-    """Once the viewport is filled, the rest of the list keeps building a few rows at
-    a time on the idle timer, but those rows stay hidden so the content height (and
+    """Once the viewport is filled, rows ahead build a few at a time on the idle
+    timer, but those rows stay hidden so the content height (and
     the scrollbar) does not move while the reader is still. Scrolling reveals the
     prebuilt rows instead of building them."""
     import time

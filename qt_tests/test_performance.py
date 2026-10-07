@@ -220,9 +220,40 @@ def test_scrolling_deep_into_a_long_list_costs_no_more_than_the_first_batch():
         f"steps of {[round(s, 3) for s in steps[:3]]}s")
 
 
+def test_update_screen_idle_prefetch_stops_with_timer_inactive_at_cap():
+    from internpearls.platform import platform
+
+    app, dlg, lst, _bar, flush = _long_update_body()
+    shown = lst.shown()
+    try:
+        for _ in range(100):
+            lst._last_scroll = -1
+            lst._idle._fire()
+            if lst._prefetching:
+                handle = platform()._live_work[-1]
+                handle.join()
+                handle._timer_handle._fire()
+            app.processEvents()
+        assert lst.built() == shown + 100
+        assert lst.built() <= lst.shown() + lst.PREFETCH_AHEAD
+        assert lst.shown() == shown
+        assert not lst._idle.is_active()
+        dlg.hide()
+        dlg.show()
+        app.processEvents()
+        assert not lst._idle.is_active()
+        lst.verticalScrollBar().setValue(lst.verticalScrollBar().maximum())
+        app.processEvents()
+        assert lst._idle.is_active()
+    finally:
+        flush()
+        dlg.close()
+        dlg.deleteLater()
+        app.processEvents()
+
+
 def test_filtering_after_the_prefetch_has_built_everything_stays_quick():
-    """A filter tears down every row built so far, and the idle prefetch keeps building
-    while the dialog is open, so this is the case a learner reading a long list hits."""
+    """A filter stays quick even after a caller explicitly builds every row."""
     app, dlg, lst, bar, flush = _long_update_body()
     lst._build_upto(lst.total())
     app.processEvents()

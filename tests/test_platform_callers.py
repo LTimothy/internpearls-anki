@@ -131,6 +131,27 @@ class _Checkpoints:
         pass
 
 
+def test_streaming_prefetch_ticks_at_cap_submit_no_work(anki):
+    from internpearls import widgets
+
+    native = _DeferredPlatform()
+    with use_platform(native):
+        listing = widgets.StreamingList(lambda item: widgets.QWidget(), list(range(1000)))
+        listing.isVisible = lambda: True
+        listing._last_scroll = -1
+        for _ in range(100):
+            listing._idle_extend()
+            while native.pending:
+                compute, deliver = native.pending.pop(0)
+                deliver(compute(_Checkpoints()))
+        assert listing.built() == 150
+        assert native.requests[-1].inputs["count"] == 1
+        requests = len(native.requests)
+        for _ in range(10):
+            listing._idle_extend()
+        assert len(native.requests) == requests
+
+
 def test_a_prefetch_that_lands_after_a_scroll_is_dropped(anki):
     """A scroll can build rows while a prefetch for those same rows is in flight.
     Delivering that batch anyway renders them twice and pushes every later row out of

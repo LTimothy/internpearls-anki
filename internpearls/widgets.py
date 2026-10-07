@@ -629,11 +629,10 @@ class StreamingList(QScrollArea):
 
         self._last_scroll = 0.0
         self.verticalScrollBar().valueChanged.connect(self._maybe_extend)
-        self._extend()
 
         # Idle prefetch. Building a 50-row batch at the moment the reader scrolls to
-        # the boundary is a visible hitch, so once the viewport is filled the backlog
-        # is built a few rows at a time on a timer while the reader keeps reading.
+        # the boundary is a visible hitch, so once the viewport is filled a bounded
+        # lookahead is built a few rows at a time while the reader keeps reading.
         # Prefetched rows wait in a hidden page until the scroll path reveals it: a
         # hidden page adds nothing to the layout, so the content height (and with it
         # the scrollbar) only moves when the reader scrolls, not on every tick. The pace is
@@ -643,8 +642,9 @@ class StreamingList(QScrollArea):
         self._idle = platform().create_timer(
             platform_owner_id(self), self._idle_extend, self.IDLE_DELAY_MS,
             single_shot=True)
-        self._idle.start()
+        self._extend()
 
+    PREFETCH_AHEAD = 100
     IDLE_CHUNK = 3
     IDLE_DELAY_MS = 150
     SCROLL_QUIET_S = 0.4
@@ -678,15 +678,17 @@ class StreamingList(QScrollArea):
             self._built += 1
 
     def _idle_extend(self):
+        limit = min(self.total(), self.shown() + self.PREFETCH_AHEAD)
+        if self.built() >= limit:
+            self._idle.stop()
+            return
         if self._prefetching:       # one chunk in flight at a time
             self._idle.start()
-            return
-        if self.built() >= self.total():
             return
         if (self.isVisible()
                 and platform().monotonic() - self._last_scroll > self.SCROLL_QUIET_S):
             start = self.built()
-            end = min(start + self.IDLE_CHUNK, self.total())
+            end = min(start + self.IDLE_CHUNK, limit)
             generation = self._generation
 
             def build(end):
@@ -713,12 +715,16 @@ class StreamingList(QScrollArea):
             self._prefetching = True
             platform().start_work(request, prefetch, build, abandon).start()
         if self.isVisible():
-            self._idle.start()   # hidden, showEvent restarts it
+            self._start_prefetch()   # hidden, showEvent restarts it
+
+    def _start_prefetch(self):
+        if (self.built() < min(self.total(), self.shown() + self.PREFETCH_AHEAD)
+                and not self._idle.is_active()):
+            self._idle.start()
 
     def showEvent(self, event):
         super().showEvent(event)
-        if self.built() < self.total() and not self._idle.is_active():
-            self._idle.start()
+        self._start_prefetch()
 
     def shown(self):
         return self._shown
@@ -767,6 +773,7 @@ class StreamingList(QScrollArea):
         # the batch it just revealed.
         self._page(self._shown // self._batch).setVisible(True)
         self._shown = end
+        self._start_prefetch()
 
     def fill_all(self):
         while self._shown < self.total():
@@ -794,8 +801,6 @@ class StreamingList(QScrollArea):
         self._extend()
         if self.viewport().height() > 0:
             self._fill_viewport()
-        if self.built() < self.total() and not self._idle.is_active():
-            self._idle.start()
 
 
 class _SearchField(QLineEdit):

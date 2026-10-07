@@ -369,6 +369,91 @@ def test_streaming_list_repeated_bottom_scroll_after_exhaustion_does_not_rebuild
         "scrolling to the bottom of an exhausted list must not rebuild or overrun"
 
 
+def _idle_ticks(lst, native, count):
+    from internpearls.platform import wait_for_mock_work
+    for _ in range(count):
+        lst._idle._fire()
+        if lst._prefetching:
+            handle = native._live_work[-1]
+            handle.join()
+            wait_for_mock_work(handle)
+
+
+def test_streaming_list_idle_prefetch_stops_with_timer_inactive_at_cap():
+    from internpearls import widgets
+    from internpearls.platform import NativePlatform, use_platform
+    built = []
+    native = NativePlatform()
+    with use_platform(native):
+        lst = widgets.StreamingList(lambda item: _stub_row(built, item), list(range(1000)))
+        lst.isVisible = lambda: True
+        lst._last_scroll = -1
+        _idle_ticks(lst, native, 100)
+        assert lst.built() == 150
+        assert lst.built() == lst.shown() + lst.PREFETCH_AHEAD
+        assert not lst._idle.is_active()
+        assert built == list(range(150))
+
+
+def test_streaming_list_scroll_restarts_idle_prefetch_to_the_new_cap():
+    from internpearls import widgets
+    from internpearls.platform import NativePlatform, use_platform
+    native = NativePlatform()
+    with use_platform(native):
+        lst = widgets.StreamingList(lambda item: widgets.QWidget(), list(range(1000)))
+        lst.isVisible = lambda: True
+        lst._build_upto(150)
+        lst._idle.stop()
+        bar = lst.verticalScrollBar()
+        bar.setMaximum(1000)
+        bar.setValue(1000)
+        assert lst.shown() == 100
+        assert lst._idle.is_active()
+        lst._last_scroll = -1
+        _idle_ticks(lst, native, 100)
+        assert lst.built() == 200
+        assert lst.built() == lst.shown() + lst.PREFETCH_AHEAD
+        assert not lst._idle.is_active()
+
+
+def test_streaming_list_viewport_fill_restarts_idle_prefetch():
+    from internpearls import widgets
+    lst = widgets.StreamingList(lambda item: widgets.QWidget(), list(range(1000)))
+    lst._build_upto(150)
+    lst._idle.stop()
+    _grown(lst, viewport_height=1000, row_height=10)
+    lst._fill_viewport()
+    assert lst.shown() == 150
+    assert lst._idle.is_active()
+
+
+def test_streaming_list_reset_restarts_bounded_idle_prefetch():
+    from internpearls import widgets
+    from internpearls.platform import NativePlatform, use_platform
+    native = NativePlatform()
+    with use_platform(native):
+        lst = widgets.StreamingList(lambda item: widgets.QWidget(), list(range(1000)))
+        lst.isVisible = lambda: True
+        lst._build_upto(150)
+        lst._idle.stop()
+        lst.reset(list(range(1000, 2000)))
+        assert lst._idle.is_active()
+        lst._last_scroll = -1
+        _idle_ticks(lst, native, 100)
+        assert lst.built() == 150
+        assert not lst._idle.is_active()
+
+
+def test_streaming_list_explicit_build_and_fill_all_are_unbounded():
+    from internpearls import widgets
+    for action in (lambda lst: lst._build_upto(lst.total()), lambda lst: lst.fill_all()):
+        built = []
+        lst = widgets.StreamingList(lambda item: _stub_row(built, item), list(range(1000)))
+        action(lst)
+        assert lst.built() == 1000
+        assert built == list(range(1000))
+
+
 def test_streaming_list_prefetched_rows_stay_hidden_until_revealed():
     """The idle prefetch builds rows ahead of scrolling into pages that stay hidden;
     the batch that later reveals them shows their page. Drives the real prefetch
