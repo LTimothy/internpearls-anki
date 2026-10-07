@@ -1265,6 +1265,133 @@ def test_cloze_filled_html_does_not_let_a_malformed_deletion_swallow_the_next_on
 
 
 # -------------------------------------------------------------- build_feedback_digest
+@pytest.mark.parametrize("text, expected", [
+    ("\u2026", "..."),
+    ("\u2014", "-"), ("\u2013", "-"), ("\u2012", "-"),
+    ("\u2010", "-"), ("\u2011", "-"), ("\u2212", "-"),
+    ("\u2018", "'"), ("\u2019", "'"), ("\u201b", "'"), ("\u2032", "'"),
+    ("\u201c", '"'), ("\u201d", '"'), ("\u201f", '"'), ("\u2033", '"'),
+    ("\u00a0", " "), ("\u2000", " "), ("\u2001", " "), ("\u2002", " "),
+    ("\u2003", " "), ("\u2004", " "), ("\u2005", " "), ("\u2006", " "),
+    ("\u2007", " "), ("\u2008", " "), ("\u2009", " "), ("\u200a", " "),
+    ("\u202f", " "), ("\u205f", " "), ("\u200b", ""),
+    ("\u2192", "->"), ("\u2190", "<-"), ("\u2194", "<->"),
+    ("\u2191", "up"), ("\u2193", "down"),
+    ("\u2265", ">="), ("\u2264", "<="), ("\u2248", "~"), ("\u2260", "!="),
+    ("\u00b1", "+/-"), ("\u00d7", "x"), ("\u00f7", "/"), ("\u00b7", "."),
+    ("37\u00b0C", "37 degC"), ("\u00b5g", "ug"), ("\u03bc", "mu"),
+    ("\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079", "0123456789"),
+    ("\u2080\u2081\u2082\u2083\u2084\u2085\u2086\u2087\u2088\u2089", "0123456789"),
+    ("\u207a\u207b\u208a\u208b", "+-+-"), ("PaCO\u2082", "PaCO2"),
+    ("Jos\u00e9, Ana\u00efs, caf\u00e9", "Jose, Anais, cafe"),
+    ("\ufb01", "fi"),
+])
+def test_ascii_text_spells_unicode_as_ascii(text, expected):
+    assert logic.ascii_text(text) == expected
+
+
+@pytest.mark.parametrize("lower, upper, name", [
+    ("\u03b1", "\u0391", "alpha"), ("\u03b2", "\u0392", "beta"),
+    ("\u03b3", "\u0393", "gamma"), ("\u03b4", "\u0394", "delta"),
+    ("\u03b5", "\u0395", "epsilon"), ("\u03b6", "\u0396", "zeta"),
+    ("\u03b7", "\u0397", "eta"), ("\u03b8", "\u0398", "theta"),
+    ("\u03b9", "\u0399", "iota"), ("\u03ba", "\u039a", "kappa"),
+    ("\u03bb", "\u039b", "lambda"), ("\u03bc", "\u039c", "mu"),
+    ("\u03bd", "\u039d", "nu"), ("\u03be", "\u039e", "xi"),
+    ("\u03bf", "\u039f", "omicron"), ("\u03c0", "\u03a0", "pi"),
+    ("\u03c1", "\u03a1", "rho"), ("\u03c2", "\u03a3", "sigma"),
+    ("\u03c3", "\u03a3", "sigma"), ("\u03c4", "\u03a4", "tau"),
+    ("\u03c5", "\u03a5", "upsilon"), ("\u03c6", "\u03a6", "phi"),
+    ("\u03c7", "\u03a7", "chi"), ("\u03c8", "\u03a8", "psi"),
+    ("\u03c9", "\u03a9", "omega"),
+])
+def test_ascii_text_spells_greek_names_with_case(lower, upper, name):
+    assert logic.ascii_text(lower) == name
+    assert logic.ascii_text(upper) == name.capitalize()
+
+
+def test_ascii_text_keeps_unmapped_text_and_newlines():
+    text = "ASCII !? <>=\n\u4e2d\u6587 \u263a\ufe0f"
+    assert logic.ascii_text(text) == text
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("\u304c\u304e", "\u304c\u304e"),
+    ("\u304b\u3099", "\u304c"),
+    ("\ud55c\uad6d\uc5b4", "\ud55c\uad6d\uc5b4"),
+    ("Jos\u00e9", "Jose"),
+    ("\uff11", "1"),
+    ("\u00b2", "2"),
+    ("Jos\u00e9 \u304c\u304e", "Jose \u304c\u304e"),
+    ("caf\u00e9", "cafe"),
+    ("cafe\u0301", "cafe"),
+])
+def test_ascii_text_decomposes_only_to_nonempty_ascii(text, expected):
+    assert logic.ascii_text(text) == expected
+
+
+def test_ascii_text_is_idempotent():
+    text = ("Jos\u00e9\u2019s PaCO\u2082 \u2192 \u03b2\u2081\u2026\n\u4e2d\u6587 "
+            "\u304c\u304e \ud55c\uad6d\uc5b4 \uff11\u00b2 cafe\u0301")
+    converted = logic.ascii_text(text)
+    assert logic.ascii_text(converted) == converted
+
+
+def test_build_feedback_digest_spells_truncated_front_with_three_periods():
+    front = logic.truncate("A long card front", 10)
+    text = logic.build_feedback_digest([{"deck": "D", "front": front}])
+    assert '  "A long ca..."\n' in text
+    assert "\u2026" not in text
+    assert logic.plain_text(front) == "A long ca\u2026"
+
+
+def test_build_feedback_digest_keeps_guid_punctuation_unchanged():
+    guid = "a!#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+    text = logic.build_feedback_digest(
+        [{"deck": "D", "front": "Card", "guid": guid}],
+        standing_declines={guid: {"state": "keep", "deck": "D"}})
+    assert f"  guid {guid}\n" in text
+    assert f"    D (1), undated: {guid}\n" in text
+
+
+def test_build_feedback_digest_keeps_cjk_note_unchanged():
+    text = logic.build_feedback_digest([
+        {"deck": "D", "front": "Card", "note": "\u4e2d\u6587\u5907\u6ce8"}])
+    assert "  > \u4e2d\u6587\u5907\u6ce8\n" in text
+
+
+def test_build_feedback_digest_deaccents_a_name_in_a_note():
+    text = logic.build_feedback_digest([
+        {"deck": "D", "front": "Card", "note": "Jos\u00e9 suggests a shorter front"}])
+    assert "  > Jose suggests a shorter front\n" in text
+
+
+def test_build_feedback_digest_spells_every_section_as_ascii():
+    front = "PaCO\u2082\u2014\u03b2\u2081 blocker\u2019s effect on ventilation is unclear"
+    text = logic.build_feedback_digest(
+        [{"deck": "IP::Jos\u00e9\u2019s ICU", "front": logic.truncate(front, 40),
+          "guid": "g&<>'-", "decision": "kept\u2014revise",
+          "note": "37\u00b0C; \u00b5g/kg \u2192 \u03b2\u2081; Jos\u00e9\u2019s note"}],
+        version="1\u20102", date="today\u2019s run",
+        standing_declines={"s&<>'-": {"state": "custom\u2014state",
+                                     "deck": "IP::Caf\u00e9\u2019s cards",
+                                     "decided": "day\u20101"}})
+    assert text == (
+        "Intern Pearls card feedback (today's run)\n"
+        "Add-on v1-2\n\n"
+        "Jose's ICU\n"
+        '  "PaCO2-beta1 blocker\'s effect on ventilatio..."\n'
+        "  decision: kept-revise\n"
+        "  guid g&<>'-\n"
+        "  > 37 degC; ug/kg -> beta1; Jose's note\n\n\n"
+        "Current standing declines (1)\n"
+        "  Other (1)\n"
+        "    Cafe's cards (1), day-1: custom-state:s&<>'-\n"
+    )
+    assert "?" not in text
+    assert all(ch == "\n" or " " <= ch <= "~" for ch in text)
+
+
 def test_build_feedback_digest_groups_by_deck_and_names_each_card(tmp_path):
     text = logic.build_feedback_digest([
         {"deck": "Intern Pearls::Intern Custom::Example Deck", "front": "Vasopressor?",

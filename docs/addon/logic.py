@@ -20,6 +20,7 @@ import unicodedata
 import zipfile
 
 from .ai_logic import is_generated_guid
+from .dupes import _GREEK
 
 FS = "\x1f"   # Anki's field separator inside a note's flds column
 
@@ -2288,6 +2289,39 @@ def _decline_snapshot_lines(registry, excluded=()):
     return lines
 
 
+_ASCII_TABLE = {ord(ch): name for ch, name in _GREEK.items()}
+_ASCII_TABLE.update({ord(ch.upper()): name.capitalize() for ch, name in _GREEK.items()})
+_ASCII_TABLE.update({
+    ord(ch): spelling
+    for chars, spelling in (
+        ("\u2026", "..."),
+        ("\u2014\u2013\u2012\u2010\u2011\u2212\u207b\u208b", "-"),
+        ("\u2018\u2019\u201b\u2032", "'"),
+        ("\u201c\u201d\u201f\u2033", '"'),
+        ("\u00a0\u2000\u2001\u2002\u2003\u2004\u2005\u2006"
+         "\u2007\u2008\u2009\u200a\u202f\u205f", " "),
+        ("\u200b", ""),
+        ("\u2192", "->"), ("\u2190", "<-"), ("\u2194", "<->"),
+        ("\u2191", "up"), ("\u2193", "down"),
+        ("\u2265", ">="), ("\u2264", "<="), ("\u2248", "~"), ("\u2260", "!="),
+        ("\u00b1", "+/-"), ("\u00d7", "x"), ("\u00f7", "/"), ("\u00b7", "."),
+        ("\u00b0", " deg"), ("\u00b5", "u"),
+    )
+    for ch in chars
+})
+
+
+def ascii_text(text):
+    """Spell Unicode punctuation and symbols in ASCII where a spelling exists."""
+    text = unicodedata.normalize("NFC", text)
+    result = []
+    for ch in text.translate(_ASCII_TABLE):
+        folded = "".join(c for c in unicodedata.normalize("NFKD", ch)
+                         if not unicodedata.combining(c))
+        result.append(folded if folded and folded.isascii() else ch)
+    return "".join(result)
+
+
 def build_feedback_digest(entries, version="", date="", standing_declines=None,
                           excluded=()):
     """Render flagged-card feedback as plain text, ready to paste into a message.
@@ -2338,7 +2372,7 @@ def build_feedback_digest(entries, version="", date="", standing_declines=None,
             lines.append("")
     if standing_declines is not None:
         lines.extend(_decline_snapshot_lines(standing_declines, excluded))
-    return "\n".join(lines).rstrip() + "\n"
+    return ascii_text("\n".join(lines).rstrip() + "\n")
 
 
 def duplicate_dialog_rows(groups):
