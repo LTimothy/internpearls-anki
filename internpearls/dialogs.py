@@ -264,7 +264,7 @@ def configure_source():
         with wait_cursor():
             manifest, _, source = _fetch_manifest(_cfg())
     except Exception as e:
-        _warn(f"Saved, but couldn't connect: {e}<br><br>"
+        _warn(f"Saved, but couldn't connect: {html.escape(str(e), quote=False)}<br><br>"
               "Double-check the repo name and token (or folder path), then use "
               "<i>Change source</i> in Manage decks again.")
         return
@@ -458,6 +458,7 @@ class _DeckManagerDialog(QDialog):
 
         source_row = QHBoxLayout()
         source_label = QLabel(f"Source: {source}")
+        source_label.setTextFormat(Qt.TextFormat.PlainText)
         # A failed local folder puts the whole path in this line, so without wrapping
         # one long path widens the dialog to the error's own width.
         source_label.setWordWrap(True)

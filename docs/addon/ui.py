@@ -19,6 +19,7 @@ headings, hints, and link-style buttons share one look defined here, instead of 
 dialog carrying its own copy of the stylesheet strings.
 """
 import functools
+import html
 import sys
 import traceback
 from contextlib import contextmanager
@@ -428,7 +429,7 @@ def _safe(fn):
                 print(f"Intern Pearls: something went wrong while Anki was closing: {e}",
                       file=sys.stderr)
                 return None
-            _warn(f"Something went wrong: {e}<br><br>"
+            _warn(f"Something went wrong: {html.escape(str(e), quote=False)}<br><br>"
                   "If a backup was taken before this ran, Advanced has tools to "
                   "revert to it: Restore intern pearls deck or Restore full collection.")
     return wrapper

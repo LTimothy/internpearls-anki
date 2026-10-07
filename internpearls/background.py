@@ -9,6 +9,7 @@ something actually needs to change) still runs on the main thread inside the
 completion callback, same as it does for a manual Sync decks click; that
 part is unaffected by this and isn't the part that could hang.
 """
+import html
 import tempfile
 import traceback
 
@@ -103,7 +104,8 @@ def _check_addon_updates_background():
                 tooltip(f"Intern Pearls Deck Tools updated itself to v{latest}. Restart "
                        "Anki to use it.", period=8000, parent=mw)
             except Exception as e:
-                tooltip(f"Intern Pearls: couldn't install v{latest} automatically ({e}). "
+                tooltip(f"Intern Pearls: couldn't install v{latest} automatically "
+                       f"({html.escape(str(e), quote=False)}). "
                        "Try Advanced → Check for add-on updates.", period=8000, parent=mw)
         else:
             # Either a plain notify, or auto-update was requested but the package

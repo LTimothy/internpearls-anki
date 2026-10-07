@@ -7,6 +7,21 @@ paint. These assert the visible result.
 import harness
 
 
+def test_manage_decks_source_label_displays_literal_text():
+    harness.app()
+    mock, q = harness.bootstrap()
+    from internpearls import dialogs
+    source = "error: <b>x</b> & y"
+    dialog = dialogs._DeckManagerDialog(mock.mw, [], [], source,
+                                       configured=True, source_failed=True)
+    try:
+        label = next(w for w in dialog.findChildren(q.QLabel)
+                     if w.text() == f"Source: {source}")
+        assert label.textFormat() == q.Qt.TextFormat.PlainText
+    finally:
+        dialog.deleteLater()
+
+
 def _carets(dialog, q):
     return [b for b in dialog.findChildren(q.QPushButton)
             if b.text() in (harness.CARET_CLOSED, harness.CARET_OPEN)]

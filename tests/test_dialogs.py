@@ -1559,6 +1559,22 @@ def test_the_mock_directory_picker_answers_through_the_prompt_payload():
     assert QFileDialog.getExistingDirectory(None, "Pick a folder", "/seed") == ""
 
 
+def test_configure_source_failure_escapes_exception_text(anki, monkeypatch):
+    from internpearls import dialogs
+    from test_lifecycle import _raise_markup_error
+    monkeypatch.setattr(dialogs, "_fetch_manifest", _raise_markup_error)
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            return _pick_source(p["tree"], "Try the example deck")
+        assert p["kind"] == "warn"
+        assert 'Saved, but couldn\'t connect: &lt;b&gt;x&lt;/b&gt; &amp; "y"<br><br>' in p["text"]
+        return {}
+
+    drive(anki, dialogs.configure_source, respond)
+
+
 def test_configure_source_message_uses_the_palette_not_a_css_keyword(anki):
     """The explanation and the option hints are styled labels now rather than one
     rich-text message, so the check reads their styles instead of a message string:

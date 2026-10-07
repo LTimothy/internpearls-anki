@@ -8,6 +8,7 @@ compose these; nothing here fetches from the network.
 import copy
 import datetime
 import hashlib
+import html
 import json
 import os
 import re
@@ -1429,10 +1430,11 @@ def export_deck():
     try:
         note_count = _export_deck_to(path, deck_name)
     except Exception as e:
-        _warn(f"Export failed: {e}")
+        _warn(f"Export failed: {html.escape(str(e), quote=False)}")
         return
-    _info(f"Exported <b>{plural(note_count, 'note')}</b> from {deck_name} to:"
-          f"<br><code>{path}</code><br><br>"
+    _info(f"Exported <b>{plural(note_count, 'note')}</b> from "
+          f"{html.escape(str(deck_name), quote=False)} to:"
+          f"<br><code>{html.escape(str(path), quote=False)}</code><br><br>"
           "Review history, deck options, and media are all included, this is a "
           "complete, standalone copy of just this deck.")
 
@@ -1453,8 +1455,9 @@ def import_deck():
         return
     if isinstance(src, (list, tuple)):
         src = src[0]
-    if not _ask(f"Import {os.path.basename(src)}? Matching cards are updated in "
-                "place, keeping their scheduling; anything not already here is added "
+    if not _ask(f"Import {html.escape(str(os.path.basename(src)), quote=False)}? "
+                "Matching cards are updated in place, keeping their scheduling; "
+                "anything not already here is added "
                 "as new. A backup is taken automatically first.",
                 yes_label="Import", no_label="Cancel"):
         return
@@ -1472,7 +1475,7 @@ def import_deck():
                   "imported.")
             return
         except Exception as e:
-            _warn(f"Import failed: {e}")
+            _warn(f"Import failed: {html.escape(str(e), quote=False)}")
             return
         if not _pre_sync_backup_or_confirm_skip(cfg["export_deck"],
                                                 _restore_decks(src),
@@ -1481,7 +1484,7 @@ def import_deck():
         try:
             result = _import_apkg(checked, with_scheduling=True)
         except Exception as e:
-            _warn(f"Import failed: {e}")
+            _warn(f"Import failed: {html.escape(str(e), quote=False)}")
             return
     finally:
         try:
@@ -1505,7 +1508,7 @@ def import_deck():
         invalidate_installed()
     _reset_baseline(src, getattr(result, "log", None))
     mw.reset()
-    _info(f"Imported <code>{os.path.basename(src)}</code>.")
+    _info(f"Imported <code>{html.escape(str(os.path.basename(src)), quote=False)}</code>.")
 
 
 def _restore_decks(src):
@@ -1559,10 +1562,11 @@ def backup_deck_now():
     deck_name = _cfg()["export_deck"]
     path = _backup_deck(deck_name)
     if not path:
-        _warn(f"Couldn't back up the <b>{deck_name}</b> deck. It may not exist in "
-              "this collection yet.")
+        _warn(f"Couldn't back up the <b>{html.escape(str(deck_name), quote=False)}</b> "
+              "deck. It may not exist in this collection yet.")
         return
-    _info(f"Backed up the Intern Pearls deck to:<br><code>{path}</code>")
+    _info("Backed up the Intern Pearls deck to:<br>"
+          f"<code>{html.escape(str(path), quote=False)}</code>")
 
 
 @_safe

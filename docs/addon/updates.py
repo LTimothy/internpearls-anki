@@ -4,6 +4,7 @@ The background once-per-launch check lives in background.py; the fetch/download
 helpers here are its single source of truth too, so the manual and background paths
 can't drift apart.
 """
+import html
 import json
 import os
 import re
@@ -175,7 +176,7 @@ def check_updates():
     try:
         latest = _fetch_addon_version_info(token=token)
     except Exception as e:
-        _warn(f"Couldn't check for updates: {e}")
+        _warn(f"Couldn't check for updates: {html.escape(str(e), quote=False)}")
         return
     _refresh_update_action_label(latest.get("version", ""))
 
@@ -191,5 +192,6 @@ def check_updates():
             token=token, expected=latest["version"]))
         _info("Updated. Please restart Anki.")
     except Exception as e:
-        _warn(f"Auto-install failed ({e}).<br>Opening the download page instead.")
+        _warn(f"Auto-install failed ({html.escape(str(e), quote=False)}).<br>"
+              "Opening the download page instead.")
         openLink(f"https://github.com/{ANKI_REPO}")

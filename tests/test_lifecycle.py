@@ -2,8 +2,139 @@
 import sys
 
 import mock_anki
+import pytest
 from test_sync_flows import DECK, NEW_CSS, SCOPE, TAGS, _StubAction, _fields, _write_source
 from mock_anki import make_model
+
+
+def _raise_markup_error(*args, **kwargs):
+    raise RuntimeError('<b>x</b> & "y"')
+
+
+def test_safe_warning_escapes_exception_text(anki):
+    from internpearls import ui
+
+    ui._safe(_raise_markup_error)()
+
+    assert 'Something went wrong: &lt;b&gt;x&lt;/b&gt; &amp; "y"<br><br>' in anki.gui.warnings[-1]
+
+
+def test_export_message_escapes_deck_name_and_path(anki, tmp_path):
+    from internpearls import collection
+    deck = "A <b> & B"
+    anki.mw._config = {"export_deck": deck}
+    anki.col.add_note("g1", _fields("Front"), TAGS.split(), deck=deck)
+    path = tmp_path / "copy <b> & B.apkg"
+    anki.gui.file_picks.append(str(path))
+
+    collection.export_deck()
+
+    assert path.exists()
+    text = anki.gui.infos[-1]
+    assert "Exported <b>1 note</b> from A &lt;b&gt; &amp; B to:" in text
+    assert "copy &lt;b&gt; &amp; B.apkg</code><br><br>" in text
+
+
+def test_export_failure_escapes_exception_text(anki, tmp_path, monkeypatch):
+    from internpearls import collection
+    anki.gui.file_picks.append(str(tmp_path / "copy.apkg"))
+    monkeypatch.setattr(collection, "_export_deck_to", _raise_markup_error)
+
+    collection.export_deck()
+
+    assert anki.gui.warnings[-1] == 'Export failed: &lt;b&gt;x&lt;/b&gt; &amp; "y"'
+
+
+def test_backup_message_escapes_path(anki, tmp_path, monkeypatch):
+    from internpearls import collection
+    deck = "A <b> & B"
+    anki.mw._config = {"export_deck": deck}
+    anki.col.add_note("g1", _fields("Front"), TAGS.split(), deck=deck)
+    monkeypatch.setattr(collection, "_USER_FILES", str(tmp_path / "folder <b> & B"))
+
+    collection.backup_deck_now()
+
+    text = anki.gui.infos[-1]
+    assert "to:<br><code>" in text and text.endswith("</code>")
+    assert "folder &lt;b&gt; &amp; B" in text
+
+
+def test_backup_failure_escapes_deck_name(anki):
+    from internpearls import collection
+    anki.mw._config = {"export_deck": "A <b> & B"}
+
+    collection.backup_deck_now()
+
+    assert "Couldn't back up the <b>A &lt;b&gt; &amp; B</b> deck." in anki.gui.warnings[-1]
+
+
+def test_import_confirmation_escapes_filename(anki, tmp_path):
+    from internpearls import collection
+    anki.gui.file_picks.append(str(tmp_path / "copy <b> & B.apkg"))
+    anki.gui.answers.append(False)
+
+    collection.import_deck()
+
+    assert "Import copy &lt;b&gt; &amp; B.apkg?" in anki.gui.asks[-1]
+    assert not anki.col.imports
+
+
+@pytest.mark.parametrize("failure", ["copy_apkg_checked", "_import_apkg"])
+def test_import_failure_escapes_exception_text(anki, tmp_path, monkeypatch, failure):
+    from internpearls import collection
+    anki.col.add_note("g1", _fields("Front"), TAGS.split(), deck=DECK)
+    src = collection._backup_deck(DECK)
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+    monkeypatch.setattr(collection, failure, _raise_markup_error)
+
+    collection.import_deck()
+
+    assert anki.gui.warnings[-1] == 'Import failed: &lt;b&gt;x&lt;/b&gt; &amp; "y"'
+
+
+def test_import_success_escapes_filename(anki, tmp_path):
+    from internpearls import collection
+    anki.col.add_note("g1", _fields("Front"), TAGS.split(), deck=DECK)
+    src = tmp_path / "copy <b> & B.apkg"
+    collection._export_deck_to(str(src), DECK)
+    anki.gui.file_picks.append(str(src))
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert anki.gui.infos[-1] == "Imported <code>copy &lt;b&gt; &amp; B.apkg</code>."
+
+
+def test_update_check_failure_escapes_exception_text(anki, monkeypatch):
+    from internpearls import updates
+    monkeypatch.setattr(updates, "_fetch_addon_version_info", _raise_markup_error)
+
+    updates.check_updates()
+
+    assert anki.gui.warnings[-1] == 'Couldn\'t check for updates: &lt;b&gt;x&lt;/b&gt; &amp; "y"'
+
+
+def test_update_install_failure_escapes_exception_text(anki, tmp_path, monkeypatch):
+    from internpearls import updates
+    _offer_update(monkeypatch, tmp_path, "copy.ankiaddon")
+    monkeypatch.setattr(updates, "_install_package", _raise_markup_error)
+    anki.gui.answers.append(True)
+
+    updates.check_updates()
+
+    assert 'Auto-install failed (&lt;b&gt;x&lt;/b&gt; &amp; "y").<br>' in anki.gui.warnings[-1]
+
+
+def test_background_install_failure_escapes_exception_text(anki, tmp_path, monkeypatch):
+    from internpearls import background
+    _offer_update(monkeypatch, tmp_path, "copy.ankiaddon")
+    monkeypatch.setattr(background, "_install_package", _raise_markup_error)
+    anki.mw._config = {"auto_update_addon": True, "notify_addon_updates": True}
+
+    background._check_addon_updates_background()
+
+    assert 'automatically (&lt;b&gt;x&lt;/b&gt; &amp; "y").' in anki.gui.tooltips[-1]
 
 
 def _open_profile(anki, path):
