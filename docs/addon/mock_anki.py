@@ -47,6 +47,7 @@ import re
 import sqlite3
 import sys
 import tempfile
+import time
 import types
 import zipfile
 
@@ -321,11 +322,14 @@ class _Models:
                     del self._col._cards[cid]
             self._col._generate_cloze_cards(note)
         self._col.notetype_changes.append(list(req.note_ids))
+        if req.note_ids:
+            self._col._record_write(len(req.note_ids))
 
     def add_field(self, model, field):
         model["flds"].append(field)
         col = getattr(self, "_col", None)
         if col is not None:
+            col._record_write()
             col.scm += 1   # adding a field is a real schema change (bumps schema mod)
             for n in col._notes.values():
                 if n.model is model:
@@ -347,6 +351,8 @@ class _Models:
             self._models[self._models.index(old)] = model
         for index, field in enumerate(model['flds']):
             field['ord'] = index
+        if getattr(self, '_col', None) is not None:
+            self._col._record_write()
 
 
 class _Decks:
@@ -389,11 +395,27 @@ class _Db:
     def __init__(self, col):
         self._col = col
 
-    def scalar(self, _query, guid):
+    def scalar(self, query, *args):
+        if query == "select mod from col":
+            assert not args, args
+            return self._col.mod
+        if query == "select total_changes()":
+            assert not args, args
+            return self._col._total_changes
+        assert query == "select id from notes where guid = ?", query
+        assert len(args) == 1, args
         for n in self._col._notes.values():
-            if n.guid == guid:
+            if n.guid == args[0]:
                 return n.id
         return None
+
+    def list(self, query, *args):
+        assert re.fullmatch(r"select id from notes where guid in \(\?(?:, \?)*\)",
+                            query), query
+        assert query.count('?') == len(args), args
+        guids = set(args)
+        return [n.id for n in sorted(self._col._notes.values(), key=lambda n: n.id)
+                if n.guid in guids]
 
     def all(self, query, *_args):
         """The one join collection._note_rows_sql runs: (nid, flds, mid, did, odid)
@@ -511,6 +533,8 @@ class MockCollection:
         self._next_id = 1
         self._next_cid = 1
         self._next_guid = 1
+        self.mod = 0
+        self._total_changes = 0
         self.scm = 0        # schema modification counter; only real schema changes bump it
         self.models = _Models([make_model()])
         self.models._col = self
@@ -539,11 +563,18 @@ class MockCollection:
                                           unsuspend_cards=self._unsuspend_cards)
         self.tags = types.SimpleNamespace(bulk_add=self._tags_bulk_add)
 
+    def _record_write(self, rows=1):
+        # The reduced mock tables count persisted row writes, including undo. A
+        # wall-clock mod may repeat; the connection's row count never goes backwards.
+        self._total_changes += rows + 1
+        self.mod = int(time.time() * 1000)
+
     # === undo: add_custom_undo_entry / merge_undo_entries / undo ===
     def add_custom_undo_entry(self, name):
         import copy
         self._undo_entries.append({"name": name, "notes": [], "cards": [],
-                                   "snapshot": copy.deepcopy((self._notes, self._cards))})
+                                   "snapshot": copy.deepcopy((self._notes, self._cards)),
+                                   "mod": self.mod})
         target = len(self._undo_entries) - 1
         self._undo_merge_open = target
         return target
@@ -560,6 +591,8 @@ class MockCollection:
         if not self._undo_entries:
             raise Exception("nothing to undo")
         entry = self._undo_entries.pop()
+        self._record_write(len(entry["notes"]) + len(entry["cards"]) or 1)
+        self.mod = entry.get("mod", self.mod)
         counter = len(self._undo_entries)   # the id add_custom_undo_entry returned
         if "snapshot" in entry:
             self._notes, self._cards = entry["snapshot"]
@@ -629,6 +662,7 @@ class MockCollection:
         # missing merge observable in a test rather than silently equivalent.
         self._undo_entries.append(
             {"name": "Add Note", "notes": [note.id], "cards": list(note._card_ids)})
+        self._record_write(1 + len(note._card_ids))
         return types.SimpleNamespace(note_id=note.id)
 
     # === helpers for tests and the demo ===
@@ -648,23 +682,42 @@ class MockCollection:
             memory_state=None, desired_retention=None, decay=None,
             last_review_time=None, odid=0)
         note._card_ids.append(cid)
+        self._record_write(2)
         return note
 
     def note_by_guid(self, guid):
         return next(n for n in self._notes.values() if n.guid == guid)
 
+    def remove_notes(self, nids):
+        rows = 0
+        for nid in nids:
+            note = self._notes.pop(nid, None)
+            if note:
+                rows += 1
+                for cid in note._card_ids:
+                    if self._cards.pop(cid, None) is not None:
+                        rows += 1
+        if rows:
+            self._record_write(rows)
+
     # === card-level surfaces the archive path uses ===
     def set_deck(self, cids, did):
         for cid in cids:
             self._cards[cid].did = did
+        if cids:
+            self._record_write(len(cids))
 
     def _suspend_cards(self, cids):
         for cid in cids:
             self._cards[cid].queue = -1   # -1 is Anki's suspended queue
+        if cids:
+            self._record_write(len(cids))
 
     def _unsuspend_cards(self, cids):
         for cid in cids:
             self._cards[cid].queue = 0
+        if cids:
+            self._record_write(len(cids))
 
     def file_in_filtered_deck(self, nid, filtered_deck, home_deck):
         """Test helper: put a note's card physically in `filtered_deck` with its
@@ -674,6 +727,7 @@ class MockCollection:
         for cid in self._notes[nid]._card_ids:
             self._cards[cid].did = did
             self._cards[cid].odid = odid
+        self._record_write(len(self._notes[nid]._card_ids))
 
     def _tags_bulk_add(self, nids, tag):
         for nid in nids:
@@ -681,6 +735,7 @@ class MockCollection:
             for t in tag.split():
                 if t not in note.tags:
                     note.tags.append(t)
+                    self._record_write()
 
     # === surface the add-on calls ===
     def find_notes(self, search):
@@ -803,9 +858,10 @@ class MockCollection:
         # than applying it: in real Anki this is what persists the change, and a test
         # that only reads the namespace back would pass even if it were never called.
         self.updated_cards.append(card.nid)
+        self._record_write()
 
     def update_note(self, note):
-        pass   # MockNote is mutated in place
+        self._record_write()
 
     def _register_models(self, models_by_mid):
         for m in models_by_mid.values():
@@ -854,6 +910,7 @@ class MockCollection:
                 existing.fields = list(values)[:len(existing._names)] + \
                     [""] * max(0, len(existing._names) - len(values))
                 existing.tags = tags.split()
+                self._record_write()
                 self._generate_cloze_cards(existing)
                 if deck and not existing.deck:
                     existing.deck = deck

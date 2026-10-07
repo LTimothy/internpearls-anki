@@ -4813,7 +4813,7 @@ def test_auto_sync_does_not_renag_when_the_pending_count_shrinks(anki, tmp_path)
     assert len(anki.gui.tooltips) == 1
 
     # The learner tidies one of them up by hand; one is left pending.
-    del anki.col._notes[anki.col.note_by_guid("old2").id]
+    anki.col.remove_notes([anki.col.note_by_guid("old2").id])
 
     background._auto_sync_check()
 
@@ -4834,7 +4834,7 @@ def test_auto_sync_nags_again_once_a_shrunken_backlog_grows(anki, tmp_path):
     anki.mw._config = {"decks_dir": _write_source(tmp_path, {}, retired=both),
                        "auto_sync_decks": True}
     background._auto_sync_check()
-    del anki.col._notes[anki.col.note_by_guid("old2").id]
+    anki.col.remove_notes([anki.col.note_by_guid("old2").id])
     background._auto_sync_check()          # shrank to 1, quiet
     assert len(anki.gui.tooltips) == 1
 
@@ -8947,3 +8947,248 @@ def test_digest_archive_clears_notes_only_after_a_successful_write(
         assert "wrong dose" in review.load_feedback_digests()[0]["text"]
         assert events == ["digest"]
         assert not anki.gui.warnings
+
+
+def test_capture_shipped_reads_only_touched_scoped_notes(anki, monkeypatch):
+    from internpearls import collection
+    from unittest.mock import Mock
+    for i in range(12):
+        anki.col.add_note(f'g{i}', _fields(f'Question {i}', notes=f'Notes {i}'),
+                          TAGS.split())
+    anki.col.add_note('outside', _fields('Outside', notes='Outside notes'), ['Other'])
+    reader = Mock(wraps=anki.col.get_note)
+    monkeypatch.setattr(anki.col, 'get_note', reader)
+
+    assert collection._capture_shipped(['Notes'], SCOPE,
+                                       {'g2', 'g8', 'outside', 'missing'},
+                                       {'g8': ['Back']}) == {
+        'g2': {'Notes': 'Notes 2'}, 'g8': {'Notes': 'Notes 8', 'Back': 'the back'}}
+    assert reader.call_count == 2
+    reader.reset_mock()
+    assert collection._capture_shipped(['Notes'], '', {'outside'}) == {
+        'outside': {'Notes': 'Outside notes'}}
+    assert reader.call_count == 1
+    reader.reset_mock()
+    assert collection._capture_shipped(['Notes'], SCOPE, set()) == {}
+    assert reader.call_count == 0
+
+
+def test_deferred_run_reads_note_types_once(anki, tmp_path, monkeypatch):
+    from internpearls import collection, config, sync
+    from unittest.mock import Mock
+    model = make_model(css='changed style')
+    anki.col.add_note('g1', _fields('Question'), TAGS.split())
+    folder = _write_source(tmp_path, {
+        f'{DECK}::{i}': ('v1', [('g1', _fields('Question'), TAGS)], model)
+        for i in range(23)})
+    _configure(anki, folder)
+    manifest, fetch, _ = sync._fetch_manifest(config._cfg())
+    reader = Mock(wraps=collection._existing_note_types)
+    monkeypatch.setattr(collection, '_existing_note_types', reader)
+
+    result = sync._run_sync(config._cfg(), manifest, fetch, manifest['decks'],
+                            defer_template_changes=True)
+    assert len(result[3]) == 23
+    assert anki.col.imports == []
+    assert reader.call_count == 1
+
+
+def test_note_type_map_refreshes_after_import_before_later_checks(anki, tmp_path,
+                                                                 monkeypatch):
+    from internpearls import collection, config, sync
+    from unittest.mock import Mock
+    cloze = _cloze_model()
+    anki.col.models._models.append(cloze)
+    folder = _write_source(tmp_path, {
+        f'{DECK}::First': ('v1', [('new', _fields('Question'), TAGS)], None),
+        f'{DECK}::Second': ('v1', [('new', _fields('Question'), TAGS)], cloze),
+        f'{DECK}::Third': ('v1', [('new', _fields('Question'), TAGS)], cloze)})
+    _configure(anki, folder)
+    manifest, fetch, _ = sync._fetch_manifest(config._cfg())
+    reader = Mock(wraps=collection._existing_note_types)
+    monkeypatch.setattr(collection, '_existing_note_types', reader)
+
+    result = sync._run_sync(config._cfg(), manifest, fetch, manifest['decks'],
+                            defer_template_changes=True)
+    assert len(anki.col.imports) == 1
+    assert result[3] == [f'{DECK}::Second', f'{DECK}::Third']
+    assert reader.call_count == 2
+
+
+def _idle_reconcile_source(anki, tmp_path):
+    from internpearls import sync
+    action = _StubAction()
+    sync.register_reconcile_action(action)
+    note = anki.col.add_note('old', _fields('Retired question'), TAGS.split(), deck=DECK)
+    folder = _write_source(tmp_path, {}, retired={DECK: {
+        'old': {'identity': 'Retired question', 'reason': 'split', 'superseded_by': []}}})
+    anki.mw._config = {'decks_dir': folder, 'auto_sync_decks': True}
+    return note, action, folder
+
+
+def test_idle_poll_reuses_pending_count(anki, tmp_path, monkeypatch):
+    from internpearls import background
+    from unittest.mock import Mock
+    _idle_reconcile_source(anki, tmp_path)
+    reader = Mock(wraps=background._reconcile_pending)
+    monkeypatch.setattr(background, '_reconcile_pending', reader)
+    background._auto_sync_check()
+    background._auto_sync_check()
+    assert reader.call_count == 1
+    assert len(anki.gui.tooltips) == 1
+
+
+@pytest.mark.parametrize('change', ['edit', 'import', 'manifest', 'undo', 'restore',
+                                  'scope', 'source', 'excluded', 'export_deck'])
+def test_idle_poll_recomputes_pending_after_changes(anki, tmp_path, monkeypatch, change):
+    from internpearls import background, collection
+    from unittest.mock import Mock
+    note, action, folder = _idle_reconcile_source(anki, tmp_path)
+    step = anki.col.add_custom_undo_entry('Edit note')
+    note['Back'] = 'Edited'
+    if change == 'undo':
+        note.tags = ['Other']
+    anki.col.update_note(note)
+    anki.col.merge_undo_entries(step)
+    reader = Mock(wraps=background._reconcile_pending)
+    monkeypatch.setattr(background, '_reconcile_pending', reader)
+    background._auto_sync_check()
+    background._auto_sync_check()
+    assert reader.call_count == 1
+    if change == 'edit':
+        note.tags = ['Other']
+        anki.col.update_note(note)
+    elif change == 'import':
+        src = str(tmp_path / 'import.apkg')
+        make_apkg(src, [('old', _fields('Retired question'), 'Other')])
+        collection._import_apkg(src)
+    elif change == 'manifest':
+        path = tmp_path / 'source' / 'manifest.json'
+        manifest = json.loads(path.read_text())
+        manifest['retired'] = {}
+        path.write_text(json.dumps(manifest))
+    elif change == 'undo':
+        anki.col.undo()
+    elif change == 'restore':
+        anki.mw.col = mock_anki.MockCollection()
+    elif change == 'scope':
+        anki.mw._config['scope_tag'] = 'Other'
+    elif change == 'source':
+        anki.mw._config['github_ref'] = 'another'
+    elif change == 'excluded':
+        anki.mw._config['excluded_decks'] = [DECK]
+    else:
+        anki.mw._config['export_deck'] = 'Another deck'
+    background._auto_sync_check()
+    assert reader.call_count == 2
+    expected = 1 if change in ('undo', 'source', 'export_deck') else 0
+    assert action.text == (f'Reconcile my decks ({expected} pending)'
+                           if expected else 'Reconcile my decks')
+    background._auto_sync_check()
+    assert reader.call_count == 2
+
+
+def test_idle_poll_recomputes_when_collection_marker_is_unavailable(anki, tmp_path,
+                                                                  monkeypatch):
+    from internpearls import background
+    from unittest.mock import Mock
+    _idle_reconcile_source(anki, tmp_path)
+    original = anki.col.db.scalar
+    def scalar(query, *args):
+        if query == 'select total_changes()':
+            raise RuntimeError('Unavailable')
+        return original(query, *args)
+    monkeypatch.setattr(anki.col.db, 'scalar', scalar)
+    reader = Mock(wraps=background._reconcile_pending)
+    monkeypatch.setattr(background, '_reconcile_pending', reader)
+    background._auto_sync_check()
+    background._auto_sync_check()
+    assert reader.call_count == 2
+
+
+def test_multi_deck_collection_read_counts(anki, tmp_path, monkeypatch):
+    from internpearls import background, config, sync
+    from unittest.mock import Mock
+    decks = {}
+    for i in range(5100):
+        anki.col.add_note(f'g{i}', _fields(f'Question {i}'), TAGS.split(),
+                          deck=f'{DECK}::{i // 100}' if i < 2300 else DECK)
+    for i in range(23):
+        decks[f'{DECK}::{i}'] = ('v1', [
+            (f'g{j}', _fields(f'Question {j}', back='Updated'), TAGS)
+            for j in range(i * 100, (i + 1) * 100)], None)
+    folder = _write_source(tmp_path, decks)
+    _configure(anki, folder)
+    manifest, fetch, _ = sync._fetch_manifest(config._cfg())
+    readers = {name: Mock(wraps=getattr(anki.col, name))
+               for name in ('get_note', 'get_card', 'find_notes')}
+    for name, reader in readers.items():
+        monkeypatch.setattr(anki.col, name, reader)
+    result = sync._run_sync(config._cfg(), manifest, fetch, manifest['decks'])
+    assert all(line.startswith('✓') for line in result[0])
+    update = {name: reader.call_count for name, reader in readers.items()}
+    anki.mw._config['auto_sync_decks'] = True
+    background._auto_sync_check()
+    for reader in readers.values():
+        reader.reset_mock()
+    background._auto_sync_check()
+    idle = {name: reader.call_count for name, reader in readers.items()}
+    print('collection reads', {'update': update, 'idle': idle})
+    assert update['get_note'] < 300000
+    assert idle['get_note'] == 5100
+
+
+def test_collection_marker_catches_edits_with_the_same_timestamp(anki, monkeypatch):
+    from internpearls import collection
+    note = anki.col.add_note('g', _fields('Question'), TAGS.split())
+    before = collection._collection_read_key()
+    note['Back'] = 'Updated'
+    anki.col.update_note(note)
+    monkeypatch.setattr(anki.col, 'mod', before[2])
+    assert collection._collection_read_key() != before
+
+
+def test_note_removal_changes_collection_marker(anki):
+    from internpearls import collection
+    note = anki.col.add_note('g', _fields('Question'), TAGS.split())
+    before = collection._collection_read_key()
+    anki.col.remove_notes([note.id])
+    assert collection._collection_read_key() != before
+    assert anki.col.find_notes('') == []
+
+
+def test_shipped_lookup_chunks_guids_and_keeps_duplicate_guids(anki):
+    from internpearls import collection
+    for i in range(1001):
+        anki.col.add_note(f'g{i}', _fields(f'Question {i}', notes='Source notes'),
+                          TAGS.split())
+    anki.col.add_note('g0', _fields('Another', notes='Later notes'), TAGS.split())
+    result = collection._capture_shipped(['Notes'], SCOPE,
+                                         {f'g{i}' for i in range(1001)})
+    assert len(result) == 1001
+    assert result['g0'] == {'Notes': 'Later notes'}
+
+
+@pytest.mark.parametrize('preview', ['initial', 'final'])
+def test_conversion_preview_reads_note_types_once(anki, tmp_path, monkeypatch, preview):
+    from internpearls import collection, config, sync
+    from unittest.mock import Mock
+    anki.col.add_note('g', _fields('Question'), TAGS.split(), deck=DECK)
+    folder = _write_source(tmp_path, {
+        f'{DECK}::{i}': ('v1', [('g', _fields('Question'), TAGS)], None)
+        for i in range(3)})
+    _configure(anki, folder)
+    reader = Mock(wraps=collection._existing_note_types)
+    monkeypatch.setattr(collection, '_existing_note_types', reader)
+    if preview == 'initial':
+        _update(anki, accept=False)
+    else:
+        manifest, fetch, _ = sync._fetch_manifest(config._cfg())
+        todo = manifest['decks']
+        downloaded = {d['name']: fetch(d) for d in todo}
+        assert sync._final_conversion_plan(todo, downloaded,
+                                           collection._existing_front_to_guid(SCOPE),
+                                           {}, SCOPE, set()) == {
+            d['name']: [] for d in todo}
+    # The dialog runner executes the initial preview twice while replaying Cancel.
+    assert reader.call_count == (2 if preview == 'initial' else 1)

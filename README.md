@@ -301,6 +301,8 @@ Everything that touches Anki is split by concern:
 - `widgets.py`: chips, headings, rows and `StreamingList`, shared by every list screen. Idle prefetch builds at most 100 rows ahead of the rows shown and resumes as more batches are revealed.
 - `ai_cli.py`, `ai_setup.py`, `ai_dialog.py`, `dupes_dialog.py`, `nightmode.py`: the Experimental features.
 
+Note-type checks reuse one scoped map while the collection is unchanged, then rebuild it after a write, including imports, conversions and undo. Shipped-field capture resolves touched GUIDs in SQL batches and reads only those notes within the existing scope search. Idle auto-sync polls keep the reconcile count in memory for the open collection and source. The key includes the full manifest, scope, deck settings, collection modification time and SQLite's connection write count. A reopened database, a write or an unavailable change marker forces a fresh check. Polls with downloaded packages always recompute so the live-card guard sees those packages.
+
 ### Running tests
 
 ```bash

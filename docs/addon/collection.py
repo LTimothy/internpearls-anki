@@ -14,6 +14,7 @@ import os
 import re
 import tempfile
 import uuid
+import weakref
 import zipfile
 import zlib
 
@@ -470,10 +471,17 @@ def _capture_shipped(protected, scope_tag, touched, per_note=None):
         return {}
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
     out = {}
+    touched_ids = set()
+    guids = list(touched)
+    for start in range(0, len(guids), 500):
+        chunk = guids[start:start + 500]
+        placeholders = ', '.join('?' for _ in chunk)
+        touched_ids.update(mw.col.db.list(
+            f"select id from notes where guid in ({placeholders})", *chunk))
     for nid in mw.col.find_notes(search):
-        note = mw.col.get_note(nid)
-        if note.guid not in touched:
+        if nid not in touched_ids:
             continue
+        note = mw.col.get_note(nid)
         vals = {}
         for name in protected_for(note.guid, protected, per_note):
             f = _note_field(note, name)
@@ -953,6 +961,34 @@ def carry_scheduling_forward(pairs, existing_guid_to_nid):
     return moved
 
 
+def _collection_read_key():
+    """A read cache belongs to one open database and every write invalidates it."""
+    try:
+        col = mw.col
+        mod = col.mod
+        changes = col.db.scalar("select total_changes()")
+        if not isinstance(mod, int) or not isinstance(changes, int):
+            return None
+        # mod can repeat within a millisecond and undo can restore an older value.
+        return weakref.ref(col), weakref.ref(col.db), mod, changes
+    except Exception:
+        return None
+
+
+class _NoteTypeCache:
+    def __init__(self, scope_tag):
+        self.scope_tag = scope_tag
+        self.key = None
+        self.types = None
+
+    def read(self):
+        key = _collection_read_key()
+        if key is None or key != self.key or self.types is None:
+            self.types = _existing_note_types(self.scope_tag)
+            self.key = key
+        return self.types
+
+
 def _existing_note_types(scope_tag):
     """{note guid: notetype name} for every note under the scope tag."""
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
@@ -1143,7 +1179,8 @@ def missing_notetype_targets(changes):
     return sorted({c["new"] for c in changes if not mw.col.models.by_name(c["new"])})
 
 
-def notetype_changes(src, existing_fronts, aliases, scope_tag, declined):
+def notetype_changes(src, existing_fronts, aliases, scope_tag, declined,
+                     existing_types=None):
     """Note-type changes this .apkg would need on the learner's own notes.
 
     Resolves the .apkg's guids through the same matching ladder the import uses, so a
@@ -1170,8 +1207,9 @@ def notetype_changes(src, existing_fronts, aliases, scope_tag, declined):
             continue
         if guid in incoming:
             by_existing_guid[existing_guid] = incoming[guid]
-    changes = plan_notetype_changes(by_existing_guid, _existing_note_types(scope_tag),
-                                    TARGET_FIELDS)
+    if existing_types is None:
+        existing_types = _existing_note_types(scope_tag)
+    changes = plan_notetype_changes(by_existing_guid, existing_types, TARGET_FIELDS)
     for change in changes:
         change["drops"] = _cards_a_conversion_drops(change)
     return changes

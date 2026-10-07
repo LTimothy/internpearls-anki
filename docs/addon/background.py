@@ -10,6 +10,7 @@ completion callback, same as it does for a manual Sync decks click; that
 part is unaffected by this and isn't the part that could hang.
 """
 import html
+import json
 import tempfile
 import traceback
 
@@ -18,7 +19,8 @@ from aqt.qt import QTimer
 from aqt.utils import tooltip
 
 from .ai_logic import sweep_stale_scratch
-from .collection import _pre_sync_backup_or_skip_silently, installed_matching_collection
+from .collection import (_collection_read_key, _pre_sync_backup_or_skip_silently,
+                         installed_matching_collection)
 from .config import (ADDON_VERSION, AUTO_SYNC_INTERVAL_CEILING_MIN,
                      AUTO_SYNC_INTERVAL_DEFAULT_MIN,
                      AUTO_SYNC_INTERVAL_FLOOR_MIN, INSTALLED, STATE,
@@ -143,6 +145,8 @@ class _Memory:
         # The reconcile-pending count last nudged about: the tooltip speaks only when
         # the count first appears or grows, and the watermark follows it down.
         self.reconcile_notified = 0
+        self.reconcile_key = None
+        self.reconcile_pending = 0
         # Whether the backup-failure tooltip was shown; a backup that fails once
         # usually keeps failing. Cleared by a tick whose backup succeeds.
         self.backup_failure_notified = False
@@ -281,14 +285,30 @@ def _auto_sync_check():
         # this is the one place that keeps the "Reconcile my decks" menu label (and,
         # the first time a backlog appears or grows, a one-time tooltip pointing at
         # it) honest between manual checks.
-        _, fresh, _, moves, _, _, stranded = _reconcile_pending(
-            result["manifest"], live,
-            _live_cards_loader(result["manifest"], None, result["downloaded"]))
+        read_key = _collection_read_key()
+        cache_key = None
+        # Downloaded packages can change the live-card guard independently of the
+        # manifest. Cache only idle polls, whose loader reads no packages.
+        if read_key is not None and not result["downloaded"]:
+            try:
+                cache_key = (read_key, source_identity(), live["scope_tag"],
+                             live["export_deck"], tuple(live["excluded"]),
+                             json.dumps(result["manifest"], sort_keys=True))
+            except (TypeError, ValueError):
+                pass
+        if cache_key is not None and cache_key == memory.reconcile_key:
+            pending = memory.reconcile_pending
+        else:
+            _, fresh, _, moves, _, _, stranded = _reconcile_pending(
+                result["manifest"], live,
+                _live_cards_loader(result["manifest"], None, result["downloaded"]))
+            pending = len(fresh) + len(moves) + len(stranded)
+            memory.reconcile_key = cache_key
+            memory.reconcile_pending = pending
         # `stranded` counts too: reconcile_decks and update_decks both treat a reworded
         # pair as pending work, so leaving it out here made the menu label disagree with
         # the screen it points at, and a backlog of nothing but reworded pairs was never
         # nudged about at all.
-        pending = len(fresh) + len(moves) + len(stranded)
         _refresh_reconcile_action_label(pending)
         # Only on first appearance or growth: a plain inequality also fired on a
         # shrink, so partly tidying up a backlog re-nagged about what was left.

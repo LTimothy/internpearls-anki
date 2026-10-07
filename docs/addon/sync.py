@@ -22,7 +22,8 @@ from aqt import mw
 from aqt.utils import getFile
 
 from .ai_logic import is_generated_guid
-from .collection import (NoteTypeFieldsRequired, _apply_deck, _apply_template_changes, _capture_shipped,
+from .collection import (NoteTypeFieldsRequired, _NoteTypeCache, _apply_deck,
+                         _apply_template_changes, _capture_shipped,
                          _check_protected_conversion,
                          _ensure_notetypes, change_note_types, fork_note_identities,
                          missing_notetype_targets, notetype_changes,
@@ -771,6 +772,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     applied = {}
     converted = 0
     cancelled = False
+    note_types = _NoteTypeCache(cfg["scope_tag"])
     for i, d in enumerate(todo, 1):
         conversion_undo = None
         forked_guids = set()
@@ -809,7 +811,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # converting their note would move it to a format holding none of the new
             # content.
             nt = notetype_changes(src, existing_fronts, aliases, cfg["scope_tag"],
-                                  declined)
+                                  declined, note_types.read())
             if (tpl or nt) and defer_template_changes:
                 deferred.append(d["name"])
                 # Named for what is actually being held back: a template change and a
@@ -1020,13 +1022,14 @@ def _final_conversion_plan(todo, downloaded, existing_fronts, aliases, scope_tag
     disk, planned against the declines as they stand once the learner has decided.
     A deck that can't be read is left out."""
     plan = {}
+    note_types = _NoteTypeCache(scope_tag)
     for d in todo:
         src = downloaded.get(d["name"])
         if not _is_local(src):
             continue
         try:
             plan[d["name"]] = notetype_changes(src, existing_fronts, aliases, scope_tag,
-                                               declined)
+                                               declined, note_types.read())
         except Exception:
             pass
     return plan
@@ -2055,6 +2058,7 @@ def update_decks():
     counted_out = declined - (set(held_entries(reg)) - waiting)
     existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
     aliases = manifest.get("front_aliases", {})
+    note_types = _NoteTypeCache(cfg["scope_tag"])
     for d in todo:
         src = downloaded.get(d["name"])
         if not src or isinstance(src, Exception):
@@ -2065,7 +2069,8 @@ def update_decks():
             pass    # a deck we can't read here still imports; it just can't offer this
         try:
             conversions_by_deck[d["name"]] = notetype_changes(
-                src, existing_fronts, aliases, cfg["scope_tag"], counted_out)
+                src, existing_fronts, aliases, cfg["scope_tag"], counted_out,
+                note_types.read())
         except Exception:
             pass    # same: unreadable here, still imported, just not offered up front
     pending_conversions = [c for cs in conversions_by_deck.values() for c in cs]
