@@ -103,15 +103,47 @@ if _HTTPSConnection is not None:
             self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
+    class _ProxyHTTPSConnection(_HTTPSConnection):
+        def __init__(self, host, port, timeout, context, address, on_socket):
+            super().__init__(host, port, timeout=timeout, context=context)
+            self._address, self._on_socket = address, on_socket
+
+        def connect(self):
+            family, kind, proto, _, address = self._address
+            self.sock = socket.socket(family, kind, proto)
+            self.sock.settimeout(self.timeout)
+            self._on_socket(self.sock)
+            self.sock.connect(address)
+            host = self._tunnel_host.encode("idna").decode("ascii")
+            authority = f"[{host}]:{self._tunnel_port}" if ":" in host else (
+                f"{host}:{self._tunnel_port}")
+            headers = {**self._tunnel_headers, "Host": authority}
+            request = [f"CONNECT {authority} HTTP/1.1\r\n"]
+            request.extend(f"{key}: {value}\r\n" for key, value in headers.items())
+            self.sock.sendall(("".join(request) + "\r\n").encode("latin-1"))
+            # HTTPResponse bounds status/header lines and the number of headers.
+            with http.client.HTTPResponse(self.sock) as response:
+                response.begin()
+                if response.status != 200:
+                    raise OSError(f"Tunnel connection failed: {response.status}")
+            self.sock = self._context.wrap_socket(
+                self.sock, server_hostname=self._tunnel_host,
+                do_handshake_on_connect=False)
+            self._on_socket(self.sock)
+            self.sock.do_handshake()
+
+
 def _open_connection(host, ip, port, timeout):
     if _HTTPSConnection is None:
         raise TransportError("https isn't available here")
     return _PinnedHTTPSConnection(host, ip, port, timeout)
 
 
-def _proxy_for(host):
+def _proxy_for(host, port=None):
     url = urllib.request.getproxies().get("https")
-    if not url or urllib.request.proxy_bypass(host):
+    authority = host if port is None else (
+        f"[{host}]:{port}" if ":" in host else f"{host}:{port}")
+    if not url or urllib.request.proxy_bypass(authority):
         return None
     if "://" not in url:
         url = "http://" + url
@@ -121,7 +153,7 @@ def _proxy_for(host):
         raise TransportError("invalid https proxy address") from None
 
 
-def _open_proxy_connection(host, proxy, port, timeout):
+def _proxy_address(proxy):
     if _HTTPSConnection is None:
         raise TransportError("https isn't available here")
     if proxy.scheme != "http":
@@ -132,9 +164,15 @@ def _open_proxy_connection(host, proxy, port, timeout):
         raise TransportError("invalid https proxy address") from None
     if not proxy_host:
         raise TransportError("invalid https proxy address")
+    return proxy_host, proxy_port
+
+
+def _open_proxy_connection(host, proxy, port, timeout, address, on_socket):
+    proxy_host, proxy_port = _proxy_address(proxy)
     import ssl
-    conn = _HTTPSConnection(proxy_host, proxy_port, timeout=timeout,
-                            context=ssl.create_default_context())
+    conn = _ProxyHTTPSConnection(proxy_host, proxy_port, timeout=timeout,
+                                 context=ssl.create_default_context(),
+                                 address=address, on_socket=on_socket)
     headers = {}
     if proxy.username is not None:
         user = urllib.parse.unquote(proxy.username)
@@ -211,23 +249,42 @@ def _connect_any(host, ips, port, timeout, deadline):
     raise TransportError(f"couldn't reach {host} ({last})") from last
 
 
-def _connect_proxy(host, proxy, port, timeout, deadline):
+def _connect_proxy(host, proxy, port, timeout, deadline, on_socket):
+    proxy_host, proxy_port = _proxy_address(proxy)
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise _timed_out()
-    conn = _open_proxy_connection(host, proxy, port, max(0.1, min(timeout, remaining)))
     try:
-        conn.connect()
-        return conn
-    except (TimeoutError, socket.timeout):
-        conn.close()
+        addresses = _resolve_within(proxy_host, proxy_port, remaining)
+    except TransportError:
+        if time.monotonic() >= deadline:
+            raise _timed_out() from None
+        raise TransportError("couldn't look up the proxy") from None
+    refused, timed_out = False, False
+    for address in addresses:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _timed_out()
+        conn = _open_proxy_connection(host, proxy, port, min(timeout, remaining),
+                                      address, on_socket)
+        try:
+            conn.connect()
+            if time.monotonic() >= deadline:
+                conn.close()
+                raise _timed_out()
+            return conn
+        except (OSError, http.client.HTTPException, ValueError) as e:
+            conn.close()
+            if time.monotonic() >= deadline:
+                raise _timed_out() from None
+            # A proxy's response text can echo its credentials.
+            refused = str(e).startswith("Tunnel connection failed:")
+            timed_out = isinstance(e, (TimeoutError, socket.timeout))
+    if timed_out:
         raise _timed_out() from None
-    except (OSError, http.client.HTTPException) as e:
-        conn.close()
-        # A proxy's response text can echo its credentials.
-        if str(e).startswith("Tunnel connection failed:"):
-            raise TransportError("the proxy refused the connection") from None
-        raise TransportError("couldn't connect through the proxy") from None
+    if refused:
+        raise TransportError("the proxy refused the connection") from None
+    raise TransportError("couldn't connect through the proxy") from None
 
 
 def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT,
@@ -249,7 +306,7 @@ def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT,
         if remaining <= 0:
             raise _timed_out()
         ips = checked_addresses(host, port, remaining)
-        proxy = _proxy_for(host)
+        proxy = _proxy_for(host, urllib.parse.urlsplit(url).port)
         conn = None
         raw = []
         expired = threading.Event()
@@ -266,11 +323,17 @@ def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT,
         watchdog = threading.Timer(max(0.0, deadline - time.monotonic()), expire)
         watchdog.daemon = True
         watchdog.start()
+
+        def capture(sock):
+            raw.append(sock)
+            if expired.is_set():
+                expire()
+
         try:
             if proxy is None:
                 conn = _connect_any(host, ips, port, timeout, deadline)
             else:
-                conn = _connect_proxy(host, proxy, port, timeout, deadline)
+                conn = _connect_proxy(host, proxy, port, timeout, deadline, capture)
             if getattr(conn, "sock", None) is not None:
                 raw.append(conn.sock)
             if expired.is_set():

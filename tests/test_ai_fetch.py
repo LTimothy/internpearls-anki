@@ -405,13 +405,22 @@ class _ProxyWeb(_Web):
         self.tunnels, self.requests = [], []
         self.connect_error = None
         web = self
+        resolve = self.resolve
+
+        def proxy_resolve(host, port):
+            if host == "proxy.corp" or host.startswith("10.0.0."):
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.2", port))]
+            return resolve(host, port)
+
+        monkeypatch.setattr(ai_fetch, "_resolve", proxy_resolve)
 
         class _Conn:
             sock = None
 
-            def __init__(self, host, port, timeout, context):
+            def __init__(self, host, port, timeout, context, address, on_socket):
                 self.proxy_host, self.proxy_port = host, port
                 self.timeout, self.context = timeout, context
+                self.on_socket = on_socket
 
             def set_tunnel(self, host, port, headers=None):
                 self.host, self.port, self.headers = host, port, headers or {}
@@ -421,6 +430,7 @@ class _ProxyWeb(_Web):
                 if web.connect_error is not None:
                     raise web.connect_error
                 self.sock = web.sock_factory()
+                self.on_socket(self.sock)
 
             def request(self, method, target, headers=None):
                 web.requests.append((self.host, method, target, headers))
@@ -434,7 +444,7 @@ class _ProxyWeb(_Web):
 
             def close(self):
                 pass
-        monkeypatch.setattr(ai_fetch, "_HTTPSConnection", _Conn)
+        monkeypatch.setattr(ai_fetch, "_ProxyHTTPSConnection", _Conn)
 
 
 @pytest.mark.parametrize("port", [443, 8443])
@@ -607,7 +617,8 @@ def test_a_real_proxy_receives_connect_by_name_and_407_is_a_transport_error(monk
     monkeypatch.setattr(ai_fetch, "_open_connection", lambda *args: pytest.fail(
         "a configured proxy must not connect directly"))
     monkeypatch.setattr(ai_fetch, "_resolve", lambda host, p: [
-        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", p))])
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "",
+         ("93.184.216.34" if host == "img.example" else "127.0.0.1", p))])
     try:
         with pytest.raises(ai_fetch.TransportError, match="proxy.*refused") as raised:
             ai_fetch.fetch_card_image("https://img.example/a.png", timeout=1, deadline_s=2)
@@ -661,3 +672,101 @@ def test_a_proxy_fetch_without_https_support_is_a_transport_error(monkeypatch):
     monkeypatch.setattr(ai_fetch, "_HTTPSConnection", None)
     with pytest.raises(ai_fetch.TransportError, match="https isn't available here"):
         ai_fetch.fetch_card_image("https://img.example/a.png")
+
+
+def test_a_trickling_connect_reply_stops_at_the_deadline(monkeypatch):
+    import time
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    server.settimeout(2)
+    port = server.getsockname()[1]
+    stop = threading.Event()
+    requests = []
+
+    def serve():
+        try:
+            conn, _ = server.accept()
+            with conn:
+                conn.settimeout(2)
+                request = b""
+                while b"\r\n\r\n" not in request:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        return
+                    request += chunk
+                requests.append(request)
+                for byte in b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n":
+                    conn.sendall(bytes([byte]))
+                    if stop.wait(0.03):
+                        return
+        except OSError:
+            pass
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    _proxy_settings(monkeypatch, f"http://127.0.0.1:{port}")
+    monkeypatch.setattr(ai_fetch, "_resolve", lambda host, p: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "",
+         ("93.184.216.34" if host == "img.example" else "127.0.0.1", p))])
+    start = time.monotonic()
+    try:
+        with pytest.raises(ai_fetch.TransportError, match="timed out"):
+            ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.3)
+        assert time.monotonic() - start < 1.0
+        assert requests[0].startswith(b"CONNECT img.example:443 HTTP/1.")
+    finally:
+        stop.set()
+        server.close()
+        thread.join(3)
+    assert not thread.is_alive()
+
+
+def test_a_hanging_proxy_lookup_stops_at_the_deadline(monkeypatch):
+    import time
+    stop = threading.Event()
+    looked_up = []
+
+    def resolve(host, port):
+        looked_up.append(host)
+        if host == "proxy.corp":
+            stop.wait(1.2)
+            raise socket.gaierror("lookup stalled")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+
+    getaddrinfo = socket.getaddrinfo
+
+    def lookup(host, port, *args, **kwargs):
+        if host == "proxy.corp":
+            return resolve(host, port)
+        return getaddrinfo(host, port, *args, **kwargs)
+
+    _proxy_settings(monkeypatch, "http://proxy.corp:8080")
+    monkeypatch.setattr(ai_fetch, "_resolve", resolve)
+    monkeypatch.setattr(socket, "getaddrinfo", lookup)
+    start = time.monotonic()
+    try:
+        with pytest.raises(ai_fetch.TransportError, match="timed out"):
+            ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.3)
+        assert time.monotonic() - start < 1.0
+        assert looked_up == ["img.example", "proxy.corp"]
+    finally:
+        stop.set()
+
+
+def test_a_port_specific_proxy_bypass_only_matches_that_port(monkeypatch):
+    monkeypatch.setenv("no_proxy", "img.example:8443")
+    monkeypatch.setenv("https_proxy", "http://10.0.0.2:8080")
+    monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)
+    monkeypatch.setattr(urllib.request, "proxy_bypass",
+                        urllib.request.proxy_bypass_environment)
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _png()})
+    assert ai_fetch.fetch_card_image("https://img.example:8443/a.png") == (PNG, "png")
+    assert web.connected == [("img.example", "93.184.216.34")]
+    assert web.tunnels == []
+    web.pages[("img.example", "/a.png")] = _png()
+    assert ai_fetch.fetch_card_image("https://img.example/a.png") == (PNG, "png")
+    assert web.connected == [("img.example", "93.184.216.34")]
+    assert len(web.tunnels) == 1
+    assert (web.tunnels[0].host, web.tunnels[0].port) == ("img.example", 443)
