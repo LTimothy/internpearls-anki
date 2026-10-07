@@ -3433,11 +3433,59 @@ def test_later_all_notifies_once_after_deciding_two_hundred_cards(
     assert listener_calls == [expected]
 
 
-def test_expanding_a_folded_group_counts_its_cards_as_opened(anki):
-    body, _d, _t, opened = _folded_group_body()
+def test_expanding_a_folded_group_leaves_its_cards_unopened(anki):
+    from internpearls import review
+    refreshes, status_calls, review_calls = [], [], []
+    body, decisions, touched, opened = _folded_group_body(
+        n=10, status_line=lambda: (status_calls.append(True) or ""),
+        on_review=lambda: (review_calls.append(True), [fn() for fn in refreshes]))
+    kinds = {f"guid-g{i}": "changed" for i in range(10)}
+    extra, refresh = review.hold_control({}, kinds, lambda: touched | opened, decisions)
+    extra["button"] = button = mock_anki.QPushButton(extra["label"])
+    refreshes.append(refresh)
+    status_calls.clear()
     assert opened == set()
-    _button(body, "Show 5 cards").click()
-    assert opened == {f"guid-g{i}" for i in range(5)}
+    _button(body, "Show 10 cards").click()
+    assert button.text() == "Update, and leave 10 unopened for later"
+    assert button.isVisible()
+    assert opened == set()
+    assert status_calls == [True] and review_calls == [True]
+
+
+def test_opening_two_folded_group_members_leaves_eight_holdable(anki):
+    from internpearls import review
+    from internpearls.logic import holdable_guids, unopened_line
+    body, decisions, touched, opened = _folded_group_body(n=10)
+    _button(body, "Show 10 cards").click()
+    carets = [w for w in _walk_widgets(body)
+              if isinstance(w, mock_anki.QPushButton) and w.text() == review._CARET_CLOSED]
+    assert len(carets) == 10
+    for caret in carets[:2]:
+        caret.click()
+    kinds = {f"guid-g{i}": "changed" for i in range(10)}
+    assert opened == {"guid-g0", "guid-g1"}
+    assert holdable_guids({}, kinds, touched | opened, decisions) == [
+        f"guid-g{i}" for i in range(2, 10)]
+    extra, _refresh = review.hold_control({}, kinds, lambda: touched | opened, decisions)
+    assert extra["label"] == "Update, and leave 8 unopened for later"
+    assert unopened_line(kinds, touched | opened, kinds).startswith(
+        "<b>8 of 10 cards not opened yet</b>, 8 of them in folded groups.")
+
+
+@pytest.mark.parametrize("expanded", [False, True])
+@pytest.mark.parametrize("label, state", [("Later all", "held"), ("Apply all", "apply")])
+def test_deciding_all_folded_group_members_leaves_none_holdable(anki, expanded, label, state):
+    from internpearls import review
+    from internpearls.logic import holdable_guids, unopened_line
+    body, decisions, touched, opened = _folded_group_body(n=10)
+    if expanded:
+        _button(body, "Show 10 cards").click()
+    _button(body, label).click()
+    kinds = {f"guid-g{i}": "changed" for i in range(10)}
+    assert touched == set(kinds)
+    assert decisions == ({g: "held" for g in kinds} if state == "held" else {})
+    assert holdable_guids({}, kinds, touched | opened, decisions) == []
+    assert unopened_line(kinds, touched | opened, kinds) == ""
 
 
 def test_a_feedback_group_is_not_folded(anki):
@@ -3456,6 +3504,7 @@ def test_unopened_line_counts_rows_left_and_those_folded():
     kinds = {"a": "new", "b": "changed", "c": "changed", "r": None}
     line = unopened_line(kinds, {"a"}, {"b"})
     assert line.startswith("<b>2 of 3 cards not opened yet</b>, 1 of them in folded groups.")
+    assert "Showing a group's cards does not count them as opened." in line
     assert unopened_line(kinds, {"a", "b", "c"}, ()) == ""
 
 

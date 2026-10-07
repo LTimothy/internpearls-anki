@@ -1433,8 +1433,9 @@ def unopened_line(card_kinds, reviewed, folded=(), registry=None, decisions=None
     notes = ([f"{inside} of them in folded groups"] if inside else []) + (
         [f"{decided} already decided on an earlier update"] if decided else [])
     where = (", " + " and ".join(notes)) if notes else ""
+    group_hint = "Showing a group's cards does not count them as opened. " if inside else ""
     return (f"<b>{len(left)} of {plural(len(rows), 'card')} not opened yet</b>{where}. "
-            "Update applies each one as its row is set.")
+            f"{group_hint}Update applies each one as its row is set.")
 
 
 # The card list gets a filter bar from this many card rows up.

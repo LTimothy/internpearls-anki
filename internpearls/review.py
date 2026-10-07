@@ -828,8 +828,8 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
 
     `ctx` is build_update_body's own hooks: `decisions`, `set_members(guids, kind,
     state)` to decide the members whether or not their rows are built yet, `listen(fn)`
-    to hear about every decision on the screen, and `on_expand(guids)` so opening
-    the group counts its cards as looked at."""
+    to hear about every decision on the screen, and `on_expand(guids)` to refresh
+    the screen when the group reveals its member rows."""
     row = _change_note_row(note, 0)
     row.layout().setStretch(0, 1)
     if not members:
@@ -1869,7 +1869,6 @@ def build_update_body(items, sources, flags, new_index, decisions,
         _notify_decision()
 
     def _on_expand(guids):
-        opened.update(guids)
         _refresh_bottom()
         if on_review is not None:
             on_review()

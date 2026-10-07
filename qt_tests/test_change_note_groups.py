@@ -134,7 +134,7 @@ def test_a_member_decided_on_its_own_leaves_the_group_mixed():
     assert any(w.text() == "mixed" for w in _visible_labels(dialog, q))
 
 
-def test_the_status_line_counts_unopened_cards_and_forgets_an_opened_group():
+def test_the_status_line_keeps_a_shown_groups_members_unopened():
     _, q = harness.bootstrap()
     shot = harness.render("confirm", group_size=5, group_kind="changed", progress=True,
                           size=(880, 800))
@@ -145,7 +145,20 @@ def test_the_status_line_counts_unopened_cards_and_forgets_an_opened_group():
          if b.text() == "Show 5 cards").click()
     app.processEvents()
     texts = "\n".join(w.text() for w in _visible_labels(dialog, q))
-    assert "not opened yet" not in texts, "opening the group counts its cards as seen"
+    assert "5 of 5 cards not opened yet</b>, 5 of them in folded groups" in texts
+
+
+def test_the_status_line_counts_only_opened_group_members():
+    _, q = harness.bootstrap()
+    shot = harness.render("confirm", group_size=10, group_kind="changed", progress=True,
+                          click_labels=("Show 10 cards",), size=(880, 800))
+    dialog, app = shot.dialog, harness.app()
+    for i in range(2):
+        next(b for b in dialog.findChildren(q.QPushButton)
+             if b.accessibleName() == f"Show card: Group member card number {i}?").click()
+    app.processEvents()
+    texts = "\n".join(w.text() for w in _visible_labels(dialog, q))
+    assert "8 of 10 cards not opened yet</b>, 8 of them in folded groups" in texts
 
 
 def test_folded_group_render_saved_as_png(tmp_path):
