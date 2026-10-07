@@ -135,7 +135,8 @@ def test_digest_snapshot_omits_later_cards_and_prints_a_count_line():
     assert "Held card" not in text and "Held for later" not in text
     assert "Skipped for now" not in text
     assert "2 cards left for later" in text
-    assert "Never imported (1)" in text and "Never card" in text
+    assert "Never imported (1)" in text and "    A (1), 2026-09-01: g3\n" in text
+    assert "g1" not in text and "g2" not in text
 
 
 def test_digest_count_line_agrees_for_one_card():
@@ -152,6 +153,8 @@ def test_digest_with_only_later_cards_prints_no_empty_header():
     text = _digest({"g1": _entry("held"), "g2": _entry("held")})
     assert "Current standing declines" not in text
     assert "2 cards left for later" in text
+    assert _digest({}) == logic.build_feedback_digest(
+        [{"deck": "IP::A", "front": "flagged", "guid": "g0", "note": "n"}])
 
 
 def test_digest_header_counts_only_the_listed_entries():
@@ -162,12 +165,26 @@ def test_digest_header_counts_only_the_listed_entries():
 
 def test_digest_count_line_leaves_out_later_cards_in_excluded_decks():
     reg = {"g1": _entry("held"), "g2": _entry("held", deck="IP::Off"),
-           "g3": _entry("held", deck="IP::Off::Sub")}
+           "g3": _entry("held", deck="IP::Off::Sub"),
+           "g4": _entry("never", deck="IP::Off"), "g5": _entry("frozen"),
+           "g6": _entry("keep"), "g7": _entry("custom")}
     text = logic.build_feedback_digest(
         [{"deck": "IP::A", "front": "flagged", "guid": "g0", "note": "n"}],
         standing_declines=reg, excluded=["IP::Off"])
     assert "2 cards left for later" in text   # same exact-name rule as later_count
     assert logic.later_count(reg, ["IP::Off"]) == 2
+    assert text.split("Current standing declines", 1)[1] == (
+        " (4)\n"
+        "  Never imported (1)\n"
+        "    Off (1), 2026-09-01: g4\n"
+        "  Kept yours, no more updates (1)\n"
+        "    A (1), 2026-09-01: g5\n"
+        "  Kept yours (1)\n"
+        "    A (1), 2026-09-01: g6\n"
+        "  Other (1)\n"
+        "    A (1), 2026-09-01: custom:g7\n"
+        "  2 cards left for later\n"
+    )
     text = logic.build_feedback_digest(
         [{"deck": "IP::A", "front": "flagged", "guid": "g0", "note": "n"}],
         standing_declines={"g2": _entry("held", deck="IP::Off")}, excluded=["IP::Off"])

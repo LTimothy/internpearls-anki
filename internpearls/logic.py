@@ -2235,8 +2235,8 @@ _DECLINE_SNAPSHOT_GROUPS = (
 
 
 def _one_line(text):
-    """Plain text with its whitespace folded onto one line. For a learner's note and a
-    standing decline's front, which are stored as plain text already."""
+    """Plain text with its whitespace folded onto one line. For a learner's note,
+    which is stored as plain text already."""
     return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
@@ -2265,17 +2265,24 @@ def _decline_snapshot_lines(registry, excluded=()):
         if not items:
             continue
         lines.append(f"  {label} ({len(items)})")
-        for guid, entry in sorted(
-                items, key=lambda item: (str(item[1].get("deck", "")),
-                                         str(item[1].get("front", "")), item[0])):
-            front = entry.get("front")
-            display_front = front if isinstance(front, str) and front else guid
-            lines.append(f'    "{_one_line(display_front)}"')
-            if entry.get("deck"):
-                lines.append(f'    deck: {str(entry["deck"]).split("::")[-1]}')
-            if entry.get("decided"):
-                lines.append(f'    decided: {entry["decided"]}')
-            lines.append(f"    guid {guid}")
+        by_deck = {}
+        for guid, entry in items:
+            deck = str(entry["deck"]).split("::")[-1] if entry.get("deck") else None
+            date = str(entry.get("decided") or "")
+            by_deck.setdefault(deck, {}).setdefault(date, []).append((guid, entry))
+        for deck in sorted(by_deck, key=lambda name: (name is None, name or "")):
+            dates = by_deck[deck]
+            count = sum(len(entries) for entries in dates.values())
+            segments = []
+            for date in sorted(dates, key=lambda value: (not value, value)):
+                guids = []
+                for guid, entry in sorted(dates[date], key=lambda item: item[0]):
+                    if state is None:
+                        guid = f"{entry.get('state') or 'unknown'}:{guid}"
+                    guids.append(guid)
+                segments.append(f"{date or 'undated'}: {' '.join(guids)}")
+            display_deck = deck if deck is not None else "(no deck)"
+            lines.append(f"    {display_deck} ({count}), {'; '.join(segments)}")
     if later:
         lines.append(f"  {plural(later, 'card')} left for later")
     return lines
@@ -2294,13 +2301,14 @@ def build_feedback_digest(entries, version="", date="", standing_declines=None,
     The guid line is what makes this worth more than the learner describing a card from
     memory: it names the exact spec note, so the fix doesn't start with hunting for
     which card the learner meant. A flagged card's front is HTML, so it goes through
-    plain_text on the way out; notes and standing-decline fronts are plain text already
-    and only have their whitespace folded.
+    plain_text on the way out; notes are plain text already and only have their
+    whitespace folded.
 
     `standing_declines`, when supplied, is the current declined-card registry. It is
-    rendered after the run's entries as a complete state snapshot; content hashes stay
-    out because they are sync bookkeeping rather than a learner decision. Later cards
-    in the `excluded` decks are left out of its count line.
+    rendered after the run's entries as a complete state snapshot, with GUIDs grouped
+    by deck and decision date on one line per deck per state. Content hashes stay out
+    because they are sync bookkeeping rather than a learner decision. Later cards in
+    the `excluded` decks are left out of its count line.
 
     Returns "" for no entries, so a caller can treat empty as "nothing to send" without
     a separate check.

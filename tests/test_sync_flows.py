@@ -4034,7 +4034,7 @@ def test_feedback_digest_includes_declines_still_active_from_earlier_runs(anki, 
 
     digest = next(c for c in anki.gui.clipboard if "new note" in c)
     assert "Current standing declines (1)" in digest
-    assert "An older rejected card" in digest
+    assert "    Elsewhere (1), 2026-08-01: older-guid\n" in digest
     assert "Never imported (1)" in digest
 
 
@@ -6571,7 +6571,7 @@ def test_digest_labels_only_the_state_changed_this_run_as_a_new_decision(anki, t
     digest = anki.gui.clipboard[-1]
     assert digest.count("decision: never") == 1
     assert "front b" in digest
-    assert "front a" in digest
+    assert "guid-new-a" in digest and "guid-new-b" in digest
     assert "Current standing declines (2)" in digest
 
 

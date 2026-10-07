@@ -1302,8 +1302,7 @@ def test_build_feedback_digest_is_plain_text_not_html():
 
 
 def test_build_feedback_digest_keeps_literal_comparators_in_notes_and_fronts():
-    # A learner's note is typed as plain text, and a standing decline's front is stored
-    # already decoded, so a bare "<" or ">" there is a comparator, not a tag.
+    # A learner's note is typed as plain text, so a bare "<" or ">" is a comparator.
     text = logic.build_feedback_digest(
         [{"deck": "D", "front": "MAP &lt;65?", "guid": "g",
           "note": "MAP <65 and HR >100 is wrong"}],
@@ -1311,14 +1310,14 @@ def test_build_feedback_digest_keeps_literal_comparators_in_notes_and_fronts():
                                  "deck": "D"}})
     assert "> MAP <65 and HR >100 is wrong" in text
     assert '"MAP <65?"' in text
-    assert '"HR >100 and MAP <65"' in text
+    assert "    D (1), undated: h\n" in text
 
 
 def test_build_feedback_digest_keeps_a_note_and_a_decoded_front_verbatim():
-    # Learner notes and standing-decline fronts are already plain text: only their
-    # whitespace is folded, so even something tag-shaped survives.
+    # Notes keep tag-shaped text, and HTML entities in fronts are decoded as text.
     text = logic.build_feedback_digest(
-        [{"deck": "D", "front": "Front", "guid": "g", "note": "a<b, c>d\n  and  more"}],
+        [{"deck": "D", "front": "x&lt;b, y&gt;z", "guid": "g",
+          "note": "a<b, c>d\n  and  more"}],
         standing_declines={"h": {"state": "keep", "front": "x<b, y>z", "deck": "D"}})
     assert "> a<b, c>d and more" in text
     assert '"x<b, y>z"' in text
@@ -1357,12 +1356,79 @@ def test_build_feedback_digest_carries_the_full_current_decline_snapshot():
     })
 
     assert "Current standing declines (3)" in text
-    assert "Never imported (1)" in text and "Old rejected card" in text
-    assert "Kept yours (1)" in text and "Old local wording" in text
-    assert "Kept yours, no more updates (1)" in text and "Updates disabled" in text
-    assert "1 card left for later" in text and "decided: 2026-09-13" not in text
-    assert "decided: 2026-08-01" in text
+    assert "Never imported (1)" in text and "old-never" in text
+    assert "Kept yours (1)" in text and "old-keep" in text
+    assert "Kept yours, no more updates (1)" in text and "old-frozen" in text
+    assert "1 card left for later" in text and "2026-09-13" not in text
+    assert "    Example Deck (1), 2026-08-01: old-never\n" in text
+    assert '  "New card"\n  decision: skipped\n  guid new-guid\n  > too broad\n' in text
     assert "hash:" not in text, "content hashes are implementation detail, not learner state"
+
+
+def test_decline_snapshot_groups_decks_dates_and_sorted_guids():
+    text = logic.build_feedback_digest([
+        {"deck": "IP::A", "front": "Flagged", "guid": "run-guid", "note": "note"},
+    ], standing_declines={
+        "z-guid": {"state": "never", "deck": "Z::ABC", "decided": "2026-08-29"},
+        "later-guid": {"state": "never", "deck": "IP::Alpha & Example",
+                       "decided": "2026-08-31"},
+        "undated-guid": {"state": "never", "deck": "IP::ABC", "decided": ""},
+        "zebra-guid": {"state": "never", "deck": "A::Zebra", "decided": "2026-08-29"},
+        "early-guid": {"state": "never", "deck": "IP::Alpha & Example",
+                       "decided": "2026-08-29"},
+        "a-guid": {"state": "never", "deck": "IP::ABC", "decided": "2026-08-29"},
+        "no-deck-guid": {"state": "never", "decided": "2026-08-31"},
+        "keep-guid": {"state": "keep", "deck": "IP::ABC", "decided": "2026-08-31"},
+        "keep-undated": {"state": "keep", "deck": None, "decided": None},
+    })
+    assert text.split("Current standing declines", 1)[1] == (
+        " (9)\n"
+        "  Never imported (7)\n"
+        "    ABC (3), 2026-08-29: a-guid z-guid; undated: undated-guid\n"
+        "    Alpha & Example (2), 2026-08-29: early-guid; "
+        "2026-08-31: later-guid\n"
+        "    Zebra (1), 2026-08-29: zebra-guid\n"
+        "    (no deck) (1), 2026-08-31: no-deck-guid\n"
+        "  Kept yours (2)\n"
+        "    ABC (1), 2026-08-31: keep-guid\n"
+        "    (no deck) (1), undated: keep-undated\n"
+    )
+
+
+def test_decline_snapshot_other_keeps_raw_states_and_defaults_missing_states():
+    text = logic.build_feedback_digest([
+        {"deck": "IP::A", "front": "Flagged", "guid": "run-guid", "note": "note"},
+    ], standing_declines={
+        "z-guid": {"state": "skip", "deck": "IP::A", "decided": "2026-08-29"},
+        "a-guid": {"state": "custom", "deck": "IP::A", "decided": "2026-08-29"},
+        "missing-guid": {"deck": "IP::A"},
+        "empty-guid": {"state": "", "deck": "IP::A"},
+        "none-guid": {"state": None, "deck": "IP::A"},
+    })
+    assert text.split("Current standing declines", 1)[1] == (
+        " (5)\n"
+        "  Other (5)\n"
+        "    A (5), 2026-08-29: custom:a-guid skip:z-guid; "
+        "undated: unknown:empty-guid unknown:missing-guid unknown:none-guid\n"
+    )
+
+
+@pytest.mark.parametrize("state", ["never", "frozen", "keep", "skip"])
+def test_decline_snapshot_line_count_depends_on_decks_not_cards(state):
+    registry = {
+        f"guid-{i:03d}": {"state": state, "deck": f"IP::Deck {i % 5}",
+                          "decided": "2026-08-29" if i % 2 else "2026-08-31",
+                          "front": f"Card {i}"}
+        for i in range(100)
+    }
+    text = logic.build_feedback_digest([
+        {"deck": "IP::A", "front": "Flagged", "guid": "run-guid", "note": "note"},
+    ], standing_declines=registry)
+    snapshot = "Current standing declines" + text.split("Current standing declines", 1)[1]
+    assert len(snapshot.splitlines()) <= 7
+    assert "Current standing declines (100)" in snapshot
+    assert all(guid in snapshot for guid in registry)
+    assert "Card " not in snapshot
 
 
 def test_decline_snapshot_degrades_malformed_registry_entries_instead_of_dropping_them():
