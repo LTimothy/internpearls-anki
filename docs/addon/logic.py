@@ -2268,10 +2268,23 @@ def _decline_snapshot_lines(registry, excluded=()):
         lines.append(f"  {label} ({len(items)})")
         by_deck = {}
         for guid, entry in items:
-            deck = str(entry["deck"]).split("::")[-1] if entry.get("deck") else None
+            deck = str(entry["deck"]) if entry.get("deck") else None
             date = str(entry.get("decided") or "")
             by_deck.setdefault(deck, {}).setdefault(date, []).append((guid, entry))
-        for deck in sorted(by_deck, key=lambda name: (name is None, name or "")):
+        leaf_counts = {}
+        for deck in by_deck:
+            if deck is not None:
+                leaf = deck.split("::")[-1]
+                leaf_counts[leaf] = leaf_counts.get(leaf, 0) + 1
+        display_names = {}
+        for deck in by_deck:
+            if deck is None:
+                display_names[deck] = "(no deck)"
+            else:
+                leaf = deck.split("::")[-1]
+                display_names[deck] = ascii_text(deck if leaf_counts[leaf] > 1 else leaf)
+        for deck in sorted(by_deck, key=lambda name: (name is None, display_names[name],
+                                                     name or "")):
             dates = by_deck[deck]
             count = sum(len(entries) for entries in dates.values())
             segments = []
@@ -2279,11 +2292,10 @@ def _decline_snapshot_lines(registry, excluded=()):
                 guids = []
                 for guid, entry in sorted(dates[date], key=lambda item: item[0]):
                     if state is None:
-                        guid = f"{entry.get('state') or 'unknown'}:{guid}"
+                        guid = ascii_text(f"{entry.get('state') or 'unknown'}:") + guid
                     guids.append(guid)
-                segments.append(f"{date or 'undated'}: {' '.join(guids)}")
-            display_deck = deck if deck is not None else "(no deck)"
-            lines.append(f"    {display_deck} ({count}), {'; '.join(segments)}")
+                segments.append(ascii_text(f"{date or 'undated'}: ") + " ".join(guids))
+            lines.append(f"    {display_names[deck]} ({count}), {'; '.join(segments)}")
     if later:
         lines.append(f"  {plural(later, 'card')} left for later")
     return lines
@@ -2352,27 +2364,29 @@ def build_feedback_digest(entries, version="", date="", standing_declines=None,
     header = "Intern Pearls card feedback"
     if date:
         header += f" ({date})"
-    lines = [header]
+    lines = [ascii_text(header)]
     if version:
-        lines.append(f"Add-on v{version}")
+        lines.append(ascii_text(f"Add-on v{version}"))
     by_deck = {}
     for e in entries:
         by_deck.setdefault(e.get("deck") or "", []).append(e)
     for deck, items in by_deck.items():
         lines.append("")
-        lines.append(deck.split("::")[-1] if deck else "(unknown deck)")
+        lines.append(ascii_text(deck.split("::")[-1] if deck else "(unknown deck)"))
         for e in items:
-            lines.append(f'  "{plain_text(e.get("front"))}"')
+            lines.append(ascii_text(f'  "{plain_text(e.get("front"))}"'))
             if e.get("decision"):
-                lines.append(f"  decision: {e['decision']}")
+                lines.append(ascii_text(f"  decision: {e['decision']}"))
             if e.get("guid"):
                 lines.append(f'  guid {e["guid"]}')
             if e.get("note"):
-                lines.append(f'  > {_one_line(e.get("note"))}')
+                lines.append(ascii_text(f'  > {_one_line(e.get("note"))}'))
             lines.append("")
     if standing_declines is not None:
         lines.extend(_decline_snapshot_lines(standing_declines, excluded))
-    return ascii_text("\n".join(lines).rstrip() + "\n")
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines) + "\n"
 
 
 def duplicate_dialog_rows(groups):

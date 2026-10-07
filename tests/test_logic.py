@@ -1354,6 +1354,37 @@ def test_build_feedback_digest_keeps_guid_punctuation_unchanged():
     assert f"    D (1), undated: {guid}\n" in text
 
 
+@pytest.mark.parametrize("guid", ["caf\u00e9", "cafe\u0301", "g\u03b2\u2014\u200b "])
+def test_build_feedback_digest_keeps_unicode_guids_verbatim(guid):
+    text = logic.build_feedback_digest(
+        [{"deck": "D", "front": "Caf\u00e9 &beta;", "guid": guid}],
+        standing_declines={guid: {"state": "keep", "deck": "D"}})
+    assert '  "Cafe beta"\n' in text
+    assert f"  guid {guid}\n" in text
+    assert f"    D (1), undated: {guid}\n" in text
+
+
+def test_build_feedback_digest_keeps_accented_guids_distinct():
+    text = logic.build_feedback_digest(
+        [{"deck": "D", "front": "Card", "guid": "cafe"},
+         {"deck": "D", "front": "Card", "guid": "caf\u00e9"}],
+        standing_declines={
+            "cafe": {"state": "keep", "deck": "D"},
+            "caf\u00e9": {"state": "keep", "deck": "D"},
+        })
+    assert "  guid cafe\n" in text
+    assert "  guid caf\u00e9\n" in text
+    assert "    D (2), undated: cafe caf\u00e9\n" in text
+
+
+def test_decline_snapshot_other_keeps_unicode_guid_verbatim():
+    text = logic.build_feedback_digest(
+        [{"deck": "D", "front": "Card"}],
+        standing_declines={"caf\u00e9": {"state": "custom\u2014state", "deck": "D"}})
+    assert "  Other (1)\n" in text
+    assert "    D (1), undated: custom-state:caf\u00e9\n" in text
+
+
 def test_build_feedback_digest_keeps_cjk_note_unchanged():
     text = logic.build_feedback_digest([
         {"deck": "D", "front": "Card", "note": "\u4e2d\u6587\u5907\u6ce8"}])
@@ -1511,14 +1542,32 @@ def test_decline_snapshot_groups_decks_dates_and_sorted_guids():
     assert text.split("Current standing declines", 1)[1] == (
         " (9)\n"
         "  Never imported (7)\n"
-        "    ABC (3), 2026-08-29: a-guid z-guid; undated: undated-guid\n"
         "    Alpha & Example (2), 2026-08-29: early-guid; "
         "2026-08-31: later-guid\n"
+        "    IP::ABC (2), 2026-08-29: a-guid; undated: undated-guid\n"
+        "    Z::ABC (1), 2026-08-29: z-guid\n"
         "    Zebra (1), 2026-08-29: zebra-guid\n"
         "    (no deck) (1), 2026-08-31: no-deck-guid\n"
         "  Kept yours (2)\n"
         "    ABC (1), 2026-08-31: keep-guid\n"
         "    (no deck) (1), undated: keep-undated\n"
+    )
+
+
+def test_decline_snapshot_distinguishes_decks_with_the_same_leaf():
+    text = logic.build_feedback_digest(
+        [{"deck": "D", "front": "Card"}],
+        standing_declines={
+            "b": {"state": "keep", "deck": "Parent B::Cards"},
+            "a": {"state": "keep", "deck": "Parent A::Cards"},
+            "c": {"state": "keep", "deck": "Parent C::Other"},
+        })
+    assert text.split("Current standing declines", 1)[1] == (
+        " (3)\n"
+        "  Kept yours (3)\n"
+        "    Other (1), undated: c\n"
+        "    Parent A::Cards (1), undated: a\n"
+        "    Parent B::Cards (1), undated: b\n"
     )
 
 
