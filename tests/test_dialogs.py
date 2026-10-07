@@ -38,6 +38,8 @@ def test_manage_decks_saved_message_escapes_field_names(anki, tmp_path):
     from internpearls import dialogs
     anki.mw._config = {"decks_dir": _write_source(tmp_path),
                        "protected_fields": ["A <b>x</b> & B"]}
+    anki.col.models.add_field(anki.col.models.all()[0],
+                              {"name": "A <b>x</b> & B"})
     def respond(p):
         if p["kind"] == "dialog":
             btn = find(p["tree"], t="button", label="Save")
@@ -165,6 +167,132 @@ def test_menu_actions_call_real_functions(anki, tmp_path):
 
 
 # ----------------------------------------------------------------- manage decks
+@pytest.mark.parametrize("button", ["Save", "Save and update now"])
+@pytest.mark.parametrize("entered, messages", [
+    ("Note", ["No field is called 'Note'. Did you mean 'Notes'?"]),
+    ("Note,  Dossing", ["No field is called 'Note'. Did you mean 'Notes'?",
+                        "No field is called 'Dossing'. Did you mean 'Dosing'?"]),
+    ("<zzzzzz>", ["No field is called '<zzzzzz>'."]),
+])
+def test_manage_decks_refuses_unknown_preserved_fields(
+        anki, tmp_path, monkeypatch, button, entered, messages):
+    from internpearls import dialogs
+    original = {"decks_dir": _write_source(tmp_path), "protected_fields": ["Notes"]}
+    anki.mw._config = dict(original)
+    monkeypatch.setattr(dialogs, "update_decks", lambda: pytest.fail("updated decks"))
+    warning_formats = []
+    warn = dialogs._warn
+    def record_warning(text, **kw):
+        warning_formats.append(kw.get("textFormat"))
+        return warn(text, **kw)
+    monkeypatch.setattr(dialogs, "_warn", record_warning)
+    reopened = []
+
+    def respond(p):
+        if p["kind"] == "warn":
+            assert p["text"].splitlines() == messages
+            assert anki.mw._config == original
+            return {}
+        assert p["kind"] == "dialog", "invalid names must return to Manage decks"
+        fields = find(p["tree"], t="line")
+        check = find(p["tree"], t="check")
+        if not anki.gui.warnings:
+            save = find(p["tree"], t="button", label=button)
+            return {"events": [{"id": fields["id"], "value": entered},
+                               {"id": check["id"], "value": False},
+                               {"id": save["id"], "click": True}]}
+        reopened.append((fields["value"], check["checked"]))
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+    assert anki.mw._config == original
+    assert reopened == [(entered, False)]
+    assert warning_formats and all(fmt == "plain" for fmt in warning_formats)
+
+
+@pytest.mark.parametrize("entered, expected", [
+    ("Notes, Extra", ["Notes", "Extra"]),
+    ("notes, dosing", ["notes", "dosing"]),
+    ("Notes, Prompt", ["Notes", "Prompt"]),
+])
+def test_manage_decks_saves_known_preserved_fields(anki, tmp_path, entered, expected):
+    from internpearls import dialogs
+    anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    anki.col.models._models = [mock_anki.make_model("Custom", fields=["Extra"])]
+    def respond(p):
+        if p["kind"] == "dialog":
+            fields = find(p["tree"], t="line")
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": fields["id"], "value": entered},
+                               {"id": save["id"], "click": True}]}
+        assert p["kind"] == "info"
+        return {}
+    drive(anki, dialogs.manage_decks, respond)
+    assert anki.mw._config["protected_fields"] == expected
+    assert not anki.gui.asks
+    assert not anki.gui.warnings
+
+
+@pytest.mark.parametrize("collection_open", [True, False])
+@pytest.mark.parametrize("stop", [True, False])
+def test_manage_decks_confirms_stopping_notes_protection(
+        anki, tmp_path, collection_open, stop):
+    from internpearls import dialogs
+    original = {"decks_dir": _write_source(tmp_path), "protected_fields": ["notes"]}
+    anki.mw._config = dict(original)
+    if not collection_open:
+        anki.mw.col = None
+    reopened = []
+    def respond(p):
+        if p["kind"] == "ask":
+            assert "Notes will no longer be kept through imports" in p["text"]
+            assert "Stop keeping Notes?" in p["text"]
+            assert p["buttons"] == ["Stop keeping Notes", "Keep protecting Notes"]
+            assert anki.gui.ask_defaults[-1] == "Keep protecting Notes"
+            assert anki.mw._config == original
+            return {"answer": stop}
+        if p["kind"] == "info":
+            assert stop
+            return {}
+        assert p["kind"] == "dialog"
+        fields = find(p["tree"], t="line")
+        check = find(p["tree"], t="check")
+        if not anki.gui.asks:
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": fields["id"], "value": ""},
+                               {"id": check["id"], "value": False},
+                               {"id": save["id"], "click": True}]}
+        reopened.append((fields["value"], check["checked"]))
+        cancel = find(p["tree"], t="button", label="Cancel")
+        return {"events": [{"id": cancel["id"], "click": True}]}
+    drive(anki, dialogs.manage_decks, respond)
+    assert anki.gui.asks
+    if stop:
+        assert anki.mw._config["protected_fields"] == []
+        assert anki.mw._config["excluded_decks"] == ["Intern Pearls::Intern Custom::Pharm"]
+    else:
+        assert anki.mw._config == original
+        assert reopened == [("", False)]
+
+
+def test_manage_decks_skips_field_validation_without_a_collection(anki, tmp_path):
+    from internpearls import dialogs
+    anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    anki.mw.col = None
+    def respond(p):
+        if p["kind"] == "dialog":
+            fields = find(p["tree"], t="line")
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": fields["id"], "value": "Notes, Unknown"},
+                               {"id": save["id"], "click": True}]}
+        assert p["kind"] == "info"
+        return {}
+    drive(anki, dialogs.manage_decks, respond)
+    assert anki.mw._config["protected_fields"] == ["Notes", "Unknown"]
+    assert not anki.gui.warnings
+
+
 def test_manage_decks_exclude_and_save(anki, tmp_path):
     from internpearls import dialogs, widgets
     anki.mw._config = {"decks_dir": _write_source(tmp_path)}
@@ -451,6 +579,7 @@ def test_change_source_keeps_the_edits_made_before_it(anki, tmp_path):
     losing them."""
     from internpearls import dialogs
     anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    anki.col.models.add_field(anki.col.models.all()[0], {"name": "Extra"})
     anki.gui.interactive = True
     seen = []
 

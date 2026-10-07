@@ -65,7 +65,7 @@ The run ends with one summary dialog, including the digest when you flagged or d
 
 ### Manage decks
 
-Lists every deck the source offers, with a checkbox, its card count, and a NEW or UPDATED chip where one applies. Unchecking a deck stops future syncs for it; its cards stay in your collection and Reconcile leaves them alone. The panel also edits `protected_fields`. Save keeps your choices; Save and update now also runs Update my decks.
+Lists every deck the source offers, with a checkbox, its card count, and a NEW or UPDATED chip where one applies. Unchecking a deck stops future syncs for it; its cards stay in your collection and Reconcile leaves them alone. The panel also edits `protected_fields`. With a collection open, an unknown field name is refused with a suggestion when a close match exists. Removing Notes from the list asks for confirmation before saving. Save keeps your choices; Save and update now also runs Update my decks.
 
 **Declined cards (N)** lists every card you left for later, kept your version of, or said Never to, grouped by decision (Later first, as one group), each with its deck, date, and an Offer again button that forgets the decision so your next update re-offers it.
 

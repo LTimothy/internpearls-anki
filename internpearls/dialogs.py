@@ -4,6 +4,7 @@ dimming, and About.
 Everything here is presentation plus config writes; the flows that touch the
 collection or the network live in sync.py / collection.py and are called from here.
 """
+import difflib
 import html
 
 from aqt import mw
@@ -18,7 +19,8 @@ from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      EXAMPLE_DECK_NAME, EXAMPLE_REPO,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED,
                      NIGHT_MODE_DIM_PERCENT_CEILING, NIGHT_MODE_DIM_PERCENT_FLOOR,
-                     STATE, _cfg, _load_json, _typed_value, load_declined, save_declined)
+                     STATE, TARGET_FIELDS, _cfg, _load_json, _typed_value,
+                     load_declined, save_declined)
 from .logic import (deck_status, manifest_scope_suggestion, night_mode_dim_factor,
                     parse_fields, plural, version_at_least)
 from .palette import DARK, LIGHT, colors
@@ -666,7 +668,7 @@ class _DeckManagerDialog(QDialog):
         return unticked + kept_previous
 
     def protected_fields(self):
-        return parse_fields(self._pf_edit.text())
+        return parse_fields(self._pf_edit.text(), default=())
 
 
 @_safe
@@ -678,10 +680,8 @@ def manage_decks(pending=None):
     an empty deck list and a "Configure source" / "Change source" button front and
     center, since that button is now the only way to reach deck-source configuration.
 
-    `pending` is {"excluded": [...], "protected": [...]} from a dialog that closed to
-    configure the source, and is how those edits survive the reopen below rather than
-    being thrown away by a click that never asked to discard them. Nothing else passes
-    it: the saved config is what a fresh open reads.
+    `pending` carries the deck choices and preserved-field text through a reopen after
+    configuring the source or checking a save. A fresh open reads the saved config.
     """
     cfg = _cfg()
     manifest, source, error = None, None, None
@@ -695,7 +695,8 @@ def manage_decks(pending=None):
 
     excluded = pending["excluded"] if pending else cfg["excluded"]
     protected = pending["protected"] if pending else cfg["protected"]
-    installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
+    installed = (installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
+                 if mw.col else {})
     rows = deck_status(manifest, installed, excluded) if manifest else []
 
     # Only once the source actually loaded: a source that failed offers no rows at all
@@ -710,12 +711,15 @@ def manage_decks(pending=None):
     dlg = _DeckManagerDialog(mw, rows, protected, source_label,
                              configured=bool(cfg["gh_repo"] or cfg["decks_dir"]),
                              source_failed=bool(error), stale_excluded=stale_excluded)
+    if pending and "protected_text" in pending:
+        dlg._pf_edit.setText(pending["protected_text"])
     result = dlg.exec()
     change_source, update_now = dlg.change_source_requested, dlg.update_requested
     # Merged against what was excluded going in, not read from the checkboxes alone:
     # this dialog only ever knows about the decks it rendered (see excluded_decks).
     choices = {"excluded": dlg.excluded_decks(excluded),
-               "protected": dlg.protected_fields()}
+               "protected": dlg.protected_fields(),
+               "protected_text": dlg._pf_edit.text()}
     dlg.deleteLater()   # every read of it is above; see ui._ask_scrollable
 
     if change_source:
@@ -724,6 +728,34 @@ def manage_decks(pending=None):
         return
     if not result:
         return   # cancelled
+
+    if mw.col:
+        known = {name for fields in TARGET_FIELDS.values() for name in fields}
+        known.update(field["name"] for model in mw.col.models.all()
+                     for field in model["flds"])
+        # Match collection._note_field's case-insensitive lookup.
+        known = {name.lower(): name for name in sorted(known)}
+        warnings = []
+        for name in choices["protected"]:
+            if name.lower() in known:
+                continue
+            message = f"No field is called '{name}'."
+            close = difflib.get_close_matches(name.lower(), sorted(known), n=1, cutoff=0.6)
+            if close:
+                message += f" Did you mean '{known[close[0]]}'?"
+            warnings.append(message)
+        if warnings:
+            _warn("\n".join(warnings), textFormat="plain")
+            manage_decks(choices)
+            return
+
+    if (any(name.lower() == "notes" for name in cfg["protected"])
+            and not any(name.lower() == "notes" for name in choices["protected"])):
+        if not _ask("Notes will no longer be kept through imports, so a deck update "
+                    "can replace what you wrote there. Stop keeping Notes?",
+                    yes_label="Stop keeping Notes", no_label="Keep protecting Notes"):
+            manage_decks(choices)
+            return
 
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
     conf["excluded_decks"] = choices["excluded"]
