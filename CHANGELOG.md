@@ -3,6 +3,26 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.80.0
+
+A shorter card feedback digest that survives being texted, and a saved copy of each recent one.
+
+- The standing declines at the end of a digest take one line per deck: each card is
+  listed by its ID, grouped by when you decided, instead of four lines per card. Every
+  card is still listed, so the digest still says which earlier choices are in force; a
+  long list of declines now adds a few lines rather than hundreds. Two decks that share
+  a name are shown by their full path.
+- A digest is written in plain ASCII wherever a character has an exact ASCII spelling:
+  dashes, curly quotes, the ellipsis on a shortened front, Greek letters, subscripts and
+  accents. Sent as a text message, it no longer turns those into question marks. Other
+  scripts are left as written.
+- The last 20 digests are kept. Advanced > Recent card feedback lists them, newest first,
+  and reopens any of them to copy again, so a digest that never got sent is not lost.
+  If a copy can't be saved, your notes are kept and come back on your next update.
+- The digest view has Save as file, so a digest can be attached to a message instead of
+  pasted into it.
+- Notes typed on Update my decks are saved if Anki closes while the screen is still open.
+
 ## v0.79.0
 
 Card pictures through a proxy, AI verdicts that survive a rescan, and text that always
