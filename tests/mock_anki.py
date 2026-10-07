@@ -3474,7 +3474,15 @@ def install():
 
         @staticmethod
         def processEvents():
-            pass
+            from internpearls.platform import platform
+            replay = platform()
+            settle = getattr(replay, "settle_frontier", None)
+            if settle is not None:
+                settle()
+                if replay.pending():
+                    response = mock.gui.next_interaction({"kind": "work"})
+                    if "actions" in response:
+                        apply_actions(response, allowed_ids=set())
 
         @staticmethod
         def clipboard():

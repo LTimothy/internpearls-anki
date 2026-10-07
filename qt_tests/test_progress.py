@@ -17,10 +17,8 @@ import harness
 def _progress(title="Syncing decks", total=2):
     """cancellable_progress with a real widget standing in for mw.
 
-    Real Qt rejects a non-widget parent outright, and the mock's mw is a plain object
-    (the harness only patches QDialog's own __init__, which QProgressDialog does not
-    inherit at the Python level). Restored afterwards so no later scene parents itself
-    to this throwaway window.
+    A real widget parent lets this check exercise window modality. Restored
+    afterwards so no later scene parents itself to this throwaway window.
     """
     harness.bootstrap()
     app = harness.app()
@@ -82,3 +80,114 @@ def test_the_pump_reports_cancel_without_advancing_the_bar():
         assert step(1, "Syncing a deck (1 of 2)") is False, (
             "a cancelled run must still stop at the next step boundary, which is the "
             "only place an import may be skipped")
+
+
+def test_slow_fetch_keeps_events_running_and_cancel_returns_promptly(monkeypatch):
+    import threading
+    import time
+
+    import pytest
+    from aqt.qt import QLabel, QProgressDialog, QPushButton, QTimer, Qt, QWidget
+    from internpearls import ui
+    from internpearls.config import APP_NAME
+
+    app = harness.app()
+    parent = QWidget()
+    monkeypatch.setattr(ui, "mw", parent)
+    release = threading.Event()
+    ticks, windows, threads = [], [], []
+    main_thread = threading.get_ident()
+    started = time.monotonic()
+    timer = QTimer(parent)
+
+    def tick():
+        ticks.append(time.monotonic())
+        for dlg in app.topLevelWidgets():
+            if isinstance(dlg, QProgressDialog) and dlg.isVisible():
+                windows.append((dlg.windowTitle(), dlg.windowModality(),
+                                dlg.minimum(), dlg.maximum(),
+                                dlg.findChild(QLabel).textFormat(),
+                                dlg.findChild(QLabel).text(), time.monotonic()))
+                dlg.findChild(QPushButton).click()
+        if time.monotonic() - started > 1.5:
+            release.set()
+
+    def fetch():
+        threads.append(threading.get_ident())
+        release.wait(2)
+        return "late result"
+
+    timer.timeout.connect(tick)
+    timer.start(10)
+    try:
+        with pytest.raises(ui.ProgressCancelled):
+            ui.run_with_progress("Checking <b>the deck source</b>", fetch)
+        returned = time.monotonic()
+        assert not release.is_set(), "Cancel must return before the fetch finishes"
+        assert len(ticks) >= 5
+        assert windows
+        title, modality, low, high, text_format, text, shown = windows[0]
+        assert title == APP_NAME
+        assert modality == Qt.WindowModality.WindowModal
+        assert (low, high) == (0, 0)
+        assert text_format == Qt.TextFormat.PlainText
+        assert text == "Checking <b>the deck source</b>"
+        assert 0.25 <= shown - started < 1
+        assert returned - shown < 0.2
+        assert threads[0] != main_thread
+    finally:
+        release.set()
+        timer.stop()
+        parent.deleteLater()
+        app.processEvents()
+
+
+def test_fast_fetch_does_not_show_a_progress_window(monkeypatch):
+    from aqt.qt import QProgressDialog, QWidget
+    from internpearls import ui
+
+    app = harness.app()
+    parent = QWidget()
+    monkeypatch.setattr(ui, "mw", parent)
+    shown = []
+    original = QProgressDialog.showEvent
+
+    def show_event(dlg, event):
+        shown.append(dlg)
+        original(dlg, event)
+
+    monkeypatch.setattr(QProgressDialog, "showEvent", show_event)
+    try:
+        assert ui.run_with_progress("Checking the deck source", lambda: "ready") == "ready"
+        assert not shown
+    finally:
+        parent.deleteLater()
+        app.processEvents()
+
+
+def test_destroying_the_parent_abandons_a_blocked_fetch(monkeypatch):
+    import threading
+
+    import pytest
+    from PyQt6 import sip
+    from aqt.qt import QTimer, QWidget
+    from internpearls import ui
+
+    app = harness.app()
+    parent = QWidget()
+    monkeypatch.setattr(ui, "mw", parent)
+    release = threading.Event()
+    timer = QTimer()
+    timer.setSingleShot(True)
+    timer.timeout.connect(lambda: sip.delete(parent))
+    timer.start(10)
+    try:
+        with pytest.raises(ui.ProgressCancelled):
+            ui.run_with_progress("Checking the deck source", lambda: release.wait(1))
+        assert not release.is_set()
+    finally:
+        release.set()
+        timer.stop()
+        if not sip.isdeleted(parent):
+            parent.deleteLater()
+        app.processEvents()

@@ -97,6 +97,16 @@ def bootstrap():
 
     QtWidgets.QDialog.__init__ = _init
 
+    _progress_init = QtWidgets.QProgressDialog.__init__
+
+    def _init_progress(self, *a, **k):
+        args = list(a)
+        if len(args) >= 5 and not isinstance(args[4], QtWidgets.QWidget):
+            args[4] = None
+        _progress_init(self, *args, **k)
+
+    QtWidgets.QProgressDialog.__init__ = _init_progress
+
     # Same trick conftest.py uses: register the package by path only, so importing a
     # submodule never runs __init__.py's menu and startup wiring.
     pkg = types.ModuleType("internpearls")

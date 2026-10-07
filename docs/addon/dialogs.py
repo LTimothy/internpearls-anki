@@ -28,7 +28,7 @@ from .review import append_rows, build_list_body
 from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _safe, _warn,
                  hint_label, link_button, muted_label, plain_tooltip, section_label,
-                 section_rule, title_label, wait_cursor)
+                 section_rule, title_label, ProgressCancelled, run_with_progress)
 from .widgets import FilterBar, StreamingList, chip_cell
 
 
@@ -263,9 +263,12 @@ def configure_source():
 
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
+    cfg = _cfg()
     try:
-        with wait_cursor():
-            manifest, _, source = _fetch_manifest(_cfg())
+        manifest, _, source = run_with_progress(
+            "Checking the deck source", lambda: _fetch_manifest(cfg))
+    except ProgressCancelled:
+        return
     except Exception as e:
         _warn(f"Saved, but couldn't connect: {html.escape(str(e), quote=False)}<br><br>"
               "Double-check the repo name and token (or folder path), then use "
@@ -687,8 +690,10 @@ def manage_decks(pending=None):
     manifest, source, error = None, None, None
     if cfg["gh_repo"] or cfg["decks_dir"]:
         try:
-            with wait_cursor():
-                manifest, _, source = _fetch_manifest(cfg)
+            manifest, _, source = run_with_progress(
+                "Checking the deck source", lambda: _fetch_manifest(cfg))
+        except ProgressCancelled:
+            return
         except Exception as e:
             error = str(e)
     source_label = source if manifest else (f"error: {error}" if error else "not configured")

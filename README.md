@@ -30,6 +30,8 @@ No deck source yet? Open Manage decks, choose Configure source, and pick "Try th
 
 ### Update my decks
 
+A slow deck source shows a checking window with Cancel.
+
 The main button. It fetches `manifest.json` from your deck source and works out everything pending in one pass: changed decks, retired cards still in your collection, and cards a deck reorganization needs to relocate. Each changed deck is downloaded and matched against your collection first, so the confirmation shows real counts ("12 kept · 3 new", plus "changed" for cards rewritten upstream). A progress bar with a working Cancel covers the download and the apply step; Cancel stops a transfer, never a half-finished import. The confirmation is a preview: nothing applies until you click Update.
 
 **The card list.** Every pending card is a row with a chip: NEW (you don't have it), UPDATED (its content changed upstream, with your current field values shown under it), RETIRED (being archived because a split, reword or removal replaced it, with the source's reason when there is one), or MOVED (being relocated to match a reorganized deck). Click a NEW or UPDATED row to read the whole card. The list builds in batches as you scroll, so it opens instantly however much is pending.

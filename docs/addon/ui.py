@@ -21,6 +21,7 @@ dialog carrying its own copy of the stylesheet strings.
 import functools
 import html
 import sys
+import time
 import traceback
 from contextlib import contextmanager
 
@@ -32,6 +33,7 @@ from aqt.utils import askUser, getText, showInfo, showWarning, tooltip
 
 from .config import APP_NAME
 from .palette import colors
+from .platform import new_work_request, platform, wait_for_mock_work
 
 
 # True while an interactive flow that writes the collection is running: the sync,
@@ -534,6 +536,64 @@ def cancellable_progress(title, total):
         dlg.setValue(total)
         dlg.close()
         dlg.deleteLater()   # parented to mw, so closing alone leaves it behind
+
+
+class ProgressCancelled(Exception):
+    """The user cancelled a check before its result was used."""
+
+
+def run_with_progress(label, fn):
+    """Run file or network work off-thread while pumping a delayed, modal check.
+
+    `fn` must not access Qt or the collection. Its result or exception returns on
+    the main thread; Cancel abandons the work without waiting for it to finish.
+    """
+    dlg = QProgressDialog(label, "Cancel", 0, 0, mw)
+    text = QLabel(label)
+    text.setTextFormat(Qt.TextFormat.PlainText)
+    dlg.setLabel(text)
+    dlg.setLabelText(label)
+    dlg.setWindowTitle(APP_NAME)
+    dlg.setWindowModality(Qt.WindowModality.WindowModal)
+    dlg.setMinimumDuration(300)
+    dlg.setAutoClose(False)
+    dlg.setValue(0)
+    outcome = []
+    active = True
+    handle = None
+
+    def finished(result, error):
+        if active:
+            outcome.append((result, error))
+
+    request = new_work_request(dlg, "background-fetch", "progress.fetch")
+    try:
+        handle = platform().start_work(
+            request, lambda _context: fn(),
+            lambda result: finished(result, None),
+            lambda error: finished(None, error))
+        handle.start()
+        while True:
+            QApplication.processEvents()
+            if not _window_alive() or dlg.wasCanceled():
+                raise ProgressCancelled()
+            if not handle.is_alive():
+                wait_for_mock_work(handle)
+            if outcome:
+                result, error = outcome[0]
+                if error is not None:
+                    raise error
+                return result
+            time.sleep(0.005)
+    finally:
+        active = False
+        if handle is not None:
+            handle.cancel()
+        try:
+            dlg.close()
+            dlg.deleteLater()
+        except RuntimeError:    # the main window and its children were deleted
+            pass
 
 
 # ------------------------------------------------------------------ widget helpers

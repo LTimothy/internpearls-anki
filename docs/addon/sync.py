@@ -63,7 +63,7 @@ from .review import (_CONFIRM_HEIGHT, NOTHING_CHANGED, append_rows, build_list_b
                      build_update_body, clear_saved_feedback, folded_guids, hold_control,
                      load_saved_feedback, show_result, show_result_with_feedback)
 from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _manual_flow, _safe,
-                 _warn, cancellable_progress, wait_cursor)
+                 _warn, cancellable_progress, ProgressCancelled, run_with_progress)
 
 # The "Reconcile my decks" QAction, set once by __init__.py right after building the
 # menu. Mutated from here and from background.py's auto-sync poll, mirroring
@@ -338,8 +338,10 @@ def _fetch_manifest_gated(cfg):
     or None after already showing the user a warning; the caller should just return.
     """
     try:
-        with wait_cursor():
-            manifest, fetch, source = _fetch_manifest(cfg)
+        manifest, fetch, source = run_with_progress(
+            "Checking the deck source", lambda: _fetch_manifest(cfg))
+    except ProgressCancelled:
+        return
     except Exception as e:
         _source_warning(e)
         return None
@@ -1371,8 +1373,10 @@ def reconcile_decks():
     """
     cfg = _cfg()
     try:
-        with wait_cursor():
-            manifest, fetch, source = _fetch_manifest(cfg)
+        manifest, fetch, source = run_with_progress(
+            "Checking the deck source", lambda: _fetch_manifest(cfg))
+    except ProgressCancelled:
+        return
     except Exception as e:
         _source_warning(e)
         return
@@ -1527,8 +1531,10 @@ def clean_up_duplicates():
     """
     cfg = _cfg()
     try:
-        with wait_cursor():
-            manifest, _, source = _fetch_manifest(cfg)
+        manifest, _, source = run_with_progress(
+            "Checking the deck source", lambda: _fetch_manifest(cfg))
+    except ProgressCancelled:
+        return
     except Exception as e:
         _source_warning(e)
         return

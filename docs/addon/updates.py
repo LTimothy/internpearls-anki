@@ -18,7 +18,7 @@ from aqt.utils import openLink
 from .config import ADDON_VERSION, ANKI_REPO, STATE, _cfg, _load_json
 from .logic import version_at_least
 from .net import _BG_TIMEOUT, _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_public_raw
-from .ui import _ask, _info, _safe, _warn
+from .ui import _ask, _info, _safe, _warn, ProgressCancelled, run_with_progress
 
 # The "Check for add-on updates" QAction, set once by __init__.py right after building
 # the menu. Mutated from here and from background.py's startup check so a known
@@ -174,7 +174,10 @@ def check_updates():
     """Compare our version to version.json in the public add-on repo; offer to update."""
     token = _cfg()["gh_token"]
     try:
-        latest = _fetch_addon_version_info(token=token)
+        latest = run_with_progress(
+            "Checking for add-on updates", lambda: _fetch_addon_version_info(token=token))
+    except ProgressCancelled:
+        return
     except Exception as e:
         _warn(f"Couldn't check for updates: {html.escape(str(e), quote=False)}")
         return
