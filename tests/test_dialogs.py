@@ -129,6 +129,7 @@ def test_real_menu_structure():
     adv_labels = [n["label"] for n in submenus["Advanced"]["items"] if n["t"] == "item"]
     assert adv_labels == [
         "Sync decks", "Reconcile my decks", "Import single deck (manual)",
+        "Recent card feedback",
         "Clean up duplicate cards", "Remove empty cards", "Fix note types",
         "Backup intern pearls deck",
         "Restore intern pearls deck", "Export intern pearls deck",

@@ -41,3 +41,9 @@ def shot():
 def pytest_report_header(config):
     from PyQt6.QtCore import QT_VERSION_STR
     return f"real-Qt suite: Qt {QT_VERSION_STR}, platform {harness.app().platformName()}"
+
+
+@pytest.fixture(autouse=True)
+def feedback_files(tmp_path, monkeypatch):
+    from internpearls import review
+    monkeypatch.setattr(review, "FEEDBACK", str(tmp_path / "card_feedback.json"))

@@ -37,6 +37,7 @@ from .collection import (backup_collection_now, backup_deck_now, export_deck,
 from .dialogs import about, manage_decks, open_night_mode_dimming, open_settings
 from .dupes_dialog import open_duplicate_scan
 from .nightmode import dim_images_in_night_mode, dim_webviews_in_night_mode
+from .review import open_recent_feedback
 from .sync import (clean_up_duplicates, import_single, reconcile_decks,
                    register_reconcile_action, restore_pending_after_undo, sync_decks,
                    update_decks)
@@ -81,6 +82,7 @@ def _menu():
     # ever applies content on its own — see sync.py's comment by _reconcile_action.
     register_reconcile_action(add(adv, "Reconcile my decks", reconcile_decks))
     add(adv, "Import single deck (manual)", import_single)
+    add(adv, "Recent card feedback", open_recent_feedback)
     adv.addSeparator()
     add(adv, "Clean up duplicate cards", clean_up_duplicates)
     add(adv, "Remove empty cards", remove_empty_cards)

@@ -7,8 +7,8 @@ sync.py's update flow, so living in dialogs.py would close that import into a cy
 Presentation only, in both directions: it reads note fields that sync.py already pulled
 out of a downloaded .apkg, and hands back what the learner typed. It also reads the
 collection's own media folder, to render the learner's side of a changed-field
-comparison from a picture the learner already has, but it writes nothing there or
-anywhere else, and touches no network. That's still why the dialog has no Cancel.
+comparison from a picture the learner already has. Card notes and feedback digests
+are saved under user_files/; collection media is read only. It touches no network.
 """
 import datetime
 import hashlib
@@ -17,10 +17,11 @@ import os
 import tempfile
 
 from aqt import mw
-from aqt.qt import (QDialog, QDialogButtonBox, QFontDatabase, QFrame, QHBoxLayout,
+from aqt.qt import (QFontDatabase, QFrame, QHBoxLayout,
                     QImage, QLabel, QPlainTextEdit, QPushButton, QScrollArea,
                     QSizePolicy, Qt, QTimer, QVBoxLayout, QWidget)
 
+from . import config
 from .config import (ADDON_VERSION, APP_NAME, FEEDBACK, _collection_state_path, _load_json,
                      _save_json)
 from .logic import (FILTER_MIN_CARDS, FILTER_MODES, apkg_media_index,
@@ -31,7 +32,7 @@ from .logic import (FILTER_MIN_CARDS, FILTER_MODES, apkg_media_index,
                     merged_word_diff, note_display_label, plain_text, plural, truncate,
                     word_diff_ratio)
 from .palette import colors
-from .ui import (_ask_with_widget, _info, copy_to_clipboard, hint_label, link_button,
+from .ui import (_ask_with_widget, _info, _safe, copy_to_clipboard, hint_label, link_button,
                  muted_label, title_label)
 from .widgets import (CARET_GAP, CARET_W, FilterBar, StreamingList, chip_cell,
                       chip_column_width, decision_cell, row_text_indent,
@@ -1519,6 +1520,123 @@ def clear_saved_feedback():
         pass
 
 
+def _feedback_digest_folder():
+    state = _collection_state_path(FEEDBACK)
+    return os.path.join(os.path.dirname(state), "feedback_digests") if state else None
+
+
+def _feedback_digest_names(folder):
+    return sorted((name for name in os.listdir(folder) if name.endswith(".txt")),
+                  key=lambda name: name[:-4], reverse=True)
+
+
+def _write_feedback_digest(text, entries):
+    folder = _feedback_digest_folder()
+    if folder is None:
+        return
+    os.makedirs(folder, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    stem = stamp
+    existing = [name.rsplit(".", 1)[0] for name in os.listdir(folder)
+                if name.startswith(stamp) and name.endswith((".txt", ".json"))]
+    if existing:
+        suffix = max(int(name[20:] or 0) for name in existing) + 1
+        stem = f"{stamp}-{suffix:04d}"
+    path = os.path.join(folder, stem + ".txt")
+    counts = {"notes": sum(1 for e in entries if (e.get("note") or "").strip()),
+              "decisions": sum(1 for e in entries if e.get("decision"))}
+    fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf8", newline="") as fh:
+            fh.write(text)
+        _save_json(os.path.join(folder, stem + ".json"), counts)
+        config.replace_file(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return folder
+
+
+def save_feedback_digest(text, entries):
+    """Archive the displayed text and keep the newest twenty, without blocking review."""
+    try:
+        folder = _write_feedback_digest(text, entries)
+        if folder is None:
+            return
+    except Exception as exc:
+        print(f"Could not save card feedback digest: {exc}")
+        return
+    try:
+        for name in _feedback_digest_names(folder)[20:]:
+            for victim in (name, name[:-4] + ".json"):
+                try:
+                    os.remove(os.path.join(folder, victim))
+                except FileNotFoundError:
+                    pass
+    except Exception as exc:
+        print(f"Could not prune card feedback digests: {exc}")
+
+
+def load_feedback_digests():
+    """Saved text and counts for the open collection and source, newest first."""
+    folder = _feedback_digest_folder()
+    if folder is None or not os.path.isdir(folder):
+        return []
+    saved = []
+    try:
+        names = _feedback_digest_names(folder)
+    except OSError as exc:
+        print(f"Could not read card feedback digests: {exc}")
+        return saved
+    for name in names:
+        try:
+            when = datetime.datetime.strptime(name[:19], "%Y-%m-%dT%H-%M-%S")
+            with open(os.path.join(folder, name), encoding="utf8", newline="") as fh:
+                text = fh.read()
+        except (OSError, ValueError) as exc:
+            print(f"Could not read card feedback digest: {exc}")
+            continue
+        counts = _load_json(os.path.join(folder, name[:-4] + ".json"), None)
+        if not isinstance(counts, dict) or any(
+                type(counts.get(key)) is not int for key in ("notes", "decisions")):
+            counts = {"notes": None, "decisions": None}
+        saved.append({"text": text, "when": when,
+                      "notes": counts["notes"], "decisions": counts["decisions"]})
+    return saved
+
+
+@_safe
+def open_recent_feedback():
+    saved = load_feedback_digests()
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    lay.setContentsMargins(0, 0, 0, 0)
+    rows = QWidget()
+    rlay = QVBoxLayout(rows)
+    rlay.setContentsMargins(0, 0, 0, 0)
+    rlay.setSpacing(0)
+    if not saved:
+        rlay.addWidget(simple_row(None, "No card feedback has been saved yet.",
+                                   card_columns=False))
+    for i, digest in enumerate(saved):
+        when = digest["when"]
+        counts = ("counts unavailable" if digest["notes"] is None else
+                  f"{plural(digest['notes'], 'note')}, {plural(digest['decisions'], 'decision')}")
+        label = f"{when.day} {when.strftime('%b %Y, %H:%M')} · {counts}"
+        if i:
+            rlay.addWidget(_separator())
+        row = simple_row(None, html.escape(label), card_columns=False)
+        row.layout().addWidget(link_button(
+            "Show", lambda checked=False, d=digest: show_feedback_digest(
+                None, d["text"], heading=_digest_count_heading(d["notes"], d["decisions"]) or "Card feedback")))
+        rlay.addWidget(row)
+    rlay.addStretch()
+    lay.addWidget(_scrolled(rows, 420))
+    lay.addStretch()
+    _ask_with_widget(body, yes_label="Close", no_label=None,
+                     title=f"{APP_NAME}: recent card feedback", min_height=_CONFIRM_HEIGHT)
+
+
 def build_update_body(items, sources, flags, new_index, decisions,
                       top_html, status_line, safety_html, touched=None, opened=None,
                       on_review=None):
@@ -1994,10 +2112,14 @@ def _digest_heading(entries):
     """
     flagged = sum(1 for e in entries if (e.get("note") or "").strip())
     decided = sum(1 for e in entries if e.get("decision"))
+    return _digest_count_heading(flagged, decided) or plural(len(entries), "card")
+
+
+def _digest_count_heading(flagged, decided):
     parts = [text for text, n in ((f"{plural(flagged, 'card')} flagged", flagged),
                                   (f"{plural(decided, 'decision')} recorded", decided))
              if n]
-    return ", ".join(parts) or plural(len(entries), "card")
+    return ", ".join(parts)
 
 
 def offer_feedback_digest(parent, entries, title=None, items=(), standing_declines=None,
@@ -2027,19 +2149,22 @@ def offer_feedback_digest(parent, entries, title=None, items=(), standing_declin
                                  excluded=excluded)
     if not text:
         return
-    copied = copy_to_clipboard(text)
+    save_feedback_digest(text, entries)
+    show_feedback_digest(parent, text, heading=_digest_heading(entries), title=title, items=items)
 
-    dlg = QDialog(parent or mw)
-    dlg.setWindowTitle(f"{APP_NAME}: card feedback")
-    dlg.setMinimumWidth(520)
-    dlg.setMinimumHeight(380)
-    lay = QVBoxLayout(dlg)
+
+def show_feedback_digest(parent, text, heading="Card feedback", title=None, items=()):
+    """Show and copy ready text without rebuilding it or changing saved card notes."""
+    copied = copy_to_clipboard(text)
+    body = QWidget()
+    lay = QVBoxLayout(body)
+    lay.setContentsMargins(0, 0, 0, 0)
     if title:
         # The run's own outcome, at the dialog's largest size: it is what the whole
         # screen is reporting. The flagged-card heading below is subordinate to it and
         # says so by being smaller, which is the way round these two used to read.
         lay.addWidget(_scrolled(_summary_block(title, items), 200))
-    lay.addWidget(section_header(_digest_heading(entries)))
+    lay.addWidget(section_header(heading))
     # Nothing here sends anything, and this is the last screen that can say so before
     # the notes are cleared: "copied, ready to paste" left it possible to read the
     # digest, close it, and assume the deck author now had it.
@@ -2081,11 +2206,6 @@ def offer_feedback_digest(parent, entries, title=None, items=(), standing_declin
     # the surplus goes, so it spreads thin gaps between the title/hint/box instead of
     # leaving one, below the content and above the buttons where it belongs.
     lay.addStretch()
-    bb = QDialogButtonBox()
-    again = bb.addButton("Copy again", QDialogButtonBox.ButtonRole.ActionRole)
-    again.clicked.connect(lambda: copy_to_clipboard(text))
-    close = bb.addButton("Close", QDialogButtonBox.ButtonRole.AcceptRole)
-    close.clicked.connect(dlg.accept)
-    lay.addWidget(bb)
-    dlg.exec()
-    dlg.deleteLater()   # parented to mw otherwise, which owns it until Anki quits
+    _ask_with_widget(body, yes_label="Close", no_label=None,
+                     title=f"{APP_NAME}: card feedback", min_width=520, min_height=380,
+                     actions=(("Copy again", lambda: copy_to_clipboard(text)),), parent=parent)

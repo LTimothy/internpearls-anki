@@ -303,6 +303,28 @@ def _scene_digest(mock, opts):
     return lambda: review.offer_feedback_digest(None, entries)
 
 
+def _scene_recent_feedback(mock, opts):
+    from internpearls import review
+    import json
+    from pathlib import Path
+    def open_recent():
+        with tempfile.TemporaryDirectory() as folder:
+            original = review.FEEDBACK
+            review.FEEDBACK = os.path.join(folder, "card_feedback.json")
+            try:
+                saved = Path(review._feedback_digest_folder())
+                saved.mkdir(parents=True)
+                for day in (5, 6, 7):
+                    stem = f"2026-10-{day:02d}T15-20-03"
+                    (saved / (stem + ".txt")).write_text("stored text\n", encoding="utf8")
+                    (saved / (stem + ".json")).write_text(
+                        json.dumps({"notes": day - 4, "decisions": 2}), encoding="utf8")
+                review.open_recent_feedback()
+            finally:
+                review.FEEDBACK = original
+    return open_recent
+
+
 def _scene_settings(mock, opts):
     from internpearls import dialogs
     return dialogs.open_settings
@@ -1182,6 +1204,7 @@ def _scene_ai_my_rules(mock, opts):
 
 
 SCENES = {
+    "recent-feedback": (_scene_recent_feedback, "saved card feedback digests"),
     "digest": (_scene_digest, "the flagged-card feedback digest"),
     "settings": (_scene_settings, "the Settings dialog"),
     "night-mode-dimming": (_scene_night_mode_dimming,

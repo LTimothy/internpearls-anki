@@ -8841,3 +8841,33 @@ def test_a_dangling_manifest_link_reads_as_no_manifest(anki, tmp_path):
     _sync(anki)
 
     assert "has no manifest.json" in anki.gui.warnings[0]
+
+
+@pytest.mark.parametrize("save_fails", [False, True])
+def test_digest_archive_failure_still_shows_before_clearing_notes(
+        anki, tmp_path, monkeypatch, save_fails):
+    from internpearls import review
+    review.save_feedback({"gONE": {"note": "wrong dose", "deck": DECK,
+                                   "front": "An earlier card"}})
+    shown = []
+    original = review.show_feedback_digest
+    if save_fails:
+        def fail(*args):
+            raise OSError("cannot write digest")
+        monkeypatch.setattr(review, "_write_feedback_digest", fail)
+
+    def show(*args, **kwargs):
+        assert review.load_saved_feedback()
+        result = original(*args, **kwargs)
+        assert review.load_saved_feedback()
+        shown.append(True)
+        return result
+    monkeypatch.setattr(review, "show_feedback_digest", show)
+
+    def on_screen(tree, seen, decide):
+        return {"events": [{"id": _find(tree, t="button", label=decide)["id"],
+                            "click": True}]}
+    _feedback_run(anki, tmp_path, on_screen)
+    assert shown
+    assert review.load_saved_feedback() == {}
+    assert bool(review.load_feedback_digests()) is not save_fails

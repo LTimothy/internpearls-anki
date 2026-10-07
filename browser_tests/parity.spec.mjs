@@ -378,3 +378,21 @@ test("lists", async ({ page }) => {
   await expect(dialog.getByRole("button", { name: "Update", exact: true })).toBeVisible();
   expect(failures).toEqual([]);
 });
+
+
+test("recent card feedback follows manual import and opens its empty state", async ({ page }) => {
+  const failures = await openDemo(page);
+  const labels = await page.evaluate(async () => {
+    const { menu } = await window.demo.request("menu", {});
+    return menu.find((item) => item.label === "Advanced").items
+      .filter((item) => item.t === "item").map((item) => item.label);
+  });
+  expect(labels[labels.indexOf("Import single deck (manual)") + 1]).toBe("Recent card feedback");
+  await runMenuItem(page, "Recent card feedback", "Advanced");
+  const dialog = await waitForDialog(page);
+  await expect(dialog).toHaveAccessibleName("Intern Pearls: recent card feedback");
+  await expect(dialog).toContainText("No card feedback has been saved yet.");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.locator("#overlay")).not.toHaveClass(/show/);
+  expect(failures).toEqual([]);
+});

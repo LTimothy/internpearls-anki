@@ -287,7 +287,7 @@ def _place_checkbox(dialog_layout, body, box):
 
 def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=None,
                      title=None, min_width=560, min_height=520, on_close=None,
-                     open_size=None, extra=None):
+                     open_size=None, extra=None, actions=(), parent=None):
     """Like _ask_scrollable, but the body is a caller-built widget rather than an HTML
     string, for a screen whose content is more than one scrollable label can lay out
     well: fixed summary text above a list that should take whatever height the resized
@@ -317,9 +317,10 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
     role, so it may not sit next to Update on screen). While the dialog is open its
     live button sits in extra["button"] so the caller can relabel or hide it; clicking
     it sets extra["clicked"] and answers yes. The button entry is dropped again on
-    return.
+    return. `actions` holds (label, callback) pairs for buttons that leave the
+    dialog open, such as Copy again.
     """
-    dlg = QDialog(mw)
+    dlg = QDialog(parent or mw)
     dlg.setWindowTitle(title or APP_NAME)
     dlg.setMinimumWidth(min_width)
     dlg.setMinimumHeight(min_height)
@@ -343,6 +344,9 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
         _place_checkbox(lay, body, box)
 
     bb = QDialogButtonBox()
+    for label, callback in actions:
+        action = bb.addButton(label, QDialogButtonBox.ButtonRole.ActionRole)
+        action.clicked.connect(lambda checked=False, fn=callback: fn())
     if extra is not None:
         other = bb.addButton(extra["label"], QDialogButtonBox.ButtonRole.ActionRole)
         other.setToolTip(extra.get("tooltip", ""))

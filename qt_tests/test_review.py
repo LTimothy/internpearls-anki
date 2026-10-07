@@ -157,3 +157,20 @@ def test_a_card_source_tag_paints_quotes_and_ampersands_as_text():
                                      "card_source": "[A&B] [Q's-2]"}, None)
     shown = [harness.shown(w) for w in cell.findChildren(QLabel)]
     assert "[A&B]" in shown and "[Q's-2]" in shown, shown
+
+
+def test_recent_feedback_has_rows_and_show_links(shot, tmp_path):
+    from aqt.qt import QDialogButtonBox, QScrollArea
+    s = shot("recent-feedback")
+    assert s.dialog.windowTitle() == "Intern Pearls: recent card feedback"
+    labels = [w.text() for w in s.dialog.findChildren(QLabel)]
+    assert [text for text in labels if "Oct 2026" in text] == [
+        "7 Oct 2026, 15:20 · 3 notes, 2 decisions",
+        "6 Oct 2026, 15:20 · 2 notes, 2 decisions",
+        "5 Oct 2026, 15:20 · 1 note, 2 decisions"]
+    assert sum(b.text() == "Show" for b in s.dialog.findChildren(QPushButton)) == 3
+    assert not any("<ul" in text.lower() for text in labels)
+    scroll = s.dialog.findChildren(QScrollArea)[0]
+    buttons = s.dialog.findChildren(QDialogButtonBox)[0]
+    assert not scroll.isAncestorOf(buttons)
+    assert s.image.save(str(tmp_path / "recent-feedback.png"))
