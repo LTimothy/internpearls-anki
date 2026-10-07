@@ -56,7 +56,7 @@ class _Web:
         return [(socket.AF_INET6 if ":" in a else socket.AF_INET, socket.SOCK_STREAM,
                  6, "", (a, port)) for a in self.hosts[host]]
 
-    def open(self, host, ip, port, timeout):
+    def open(self, host, ip, port, timeout, on_socket=None, deadline=None):
         web = self
 
         class _Conn:
@@ -243,6 +243,74 @@ def test_each_public_address_is_tried_in_turn(monkeypatch):
     assert web.connected == [("img.example", "93.184.216.35")]
 
 
+@pytest.fixture
+def stalled_tls_server(monkeypatch):
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    server.settimeout(2)
+    port = server.getsockname()[1]
+    stop = threading.Event()
+    hellos = []
+
+    def serve():
+        try:
+            conn, _ = server.accept()
+            with conn:
+                conn.settimeout(2)
+                hellos.append(conn.recv(4096))
+                stop.wait(3)
+        except OSError:
+            pass
+
+    thread = threading.Thread(target=serve)
+    thread.start()
+    monkeypatch.setattr(ai_fetch, "_resolve", lambda host, p: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", p))])
+    is_public = ai_fetch._is_public
+    monkeypatch.setattr(ai_fetch, "_is_public", lambda ip:
+                        str(ip) == "127.0.0.1" or is_public(ip))
+    try:
+        yield port, hellos
+    finally:
+        stop.set()
+        server.close()
+        thread.join(3)
+        assert not thread.is_alive()
+
+
+def test_a_stalled_direct_tls_handshake_stops_at_the_deadline(stalled_tls_server):
+    import time
+    port, hellos = stalled_tls_server
+    start = time.monotonic()
+    with pytest.raises(ai_fetch.TransportError, match="timed out"):
+        ai_fetch.fetch_card_image(f"https://img.example:{port}/a.png", deadline_s=0.5)
+    assert time.monotonic() - start < 0.65
+    assert hellos and hellos[0].startswith(b"\x16\x03")
+
+
+@pytest.mark.parametrize("fetch", [True, False], ids=["watchdog", "socket-timeout"])
+def test_a_slow_direct_connect_leaves_only_remaining_time_for_tls(
+        monkeypatch, stalled_tls_server, fetch):
+    import time
+    port, hellos = stalled_tls_server
+
+    class _SlowConnect(socket.socket):
+        def connect(self, address):
+            time.sleep(0.325)
+            return super().connect(address)
+
+    monkeypatch.setattr(ai_fetch.socket, "socket", _SlowConnect)
+    start = time.monotonic()
+    with pytest.raises(ai_fetch.TransportError, match="timed out"):
+        if fetch:
+            ai_fetch.fetch_card_image(f"https://img.example:{port}/a.png", deadline_s=0.5)
+        else:
+            ai_fetch._connect_any("img.example", ["127.0.0.1"], port, 1, start + 0.5)
+    assert time.monotonic() - start < 0.65
+    assert hellos and hellos[0].startswith(b"\x16\x03")
+
+
 def test_a_lookup_that_hangs_is_abandoned_at_the_deadline(monkeypatch):
     import time
     web = _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
@@ -333,7 +401,7 @@ def test_a_close_delimited_trickle_on_a_real_socket_stops_at_the_deadline(monkey
         (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", p))])
     monkeypatch.setattr(
         ai_fetch, "_open_connection",
-        lambda host, ip, p, timeout: http.client.HTTPConnection(
+        lambda host, ip, p, timeout, on_socket=None, deadline=None: http.client.HTTPConnection(
             "127.0.0.1", port, timeout=timeout))
     start = time.monotonic()
     try:

@@ -101,15 +101,30 @@ if _HTTPSConnection is not None:
         """An https connection to an address checked beforehand, verified against the
         host name the address was looked up for."""
 
-        def __init__(self, host, ip, port, timeout):
+        def __init__(self, host, ip, port, timeout, on_socket=None, deadline=None):
             import ssl
             super().__init__(host, port, timeout=timeout,
                              context=ssl.create_default_context())
             self._ip = ip
+            self._on_socket, self._deadline = on_socket, deadline
 
         def connect(self):
-            sock = socket.create_connection((self._ip, self.port), self.timeout)
-            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+            family = socket.AF_INET6 if ":" in self._ip else socket.AF_INET
+            self.sock = socket.socket(family, socket.SOCK_STREAM)
+            self.sock.settimeout(self.timeout)
+            if self._on_socket is not None:
+                self._on_socket(self.sock)
+            self.sock.connect((self._ip, self.port))
+            self.sock = self._context.wrap_socket(
+                self.sock, server_hostname=self.host, do_handshake_on_connect=False)
+            if self._on_socket is not None:
+                self._on_socket(self.sock)
+            if self._deadline is not None:
+                remaining = self._deadline - time.monotonic()
+                if remaining <= 0:
+                    raise socket.timeout()
+                self.sock.settimeout(min(self.timeout, remaining))
+            self.sock.do_handshake()
 
 
     class _ProxyHTTPSConnection(_HTTPSConnection):
@@ -159,10 +174,10 @@ if _HTTPSConnection is not None:
             self.sock.do_handshake()
 
 
-def _open_connection(host, ip, port, timeout):
+def _open_connection(host, ip, port, timeout, on_socket=None, deadline=None):
     if _HTTPSConnection is None:
         raise TransportError("https isn't available here")
-    return _PinnedHTTPSConnection(host, ip, port, timeout)
+    return _PinnedHTTPSConnection(host, ip, port, timeout, on_socket, deadline)
 
 
 def _proxy_for(host, port=None):
@@ -271,7 +286,7 @@ def _image_from(r, max_bytes, deadline=None):
     return data, ext
 
 
-def _connect_any(host, ips, port, timeout, deadline):
+def _connect_any(host, ips, port, timeout, deadline, on_socket=None):
     """A connection to the first of `ips` that accepts one, each attempt given
     whatever time is left before `deadline`."""
     last = None
@@ -279,13 +294,21 @@ def _connect_any(host, ips, port, timeout, deadline):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise _timed_out()
-        conn = _open_connection(host, ip, port, max(0.1, min(timeout, remaining)))
+        conn = _open_connection(host, ip, port, min(timeout, remaining),
+                                on_socket, deadline)
         try:
             conn.connect()
+            if time.monotonic() >= deadline:
+                conn.close()
+                raise _timed_out()
             return conn
-        except OSError as e:
-            last = e
+        except (OSError, ValueError) as e:
             conn.close()
+            if time.monotonic() >= deadline:
+                raise _timed_out() from None
+            if isinstance(e, ValueError):
+                raise
+            last = e
     raise TransportError(f"couldn't reach {host} ({last})") from last
 
 
@@ -375,7 +398,7 @@ def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT,
 
         try:
             if proxy is None:
-                conn = _connect_any(host, ips, port, timeout, deadline)
+                conn = _connect_any(host, ips, port, timeout, deadline, capture)
             else:
                 conn = _connect_proxy(host, proxy, port, timeout, deadline, capture)
             if getattr(conn, "sock", None) is not None:
