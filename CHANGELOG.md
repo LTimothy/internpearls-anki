@@ -3,6 +3,30 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.79.0
+
+Card pictures through a proxy, AI verdicts that survive a rescan, and text that always
+shows as written.
+
+- A web card picture downloads through your system's https proxy when one is set, so a
+  network that only allows proxied traffic no longer loses those pictures. The address
+  is still checked first and refused if it points at a private or local network, a
+  `no_proxy` entry is honoured (with or without a port), and the whole download, proxy
+  included, stays inside one time limit. Proxy credentials never appear in a message.
+- Scan for duplicates keeps its AI verdicts when you change scope, sensitivity or
+  exclusions, or click Rescan, as long as neither card's front or back has changed since
+  it was judged. Rescan no longer asks first, since nothing is lost.
+- Deck names, file names, folder paths, version numbers, error messages and the AI's
+  notes show exactly as written in every message, label and tooltip, including the
+  progress window, so a "<" or "&" in one no longer cuts the line or turns into
+  formatting.
+- A value of the wrong type in the add-on's config falls back to its default instead of
+  misbehaving: `"false"` written as text no longer switches a setting on, and a single
+  field name such as `"Notes"` counts as a list of one.
+- On Windows, saving a settings or state file retries briefly when another program (a
+  virus scanner, for example) holds it for a moment.
+- A drawn picture whose size can't be read is left exactly as drawn.
+
 ## v0.78.0
 
 Safer deck sources and AI output, a smarter and faster Scan for duplicates, and fixes to
