@@ -1318,6 +1318,19 @@ def test_svg_to_media_leaves_a_viewbox_less_svg_alone():
     assert data == markup.replace('"/>', '" />').encode("utf8")
 
 
+@pytest.mark.parametrize("value", ["inf", "nan", "-inf", "1e400"])
+@pytest.mark.parametrize("position", [0, 1, 2, 3], ids=["minx", "miny", "width", "height"])
+def test_normalize_svg_leaves_a_non_finite_viewbox_unchanged(value, position):
+    parts = ["0", "0", "400", "300"]
+    parts[position] = value
+    view_box = " ".join(parts)
+    markup = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}" '
+              'width="100%" height="100%">'
+              '<rect width="100%" height="100%" fill="white"/>'
+              '<circle cx="50" cy="50" r="20"/></svg>')
+    assert ai_logic._normalize_svg(markup) == markup
+
+
 # === Stale scratch sweep. The wizard removes its own mkdtemp dir when it
 # closes, so everything here is about what a crash leaves behind.
 def _scratch(tmp_path, name, age_s, size=0, now=1_000_000.0):

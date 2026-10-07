@@ -1468,13 +1468,15 @@ def _svg_attrs(tag_text):
 
 def _svg_viewbox_size(value):
     """The (width, height) a viewBox="minx miny width height" attribute
-    names, or None if it doesn't parse to exactly four numbers."""
+    names, or None if it doesn't parse to exactly four finite numbers."""
     parts = value.replace(",", " ").split()
     if len(parts) != 4:
         return None
     try:
         nums = [float(p) for p in parts]
     except ValueError:
+        return None
+    if not all(math.isfinite(n) for n in nums):
         return None
     return nums[2], nums[3]
 

@@ -28,7 +28,7 @@ Every behavior here is the minimum the add-on actually relies on:
   NeedInteraction so the driver can show the dialog and re-run the flow from a
   snapshot with the response appended. Flows are deterministic, so replay is
   exact. In non-interactive mode (pytest default), info/warn just record and
-  askUser answers from the `answers` queue (True when empty).
+  askUser answers from the `answers` queue (raises UnansweredQuestion when empty).
 - There is no event loop, so platform.wait_for_mock_work settles background
   work synchronously here and keeps it assertable.
 
@@ -932,7 +932,7 @@ class MockCollection:
 # ============================== gui / replay ==============================
 class Gui:
     """The dialog hub. Non-interactive (pytest default): info/warn record,
-    askUser pops `answers` (True when empty), getFile/getSaveFile pop
+    askUser pops `answers` (raises UnansweredQuestion when empty), getFile/getSaveFile pop
     `file_picks` (None when empty). Interactive (the demo driver, or
     dialog tests): EVERY dialog goes through next_interaction — scripted
     responses replay, and running past the script raises NeedInteraction."""
