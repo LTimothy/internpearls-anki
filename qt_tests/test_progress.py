@@ -59,6 +59,16 @@ def test_the_progress_window_is_modal_so_pumping_is_safe():
         assert dlg.windowModality() == Qt.WindowModality.WindowModal
 
 
+def test_the_progress_window_label_shows_markup_literally():
+    from aqt.qt import QLabel, Qt
+    with _progress() as (step, dlg):
+        text = "Deck <b>bold</b> &amp; <i>x</i>"
+        step(1, text)
+        label = dlg.findChild(QLabel)
+        assert label.textFormat() == Qt.TextFormat.PlainText
+        assert label.text() == text
+
+
 def test_the_pump_reports_cancel_without_advancing_the_bar():
     """What net's on_chunk sees: True while the run is live, False once Cancel is
     clicked, and no step consumed either way."""

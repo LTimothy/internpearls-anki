@@ -3555,6 +3555,9 @@ def install():
         def setAutoClose(self, b):
             pass
 
+        def setLabel(self, label):
+            self._label_widget = label
+
         def setLabelText(self, text):
             self._calls += 1
             n = _QProgressDialog.cancel_after.get(self._label)

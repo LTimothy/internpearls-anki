@@ -503,6 +503,9 @@ def cancellable_progress(title, total):
     main window and everything under it for as long as it is up.
     """
     dlg = QProgressDialog(title, "Cancel", 0, total, mw)
+    label = QLabel(title)
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    dlg.setLabel(label)
     dlg.setWindowTitle(APP_NAME)
     dlg.setWindowModality(Qt.WindowModality.WindowModal)
     dlg.setMinimumDuration(0)
