@@ -17,6 +17,7 @@ import os
 import tempfile
 
 from aqt import mw
+from aqt.utils import getSaveFile, tooltip
 from aqt.qt import (QFontDatabase, QFrame, QHBoxLayout,
                     QImage, QLabel, QPlainTextEdit, QPushButton, QScrollArea,
                     QSizePolicy, Qt, QTimer, QVBoxLayout, QWidget)
@@ -32,7 +33,7 @@ from .logic import (FILTER_MIN_CARDS, FILTER_MODES, apkg_media_index,
                     merged_word_diff, note_display_label, plain_text, plural, truncate,
                     word_diff_ratio)
 from .palette import colors
-from .ui import (_ask_with_widget, _info, _safe, copy_to_clipboard, hint_label, link_button,
+from .ui import (_ask_with_widget, _info, _safe, _warn, copy_to_clipboard, hint_label, link_button,
                  muted_label, title_label)
 from .widgets import (CARET_GAP, CARET_W, FilterBar, StreamingList, chip_cell,
                       chip_column_width, decision_cell, row_text_indent,
@@ -2153,6 +2154,34 @@ def offer_feedback_digest(parent, entries, title=None, items=(), standing_declin
     show_feedback_digest(parent, text, heading=_digest_heading(entries), title=title, items=items)
 
 
+@_safe
+def _save_feedback_file(text):
+    date = datetime.date.today().isoformat()
+    header = text.partition("\n")[0]
+    if header.startswith("Intern Pearls card feedback (") and header.endswith(")"):
+        try:
+            date = datetime.date.fromisoformat(header.rsplit("(", 1)[1][:-1]).isoformat()
+        except ValueError:
+            pass
+    path = getSaveFile(mw, "Save Intern Pearls feedback", "internPearlsFeedback",
+                       "Text file", ".txt", fname=f"Intern Pearls feedback {date}.txt")
+    if not path:
+        return
+    try:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf8", newline="") as fh:
+                fh.write(text)
+            config.replace_file(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+    except Exception as exc:
+        _warn(f"Could not save feedback: {exc}", textFormat="plain")
+        return
+    tooltip(f"Saved to {html.escape(os.path.basename(path))}")
+
+
 def show_feedback_digest(parent, text, heading="Card feedback", title=None, items=()):
     """Show and copy ready text without rebuilding it or changing saved card notes."""
     copied = copy_to_clipboard(text)
@@ -2170,10 +2199,10 @@ def show_feedback_digest(parent, text, heading="Card feedback", title=None, item
     # digest, close it, and assume the deck author now had it.
     lay.addWidget(muted_label(
         "Nothing is sent automatically. This is on your clipboard: paste it into a "
-        "message to the deck author."
+        "message to the deck author, or save a file to attach."
         if copied else
         "Nothing is sent automatically. Select and copy the text below, then paste it "
-        "into a message to the deck author."))
+        "into a message to the deck author, or save a file to attach."))
     view = QPlainTextEdit(text)
     view.setReadOnly(True)
     view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
@@ -2208,4 +2237,6 @@ def show_feedback_digest(parent, text, heading="Card feedback", title=None, item
     lay.addStretch()
     _ask_with_widget(body, yes_label="Close", no_label=None,
                      title=f"{APP_NAME}: card feedback", min_width=520, min_height=380,
-                     actions=(("Copy again", lambda: copy_to_clipboard(text)),), parent=parent)
+                     actions=(("Copy again", lambda: copy_to_clipboard(text)),
+                              ("Save as file", lambda: _save_feedback_file(view.toPlainText()))),
+                     parent=parent)

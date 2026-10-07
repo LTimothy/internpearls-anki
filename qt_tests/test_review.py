@@ -174,3 +174,36 @@ def test_recent_feedback_has_rows_and_show_links(shot, tmp_path):
     buttons = s.dialog.findChildren(QDialogButtonBox)[0]
     assert not scroll.isAncestorOf(buttons)
     assert s.image.save(str(tmp_path / "recent-feedback.png"))
+
+
+def test_digest_save_and_copy_are_actions_and_close_is_default(monkeypatch):
+    from aqt.qt import QDialogButtonBox
+    monkeypatch.setattr(review, "getSaveFile", lambda *args, **kw: None, raising=False)
+    dialog = harness.render("digest").dialog
+    box = dialog.findChildren(QDialogButtonBox)[0]
+    buttons = {b.text(): b for b in box.buttons()}
+    assert set(buttons) == {"Copy again", "Save as file", "Close"}
+    action = QDialogButtonBox.ButtonRole.ActionRole
+    accept = QDialogButtonBox.ButtonRole.AcceptRole
+    assert box.buttonRole(buttons["Copy again"]) == action
+    assert box.buttonRole(buttons["Save as file"]) == action
+    assert box.buttonRole(buttons["Close"]) == accept
+    assert buttons["Close"].isDefault()
+
+    platform_box = QDialogButtonBox()
+    for label, role in (("Copy again", action), ("Save as file", action), ("Close", accept)):
+        platform_box.addButton(label, role)
+    platform_box.show()
+    harness.app().processEvents()
+    order = lambda bb: [b.text() for b in sorted(bb.buttons(), key=lambda b: b.x())]
+    assert order(box) == order(platform_box)
+    platform_box.close()
+
+    for label in ("Copy again", "Save as file"):
+        buttons[label].setFocus()
+        buttons[label].click()
+        harness.app().processEvents()
+        assert dialog.isVisible()
+        assert buttons["Close"].isDefault()
+    buttons["Close"].click()
+    assert not dialog.isVisible()

@@ -1,6 +1,8 @@
 """Saved feedback text and the dialog that reopens it."""
 import datetime
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -199,3 +201,119 @@ def test_recent_feedback_error_shows_safe_warning(anki, monkeypatch, capsys):
     assert "Something went wrong: Cannot load &lt;b&gt;feedback&lt;/b&gt;" in anki.gui.warnings[0]
     assert "Traceback" not in anki.gui.warnings[0]
     assert "RuntimeError: Cannot load <b>feedback</b>" in capsys.readouterr().out
+
+
+def _save_from_view(anki, monkeypatch, text):
+    rounds = []
+    def interact(payload):
+        rounds.append(payload)
+        fields = [n for n in payload["contract_tree"]["nodes"]
+                  if n["kind"] == "textarea"]
+        assert fields[0]["value"] == text
+        label = "Save as file" if len(rounds) == 1 else "Close"
+        button = find(payload["tree"], t="button", label=label)
+        assert button is not None, f"Missing {label} button"
+        return {"events": [{"id": button["id"], "click": True}]}
+    monkeypatch.setattr(anki.gui, "next_interaction", interact)
+    review.show_feedback_digest(None, text)
+    assert len(rounds) == 2
+
+
+def test_save_as_file_writes_displayed_text_atomically(anki, monkeypatch, tmp_path):
+    text = "Intern Pearls card feedback (2026-10-06)\n\n  > café <b>dose</b>\n"
+    target = tmp_path / "feedback <dose> & notes.txt"
+    target.write_bytes(b"previous feedback")
+    anki.gui.file_picks.append(str(target))
+    replaced = []
+    original = config.replace_file
+    def replace(src, dst):
+        assert Path(src).parent == target.parent
+        assert Path(dst) == target
+        assert target.read_bytes() == b"previous feedback"
+        assert Path(src).read_bytes() == text.encode("utf8")
+        replaced.append(src)
+        return original(src, dst)
+    monkeypatch.setattr(config, "replace_file", replace)
+    _save_from_view(anki, monkeypatch, text)
+    assert target.read_bytes() == text.encode("utf8")
+    assert len(replaced) == 1
+    assert not Path(replaced[0]).exists()
+    assert anki.gui.tooltips == ["Saved to feedback &lt;dose&gt; &amp; notes.txt"]
+    assert not anki.gui.warnings
+
+
+def test_save_as_file_cancel_writes_nothing(anki, monkeypatch, tmp_path):
+    before = set(tmp_path.rglob("*"))
+    anki.gui.file_picks.append(None)
+    _save_from_view(anki, monkeypatch, "feedback\n")
+    assert set(tmp_path.rglob("*")) == before
+    assert not anki.gui.tooltips
+    assert not anki.gui.warnings
+
+
+def test_save_as_file_picker_error_shows_safe_warning_and_stays_open(
+        anki, monkeypatch, capsys):
+    def fail(*args, **kwargs):
+        raise RuntimeError("Cannot open <b>file picker</b>")
+    monkeypatch.setattr(review, "getSaveFile", fail)
+    _save_from_view(anki, monkeypatch, "feedback\n")
+    assert len(anki.gui.warnings) == 1
+    assert "Something went wrong: Cannot open &lt;b&gt;file picker&lt;/b&gt;" in anki.gui.warnings[0]
+    assert "Traceback" not in anki.gui.warnings[0]
+    assert "RuntimeError: Cannot open <b>file picker</b>" in capsys.readouterr().out
+    assert anki.gui.clipboard == ["feedback\n"]
+    assert not anki.gui.tooltips
+
+
+@pytest.mark.parametrize("failure", ["write", "replace"])
+def test_save_as_file_failure_warns_in_plain_text_and_stays_open(
+        anki, monkeypatch, tmp_path, failure):
+    target = tmp_path / "feedback.txt"
+    target.write_bytes(b"previous feedback")
+    anki.gui.file_picks.append(str(target))
+    warnings = []
+    from internpearls import ui
+    original = ui.showWarning
+    def warn(text, **kw):
+        warnings.append((text, kw))
+        return original(text, **kw)
+    monkeypatch.setattr(ui, "showWarning", warn)
+    def fail(*args, **kwargs):
+        raise OSError("cannot write <feedback> & notes")
+    if failure == "write":
+        fdopen = review.os.fdopen
+        @contextmanager
+        def fail_write(*args, **kwargs):
+            with fdopen(*args, **kwargs):
+                yield SimpleNamespace(write=fail)
+        monkeypatch.setattr(review.os, "fdopen", fail_write)
+    else:
+        monkeypatch.setattr(config, "replace_file", fail)
+    _save_from_view(anki, monkeypatch, "feedback\n")
+    assert len(warnings) == 1
+    assert "cannot write <feedback> & notes" in warnings[0][0]
+    assert warnings[0][1]["textFormat"] == "plain"
+    assert target.read_bytes() == b"previous feedback"
+    assert list(target.parent.glob("*.tmp")) == []
+    assert not anki.gui.tooltips
+
+
+@pytest.mark.parametrize("text, date", [
+    ("Intern Pearls card feedback (2026-10-06)\n", "2026-10-06"),
+    ("Intern Pearls card feedback\n  > appointment (2025-01-02)\n", "2026-10-07"),
+])
+def test_save_as_file_picker_uses_digest_date_or_today(anki, monkeypatch, text, date):
+    class Today(datetime.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 10, 7)
+    monkeypatch.setattr(review.datetime, "date", Today)
+    from aqt.utils import getSaveFile
+    picks = []
+    def pick(parent, title, key, name, ext, fname=""):
+        picks.append((parent, name, ext, fname))
+        return getSaveFile(parent, title, key, name, ext, fname=fname)
+    monkeypatch.setattr(review, "getSaveFile", pick, raising=False)
+    anki.gui.file_picks.append(None)
+    _save_from_view(anki, monkeypatch, text)
+    assert picks == [(anki.mw, "Text file", ".txt", f"Intern Pearls feedback {date}.txt")]
