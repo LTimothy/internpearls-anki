@@ -1523,7 +1523,7 @@ def load_saved_feedback():
 
 
 def clear_saved_feedback():
-    """Drop the saved notes, once they have actually been shown to the learner."""
+    """Drop the saved notes, once they have been archived and shown to the learner."""
     path = _collection_state_path(FEEDBACK)
     try:
         if path:
@@ -1538,8 +1538,17 @@ def _feedback_digest_folder():
 
 
 def _feedback_digest_names(folder):
-    return sorted((name for name in os.listdir(folder) if name.endswith(".txt")),
-                  key=lambda name: name[:-4], reverse=True)
+    names = []
+    for name in os.listdir(folder):
+        if not name.endswith(".txt"):
+            continue
+        try:
+            sequence = int(name.split("-", 1)[0])
+        except ValueError:
+            continue
+        if sequence > 0:
+            names.append((sequence, name))
+    return [name for sequence, name in sorted(names, reverse=True)]
 
 
 def _write_feedback_digest(text, entries):
@@ -1548,12 +1557,9 @@ def _write_feedback_digest(text, entries):
         return
     os.makedirs(folder, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    stem = stamp
-    existing = [name.rsplit(".", 1)[0] for name in os.listdir(folder)
-                if name.startswith(stamp) and name.endswith((".txt", ".json"))]
-    if existing:
-        suffix = max(int(name[20:] or 0) for name in existing) + 1
-        stem = f"{stamp}-{suffix:04d}"
+    existing = _feedback_digest_names(folder)
+    sequence = int(existing[0].split("-", 1)[0]) + 1 if existing else 1
+    stem = f"{sequence:06d}-{stamp}"
     path = os.path.join(folder, stem + ".txt")
     counts = {"notes": sum(1 for e in entries if (e.get("note") or "").strip()),
               "decisions": sum(1 for e in entries if e.get("decision"))}
@@ -1570,14 +1576,14 @@ def _write_feedback_digest(text, entries):
 
 
 def save_feedback_digest(text, entries):
-    """Archive the displayed text and keep the newest twenty, without blocking review."""
+    """Return whether the text was archived, even if pruning older digests fails."""
     try:
         folder = _write_feedback_digest(text, entries)
         if folder is None:
-            return
+            return False
     except Exception as exc:
         print(f"Could not save card feedback digest: {exc}")
-        return
+        return False
     try:
         for name in _feedback_digest_names(folder)[20:]:
             for victim in (name, name[:-4] + ".json"):
@@ -1587,6 +1593,7 @@ def save_feedback_digest(text, entries):
                     pass
     except Exception as exc:
         print(f"Could not prune card feedback digests: {exc}")
+    return True
 
 
 def load_feedback_digests():
@@ -1602,7 +1609,7 @@ def load_feedback_digests():
         return saved
     for name in names:
         try:
-            when = datetime.datetime.strptime(name[:19], "%Y-%m-%dT%H-%M-%S")
+            when = datetime.datetime.strptime(name.split("-", 1)[1][:-4], "%Y-%m-%dT%H-%M-%S")
             with open(os.path.join(folder, name), encoding="utf8", newline="") as fh:
                 text = fh.read()
         except (OSError, ValueError) as exc:
@@ -2091,6 +2098,8 @@ def show_result_with_feedback(title, items, entries, nothing_note="",
                               standing_declines=None, excluded=()):
     """The end of a run, as one dialog instead of two.
 
+    Return whether the shown digest was archived, or True when there was no digest.
+
     A completion summary and a feedback digest used to arrive as separate boxes, back
     to back, at the exact point in the run where the reader is most done paying
     attention: the summary lands first, gets dismissed, and the digest, the one thing
@@ -2122,9 +2131,9 @@ def show_result_with_feedback(title, items, entries, nothing_note="",
             show_result(title, items)
         elif nothing_note:
             _info(nothing_note)
-        return
-    offer_feedback_digest(None, entries, title=title, items=items,
-                          standing_declines=standing_declines, excluded=excluded)
+        return True
+    return offer_feedback_digest(None, entries, title=title, items=items,
+                                 standing_declines=standing_declines, excluded=excluded)
 
 
 def _digest_heading(entries):
@@ -2151,6 +2160,8 @@ def offer_feedback_digest(parent, entries, title=None, items=(), standing_declin
                           excluded=()):
     """Put the flagged-card summary on the clipboard and show it.
 
+    Return whether the shown digest was archived, or True when there was no digest.
+
     Shown as well as copied, for two reasons: the learner sees exactly what's being
     sent before it is sent, and a clipboard that silently didn't take (a mocked or
     headless Qt) costs a manual select-and-copy instead of costing the learner the
@@ -2173,9 +2184,10 @@ def offer_feedback_digest(parent, entries, title=None, items=(), standing_declin
                                  standing_declines=standing_declines,
                                  excluded=excluded)
     if not text:
-        return
-    save_feedback_digest(text, entries)
+        return True
+    archived = save_feedback_digest(text, entries)
     show_feedback_digest(parent, text, heading=_digest_heading(entries), title=title, items=items)
+    return archived
 
 
 @_safe

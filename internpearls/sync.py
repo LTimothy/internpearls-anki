@@ -2182,7 +2182,7 @@ def update_decks():
 
     def _finish(title=None, items=(), run_decisions=None, nothing_note=""):
         """End the run: the summary and the learner's notes as one dialog, then drop
-        the saved copy of those notes.
+        the saved copy of those notes if the digest was archived.
 
         Called on every exit path including Cancel, deliberately: if the learner read
         the new cards, flagged three of them and backed out, those flags are the most
@@ -2203,7 +2203,7 @@ def update_decks():
         that stops before anything imports, already has decisions on disk by then and
         passes this through so the digest agrees with what the registry now holds.
 
-        The saved copy is cleared only once the digest has actually been built and
+        The saved copy is cleared only once the digest has been archived and
         shown. An exit with nothing flagged leaves the file alone rather than deleting
         it: there is nothing to clear in that case anyway, and treating "no flags this
         run" as "safe to forget" is exactly how a recovered note would get thrown away
@@ -2215,10 +2215,14 @@ def update_decks():
         standing = load_declined()
         if run_decisions is not None:
             save_later_seen(later_count(standing, cfg["excluded"]))
-        show_result_with_feedback(title, items, entries, nothing_note=nothing_note,
-                                  standing_declines=standing, excluded=cfg["excluded"])
+        archived = show_result_with_feedback(title, items, entries, nothing_note=nothing_note,
+                                             standing_declines=standing, excluded=cfg["excluded"])
         if entries:
-            clear_saved_feedback()
+            if archived:
+                clear_saved_feedback()
+            else:
+                _warn("A copy of this card feedback couldn't be saved, so your notes are kept "
+                      "and will come back on your next update.", textFormat="plain")
 
     # Unticked by default: applying it forces a one-time full AnkiWeb sync, which is
     # not something a reader should be able to agree to by not reading a checkbox.

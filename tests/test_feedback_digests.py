@@ -18,11 +18,11 @@ def _folder():
     return Path(config._collection_state_path(review.FEEDBACK)).parent / "feedback_digests"
 
 
-def _freeze(monkeypatch):
+def _freeze(monkeypatch, hour=15, minute=20):
     class Frozen(datetime.datetime):
         @classmethod
         def now(cls):
-            return cls(2026, 10, 7, 15, 20, 3)
+            return cls(2026, 10, 7, hour, minute, 3)
     monkeypatch.setattr(review.datetime, "datetime", Frozen)
 
 
@@ -34,7 +34,7 @@ def test_digest_is_archived_before_the_dialog_opens(anki, monkeypatch):
         close = find(payload["tree"], t="button", label="Close")
         return {"events": [{"id": close["id"], "click": True}]}
     monkeypatch.setattr(anki.gui, "next_interaction", interact)
-    review.offer_feedback_digest(None, ENTRIES)
+    assert review.offer_feedback_digest(None, ENTRIES) is True
 
 
 def test_same_second_digests_keep_both_texts(anki, monkeypatch):
@@ -44,7 +44,52 @@ def test_same_second_digests_keep_both_texts(anki, monkeypatch):
     files = sorted(_folder().glob("*.txt"))
     assert len(files) == 2
     assert {p.read_text(encoding="utf8") for p in files} == {"first\n", "second\n"}
-    assert all(p.name.startswith("2026-10-07T15-20-03") for p in files)
+    assert [int(p.name.split("-", 1)[0]) for p in files] == [1, 2]
+    assert all(p.name.split("-", 1)[1] == "2026-10-07T15-20-03.txt" for p in files)
+
+
+def test_clock_rollback_keeps_the_last_saved_digest_first(anki, monkeypatch):
+    _freeze(monkeypatch, hour=1, minute=59)
+    for i in range(20):
+        review.save_feedback_digest(str(i), ENTRIES)
+    _freeze(monkeypatch, hour=1, minute=0)
+    review.save_feedback_digest("last saved", ENTRIES)
+    saved = review.load_feedback_digests()
+    assert [d["text"] for d in saved] == ["last saved"] + [str(i) for i in range(19, 0, -1)]
+    assert saved[0]["when"] == datetime.datetime(2026, 10, 7, 1, 0, 3)
+    assert len(list(_folder().glob("*.txt"))) == 20
+    assert len(list(_folder().glob("*.json"))) == 20
+    assert all(d["notes"] == 1 and d["decisions"] == 1 for d in saved)
+
+
+def test_digest_list_uses_numeric_sequence_and_skips_unparseable_names(anki):
+    folder = _folder()
+    folder.mkdir(parents=True)
+    for name, text in [
+            ("999999-2026-10-07T01-59-03.txt", "older"),
+            ("1000000-2026-10-07T01-00-03.txt", "newest"),
+            ("not-a-digest.txt", "invalid"),
+            ("1000001-not-a-timestamp.txt", "invalid date")]:
+        (folder / name).write_text(text, encoding="utf8")
+    assert [d["text"] for d in review.load_feedback_digests()] == ["newest", "older"]
+
+
+def test_digest_write_failure_returns_false(anki, monkeypatch):
+    def fail(*args):
+        raise OSError("cannot write digest")
+    monkeypatch.setattr(review, "_write_feedback_digest", fail)
+    assert review.save_feedback_digest("feedback", ENTRIES) is False
+
+
+def test_digest_without_an_open_collection_returns_false(anki):
+    anki.mw.col = None
+    assert review.save_feedback_digest("feedback", ENTRIES) is False
+
+
+def test_no_feedback_returns_true_without_showing_a_digest(anki):
+    assert review.offer_feedback_digest(None, []) is True
+    assert review.show_result_with_feedback(None, (), []) is True
+    assert not anki.gui.clipboard
 
 
 def test_prune_keeps_the_twenty_newest_digests_and_their_counts(anki, monkeypatch):
@@ -68,7 +113,7 @@ def test_digest_write_is_atomic_and_utf8(anki, monkeypatch):
             seen.append(Path(src).read_text(encoding="utf8"))
         return original(src, dst)
     monkeypatch.setattr(config, "replace_file", replace)
-    review.save_feedback_digest("café\n", ENTRIES)
+    assert review.save_feedback_digest("café\n", ENTRIES) is True
     assert seen == ["café\n"]
     assert not list(_folder().glob("*.tmp"))
 
@@ -99,7 +144,7 @@ def test_prune_failure_does_not_stop_the_digest_view(anki, monkeypatch, capsys):
         close = find(payload["tree"], t="button", label="Close")
         return {"events": [{"id": close["id"], "click": True}]}
     monkeypatch.setattr(anki.gui, "next_interaction", interact)
-    review.offer_feedback_digest(None, ENTRIES)
+    assert review.offer_feedback_digest(None, ENTRIES) is True
     assert anki.gui.clipboard
     assert "cannot prune" in capsys.readouterr().out
     assert len(list(_folder().glob("*.txt"))) == 21

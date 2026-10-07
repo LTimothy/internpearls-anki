@@ -315,7 +315,7 @@ def _scene_recent_feedback(mock, opts):
                 saved = Path(review._feedback_digest_folder())
                 saved.mkdir(parents=True)
                 for day in (5, 6, 7):
-                    stem = f"2026-10-{day:02d}T15-20-03"
+                    stem = f"{day - 4:06d}-2026-10-{day:02d}T15-20-03"
                     (saved / (stem + ".txt")).write_text("stored text\n", encoding="utf8")
                     (saved / (stem + ".json")).write_text(
                         json.dumps({"notes": day - 4, "decisions": 2}), encoding="utf8")

@@ -8845,31 +8845,77 @@ def test_a_dangling_manifest_link_reads_as_no_manifest(anki, tmp_path):
     assert "has no manifest.json" in anki.gui.warnings[0]
 
 
-@pytest.mark.parametrize("save_fails", [False, True])
-def test_digest_archive_failure_still_shows_before_clearing_notes(
-        anki, tmp_path, monkeypatch, save_fails):
-    from internpearls import review
-    review.save_feedback({"gONE": {"note": "wrong dose", "deck": DECK,
-                                   "front": "An earlier card"}})
+@pytest.mark.parametrize("failure", [None, "write", "prune"])
+def test_digest_archive_clears_notes_only_after_a_successful_write(
+        anki, tmp_path, monkeypatch, failure):
+    from internpearls import review, sync, ui
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)})
+    _configure(anki, folder)
+    notes = {"gONE": {"note": "wrong dose", "deck": DECK, "front": "An earlier card"}}
+    review.save_feedback(notes)
     shown = []
-    original = review.show_feedback_digest
-    if save_fails:
+    events = []
+    warnings = []
+    writer = review._write_feedback_digest
+    if failure == "write":
         def fail(*args):
             raise OSError("cannot write digest")
         monkeypatch.setattr(review, "_write_feedback_digest", fail)
+    elif failure == "prune":
+        for i in range(20):
+            review.save_feedback_digest(str(i), [])
+        remove = review.os.remove
+        def fail_prune(path):
+            if str(path).endswith(".txt"):
+                raise OSError("cannot prune")
+            return remove(path)
+        monkeypatch.setattr(review.os, "remove", fail_prune)
 
-    def show(*args, **kwargs):
-        assert review.load_saved_feedback()
-        result = original(*args, **kwargs)
-        assert review.load_saved_feedback()
-        shown.append(True)
-        return result
-    monkeypatch.setattr(review, "show_feedback_digest", show)
+    warning = ui.showWarning
+    def warn(text, **kwargs):
+        events.append("warning")
+        warnings.append((text, kwargs))
+        return warning(text, **kwargs)
+    monkeypatch.setattr(ui, "showWarning", warn)
 
-    def on_screen(tree, seen, decide):
-        return {"events": [{"id": _find(tree, t="button", label=decide)["id"],
+    def interact(payload):
+        if payload["kind"] != "dialog":
+            return {}
+        tree = payload["tree"]
+        if "card feedback" in (payload.get("title") or ""):
+            assert review.load_saved_feedback() == notes
+            assert not warnings
+            shown.append(anki.gui.clipboard[-1])
+            events.append("digest")
+            label = "Close"
+        else:
+            label = "Cancel"
+        return {"events": [{"id": _find(tree, t="button", label=label)["id"],
                             "click": True}]}
-    _feedback_run(anki, tmp_path, on_screen)
-    assert shown
-    assert review.load_saved_feedback() == {}
-    assert bool(review.load_feedback_digests()) is not save_fails
+    anki.gui.interactive = True
+    monkeypatch.setattr(anki.gui, "next_interaction", interact)
+    sync.update_decks()
+    assert len(shown) == 1 and "wrong dose" in shown[0]
+    if failure == "write":
+        assert review.load_saved_feedback() == notes
+        assert not review.load_feedback_digests()
+        assert events == ["digest", "warning"]
+        assert len(anki.gui.warnings) == len(warnings) == 1
+        assert warnings[0][1]["textFormat"] == "plain"
+        assert "your notes are kept" in warnings[0][0]
+        assert "next update" in warnings[0][0]
+        monkeypatch.setattr(review, "_write_feedback_digest", writer)
+        warnings.clear()
+        sync.update_decks()
+        assert len(shown) == 2 and "wrong dose" in shown[1]
+        assert "An earlier card" in shown[1]
+        assert review.load_saved_feedback() == {}
+        assert review.load_feedback_digests()
+        assert not warnings
+        assert len(anki.gui.warnings) == 1
+    else:
+        assert review.load_saved_feedback() == {}
+        assert "wrong dose" in review.load_feedback_digests()[0]["text"]
+        assert events == ["digest"]
+        assert not anki.gui.warnings
