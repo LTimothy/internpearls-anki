@@ -320,6 +320,7 @@ class ReplayPlatform:
     MAX_TIMER_DELIVERIES = 1000
     _WALL_ORIGIN = datetime(2026, 1, 1, tzinfo=timezone.utc)
     reconstructing = True
+    supports_blocking_work = False
 
     def __init__(self, epoch=1, checkpoint_credits=0, now_ms=0,
                  scratch_root=None, take_overlay=None, restore_overlay=None):

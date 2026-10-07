@@ -138,6 +138,7 @@ class TimerHandle(Protocol):
 
 class Platform(Protocol):
     epoch: int
+    supports_blocking_work: bool  # Work can deliver while the caller pumps Qt events.
 
     def owner_id(self, owner) -> int:
         raise NotImplementedError
@@ -358,6 +359,8 @@ class _NativeWorkHandle:
 
 
 class NativePlatform:
+    supports_blocking_work = True
+
     def __init__(self, epoch=1):
         self.epoch = epoch
         self._weak_owner_ids = {}

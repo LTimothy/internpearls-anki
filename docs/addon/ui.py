@@ -547,7 +547,11 @@ def run_with_progress(label, fn):
 
     `fn` must not access Qt or the collection. Its result or exception returns on
     the main thread; Cancel abandons the work without waiting for it to finish.
+    Platforms without blocking work support run inline without a progress window.
     """
+    if not platform().supports_blocking_work:
+        return fn()
+
     dlg = QProgressDialog(label, "Cancel", 0, 0, mw)
     text = QLabel(label)
     text.setTextFormat(Qt.TextFormat.PlainText)

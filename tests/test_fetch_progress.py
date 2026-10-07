@@ -165,7 +165,7 @@ def test_abandoned_progress_discards_a_late_result(anki, monkeypatch):
     assert handles and handles[0].cancel_event.is_set()
 
 
-def test_progress_settles_replayed_work_without_stalling(anki, monkeypatch):
+def test_progress_returns_inline_during_replay(anki, monkeypatch):
     from internpearls import ui
     from internpearls.platform import work_checkpoint
     from mock_anki import Runner
@@ -178,18 +178,72 @@ def test_progress_settles_replayed_work_without_stalling(anki, monkeypatch):
         return "ready"
 
     def stalled(_seconds):
-        pytest.fail("the mock event pump did not reach the pending work")
+        pytest.fail("inline work waited for a result")
 
     monkeypatch.setattr(ui.time, "sleep", stalled)
     response = runner.start_protocol(
         lambda: results.append(ui.run_with_progress("Checking the deck source", fetch)),
         epoch=1)
-    assert response["status"] == "need"
-    assert response["payload"]["kind"] == "work"
-    response = runner.feed_protocol({
-        "protocol": 1, "epoch": 1, "sequence": 1,
-        "render_revision": response["render_revision"],
-        "actions": [{"type": "advance", "elapsed_ms": 0, "checkpoint_credits": 1}],
-    })
     assert response["status"] == "done"
+    assert response["pending"] == []
     assert results == ["ready"]
+
+
+@pytest.mark.parametrize("error", [False, True], ids=["result", "error"])
+def test_replay_progress_runs_on_main_thread_without_a_window(
+        anki, monkeypatch, tmp_path, error):
+    from demo.replay import ReplayPlatform
+    from internpearls import ui
+    from internpearls.platform import use_platform
+
+    main_thread = threading.get_ident()
+    seen = []
+    result = object()
+    failure = RuntimeError("fetch failed")
+
+    def fetch():
+        seen.append(threading.get_ident())
+        if error:
+            raise failure
+        return result
+
+    def progress(*args, **kwargs):
+        pytest.fail("inline work created a progress window")
+
+    monkeypatch.setattr(ui, "QProgressDialog", progress)
+    replay = ReplayPlatform(scratch_root=str(tmp_path / "replay"))
+    with use_platform(replay):
+        if error:
+            with pytest.raises(RuntimeError) as raised:
+                ui.run_with_progress("Checking the deck source", fetch)
+            assert raised.value is failure
+        else:
+            assert ui.run_with_progress("Checking the deck source", fetch) is result
+    assert seen == [main_thread]
+    assert replay.pending() == []
+
+
+def test_native_progress_uses_worker(anki, monkeypatch):
+    from internpearls import ui
+    from internpearls.platform import NativePlatform, use_platform
+
+    native = NativePlatform()
+    handles, threads = [], []
+    main_thread = threading.get_ident()
+    start_work = native.start_work
+
+    def capture(*args, **kwargs):
+        handle = start_work(*args, **kwargs)
+        handles.append(handle)
+        return handle
+
+    def fetch():
+        threads.append(threading.get_ident())
+        return "ready"
+
+    monkeypatch.setattr(native, "start_work", capture)
+    with use_platform(native):
+        assert ui.run_with_progress("Checking the deck source", fetch) == "ready"
+    assert len(handles) == 1
+    assert threads == [handles[0].ident]
+    assert threads[0] != main_thread

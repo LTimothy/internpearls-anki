@@ -17,6 +17,46 @@ def _request(epoch=4, owner_id=1, operation=1, attempt=1,
                        epoch=epoch)
 
 
+@pytest.mark.parametrize("action", ["manage", "update"])
+def test_deck_source_actions_reach_dialog_without_pumping_work(
+        anki, monkeypatch, tmp_path, action):
+    from aqt.qt import QApplication
+    from internpearls import dialogs, sync, ui
+
+    source = tmp_path / "source"
+    source.mkdir()
+    deck = "Intern Pearls::Intern Custom::Pharm"
+    mock_anki.make_apkg(str(source / "Pharm.apkg"), [
+        ("g1", ["Front one", "Back one", "", "", "", "", ""],
+         "InternPearls::Pharm"),
+    ], deck=deck)
+    (source / "manifest.json").write_text(json.dumps({
+        "schema": 1,
+        "decks": [{"name": deck, "apkg": "Pharm.apkg", "version": "v1",
+                   "cards": 1}],
+    }), encoding="utf8")
+    anki.mw._config = {"decks_dir": str(source)}
+
+    def stalled(_seconds):
+        pytest.fail("the source check waited for driver-controlled work")
+
+    monkeypatch.setattr(QApplication, "processEvents", lambda: None)
+    monkeypatch.setattr(ui.time, "sleep", stalled)
+    run = dialogs.manage_decks if action == "manage" else sync.update_decks
+    response = mock_anki.Runner(anki).start_protocol(run, epoch=40)
+
+    assert response["status"] == "need"
+    assert response["payload"]["kind"] == "dialog"
+    assert response["pending"] == []
+    nodes = response["payload"]["contract_tree"]["nodes"]
+    expected_button = "Update" if action == "update" else "Save"
+    assert any(node["kind"] == "button" and node.get("text") == expected_button
+               for node in nodes)
+    expected_text = "Front one" if action == "update" else "local folder"
+    assert any(expected_text in node.get("text", "") for node in nodes)
+    assert not anki.gui.warnings
+
+
 def _protocol_request(response, sequence, actions=(), **changes):
     request = {
         "protocol": 1,
