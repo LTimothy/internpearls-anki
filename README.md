@@ -295,7 +295,7 @@ Everything that touches Anki is split by concern:
 - `sync.py`: source resolution, Sync decks, Reconcile my decks, Update my decks, and Import single deck.
 - `updates.py`: self-update. `background.py`: the startup update check and the auto-sync poll, dispatched through `platform.py`.
 - `dialogs.py`: Manage decks, Settings, Night mode dimming, About, source configuration.
-- `review.py`: card rows and the feedback digest for the update and summary screens (kept out of `dialogs.py`, which imports `sync.py`).
+- `review.py`: card rows and the feedback digest for the update and summary screens (kept out of `dialogs.py`, which imports `sync.py`). Update rows create a note editor only for an existing note or when the reader opens it; a decision caption can appear without an editor.
 - `widgets.py`: chips, headings, rows and `StreamingList`, shared by every list screen. Idle prefetch builds at most 100 rows ahead of the rows shown and resumes as more batches are revealed.
 - `ai_cli.py`, `ai_setup.py`, `ai_dialog.py`, `dupes_dialog.py`, `nightmode.py`: the Experimental features.
 

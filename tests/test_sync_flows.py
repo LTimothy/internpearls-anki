@@ -78,6 +78,15 @@ def _find(tree, **want):
     return None
 
 
+def _open_feedback_box(tree):
+    """Open the single card, then its note editor, before typing into it."""
+    if _find(tree, t="textarea") is not None:
+        return None
+    button = (_find(tree, t="button", label="▸")
+              or _find(tree, t="button", label="Add note"))
+    return {"events": [{"id": button["id"], "click": True}]}
+
+
 def _label_nodes(tree):
     return [n for n in _walk(tree) if n.get("t") == "label"]
 
@@ -3098,12 +3107,10 @@ def test_a_retired_row_superseded_by_an_unchanged_card_stands_alone(
     assert retired == [("retired", "Retired front", "reworded")], retired
 
 
-def test_review_box_starts_empty_with_nothing_summarized(anki, tmp_path):
+def test_review_without_a_note_has_no_box_or_digest(anki, tmp_path):
     """Default: the confirmation previews the incoming cards inline, with a cloze
-    note's deletions filled in rather than blanked. A row's feedback box is
-    contextual, not gated by any setting, so it renders on every row, but starts
-    empty; leaving it untouched means nothing ends up summarized or copied at the
-    end of the run."""
+    note's deletions filled in rather than blanked. Leaving its note unopened creates
+    no editor and offers nothing to the clipboard."""
     from internpearls import sync
     cloze_model = make_model(name="Study Deck - Cloze",
                              fields=["Text", "Why", "Image", "Dosing", "Notes"])
@@ -3133,10 +3140,7 @@ def test_review_box_starts_empty_with_nothing_summarized(anki, tmp_path):
     assert "lumbar" in seen["screen"]
     assert "{{c1::" not in seen["screen"]
     assert palette.colors()["accent"] in seen["screen"]
-    # The box itself still renders (contextual now, not settings-gated) but starts
-    # empty, and nothing is offered to the clipboard.
-    assert seen["boxes"], "the feedback box should render on every row"
-    assert all(not b["value"] for b in seen["boxes"]), "nothing should pre-fill it"
+    assert seen["boxes"] == []
     assert "flagged" not in seen["screen"]
     assert not anki.gui.clipboard, "nothing should reach the clipboard"
     # It's still just a preview: the card still imports once Update is chosen.
@@ -3207,8 +3211,8 @@ def test_review_rules_separate_cards_without_trailing_the_last_one(anki, tmp_pat
 
 
 def test_review_collects_feedback_and_offers_the_digest(anki, tmp_path):
-    """Boxes appear on every row and the digest is offered on close, no setting
-    involved. The learner sees the answer and the reasoning, not just the front,
+    """Add note opens an editor and the digest is offered on close. The learner sees
+    the answer and the reasoning, not just the front,
     because "this card is wrong" is a judgment you can't make from a prompt alone."""
     from internpearls import sync
     folder = _write_source(tmp_path, {
@@ -3224,6 +3228,9 @@ def test_review_collects_feedback_and_offers_the_digest(anki, tmp_path):
         if "card feedback" in title:
             return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
                                 "click": True}]}
+        opening = _open_feedback_box(tree)
+        if opening:
+            return opening
         if "typed" not in seen:
             seen["screen"] = _labels(tree)
             box = next(n for n in _walk(tree) if n.get("t") == "textarea")
@@ -3271,6 +3278,9 @@ def test_update_decks_declined_still_returns_the_feedback_the_learner_wrote(anki
         if "card feedback" in title:
             return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
                                 "click": True}]}
+        opening = _open_feedback_box(tree)
+        if opening:
+            return opening
         if "typed" not in seen:
             box = next(n for n in _walk(tree) if n.get("t") == "textarea")
             seen["typed"] = True
@@ -3978,6 +3988,9 @@ def test_feedback_is_saved_without_waiting_for_the_dialog_to_close(anki, tmp_pat
     saved = {}
 
     def on_screen(tree, seen, decide):
+        opening = _open_feedback_box(tree)
+        if opening:
+            return opening
         box = next(n for n in _walk(tree) if n.get("t") == "textarea")
         if not seen.get("typed"):
             seen["typed"] = True
@@ -4025,6 +4038,9 @@ def test_feedback_digest_includes_declines_still_active_from_earlier_runs(anki, 
                        "hash": "older-hash"}})
 
     def on_screen(tree, seen, decide):
+        opening = _open_feedback_box(tree)
+        if opening:
+            return opening
         box = next(n for n in _walk(tree) if n.get("t") == "textarea")
         return {"events": [{"id": box["id"], "value": "new note"},
                            {"id": _find(tree, t="button", label=decide)["id"],
@@ -4055,6 +4071,9 @@ def test_saved_feedback_is_cleared_once_the_digest_has_been_shown(anki, tmp_path
 def test_completion_summary_and_feedback_arrive_as_one_dialog(anki, tmp_path):
     """They used to be two boxes back to back at the end of the run."""
     def on_screen(tree, seen, decide):
+        opening = _open_feedback_box(tree)
+        if opening:
+            return opening
         box = next(n for n in _walk(tree) if n.get("t") == "textarea")
         return {"events": [{"id": box["id"], "value": "too bulky"},
                            {"id": _find(tree, t="button", label=decide)["id"],
@@ -4094,6 +4113,9 @@ def test_result_screen_uses_the_shared_title_and_row_components(anki, tmp_path):
             seen["digest"] = tree
             return {"events": [{"id": _find(tree, t="button", label="Close")["id"],
                                 "click": True}]}
+        opening = _open_feedback_box(tree)
+        if opening:
+            return opening
         box = next((n for n in _walk(tree) if n.get("t") == "textarea"), None)
         events = [{"id": box["id"], "value": "too bulky"}] if box else []
         events.append(
@@ -4118,6 +4140,9 @@ def test_result_screen_shows_only_the_digest_when_the_run_was_cancelled(anki, tm
     digest is the whole dialog, with no leftover title or result rows above it, since
     there is no completed run to summarize."""
     def on_screen(tree, seen, decide):
+        opening = _open_feedback_box(tree)
+        if opening:
+            return opening
         box = next(n for n in _walk(tree) if n.get("t") == "textarea")
         return {"events": [{"id": box["id"], "value": "too bulky"},
                            {"id": _find(tree, t="button", label=decide)["id"],

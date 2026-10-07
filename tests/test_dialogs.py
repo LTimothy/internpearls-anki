@@ -2337,7 +2337,7 @@ def test_choosing_later_records_it_and_opens_no_note_box(anki):
     cell.buttons["held"].click()
     assert decisions == {"guid-new-a": "held"}
     box = _find_feedback_box(body)
-    assert box is not None and not box.isVisible()
+    assert box is None
     texts = " ".join(t or "" for t in _row_texts(body))
     assert "next time you run Update my decks, set to Import" in texts
     assert "With a note, it waits until the card is updated" in texts
@@ -2377,7 +2377,7 @@ def test_later_on_a_changed_row_says_it_comes_back_set_to_apply(anki):
     body, boxes, flush, decisions = _build_body_with_one_changed_card()
     _find_decision_cell(body).buttons["held"].click()
     assert decisions == {"guid-changed-a": "held"}
-    assert not _find_feedback_box(body).isVisible()
+    assert _find_feedback_box(body) is None
     texts = " ".join(t or "" for t in _row_texts(body))
     assert "next time you run Update my decks, set to Apply" in texts
 
@@ -2459,7 +2459,7 @@ def test_a_waiting_later_row_is_seeded_at_later_and_wears_the_later_chip(anki):
     texts = _row_texts(body)
     assert [t for t in texts if t in set(widgets.CHIPS.values())] == ["LATER"]
     assert "Your note: fix the dose" in texts and "Not updated yet" in texts
-    assert not _find_feedback_box(body).isVisible(), "a seeded Later asks nothing"
+    assert _find_feedback_box(body) is None, "a seeded Later asks nothing"
 
 
 def test_a_returning_later_row_that_does_not_wait_starts_at_its_default(anki):
@@ -2544,7 +2544,7 @@ def test_a_re_offered_decline_opens_with_no_empty_feedback_box(anki):
     body, boxes, flush, decisions = _build_body(
         [_changed_card_detail(declined_state="keep")])
     box = _find_feedback_box(body)
-    assert box is not None and not box.isVisible()
+    assert box is None
     add_note = next(w for w in _walk_widgets(body)
                     if getattr(w, "text", None) and w.text() == "Add note")
     assert add_note.isVisible(), "a re-offered decline must still be able to add a note"
@@ -2675,7 +2675,7 @@ def test_import_row_offers_a_quiet_add_note_that_reveals_the_box(anki):
     from internpearls import review
     body, boxes, flush, decisions = _build_body_with_one_new_card()
     box = _find_feedback_box(body)
-    assert box is not None and not box.isVisible()
+    assert box is None
     caret = next(w for w in _walk_widgets(body)
                 if getattr(w, "text", None) and w.text() in (review._CARET_CLOSED,
                                                              review._CARET_OPEN))
@@ -2683,6 +2683,7 @@ def test_import_row_offers_a_quiet_add_note_that_reveals_the_box(anki):
     add_note = next(w for w in _walk_widgets(body)
                     if getattr(w, "text", None) and w.text() == "Add note")
     add_note.click()
+    box = _find_feedback_box(body)
     assert box.isVisible()
 
 

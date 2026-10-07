@@ -46,6 +46,7 @@ def _pending_update_note(guid="g1"):
         {}, "", lambda: "", "")
     saver = next(timer for timer in reversed(QTimer.registry)
                  if timer.interval == 400 and timer.single_shot)
+    _add_note_of(body).click()
     boxes[guid].setPlainText("Check the dose")
     assert saver.started == 400
     return body, flush, saver
@@ -1303,6 +1304,87 @@ def _cell_of(row):
     return next(w for w in _walk_widgets(row) if hasattr(w, "buttons"))
 
 
+def _add_note_of(row):
+    return next(w for w in _walk_widgets(row)
+                if callable(getattr(w, "text", None)) and w.text() == "Add note")
+
+
+def test_add_note_creates_one_box_and_reuses_it_when_reopened():
+    detail = dict(_basic_note_detail(), guid="g1", kind="new")
+    boxes = {}
+    row = review._card_row(detail, {}, boxes, {}, _no_decide)
+    assert _box_of(row) is None and boxes == {}
+    assert row._layout._children[-1]._layout._children == []
+    _caret_widget(row).click()
+    _add_note_of(row).click()
+    box = boxes["g1"]
+    assert _box_of(row) is box and box.isVisible()
+    _cell_of(row).buttons["import"].click()
+    assert not box.isVisible()
+    _add_note_of(row).click()
+    assert boxes["g1"] is box and box.isVisible()
+
+
+def test_a_carried_note_has_a_visible_box_at_build_time():
+    detail = dict(_basic_note_detail(), guid="g1", kind="changed")
+    boxes = {}
+    row = review._card_row(detail, {"g1": "Check the dose"}, boxes, {}, _no_decide)
+    assert _box_of(row) is boxes["g1"]
+    assert boxes["g1"].isVisible()
+    assert boxes["g1"].toPlainText() == "Check the dose"
+
+
+@pytest.mark.parametrize("save_by", ["debounce", "flush"])
+def test_lazy_note_edits_save_with_rows_that_have_no_box(anki, save_by):
+    from aqt.qt import QTimer
+    flags = {"carried": "Earlier note"}
+    index = {"carried": ("IP::A", "First card"), "lazy": ("IP::A", "Second card"),
+             "empty": ("IP::A", "Third card")}
+    items = [("card", "IP::A", {"guid": g, "kind": "new", "notetype": "Basic",
+                                "fields": [("Front", front), ("Back", "Answer")]})
+             for g, (_, front) in index.items()]
+    body, boxes, flush = review.build_update_body(
+        items, {}, flags, index, {}, "", lambda: "", "")
+    saver = next(t for t in reversed(QTimer.registry) if t.interval == 400)
+    try:
+        assert set(boxes) == {"carried"}
+        next(w for w in _walk_widgets(body)
+             if callable(getattr(w, "accessibleName", None))
+             and w.accessibleName() == "Add note: Second card").click()
+        assert set(boxes) == {"carried", "lazy"}
+        boxes["lazy"].setPlainText("  New note  ")
+        assert flags == {"carried": "Earlier note", "lazy": "New note"}
+        assert saver.started == 400
+        if save_by == "debounce":
+            saver.fire()
+        else:
+            flush()
+            assert saver.started is None
+        assert review.load_saved_feedback() == {
+            "carried": {"note": "Earlier note", "deck": "IP::A", "front": "First card"},
+            "lazy": {"note": "New note", "deck": "IP::A", "front": "Second card"}}
+        if save_by == "debounce":
+            boxes["lazy"].clear()
+            saver.fire()
+            assert "lazy" not in flags
+            assert set(review.load_saved_feedback()) == {"carried"}
+    finally:
+        flush()
+
+
+def test_pending_entries_preserves_unbuilt_notes_and_omits_empty_rows():
+    boxes = {}
+    flags = {"carried": "Earlier note", "unbuilt": "Saved note"}
+    for guid in ("carried", "empty"):
+        review._card_row(dict(_basic_note_detail(), guid=guid, kind="new"),
+                         flags, boxes, {}, _no_decide)
+    assert set(boxes) == {"carried"}
+    assert review.pending_entries(boxes, flags, {"carried": ("IP::A", "First card")},
+                                  {"unbuilt": {"deck": "IP::B", "front": "Other card"}}) == {
+        "carried": {"note": "Earlier note", "deck": "IP::A", "front": "First card"},
+        "unbuilt": {"note": "Saved note", "deck": "IP::B", "front": "Other card"}}
+
+
 def test_every_way_of_turning_a_card_down_opens_the_note_box():
     """Keep yours and Never open the box on the click. Never used to be the exception,
     which made the loudest decision in the dialog the only silent one: a round arrived
@@ -1310,9 +1392,9 @@ def test_every_way_of_turning_a_card_down_opens_the_note_box():
     for kind, decision in (("new", "never"), ("changed", "keep"), ("changed", "frozen")):
         detail = dict(_basic_note_detail(), guid=f"g-{decision}", kind=kind)
         row = review._card_row(detail, {}, {}, {}, lambda *a, **k: None)
-        box = _box_of(row)
-        assert box is not None and not box.isVisible()
+        assert _box_of(row) is None
         _cell_of(row).buttons[decision].click()
+        box = _box_of(row)
         assert box.isVisible(), f"{decision} left no way to say why"
 
 
@@ -1325,7 +1407,7 @@ def test_accepting_or_deferring_a_card_leaves_the_box_shut():
         detail = dict(_basic_note_detail(), guid=f"g-{decision}", kind=kind)
         row = review._card_row(detail, {}, {}, {}, lambda *a, **k: None)
         _cell_of(row).buttons[decision].click()
-        assert not _box_of(row).isVisible()
+        assert _box_of(row) is None
 
 
 def test_a_note_already_written_survives_a_move_to_never():

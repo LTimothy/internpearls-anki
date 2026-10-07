@@ -40,6 +40,7 @@ def _pending_update_note():
         stream.fill_all()
     saver = next(timer for timer in body.findChildren(QTimer)
                  if timer.interval() == 400 and timer.isSingleShot())
+    next(b for b in body.findChildren(QPushButton) if b.text() == "Add note").click()
     boxes["g1"].setPlainText("Check the dose")
     assert saver.isActive()
     return body, flush, saver
@@ -163,15 +164,41 @@ def test_review_controls_name_the_card_and_feedback_field():
                  if button.text() in (review._CARET_CLOSED, review._CARET_OPEN))
     add_note = next(button for button in buttons if button.text() == "Add note")
     later = next(button for button in buttons if button.text() == "Later")
+    assert row.findChildren(QPlainTextEdit) == []
+    later.click()
+    assert row.findChildren(QPlainTextEdit) == []
+    caption = next(label for label in row.findChildren(QLabel)
+                   if label.text() == review._later_caption("new"))
+    add_note.click()
     box = row.findChildren(QPlainTextEdit)[0]
 
     assert caret.accessibleName() == f"Show card: {card_label}"
     assert add_note.accessibleName() == f"Add note: {card_label}"
     assert box.accessibleName() == f"Feedback note: {card_label}"
-    later.click()
-    caption = next(label for label in row.findChildren(QLabel)
-                   if label.text() == review._later_caption("new"))
     assert caption.buddy() is box
+
+
+@pytest.mark.parametrize("noted", [(), (0, 149, 299)])
+def test_300_built_rows_create_editors_only_for_carried_notes(noted):
+    from PyQt6 import sip
+    from internpearls.widgets import StreamingList
+    harness.app()
+    items = [("card", "IP::A", {"guid": f"g{i}", "kind": "new", "notetype": "Basic",
+                                "fields": [("Front", f"Card {i}?"), ("Back", "Answer")]})
+             for i in range(300)]
+    flags = {f"g{i}": "Saved note" for i in noted}
+    body, boxes, flush = review.build_update_body(items, {}, flags, {}, {}, "", lambda: "", "")
+    try:
+        stream = body.findChildren(StreamingList)[0]
+        stream.fill_all()
+        assert stream.shown() == 300
+        assert len(body.findChildren(QPlainTextEdit)) == len(noted)
+        assert set(boxes) == set(flags)
+        assert all(box.toPlainText() == "Saved note" and not box.isHidden()
+                   for box in boxes.values())
+    finally:
+        flush()
+        sip.delete(body)
 
 
 def _displayed(label):

@@ -1117,7 +1117,7 @@ def _card_label(detail):
 
 
 def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=None,
-              on_open=None, register=None):
+              on_open=None, register=None, on_box=None):
     """One card as a single row: a caret, its one chip column (see `_row_chip`), its
     tag if it has one, and its primary line. Clicking the row (the caret or the line
     itself) reveals the answer, the why behind a green left rule, and dosing when
@@ -1256,32 +1256,42 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     primary.setCursor(Qt.CursorShape.PointingHandCursor)
     hlay.addWidget(primary, 1)
 
-    # The feedback box and its caption are built for every row, whatever its kind, but
-    # stay invisible until something earns them: an existing note carried over in
-    # `flags`, a decline already on the card, or a click on Keep/Never/Add note below.
-    caption = muted_label("")
-    caption.setVisible(False)
-    box = QPlainTextEdit(flags.get(guid, ""))
-    box.setAccessibleName(f"Feedback note: {card_label}")
-    if hasattr(caption, "setBuddy"):
-        caption.setBuddy(box)
-    box.setPlaceholderText(_FEEDBACK_PLACEHOLDER)
-    box.setFixedHeight(50)
-    # A note already written is what opens this, not a decline the reader made in some
-    # earlier run: ten re-offered declined cards used to arrive as ten empty boxes
-    # parked open, which is the state _apply_decision_visuals goes out of its way to
-    # avoid everywhere else. Add note (below) is what reopens one on a row like that.
-    box.setVisible(bool(flags.get(guid)))
-    boxes[guid] = box
     # In the text column, like the note lines above: the caption and box are about the
     # card. Hidden while both are, so a row without them gains no spacing.
     decision = QWidget()
     dlay = QVBoxLayout(decision)
     dlay.setContentsMargins(indent, 0, 0, 0)
     dlay.setSpacing(4)
-    dlay.addWidget(caption)
-    dlay.addWidget(box)
     decision.setVisible(bool(flags.get(guid)))
+    caption = None
+    box = None
+
+    def _ensure_caption():
+        nonlocal caption
+        if caption is None:
+            caption = muted_label("")
+            caption.setVisible(False)
+            dlay.addWidget(caption)
+
+    def _ensure_box():
+        nonlocal box
+        if box is not None:
+            return
+        _ensure_caption()
+        box = QPlainTextEdit(flags.get(guid, ""))
+        box.setAccessibleName(f"Feedback note: {card_label}")
+        if hasattr(caption, "setBuddy"):
+            caption.setBuddy(box)
+        box.setPlaceholderText(_FEEDBACK_PLACEHOLDER)
+        box.setFixedHeight(50)
+        box.setVisible(bool(flags.get(guid)))
+        dlay.addWidget(box)
+        boxes[guid] = box
+        if on_box is not None:
+            on_box(guid, box)
+
+    if flags.get(guid):
+        _ensure_box()
 
     default = _DEFAULT_DECISION.get(kind)
     never_note = hint_label("won't be offered again")
@@ -1291,6 +1301,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     add_note.setVisible(False)
 
     def _reveal_box(_checked=False):
+        _ensure_box()
         box.setVisible(True)
         add_note.setVisible(False)
         decision.setVisible(True)
@@ -1299,18 +1310,24 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     def _apply_decision_visuals(state, clicked=False):
         text = (_later_caption(kind, detail) if state == "held"
                 else _DECLINE_CAPTION.get(state))
-        caption.setVisible(bool(text))
         if text:
+            _ensure_caption()
             caption.setText(text)
+        if caption is not None:
+            caption.setVisible(bool(text))
         # Sticky once there's something to lose (a saved flag or typed-but-unsaved
         # text), but a decline back to default with nothing written in it closes
         # again, restoring the quiet Add note affordance rather than leaving an
         # empty box parked open. `clicked` is what keeps that rule true of a decline
         # the row opened already carrying: declining here and now is a moment worth
         # offering the box for, while a decline made in an earlier run is not.
-        has_note = bool(flags.get(guid)) or bool(box.toPlainText().strip())
+        has_note = bool(flags.get(guid)) or (box is not None
+                                           and bool(box.toPlainText().strip()))
         show_box = has_note or (state in _TURNED_DOWN and clicked)
-        box.setVisible(show_box)
+        if show_box:
+            _ensure_box()
+        if box is not None:
+            box.setVisible(show_box)
         decision.setVisible(bool(text) or show_box)
         # Offered whenever the box is closed, whatever the row decided: a re-offered
         # decline is not a default row, and gating this on the default left exactly
@@ -1723,8 +1740,10 @@ def build_update_body(items, sources, flags, new_index, decisions,
     filter or typing a search rebuilds the stream from `filter_update_items`; the
     decisions, flags and touched set stay put, and rows are rebuilt from them.
 
-    Returns (widget, boxes, flush). `boxes` is {guid: QPlainTextEdit}, built lazily as
-    the list's own rows are. `flush()` stops the debounce save timer, writes one final
+    Returns (widget, boxes, flush). `boxes` is {guid: QPlainTextEdit}, populated only
+    when a built row carries a note or opens its editor. Built rows without a box
+    have no note.
+    `flush()` stops the debounce save timer, writes one final
     unconditional copy of what's flagged to disk, and releases the temporary directory
     pictures were extracted into; the caller runs it once, right after the dialog this
     body sits in has closed.
@@ -1802,6 +1821,9 @@ def build_update_body(items, sources, flags, new_index, decisions,
         _refresh_bottom()
         saver.start()
 
+    def _on_box(guid, box):
+        box.textChanged.connect(lambda: _on_change(guid, box))
+
     listeners = []
     setters = {}
 
@@ -1872,10 +1894,7 @@ def build_update_body(items, sources, flags, new_index, decisions,
         _, deck_name, detail = item
         row = _card_row(detail, flags, boxes, decisions, _on_decide,
                         resolve=resolvers.get(deck_name), chips=chips, on_open=_on_open,
-                        register=setters.__setitem__)
-        box = boxes.get(detail["guid"])
-        if box is not None:
-            box.textChanged.connect(lambda g=detail["guid"], b=box: _on_change(g, b))
+                        register=setters.__setitem__, on_box=_on_box)
         return row
 
     if items:
