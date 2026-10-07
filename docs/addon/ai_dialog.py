@@ -30,7 +30,7 @@ from .ai_setup import (LABEL_W, _open_url, _safe_settle, _settle_min_size,
                        start_backend_detection)
 from .config import (AI_LAST_RUN_LOG, APP_NAME, TARGET_FIELDS, _cfg,
                      load_ai_usage, save_ai_usage, load_deck_skill,
-                     save_deck_skill, load_user_skill, save_user_skill)
+                     save_deck_skill, load_user_skill, save_user_skill, replace_file)
 from .logic import cloze_filled_html, field_preview_html, note_display_label, plural
 from .ai_fetch import fetch_card_image
 from .palette import colors
@@ -1590,7 +1590,7 @@ class _GenerateDialog(QDialog):
                     while os.path.lexists(os.path.join(s.scratch, candidate)):
                         candidate = f"{stem}-{suffix}{ext}"
                         suffix += 1
-                    os.replace(source, os.path.join(s.scratch, candidate))
+                    replace_file(source, os.path.join(s.scratch, candidate))
                     moved.append(candidate)
             except (OSError, ValueError) as e:
                 for name in moved:

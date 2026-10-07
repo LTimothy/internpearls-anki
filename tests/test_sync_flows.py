@@ -4470,6 +4470,122 @@ def test_save_json_leaves_the_old_file_intact_when_the_write_fails(tmp_path, mon
     assert [f for f in os.listdir(tmp_path) if f.endswith(".tmp")] == []
 
 
+def test_replace_file_retries_permission_errors_then_lands_the_file(tmp_path, monkeypatch):
+    from internpearls import config
+    src, dst = tmp_path / "source.tmp", tmp_path / "target.json"
+    src.write_bytes(b"new contents")
+    dst.write_bytes(b"old contents")
+    real_replace = os.replace
+    attempts, sleeps = [], []
+
+    def replace(source, target):
+        attempts.append((source, target))
+        if len(attempts) <= 2:
+            raise PermissionError("file locked")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(config, "_REPLACE_RETRIES", 5, raising=False)
+    monkeypatch.setattr(os, "replace", replace)
+    monkeypatch.setattr("time.sleep", sleeps.append)
+
+    config.replace_file(src, dst)
+
+    assert attempts == [(src, dst)] * 3
+    assert sleeps == [0.05, 0.05]
+    assert dst.read_bytes() == b"new contents"
+    assert not src.exists()
+
+
+def test_replace_file_reraises_the_last_permission_error(monkeypatch):
+    from internpearls import config
+    errors, sleeps = [], []
+
+    def replace(source, target):
+        error = PermissionError("file locked")
+        errors.append(error)
+        raise error
+
+    monkeypatch.setattr(config, "_REPLACE_RETRIES", 5, raising=False)
+    monkeypatch.setattr(os, "replace", replace)
+    monkeypatch.setattr("time.sleep", sleeps.append)
+
+    with pytest.raises(PermissionError) as caught:
+        config.replace_file("source.tmp", "target.json")
+
+    assert len(errors) == 5
+    assert caught.value is errors[-1]
+    assert sleeps == [0.05] * 4
+
+
+def test_replace_file_does_not_retry_when_retries_are_disabled(monkeypatch):
+    from internpearls import config
+    attempts, sleeps = [], []
+    error = PermissionError("permission denied")
+
+    def replace(source, target):
+        attempts.append((source, target))
+        raise error
+
+    monkeypatch.setattr(config, "_REPLACE_RETRIES", 1, raising=False)
+    monkeypatch.setattr(os, "replace", replace)
+    monkeypatch.setattr("time.sleep", sleeps.append)
+
+    with pytest.raises(PermissionError) as caught:
+        config.replace_file("source.tmp", "target.json")
+
+    assert attempts == [("source.tmp", "target.json")]
+    assert caught.value is error
+    assert sleeps == []
+
+
+def test_replace_file_does_not_retry_other_os_errors(monkeypatch):
+    from internpearls import config
+    attempts, sleeps = [], []
+    error = FileNotFoundError("source missing")
+
+    def replace(source, target):
+        attempts.append((source, target))
+        raise error
+
+    monkeypatch.setattr(config, "_REPLACE_RETRIES", 5, raising=False)
+    monkeypatch.setattr(os, "replace", replace)
+    monkeypatch.setattr("time.sleep", sleeps.append)
+
+    with pytest.raises(FileNotFoundError) as caught:
+        config.replace_file("source.tmp", "target.json")
+
+    assert attempts == [("source.tmp", "target.json")]
+    assert caught.value is error
+    assert sleeps == []
+
+
+def test_save_json_retries_permission_errors(tmp_path, monkeypatch):
+    from internpearls import config
+    path = tmp_path / "state.json"
+    path.write_text('{"deck": "v1"}', encoding="utf8")
+    real_replace = os.replace
+    attempts, sleeps = [], []
+
+    def replace(source, target):
+        attempts.append((source, target))
+        if len(attempts) <= 2:
+            raise PermissionError("file locked")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(config, "_REPLACE_RETRIES", 5, raising=False)
+    monkeypatch.setattr(os, "replace", replace)
+    monkeypatch.setattr("time.sleep", sleeps.append)
+
+    config._save_json(str(path), {"deck": "v2"})
+
+    assert len(attempts) == 3
+    assert attempts == [attempts[0]] * 3
+    assert attempts[0][1] == str(path)
+    assert sleeps == [0.05, 0.05]
+    assert json.loads(path.read_text(encoding="utf8")) == {"deck": "v2"}
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
 # ------------------------------------------------------------------- backup scope
 def test_backup_covers_every_root_the_run_touches(anki, tmp_path):
     """The backup used to be export_deck's subtree and nothing else, so a run changing a

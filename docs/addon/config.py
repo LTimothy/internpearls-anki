@@ -7,6 +7,7 @@ import json
 import hashlib
 import os
 import tempfile
+import time
 
 from aqt import mw
 
@@ -267,6 +268,18 @@ def collection_key():
 # inheriting them too.
 _SCOPED_STATE = ("installed.json", "shipped_fields.json", "later_seen.json")
 _ADOPTED_STATE = ("declined.json", "deck_skill.json", "card_feedback.json")
+_REPLACE_RETRIES = 5 if os.name == "nt" else 1
+
+
+def replace_file(src, dst):
+    # Windows scanners can briefly lock either path during an atomic rename.
+    for attempt in range(_REPLACE_RETRIES):
+        try:
+            return os.replace(src, dst)
+        except PermissionError:
+            if attempt + 1 == _REPLACE_RETRIES:
+                raise
+            time.sleep(0.05)
 
 
 def _collection_state_path(path):
@@ -292,7 +305,7 @@ def _collection_state_path(path):
     if name in _ADOPTED_STATE and not os.path.exists(scoped) and os.path.exists(path):
         try:
             os.makedirs(os.path.dirname(scoped), exist_ok=True)
-            os.replace(path, scoped)
+            replace_file(path, scoped)
         except OSError:
             pass
     return scoped
@@ -344,7 +357,7 @@ def _save_json(path, data):
     try:
         with os.fdopen(fd, "w", encoding="utf8") as fh:
             json.dump(data, fh, indent=2)
-        os.replace(tmp, path)
+        replace_file(tmp, path)
     except Exception:
         try:
             os.remove(tmp)
@@ -485,7 +498,7 @@ def save_user_skill(text):
     try:
         with os.fdopen(fd, "w", encoding="utf8") as fh:
             fh.write(text)
-        os.replace(tmp, USER_SKILL)
+        replace_file(tmp, USER_SKILL)
     except Exception:
         try:
             os.remove(tmp)

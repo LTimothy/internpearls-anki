@@ -39,7 +39,7 @@ from .collection import (NoteTypeFieldsRequired, _apply_deck, _apply_template_ch
 from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, collection_key, load_declined, load_deck_skill,
-                     save_declined, save_deck_skill, save_later_seen)
+                     replace_file, save_declined, save_deck_skill, save_later_seen)
 from .logic import (APKG_MAX_BYTES, apkg_deck_names, apkg_note_details, apkg_notes,
                     change_notes_for, safe_source_path,
                     source_label_for, group_change_notes, sort_source_groups,
@@ -150,7 +150,7 @@ def _write_scratch(apkg_path, data, version=None):
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         path = _scratch_path(apkg_path, version)
-        os.replace(tmp, path)
+        replace_file(tmp, path)
         return path
     except Exception:
         try:
