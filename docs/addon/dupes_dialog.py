@@ -255,6 +255,7 @@ class _DuplicateScanDialog(QDialog):
         self.setMinimumSize(800, 560)
         self._pairs = []
         self._verdicts = {}
+        self._judge_summary = ""
         self._left_count = self._right_count = 0
         self._deck_names = sorted({d.name for d in mw.col.decks.all_names_and_ids()})
         # Every note in the collection, read once per dialog. Changing the sensitivity
@@ -705,6 +706,8 @@ class _DuplicateScanDialog(QDialog):
         if same:
             text += f", {same} judged the same"
         lines = [text]
+        if self._judge_summary:
+            lines.append(self._judge_summary)
         lines.extend(self._thin_pool_notes())
         info, warn = self._exclusion_feedback()
         if info:
@@ -981,6 +984,7 @@ class _DuplicateScanDialog(QDialog):
         self._judge_scratch = scratch
         self._judge_result = None
         self._judge_error = None
+        self._judge_summary = ""
         self._judge_ready = False
         self._judge_finished = False
         self._judge_t0 = platform().monotonic()
@@ -1040,6 +1044,7 @@ class _DuplicateScanDialog(QDialog):
         self._judging = False
         self._judge_result = None
         self._judge_error = None
+        self._judge_summary = ""
 
     def _retire_all(self):
         """Closing: stop the judging run, the scan, the backend probe (which a rescan
@@ -1092,11 +1097,26 @@ class _DuplicateScanDialog(QDialog):
             return
         self._judging = False
         self._sync_judge_button()
-        if self._judge_error or not self._judge_result:
-            self._rebuild_list()
+        verdicts = {}
+        reason = ""
+        if self._judge_error:
+            reason = str(self._judge_error) or "no usable verdicts returned"
+        elif not self._judge_result or not self._judge_result.get("text"):
+            reason = "no reply returned"
+        else:
+            verdicts, errors = ai_logic.parse_dupes_verdicts_json(
+                self._judge_result["text"], len(self._judge_pairs))
+            if not verdicts:
+                reason = errors[0] if errors else "no usable verdicts returned"
+        if reason:
+            self._judge_summary = (f"AI judging failed ({_esc(reason)}). "
+                                   "Your candidates are unchanged; Judge with AI tries again.")
+            self.summary_label.setText(self._summary_text())
             return
-        verdicts, errors = ai_logic.parse_dupes_verdicts_json(
-            self._judge_result["text"], len(self._judge_pairs))
+        self._judge_summary = ""
+        if len(verdicts) < len(self._judge_pairs):
+            self._judge_summary = (f"AI assessed {len(verdicts)} of {len(self._judge_pairs)} "
+                                   "pairs; the rest are unchanged.")
         for i, pair in enumerate(self._judge_pairs):
             v = verdicts.get(i)
             if v:

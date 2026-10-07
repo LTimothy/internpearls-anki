@@ -390,6 +390,10 @@ def test_judge_with_ai_updates_chips_and_folds_different(monkeypatch):
     # a "different" pair sits under the fold, not among the shown rows
     shown = [p for p in dlg._pairs if p["judged"] != "different"]
     assert len(shown) == 2
+    assert len(dlg._verdicts) == 3
+    assert "AI assessed" not in dlg.summary_label.text()
+    assert "AI judging failed" not in dlg.summary_label.text()
+    assert "1 judged the same" in dlg.summary_label.text()
     assert len(scratch_paths) == 1
     assert not Path(scratch_paths[0]).exists()
     dlg.deleteLater()
@@ -403,12 +407,154 @@ def _judge_verdicts(dlg, monkeypatch, verdicts=("same", "overlaps", "different")
     monkeypatch.setattr(ai_cli, "run_generation", lambda *a, **kw: {
         "text": json.dumps({"verdicts": reply}), "tokens": 10,
         "rate_limits": None, "duration_s": 0.1})
-    expected = {p["key"]: (v["verdict"], v["note"])
-                for p, v in zip(dlg._pairs, reply)}
+    expected = {p["key"]: (p["judged"], p["note"]) for p in dlg._pairs}
+    expected.update({p["key"]: (v["verdict"], v["note"])
+                     for p, v in zip(dlg._pairs, reply)})
     dlg._judge_with_ai()
     dlg._wait_for_judge()
     assert {p["key"]: (p["judged"], p["note"]) for p in dlg._pairs} == expected
     return expected
+
+
+def test_partial_judge_keeps_unassessed_candidates_shown_and_uncached(monkeypatch):
+    mock, q = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    try:
+        bands = [l.text() for l in dlg.findChildren(q.QLabel)
+                 if l.text().startswith(("Likely duplicate ", "Possible "))]
+        assert len(bands) == 3
+        expected = _judge_verdicts(dlg, monkeypatch, ("different",))
+        assert [p["judged"] for p in dlg._pairs] == ["different", None, None]
+        assert set(dlg._verdicts) == {dlg._pairs[0]["key"]}
+        assert [item[1]["key"] for item in dlg._list_items() if item[0] == "pair"] == [
+            p["key"] for p in dlg._pairs[1:]]
+        assert [b.text() for b in dlg.findChildren(q.QPushButton)
+                if b.text().startswith("Judged different")] == ["Judged different (1)"]
+        assert [l.text() for l in dlg.findChildren(q.QLabel)
+                if l.text().startswith(("Likely duplicate ", "Possible "))] == bands[1:]
+        assert "AI assessed 1 of 3 pairs; the rest are unchanged." in dlg.summary_label.text()
+        dlg._toggle_fold()
+        assert "AI assessed 1 of 3 pairs; the rest are unchanged." in dlg.summary_label.text()
+        dlg._rescan()
+        dlg._wait_for_scan()
+        assert {p["key"]: (p["judged"], p["note"]) for p in dlg._pairs} == expected
+        assert "AI assessed" not in dlg.summary_label.text()
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+
+
+@pytest.mark.parametrize("previously_judged", [False, True])
+def test_empty_judge_reply_keeps_rows_and_cache_unchanged(monkeypatch, previously_judged):
+    import copy
+    mock, q = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    try:
+        if previously_judged:
+            _judge_verdicts(dlg, monkeypatch)
+        pairs, cache = copy.deepcopy((dlg._pairs, dlg._verdicts))
+        items = copy.deepcopy(dlg._list_items())
+        bands = [l.text() for l in dlg.findChildren(q.QLabel) if l is not dlg.summary_label]
+        _judge_verdicts(dlg, monkeypatch, ())
+        assert dlg._pairs == pairs
+        assert dlg._verdicts == cache
+        assert dlg._list_items() == items
+        assert [l.text() for l in dlg.findChildren(q.QLabel)
+                if l is not dlg.summary_label] == bands
+        summary = dlg.summary_label.text()
+        assert "AI judging failed" in summary
+        assert "no verdict returned" in summary
+        assert "Your candidates are unchanged; Judge with AI tries again." in summary
+        assert dlg.judge_btn.isEnabled()
+        _judge_verdicts(dlg, monkeypatch)
+        assert "AI judging failed" not in dlg.summary_label.text()
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+
+
+@pytest.mark.parametrize("reply", [
+    None, "", "not json",
+    '{"verdicts": [{"pair": 0, "verdict": "maybe", "note": "x"}]}',
+])
+def test_unusable_judge_reply_reports_reason_and_keeps_candidates(monkeypatch, reply):
+    import copy
+    from internpearls import ai_cli
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    try:
+        pairs = copy.deepcopy(dlg._pairs)
+        monkeypatch.setattr(ai_cli, "run_generation", lambda *a, **kw:
+                            None if reply is None else {"text": reply})
+        dlg._judge_with_ai()
+        dlg._wait_for_judge()
+        assert dlg._pairs == pairs
+        assert dlg._verdicts == {}
+        assert len([item for item in dlg._list_items() if item[0] == "pair"]) == 3
+        summary = dlg.summary_label.text()
+        assert "AI judging failed (" in summary
+        assert "Your candidates are unchanged; Judge with AI tries again." in summary
+        if reply is None or reply == "":
+            assert "no reply returned" in summary
+        elif reply == "not json":
+            assert "reply was not valid JSON" in summary
+        else:
+            assert "unknown verdict" in summary
+        assert dlg.judge_btn.isEnabled()
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+
+
+@pytest.mark.parametrize("previously_judged", [False, True])
+def test_failed_judge_escapes_reason_and_keeps_rows_unchanged(monkeypatch, previously_judged):
+    import copy
+    from PyQt6.QtGui import QTextDocument
+    from internpearls import ai_cli
+    mock, q = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    try:
+        if previously_judged:
+            _judge_verdicts(dlg, monkeypatch)
+        pairs, cache = copy.deepcopy((dlg._pairs, dlg._verdicts))
+        items = copy.deepcopy(dlg._list_items())
+        bands = [l.text() for l in dlg.findChildren(q.QLabel) if l is not dlg.summary_label]
+
+        def fail(*a, **kw):
+            raise RuntimeError("A <b>x</b> & B")
+
+        monkeypatch.setattr(ai_cli, "run_generation", fail)
+        dlg._judge_with_ai()
+        dlg._wait_for_judge()
+        assert dlg._pairs == pairs
+        assert dlg._verdicts == cache
+        assert dlg._list_items() == items
+        assert [l.text() for l in dlg.findChildren(q.QLabel)
+                if l is not dlg.summary_label] == bands
+        assert dlg.summary_label.textFormat() == q.Qt.TextFormat.RichText
+        assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in dlg.summary_label.text()
+        doc = QTextDocument()
+        doc.setHtml(dlg.summary_label.text())
+        assert ("AI judging failed (A <b>x</b> & B). Your candidates are unchanged; "
+                "Judge with AI tries again.") in doc.toPlainText()
+        assert dlg.judge_btn.isEnabled()
+        dlg._toggle_fold()
+        assert "AI judging failed" in dlg.summary_label.text()
+    finally:
+        dlg.close()
+        dlg.deleteLater()
 
 
 @pytest.mark.parametrize("control", ["sensitivity", "exclusions"])

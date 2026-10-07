@@ -1474,13 +1474,21 @@ def test_parse_dupes_verdicts_json_happy_path():
     assert errors == []
     assert verdicts[0]["verdict"] == "same"
     assert verdicts[1]["verdict"] == "different"
+    assert set(verdicts) == {0, 1}
 
 
-def test_parse_dupes_verdicts_json_missing_index_defaults_to_different():
+def test_parse_dupes_verdicts_json_missing_index_has_no_verdict():
     import json as _json
     reply = _json.dumps({"verdicts": [{"pair": 0, "verdict": "same", "note": "x"}]})
     verdicts, errors = ai_logic.parse_dupes_verdicts_json(reply, 2)
-    assert verdicts[1]["verdict"] == "different"
+    assert verdicts == {0: {"verdict": "same", "note": "x"}}
+    assert errors == ["pair 1: no verdict returned"]
+
+
+def test_parse_dupes_verdicts_json_empty_list_has_no_verdicts():
+    verdicts, errors = ai_logic.parse_dupes_verdicts_json('{"verdicts": []}', 2)
+    assert verdicts == {}
+    assert errors == ["pair 0: no verdict returned", "pair 1: no verdict returned"]
 
 
 def test_parse_dupes_verdicts_json_bad_reply():
@@ -1494,7 +1502,7 @@ def test_parse_dupes_verdicts_json_unknown_verdict_word():
     reply = _json.dumps({"verdicts": [{"pair": 0, "verdict": "maybe", "note": "x"}]})
     verdicts, errors = ai_logic.parse_dupes_verdicts_json(reply, 1)
     assert errors
-    assert verdicts[0]["verdict"] == "different"
+    assert verdicts == {}
 
 
 def test_a_bad_image_source_is_kept_on_its_card_rather_than_failing_the_reply():

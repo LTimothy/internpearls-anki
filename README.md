@@ -163,7 +163,7 @@ Finds cards elsewhere in your collection that restate a fact your managed cards 
 
 Each candidate row shows its band and score, both fronts, the other card's deck and note type, and the shared words that drove the match (an image filename never counts). Suspend ours, Suspend theirs, Keep both and Ignore pair are on the row; all are reversible, and Ignore pair keeps the pair from returning. Opening a row shows both answers. Copy list copies the candidates as text. Long lists load as you scroll. Enter never triggers Rescan, and AI verdicts stay on their rows through a rescan as long as neither card's front or back has changed.
 
-**Judge with AI** sends each pair's front and back text (no ids, no scheduling data) to your assistant in one Thorough turn and marks rows DUPLICATE or OVERLAPS; pairs judged different fold below "Judged different". It only changes what rows say.
+**Judge with AI** sends each pair's front and back text (no ids, no scheduling data) to your assistant in one Thorough turn and marks rows DUPLICATE or OVERLAPS; pairs judged different fold below "Judged different". Pairs it does not assess stay as they were. It only changes what rows say.
 
 ### Advanced submenu
 

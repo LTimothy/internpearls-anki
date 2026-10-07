@@ -845,9 +845,8 @@ def parse_dupes_verdicts_json(text, n_pairs):
     """Parse a duplicate-judging reply into (verdicts, errors), the same tolerance
     parse_verdicts_json extends per-card: a reply that isn't a JSON object with a
     "verdicts" list is unusable outright; a malformed individual entry adds one line
-    to errors rather than failing the whole reply. Every index 0..n_pairs-1 comes back
-    covered, an index the reply never mentions gets a synthetic "different" entry
-    (the safe default: nothing is claimed a duplicate without an actual verdict for it).
+    to errors rather than failing the whole reply. Only valid verdicts actually
+    returned are included; each missing pair adds one line to errors and has no entry.
     """
     try:
         data = json.loads(_find_json_obj(text))
@@ -879,8 +878,7 @@ def parse_dupes_verdicts_json(text, n_pairs):
         parsed[idx] = {"verdict": verdict, "note": note.strip()}
     for i in range(n_pairs):
         if i not in parsed:
-            parsed[i] = {"verdict": "different",
-                        "note": "the assistant returned no verdict for this pair"}
+            errors.append(f"pair {i}: no verdict returned")
     return parsed, errors
 
 
