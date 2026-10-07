@@ -10,6 +10,11 @@ from internpearls import ai_fetch
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
 
+@pytest.fixture(autouse=True)
+def no_proxy_by_default(monkeypatch):
+    monkeypatch.setattr(ai_fetch.urllib.request, "getproxies", lambda: {})
+
+
 class _Response:
     def __init__(self, status, headers=None, body=b""):
         self.status = status
@@ -86,6 +91,23 @@ def test_a_public_image_downloads(monkeypatch):
                {("img.example", "/a.png?x=1"): _png()})
     assert ai_fetch.fetch_card_image("https://img.example/a.png?x=1") == (PNG, "png")
     assert web.connected == [("img.example", "93.184.216.34")]
+
+
+def test_a_direct_download_ignores_the_machines_proxy_settings(monkeypatch):
+    monkeypatch.setenv("https_proxy", "http://environment.example:8080")
+    monkeypatch.setattr(urllib.request, "getproxies_macosx_sysconf", lambda: {
+        "https": "http://system.example:8080"}, raising=False)
+    web = _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
+               {("img.example", "/a.png?x=1"): _png()})
+    assert ai_fetch.fetch_card_image("https://img.example/a.png?x=1") == (PNG, "png")
+    assert web.connected == [("img.example", "93.184.216.34")]
+
+
+def test_an_overlong_dns_label_is_a_lookup_transport_error():
+    host = "x" * 64 + ".example"
+    with pytest.raises(ai_fetch.TransportError, match=f"couldn't look up {host}") as raised:
+        ai_fetch._resolve_within(host, 443, 1)
+    assert isinstance(raised.value.__cause__, UnicodeError)
 
 
 @pytest.mark.parametrize("address", [
@@ -204,8 +226,9 @@ def test_a_loopback_server_is_never_contacted():
             with pytest.raises(RuntimeError):
                 ai_fetch.fetch_card_image(url, timeout=1)
     finally:
-        t.join()
         server.close()
+        t.join(3)
+    assert not t.is_alive()
     assert contacted == []
 
 
@@ -287,23 +310,23 @@ def test_a_close_delimited_trickle_on_a_real_socket_stops_at_the_deadline(monkey
     server = socket.socket()
     server.bind(("127.0.0.1", 0))
     server.listen(1)
+    server.settimeout(2)
     port = server.getsockname()[1]
     stop = threading.Event()
 
     def serve():
-        conn, _ = server.accept()
         try:
-            conn.sendall(b"HTTP/1.0 200 OK\r\nContent-Type: image/png\r\n"
-                         b"Connection: close\r\n\r\n" + PNG[:8])
-            for _ in range(100):
-                if stop.is_set():
-                    break
-                conn.sendall(b"\x00")
-                time.sleep(0.2)
+            conn, _ = server.accept()
+            with conn:
+                conn.settimeout(2)
+                conn.sendall(b"HTTP/1.0 200 OK\r\nContent-Type: image/png\r\n"
+                             b"Connection: close\r\n\r\n" + PNG[:8])
+                for _ in range(100):
+                    conn.sendall(b"\x00")
+                    if stop.wait(0.2):
+                        break
         except OSError:
             pass
-        finally:
-            conn.close()
     t = threading.Thread(target=serve, daemon=True)
     t.start()
     monkeypatch.setattr(ai_fetch, "_resolve", lambda host, p: [
@@ -320,6 +343,8 @@ def test_a_close_delimited_trickle_on_a_real_socket_stops_at_the_deadline(monkey
     finally:
         stop.set()
         server.close()
+        t.join(3)
+    assert not t.is_alive()
 
 
 
@@ -625,8 +650,8 @@ def test_a_real_proxy_receives_connect_by_name_and_407_is_a_transport_error(monk
         assert "p@ss" not in str(raised.value)
         assert "p%40ss" not in str(raised.value)
     finally:
-        thread.join(3)
         server.close()
+        thread.join(3)
     assert not thread.is_alive()
     assert errors == []
     assert len(requests) == 1
@@ -674,7 +699,9 @@ def test_a_proxy_fetch_without_https_support_is_a_transport_error(monkeypatch):
         ai_fetch.fetch_card_image("https://img.example/a.png")
 
 
-def test_a_trickling_connect_reply_stops_at_the_deadline(monkeypatch):
+@pytest.mark.parametrize("interim", [b"", b"HTTP/1.1 100 Continue\r\n\r\n",
+                                    b"HTTP/1.1 103 Early Hints\r\n\r\n"])
+def test_a_trickling_connect_reply_stops_at_the_deadline(monkeypatch, interim):
     import time
     server = socket.socket()
     server.bind(("127.0.0.1", 0))
@@ -696,6 +723,7 @@ def test_a_trickling_connect_reply_stops_at_the_deadline(monkeypatch):
                         return
                     request += chunk
                 requests.append(request)
+                conn.sendall(interim)
                 for byte in b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n":
                     conn.sendall(bytes([byte]))
                     if stop.wait(0.03):
@@ -826,6 +854,150 @@ def test_an_environment_hostname_exception_bypasses_explicit_ports(monkeypatch, 
     assert web.tunnels == []
 
 
+@pytest.mark.parametrize("entry", ["[2606:4700::1111]", "2606:4700::1111"])
+@pytest.mark.parametrize("port", [None, 443, 8443])
+@pytest.mark.parametrize("host, bypass", [
+    ("2606:4700::1111", True), ("2606:4700::1111:443", False),
+])
+def test_an_ipv6_proxy_exception_matches_only_the_exact_address(
+        monkeypatch, entry, port, host, bypass):
+    monkeypatch.setenv("no_proxy", entry)
+    monkeypatch.setenv("https_proxy", "http://10.0.0.2:8080")
+    monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)
+    monkeypatch.setattr(urllib.request, "proxy_bypass",
+                        urllib.request.proxy_bypass_environment)
+    proxy = ai_fetch._proxy_for(host, port)
+    assert (proxy is None) == bypass
+    if proxy is not None:
+        assert proxy.geturl() == "http://10.0.0.2:8080"
+
+
+@pytest.mark.parametrize("host, entry, bypass", [
+    ("2606:4700::1111", "2606:4700:0:0::1111", True),
+    ("2606:4700:0:0::1111", "2606:4700::1111", True),
+    ("2606:4700::1111", " [2606:4700:0:0::1111] ", True),
+    ("2606:4700:0:0::1111", " [2606:4700::1111] ", True),
+    ("2606:4700::1111", "2606:4700:0:0::1112", False),
+    ("2606:4700::1111", "img.example", False),
+    ("2606:4700::1111", "img.example,2606:4700:0:0::1111", True),
+])
+def test_an_ipv6_proxy_exception_compares_addresses(monkeypatch, host, entry, bypass):
+    monkeypatch.setenv("no_proxy", entry)
+    monkeypatch.setenv("https_proxy", "http://10.0.0.2:8080")
+    monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)
+    monkeypatch.setattr(urllib.request, "proxy_bypass",
+                        urllib.request.proxy_bypass_environment)
+    assert (ai_fetch._proxy_for(host, 443) is None) == bypass
+
+
+@pytest.mark.parametrize("entry, port, bypass", [
+    ("[2606:4700::1111]:8443", 8443, True),
+    ("[2606:4700::1111]:8443", 443, False),
+    ("::1111", 8443, False),
+    ("2606:4700::111", 8443, False),
+])
+def test_an_ipv6_proxy_exception_respects_ports_and_rejects_suffixes(
+        monkeypatch, entry, port, bypass):
+    monkeypatch.setenv("no_proxy", entry)
+    monkeypatch.setenv("https_proxy", "http://10.0.0.2:8080")
+    monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)
+    monkeypatch.setattr(urllib.request, "proxy_bypass",
+                        urllib.request.proxy_bypass_environment)
+    assert (ai_fetch._proxy_for("2606:4700::1111", port) is None) == bypass
+
+
+@pytest.fixture
+def connect_reply(monkeypatch):
+    import ssl
+
+    class _Socket:
+        def __init__(self, reply):
+            self.reply = reply
+            self.handshake = False
+
+        def settimeout(self, timeout):
+            pass
+
+        def connect(self, address):
+            pass
+
+        def sendall(self, request):
+            pass
+
+        def recv(self, size):
+            chunk, self.reply = self.reply[:size], self.reply[size:]
+            return chunk
+
+        def do_handshake(self):
+            self.handshake = True
+
+        def close(self):
+            pass
+
+    def connection(reply):
+        sock = _Socket(reply)
+        monkeypatch.setattr(ai_fetch.socket, "socket", lambda *args: sock)
+        monkeypatch.setattr(ssl.SSLContext, "wrap_socket", lambda *args, **kwargs: sock)
+        conn = ai_fetch._ProxyHTTPSConnection(
+            "proxy.corp", 8080, timeout=1, context=ssl.create_default_context(),
+            address=(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 8080)),
+            on_socket=lambda sock: None)
+        conn.set_tunnel("img.example", 443)
+        return conn, sock
+
+    return connection
+
+
+@pytest.mark.parametrize("interim", [b"", b"HTTP/1.1 100 Continue\r\n\r\n",
+                                    b"HTTP/1.1 103 Early Hints\r\n\r\n",
+                                    b"HTTP/1.1 100 Continue\r\n\r\n"
+                                    b"HTTP/1.1 103 Early Hints\r\n\r\n"])
+@pytest.mark.parametrize("status", [200, 201, 204, 299])
+def test_a_connect_accepts_any_2xx_after_interim_replies(connect_reply, interim, status):
+    conn, sock = connect_reply(interim + f"HTTP/1.1 {status} OK\r\n\r\n".encode()
+                               + b"tunnel bytes")
+    conn.connect()
+    assert sock.handshake
+    assert sock.recv(100) == b"tunnel bytes"
+
+
+@pytest.mark.parametrize("status", [300, 407])
+def test_a_connect_rejects_a_final_failure_after_interim_replies(connect_reply, status):
+    conn, sock = connect_reply(b"HTTP/1.1 103 Early Hints\r\n\r\n"
+                               + f"HTTP/1.1 {status} Failed\r\n\r\n".encode())
+    with pytest.raises(OSError, match=f"Tunnel connection failed: {status}"):
+        conn.connect()
+    assert not sock.handshake
+
+
+def test_a_connect_requires_a_final_reply_after_interim_replies(connect_reply):
+    conn, sock = connect_reply(b"HTTP/1.1 103 Early Hints\r\n\r\n")
+    with pytest.raises(OSError, match="Incomplete CONNECT reply"):
+        conn.connect()
+    assert not sock.handshake
+
+
+@pytest.mark.parametrize("reply", [
+    (b"HTTP/1.1 103 Early Hints\r\n" + b"X: " + b"x" * 33000 + b"\r\n\r\n") * 2,
+    (b"HTTP/1.1 103 Early Hints\r\n" + b"X: x\r\n" * 49 + b"\r\n") * 2,
+], ids=["total-size", "line-count"])
+def test_connect_reply_caps_are_shared_by_all_blocks(connect_reply, reply):
+    conn, sock = connect_reply(reply + b"HTTP/1.1 200 OK\r\n\r\n")
+    with pytest.raises(OSError, match="CONNECT reply is too large"):
+        conn.connect()
+    assert not sock.handshake
+
+
+@pytest.mark.parametrize("headers", [b"X: first\r\n second\r\n\tthird\r\n",
+                                    b"unused line\r\n"])
+def test_connect_reply_headers_are_ignored(connect_reply, headers):
+    conn, sock = connect_reply(b"HTTP/1.1 200 OK\r\n" + headers + b"\r\n"
+                               + b"tunnel bytes")
+    conn.connect()
+    assert sock.handshake
+    assert sock.recv(100) == b"tunnel bytes"
+
+
 @pytest.mark.parametrize("reply", [
     b"HTTP/1.1 200 Connection Established\r\n\r\n\x15\x03\x03\x00\x02\x02\x28",
     b"HTTP/1.1 200 OK\r\n" + (b"X: " + b"x" * 4096 + b"\r\n") * 17 + b"\r\n",
@@ -833,9 +1005,9 @@ def test_an_environment_hostname_exception_bypasses_explicit_ports(monkeypatch, 
     b"HTTP/2 200 OK\r\n\r\n",
     b"HTTP/1.1 20 OK\r\n\r\n",
     b"HTTP/1.1 secret OK\r\n\r\n",
-    b"HTTP/1.1 200 OK\r\nsecret\r\n\r\n",
+    b"HTTP/1.1 099 secret\r\n\r\n",
 ], ids=["tls-alert", "total-size", "line-count", "invalid-version", "short-status",
-        "invalid-status", "invalid-header"])
+        "invalid-status", "invalid-status-range"])
 def test_a_connect_reply_fails_fast_without_losing_tunnel_bytes(monkeypatch, reply):
     import time
     import traceback

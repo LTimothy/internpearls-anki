@@ -71,7 +71,7 @@ def _resolve_within(host, port, seconds):
     so it is left to finish on its own thread)."""
     try:
         return _run_within(lambda: _resolve(host, port), seconds)
-    except OSError as e:
+    except (OSError, UnicodeError) as e:
         raise TransportError(f"couldn't look up {host} ({e})") from e
 
 
@@ -131,23 +131,26 @@ if _HTTPSConnection is not None:
             request.extend(f"{key}: {value}\r\n" for key, value in headers.items())
             self.sock.sendall(("".join(request) + "\r\n").encode("latin-1"))
             # Leave bytes after the blank line on the socket for TLS.
-            reply = bytearray()
-            lines = 0
-            while not reply.endswith(b"\r\n\r\n"):
-                byte = self.sock.recv(1)
-                if not byte:
-                    raise OSError("Incomplete CONNECT reply")
-                reply += byte
-                lines += byte == b"\n"
-                if len(reply) > 64 * 1024 or lines > 100:
-                    raise OSError("CONNECT reply is too large")
-            headers = reply.split(b"\r\n")
-            status = re.fullmatch(rb"HTTP/1\.[0-9] +([0-9]{3})(?: +[^\r\n]*)?", headers[0])
-            if status is None or int(status[1]) < 100 or any(
-                    b":" not in line for line in headers[1:-2]):
-                raise OSError("Malformed CONNECT reply")
-            code = int(status[1])
-            if code != 200:
+            size = lines = 0
+            while True:
+                reply = bytearray()
+                while not reply.endswith(b"\r\n\r\n"):
+                    byte = self.sock.recv(1)
+                    if not byte:
+                        raise OSError("Incomplete CONNECT reply")
+                    reply += byte
+                    size += 1
+                    lines += byte == b"\n"
+                    if size > 64 * 1024 or lines > 100:
+                        raise OSError("CONNECT reply is too large")
+                status = re.fullmatch(rb"HTTP/1\.[0-9] +([0-9]{3})(?: +[^\r\n]*)?",
+                                      reply.split(b"\r\n", 1)[0])
+                if status is None or int(status[1]) < 100:
+                    raise OSError("Malformed CONNECT reply")
+                code = int(status[1])
+                if code >= 200:
+                    break
+            if not 200 <= code < 300:
                 raise OSError(f"Tunnel connection failed: {code}")
             self.sock = self._context.wrap_socket(
                 self.sock, server_hostname=self._tunnel_host,
@@ -163,9 +166,22 @@ def _open_connection(host, ip, port, timeout):
 
 
 def _proxy_for(host, port=None):
-    url = urllib.request.getproxies().get("https")
-    authority = host if port is None else (
-        f"[{host}]:{port}" if ":" in host else f"{host}:{port}")
+    proxies = urllib.request.getproxies()
+    url = proxies.get("https")
+    try:
+        ipv6 = ipaddress.ip_address(host).version == 6
+    except ValueError:
+        ipv6 = False
+    if ipv6:
+        for name in proxies.get("no", "").split(","):
+            try:
+                if (ipaddress.ip_address(name.strip().strip("[]")) ==
+                        ipaddress.ip_address(host)):
+                    return None
+            except ValueError:
+                continue
+        host = f"[{host}]"
+    authority = host if port is None else f"{host}:{port}"
     if not url or urllib.request.proxy_bypass(host) or (
             port is not None and urllib.request.proxy_bypass(authority)):
         return None
