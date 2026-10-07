@@ -18,7 +18,7 @@ from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      EXAMPLE_DECK_NAME, EXAMPLE_REPO,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED,
                      NIGHT_MODE_DIM_PERCENT_CEILING, NIGHT_MODE_DIM_PERCENT_FLOOR,
-                     STATE, _cfg, _load_json, load_declined, save_declined)
+                     STATE, _cfg, _load_json, _typed_value, load_declined, save_declined)
 from .logic import (deck_status, manifest_scope_suggestion, night_mode_dim_factor,
                     parse_fields, plural, version_at_least)
 from .palette import DARK, LIGHT, colors
@@ -202,8 +202,9 @@ def configure_source():
     chooser.deleteLater()
 
     if choice == "github":
-        repo, token, ok = _github_source_form(conf.get("github_decks_repo", ""),
-                                              conf.get("github_token", ""))
+        repo, token, ok = _github_source_form(
+            _typed_value(conf.get("github_decks_repo"), ""),
+            _typed_value(conf.get("github_token"), ""))
         if not ok or not repo:
             return
         conf["github_decks_repo"] = repo
@@ -234,7 +235,7 @@ def configure_source():
         # never the only place the instruction appears.
         path = QFileDialog.getExistingDirectory(
             mw, f"{APP_NAME}: folder with manifest.json + .apkg files",
-            conf.get("decks_dir", ""))
+            _typed_value(conf.get("decks_dir"), ""))
         if not path.strip():
             return
         conf["decks_dir"] = path.strip()

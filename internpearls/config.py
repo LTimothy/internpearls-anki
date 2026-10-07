@@ -148,7 +148,7 @@ def _ai_map(value):
 def _ai_bool_map(value, default=True):
     if not isinstance(value, dict):
         value = {}
-    return {kind: bool(value.get(kind, default)) for kind in _AI_BACKEND_KINDS}
+    return {kind: _typed_value(value.get(kind), default) for kind in _AI_BACKEND_KINDS}
 
 
 def _cli_path_map(value, preferred):
@@ -174,25 +174,38 @@ def _default_count(value):
     return n if 0 < n <= AI_COUNT_CEILING else 0
 
 
+def _typed_value(value, default):
+    return value if isinstance(value, type(default)) else default
+
+
+def _string_list(value, default):
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, str)]
+    if isinstance(value, str) and value:
+        return [value]
+    return default
+
+
 def _cfg():
     c = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
+    backend = _typed_value(c.get("ai_backend"), "")
     return {
-        "protected":   c.get("protected_fields", ["Notes"]),
-        "scope_tag":   c.get("scope_tag", "InternPearls"),
-        "decks_dir":   c.get("decks_dir", ""),
-        "gh_repo":     c.get("github_decks_repo", ""),
-        "gh_ref":      c.get("github_ref", "main"),
-        "gh_token":    c.get("github_token", ""),
-        "export_deck": c.get("export_deck", EXPORT_DECK),
-        "excluded":    c.get("excluded_decks", []),
-        "notify_addon_updates": c.get("notify_addon_updates", True),
-        "auto_update_addon":    c.get("auto_update_addon", False),
-        "auto_sync_decks":      c.get("auto_sync_decks", False),
+        "protected":   _string_list(c.get("protected_fields"), ["Notes"]),
+        "scope_tag":   _typed_value(c.get("scope_tag"), "InternPearls"),
+        "decks_dir":   _typed_value(c.get("decks_dir"), ""),
+        "gh_repo":     _typed_value(c.get("github_decks_repo"), ""),
+        "gh_ref":      _typed_value(c.get("github_ref"), "main"),
+        "gh_token":    _typed_value(c.get("github_token"), ""),
+        "export_deck": _typed_value(c.get("export_deck"), EXPORT_DECK),
+        "excluded":    _string_list(c.get("excluded_decks"), []),
+        "notify_addon_updates": _typed_value(c.get("notify_addon_updates"), True),
+        "auto_update_addon":    _typed_value(c.get("auto_update_addon"), False),
+        "auto_sync_decks":      _typed_value(c.get("auto_sync_decks"), False),
         "auto_sync_interval_minutes": clamp_interval_minutes(
             c.get("auto_sync_interval_minutes", AUTO_SYNC_INTERVAL_DEFAULT_MIN),
             AUTO_SYNC_INTERVAL_FLOOR_MIN, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
             AUTO_SYNC_INTERVAL_CEILING_MIN),
-        "dim_images_night_mode": c.get("dim_images_night_mode", False),
+        "dim_images_night_mode": _typed_value(c.get("dim_images_night_mode"), False),
         "dim_images_night_mode_percent": clamp_night_mode_dim_percent(
             c.get("dim_images_night_mode_percent", NIGHT_MODE_DIM_PERCENT_DEFAULT),
             NIGHT_MODE_DIM_PERCENT_FLOOR, NIGHT_MODE_DIM_PERCENT_DEFAULT,
@@ -200,8 +213,8 @@ def _cfg():
         "dim_night_mode_scope": (c.get("dim_night_mode_scope")
                                  if c.get("dim_night_mode_scope") in ("images", "content")
                                  else NIGHT_MODE_SCOPE_DEFAULT),
-        "ai_backend":            c.get("ai_backend", ""),
-        "ai_cli_path":           _cli_path_map(c.get("ai_cli_path"), c.get("ai_backend", "")),
+        "ai_backend":            backend,
+        "ai_cli_path":           _cli_path_map(c.get("ai_cli_path"), backend),
         "ai_backend_enabled":    _ai_bool_map(c.get("ai_backend_enabled")),
         "ai_model":              _ai_map(c.get("ai_model")),
         "ai_effort":             _ai_map(c.get("ai_effort")),
@@ -217,10 +230,10 @@ def _cfg():
         # dupes.pair_key so a rescan never re-offers them. Config-backed, not
         # user_files: it's a preference about which pairs to show, not sync
         # bookkeeping the add-on itself needs to survive an update.
-        "dupes_ignored": list(c.get("dupes_ignored", [])),
+        "dupes_ignored": _string_list(c.get("dupes_ignored"), []),
         # Deck-name substrings the duplicate scan leaves out of the comparison; see
         # `set_dupes_excluded_decks`.
-        "dupes_excluded_decks": list(c.get("dupes_excluded_decks", [])),
+        "dupes_excluded_decks": _string_list(c.get("dupes_excluded_decks"), []),
         # Duplicate-scan cosine threshold, set via the Sensitivity combo (Strict
         # 0.6 / Normal 0.5 / Loose 0.4). See `set_dupes_threshold`.
         "dupes_threshold": (c.get("dupes_threshold")
@@ -233,8 +246,10 @@ def source_identity():
     """The deck source and scope the live config points at: what per-source state is
     keyed by, and what an in-flight fetch must still match when it lands."""
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
-    return (conf.get("github_decks_repo", ""), conf.get("github_ref", "main"),
-            conf.get("decks_dir", ""), conf.get("scope_tag", "InternPearls"))
+    return (_typed_value(conf.get("github_decks_repo"), ""),
+            _typed_value(conf.get("github_ref"), "main"),
+            _typed_value(conf.get("decks_dir"), ""),
+            _typed_value(conf.get("scope_tag"), "InternPearls"))
 
 
 def collection_key():
@@ -373,7 +388,7 @@ def add_dupes_ignored(key):
     """Add one pair_key to the duplicate-scan ignore list, saved to the add-on's own
     config (see `_cfg`'s `dupes_ignored`)."""
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
-    ignored = set(conf.get("dupes_ignored", []))
+    ignored = set(_string_list(conf.get("dupes_ignored"), []))
     ignored.add(key)
     conf["dupes_ignored"] = sorted(ignored)
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)

@@ -1,3 +1,5 @@
+import pytest
+
 from internpearls.collection import note_rows, suspend_notes, unsuspend_notes
 from internpearls.config import add_dupes_ignored, _cfg
 
@@ -57,6 +59,19 @@ def test_add_dupes_ignored_persists(anki):
     assert _cfg()["dupes_ignored"] == ["1:2"]
     add_dupes_ignored("3:4")
     assert _cfg()["dupes_ignored"] == ["1:2", "3:4"]
+
+
+@pytest.mark.parametrize("value, expected", [
+    (5, ["1:2"]),
+    ("abc", ["1:2", "abc"]),
+    (["0:9", 7], ["0:9", "1:2"]),
+])
+def test_add_dupes_ignored_sanitizes_existing_values(anki, value, expected):
+    anki.mw._config = {"dupes_ignored": value, "scope_tag": "Custom"}
+
+    add_dupes_ignored("1:2")
+
+    assert anki.mw._config == {"dupes_ignored": expected, "scope_tag": "Custom"}
 
 
 def test_note_rows_sql_path_matches_the_per_note_path(anki):

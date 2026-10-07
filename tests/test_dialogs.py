@@ -977,6 +977,120 @@ def test_config_reads_a_non_finite_number_as_its_default(anki, bad):
     assert cfg["ai_default_count"] == 0
 
 
+@pytest.mark.parametrize("key, result_key, default", [
+    ("protected_fields", "protected", ["Notes"]),
+    ("excluded_decks", "excluded", []),
+    ("dupes_ignored", "dupes_ignored", []),
+    ("dupes_excluded_decks", "dupes_excluded_decks", []),
+])
+@pytest.mark.parametrize("value, expected", [
+    ("Notes", ["Notes"]),
+    (["Notes", 5, False, None, {}, ["Other"], ""], ["Notes", ""]),
+    (["Notes", "Other"], ["Notes", "Other"]),
+    ([], []),
+    (5, None), (False, None), (None, None), ({}, None), ("", None),
+])
+def test_config_reads_string_lists(anki, key, result_key, default, value, expected):
+    from internpearls import config
+
+    anki.mw._config = {key: value}
+    assert config._cfg()[result_key] == (default if expected is None else expected)
+
+
+@pytest.mark.parametrize("key, default", [
+    ("notify_addon_updates", True), ("auto_update_addon", False),
+    ("auto_sync_decks", False), ("dim_images_night_mode", False),
+])
+@pytest.mark.parametrize("value", ["false", "true", "", 0, 1, None, [], {}, True, False])
+def test_config_reads_only_boolean_values(anki, key, default, value):
+    from internpearls import config
+
+    anki.mw._config = {key: value}
+    expected = value if isinstance(value, bool) else default
+    assert config._cfg()[key] is expected
+
+
+@pytest.mark.parametrize("kind", ["claude", "codex", "agy"])
+@pytest.mark.parametrize("value", ["false", "true", "", 0, 1, None, [], {}, True, False])
+def test_config_reads_only_boolean_backend_values(anki, kind, value):
+    from internpearls import config
+
+    anki.mw._config = {"ai_backend_enabled": {kind: value}}
+    expected = value if isinstance(value, bool) else True
+    assert config._cfg()["ai_backend_enabled"][kind] is expected
+
+
+@pytest.mark.parametrize("default", [True, False])
+@pytest.mark.parametrize("value", ["false", "true", "", 0, 1, None, [], {}])
+def test_ai_bool_map_uses_its_default_for_non_booleans(anki, default, value):
+    from internpearls import config
+
+    assert config._ai_bool_map({"claude": value}, default) == {
+        "claude": default, "codex": default, "agy": default}
+
+
+@pytest.mark.parametrize("key, result_key, default", [
+    ("scope_tag", "scope_tag", "InternPearls"),
+    ("decks_dir", "decks_dir", ""),
+    ("github_decks_repo", "gh_repo", ""),
+    ("github_ref", "gh_ref", "main"),
+    ("github_token", "gh_token", ""),
+    ("export_deck", "export_deck", "Intern Pearls::Intern Custom"),
+    ("ai_backend", "ai_backend", ""),
+])
+@pytest.mark.parametrize("value", [5, False, None, [], {}, "", "  Custom  "])
+def test_config_reads_only_string_values(anki, key, result_key, default, value):
+    from internpearls import config
+
+    anki.mw._config = {key: value, "ai_cli_path": "/example/cli"}
+    expected = value if isinstance(value, str) else default
+    assert config._cfg()[result_key] == expected
+
+
+@pytest.mark.parametrize("key, index, default", [
+    ("github_decks_repo", 0, ""), ("github_ref", 1, "main"),
+    ("decks_dir", 2, ""), ("scope_tag", 3, "InternPearls"),
+])
+@pytest.mark.parametrize("value", [5, False, None, [], {}, "", "  Custom  "])
+def test_source_identity_reads_only_string_values(anki, key, index, default, value):
+    from internpearls import config
+
+    anki.mw._config = {key: value}
+    expected = value if isinstance(value, str) else default
+    identity = config.source_identity()
+    assert identity[index] == expected
+    hash(identity)
+
+
+def test_config_preserves_well_formed_values(anki):
+    from internpearls import config
+
+    anki.mw._config = {
+        "protected_fields": ["Notes", "Why"], "scope_tag": "Custom",
+        "decks_dir": "/example/decks", "github_decks_repo": "owner/decks",
+        "github_ref": "release", "github_token": "", "export_deck": "Custom::Deck",
+        "excluded_decks": ["Archive"], "notify_addon_updates": False,
+        "auto_update_addon": True, "auto_sync_decks": True,
+        "auto_sync_interval_minutes": 30, "dim_images_night_mode": True,
+        "dim_images_night_mode_percent": 45, "dim_night_mode_scope": "content",
+        "ai_backend": "codex",
+        "ai_cli_path": {"claude": "", "codex": "/example/cli", "agy": ""},
+        "ai_backend_enabled": {"claude": False, "codex": True, "agy": False},
+        "ai_model": {"claude": "sonnet", "codex": "", "agy": ""},
+        "ai_effort": {"claude": "high", "codex": "", "agy": ""},
+        "ai_default_count": 7, "ai_default_depth": "quick",
+        "dupes_ignored": ["pair"], "dupes_excluded_decks": ["Archive"],
+        "dupes_threshold": 0.6,
+    }
+    expected = dict(anki.mw._config)
+    for key, result_key in [("protected_fields", "protected"),
+                            ("excluded_decks", "excluded"),
+                            ("github_decks_repo", "gh_repo"),
+                            ("github_ref", "gh_ref"), ("github_token", "gh_token")]:
+        expected[result_key] = expected.pop(key)
+    assert config._cfg() == expected
+
+
 def test_settings_spin_controls_have_accessible_names(anki):
     from internpearls import dialogs
 
@@ -1414,6 +1528,47 @@ def test_configure_source_github_form(anki):
 
     drive(anki, dialogs.configure_source, respond)
     assert anki.mw._config["github_decks_repo"] == "someone/decks"
+
+
+@pytest.mark.parametrize("key, value", [
+    ("github_decks_repo", 5), ("github_token", None),
+])
+def test_configure_source_github_form_defaults_non_strings_to_empty(anki, key, value):
+    from internpearls import dialogs
+
+    anki.mw._config = {key: value}
+    anki.gui.interactive = True
+
+    def respond(p):
+        assert p["kind"] == "dialog"
+        pick = _pick_source(p["tree"], "GitHub repo")
+        if pick:
+            return pick
+        assert find(p["tree"], t="line", password=False)["value"] == ""
+        assert find(p["tree"], t="line", password=True)["value"] == ""
+        return _pick_source(p["tree"], "Cancel")
+
+    drive(anki, dialogs.configure_source, respond)
+    assert anki.mw._config == {key: value}
+    assert not anki.gui.warnings
+
+
+def test_configure_source_local_picker_defaults_non_string_to_empty(anki):
+    from internpearls import dialogs
+
+    anki.mw._config = {"decks_dir": 5}
+    anki.gui.interactive = True
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            return _pick_source(p["tree"], "Local folder")
+        assert p["kind"] == "prompt"
+        assert p["default"] == ""
+        return {"text": "", "ok": False}
+
+    drive(anki, dialogs.configure_source, respond)
+    assert anki.mw._config == {"decks_dir": 5}
+    assert not anki.gui.warnings
 
 
 def test_github_source_blank_repo_keeps_the_dialog_open_with_a_warning(anki):
