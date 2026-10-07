@@ -32,7 +32,7 @@ from .logic import field_preview_text, plain_text
 from .palette import colors
 from .platform import (new_work_request, platform, platform_owner_id,
                        wait_for_mock_work)
-from .ui import (_ask, _safe, copy_to_clipboard, hint_label, link_button,
+from .ui import (_safe, copy_to_clipboard, hint_label, link_button,
                  section_label, title_label)
 from .widgets import CARET_GAP, CARET_W, StreamingList
 
@@ -254,6 +254,7 @@ class _DuplicateScanDialog(QDialog):
         # over half the row's width.
         self.setMinimumSize(800, 560)
         self._pairs = []
+        self._verdicts = {}
         self._left_count = self._right_count = 0
         self._deck_names = sorted({d.name for d in mw.col.decks.all_names_and_ids()})
         # Every note in the collection, read once per dialog. Changing the sensitivity
@@ -476,12 +477,7 @@ class _DuplicateScanDialog(QDialog):
         return [r for r in self._all_rows() if r[0] in ids]
 
     @_safe
-    def _rescan_fresh(self):
-        # A rescan drops every verdict, and a judging run is paid for.
-        if any(p["judged"] for p in self._pairs) and not _ask(
-                "Rescanning drops the AI verdicts on this list. Rescan anyway?",
-                yes_label="Rescan", no_label="Keep results"):
-            return
+    def _rescan_fresh(self, *_):
         self._rows_cache = None
         self._rescan()
 
@@ -620,8 +616,16 @@ class _DuplicateScanDialog(QDialog):
                          if total and count == total}
             partly_suspended = {side for side, (count, total) in counts.items()
                                 if 0 < count < total}
+            judged, note = None, ""
+            stored = self._verdicts.get(key)
+            if stored:
+                if all(_note_or_none(nid) is not None and _note_texts(nid) == texts
+                       for nid, texts in stored["texts"].items()):
+                    judged, note = stored["judged"], stored["note"]
+                else:
+                    del self._verdicts[key]
             self._pairs.append({"score": score, "left": left, "right": right,
-                               "key": key, "judged": None, "note": "",
+                               "key": key, "judged": judged, "note": note,
                                "suspended": suspended,
                                "partly_suspended": partly_suspended,
                                "suspension_counts": counts, "shares": shares,
@@ -954,6 +958,7 @@ class _DuplicateScanDialog(QDialog):
         kind = self._judge_backend
         path = self._judge_path
         payload = []
+        judge_texts = []
         judged_pairs = [p for p in self._pairs
                         if _note_or_none(p["left"][0]) is not None
                         and _note_or_none(p["right"][0]) is not None]
@@ -962,11 +967,14 @@ class _DuplicateScanDialog(QDialog):
         for p in judged_pairs:
             left_front, left_back = _note_texts(p["left"][0])
             right_front, right_back = _note_texts(p["right"][0])
+            judge_texts.append({p["left"][0]: (left_front, left_back),
+                                p["right"][0]: (right_front, right_back)})
             payload.append({"ours": {"front": left_front, "back": left_back},
                            "theirs": {"front": right_front, "back": right_back}})
         prompt = ai_logic.build_dupes_judge_prompt(payload)
         scratch = platform().allocate_scratch(platform_owner_id(self), "dupejudge")
         self._judge_pairs = judged_pairs
+        self._judge_texts = judge_texts
         self._judge_scratch = scratch
         self._judge_result = None
         self._judge_error = None
@@ -1091,6 +1099,8 @@ class _DuplicateScanDialog(QDialog):
             if v:
                 pair["judged"] = v["verdict"]
                 pair["note"] = v["note"]
+                self._verdicts[pair["key"]] = {"judged": v["verdict"], "note": v["note"],
+                                              "texts": self._judge_texts[i]}
         self._rebuild_list()
 
     def _wait_for_judge(self, timeout=15):

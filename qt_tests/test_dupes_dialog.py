@@ -301,6 +301,137 @@ def test_judge_with_ai_updates_chips_and_folds_different(monkeypatch):
     dlg.deleteLater()
 
 
+def _judge_verdicts(dlg, monkeypatch, verdicts=("same", "overlaps", "different")):
+    import json
+    from internpearls import ai_cli
+    reply = [{"pair": i, "verdict": verdict, "note": f"Reason {i}: {verdict}"}
+             for i, verdict in enumerate(verdicts)]
+    monkeypatch.setattr(ai_cli, "run_generation", lambda *a, **kw: {
+        "text": json.dumps({"verdicts": reply}), "tokens": 10,
+        "rate_limits": None, "duration_s": 0.1})
+    expected = {p["key"]: (v["verdict"], v["note"])
+                for p, v in zip(dlg._pairs, reply)}
+    dlg._judge_with_ai()
+    dlg._wait_for_judge()
+    assert {p["key"]: (p["judged"], p["note"]) for p in dlg._pairs} == expected
+    return expected
+
+
+@pytest.mark.parametrize("control", ["sensitivity", "exclusions"])
+def test_judge_verdicts_survive_scan_control_changes(monkeypatch, control):
+    mock, q = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    try:
+        expected = _judge_verdicts(dlg, monkeypatch)
+        if control == "sensitivity":
+            dlg.sensitivity_combo.setCurrentIndex(2)
+        else:
+            dlg.exclude_edit.setText("Example Shared Deck")
+            dlg._exclude_edited()
+            dlg._wait_for_scan()
+            assert dlg._pairs == []
+            dlg.exclude_edit.setText("")
+            dlg._exclude_edited()
+        dlg._wait_for_scan()
+        assert {p["key"]: (p["judged"], p["note"]) for p in dlg._pairs} == expected
+        assert "1 judged the same" in dlg.summary_label.text()
+        assert any(b.text() == "Judged different (1)"
+                   for b in dlg.findChildren(q.QPushButton))
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+
+
+@pytest.mark.parametrize("change", ["front", "back", "deleted"])
+def test_rescan_drops_only_verdicts_for_changed_notes(monkeypatch, change):
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    try:
+        expected = _judge_verdicts(dlg, monkeypatch)
+        pair = dlg._pairs[0]
+        nid = pair["right" if change == "deleted" else "left"][0]
+        if change == "deleted":
+            del mock.mw.col._notes[nid]
+        else:
+            mock.mw.col.get_note(nid).fields[0 if change == "front" else 1] += " edited"
+        dlg._rescan()
+        dlg._wait_for_scan()
+        expected[pair["key"]] = (None, "")
+        assert {p["key"]: (p["judged"], p["note"]) for p in dlg._pairs} == expected
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+
+
+def test_judge_verdicts_survive_swapped_scopes(monkeypatch):
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    try:
+        expected = _judge_verdicts(dlg, monkeypatch)
+        sides = {p["key"]: (p["left"][0], p["right"][0]) for p in dlg._pairs}
+        dlg.left_combo.setCurrentText("Example Shared Deck")
+        dlg._wait_for_scan()
+        dlg.right_combo.setCurrentText("Intern Custom")
+        dlg._wait_for_scan()
+        assert {p["key"]: (p["right"][0], p["left"][0]) for p in dlg._pairs} == sides
+        assert {p["key"]: (p["judged"], p["note"]) for p in dlg._pairs} == expected
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+
+
+def test_later_judge_verdicts_replace_earlier_verdicts(monkeypatch):
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    try:
+        _judge_verdicts(dlg, monkeypatch)
+        expected = _judge_verdicts(dlg, monkeypatch, ("different", "same", "overlaps"))
+        dlg._rescan()
+        dlg._wait_for_scan()
+        assert {p["key"]: (p["judged"], p["note"]) for p in dlg._pairs} == expected
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+
+
+def test_restored_verdicts_compare_the_text_sent_to_the_judge(monkeypatch):
+    from internpearls import ai_logic
+    mock, _ = harness.bootstrap()
+    harness.app()
+    harness._ai_backend_available("claude")
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    try:
+        pair = dlg._pairs[0]
+        build_prompt = ai_logic.build_dupes_judge_prompt
+
+        def edit_after_payload(payload):
+            mock.mw.col.get_note(pair["right"][0]).fields[1] += " edited"
+            return build_prompt(payload)
+
+        monkeypatch.setattr(ai_logic, "build_dupes_judge_prompt", edit_after_payload)
+        expected = _judge_verdicts(dlg, monkeypatch)
+        dlg._rescan()
+        dlg._wait_for_scan()
+        expected[pair["key"]] = (None, "")
+        assert {p["key"]: (p["judged"], p["note"]) for p in dlg._pairs} == expected
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+
+
 def test_judge_close_cancels_worker_stops_timer_and_cleans_scratch(monkeypatch):
     from internpearls import ai_cli
     mock, _ = harness.bootstrap()

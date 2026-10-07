@@ -368,29 +368,34 @@ def test_enter_does_not_rescan_or_default_any_button():
     dlg.deleteLater()
 
 
-def test_rescan_link_confirms_before_discarding_judged_results(monkeypatch):
-    from internpearls import dupes_dialog
-    mock, _ = harness.bootstrap()
+def test_rescan_link_keeps_judged_results_without_asking(monkeypatch):
+    from internpearls import dupes_dialog, ui
+    from test_dupes_dialog import _judge_verdicts
+    mock, q = harness.bootstrap()
     harness.app()
     harness._ai_backend_available("claude")
     _populate_many(mock, pairs=3)
     dlg = _open(mock)
+    expected = _judge_verdicts(dlg, monkeypatch)
+    cached_rows = dlg._rows_cache
     asked = []
-    answers = [False, True]
+    ask = lambda text, **kw: asked.append(text) or False
+    monkeypatch.setattr(ui, "_ask", ask)
     monkeypatch.setattr(dupes_dialog, "_ask",
-                        lambda text, **kw: asked.append(text) or answers.pop(0))
-    dlg._rescan_fresh()
-    assert not asked, "nothing is judged yet, so nothing is lost"
+                        ask, raising=False)
     seq = dlg._scan_seq
-    assert seq > 1
+    dlg._rescan_fresh()
+    assert not asked
+    assert dlg._scan_seq == seq + 1
+    assert dlg._rows_cache is not cached_rows
     dlg._wait_for_scan()
-    dlg._pairs[0]["judged"] = "same"
-    seq = dlg._scan_seq
-    dlg._rescan_fresh()
-    assert len(asked) == 1 and dlg._scan_seq == seq
-    assert dlg._pairs[0]["judged"] == "same"
-    dlg._rescan_fresh()
-    assert len(asked) == 2 and dlg._scan_seq == seq + 1
+    assert {p["key"]: (p["judged"], p["note"]) for p in dlg._pairs} == expected
+    next(b for b in dlg.findChildren(q.QPushButton) if b.text() == "Rescan").click()
+    assert not asked
+    assert dlg._scan_seq == seq + 2
+    dlg._wait_for_scan()
+    assert {p["key"]: (p["judged"], p["note"]) for p in dlg._pairs} == expected
+    dlg.close()
     dlg.deleteLater()
 
 
