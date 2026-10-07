@@ -1712,7 +1712,8 @@ def test_production_generate_import_commits_exactly_once(
         })
     media = tmp_path / "media"
     media.mkdir()
-    runner = mock_anki.Runner(anki, paths=[config.STATE, str(media)])
+    runner = mock_anki.Runner(anki, paths=[config.STATE, str(media),
+                                          os.path.dirname(config.AI_DRAFT)])
 
     first = runner.start_protocol(ai_dialog.generate_cards, epoch=34)
     source_id = next(

@@ -1806,3 +1806,51 @@ def test_the_skills_row_detail_is_plain_text(shot):
     _, q = harness.bootstrap()
     dlg = shot("ai-input", state="ready").dialog
     assert dlg.skills_row.detail.textFormat() == q.Qt.TextFormat.PlainText
+
+
+def _draft_for_resume(monkeypatch):
+    harness.app()
+    monkeypatch.setattr(ai_cli, "find_cli", lambda *a, **kw: None)
+    dlg = harness.settled(ai_dialog._GenerateDialog())
+    dlg.session.cards = [{"note_type": "Study Deck - Basic",
+                          "fields": {"Front": "Resumed question", "Back": "Answer"},
+                          "tags": ["draft"], "images": [], "rationale": "Reason"}]
+    dlg._pending_prev_included = None
+    dlg._apply_review_state()
+    dlg.note_boxes[0].setPlainText("Revision note")
+    dlg.feedback_box.setPlainText("Set feedback")
+    dlg._draft_timer.timeout.emit()
+    dlg.deleteLater()
+
+
+def test_resume_question_uses_wrapper_with_resume_as_safe_default(monkeypatch, tmp_path):
+    from aqt.qt import QMessageBox, QTimer
+    _draft_for_resume(monkeypatch)
+    captured = []
+    original = QMessageBox.exec
+    def answer(box):
+        captured.append(box)
+        def resume():
+            assert box.grab().save(str(tmp_path / "resume-question.png"))
+            box.defaultButton().click()
+        QTimer.singleShot(0, resume)
+        return original(box)
+    monkeypatch.setattr(QMessageBox, "exec", answer)
+    resumed = harness.settled(ai_dialog._GenerateDialog())
+    assert len(captured) == 1
+    box = captured[0]
+    assert {b.text() for b in box.buttons()} == {"Resume draft", "Start new"}
+    assert box.defaultButton().text() == "Resume draft"
+    assert box.escapeButton() is box.defaultButton()
+    assert "1 cards" in box.text() or "1 card" in box.text()
+    assert "until" in box.text()
+    resumed.show()
+    harness.app().processEvents()
+    resumed.grab().save(str(tmp_path / "resumed-review.png"))
+    assert resumed.stack.currentWidget() is resumed.review_page
+    assert resumed.note_boxes[0].toPlainText() == "Revision note"
+    assert resumed.feedback_box.toPlainText() == "Set feedback"
+    from aqt.qt import QLabel
+    assert any("Resumed question" in label.text()
+               for label in resumed._row_widgets[0].findChildren(QLabel))
+    resumed.deleteLater()

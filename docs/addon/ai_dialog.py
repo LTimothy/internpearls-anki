@@ -1,9 +1,8 @@
 """The "Generate cards with AI" wizard.
 
 A single QDialog holds a QStackedWidget of four pages: setup, input, progress,
-review. Nothing here touches the collection until Import (_do_import); review,
-editing, notes, and revisions are all in-memory session state, and closing the
-dialog mid-review discards it after a confirm (see _GenerateDialog.reject).
+review. Nothing here touches the collection until Import (_do_import). Review
+state is saved per collection so closing the dialog can keep an unfinished draft.
 """
 import html
 import os
@@ -24,7 +23,7 @@ from aqt.qt import (QApplication, QCheckBox, QComboBox, QDialog,
                     QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
                     QSpinBox, QStackedWidget, Qt, QTimer, QVBoxLayout, QWidget)
 
-from . import ai_cli, ai_logic, collection, dupes
+from . import ai_cli, ai_draft, ai_logic, collection, dupes
 from .ai_setup import (LABEL_W, _open_url, _safe_settle, _settle_min_size,
                        _wrapped_hint, run_connection_test_async,
                        start_backend_detection)
@@ -818,6 +817,13 @@ class _GenerateDialog(QDialog):
             pass
         self.resize(max(open_w, 480), open_h)
         self.session = s = _Session()
+        self._draft_path = ai_draft.draft_path()
+        self._draft_active = False
+        self._draft_pending = False
+        self._draft_timer = QTimer(self)
+        self._draft_timer.setSingleShot(True)
+        self._draft_timer.setInterval(350)
+        self._draft_timer.timeout.connect(lambda: self._guard(self._flush_draft))
         self._expanded_rows = set()
         self._image_busy = set()
         self._image_workers = []
@@ -860,7 +866,93 @@ class _GenerateDialog(QDialog):
                     self.progress_page, self.review_page):
             self.stack.addWidget(page)
 
+        for signal in (self.source_box.textChanged, self.instructions_box.textChanged,
+                       self.count_spin.valueChanged, self.deck_combo.currentTextChanged,
+                       self.thorough_radio.toggled, self.quick_radio.toggled):
+            signal.connect(lambda *_args: self._schedule_draft())
+        for box in self.type_boxes.values():
+            box.toggled.connect(lambda _checked: self._schedule_draft())
+        saved, damaged = ai_draft.load(self._draft_path, FIELD_MAP)
+        if damaged:
+            _info("The saved draft couldn't be read. It has been set aside. "
+                  "You can start a new drafting session.", textFormat="plain")
+        if saved and not _ask(
+                f"You have an unfinished draft from "
+                f"{html.escape(saved['saved_at'].replace('T', ', '))} with "
+                f"{plural(len(saved['cards']), 'card')}. Pick up where you left off?<br>"
+                "Start new keeps this draft until you generate new cards. "
+                "Attachments (PDFs and source images) are not kept.",
+                yes_label="Start new", no_label="Resume draft"):
+            self._restore_draft(saved)
         self._detect(cfg)
+
+    def _schedule_draft(self):
+        if self._draft_active and self.session.cards:
+            self._draft_pending = True
+            self._draft_timer.start()
+
+    def _flush_draft(self):
+        self._draft_timer.stop()
+        if not self._draft_active or not self._draft_pending:
+            return True
+        s = self.session
+        state = {key: getattr(s, key) for key in ai_draft.STATE_FIELDS}
+        state.update(source=self.source_box.toPlainText(),
+                     instructions=self.instructions_box.text(),
+                     deck_name=self.deck_combo.currentText().strip() or s.deck_name,
+                     mode=self._resolved_mode(), count=self._resolved_count(),
+                     note_types=[n for n, b in self.type_boxes.items() if b.isChecked()],
+                     feedback=self.feedback_box.toPlainText(), decided=self._decided)
+        state["cards"] = [{key: card[key] for key in (
+            "note_type", "fields", "tags", "images", "rationale")} for card in s.cards]
+        for key in ai_draft.INDEX_SETS:
+            state[key] = sorted(state[key])
+        try:
+            ai_draft.save(self._draft_path, state, s.image_data, s.scratch)
+        except (OSError, ValueError) as exc:
+            _warn(f"The draft couldn't be saved: {exc}. Keep this window open "
+                  "and try again.", textFormat="plain")
+            return False
+        self._draft_pending = False
+        return True
+
+    def _restore_draft(self, saved):
+        s = self.session
+        s.scratch = platform().allocate_scratch(platform_owner_id(self), "aigen")
+        ai_draft.restore_images(saved, s.scratch)
+        for key in ai_draft.STATE_FIELDS:
+            setattr(s, key, saved[key])
+        s.image_data = saved["image_data"]
+        for i, card in enumerate(s.cards):
+            if i not in s.image_data and card["images"]:
+                s.image_data[i] = [
+                    _resolve_with_thumb(im, s.scratch, i, j)
+                    if im["source"].startswith(("file:", "attached:", "svg:"))
+                    else {"state": "error", "kind": "url",
+                          "error": "Image resolution did not finish. Retry this image."}
+                    for j, im in enumerate(card["images"])]
+                s.checks = ai_logic.mechanical_checks(
+                    s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
+                    _image_errors(s))
+        self._decided = saved["decided"]
+        self.source_box.setPlainText(s.source)
+        self.instructions_box.setText(s.instructions)
+        self.deck_combo.setEditText(s.deck_name)
+        self.count_spin.setValue(s.count or 0)
+        self._depth_touched = True
+        self.thorough_radio.setChecked(s.mode == "thorough")
+        self.quick_radio.setChecked(s.mode == "quick")
+        for name, box in self.type_boxes.items():
+            box.setChecked(name in s.note_types)
+        self.feedback_box.setPlainText(saved["feedback"])
+        self._draft_active = True
+        self._rebuild_review(keep_place=False)
+        self.stack.setCurrentWidget(self.review_page)
+
+    def _discard_draft(self):
+        self._draft_timer.stop()
+        ai_draft.discard(self._draft_path)
+        self._draft_active = self._draft_pending = False
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1009,7 +1101,8 @@ class _GenerateDialog(QDialog):
             "Checking which assistants answer." if self._detecting else
             f"Ready: {ai_cli.BACKENDS[s.backend]['label']} detected." if s.backend
             else "No enabled assistant detected yet. Configure one, then come back.")
-        self.stack.setCurrentWidget(self.input_page if s.backend else self.setup_page)
+        if not (self._draft_active and self.session.cards):
+            self.stack.setCurrentWidget(self.input_page if s.backend else self.setup_page)
         # Refreshed either way: the input page can be shown with nothing
         # detected (its own row says so), and Generate's enablement reads the
         # backend as well as the source.
@@ -1979,6 +2072,9 @@ class _GenerateDialog(QDialog):
         if extra_error is None:
             self._retried_json = False
             if not revision and not check:
+                if not self._flush_draft():
+                    return
+                self._draft_active = False
                 # A genuinely fresh (non-revision, non-check) request: Back-then-
                 # Generate can reach here with an unrelated earlier draft still
                 # sitting in s.cards, and _finish_generation's revision detection
@@ -2396,6 +2492,15 @@ class _GenerateDialog(QDialog):
         # include list, consulted only for cards _rebuild_review's diff
         # didn't mark as updated.
         self._pending_prev_included = prev_included if same_shape else None
+        s.image_data = {}
+        s.checks = ai_logic.mechanical_checks(
+            s.cards, collection.existing_front_map(_cfg()["scope_tag"]))
+        s.included = [prev_included[i] if same_shape and i not in s.updated
+                      else not any(c["level"] == "block" for c in per)
+                      for i, per in enumerate(s.checks)]
+        self._draft_active = True
+        self._schedule_draft()
+        self._flush_draft()
         self._start_image_phase()
 
     def _finish_check(self, res):
@@ -2536,9 +2641,11 @@ class _GenerateDialog(QDialog):
         else:
             s.included = default_included
         self._pending_prev_included = None
+        self._draft_active = True
         self._refresh_near()
         self._rebuild_review(keep_place=False)
         self.stack.setCurrentWidget(self.review_page)
+        self._flush_draft()
 
     def _return_to_input_or_review(self):
         """Where a cancelled or failed request lands. A revision (Revise all)
@@ -2587,6 +2694,7 @@ class _GenerateDialog(QDialog):
         self.feedback_box.setMaximumHeight(60)
         self.feedback_box.setPlaceholderText(
             "e.g. shorter answers, add one card on avoided drugs")
+        self.feedback_box.textChanged.connect(self._schedule_draft)
         lay.addWidget(self.feedback_box)
         self.import_note = hint_label("")
         self.import_note.setVisible(False)
@@ -2997,6 +3105,7 @@ class _GenerateDialog(QDialog):
         (token spend, the rate-limit window, the revision diff) moves to a
         small-print footer under the list, rather than one line carrying both.
         """
+        self._schedule_draft()
         s = self.session
         n_done = len(s.imported)
         n_inc = sum(inc for i, inc in enumerate(s.included) if i not in s.imported)
@@ -3367,7 +3476,7 @@ class _GenerateDialog(QDialog):
                  if inc and i not in s.imported]
         if not pairs:
             _info("Nothing is selected to import. Check at least one card, "
-                  "or Cancel to discard the draft.")
+                  "or close to keep or discard the draft.")
             return 0
         media = {}
         svg_index = 0
@@ -3413,6 +3522,7 @@ class _GenerateDialog(QDialog):
             s.imported.update(pairs[pos][0] for pos in partial.written)
             mw.reset()
             self._rebuild_review()
+            self._flush_draft()
             landed = len(partial.written)
             _warn(f"The import stopped part-way ({partial.__cause__}). "
                   f"Added: {plural(landed, 'card')}. Not added: "
@@ -3428,6 +3538,7 @@ class _GenerateDialog(QDialog):
         # hooks the deck browser listens for (refreshing the deck list and its
         # counts) without needing a second, narrower call for either.
         mw.reset()
+        self._discard_draft()
         self._cleanup_scratch()
         # A transient toast, not a modal: this is what Anki's own Add shows after
         # adding notes, and a click-through confirmation here is one extra click
@@ -3444,8 +3555,7 @@ class _GenerateDialog(QDialog):
         the same cleanup to a background reaper instead (see
         _cancel_running_generation) so closing never blocks on a live worker.
         Best-effort: a failure to delete must never raise into the user's face
-        or block the dialog from closing, and nothing about a session may
-        outlive it (see the module docstring's storage policy)."""
+        or block the dialog from closing. Saved draft pictures have their own folder."""
         if self.session.scratch:
             shutil.rmtree(self.session.scratch, ignore_errors=True)
             self.session.scratch = None
@@ -3464,6 +3574,8 @@ class _GenerateDialog(QDialog):
             except RuntimeError:    # that widget or timer is already gone
                 pass
 
+        quietly(self._flush_draft)
+        quietly(self._draft_timer.stop)
         for _thread, timer in own.get("_conn_test_refs", ()):
             quietly(timer.stop)
         for name in ("_attach_timer", "_timer", "_img_timer"):
@@ -3508,40 +3620,38 @@ class _GenerateDialog(QDialog):
         super().keyPressEvent(event)
 
     def reject(self):
-        """Closing mid-review discards everything unsaved: nothing about a
-        draft, a note, or a prompt is ever written to disk (see the module
-        docstring), so this confirmation is the only chance to back out.
+        """Keep the draft by default on close, or discard it explicitly.
 
-        Qt routes Escape and the window's close box through this same method
-        (QDialog's own closeEvent calls reject()), except on the progress page,
-        where keyPressEvent intercepts Escape above and runs the cancel path
-        instead of ever reaching here. So this is the one place that has to
-        handle closing mid-generation too, for the close box's own path: a
-        run in flight is real, billed work, not something to silently throw
-        away on a stray Escape, so it gets the same kind of confirm as
-        discarding a draft. Once confirmed, though, the actual cancel is
-        handed off (see _cancel_running_generation) rather than blocking this
-        call on however long the subprocess takes to die."""
+        The close box also confirms cancellation of a running generation;
+        Escape on the progress page uses keyPressEvent's cancel path instead.
+        """
         if self._attachment_in_progress():
             self._cancel_running_attachment()
             super().reject()
             return
-        if (self.stack.currentWidget() is self.review_page
-                and self.session.cards
-                and not _ask(
-                    "Discard the drafted cards? Nothing from this session "
-                    "is saved between sessions.",
-                    yes_label="Discard", no_label="Keep editing")):
-            return
+        if self.stack.currentWidget() is self.review_page and self.session.cards:
+            if _ask("This draft is kept and can be resumed when you open Generate "
+                    "cards (AI) again. Attachments (PDFs and source images) are not "
+                    "kept. Close with the draft saved, or discard it?",
+                    yes_label="Discard draft", no_label="Keep draft and close"):
+                self._discard_draft()
+            elif not self._flush_draft():
+                return
         if self._generation_in_progress():
             if not _ask(
                     "A generation is still running. Closing now cancels it "
                     "and discards this run.",
                     yes_label="Cancel and close", no_label="Keep waiting"):
                 return
+            if not self._flush_draft():
+                return
             self._cancel_running_generation()
         else:
+            if not self._flush_draft():
+                return
             self._cleanup_scratch()
+        self._draft_timer.stop()
+        self._draft_active = False
         super().reject()
 
 

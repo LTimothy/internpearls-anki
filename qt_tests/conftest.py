@@ -45,5 +45,6 @@ def pytest_report_header(config):
 
 @pytest.fixture(autouse=True)
 def feedback_files(tmp_path, monkeypatch):
-    from internpearls import review
+    from internpearls import config, review
     monkeypatch.setattr(review, "FEEDBACK", str(tmp_path / "card_feedback.json"))
+    monkeypatch.setattr(config, "AI_DRAFT", str(tmp_path / "ai_draft.json"), raising=False)

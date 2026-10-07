@@ -1403,16 +1403,16 @@ def test_cards_with_no_images_are_unaffected_by_the_gate(anki, monkeypatch):
     assert not hasattr(dlg, "_img_worker")
 
 
-def test_close_at_review_confirms_discard(anki, monkeypatch):
+def test_close_at_review_keeps_draft_by_default(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
     dlg._wait_for_worker()
-    anki.gui.answers = [False]   # "Keep editing"
+    anki.gui.answers = [False]   # "Keep draft and close"
     dlg.reject()
-    assert dlg.stack.currentWidget() is dlg.review_page
-    assert dlg.session.cards            # nothing discarded
-    assert dlg._result is None          # the dialog is still open
-    assert any("Discard" in b[0] for b in anki.gui.ask_buttons)
+    assert dlg.session.cards
+    assert dlg._result == 0
+    assert os.path.isfile(_draft_path())
+    assert any("Discard draft" in b[0] for b in anki.gui.ask_buttons)
 
 
 def test_close_at_review_discards_when_confirmed(anki, monkeypatch):
@@ -1752,17 +1752,16 @@ def test_scratch_dir_removed_on_discard(anki, monkeypatch):
     assert dlg.session.scratch is None
 
 
-def test_scratch_dir_kept_when_discard_is_declined(anki, monkeypatch):
-    """Cleanup only runs once the dialog actually agrees to close: declining
-    the discard confirmation must not blow away work still being reviewed."""
+def test_scratch_dir_removed_after_keeping_draft_and_closing(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     dlg._start_generation()
     dlg._wait_for_worker()
     scratch = dlg.session.scratch
-    anki.gui.answers = [False]   # "Keep editing"
+    anki.gui.answers = [False]   # "Keep draft and close"
     dlg.reject()
-    assert os.path.isdir(scratch)
-    assert dlg.session.scratch == scratch
+    assert not os.path.exists(scratch)
+    assert dlg.session.scratch is None
+    assert os.path.isfile(_draft_path())
 
 
 def test_scratch_cleanup_is_defensive_about_an_already_missing_directory(anki, monkeypatch):
@@ -2664,3 +2663,376 @@ def test_an_edit_during_a_lookup_is_looked_up_after_it(anki, monkeypatch):
     dlg._wait_for_near()
     assert any(c.get("deck") == "Pharm::Pressors" for c in dlg.session.checks[0])
     assert dlg.session.included == [False]
+
+
+# === saved drafts =============================================================
+
+def _draft_path():
+    return config._collection_state_path(config.AI_DRAFT)
+
+
+def _saved_draft():
+    import json
+    with open(_draft_path(), encoding="utf8") as fh:
+        return json.load(fh)
+
+
+def _drafted(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    return dlg
+
+
+def test_draft_saved_as_soon_as_cards_arrive(anki, monkeypatch):
+    dlg = _drafted(anki, monkeypatch)
+    saved = _saved_draft()
+    assert saved["cards"][0]["fields"]["Front"] == "q"
+    assert saved["included"] == [True]
+    assert saved["source"] == "LAST toxicity source text"
+    assert "cli_path" not in saved and "backend" not in saved
+    assert "attachments" not in saved and "log" not in saved
+    assert os.path.commonpath([_draft_path(), os.path.dirname(config.AI_DRAFT)]) == os.path.dirname(config.AI_DRAFT)
+    dlg._cleanup_scratch()
+
+
+def test_draft_debounces_note_decision_and_set_feedback(anki, monkeypatch):
+    dlg = _drafted(anki, monkeypatch)
+    before = _saved_draft()
+    dlg.note_boxes[0].setPlainText("Add the route")
+    dlg.feedback_box.setPlainText("Shorter answers")
+    dlg.decision_cells[0].buttons["skip"].click()
+    assert _saved_draft() == before
+    dlg._draft_timer.fire()
+    saved = _saved_draft()
+    assert saved["notes"] == {"0": "Add the route"}
+    assert saved["feedback"] == "Shorter answers"
+    assert saved["included"] == [False]
+
+
+def test_draft_saves_fact_check_and_hand_edit(anki, monkeypatch):
+    dlg = _drafted(anki, monkeypatch)
+    monkeypatch.setattr(ai_cli, "build_argv", lambda *a, **kw:
+                        ([sys.executable, FAKE, "verdicts_ok"], True))
+    dlg._check_facts()
+    dlg._wait_for_worker()
+    dlg._draft_timer.fire()
+    assert _saved_draft()["verdicts"]["0"]["verdict"] == "confirmed"
+    anki.gui.answers = [False]
+    checked = _settled(ai_dialog._GenerateDialog())
+    assert checked.stack.currentWidget() is checked.review_page
+    assert checked.session.verdicts == dlg.session.verdicts
+
+    class Edit:
+        def __init__(self, *a):
+            pass
+        def exec(self):
+            return ai_dialog.QDialog.DialogCode.Accepted
+        def fields(self):
+            return {"Front": "Edited question", "Back": "Edited answer", "Why": "Reason"}
+        def tags(self):
+            return ["edited", "topic::one"]
+    monkeypatch.setattr(ai_dialog, "_EditCardDialog", Edit)
+    dlg._edit_card(0)
+    dlg._draft_timer.fire()
+    saved = _saved_draft()
+    assert saved["cards"][0]["fields"]["Why"] == "Reason"
+    assert saved["cards"][0]["tags"] == ["edited", "topic::one"]
+    assert saved["edited_since_check"] == [0]
+    assert saved["updated"] == [0]
+    assert saved["verdicts"] == {}
+
+
+def test_resume_restores_complete_review_state(anki, monkeypatch):
+    import copy
+    dlg = _three_card_draft(anki, monkeypatch)
+    dlg.source_box.setPlainText("Pasted source <b>literal</b>")
+    dlg.instructions_box.setText("Focus on doses")
+    dlg.deck_combo.setEditText("My deck::Drafts")
+    dlg.count_spin.setValue(3)
+    dlg._depth_touched = True
+    dlg.quick_radio.setChecked(True)
+    dlg.thorough_radio.setChecked(False)
+    dlg.session.updated = {0, 1}
+    dlg.session.edited_since_check = {0}
+    dlg.session.verdicts = {
+        1: {"verdict": "corrected", "note": "Dose", "sources": [],
+            "correction": None, "applied": True},
+        2: {"verdict": "unverified", "note": "No source", "sources": [],
+            "correction": {"Back": "Maybe"}, "kept_yours": False}}
+    dlg._rebuild_review()
+    dlg.note_boxes[0].setPlainText("My revision note")
+    dlg.decision_cells[1].buttons["skip"].click()
+    dlg.feedback_box.setPlainText("Feedback on the set")
+    cards = copy.deepcopy(dlg.session.cards)
+    anki.gui.answers = [False]  # Keep draft and close
+    dlg.reject()
+    assert os.path.isfile(_draft_path())
+    anki.gui.answers = [False]  # Resume draft, the safe default
+    resumed = _settled(ai_dialog._GenerateDialog())
+    assert resumed.stack.currentWidget() is resumed.review_page
+    s = resumed.session
+    assert s.cards == cards
+    assert s.included == [True, False, True]
+    assert s.notes == {0: "My revision note"}
+    assert s.verdicts == dlg.session.verdicts
+    assert s.updated == {0, 1} and s.edited_since_check == {0}
+    assert s.deck_name == "My deck::Drafts"
+    assert resumed.deck_combo.currentText() == s.deck_name
+    assert s.mode == "quick" and s.count == 3
+    assert s.source == "Pasted source <b>literal</b>"
+    assert s.instructions == "Focus on doses"
+    assert s.note_types == ["Study Deck - Basic"]
+    assert resumed.feedback_box.toPlainText() == "Feedback on the set"
+    assert s.attachments == []
+    assert "3 cards" in anki.gui.asks[-1]
+    assert "until" in anki.gui.asks[-1].lower()
+    assert anki.gui.ask_defaults[-1] == "Resume draft"
+
+
+def test_start_new_keeps_draft_until_new_generation(anki, monkeypatch):
+    dlg = _drafted(anki, monkeypatch)
+    old = _saved_draft()
+    anki.gui.answers = [True]  # Start new
+    new = _settled(ai_dialog._GenerateDialog())
+    assert new.stack.currentWidget() is new.input_page
+    new.source_box.setPlainText("New material")
+    assert _saved_draft() == old
+    new._start_generation()
+    assert _saved_draft() == old
+    new._wait_for_worker()
+    assert _saved_draft()["source"] == "New material"
+    dlg._cleanup_scratch()
+
+
+def test_import_deletes_saved_draft(anki, monkeypatch):
+    dlg = _drafted(anki, monkeypatch)
+    assert os.path.isfile(_draft_path())
+    assert dlg._do_import() == 1
+    assert not os.path.exists(_draft_path())
+    assert dlg._draft_timer.started is None
+
+
+def test_partial_import_preserves_imported_marks_on_resume(anki, monkeypatch):
+    dlg = _three_card_draft(anki, monkeypatch)
+    original = anki.col.add_note
+    calls = []
+    def fail_second(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("Write failed")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(anki.col, "add_note", fail_second)
+    dlg._do_import()
+    assert _saved_draft()["imported"] == [0]
+    anki.gui.answers = [False]
+    resumed = _settled(ai_dialog._GenerateDialog())
+    assert resumed.session.imported == {0}
+    assert resumed.decision_cells[0] is None
+    assert resumed.import_btn.text() == "Import 2 cards"
+    monkeypatch.setattr(anki.col, "add_note", original)
+    assert resumed._do_import() == 2
+    assert len(anki.col._notes) == 3
+    assert not os.path.exists(_draft_path())
+
+
+def test_discard_deletes_saved_draft(anki, monkeypatch):
+    dlg = _drafted(anki, monkeypatch)
+    assert os.path.isfile(_draft_path())
+    anki.gui.answers = [True]  # Discard draft
+    dlg.reject()
+    assert not os.path.exists(_draft_path())
+    assert dlg._result == 0
+    assert anki.gui.ask_defaults[-1] == "Keep draft and close"
+    assert dlg._draft_timer.started is None
+
+
+@pytest.mark.parametrize("contents", ["{", '{"cards": [42]}',
+                                      '{"version": 999}'])
+def test_damaged_draft_is_set_aside_and_does_not_block(
+        anki, monkeypatch, contents):
+    seen = []
+    original = ai_dialog._info
+    def info(text, **kw):
+        seen.append(kw)
+        return original(text, **kw)
+    monkeypatch.setattr(ai_dialog, "_info", info)
+    path = _draft_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fh:
+        fh.write(contents)
+    dlg = _ready_dialog(anki, monkeypatch)
+    assert dlg.stack.currentWidget() is dlg.input_page
+    assert not os.path.exists(path)
+    assert open(path + ".bad").read() == contents
+    assert any("draft" in text.lower() and "read" in text.lower()
+               for text in anki.gui.infos)
+    assert seen[-1]["textFormat"] == "plain"
+
+
+def test_drafts_are_scoped_to_collection_and_source(anki, monkeypatch, tmp_path):
+    anki.col.path = str(tmp_path / "one.anki2")
+    dlg = _drafted(anki, monkeypatch)
+    first = _draft_path()
+    assert os.path.isfile(first)
+    anki.col.path = str(tmp_path / "two.anki2")
+    other = _settled(ai_dialog._GenerateDialog())
+    assert not os.path.exists(_draft_path()) and _draft_path() != first
+    assert other.stack.currentWidget() is other.input_page
+    anki.col.path = str(tmp_path / "one.anki2")
+    anki.mw._config["github_decks_repo"] = "different/source"
+    assert _draft_path() != first
+    different_source = _settled(ai_dialog._GenerateDialog())
+    assert different_source.stack.currentWidget() is different_source.input_page
+    dlg._cleanup_scratch()
+
+
+def test_saved_images_survive_scratch_cleanup_and_resume(anki, monkeypatch):
+    dlg = _drafted(anki, monkeypatch)
+    name = "figure.svg"
+    data = b'<svg xmlns="http://www.w3.org/2000/svg" width="50" height="50"><rect width="50" height="50" /></svg>'
+    with open(os.path.join(dlg.session.scratch, name), "wb") as fh:
+        fh.write(data)
+    dlg.session.cards[0]["images"] = [{"source": "file:" + name,
+                                      "attribution": "My figure"}]
+    dlg.session.image_data = {0: [ai_dialog._resolve_with_thumb(
+        dlg.session.cards[0]["images"][0], dlg.session.scratch, 0, 0)]}
+    with open(os.path.join(dlg.session.scratch, "source.pdf"), "wb") as fh:
+        fh.write(b"private attachment")
+    dlg._rebuild_review()
+    anki.gui.answers = [False]
+    dlg.reject()
+    anki.gui.answers = [False]
+    resumed = _settled(ai_dialog._GenerateDialog())
+    assert resumed.stack.currentWidget() is resumed.review_page
+    result = resumed.session.image_data[0][0]
+    assert result["state"] == "ok" and result["bytes"] == data
+    assert open(result["path"], "rb").read() == data
+    assert open(os.path.join(resumed.session.scratch, name), "rb").read() == data
+    assert not os.path.exists(os.path.join(resumed.session.scratch, "source.pdf"))
+    assert resumed._do_import() == 1
+    assert data in anki.col.media._files.values()
+
+
+def test_failed_fresh_generation_keeps_previous_draft(anki, monkeypatch):
+    dlg = _drafted(anki, monkeypatch)
+    dlg.note_boxes[0].setPlainText("Keep this note")
+    dlg._draft_timer.fire()
+    old = _saved_draft()
+    dlg.feedback_box.setPlainText("Pending feedback")
+    dlg.stack.setCurrentWidget(dlg.input_page)
+    monkeypatch.setattr(ai_cli, "build_argv", lambda *a, **kw:
+                        ([sys.executable, FAKE, "badjson"], True))
+    dlg._start_generation()
+    dlg._draft_timer.fire()
+    assert _saved_draft()["cards"] == old["cards"]
+    assert _saved_draft()["notes"] == {"0": "Keep this note"}
+    assert _saved_draft()["feedback"] == "Pending feedback"
+    dlg._wait_for_worker()
+    dlg._wait_for_worker()
+    assert not dlg._generation_in_progress()
+    assert _saved_draft()["cards"] == old["cards"]
+    assert _saved_draft()["notes"] == {"0": "Keep this note"}
+    assert _saved_draft()["feedback"] == "Pending feedback"
+
+
+def test_draft_atomic_write_failure_preserves_saved_cards(anki, monkeypatch):
+    dlg = _drafted(anki, monkeypatch)
+    path = _draft_path()
+    old = open(path, "rb").read()
+    original = config.replace_file
+    def fail_draft(src, dst):
+        if dst == path:
+            raise OSError("Disk unavailable")
+        return original(src, dst)
+    monkeypatch.setattr(config, "replace_file", fail_draft)
+    dlg.note_boxes[0].setPlainText("Pending note")
+    anki.gui.answers = [False]
+    dlg.reject()
+    assert open(path, "rb").read() == old
+    assert dlg._result is None
+    assert not any(name.endswith(".tmp") for name in os.listdir(os.path.dirname(path)))
+    assert any("couldn't be saved" in text for text in anki.gui.warnings)
+    monkeypatch.setattr(config, "replace_file", original)
+    anki.gui.answers = [False]
+    dlg.reject()
+    assert _saved_draft()["notes"] == {"0": "Pending note"}
+
+
+@pytest.mark.parametrize("accept", [True, False])
+def test_draft_restores_correction_decision(anki, monkeypatch, accept):
+    dlg = _drafted(anki, monkeypatch)
+    dlg.session.verdicts = {0: {"verdict": "corrected", "note": "Use the route",
+                               "sources": [], "correction": {"Back": "IV dose"}}}
+    if accept:
+        dlg._accept_correction(0)
+    else:
+        dlg._keep_correction(0)
+    dlg._draft_timer.fire()
+    anki.gui.answers = [False]
+    resumed = _settled(ai_dialog._GenerateDialog())
+    verdict = resumed.session.verdicts[0]
+    assert verdict["correction"] is None
+    assert verdict.get("applied", False) == accept
+    assert verdict.get("kept_yours", False) == (not accept)
+    assert resumed.session.cards[0]["fields"]["Back"] == ("IV dose" if accept else "a")
+
+
+def test_scratch_card_image_saved_before_image_phase_finishes(anki, monkeypatch):
+    import json
+    dlg = _drafted(anki, monkeypatch)
+    data = b'<svg xmlns="http://www.w3.org/2000/svg" width="50" height="50"><rect width="50" height="50" /></svg>'
+    with open(os.path.join(dlg.session.scratch, "figure.svg"), "wb") as fh:
+        fh.write(data)
+    card = dict(dlg.session.cards[0], images=[{"source": "file:figure.svg",
+                                            "attribution": "My figure"}])
+    monkeypatch.setattr(dlg, "_start_image_phase", lambda: None)
+    dlg._worker_result = {"text": json.dumps([card]), "tokens": 15, "duration_s": 1}
+    dlg._finish_generation()
+    dlg._cleanup_scratch()  # the next launch has no session scratch left
+    anki.gui.answers = [False]
+    resumed = _settled(ai_dialog._GenerateDialog())
+    assert resumed.session.image_data[0][0]["bytes"] == data
+    assert os.path.isfile(os.path.join(resumed.session.scratch, "figure.svg"))
+
+
+def test_draft_keeps_downloaded_image_without_refetching(anki, monkeypatch):
+    _stub_fetch_image(monkeypatch)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    anki.gui.answers = [False]
+    dlg.reject()
+    monkeypatch.setattr(ai_dialog, "fetch_card_image", lambda *a: pytest.fail("Image refetched"))
+    anki.gui.answers = [False]
+    resumed = _settled(ai_dialog._GenerateDialog())
+    assert resumed.session.image_data[0][0]["bytes"] == b"PNGDATA"
+    assert resumed._do_import() == 1
+    assert b"PNGDATA" in anki.col.media._files.values()
+
+
+def test_draft_keeps_attached_image_with_uppercase_extension(anki, monkeypatch):
+    dlg = _drafted(anki, monkeypatch)
+    data = b"\x89PNG\r\n\x1a\nPNGDATA"
+    with open(os.path.join(dlg.session.scratch, "photo.PNG"), "wb") as fh:
+        fh.write(data)
+    image = {"source": "attached:photo.PNG", "attribution": "My picture"}
+    dlg.session.cards[0]["images"] = [image]
+    dlg.session.image_data = {0: [ai_dialog._resolve_with_thumb(image, dlg.session.scratch, 0, 0)]}
+    dlg._rebuild_review()
+    anki.gui.answers = [False]
+    dlg.reject()
+    assert dlg._result == 0
+    anki.gui.answers = [False]
+    resumed = _settled(ai_dialog._GenerateDialog())
+    assert resumed.session.image_data[0][0]["bytes"] == data
+    assert os.path.isfile(os.path.join(resumed.session.scratch, "photo.PNG"))
+
+
+def test_deeply_damaged_draft_does_not_block_wizard(anki, monkeypatch):
+    path = _draft_path()
+    with open(path, "w") as fh:
+        fh.write("[" * 2000 + "]" * 2000)
+    dlg = _ready_dialog(anki, monkeypatch)
+    assert dlg.stack.currentWidget() is dlg.input_page
+    assert os.path.isfile(path + ".bad")

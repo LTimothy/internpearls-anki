@@ -83,6 +83,7 @@ def anki(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DECLINED", str(user_files / "declined.json"))
     monkeypatch.setattr(config, "DECK_SKILL", str(user_files / "deck_skill.json"))
     monkeypatch.setattr(config, "AI_USAGE", str(user_files / "ai_usage.json"))
+    monkeypatch.setattr(config, "AI_DRAFT", str(user_files / "ai_draft.json"), raising=False)
     monkeypatch.setattr(config, "LATER_SEEN", str(user_files / "later_seen.json"))
     monkeypatch.setattr(config, "USER_SKILL", str(user_files / "user_skill.md"))
     background._memories.clear()   # session-scoped auto-sync memory, same reason

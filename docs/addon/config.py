@@ -63,6 +63,7 @@ STATE = os.path.join(_USER_FILES, "state.json")
 # error mid-import) threw it away silently. {guid: {note, deck, front}}; cleared once
 # the digest has been shown.
 FEEDBACK = os.path.join(_USER_FILES, "card_feedback.json")
+AI_DRAFT = os.path.join(_USER_FILES, "ai_draft.json")
 # What the deck source last shipped for each preserved field, so _restore can tell
 # "the learner edited this" from "the deck author changed this" instead of freezing the
 # field forever. {guid: {field: value}}. See collection._restore.
@@ -266,7 +267,8 @@ def collection_key():
 # file (its owner is unknown); the second moves it to whichever collection and source
 # reads it first, so existing decisions survive the upgrade without a second profile
 # inheriting them too.
-_SCOPED_STATE = ("installed.json", "shipped_fields.json", "later_seen.json")
+_SCOPED_STATE = ("installed.json", "shipped_fields.json", "later_seen.json",
+                 "ai_draft.json")
 _ADOPTED_STATE = ("declined.json", "deck_skill.json", "card_feedback.json")
 _REPLACE_RETRIES = 5 if os.name == "nt" else 1
 
