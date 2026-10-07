@@ -11,17 +11,37 @@ the screen's open time flat regardless of the backlog.
 import time
 
 import harness
+import pytest
 
 # A large first sync, about 3,000 cards, so this guards the property at a size where
 # building every row up front would plainly freeze the screen.
 _PENDING = 3000
 
-# 250ms is generous over the ~2ms/card measured cost of building only the visible batch
-# (StreamingList's default batch=50, so roughly 100ms of actual row-building work): wide
-# enough to absorb CI being slower than a dev machine, while still failing hard if a
-# future change makes the screen build every row up front again (3000 rows' worth would
-# take several seconds, not milliseconds).
+# Pass under the absolute budget or a multiple of a small build of the same Qt rows
+# immediately beforehand, so machine load scales the allowance with row-building cost.
 _BUDGET_SECONDS = 0.25
+_REFERENCE_MULTIPLE = 12
+
+
+def _assert_within_budget(elapsed, reference, action, budget=_BUDGET_SECONDS):
+    assert elapsed < budget or elapsed < _REFERENCE_MULTIPLE * reference, (
+        f"{action} took {elapsed:.3f}s; budget {budget}s or "
+        f"{_REFERENCE_MULTIPLE} times the {reference:.3f}s reference")
+
+
+@pytest.mark.parametrize("elapsed, reference", [(0.1, 0.001), (1.0, 0.2)])
+def test_timing_budget_accepts_absolute_or_reference_bound(elapsed, reference):
+    _assert_within_budget(elapsed, reference, "building a batch")
+
+
+def test_timing_budget_rejects_many_batches_with_measured_costs():
+    with pytest.raises(AssertionError) as error:
+        _assert_within_budget(12.0, 0.2, "building every row")
+    message = str(error.value)
+    assert "12.000s" in message
+    assert "0.200s" in message
+    assert "reference" in message
+    assert "times" in message
 
 
 def _many_details(n):
@@ -31,6 +51,39 @@ def _many_details(n):
                         ("Back", "answer"), ("Why", ""), ("Image", ""),
                         ("Tag", ""), ("Dosing", ""), ("Notes", "")]}
             for i in range(n)]
+
+
+def _update_reference_seconds(filter_after_prefetch=False):
+    """Warm, then time a fully built small screen using the same Qt row builders."""
+    import aqt.qt as aqt_qt
+    from internpearls import review
+    from internpearls.widgets import FilterBar, StreamingList
+
+    app = harness.app()
+    items = [("header", "Example Deck")]
+    for i, detail in enumerate(_many_details(50)):
+        items += ([("sep",)] if i else []) + [("card", "Example Deck", detail)]
+    for _ in range(2):
+        start = time.perf_counter()
+        body, _boxes, flush = review.build_update_body(
+            items, {}, {}, {}, {}, "<b>50</b> pending cards", lambda: "", "safety note")
+        lst = body.findChild(StreamingList)
+        lst._build_upto(lst.total())
+        lst.fill_all()
+        dlg = aqt_qt.QDialog()
+        aqt_qt.QVBoxLayout(dlg).addWidget(body)
+        dlg.resize(700, 620)
+        dlg.show()
+        app.processEvents()
+        if filter_after_prefetch:
+            body.findChild(FilterBar).options.buttons["new"].click()
+            app.processEvents()
+        elapsed = time.perf_counter() - start
+        flush()
+        dlg.close()
+        dlg.deleteLater()
+        app.sendPostedEvents(None, aqt_qt.QEvent.Type.DeferredDelete)
+    return elapsed
 
 
 def test_update_screen_opens_fast_with_thousands_of_cards_pending():
@@ -71,6 +124,7 @@ def test_update_screen_opens_fast_with_thousands_of_cards_pending():
         return 1
 
     original = aqt_qt.QDialog.exec
+    reference = _update_reference_seconds()
     aqt_qt.QDialog.exec = fake_exec
     start = time.perf_counter()
     try:
@@ -84,11 +138,8 @@ def test_update_screen_opens_fast_with_thousands_of_cards_pending():
     flush()
 
     assert shown, "the dialog never opened"
-    assert elapsed < _BUDGET_SECONDS, (
-        f"opening the update screen with {_PENDING} pending cards took "
-        f"{elapsed:.3f}s, over the {_BUDGET_SECONDS}s budget. If this regressed, "
-        "something is likely building every row up front again instead of only the "
-        "first batch (see widgets.StreamingList).")
+    _assert_within_budget(elapsed, reference,
+                         f"opening the update screen with {_PENDING} pending cards")
 
     lst = body.findChild(StreamingList)
     assert lst is not None, "expected a StreamingList in the update screen's body"
@@ -113,6 +164,7 @@ def test_filtering_a_huge_list_stays_lazy_and_quick():
     body, _boxes, flush = review.build_update_body(
         items, {}, {}, {}, {}, "", lambda: "", "safety note")
     lst, bar = body.findChild(StreamingList), body.findChild(FilterBar)
+    reference = _update_reference_seconds()
     start = time.perf_counter()
     bar.options.buttons["changed"].click()
     elapsed = time.perf_counter() - start
@@ -120,8 +172,7 @@ def test_filtering_a_huge_list_stays_lazy_and_quick():
     changed = _PENDING // 2
     assert lst.total() == 1 + changed + (changed - 1)   # heading, rows, hairlines
     assert 0 < lst.shown() < lst.total()
-    assert elapsed < _BUDGET_SECONDS, (
-        f"filtering {_PENDING} cards took {elapsed:.3f}s, over {_BUDGET_SECONDS}s")
+    _assert_within_budget(elapsed, reference, f"filtering {_PENDING} cards")
 
 
 def _long_update_body():
@@ -175,14 +226,14 @@ def test_filtering_after_the_prefetch_has_built_everything_stays_quick():
     app, dlg, lst, bar, flush = _long_update_body()
     lst._build_upto(lst.total())
     app.processEvents()
+    reference = _update_reference_seconds(filter_after_prefetch=True)
     start = time.perf_counter()
     bar.options.buttons["new"].click()
     app.processEvents()
     elapsed = time.perf_counter() - start
     flush()
     dlg.close()
-    assert elapsed < 2.0, (
-        f"filtering after a full prefetch took {elapsed:.3f}s")
+    _assert_within_budget(elapsed, reference, "filtering after a full prefetch", budget=2.0)
 
 
 def _many_declined(tmp_path, monkeypatch, n):
@@ -197,6 +248,33 @@ def _many_declined(tmp_path, monkeypatch, n):
     monkeypatch.setattr(config, "DECLINED", str(path))
 
 
+def _declined_reference_seconds(tmp_path, monkeypatch):
+    """Declined rows have their own widgets and registry loading cost."""
+    import aqt.qt as aqt_qt
+    from internpearls import dialogs
+    from internpearls.widgets import StreamingList
+
+    app = harness.app()
+    path = tmp_path / "reference"
+    path.mkdir(exist_ok=True)
+    with monkeypatch.context() as patch:
+        _many_declined(path, patch, 50)
+        for _ in range(2):
+            start = time.perf_counter()
+            dlg = dialogs._DeclinedDialog(None)
+            lst = dlg.findChild(StreamingList)
+            lst._build_upto(lst.total())
+            lst.fill_all()
+            dlg.resize(560, 520)
+            dlg.show()
+            app.processEvents()
+            elapsed = time.perf_counter() - start
+            dlg.close()
+            dlg.deleteLater()
+            app.sendPostedEvents(None, aqt_qt.QEvent.Type.DeferredDelete)
+    return elapsed
+
+
 def test_declined_cards_opens_fast_with_thousands_of_entries(tmp_path, monkeypatch):
     """Declined cards used to build a row per entry before it could open."""
     import aqt.qt as aqt_qt
@@ -208,6 +286,7 @@ def test_declined_cards_opens_fast_with_thousands_of_entries(tmp_path, monkeypat
     aqt_qt.QLabel("warm").deleteLater()
     _many_declined(tmp_path, monkeypatch, _PENDING)
 
+    reference = _declined_reference_seconds(tmp_path, monkeypatch)
     start = time.perf_counter()
     dlg = dialogs._DeclinedDialog(None)
     dlg.resize(560, 520)
@@ -219,10 +298,10 @@ def test_declined_cards_opens_fast_with_thousands_of_entries(tmp_path, monkeypat
     assert lst is not None, "expected Declined cards to stream its rows"
     assert lst.total() == _PENDING + 4      # four group headings
     assert lst.shown() < lst.total()
-    assert elapsed < _BUDGET_SECONDS, (
-        f"opening Declined cards with {_PENDING} entries took {elapsed:.3f}s, over "
-        f"the {_BUDGET_SECONDS}s budget")
+    _assert_within_budget(elapsed, reference,
+                         f"opening Declined cards with {_PENDING} entries")
 
+    reference = _declined_reference_seconds(tmp_path, monkeypatch)
     start = time.perf_counter()
     button = next(b for b in dlg.findChildren(aqt_qt.QPushButton)
                   if b.text() == "Offer again" and b.isVisible())
@@ -231,8 +310,7 @@ def test_declined_cards_opens_fast_with_thousands_of_entries(tmp_path, monkeypat
     elapsed = time.perf_counter() - start
     dlg.close()
     assert lst.total() == _PENDING + 3
-    assert elapsed < _BUDGET_SECONDS, (
-        f"Offer again with {_PENDING} entries took {elapsed:.3f}s")
+    _assert_within_budget(elapsed, reference, f"Offer again with {_PENDING} entries")
 
 
 def test_offer_again_keeps_the_reader_where_they_were(tmp_path, monkeypatch):
