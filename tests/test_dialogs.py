@@ -1064,7 +1064,7 @@ def test_save_json_creates_a_missing_directory(tmp_path):
 def _all_text(tree):
     """Every "text" (QLabel) and "label" (QPushButton) string anywhere in the tree,
     joined into one blob so a caller can check substrings ("Declined" is part of a
-    button labelled "Declined cards (1)") as well as whole strings."""
+    button labelled "Later and declined cards (1)") as well as whole strings."""
     out = []
     for n in walk(tree):
         for key in ("text", "label"):
@@ -1103,7 +1103,7 @@ def test_manage_decks_names_the_declined_count(anki):
     config.save_declined({"g1": {"state": "skip", "front": "f", "deck": "IP::A",
                                  "decided": "2026-08-01", "hash": ""}})
     tree = _snapshot_manage_decks(anki)
-    assert "Declined cards (1)" in _all_text(tree)
+    assert "Later and declined cards (1)" in _all_text(tree)
 
 
 def test_manage_decks_declined_count_refreshes_after_the_dialog_closes(anki,
@@ -1122,11 +1122,11 @@ def test_manage_decks_declined_count_refreshes_after_the_dialog_closes(anki,
 
     def respond(p):
         tree = p["tree"]
-        btn = find(tree, t="button", label="Declined cards (1)")
+        btn = find(tree, t="button", label="Later and declined cards (1)")
         if btn and not opened["clicked"]:
             opened["clicked"] = True
             return {"events": [{"id": btn["id"], "click": True}]}
-        assert find(tree, t="button", label="Declined cards") is not None, (
+        assert find(tree, t="button", label="Later and declined cards") is not None, (
             "the declined count did not refresh after the dialog closed")
         cancel = find(tree, t="button", label="Cancel")
         return {"events": [{"id": cancel["id"], "click": True}]}
@@ -2670,7 +2670,7 @@ def test_a_decline_caption_names_the_way_back_rather_than_promising_next_update(
     names it."""
     from internpearls import review
     for state, caption in review._DECLINE_CAPTION.items():
-        assert "Declined cards" in caption, f"{state} caption names no way back"
+        assert "Later and declined cards" in caption, f"{state} caption names no way back"
         assert "next update" not in caption, (
             f"{state} caption still promises a re-offer nothing here can schedule")
 
@@ -3320,7 +3320,8 @@ def test_declined_dialog_lists_later_cards_first_in_one_group(anki):
                "decided": "2026-08-01", "hash": ""},
         "g2": {"state": "held", "front": "front b", "deck": "IP::A",
                "decided": "2026-09-23", "hash": ""}})
-    lines = _all_text(_snapshot_declined_dialog(anki)).split("\n")
+    tree = _snapshot_declined_dialog(anki)
+    lines = [n["text"] for n in walk(tree) if n.get("t") == "label"]
     assert lines.count("Later") == 1
     later, never = lines.index("Later"), lines.index("Never imported")
     assert later < lines.index("front a") < never

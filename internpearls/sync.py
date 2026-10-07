@@ -1937,7 +1937,7 @@ _UPDATE_SAFETY_NOTE = (
     "This is a preview: nothing is applied until you confirm below, and a backup "
     "is taken automatically first. Your review history and your own notes on cards "
     "are always kept, and nothing here is ever deleted. Anything you leave for later "
-    "or turn away can be offered again under Manage decks \u2192 Declined cards.")
+    "or turn away can be offered again under Manage decks \u2192 Later and declined cards.")
 
 
 @_safe
@@ -2177,7 +2177,7 @@ def update_decks():
         if hidden:
             parts.append(f"{plural(hidden, 'card')} hidden (Never). Restore "
                          f"{'it' if hidden == 1 else 'them'} under Manage decks \u2192 "
-                         "Declined cards.")
+                         "Later and declined cards.")
         return ("<br><br>".join(parts) + "<br><br>") if parts else ""
 
     def _finish(title=None, items=(), run_decisions=None, nothing_note=""):

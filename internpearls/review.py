@@ -1056,12 +1056,12 @@ _DEFAULT_DECISION = {"new": "import", "changed": "apply"}
 
 _DECLINE_CAPTION = {
     "keep": ("Your card stays as it is. A change is offered again only when this "
-             "card's source content changes, or any time from Manage decks → Declined cards."),
+             "card's source content changes, or any time from Manage decks → Later and declined cards."),
     # No "offered again" clause on purpose: unlike Keep, this one is not a
-    # not-this-time. Manage decks → Declined cards is the only way back, and saying so
-    # is what keeps it from reading as the same soft decision with a different label.
+    # not-this-time. Manage decks → Later and declined cards is the only way back.
+    # Saying so keeps it from reading as the same soft decision with a different label.
     "frozen": ("Your card stays as it is, and changes to it won't be offered again. "
-               "Undo from Manage decks → Declined cards."),
+               "Undo from Manage decks → Later and declined cards."),
 }
 
 # Nothing is transmitted from here: a note is folded into the digest at the end of the

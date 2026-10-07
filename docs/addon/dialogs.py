@@ -29,7 +29,7 @@ from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _safe, _warn,
                  hint_label, link_button, muted_label, plain_tooltip, section_label,
                  section_rule, title_label, wait_cursor)
-from .widgets import StreamingList, chip_cell
+from .widgets import FilterBar, StreamingList, chip_cell
 
 
 def _field_label(text, field, *, section=False, top_margin=0):
@@ -603,7 +603,7 @@ class _DeckManagerDialog(QDialog):
     @staticmethod
     def _declined_label():
         n = len(load_declined())
-        return f"Declined cards ({n})" if n else "Declined cards"
+        return f"Later and declined cards ({n})" if n else "Later and declined cards"
 
     def _open_declined(self):
         # Offer again inside that dialog can shrink the registry, so the count is
@@ -823,12 +823,27 @@ class _DeclinedDialog(QDialog):
 
     def __init__(self, parent):
         super().__init__(parent)
-        self.setWindowTitle(f"{APP_NAME}: Declined cards")
+        self.setWindowTitle(f"{APP_NAME}: Later and declined cards")
         self.setMinimumWidth(480)
 
         outer = QVBoxLayout(self)
         outer.setSpacing(10)
-        outer.addWidget(title_label("Declined cards"))
+        outer.addWidget(title_label("Later and declined cards"))
+        help_label = hint_label(
+            "Offer again forgets the decision, so the card comes back on your next "
+            "Update my decks.")
+        help_label.setTextFormat(Qt.TextFormat.PlainText)
+        outer.addWidget(help_label)
+
+        self._filter_mode, self._filter_query = "all", ""
+        modes = [("all", "All"), ("held", "Later"), ("never", "Never"),
+                 ("keep", "Kept yours"), ("frozen", "Kept yours with no more updates")]
+        known_states = {state for state, _ in _DECLINE_GROUPS}
+        if any(_decline_group(entry) not in known_states
+               for entry in load_declined().values()):
+            modes.append(("other", "Other"))
+        self._filter = FilterBar(modes, self._refilter)
+        outer.addWidget(self._filter)
 
         # Streamed like the update list: thousands of entries used to mean seconds of
         # row building before the dialog appeared, and again on every Offer again.
@@ -863,7 +878,16 @@ class _DeclinedDialog(QDialog):
         primary = QLabel(entry.get("front") or guid)
         primary.setTextFormat(Qt.TextFormat.PlainText)
         primary.setWordWrap(True)
-        h.addWidget(primary, 1)
+        text = QWidget()
+        text_layout = QVBoxLayout(text)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(4)
+        text_layout.addWidget(primary)
+        if _decline_group(entry) == "held" and entry.get("note"):
+            note_label = muted_label(f"Your note: {entry['note']}")
+            note_label.setTextFormat(Qt.TextFormat.PlainText)
+            text_layout.addWidget(note_label)
+        h.addWidget(text, 1)
         parts = [p for p in ((entry.get("deck") or "").split("::")[-1],
                              entry.get("decided") or "") if p]
         if show_state:
@@ -891,19 +915,46 @@ class _DeclinedDialog(QDialog):
                 invalidate_installed([entry["deck"]])
         self._rebuild()
 
-    def _rebuild(self):
+    def _refilter(self, mode, query):
+        self._filter_mode, self._filter_query = mode, query
+        self._rebuild(preserve_scroll=False)
+
+    def _rebuild(self, preserve_scroll=True):
         reg = load_declined()
+        known_states = {state for state, _ in _DECLINE_GROUPS}
+        query = self._filter_query.strip().casefold()
+        matched = {}
+        for guid, entry in reg.items():
+            state = _decline_group(entry)
+            mode = self._filter_mode
+            if mode == "other":
+                if state in known_states:
+                    continue
+            elif mode != "all" and state != mode:
+                continue
+            fields = entry if isinstance(entry, dict) else {}
+            if query and not any(query in str(value).casefold() for value in (
+                    fields.get("front") or guid, fields.get("deck") or "",
+                    fields.get("note") or "")):
+                continue
+            matched[guid] = entry
+        active = self._filter_mode != "all" or bool(query)
+        self._filter.set_count(f"Showing {len(matched)} of {len(reg)} cards"
+                               if active else "")
+        other_button = self._filter.options.buttons.get("other")
+        if other_button is not None:
+            other_button.setVisible(any(_decline_group(entry) not in known_states
+                                        for entry in reg.values()))
         # Every entry renders somewhere: a recognized state under its own heading,
         # anything else under Other, including a non-dict value from a hand-edited
         # file. sync.py's own filter (declined = set(reg)) keeps a GUID permanently
         # declined by presence alone regardless of what its entry holds, so Other is
         # the learner's only way back to a card this dialog can't otherwise name.
         grouped = {}
-        for guid, entry in reg.items():
+        for guid, entry in matched.items():
             grouped.setdefault(_decline_group(entry), []).append((guid, entry))
 
         items = []
-        known_states = {state for state, _ in _DECLINE_GROUPS}
         for state, heading in _DECLINE_GROUPS:
             rows = grouped.get(state)
             if rows:
@@ -921,7 +972,8 @@ class _DeclinedDialog(QDialog):
         # Offer again rebuilds the list; build back down to where the reader was and
         # put the scroll position back, so the next row is where they left it.
         bar = self._list.verticalScrollBar()
-        position, shown = bar.value(), self._list.shown()
+        position, shown = ((bar.value(), self._list.shown()) if preserve_scroll
+                           else (0, 0))
         self._list.reset(items)
         while self._list.shown() < min(shown, self._list.total()):
             self._list._extend()
@@ -957,8 +1009,7 @@ class _DeclinedDialog(QDialog):
 
 @_safe
 def open_declined_cards():
-    """Open Declined cards: every Later, never-imported or kept-back card, grouped by
-    that choice, each with an Offer again button."""
+    """Open Later and declined cards, grouped by choice, each with Offer again."""
     dlg = _DeclinedDialog(mw)
     dlg.exec()
     dlg.deleteLater()   # parented to mw otherwise, which owns it until Anki quits

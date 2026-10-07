@@ -7846,7 +7846,10 @@ def test_one_hidden_card_reads_as_one_card(anki, tmp_path):
 
     texts = _all_text(_snapshot_update_confirmation(anki))
 
-    assert "1 card hidden (Never). Restore it under" in texts
+    assert ("1 card hidden (Never). Restore it under Manage decks → "
+            "Later and declined cards.") in texts
+    assert ("or turn away can be offered again under Manage decks → "
+            "Later and declined cards.") in texts
 
 
 # --------------------------------------------------- background poll bookkeeping
