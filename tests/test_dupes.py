@@ -180,6 +180,58 @@ def test_pair_key_format():
     assert pair_key(3, 1) == "1:3"
 
 
+def test_search_replenishes_ignored_top_three_pairs_in_order():
+    from internpearls.dupes import search
+    text = "ketamine induction dose"
+    left = [(i, text, "Ours", "Basic") for i in (1, 10)]
+    right = [(i, text, "Theirs", "Basic") for i in range(2, 9)]
+    index = build_index(right)
+    ignored = {"1:2", "1:3", "3:10", "5:10"}
+    unignored = search(index, left, top=len(right))
+    expected = []
+    for row in left:
+        candidates = [p for p in unignored if p[1] == row
+                      and pair_key(p[1][0], p[2][0]) not in ignored]
+        expected.extend(candidates[:3])
+    expected.sort(key=lambda p: -p[0])
+    results = search(index, left, top=3, ignored=ignored)
+    assert results == expected
+    assert [(p[1][0], p[2][0]) for p in results] == [
+        (1, 4), (1, 5), (1, 6), (10, 2), (10, 4), (10, 6)]
+
+
+def test_search_skips_pair_keys_when_nothing_is_ignored(monkeypatch):
+    from internpearls import dupes
+    left = [(1, "ketamine induction dose", "Ours", "Basic")]
+    right = [(2, "ketamine induction dose", "Theirs", "Basic")]
+    index = build_index(right)
+    expected = dupes.search(index, left)
+
+    def unexpected_key(a, b):
+        raise AssertionError("pair_key called with an empty ignore list")
+
+    monkeypatch.setattr(dupes, "pair_key", unexpected_key)
+    assert dupes.search(index, left, ignored=set()) == expected
+
+
+def test_search_only_builds_pair_keys_above_the_cosine_threshold(monkeypatch):
+    from internpearls import dupes
+    left = [(1, "ketamine induction dose", "Ours", "Basic")]
+    right = [(2, "ketamine induction dose", "Theirs", "Basic"),
+             (3, "ketamine allergy", "Theirs", "Basic")]
+    calls = []
+
+    def counted_key(a, b):
+        calls.append((a, b))
+        return pair_key(a, b)
+
+    monkeypatch.setattr(dupes, "pair_key", counted_key)
+    results = dupes.search(build_index(right), left, threshold=0.9,
+                          ignored={"1:2"})
+    assert results == []
+    assert calls == [(1, 2)]
+
+
 def _reference_seconds():
     """Time of a small scan on this machine right now. A bound that passes on a quiet
     machine in absolute seconds may also pass by being a multiple of this, which moves

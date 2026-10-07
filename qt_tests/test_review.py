@@ -255,6 +255,60 @@ def test_source_text_on_the_update_screen_reads_as_written():
     assert "Tom & Jerry <60" in shown, shown
 
 
+def test_later_all_updates_built_rows_and_notifies_once(monkeypatch):
+    from PyQt6 import sip
+    from internpearls.widgets import StreamingList
+    harness.app()
+    decisions, touched = {}, set()
+    status_calls, review_calls = [], []
+    group_note_row = review._group_note_row
+
+    def with_built_rows(note, card_count, members=(), build_row=None, ctx=None):
+        row = group_note_row(note, card_count, members, build_row, ctx)
+        cards = [m for m in members if m[0] == "card"]
+        for member in cards[:3]:
+            row.layout().addWidget(build_row(member))
+        return row
+
+    monkeypatch.setattr(review, "_group_note_row", with_built_rows)
+    items = [("group_note", {"kind": "maintainer", "note": "Shared change"}, 200)]
+    for i in range(200):
+        items.extend([("sep", "grouped"), ("card", "Deck", {
+            "guid": f"g{i}", "kind": "changed", "notetype": "Basic",
+            "fields": [("Front", f"Card {i}"), ("Back", "Answer")],
+            "was": {"Back": "Old answer"}})])
+    body, _boxes, flush = review.build_update_body(
+        items, {}, {}, {}, decisions, "",
+        lambda: (status_calls.append(dict(decisions)) or ""), "", touched,
+        on_review=lambda: review_calls.append(dict(decisions)))
+    try:
+        for stream in body.findChildren(StreamingList):
+            stream.fill_all()
+        cells = [w for w in body.findChildren(type(body))
+                 if "frozen" in getattr(w, "buttons", {})]
+        assert len(cells) == 3
+        status_calls.clear()
+        review_calls.clear()
+        next(b for b in body.findChildren(QPushButton)
+             if b.text() == "Later all").click()
+        expected = {f"g{i}": "held" for i in range(200)}
+        assert decisions == expected
+        assert touched == set(expected)
+        assert all(cell.buttons["held"].isChecked() for cell in cells)
+        assert all(not cell.buttons["apply"].isChecked() for cell in cells)
+        assert status_calls == [expected]
+        assert review_calls == [expected]
+
+        status_calls.clear()
+        review_calls.clear()
+        cells[0].buttons["apply"].click()
+        assert len(decisions) == 199
+        assert len(status_calls) == len(review_calls) == 1
+    finally:
+        flush()
+        sip.delete(body)
+
+
 def test_a_card_source_tag_paints_quotes_and_ampersands_as_text():
     harness.bootstrap()
     harness.app()

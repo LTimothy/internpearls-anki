@@ -339,10 +339,10 @@ def search(index, left_rows, threshold=DEFAULT_THRESHOLD, top=3,
                 doc_contrib.setdefault(ri, {})[tok] = dw
         ranked = []
         for ri, dot in scores.items():
-            if pair_key(left[0], right_rows[ri][0]) in ignored:
-                continue
             cosine = dot / (q_norm * index.doc_norm[ri])
             if cosine < threshold:
+                continue
+            if ignored and pair_key(left[0], right_rows[ri][0]) in ignored:
                 continue
             # Marks are read only for pairs that already clear the threshold, which
             # is a small share of the pairs sharing a token.

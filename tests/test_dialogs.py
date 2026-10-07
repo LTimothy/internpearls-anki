@@ -3238,7 +3238,8 @@ def test_declined_dialog_puts_a_legacy_skip_entry_under_later(anki):
     assert dialogs._decline_group("not a dict") is None
 
 
-def _folded_group_body(kind="changed", note_kind="maintainer", n=5):
+def _folded_group_body(kind="changed", note_kind="maintainer", n=5,
+                       status_line=lambda: "", on_review=None):
     from internpearls import review
     note = {"kind": note_kind, "note": "one change across these cards", "on": "2026-09-27"}
     items = [("group_note", note, n)]
@@ -3249,7 +3250,8 @@ def _folded_group_body(kind="changed", note_kind="maintainer", n=5):
                                              else {})))]
     decisions, touched, opened = {}, set(), set()
     body, _boxes, _flush = review.build_update_body(
-        items, {}, {}, {}, decisions, "", lambda: "", "", touched, opened=opened)
+        items, {}, {}, {}, decisions, "", status_line, "", touched, opened=opened,
+        on_review=on_review)
     return body, decisions, touched, opened
 
 
@@ -3285,6 +3287,53 @@ def test_a_changed_card_group_offers_later_all_too(anki):
     assert decisions == {f"guid-g{i}": "held" for i in range(5)}
     assert not any(w.text() == "Never" for w in _walk_widgets(body)
                    if isinstance(w, mock_anki.QPushButton))
+
+
+@pytest.mark.parametrize("expanded", [False, True])
+@pytest.mark.parametrize("kind", ["new", "changed"])
+def test_later_all_notifies_once_after_deciding_two_hundred_cards(
+        anki, monkeypatch, expanded, kind):
+    from internpearls import review
+    status_calls, review_calls, listener_calls = [], [], []
+    decision_cell = review.decision_cell
+
+    def counted_cell(options, state, on_change, card_label=""):
+        cell = decision_cell(options, state, on_change, card_label)
+        if any(label == "Later all" for _, label in options):
+            set_state = cell.set_state
+
+            def refresh(value):
+                listener_calls.append(dict(decisions))
+                set_state(value)
+
+            cell.set_state = refresh
+        return cell
+
+    monkeypatch.setattr(review, "decision_cell", counted_cell)
+    decisions = {}
+    body, decisions, touched, _opened = _folded_group_body(
+        kind=kind, n=200,
+        status_line=lambda: (status_calls.append(dict(decisions)) or ""),
+        on_review=lambda: review_calls.append(dict(decisions)))
+    if expanded:
+        _button(body, "Show 200 cards").click()
+    status_calls.clear()
+    review_calls.clear()
+    listener_calls.clear()
+
+    _button(body, "Later all").click()
+
+    expected = {f"guid-g{i}": "held" for i in range(200)}
+    assert decisions == expected
+    assert touched == set(expected)
+    if expanded:
+        cells = [w for w in _walk_widgets(body)
+                 if {"never", "frozen"} & set(getattr(w, "buttons", {}))]
+        assert len(cells) == 200
+        assert all(cell.buttons["held"].isChecked() for cell in cells)
+    assert status_calls == [expected]
+    assert review_calls == [expected]
+    assert listener_calls == [expected]
 
 
 def test_expanding_a_folded_group_counts_its_cards_as_opened(anki):

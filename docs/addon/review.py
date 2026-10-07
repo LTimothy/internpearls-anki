@@ -826,10 +826,10 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
     the group holds, names its first few cards, offers one decision for all of them,
     and has a button that builds the members the first time it is pressed.
 
-    `ctx` is build_update_body's own hooks: `decisions`, `set_member(guid, kind,
-    state)` to decide one member whether or not its row is built yet, `listen(fn)` to
-    hear about every decision on the screen, and `on_expand(guids)` so opening the
-    group counts its cards as looked at."""
+    `ctx` is build_update_body's own hooks: `decisions`, `set_members(guids, kind,
+    state)` to decide the members whether or not their rows are built yet, `listen(fn)`
+    to hear about every decision on the screen, and `on_expand(guids)` so opening
+    the group counts its cards as looked at."""
     row = _change_note_row(note, 0)
     row.layout().setStretch(0, 1)
     if not members:
@@ -861,7 +861,7 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
 
     kinds = {d.get("kind") for d in cards}
     options = _GROUP_OPTIONS.get(next(iter(kinds))) if len(kinds) == 1 else None
-    if options and ctx.get("set_member"):
+    if options and ctx.get("set_members"):
         kind = next(iter(kinds))
         default = _DEFAULT_DECISION[kind]
         decisions = ctx["decisions"]
@@ -872,8 +872,7 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
             return next(iter(states)) if len(states) == 1 else None
 
         def _decide_all(state):
-            for g in guids:
-                ctx["set_member"](g, kind, state)
+            ctx["set_members"](guids, kind, state)
 
         cell = decision_cell(options, _current(), _decide_all,
                              f"{plural(len(guids), 'card')}: {note_text}")
@@ -1826,14 +1825,19 @@ def build_update_body(items, sources, flags, new_index, decisions,
 
     listeners = []
     setters = {}
+    deciding_all = False
 
-    def _on_decide(guid, state):
-        touched.add(guid)
+    def _notify_decision(guid=None, state=None):
         for fn in listeners:
             fn(guid, state)
         _refresh_bottom()
         if on_review is not None:
             on_review()
+
+    def _on_decide(guid, state):
+        touched.add(guid)
+        if not deciding_all:
+            _notify_decision(guid, state)
 
     def _on_open(guid):
         opened.add(guid)
@@ -1854,13 +1858,23 @@ def build_update_body(items, sources, flags, new_index, decisions,
             decisions[guid] = state
         _on_decide(guid, state)
 
+    def _set_members(guids, kind, state):
+        nonlocal deciding_all
+        deciding_all = True
+        try:
+            for guid in guids:
+                _set_member(guid, kind, state)
+        finally:
+            deciding_all = False
+        _notify_decision()
+
     def _on_expand(guids):
         opened.update(guids)
         _refresh_bottom()
         if on_review is not None:
             on_review()
 
-    group_ctx = {"decisions": decisions, "set_member": _set_member,
+    group_ctx = {"decisions": decisions, "set_members": _set_members,
                  "listen": listeners.append, "on_expand": _on_expand}
 
     # Measured once for the whole screen, not per row: every row in one list has to be
