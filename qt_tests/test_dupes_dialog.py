@@ -9,6 +9,100 @@ import pytest
 from internpearls import palette as colors_module
 
 
+def test_scan_failure_escapes_exception_text():
+    from aqt.qt import Qt
+    from PyQt6.QtGui import QTextDocument
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    dlg._scan_error = RuntimeError("A <b>x</b> & B")
+    dlg._finish_scan()
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in dlg.summary_label.text()
+    assert "<b>x</b>" not in dlg.summary_label.text()
+    assert dlg.summary_label.textFormat() == Qt.TextFormat.RichText
+    doc = QTextDocument()
+    doc.setHtml(dlg.summary_label.text())
+    assert doc.toPlainText() == "Scan failed: A <b>x</b> & B"
+    dlg.deleteLater()
+
+
+def test_scan_delivery_error_displays_exception_literally(monkeypatch):
+    from aqt.qt import Qt
+    from PyQt6.QtGui import QTextDocument
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+
+    def fail():
+        raise RuntimeError("A <b>x</b> & B")
+
+    monkeypatch.setattr(dlg, "_finish_scan", fail)
+    dlg._scan_finished = False
+    dlg._poll_scan()
+    assert dlg.summary_label.textFormat() == Qt.TextFormat.RichText
+    doc = QTextDocument()
+    doc.setHtml(dlg.summary_label.text())
+    assert doc.toPlainText() == "Something went wrong: A <b>x</b> & B"
+    dlg.deleteLater()
+
+
+def test_summary_displays_single_thin_pool_note_literally(monkeypatch):
+    from aqt.qt import Qt
+    from PyQt6.QtGui import QTextDocument
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    dlg._left_count, dlg._right_count = 1, 50
+    monkeypatch.setattr(dlg, "_side_label", lambda *a: "A & B")
+    dlg._rebuild_list()
+    doc = QTextDocument()
+    doc.setHtml(dlg.summary_label.text())
+    assert doc.toPlainText() == (
+        "1 scanned against 50, 3 candidates\n"
+        "A & B has only 1 card; pick a deck to compare against")
+    dlg.summary_label.setText(dlg._thin_pool_notes()[0])
+    assert dlg.summary_label.textFormat() == Qt.TextFormat.RichText
+    doc.setHtml(dlg.summary_label.text())
+    assert doc.toPlainText() == "A & B has only 1 card; pick a deck to compare against"
+    dlg.deleteLater()
+
+
+@pytest.mark.parametrize("sink", ["tooltip", "judge_note", "thin_pool"])
+def test_duplicate_row_shows_outside_text_literally(monkeypatch, sink):
+    from aqt.qt import QLabel, Qt
+    from PyQt6.QtGui import QTextDocument
+    from internpearls import dupes_dialog
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    text = "A <b>x</b> & B"
+    pair = dict(dlg._pairs[0], note=text)
+    monkeypatch.setattr(dupes_dialog, "_note_texts", lambda nid: (text, "answer"))
+    pair["right"] = (*pair["right"][:2], text, text)
+    if sink == "thin_pool":
+        monkeypatch.setattr(dlg, "_side_label", lambda *a: text)
+        summary = dlg._summary_text()
+        assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in summary
+        assert "<b>x</b>" not in summary
+    else:
+        row = dlg._build_row(pair)
+        labels = row.findChildren(QLabel)
+        if sink == "tooltip":
+            tooltip = next(l.toolTip() for l in labels if l.toolTip())
+            doc = QTextDocument()
+            doc.setHtml(tooltip)
+            assert doc.toPlainText() == f"ours: {text}\ntheirs: {text} ({text}, {text})"
+        else:
+            label = next(l for l in labels if l.text() == text)
+            assert label.textFormat() == Qt.TextFormat.PlainText
+        row.deleteLater()
+    dlg.deleteLater()
+
+
 def _populate(mock):
     import mock_anki
     mock.mw.col = mock_anki.MockCollection()   # a fresh collection per test

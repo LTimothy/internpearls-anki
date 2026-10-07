@@ -25,8 +25,8 @@ from .palette import DARK, LIGHT, colors
 from .review import append_rows, build_list_body
 from .sync import _fetch_manifest, update_decks
 from .ui import (_ask, _ask_scrollable, _ask_with_widget, _info, _safe, _warn,
-                 hint_label, link_button, muted_label, section_label, section_rule,
-                 title_label, wait_cursor)
+                 hint_label, link_button, muted_label, plain_tooltip, section_label,
+                 section_rule, title_label, wait_cursor)
 from .widgets import StreamingList, chip_cell
 
 
@@ -577,7 +577,7 @@ class _DeckManagerDialog(QDialog):
         cb.setChecked(r["enabled"])
         # The full path, always, whatever the row ended up showing: it is the only thing
         # that names the deck exactly, and both the label rules above can shorten it.
-        cb.setToolTip(r["name"])
+        cb.setToolTip(plain_tooltip(r["name"]))
         cb.setStyleSheet(_DECK_LABEL_STYLE)
         self._checks[r["name"]] = cb
         h.addWidget(cb)
@@ -749,7 +749,8 @@ def manage_decks(pending=None):
                 " This just saved your choices; nothing was pulled. Run <b>Update "
                 "my decks</b> when you're ready (or use <i>Save and update now</i> "
                 "next time to do both at once).")
-    _info(f"Saved. {scope}, preserving {', '.join(conf['protected_fields'])}."
+    protected = ", ".join(html.escape(str(f), quote=False) for f in conf["protected_fields"])
+    _info(f"Saved. {scope}, preserving {protected}."
           f"<br><br>{next_step}")
 
 
@@ -1348,10 +1349,12 @@ def about():
     update_suffix = ""
     if latest_known and not version_at_least(ADDON_VERSION, latest_known):
         warning = colors()["warning"]
-        update_suffix = (f" &nbsp;<span style='color:{warning};'>(v{latest_known} "
+        latest_text = html.escape(str(latest_known), quote=False)
+        update_suffix = (f" &nbsp;<span style='color:{warning};'>(v{latest_text} "
                          f"available — Advanced → Check for add-on updates)</span>")
 
     muted = colors()["muted"]
+    protected = ", ".join(html.escape(str(f), quote=False) for f in cfg["protected"])
     text = (
         f"<b>Intern Pearls Deck Tools</b> &nbsp;<span style='color:{muted};'>v{ADDON_VERSION}"
         f"</span>{update_suffix}<br><br>"
@@ -1365,7 +1368,7 @@ def about():
         "<br><br><b>Current settings</b><br>"
         f"Auto-sync: {sync_status}<br>"
         f"Add-on updates: {update_status}<br>"
-        f"Preserved fields: {', '.join(cfg['protected']) or 'none set'}"
+        f"Preserved fields: {protected or 'none set'}"
         "<br><br>"
         "Change these under <i>Manage decks</i> (which decks, which fields, and where "
         "from) or <i>Settings</i> (how automatic)."

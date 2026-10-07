@@ -8369,6 +8369,30 @@ def test_an_oversized_local_manifest_is_refused_unread(anki, tmp_path, monkeypat
 ODD_DECK = "Intern Pearls::Intern Custom::A<b>B"
 
 
+def test_update_archive_result_escapes_the_destination_deck(anki, tmp_path):
+    export = "A <b>x</b> & B"
+    _existing_card(anki, "old1", "old card")
+    _configure(anki, _write_retired_source(tmp_path, {
+        DECK: {"old1": {"identity": "old card", "reason": "split",
+                        "superseded_by": []}}}))
+    anki.mw._config["export_deck"] = export
+    text = _summary_text(_update(anki))
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in text
+    assert "<b>x</b>" not in text
+
+
+def test_import_single_result_escapes_the_filename(anki, tmp_path):
+    from internpearls import sync
+    _configure(anki, _write_source(tmp_path, {}))
+    src = str(tmp_path / "A <b>x<b> & B.apkg")
+    make_apkg(src, [("g1", _fields("Front one"), TAGS)], deck=DECK)
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+    sync.import_single()
+    assert "A &lt;b&gt;x&lt;b&gt; &amp; B.apkg" in anki.gui.infos[-1]
+    assert "<b>x<b>" not in anki.gui.infos[-1]
+
+
 def _odd_reconcile_source(anki, tmp_path):
     _existing_card(anki, "old1", "retired card")
     _existing_card(anki, "g1", "MAP &lt;60 moved", deck=DECK)

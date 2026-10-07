@@ -2659,7 +2659,7 @@ def update_decks():
     if n_archived:
         result_lines.append(
             f"✓ Archived <b>{plural(n_archived, 'retired card')}</b> to "
-            f"<b>{retired_deck}</b>"
+            f"<b>{_text(retired_deck)}</b>"
             + (f" ({plural(carried, 'personal note')} carried over)" if carried else "")
             + ".")
     if n_merged:
@@ -2824,5 +2824,5 @@ def import_single():
                    if restored else "")
     moved_line = (f" Moved {plural(len(changed_nids), 'card')} to the new format."
                   if changed_nids else "")
-    _info(f"Imported {os.path.basename(src)}: {in_place} kept history, {as_new} new."
+    _info(f"Imported {_text(os.path.basename(src))}: {in_place} kept history, {as_new} new."
           f"{moved_line}{fields_line}")

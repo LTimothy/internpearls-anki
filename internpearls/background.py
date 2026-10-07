@@ -97,14 +97,15 @@ def _check_addon_updates_background():
             return
         state["last_notified_addon_version"] = latest
         _save_json(STATE, state)
+        latest_text = html.escape(str(latest), quote=False)
 
         if action == "auto_update" and result["package_path"]:
             try:
                 _install_package(result["package_path"])
-                tooltip(f"Intern Pearls Deck Tools updated itself to v{latest}. Restart "
+                tooltip(f"Intern Pearls Deck Tools updated itself to v{latest_text}. Restart "
                        "Anki to use it.", period=8000, parent=mw)
             except Exception as e:
-                tooltip(f"Intern Pearls: couldn't install v{latest} automatically "
+                tooltip(f"Intern Pearls: couldn't install v{latest_text} automatically "
                        f"({html.escape(str(e), quote=False)}). "
                        "Try Advanced → Check for add-on updates.", period=8000, parent=mw)
         else:
@@ -112,7 +113,7 @@ def _check_addon_updates_background():
             # didn't download — either way, tell the user a newer version exists rather
             # than doing nothing.
             tooltip(
-                f"Intern Pearls Deck Tools v{latest} is available (you have "
+                f"Intern Pearls Deck Tools v{latest_text} is available (you have "
                 f"v{ADDON_VERSION}). Intern Pearls → Advanced → Check for add-on "
                 "updates to install.", period=8000, parent=mw)
 

@@ -114,3 +114,22 @@ def test_note_rows_by_deck_does_not_wildcard_an_underscore(anki):
                       deck="Step 2 Pearls")
     rows = note_rows(anki.col, deck_name="Step_2 Pearls")
     assert [r[2] for r in rows] == ["Step_2 Pearls"]
+
+
+@pytest.mark.parametrize("sink", ["scan_error", "thin_pool"])
+def test_duplicate_summary_escapes_outside_text(anki, monkeypatch, sink):
+    from internpearls import ai_cli, dupes_dialog
+    monkeypatch.setattr(ai_cli, "find_cli", lambda *a, **kw: None)
+    dlg = dupes_dialog._DuplicateScanDialog("InternPearls")
+    dlg._wait_for_backends()
+    dlg._wait_for_scan()
+    text = "A <b>x</b> & B"
+    if sink == "scan_error":
+        dlg._scan_error = RuntimeError(text)
+        dlg._finish_scan()
+        summary = dlg.summary_label.text()
+    else:
+        monkeypatch.setattr(dlg, "_side_label", lambda *a: text)
+        summary = dlg._summary_text()
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in summary
+    assert "<b>x</b>" not in summary

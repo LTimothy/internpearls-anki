@@ -183,7 +183,7 @@ def check_updates():
     if version_at_least(ADDON_VERSION, latest.get("version", "0")):
         _info(f"Intern Pearls Deck Tools is up to date (v{ADDON_VERSION}).")
         return
-    if not _ask(f"Update available: v{latest['version']} "
+    if not _ask(f"Update available: v{html.escape(str(latest['version']), quote=False)} "
                 f"(you have v{ADDON_VERSION}). Download and install now?",
                 yes_label="Install now", no_label="Not now"):
         return

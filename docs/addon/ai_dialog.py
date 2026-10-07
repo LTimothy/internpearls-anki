@@ -177,7 +177,7 @@ class _EditCardDialog(QDialog):
         content = QWidget()
         content_lay = QVBoxLayout(content)
         content_lay.setContentsMargins(0, 0, 0, 0)
-        content_lay.addWidget(muted_label(html.escape(card["note_type"])))
+        content_lay.addWidget(muted_label(card["note_type"]))
         self._field_edits = {}
         self._field_labels = {}
         for name in FIELD_MAP[card["note_type"]]:
@@ -403,7 +403,8 @@ def _chip_with_type(kind, note_type, kinds):
     lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(1)
     lay.addWidget(cell)
-    tag = QLabel(html.escape(note_type))
+    tag = QLabel(note_type)
+    tag.setTextFormat(Qt.TextFormat.PlainText)
     tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
     tag.setWordWrap(True)
     tag.setStyleSheet(f"color: {colors()['dim']}; font-size: 10px;")
@@ -1064,6 +1065,7 @@ class _GenerateDialog(QDialog):
         self.attach_cancel_btn.setAccessibleName("Cancel attachment extraction")
         self.attach_cancel_btn.setVisible(False)
         self.attach_status = hint_label("")
+        self.attach_status.setTextFormat(Qt.TextFormat.PlainText)
         self.attach_status.setVisible(False)
         self.char_label = hint_label("0 characters")
         attach_row = QHBoxLayout()
@@ -2578,6 +2580,7 @@ class _GenerateDialog(QDialog):
         # _update_review_summary. Hidden entirely when there's nothing to say
         # (the very first draft of a session, before any run has billed anything).
         self.review_footer = hint_label("")
+        self.review_footer.setTextFormat(Qt.TextFormat.PlainText)
         lay.addWidget(self.review_footer)
         lay.addWidget(QLabel("Feedback on the whole set (optional)"))
         self.feedback_box = QPlainTextEdit()
@@ -3429,8 +3432,8 @@ class _GenerateDialog(QDialog):
         # A transient toast, not a modal: this is what Anki's own Add shows after
         # adding notes, and a click-through confirmation here is one extra click
         # for news that doesn't need an answer.
-        tooltip(f"{plural(n, 'card')} added to {s.deck_name}. This is one undo "
-               f"step: {_undo_shortcut()} reverts it.", period=6000, parent=mw)
+        tooltip(f"{plural(n, 'card')} added to {html.escape(str(s.deck_name), quote=False)}. "
+               f"This is one undo step: {_undo_shortcut()} reverts it.", period=6000, parent=mw)
         self.accept()
         return n
 

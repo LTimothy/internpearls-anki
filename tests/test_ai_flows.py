@@ -962,6 +962,16 @@ def test_import_writes_notes_and_closes(anki, monkeypatch):
     assert dlg._result == 1   # the dialog closed (accepted)
 
 
+def test_import_tooltip_escapes_the_target_deck(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    dlg.session.deck_name = "A <b>x</b> & B"
+    assert dlg._do_import() == 1
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in anki.gui.tooltips[-1]
+    assert "<b>x</b>" not in anki.gui.tooltips[-1]
+
+
 def test_undo_shortcut_asks_qt_for_the_native_undo_key_sequence(anki):
     """Isolated from the dialog flow: _undo_shortcut() must ask Qt
     for StandardKey.Undo rendered as NativeText, not a bare/default-format

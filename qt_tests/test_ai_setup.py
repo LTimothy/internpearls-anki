@@ -7,6 +7,18 @@ from aqt.qt import (QApplication, QCoreApplication, QEvent, QLabel, QPoint,
 from internpearls import ai_cli, ai_setup
 
 
+def test_model_line_shows_config_text_literally(monkeypatch):
+    from aqt import mw
+    from aqt.qt import Qt
+    harness.app()
+    monkeypatch.setattr(mw, "_config", {"ai_model": {"claude": "A <b>x</b> & B"}})
+    dlg = _dialog(monkeypatch)
+    label = dlg.rows["claude"].model_line
+    assert "A <b>x</b> & B" in label.text()
+    assert label.textFormat() == Qt.TextFormat.PlainText
+    dlg.deleteLater()
+
+
 def _dialog(monkeypatch, found=("claude",)):
     harness.bootstrap()
     harness.app()      # Qt aborts outright if a QWidget is built before the app

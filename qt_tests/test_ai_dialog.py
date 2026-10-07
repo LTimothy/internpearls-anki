@@ -10,8 +10,42 @@ import threading
 import time
 
 import harness
+import pytest
 from internpearls import ai_cli, ai_dialog
 from internpearls.platform import NativePlatform
+
+
+def test_note_type_tag_displays_name_literally():
+    from aqt.qt import Qt
+    harness.app()
+    chip = ai_dialog._chip_with_type("ok", "A & B", ai_dialog._REVIEW_CHIP_KINDS)
+    tag = chip.layout().itemAt(1).widget()
+    assert tag.text() == "A & B"
+    assert tag.textFormat() == Qt.TextFormat.PlainText
+    chip.deleteLater()
+
+
+@pytest.mark.parametrize("sink", ["deck", "attachment", "footer"])
+def test_wizard_outside_text_labels_are_plain(monkeypatch, sink):
+    from aqt.qt import Qt
+    harness.app()
+    monkeypatch.setattr(ai_cli, "find_cli", lambda *a, **kw: None)
+    dlg = harness.settled(ai_dialog._GenerateDialog())
+    text = "A <b>x</b> & B"
+    if sink == "deck":
+        dlg.deck_combo.setEditText(text)
+        dlg._refresh_deck_row()
+        label = dlg.deck_row.detail
+    elif sink == "attachment":
+        dlg.attach_status.setText(text)
+        label = dlg.attach_status
+    else:
+        dlg.session.rate_limits = {"primary_pct": 1, "secondary_pct": 2, "resets": text}
+        dlg._update_review_summary()
+        label = dlg.review_footer
+    assert text in label.text()
+    assert label.textFormat() == Qt.TextFormat.PlainText
+    dlg.deleteLater()
 
 
 def _wait_for_delivery(dlg, timeout=15):

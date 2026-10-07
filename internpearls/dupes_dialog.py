@@ -32,7 +32,7 @@ from .logic import field_preview_text, plain_text
 from .palette import colors
 from .platform import (new_work_request, platform, platform_owner_id,
                        wait_for_mock_work)
-from .ui import (_safe, copy_to_clipboard, hint_label, link_button,
+from .ui import (_safe, copy_to_clipboard, hint_label, link_button, plain_tooltip,
                  section_label, title_label)
 from .widgets import CARET_GAP, CARET_W, StreamingList
 
@@ -329,6 +329,7 @@ class _DuplicateScanDialog(QDialog):
         outer.addWidget(self.exclude_edit)
 
         self.summary_label = hint_label("")
+        self.summary_label.setTextFormat(Qt.TextFormat.RichText)
         outer.addWidget(self.summary_label)
         outer.addWidget(hint_label(_SCORE_HINT))
 
@@ -591,7 +592,7 @@ class _DuplicateScanDialog(QDialog):
 
     def _finish_scan(self):
         if self._scan_error:
-            self.summary_label.setText(f"Scan failed: {self._scan_error}")
+            self.summary_label.setText(f"Scan failed: {_esc(str(self._scan_error))}")
             return
         ignored = set(_cfg()["dupes_ignored"])
         self._pairs = []
@@ -692,7 +693,7 @@ class _DuplicateScanDialog(QDialog):
                 (self.left_combo, "Cards this add-on manages", self._left_count),
                 (self.right_combo, "Everything else", self._right_count)):
             if count < 50:
-                notes.append(f"{self._side_label(combo, default)} has only {count} "
+                notes.append(f"{_esc(self._side_label(combo, default))} has only {count} "
                             f"card{'s' if count != 1 else ''}; pick a deck to compare "
                             "against")
         return notes
@@ -820,8 +821,8 @@ class _DuplicateScanDialog(QDialog):
             f" ({_esc(_breakable(pair['right'][2]))}, "
             f"{_esc(_breakable(pair['right'][3]))})</span>"
             f"{shares_html}{differs_html}")
-        primary.setToolTip(f"ours: {left_front}\ntheirs: {right_front} "
-                           f"({pair['right'][2]}, {pair['right'][3]})")
+        primary.setToolTip(plain_tooltip(f"ours: {left_front}\ntheirs: {right_front} "
+                                        f"({pair['right'][2]}, {pair['right'][3]})"))
         primary.setWordWrap(True)
         primary.setTextFormat(Qt.TextFormat.RichText)
         hl.addWidget(primary, 1)
@@ -893,7 +894,9 @@ class _DuplicateScanDialog(QDialog):
         blay.addWidget(ours_answer)
         blay.addWidget(theirs_answer)
         if pair.get("note"):
-            blay.addWidget(hint_label(pair["note"]))
+            note = hint_label(pair["note"])
+            note.setTextFormat(Qt.TextFormat.PlainText)
+            blay.addWidget(note)
         outer.addWidget(body)
 
         def _toggle():

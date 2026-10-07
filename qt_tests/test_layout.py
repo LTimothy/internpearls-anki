@@ -162,6 +162,7 @@ def test_a_wide_deck_label_is_elided_by_pixels_not_by_character_count():
     space the cap stands for. Elided against real font metrics instead, which is the
     one thing the mock suite cannot measure.
     """
+    from PyQt6.QtGui import QTextDocument
     _, q = harness.bootstrap()
     harness.app()
     from internpearls import dialogs
@@ -182,7 +183,9 @@ def test_a_wide_deck_label_is_elided_by_pixels_not_by_character_count():
         f"the row paints {box.text()!r} at "
         f"{metrics.horizontalAdvance(box.text())}px, past its {dialogs._DECK_LABEL_W}px "
         "budget")
-    assert "…" in box.text() and box.toolTip() == f"Root::{name}"
+    document = QTextDocument()
+    document.setHtml(box.toolTip())
+    assert "…" in box.text() and document.toPlainText() == f"Root::{name}"
     # The other half of the rule: an ordinary name, which is most of a list, is left
     # exactly as it is.
     assert dialogs._fit_label("Example Deck") == "Example Deck"

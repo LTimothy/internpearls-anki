@@ -469,3 +469,11 @@ def test_filter_bar_applies_a_pick_at_once_and_a_search_after_the_delay():
     assert bar._count.isVisible() and bar._count.text() == "Showing 1 of 30 cards"
     bar.set_count("")
     assert not bar._count.isVisible()
+
+
+def test_plain_tooltip_escapes_text_and_preserves_newlines():
+    from internpearls import ui
+    text = ui.plain_tooltip('A <b>x</b> & B\n"next"')
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B\n\"next\"" in text
+    assert "<b>x</b>" not in text
+    assert "white-space:pre-wrap" in text

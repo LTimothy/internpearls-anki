@@ -451,7 +451,7 @@ def _bg_safe(fn):
             if not _window_alive():
                 return None
             try:
-                tooltip(f"Intern Pearls: background check failed ({e})",
+                tooltip(f"Intern Pearls: background check failed ({html.escape(str(e), quote=False)})",
                        period=4000, parent=mw)
             except Exception:
                 pass
@@ -572,9 +572,14 @@ def section_rule():
 def muted_label(text):
     """Secondary explanatory text at the dialog's normal font size."""
     lbl = QLabel(text)
+    lbl.setTextFormat(Qt.TextFormat.PlainText)
     lbl.setWordWrap(True)
     lbl.setStyleSheet(f"color: {colors()['muted']};")
     return lbl
+
+
+def plain_tooltip(text):
+    return "<p style='white-space:pre-wrap'>" + html.escape(str(text), quote=False) + "</p>"
 
 
 def hint_label(text, top_margin=0, cls=QLabel):

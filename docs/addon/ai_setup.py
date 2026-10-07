@@ -133,7 +133,9 @@ def _wrapped_hint(text):
     Every multi-line hint in this window goes through here: one paragraph left on
     a plain hint_label puts the window's minimum height back below what it needs
     and the squeeze comes back for everything under it."""
-    return hint_label(text, cls=_WrappedHint)
+    label = hint_label(text, cls=_WrappedHint)
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    return label
 
 
 def _settle_min_size(dialog):

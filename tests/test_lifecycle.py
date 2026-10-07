@@ -7,6 +7,65 @@ from test_sync_flows import DECK, NEW_CSS, SCOPE, TAGS, _StubAction, _fields, _w
 from mock_anki import make_model
 
 
+@pytest.mark.parametrize("written", [False, True])
+def test_collection_backup_escapes_the_folder(anki, monkeypatch, written):
+    from internpearls import collection
+    monkeypatch.setattr(collection, "_backup_collection",
+                        lambda: ("A <b>x</b> & B", written))
+    collection.backup_collection_now()
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in anki.gui.infos[-1]
+    assert "<b>x</b>" not in anki.gui.infos[-1]
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_backup_question_escapes_each_deck_name(anki, monkeypatch, failed):
+    from internpearls import collection
+    name = "A <b>x</b> & B"
+    anki.col.decks.id(name)
+    anki.col.decks.id("Other")
+    monkeypatch.setattr(collection, "_backup_deck",
+                        lambda deck, *args: None if (deck == name) == failed else "saved")
+    anki.gui.answers.append(False)
+    collection._pre_sync_backup_or_confirm_skip(name, decks=[name, "Other"])
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in anki.gui.asks[-1]
+    assert "<b>x</b>" not in anki.gui.asks[-1]
+
+
+def test_update_question_escapes_the_network_version(anki, monkeypatch):
+    from internpearls import updates
+    monkeypatch.setattr(updates, "_fetch_addon_version_info",
+                        lambda **kw: {"version": "99 A <b>x</b> & B"})
+    anki.gui.answers.append(False)
+    updates.check_updates()
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in anki.gui.asks[-1]
+    assert "<b>x</b>" not in anki.gui.asks[-1]
+
+
+@pytest.mark.parametrize("action", ["notify", "install", "fail"])
+def test_background_update_tooltip_escapes_the_network_version(anki, monkeypatch, action):
+    from internpearls import background
+    anki.mw._config = {"notify_addon_updates": True, "auto_update_addon": action != "notify"}
+    monkeypatch.setattr(background, "_addon_update_work", lambda *a: {
+        "info": {"version": "99 A <b>x</b> & B"},
+        "package_path": "package" if action != "notify" else None})
+    def install(path):
+        if action == "fail":
+            raise RuntimeError("cannot install")
+    monkeypatch.setattr(background, "_install_package", install)
+    background._check_addon_updates_background()
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in anki.gui.tooltips[-1]
+    assert "<b>x</b>" not in anki.gui.tooltips[-1]
+
+
+def test_background_failure_tooltip_escapes_exception_text(anki):
+    from internpearls import ui
+    def fail():
+        raise RuntimeError("A <b>x</b> & B")
+    ui._bg_safe(fail)()
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in anki.gui.tooltips[-1]
+    assert "<b>x</b>" not in anki.gui.tooltips[-1]
+
+
 def _raise_markup_error(*args, **kwargs):
     raise RuntimeError('<b>x</b> & "y"')
 

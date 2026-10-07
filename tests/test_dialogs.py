@@ -15,6 +15,39 @@ from demo_contract_cases import contract_action_table
 from mock_anki import make_apkg
 
 
+@pytest.mark.parametrize("value", ["version", "field"])
+def test_about_escapes_outside_text(anki, monkeypatch, value):
+    from internpearls import dialogs
+    text = "99 A <b>x</b> & B"
+    if value == "version":
+        monkeypatch.setattr(dialogs, "_load_json", lambda *a: {
+            "last_notified_addon_version": text})
+    else:
+        anki.mw._config = {"protected_fields": [text]}
+    seen = {}
+    def respond(p):
+        seen["text"] = find(p["tree"], t="label")["text"]
+        btn = find(p["tree"], t="button", label="OK")
+        return {"events": [{"id": btn["id"], "click": True}]}
+    drive(anki, dialogs.about, respond)
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in seen["text"]
+    assert "<b>x</b>" not in seen["text"]
+
+
+def test_manage_decks_saved_message_escapes_field_names(anki, tmp_path):
+    from internpearls import dialogs
+    anki.mw._config = {"decks_dir": _write_source(tmp_path),
+                       "protected_fields": ["A <b>x</b> & B"]}
+    def respond(p):
+        if p["kind"] == "dialog":
+            btn = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": btn["id"], "click": True}]}
+        return {}
+    drive(anki, dialogs.manage_decks, respond)
+    assert "A &lt;b&gt;x&lt;/b&gt; &amp; B" in anki.gui.infos[-1]
+    assert "<b>x</b>" not in anki.gui.infos[-1]
+
+
 def test_dialog_frontier_settles_current_replay_work(anki):
     from aqt.qt import QDialog, QLabel, QVBoxLayout
     from demo.replay import ReplayPlatform
@@ -326,13 +359,15 @@ def test_a_disambiguated_deck_label_takes_only_as_much_path_as_it_needs():
 def test_a_deck_row_carries_its_full_path_as_a_tooltip():
     """Whatever the row ended up showing, the deck is named exactly somewhere: the leaf
     alone is ambiguous and a long label is elided."""
+    from internpearls.logic import plain_text
     check = _bare_deck_row("Intern Pearls::Intern Custom::Pharm", "Pharm")
     assert check["label"] == "Pharm"
-    assert check["tooltip"] == "Intern Pearls::Intern Custom::Pharm"
+    assert plain_text(check["tooltip"]) == "Intern Pearls::Intern Custom::Pharm"
 
 
 def test_a_very_long_deck_label_is_elided_rather_than_widening_the_dialog():
     from internpearls import dialogs
+    from internpearls.logic import plain_text
     long_name = "Example Group::" + "A long subdeck name that runs on in detail"
     check = _bare_deck_row(long_name, long_name)
     assert len(check["label"]) <= dialogs._DECK_LABEL_MAX
@@ -340,7 +375,7 @@ def test_a_very_long_deck_label_is_elided_rather_than_widening_the_dialog():
     # Elided from the middle: both ends carry meaning, the parent that disambiguates it
     # and the deck's own name.
     assert check["label"].startswith("Example Group::") and check["label"].endswith("detail")
-    assert check["tooltip"] == long_name
+    assert plain_text(check["tooltip"]) == long_name
 
 
 def test_manage_decks_source_label_uses_the_palette_not_a_css_keyword(anki, tmp_path):

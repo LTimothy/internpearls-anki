@@ -327,9 +327,11 @@ def _pre_sync_backup_or_confirm_skip(deck_name, decks=None, scope_tag=None, keep
         # backup was taken") is wrong in both directions: it hides the cover that does
         # exist and hides which deck is the one without it.
         covered = [d for d, path in saved.items() if path]
-        done = (f"Backed up: {', '.join(covered)}.<br><br>" if covered else "")
+        covered_text = ", ".join(html.escape(str(d), quote=False) for d in covered)
+        failed_text = ", ".join(html.escape(str(d), quote=False) for d in failed)
+        done = (f"Backed up: {covered_text}.<br><br>" if covered else "")
         proceed = _ask(
-            f"Couldn't back up: {', '.join(failed)}.<br><br>{done}"
+            f"Couldn't back up: {failed_text}.<br><br>{done}"
             "Proceed anyway? (You can back up manually first: Advanced → Backup "
             "intern pearls deck, or Advanced → Backup full collection.)",
             yes_label="Continue without a backup", no_label="Cancel")
@@ -1581,9 +1583,10 @@ def backup_collection_now():
         return
     if not written:
         _info("Nothing has changed since your last collection backup, so it's already "
-              f"up to date in:<br><code>{folder}</code>")
+              f"up to date in:<br><code>{html.escape(str(folder), quote=False)}</code>")
         return
-    _info(f"Backed up your whole collection (every deck) to:<br><code>{folder}</code>")
+    _info("Backed up your whole collection (every deck) to:<br>"
+          f"<code>{html.escape(str(folder), quote=False)}</code>")
 
 
 @_safe
