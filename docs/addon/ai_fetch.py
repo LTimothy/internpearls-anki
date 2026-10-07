@@ -9,6 +9,7 @@ name after the same local address checks.
 import base64
 import http.client
 import ipaddress
+import re
 import socket
 import threading
 import time
@@ -46,15 +47,14 @@ def _timed_out():
                           "internet connection and try again.")
 
 
-def _resolve_within(host, port, seconds):
-    """_resolve, given up on after `seconds` (the lookup itself cannot be cancelled,
-    so it is left to finish on its own thread)."""
+def _run_within(call, seconds):
+    """Give up after `seconds`, leaving the callable to finish on its own thread."""
     box = {}
 
     def run():
         try:
-            box["infos"] = _resolve(host, port)
-        except OSError as e:
+            box["result"] = call()
+        except Exception as e:
             box["error"] = e
     t = threading.Thread(target=run, daemon=True)
     t.start()
@@ -62,8 +62,17 @@ def _resolve_within(host, port, seconds):
     if t.is_alive():
         raise _timed_out()
     if "error" in box:
-        raise TransportError(f"couldn't look up {host} ({box['error']})") from box["error"]
-    return box["infos"]
+        raise box["error"]
+    return box["result"]
+
+
+def _resolve_within(host, port, seconds):
+    """_resolve, given up on after `seconds` (the lookup itself cannot be cancelled,
+    so it is left to finish on its own thread)."""
+    try:
+        return _run_within(lambda: _resolve(host, port), seconds)
+    except OSError as e:
+        raise TransportError(f"couldn't look up {host} ({e})") from e
 
 
 def checked_addresses(host, port, seconds=_DOWNLOAD_TIMEOUT):
@@ -121,11 +130,25 @@ if _HTTPSConnection is not None:
             request = [f"CONNECT {authority} HTTP/1.1\r\n"]
             request.extend(f"{key}: {value}\r\n" for key, value in headers.items())
             self.sock.sendall(("".join(request) + "\r\n").encode("latin-1"))
-            # HTTPResponse bounds status/header lines and the number of headers.
-            with http.client.HTTPResponse(self.sock) as response:
-                response.begin()
-                if response.status != 200:
-                    raise OSError(f"Tunnel connection failed: {response.status}")
+            # Leave bytes after the blank line on the socket for TLS.
+            reply = bytearray()
+            lines = 0
+            while not reply.endswith(b"\r\n\r\n"):
+                byte = self.sock.recv(1)
+                if not byte:
+                    raise OSError("Incomplete CONNECT reply")
+                reply += byte
+                lines += byte == b"\n"
+                if len(reply) > 64 * 1024 or lines > 100:
+                    raise OSError("CONNECT reply is too large")
+            headers = reply.split(b"\r\n")
+            status = re.fullmatch(rb"HTTP/1\.[0-9] +([0-9]{3})(?: +[^\r\n]*)?", headers[0])
+            if status is None or int(status[1]) < 100 or any(
+                    b":" not in line for line in headers[1:-2]):
+                raise OSError("Malformed CONNECT reply")
+            code = int(status[1])
+            if code != 200:
+                raise OSError(f"Tunnel connection failed: {code}")
             self.sock = self._context.wrap_socket(
                 self.sock, server_hostname=self._tunnel_host,
                 do_handshake_on_connect=False)
@@ -143,7 +166,8 @@ def _proxy_for(host, port=None):
     url = urllib.request.getproxies().get("https")
     authority = host if port is None else (
         f"[{host}]:{port}" if ":" in host else f"{host}:{port}")
-    if not url or urllib.request.proxy_bypass(authority):
+    if not url or urllib.request.proxy_bypass(host) or (
+            port is not None and urllib.request.proxy_bypass(authority)):
         return None
     if "://" not in url:
         url = "http://" + url
@@ -306,7 +330,11 @@ def fetch_card_image(url, max_bytes=5 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT,
         if remaining <= 0:
             raise _timed_out()
         ips = checked_addresses(host, port, remaining)
-        proxy = _proxy_for(host, urllib.parse.urlsplit(url).port)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _timed_out()
+        proxy = _run_within(lambda: _proxy_for(host, urllib.parse.urlsplit(url).port),
+                            remaining)
         conn = None
         raw = []
         expired = threading.Event()

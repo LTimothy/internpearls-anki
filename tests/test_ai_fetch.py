@@ -770,3 +770,118 @@ def test_a_port_specific_proxy_bypass_only_matches_that_port(monkeypatch):
     assert web.connected == [("img.example", "93.184.216.34")]
     assert len(web.tunnels) == 1
     assert (web.tunnels[0].host, web.tunnels[0].port) == ("img.example", 443)
+
+
+@pytest.mark.parametrize("lookup", ["getproxies", "proxy_bypass"])
+def test_proxy_discovery_stops_at_the_deadline(monkeypatch, lookup):
+    import time
+    _proxy_settings(monkeypatch, "http://10.0.0.2:8080")
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _png()})
+    stop = threading.Event()
+    original = getattr(urllib.request, lookup)
+
+    def blocked(*args):
+        stop.wait(0.7)
+        return original(*args)
+
+    monkeypatch.setattr(urllib.request, lookup, blocked)
+    start = time.monotonic()
+    try:
+        with pytest.raises(ai_fetch.TransportError, match="timed out"):
+            ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=0.1)
+        assert time.monotonic() - start < 0.4
+        assert web.connected == []
+        assert web.tunnels == []
+    finally:
+        stop.set()
+
+
+@pytest.mark.parametrize("authority", ["img.example", "img.example:443",
+                                       "img.example:8443"])
+def test_a_macos_hostname_exception_bypasses_explicit_ports(monkeypatch, authority):
+    _proxy_settings(monkeypatch, "http://10.0.0.2:8080")
+    monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host:
+                        urllib.request._proxy_bypass_macosx_sysconf(
+                            host, {"exclude_simple": False, "exceptions": ["img.example"]}))
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _png()})
+    assert ai_fetch.fetch_card_image(f"https://{authority}/a.png") == (PNG, "png")
+    assert web.connected == [("img.example", "93.184.216.34")]
+    assert web.tunnels == []
+
+
+@pytest.mark.parametrize("authority", ["img.example", "img.example:443",
+                                       "img.example:8443"])
+def test_an_environment_hostname_exception_bypasses_explicit_ports(monkeypatch, authority):
+    monkeypatch.setenv("no_proxy", "img.example")
+    monkeypatch.setenv("https_proxy", "http://10.0.0.2:8080")
+    monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)
+    monkeypatch.setattr(urllib.request, "proxy_bypass",
+                        urllib.request.proxy_bypass_environment)
+    web = _ProxyWeb(monkeypatch, {"img.example": ["93.184.216.34"]},
+                    {("img.example", "/a.png"): _png()})
+    assert ai_fetch.fetch_card_image(f"https://{authority}/a.png") == (PNG, "png")
+    assert web.connected == [("img.example", "93.184.216.34")]
+    assert web.tunnels == []
+
+
+@pytest.mark.parametrize("reply", [
+    b"HTTP/1.1 200 Connection Established\r\n\r\n\x15\x03\x03\x00\x02\x02\x28",
+    b"HTTP/1.1 200 OK\r\n" + (b"X: " + b"x" * 4096 + b"\r\n") * 17 + b"\r\n",
+    b"HTTP/1.1 200 OK\r\n" + b"X: x\r\n" * 101 + b"\r\n",
+    b"HTTP/2 200 OK\r\n\r\n",
+    b"HTTP/1.1 20 OK\r\n\r\n",
+    b"HTTP/1.1 secret OK\r\n\r\n",
+    b"HTTP/1.1 200 OK\r\nsecret\r\n\r\n",
+], ids=["tls-alert", "total-size", "line-count", "invalid-version", "short-status",
+        "invalid-status", "invalid-header"])
+def test_a_connect_reply_fails_fast_without_losing_tunnel_bytes(monkeypatch, reply):
+    import time
+    import traceback
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    server.settimeout(2)
+    port = server.getsockname()[1]
+    stop = threading.Event()
+    requests = []
+
+    def serve():
+        try:
+            conn, _ = server.accept()
+            with conn:
+                conn.settimeout(2)
+                request = b""
+                while b"\r\n\r\n" not in request:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        return
+                    request += chunk
+                requests.append(request)
+                conn.sendall(reply)
+                stop.wait(3)
+        except OSError:
+            pass
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    _proxy_settings(monkeypatch, f"http://user:secret@127.0.0.1:{port}")
+    monkeypatch.setattr(ai_fetch, "_resolve", lambda host, p: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "",
+         ("93.184.216.34" if host == "img.example" else "127.0.0.1", p))])
+    start = time.monotonic()
+    try:
+        with pytest.raises(ai_fetch.TransportError) as raised:
+            ai_fetch.fetch_card_image("https://img.example/a.png", deadline_s=2)
+        assert time.monotonic() - start < 1
+        assert "timed out" not in str(raised.value)
+        message = "".join(traceback.format_exception(
+            type(raised.value), raised.value, raised.value.__traceback__))
+        assert "secret" not in message
+        assert requests[0].startswith(b"CONNECT img.example:443 HTTP/1.")
+    finally:
+        stop.set()
+        server.close()
+        thread.join(3)
+    assert not thread.is_alive()
