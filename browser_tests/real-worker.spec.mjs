@@ -108,7 +108,8 @@ test("invalid public input keeps the real Worker request sequence coherent", asy
 
 test("real Worker replays an acknowledged contract error before Cancel", async ({ page }) => {
   await openRealDemo(page);
-  await page.evaluate(() => window.demo.runFlow("m22"));
+  const settingsId = await menuActionId(page, /^Settings$/);
+  await page.evaluate((id) => window.demo.runFlow(id), settingsId);
   const rootId = await page.locator("#dbody > [data-wid]").getAttribute("data-wid");
   const rejected = await page.evaluate((id) =>
     window.demo.dispatch([{ type: "activate", id }]), rootId);
@@ -152,7 +153,8 @@ test("real Worker replays an acknowledged contract error before Cancel", async (
 
 test("real Escape uses cancel recovery while its Worker request is delayed", async ({ page }) => {
   await openRealDemo(page);
-  await page.evaluate(() => window.demo.runFlow("m22"));
+  const settingsId = await menuActionId(page, /^Settings$/);
+  await page.evaluate((id) => window.demo.runFlow(id), settingsId);
   await page.clock.install();
   await page.evaluate(() => {
     window.__holdNextFeed = true;
@@ -439,7 +441,8 @@ test("real Backup flow redacts virtual runtime paths", async ({ page }) => {
 
 test("real typed legacy dialogs retain picker choices Cancel and question text", async ({ page }) => {
   await openRealDemo(page);
-  await page.evaluate(() => window.demo.runFlow("m13"));
+  const restoreDeckId = await menuActionId(page, /^Restore intern pearls deck$/);
+  await page.evaluate((id) => window.demo.runFlow(id), restoreDeckId);
   const picker = {
     choices: await page.locator("#dbody button").allTextContents(),
     cancel: await page.getByRole("button", { name: "Cancel" }).count(),
@@ -449,7 +452,8 @@ test("real typed legacy dialogs retain picker choices Cancel and question text",
 
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.locator("#overlay")).not.toHaveClass(/show/);
-  await page.evaluate(() => window.demo.runFlow("m16"));
+  const restoreCollectionId = await menuActionId(page, /^Restore full collection$/);
+  await page.evaluate((id) => window.demo.runFlow(id), restoreCollectionId);
   await expect(page.locator("#dbody")).toContainText("whole collection");
   await expect(page.getByRole("button", { name: "Choose a backup" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
