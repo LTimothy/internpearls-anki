@@ -1489,6 +1489,17 @@ def _chip_kinds(items):
     return tuple(dict.fromkeys(k for k in kinds if k))
 
 
+_update_flushes = {}
+
+
+def flush_update_notes():
+    for flush in tuple(_update_flushes):
+        try:
+            flush(preserve_saved=True)
+        except Exception as exc:
+            print(f"Could not save card feedback: {exc}")
+
+
 def save_feedback(entries):
     """Write the in-progress notes to user_files/, or clear the file when there are none.
 
@@ -1887,10 +1898,23 @@ def build_update_body(items, sources, flags, new_index, decisions,
 
     lay.addWidget(bottom)
 
-    def flush():
-        saver.stop()                    # the final state, not whatever the debounce had
-        save_feedback(_entries())
-        media_dir.cleanup()
+    def flush(*, preserve_saved=False):
+        if flush not in _update_flushes:
+            return
+        _update_flushes.pop(flush, None)
+        try:
+            try:
+                saver.stop()            # the final state, not whatever the debounce had
+            except RuntimeError:        # its owner was deleted, and the QTimer with it
+                return
+            entries = _entries()
+            if entries or not preserve_saved:
+                save_feedback(entries)
+        finally:
+            media_dir.cleanup()
+
+    _update_flushes[flush] = None
+    body.destroyed.connect(lambda *_: _update_flushes.pop(flush, None))
 
     return body, boxes, flush
 

@@ -8331,11 +8331,12 @@ def test_cancelled_backup_restore_leaves_installed_state_alone(anki, monkeypatch
     _save_json(INSTALLED, {DECK: "v1"})
     anki.gui.answers.append(True)
     monkeypatch.setattr(anki.mw, "onOpenBackup", lambda: None)   # picker cancelled
+    hooks_before = aqt.gui_hooks.profile_will_close.count()
 
     collection.restore_from_backup()
 
     assert _load_json(INSTALLED, {}) == {DECK: "v1"}
-    assert aqt.gui_hooks.profile_will_close.count() == 0
+    assert aqt.gui_hooks.profile_will_close.count() == hooks_before
 
 
 def test_an_accepted_backup_restore_clears_installed_state(anki):
@@ -8344,11 +8345,12 @@ def test_an_accepted_backup_restore_clears_installed_state(anki):
     from internpearls.config import INSTALLED, _load_json, _save_json
     _save_json(INSTALLED, {DECK: "v1"})
     anki.gui.answers.append(True)
+    hooks_before = aqt.gui_hooks.profile_will_close.count()
 
     collection.restore_from_backup()
 
     assert _load_json(INSTALLED, {}) == {}
-    assert aqt.gui_hooks.profile_will_close.count() == 0
+    assert aqt.gui_hooks.profile_will_close.count() == hooks_before
 
 
 # ------------------------------------------------- what a deck source may point at

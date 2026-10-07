@@ -2,9 +2,87 @@
 from pathlib import Path
 
 import harness
+import pytest
 from aqt import mw
 from aqt.qt import QLabel, QPlainTextEdit, QPushButton, QSpinBox
 from internpearls import config, dialogs, review
+
+
+@pytest.fixture
+def profile_close(monkeypatch):
+    import importlib
+    import sys
+    from aqt import gui_hooks
+    from mock_anki import Hook
+
+    harness.app()
+    monkeypatch.setattr(review, "_update_flushes", {}, raising=False)
+    for hook in ("card_will_show", "webview_will_set_content", "state_did_undo",
+                 "profile_will_close", "main_window_did_init"):
+        monkeypatch.setattr(gui_hooks, hook, Hook())
+    name = "internpearls.__init__"
+    if name in sys.modules:
+        importlib.reload(sys.modules[name])
+    else:
+        importlib.import_module(name)
+    return gui_hooks.profile_will_close
+
+
+def _pending_update_note():
+    from aqt.qt import QTimer
+    from internpearls.widgets import StreamingList
+    detail = {"guid": "g1", "kind": "new", "notetype": "Basic",
+              "fields": [("Front", "Which nerve?"), ("Back", "Femoral")]}
+    body, boxes, flush = review.build_update_body(
+        [("card", "IP::A", detail)], {}, {}, {"g1": ("IP::A", "Which nerve?")},
+        {}, "", lambda: "", "")
+    for stream in body.findChildren(StreamingList):
+        stream.fill_all()
+    saver = next(timer for timer in body.findChildren(QTimer)
+                 if timer.interval() == 400 and timer.isSingleShot())
+    boxes["g1"].setPlainText("Check the dose")
+    assert saver.isActive()
+    return body, flush, saver
+
+
+def test_profile_close_saves_notes_with_a_real_debounce_timer_pending(profile_close):
+    import json
+    from PyQt6 import sip
+    body, flush, saver = _pending_update_note()
+    path = Path(config._collection_state_path(review.FEEDBACK))
+    assert not path.exists()
+    try:
+        profile_close()
+        assert json.loads(path.read_text()) == {
+            "g1": {"note": "Check the dose", "deck": "IP::A", "front": "Which nerve?"}}
+        assert not saver.isActive()
+        assert flush not in review._update_flushes
+    finally:
+        sip.delete(body)
+
+
+def test_profile_close_does_not_save_a_body_deleted_by_qt(profile_close, monkeypatch):
+    from PyQt6 import sip
+    body, flush, saver = _pending_update_note()
+    assert flush in review._update_flushes
+    sip.delete(body)
+    assert flush not in review._update_flushes
+    monkeypatch.setattr(review, "save_feedback", lambda entries: pytest.fail("saved deleted body"))
+    profile_close()
+
+
+def test_profile_close_skips_a_deleted_debounce_timer(profile_close, monkeypatch, capsys):
+    from PyQt6 import sip
+    body, flush, saver = _pending_update_note()
+    assert flush in review._update_flushes
+    sip.delete(saver)
+    monkeypatch.setattr(review, "save_feedback", lambda entries: pytest.fail("saved deleted timer"))
+    try:
+        profile_close()
+        assert flush not in review._update_flushes
+        assert capsys.readouterr().out == ""
+    finally:
+        sip.delete(body)
 
 
 def test_settings_roundtrips_a_week_and_labels_focus_their_spinboxes():

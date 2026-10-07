@@ -7,6 +7,8 @@ installed by conftest.py before this module imports, same as every other test fi
 """
 import os
 
+import pytest
+
 from internpearls import review
 
 _ADDON_DIR = os.path.dirname(review.__file__)
@@ -14,6 +16,121 @@ _ADDON_DIR = os.path.dirname(review.__file__)
 # Every _card_row call below is about the row's content, not its decision control, so
 # this stands in for the real on_decide callback build_update_body would supply.
 _no_decide = lambda *a, **k: None
+
+
+@pytest.fixture
+def profile_close(anki, monkeypatch):
+    import importlib
+    import sys
+    from aqt import gui_hooks
+    from mock_anki import Hook
+
+    monkeypatch.setattr(review, "_update_flushes", {}, raising=False)
+    for hook in ("card_will_show", "webview_will_set_content", "state_did_undo",
+                 "profile_will_close", "main_window_did_init"):
+        monkeypatch.setattr(gui_hooks, hook, Hook())
+    name = "internpearls.__init__"
+    if name in sys.modules:
+        importlib.reload(sys.modules[name])
+    else:
+        importlib.import_module(name)
+    return gui_hooks.profile_will_close
+
+
+def _pending_update_note(guid="g1"):
+    from aqt.qt import QTimer
+    detail = dict(_basic_note_detail(), guid=guid, kind="new")
+    body, boxes, flush = review.build_update_body(
+        [("card", "IP::A", detail)], {}, {},
+        {guid: ("IP::A", "What nerve block covers the anterior thigh?")},
+        {}, "", lambda: "", "")
+    saver = next(timer for timer in reversed(QTimer.registry)
+                 if timer.interval == 400 and timer.single_shot)
+    boxes[guid].setPlainText("Check the dose")
+    assert saver.started == 400
+    return body, flush, saver
+
+
+def test_profile_close_saves_pending_update_notes(profile_close, anki):
+    import copy
+    import json
+    from pathlib import Path
+    from internpearls import config
+
+    anki.col.path = os.path.join(os.path.dirname(review.FEEDBACK), "collection.anki2")
+    before = copy.deepcopy((anki.col._notes, anki.col._cards, anki.col._undo_entries,
+                            anki.col.imports, anki.col.updated_cards))
+    body, flush, saver = _pending_update_note()
+    path = Path(config._collection_state_path(review.FEEDBACK))
+    assert not path.exists()
+
+    profile_close()
+
+    assert json.loads(path.read_text()) == {
+        "g1": {"note": "Check the dose", "deck": "IP::A",
+               "front": "What nerve block covers the anterior thigh?"}}
+    assert saver.started is None
+    assert (anki.col._notes, anki.col._cards, anki.col._undo_entries,
+            anki.col.imports, anki.col.updated_cards) == before
+    assert flush not in review._update_flushes
+
+
+def test_profile_close_does_not_call_an_already_flushed_body(profile_close, monkeypatch):
+    body, flush, saver = _pending_update_note()
+    assert flush in review._update_flushes
+    flush()
+    assert flush not in review._update_flushes
+    monkeypatch.setattr(review, "save_feedback", lambda entries: pytest.fail("saved twice"))
+    profile_close()
+
+
+def test_profile_close_does_not_call_a_destroyed_body(profile_close, monkeypatch):
+    body, flush, saver = _pending_update_note()
+    assert flush in review._update_flushes
+    body.deleteLater()
+    assert flush not in review._update_flushes
+    monkeypatch.setattr(review, "save_feedback", lambda entries: pytest.fail("saved deleted body"))
+    profile_close()
+
+
+def test_profile_close_continues_after_a_flush_error(profile_close, monkeypatch, capsys):
+    first, first_flush, _ = _pending_update_note("g1")
+    second, second_flush, _ = _pending_update_note("g2")
+    save = review.save_feedback
+
+    def save_unless_first(entries):
+        if "g1" in entries:
+            raise OSError("cannot save note")
+        save(entries)
+
+    monkeypatch.setattr(review, "save_feedback", save_unless_first)
+    profile_close()
+    assert review.load_saved_feedback()["g2"]["note"] == "Check the dose"
+    assert "cannot save note" in capsys.readouterr().out
+    assert not review._update_flushes
+
+
+@pytest.mark.parametrize("saved", [False, True])
+def test_profile_close_without_an_update_screen_writes_nothing(
+        profile_close, monkeypatch, saved):
+    from pathlib import Path
+    path = Path(review.FEEDBACK)
+    if saved:
+        review.save_feedback({"old": {"note": "Keep this", "deck": "IP::A", "front": "Q"}})
+    before = path.read_bytes() if saved else None
+    monkeypatch.setattr(review, "save_feedback", lambda entries: pytest.fail("unexpected save"))
+    profile_close()
+    assert (path.read_bytes() if path.exists() else None) == before
+
+
+def test_profile_close_with_empty_notes_preserves_saved_feedback(profile_close):
+    body, boxes, flush = review.build_update_body([], {}, {}, {}, {}, "", lambda: "", "")
+    assert flush in review._update_flushes
+    saved = {"old": {"note": "Keep this", "deck": "IP::A", "front": "Q"}}
+    review.save_feedback(saved)
+    profile_close()
+    assert review.load_saved_feedback() == saved
+    assert flush not in review._update_flushes
 
 
 def _image_note_detail(image_field='<img src="sample-a.jpg">'):

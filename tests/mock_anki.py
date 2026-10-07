@@ -1223,6 +1223,8 @@ class pyqtSignal:
 
 
 class QWidget:
+    destroyed = pyqtSignal(object)
+
     # Keep ownership available to effective-state checks without exposing an
     # upward link to structural walkers that inspect vars(widget). The mock's
     # serialized tree remains layout-owned, as it is in the browser contract.
@@ -1284,7 +1286,9 @@ class QWidget:
         """Qt's deferred delete. Nothing here owns C++ memory to free, so this records
         the call: a dialog parented to mw leaks in real Anki unless something asks for
         it, and this is what lets a flow test assert that something did."""
-        self.deleted = True
+        if not self.deleted:
+            self.deleted = True
+            self.destroyed.emit(self)
 
     def setEnabled(self, v):
         self._enabled = v
