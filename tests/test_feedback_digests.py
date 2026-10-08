@@ -37,6 +37,33 @@ def test_digest_is_archived_before_the_dialog_opens(anki, monkeypatch):
     assert review.offer_feedback_digest(None, ENTRIES) is True
 
 
+@pytest.mark.parametrize("archived", [True, False])
+@pytest.mark.parametrize("copied", [True, False])
+def test_end_of_run_digest_hint_reports_whether_a_copy_was_saved(
+        anki, monkeypatch, archived, copied):
+    if not archived:
+        monkeypatch.setattr(review, "save_feedback_digest", lambda text, entries: False)
+    if not copied:
+        monkeypatch.setattr(review, "copy_to_clipboard", lambda text: False)
+    expected = (
+        "Nothing is sent automatically. This is on your clipboard: paste it into a "
+        "message to the deck author, or save a file to attach."
+        if copied else
+        "Nothing is sent automatically. Select and copy the text below, then paste it "
+        "into a message to the deck author, or save a file to attach.")
+    if archived:
+        expected += " A copy is saved under Advanced → Recent card feedback."
+
+    def interact(payload):
+        hints = [n["text"] for n in walk(payload["tree"])
+                 if n.get("t") == "label" and "Nothing is sent automatically" in n["text"]]
+        assert hints == [expected]
+        close = find(payload["tree"], t="button", label="Close")
+        return {"events": [{"id": close["id"], "click": True}]}
+    monkeypatch.setattr(anki.gui, "next_interaction", interact)
+    assert review.show_result_with_feedback("Update complete", (), ENTRIES) is archived
+
+
 def test_same_second_digests_keep_both_texts(anki, monkeypatch):
     _freeze(monkeypatch)
     review.save_feedback_digest("first\n", ENTRIES)
@@ -170,6 +197,11 @@ def test_recent_feedback_rows_are_newest_first_and_show_unchanged_text(anki, mon
             show = find(tree, t="button", label="Show")
             return {"events": [{"id": show["id"], "click": True}]}
         if "recent" not in payload["title"].lower():
+            hints = [n["text"] for n in walk(tree)
+                     if n.get("t") == "label" and "Nothing is sent automatically" in n["text"]]
+            assert hints == [
+                "Nothing is sent automatically. This is on your clipboard: paste it into a "
+                "message to the deck author, or save a file to attach."]
             fields = [n for n in payload["contract_tree"]["nodes"]
                       if n["kind"] == "textarea"]
             assert len(fields) == 1

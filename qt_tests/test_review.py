@@ -335,10 +335,21 @@ def test_recent_feedback_has_rows_and_show_links(shot, tmp_path):
     assert s.image.save(str(tmp_path / "recent-feedback.png"))
 
 
-def test_digest_save_and_copy_are_actions_and_close_is_default(monkeypatch):
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_digest_save_and_copy_are_actions_and_close_is_default(monkeypatch, tmp_path, theme):
     from aqt.qt import QDialogButtonBox
+    from sampling import widget_rect
     monkeypatch.setattr(review, "getSaveFile", lambda *args, **kw: None, raising=False)
-    dialog = harness.render("digest").dialog
+    dialog = harness.render("digest", theme=theme).dialog
+    dialog.resize(dialog.minimumSize())
+    harness.app().processEvents()
+    hint = next(label for label in dialog.findChildren(QLabel)
+                if "Nothing is sent automatically" in label.text())
+    assert hint.text().endswith("A copy is saved under Advanced → Recent card feedback.")
+    assert hint.isVisible()
+    assert hint.heightForWidth(hint.width()) <= hint.height() + 1
+    assert dialog.rect().contains(widget_rect(dialog, hint))
+    assert dialog.grab().save(str(tmp_path / f"digest-{theme}-minimum.png"))
     box = dialog.findChildren(QDialogButtonBox)[0]
     buttons = {b.text(): b for b in box.buttons()}
     assert set(buttons) == {"Copy again", "Save as file", "Close"}

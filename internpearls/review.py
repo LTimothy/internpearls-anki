@@ -2218,7 +2218,8 @@ def offer_feedback_digest(parent, entries, title=None, items=(), standing_declin
     if not text:
         return True
     archived = save_feedback_digest(text, entries)
-    show_feedback_digest(parent, text, heading=_digest_heading(entries), title=title, items=items)
+    show_feedback_digest(parent, text, heading=_digest_heading(entries), title=title,
+                         items=items, archived=archived)
     return archived
 
 
@@ -2250,7 +2251,8 @@ def _save_feedback_file(text):
     tooltip(f"Saved to {html.escape(os.path.basename(path))}")
 
 
-def show_feedback_digest(parent, text, heading="Card feedback", title=None, items=()):
+def show_feedback_digest(parent, text, heading="Card feedback", title=None, items=(), *,
+                         archived=False):
     """Show and copy ready text without rebuilding it or changing saved card notes."""
     copied = copy_to_clipboard(text)
     body = QWidget()
@@ -2265,12 +2267,15 @@ def show_feedback_digest(parent, text, heading="Card feedback", title=None, item
     # Nothing here sends anything, and this is the last screen that can say so before
     # the notes are cleared: "copied, ready to paste" left it possible to read the
     # digest, close it, and assume the deck author now had it.
-    lay.addWidget(muted_label(
+    hint = (
         "Nothing is sent automatically. This is on your clipboard: paste it into a "
         "message to the deck author, or save a file to attach."
         if copied else
         "Nothing is sent automatically. Select and copy the text below, then paste it "
-        "into a message to the deck author, or save a file to attach."))
+        "into a message to the deck author, or save a file to attach.")
+    if archived:
+        hint += " A copy is saved under Advanced → Recent card feedback."
+    lay.addWidget(muted_label(hint))
     view = QPlainTextEdit(text)
     view.setReadOnly(True)
     view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
