@@ -3006,6 +3006,102 @@ def test_partial_import_saves_note_id_and_guid(anki, monkeypatch):
     assert _saved_draft()["imported_notes"] == {"0": {"id": note.id, "guid": note.guid}}
 
 
+@pytest.mark.parametrize("close_action", ["save", "discard", "without_saving"])
+def test_import_stays_open_when_draft_save_and_deletion_fail(
+        anki, monkeypatch, close_action):
+    from internpearls import ai_draft
+    dlg = _drafted(anki, monkeypatch)
+    before = open(_draft_path(), "rb").read()
+    scratch = dlg.session.scratch
+    warnings = []
+    monkeypatch.setattr(ai_dialog, "_warn",
+                        lambda text, **kw: warnings.append((text, kw)))
+    with monkeypatch.context() as blocked:
+        def fail_save(*args):
+            raise PermissionError("Blocked <file> & folder")
+        def fail_delete(path):
+            raise PermissionError("Blocked <file> & folder")
+        blocked.setattr(ai_draft, "save", fail_save)
+        blocked.setattr(ai_draft, "discard", fail_delete)
+        assert dlg._do_import() == 1
+        assert dlg._result is None
+        assert dlg.stack.currentWidget() is dlg.review_page
+        assert dlg.session.imported == {0}
+        assert dlg.decision_cells[0] is None
+        assert "imported" in _row_text(dlg._row_widgets[0]).lower()
+        assert dlg.import_btn.text() == "Import 0 cards"
+        assert dlg._draft_active and dlg._draft_pending
+        assert not dlg._draft_retired
+        assert os.path.isdir(scratch)
+        assert open(_draft_path(), "rb").read() == before
+        assert warnings == [("The cards were imported, but the saved draft couldn't "
+                             "be updated or removed (Blocked <file> & folder). "
+                             "Close the wizard when the folder is writable again, "
+                             "or choose Discard draft when you close.",
+                             {"textFormat": "plain"})]
+        assert dlg._do_import() == 0
+        assert len(anki.col._notes) == 1
+        if close_action == "without_saving":
+            anki.gui.answers = [False, False]
+            dlg.reject()
+            assert dlg._result is None
+            assert "Close anyway?" in anki.gui.asks[-1]
+            assert anki.gui.ask_defaults[-1] == "Keep window open"
+            anki.gui.answers = [False, True]
+            dlg.reject()
+            assert dlg._result == ai_dialog.QDialog.DialogCode.Rejected
+            assert open(_draft_path(), "rb").read() == before
+    if close_action != "without_saving":
+        anki.gui.answers = [close_action == "discard"]
+        dlg.reject()
+        assert dlg._result == ai_dialog.QDialog.DialogCode.Rejected
+        if close_action == "discard":
+            assert not os.path.exists(_draft_path())
+        else:
+            assert _saved_draft()["imported"] == [0]
+    assert dlg.session.scratch is None
+
+
+@pytest.mark.parametrize("already_exists", [False, True])
+def test_resume_checks_stale_draft_against_existing_fronts(
+        anki, monkeypatch, already_exists):
+    from internpearls import ai_draft
+    dlg = _three_card_draft(anki, monkeypatch)
+    dlg.decision_cells[0].buttons["include"].click()
+    dlg._flush_draft()
+    if already_exists:
+        dlg.session.included = [True, False, False]
+        with monkeypatch.context() as blocked:
+            def fail_save(*args):
+                raise PermissionError("Folder is read-only")
+            def fail_delete(path):
+                raise PermissionError("Folder is read-only")
+            blocked.setattr(ai_draft, "save", fail_save)
+            blocked.setattr(ai_draft, "discard", fail_delete)
+            assert dlg._do_import() == 1
+            anki.gui.answers = [False, True]
+            dlg.reject()
+    else:
+        anki.gui.answers = [False]
+        dlg.reject()
+    assert _saved_draft()["imported_notes"] == {}
+    anki.gui.answers = [False]
+    resumed = _settled(ai_dialog._GenerateDialog())
+    assert resumed.session.imported == set()
+    assert resumed.session.included == [not already_exists, True, True]
+    duplicates = [c for c in resumed.session.checks[0] if c["code"] == "duplicate"]
+    if already_exists:
+        assert duplicates[0]["existing"] == "q"
+        assert "duplicate of an existing card" in _row_text(resumed._row_widgets[0])
+        assert resumed.decision_cells[0].buttons["skip"].isChecked()
+    else:
+        assert not duplicates
+    assert resumed._do_import() == (2 if already_exists else 3)
+    assert len(anki.col._notes) == 3
+    assert {n["Front"] for n in anki.col._notes.values()} == {
+        "q", "Second question", "Third question"}
+
+
 def test_successful_import_finishes_when_draft_deletion_fails(anki, monkeypatch):
     from internpearls import ai_draft
     dlg = _drafted(anki, monkeypatch)

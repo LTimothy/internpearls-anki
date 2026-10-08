@@ -966,9 +966,13 @@ class _GenerateDialog(QDialog):
                     else {"state": "error", "kind": "url",
                           "error": "Image resolution did not finish. Retry this image."}
                     for j, im in enumerate(card["images"])]
-                s.checks = ai_logic.mechanical_checks(
-                    s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
-                    _image_errors(s))
+        s.checks = ai_logic.mechanical_checks(
+            s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
+            _image_errors(s))
+        for i, per in enumerate(s.checks):
+            if i not in s.imported and any(
+                    c["code"] == "duplicate" and c.get("existing") for c in per):
+                s.included[i] = False
         self._decided = saved["decided"]
         self.source_box.setPlainText(s.source)
         self.instructions_box.setText(s.instructions)
@@ -3585,10 +3589,18 @@ class _GenerateDialog(QDialog):
         # counts) without needing a second, narrower call for either.
         mw.reset()
         self._schedule_draft()
-        self._flush_draft(quiet=True)
+        saved = self._flush_draft(quiet=True)
         try:
             self._discard_draft()
         except OSError as exc:
+            if not saved:
+                self._rebuild_review()
+                self.stack.setCurrentWidget(self.review_page)
+                _warn("The cards were imported, but the saved draft couldn't be "
+                      f"updated or removed ({exc}). Close the wizard when the "
+                      "folder is writable again, or choose Discard draft when "
+                      "you close.", textFormat="plain")
+                return n
             self._retire_draft()
             _warn("The cards were imported, but the saved draft couldn't be removed: "
                   f"{exc}. It will be offered next time; cards already imported "
