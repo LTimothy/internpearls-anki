@@ -5136,6 +5136,132 @@ def test_update_skip_defers_ledger_retirement_and_its_backup(
 
 
 @pytest.mark.parametrize("suffix", ["", "::Subdeck"])
+@pytest.mark.parametrize("retired_guid", ["old1", "new1"])
+def test_update_skip_defers_retired_reworded_pairs(
+        anki, tmp_path, monkeypatch, suffix, retired_guid):
+    from internpearls import sync
+    outside = "Other Root::Kept"
+    old = _existing_card(anki, "old1", "Deferred old wording", deck=outside)
+    _existing_card(anki, "new1", "Deferred new wording", deck=NEW_DECK)
+    _sched(anki, old, reps=4, ivl=12, type=2, queue=2)
+    _existing_card(anki, "active-old", "Active retirement", deck=NEW_DECK)
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("skipped", _fields("Skipped content"), TAGS)], None),
+        NEW_DECK: ("v1", [("new1", _fields("Deferred new wording"), TAGS),
+                          ("active-new", _fields("Active replacement"), TAGS)], None)},
+        retired={
+            DECK + suffix: {retired_guid: {
+                "identity": "Deferred old wording" if retired_guid == "old1"
+                            else "Deferred new wording",
+                "reason": "reworded",
+                "superseded_by": ["new1"] if retired_guid == "old1" else ["future1"]}},
+            NEW_DECK: {"active-old": {"identity": "Active retirement", "reason": "split",
+                                      "superseded_by": ["active-new"]}}},
+        deck_moves={retired_guid: {"from": outside if retired_guid == "old1" else NEW_DECK,
+                                   "to": NEW_DECK + "::Moved"}})
+    path = os.path.join(folder, "manifest.json")
+    manifest = sync._load_json(path, {})
+    manifest["superseded_fronts"] = {"Deferred old wording": "Deferred new wording"}
+    sync._save_json(path, manifest)
+    _configure(anki, folder)
+    anki.mw._config["export_deck"] = NEW_DECK
+    failures = {DECK: 99}
+    _fail_preview_fetches(sync, monkeypatch, failures)
+
+    trees = _update(anki, ask=lambda _text: False)
+
+    assert "Deferred old wording" not in "\n".join(_label_texts(trees[0]))
+    old = anki.col.note_by_guid("old1")
+    card = anki.col.get_card(old.card_ids()[0])
+    assert RETIRED_TAG not in old.tags and card.queue == 2
+    assert (card.reps, card.ivl) == (4, 12)
+    assert anki.col.decks.name(card.did) == outside
+    new = anki.col.note_by_guid("new1")
+    card = anki.col.get_card(new.card_ids()[0])
+    assert RETIRED_TAG not in new.tags
+    assert (card.reps, card.ivl, card.queue) == (0, 0, 0)
+    assert anki.col.decks.name(card.did) == NEW_DECK
+    assert RETIRED_TAG in anki.col.note_by_guid("active-old").tags
+    assert _backed_up_decks(anki) == [NEW_DECK]
+    failures[DECK] = 0
+    trees = _update(anki, accept=False)
+    assert "Deferred old wording" in "\n".join(_label_texts(trees[0]))
+    tree = _reconcile_tree(anki, accept=False)
+    assert "Deferred old wording" in "\n".join(_label_texts(tree))
+
+
+@pytest.mark.parametrize("suffix", ["", "::Subdeck"])
+def test_update_skip_omits_retired_reworded_backup_without_successor(
+        anki, tmp_path, monkeypatch, suffix):
+    from internpearls import sync
+    outside = "Other Root::Kept"
+    _existing_card(anki, "old1", "Deferred old wording", deck=outside)
+    _existing_card(anki, "active", "Active content", deck=NEW_DECK)
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("new1", _fields("Deferred new wording"), TAGS)], None),
+        NEW_DECK: ("v1", [("active", _fields("Active content"), TAGS)], None)},
+        retired={DECK + suffix: {"old1": {
+            "identity": "Deferred old wording", "reason": "reworded",
+            "superseded_by": ["new1"]}}})
+    path = os.path.join(folder, "manifest.json")
+    manifest = sync._load_json(path, {})
+    manifest["superseded_fronts"] = {"Deferred old wording": "Deferred new wording"}
+    sync._save_json(path, manifest)
+    _configure(anki, folder)
+    anki.mw._config["export_deck"] = NEW_DECK
+    failures = {DECK: 99}
+    _fail_preview_fetches(sync, monkeypatch, failures)
+
+    _update(anki, ask=lambda _text: False)
+
+    assert RETIRED_TAG not in anki.col.note_by_guid("old1").tags
+    assert _backed_up_decks(anki) == [NEW_DECK]
+    failures[DECK] = 0
+    trees = _update(anki, accept=False)
+    assert "Deferred old wording" in "\n".join(_label_texts(trees[0]))
+    tree = _reconcile_tree(anki, accept=False)
+    assert "Deferred old wording" in "\n".join(_label_texts(tree))
+
+
+@pytest.mark.parametrize("next_flow", ["update", "reconcile"])
+def test_update_retired_reworded_pair_merges_on_the_next_unskipped_run(
+        anki, tmp_path, monkeypatch, next_flow):
+    from internpearls import sync
+    old = _existing_card(anki, "old1", "Deferred old wording", deck="Other Root::Kept")
+    _existing_card(anki, "new1", "Deferred new wording", deck=NEW_DECK)
+    _sched(anki, old, reps=4, ivl=12, type=2, queue=2)
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("skipped", _fields("Skipped content"), TAGS)], None),
+        NEW_DECK: ("v1", [("new1", _fields("Deferred new wording"), TAGS)], None)},
+        retired={DECK: {"old1": {"identity": "Deferred old wording", "reason": "reworded",
+                                 "superseded_by": ["new1"]}}})
+    path = os.path.join(folder, "manifest.json")
+    manifest = sync._load_json(path, {})
+    manifest["superseded_fronts"] = {"Deferred old wording": "Deferred new wording"}
+    sync._save_json(path, manifest)
+    _configure(anki, folder)
+    anki.mw._config["export_deck"] = NEW_DECK
+    failures = {DECK: 99}
+    _fail_preview_fetches(sync, monkeypatch, failures)
+
+    _update(anki, ask=lambda _text: False)
+
+    assert RETIRED_TAG not in anki.col.note_by_guid("old1").tags
+    failures[DECK] = 0
+    if next_flow == "update":
+        trees = _update(anki)
+        assert "Deferred old wording" in "\n".join(_label_texts(trees[0]))
+    else:
+        _reconcile_tree(anki, accept=True)
+    old = anki.col.note_by_guid("old1")
+    assert RETIRED_TAG in old.tags
+    assert anki.col.get_card(old.card_ids()[0]).queue == -1
+    card = anki.col.get_card(anki.col.note_by_guid("new1").card_ids()[0])
+    assert (card.reps, card.ivl, card.queue) == (4, 12, 2)
+    assert "Other Root" in _backed_up_decks(anki)
+
+
+@pytest.mark.parametrize("suffix", ["", "::Subdeck"])
 def test_update_skip_defers_moves_to_the_failed_deck(
         anki, tmp_path, monkeypatch, suffix):
     from internpearls import sync

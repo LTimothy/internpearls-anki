@@ -1338,7 +1338,7 @@ def _content_backup_decks(srcs, aliases, scope_tag):
     return decks_holding(guids, _existing_guid_to_nid(scope_tag)) if guids else []
 
 
-def _reworded_backup_decks(superseded, scope_tag, skipped=()):
+def _reworded_backup_decks(superseded, scope_tag, skipped=(), skipped_retired_guids=()):
     """Decks holding either wording of any pair the source has ever reworded.
 
     Wider than the pairs found before a run, and deliberately: update_decks recomputes
@@ -1354,14 +1354,17 @@ def _reworded_backup_decks(superseded, scope_tag, skipped=()):
     wanted = set(superseded) | set(superseded.values())
     existing_decks = _existing_guid_to_deck(scope_tag)
     existing_fronts = _existing_front_to_guid(scope_tag)
-    if skipped:
+    if skipped or skipped_retired_guids:
         for p in find_stranded_pairs(superseded, existing_fronts):
-            if _deck_opted_out(existing_decks.get(p["successor_guid"]), skipped):
+            if (p["guid"] in skipped_retired_guids
+                    or p["successor_guid"] in skipped_retired_guids
+                    or _deck_opted_out(existing_decks.get(p["successor_guid"]), skipped)):
                 wanted.discard(p["front"])
                 wanted.discard(p["successor_front"])
     decks = []
     for front, guid in existing_fronts.items():
-        deck = existing_decks.get(guid) if front in wanted else None
+        deck = (existing_decks.get(guid)
+                if front in wanted and guid not in skipped_retired_guids else None)
         if deck:
             decks.append(deck)
     return decks
@@ -2026,6 +2029,7 @@ def update_decks():
 
     preview, downloaded, collisions = {}, {}, []
     skipped = set()
+    skipped_retired_guids = set()
     if todo:
         preview_args = (_existing_front_to_guid(cfg["scope_tag"]),
                         manifest.get("front_aliases", {}),
@@ -2052,15 +2056,22 @@ def update_decks():
             if not retry:
                 failed_names = {d["name"] for d in failed}
                 skipped.update(failed_names)
+                skipped_retired_guids = {
+                    guid for deck, entries in manifest.get("retired", {}).items()
+                    if _deck_opted_out(deck, skipped) for guid in entries}
                 todo = [d for d in todo if d["name"] not in failed_names]
                 for name in failed_names:
                     preview.pop(name, None)
                     downloaded.pop(name, None)
-                fresh = [r for r in fresh if not _deck_opted_out(r["deck"], skipped)]
-                moves = [m for m in moves if not _deck_opted_out(m["to"], skipped)]
+                fresh = [r for r in fresh if r["guid"] not in skipped_retired_guids
+                         and not _deck_opted_out(r["deck"], skipped)]
+                moves = [m for m in moves if m["guid"] not in skipped_retired_guids
+                         and not _deck_opted_out(m["to"], skipped)]
                 existing_decks = _existing_guid_to_deck(cfg["scope_tag"])
                 stranded = [p for p in stranded
-                            if not _deck_opted_out(
+                            if p["guid"] not in skipped_retired_guids
+                            and p["successor_guid"] not in skipped_retired_guids
+                            and not _deck_opted_out(
                                 existing_decks.get(p["successor_guid"]), skipped)]
                 if not todo and not fresh and not moves and not stranded:
                     _refresh_reconcile_action_label(0)
@@ -2591,7 +2602,7 @@ def update_decks():
                                 aliases, cfg["scope_tag"])
         + _reconcile_backup_decks(fresh, moves, stranded, existing_nids)
         + _reworded_backup_decks(manifest.get("superseded_fronts", {}), cfg["scope_tag"],
-                                 skipped),
+                                 skipped, skipped_retired_guids),
         cfg["scope_tag"])
     if not proceed:
         # Same as the retry-cancel above: the registry write already happened, so
@@ -2717,6 +2728,8 @@ def update_decks():
             pairs = find_stranded_pairs(superseded, fronts_now, *live_cards())
         stranded = [p for p in pairs
             if p["guid"] in existing_nids and p["successor_guid"] in existing_nids
+            and p["guid"] not in skipped_retired_guids
+            and p["successor_guid"] not in skipped_retired_guids
             and not is_generated_guid(p["guid"])
             and not is_generated_guid(p["successor_guid"])
             and tag not in mw.col.get_note(existing_nids[p["guid"]]).tags
