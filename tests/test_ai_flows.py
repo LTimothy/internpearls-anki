@@ -2684,6 +2684,107 @@ def _drafted(anki, monkeypatch):
     return dlg
 
 
+def test_draft_debounce_uses_the_owner_platform_timer(anki, monkeypatch):
+    from internpearls.platform import NativePlatform, use_platform
+
+    class RecordingPlatform(NativePlatform):
+        def __init__(self):
+            super().__init__()
+            self.timers = []
+
+        def create_timer(self, owner_id, callback, interval_ms, single_shot=False):
+            timer = super().create_timer(owner_id, callback, interval_ms, single_shot)
+            self.timers.append((owner_id, interval_ms, single_shot, timer))
+            return timer
+
+    native = RecordingPlatform()
+    with use_platform(native):
+        dlg = _drafted(anki, monkeypatch)
+        draft_timers = [entry for entry in native.timers
+                        if entry[:3] == (native.owner_id(dlg), 350, True)]
+        assert len(draft_timers) == 1
+        before = _saved_draft()
+        dlg.feedback_box.setPlainText("Shorter answers")
+        assert _saved_draft() == before
+        draft_timers[0][3].fire()
+        assert _saved_draft()["feedback"] == "Shorter answers"
+        dlg._retire_for_delete()
+
+
+@pytest.mark.parametrize("control", ["source", "instructions", "count", "deck",
+                                     "thorough", "quick", "type", "feedback"])
+def test_draft_change_signals_are_guarded(anki, monkeypatch, control):
+    dlg = _drafted(anki, monkeypatch)
+
+    def boom():
+        raise ValueError("draft save failed")
+
+    monkeypatch.setattr(dlg, "_schedule_draft", boom)
+    changes = {"source": lambda: dlg.source_box.setPlainText("New source"),
+               "instructions": lambda: dlg.instructions_box.setText("New focus"),
+               "count": lambda: dlg.count_spin.setValue(5),
+               "deck": lambda: dlg.deck_combo.setCurrentText("New deck"),
+               "thorough": lambda: dlg.thorough_radio.setChecked(
+                   not dlg.thorough_radio.isChecked()),
+               "quick": lambda: dlg.quick_radio.setChecked(
+                   not dlg.quick_radio.isChecked()),
+               "type": lambda: _trigger_note_type_checkbox(dlg),
+               "feedback": lambda: dlg.feedback_box.setPlainText("New feedback")}
+    changes[control]()
+    assert any("draft save failed" in text for text in anki.gui.warnings)
+    dlg._retire_for_delete()
+
+
+def test_retired_wizard_cannot_schedule_another_draft_save(anki, monkeypatch):
+    dlg = _drafted(anki, monkeypatch)
+    dlg.feedback_box.setPlainText("Keep this feedback")
+    dlg._retire_for_delete()
+    dlg.feedback_box.setPlainText("Late change")
+    dlg._draft_timer.fire()
+    assert dlg._draft_timer.started is None
+    assert _saved_draft()["feedback"] == "Keep this feedback"
+
+
+def test_debounced_draft_save_failure_warns_once_in_plain_text(anki, monkeypatch):
+    from internpearls import ai_draft
+
+    dlg = _drafted(anki, monkeypatch)
+    warnings = []
+    monkeypatch.setattr(ai_dialog, "_warn",
+                        lambda text, **kw: warnings.append((text, kw)))
+
+    def fail_save(*a, **kw):
+        raise OSError("Disk <full>")
+
+    monkeypatch.setattr(ai_draft, "save", fail_save)
+    dlg.feedback_box.setPlainText("Unsaved feedback")
+    dlg._draft_timer.fire()
+    assert warnings == [("The draft couldn't be saved: Disk <full>. "
+                         "Keep this window open and try again.",
+                         {"textFormat": "plain"})]
+    assert anki.gui.asks == []
+    assert dlg._result is None
+
+
+def test_teardown_with_a_failed_draft_save_is_quiet(anki, monkeypatch):
+    from internpearls import ai_draft
+
+    dlg = _drafted(anki, monkeypatch)
+    before = open(_draft_path(), "rb").read()
+
+    def fail_save(*a, **kw):
+        raise OSError("Disk full")
+
+    monkeypatch.setattr(ai_draft, "save", fail_save)
+    dlg.feedback_box.setPlainText("Unsaved feedback")
+    dlg._retire_for_delete()
+    assert anki.gui.asks == []
+    assert anki.gui.warnings == []
+    dlg.feedback_box.setPlainText("Late change")
+    dlg._draft_timer.fire()
+    assert open(_draft_path(), "rb").read() == before
+
+
 def test_draft_saved_as_soon_as_cards_arrive(anki, monkeypatch):
     dlg = _drafted(anki, monkeypatch)
     saved = _saved_draft()
@@ -2947,12 +3048,13 @@ def test_draft_atomic_write_failure_preserves_saved_cards(anki, monkeypatch):
         return original(src, dst)
     monkeypatch.setattr(config, "replace_file", fail_draft)
     dlg.note_boxes[0].setPlainText("Pending note")
-    anki.gui.answers = [False]
+    anki.gui.answers = [False, False]
     dlg.reject()
     assert open(path, "rb").read() == old
     assert dlg._result is None
     assert not any(name.endswith(".tmp") for name in os.listdir(os.path.dirname(path)))
-    assert any("couldn't be saved" in text for text in anki.gui.warnings)
+    assert anki.gui.warnings == []
+    assert "couldn't be saved" in anki.gui.asks[-1]
     monkeypatch.setattr(config, "replace_file", original)
     anki.gui.answers = [False]
     dlg.reject()

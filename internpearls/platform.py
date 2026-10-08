@@ -187,13 +187,23 @@ class _NativeTimerHandle:
         self._timer.setSingleShot(single_shot)
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self._fire)
+        destroyed = getattr(self._timer, "destroyed", None)
+        if destroyed is not None:
+            destroyed.connect(self._abandon)
+
+    def _abandon(self, *_):
+        self._active = False
+        self._callback = None
 
     def _fire(self):
         if self._single_shot:
             self.stop()
-        self._callback()
+        if self._callback is not None:
+            self._callback()
 
     def start(self):
+        if self._callback is None:
+            return
         self._active = True
         try:
             self._timer.start()

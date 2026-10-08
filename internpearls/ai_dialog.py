@@ -820,10 +820,10 @@ class _GenerateDialog(QDialog):
         self._draft_path = ai_draft.draft_path()
         self._draft_active = False
         self._draft_pending = False
-        self._draft_timer = QTimer(self)
-        self._draft_timer.setSingleShot(True)
-        self._draft_timer.setInterval(350)
-        self._draft_timer.timeout.connect(lambda: self._guard(self._flush_draft))
+        self._draft_retired = False
+        self._draft_timer = platform().create_timer(
+            platform_owner_id(self), lambda: self._guard(self._flush_draft),
+            350, single_shot=True)
         self._expanded_rows = set()
         self._image_busy = set()
         self._image_workers = []
@@ -869,9 +869,9 @@ class _GenerateDialog(QDialog):
         for signal in (self.source_box.textChanged, self.instructions_box.textChanged,
                        self.count_spin.valueChanged, self.deck_combo.currentTextChanged,
                        self.thorough_radio.toggled, self.quick_radio.toggled):
-            signal.connect(lambda *_args: self._schedule_draft())
+            signal.connect(lambda *_args: self._guard(self._schedule_draft))
         for box in self.type_boxes.values():
-            box.toggled.connect(lambda _checked: self._schedule_draft())
+            box.toggled.connect(lambda _checked: self._guard(self._schedule_draft))
         saved, damaged = ai_draft.load(self._draft_path, FIELD_MAP)
         if damaged:
             _info("The saved draft couldn't be read. It has been set aside. "
@@ -887,12 +887,26 @@ class _GenerateDialog(QDialog):
         self._detect(cfg)
 
     def _schedule_draft(self):
+        if self._draft_retired:
+            return
+        try:
+            self.isVisible()
+        except RuntimeError:
+            self._retire_draft()
+            return
         if self._draft_active and self.session.cards:
             self._draft_pending = True
             self._draft_timer.start()
 
-    def _flush_draft(self):
+    def _flush_draft(self, closing=False, quiet=False):
         self._draft_timer.stop()
+        if self._draft_retired:
+            return True
+        try:
+            self.isVisible()
+        except RuntimeError:
+            self._retire_draft()
+            return True
         if not self._draft_active or not self._draft_pending:
             return True
         s = self.session
@@ -910,11 +924,24 @@ class _GenerateDialog(QDialog):
         try:
             ai_draft.save(self._draft_path, state, s.image_data, s.scratch)
         except (OSError, ValueError) as exc:
-            _warn(f"The draft couldn't be saved: {exc}. Keep this window open "
-                  "and try again.", textFormat="plain")
+            if closing:
+                if _ask(f"Your draft couldn't be saved ({html.escape(str(exc))}). "
+                        "Close anyway? Changes since the last successful save "
+                        "will be lost.", yes_label="Close without saving",
+                        no_label="Keep window open"):
+                    self._retire_draft()
+                    return True
+            elif not quiet:
+                _warn(f"The draft couldn't be saved: {exc}. Keep this window open "
+                      "and try again.", textFormat="plain")
             return False
         self._draft_pending = False
         return True
+
+    def _retire_draft(self):
+        self._draft_retired = True
+        self._draft_active = self._draft_pending = False
+        self._draft_timer.stop()
 
     def _restore_draft(self, saved):
         s = self.session
@@ -2694,7 +2721,7 @@ class _GenerateDialog(QDialog):
         self.feedback_box.setMaximumHeight(60)
         self.feedback_box.setPlaceholderText(
             "e.g. shorter answers, add one card on avoided drugs")
-        self.feedback_box.textChanged.connect(self._schedule_draft)
+        self.feedback_box.textChanged.connect(lambda: self._guard(self._schedule_draft))
         lay.addWidget(self.feedback_box)
         self.import_note = hint_label("")
         self.import_note.setVisible(False)
@@ -3574,8 +3601,8 @@ class _GenerateDialog(QDialog):
             except RuntimeError:    # that widget or timer is already gone
                 pass
 
-        quietly(self._flush_draft)
-        quietly(self._draft_timer.stop)
+        quietly(lambda: self._flush_draft(quiet=True))
+        self._retire_draft()
         for _thread, timer in own.get("_conn_test_refs", ()):
             quietly(timer.stop)
         for name in ("_attach_timer", "_timer", "_img_timer"):
@@ -3619,6 +3646,18 @@ class _GenerateDialog(QDialog):
             return
         super().keyPressEvent(event)
 
+    def accept(self):
+        if not self._flush_draft(closing=True):
+            return
+        self._retire_draft()
+        super().accept()
+
+    def done(self, result):
+        if not self._flush_draft(closing=True):
+            return
+        self._retire_draft()
+        super().done(result)
+
     def reject(self):
         """Keep the draft by default on close, or discard it explicitly.
 
@@ -3626,6 +3665,9 @@ class _GenerateDialog(QDialog):
         Escape on the progress page uses keyPressEvent's cancel path instead.
         """
         if self._attachment_in_progress():
+            if not self._flush_draft(closing=True):
+                return
+            self._retire_draft()
             self._cancel_running_attachment()
             super().reject()
             return
@@ -3635,7 +3677,7 @@ class _GenerateDialog(QDialog):
                     "kept. Close with the draft saved, or discard it?",
                     yes_label="Discard draft", no_label="Keep draft and close"):
                 self._discard_draft()
-            elif not self._flush_draft():
+            elif not self._flush_draft(closing=True):
                 return
         if self._generation_in_progress():
             if not _ask(
@@ -3643,15 +3685,15 @@ class _GenerateDialog(QDialog):
                     "and discards this run.",
                     yes_label="Cancel and close", no_label="Keep waiting"):
                 return
-            if not self._flush_draft():
+            if not self._flush_draft(closing=True):
                 return
+            self._retire_draft()
             self._cancel_running_generation()
         else:
-            if not self._flush_draft():
+            if not self._flush_draft(closing=True):
                 return
+            self._retire_draft()
             self._cleanup_scratch()
-        self._draft_timer.stop()
-        self._draft_active = False
         super().reject()
 
 
