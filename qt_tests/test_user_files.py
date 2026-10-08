@@ -1,35 +1,42 @@
 """Persistent state stays in temporary folders throughout the real-Qt suite."""
 import importlib
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 
-@pytest.mark.parametrize("module, names", [
-    ("config", ("INSTALLED", "STATE", "FEEDBACK", "SHIPPED", "DECLINED",
-                "DECK_SKILL", "AI_USAGE", "AI_LAST_RUN_LOG", "AI_DRAFT",
-                "LATER_SEEN", "USER_SKILL")),
-    ("background", ("INSTALLED", "STATE")),
-    ("updates", ("STATE",)),
-    ("collection", ("INSTALLED", "SHIPPED")),
-    ("sync", ("INSTALLED", "SHIPPED")),
-    ("review", ("FEEDBACK",)),
-    ("dialogs", ("INSTALLED",)),
-    ("ai_dialog", ("AI_LAST_RUN_LOG",)),
-])
-def test_persistent_paths_write_only_under_tmp_path(tmp_path, module, names):
-    mod = importlib.import_module("internpearls." + module)
+for module in ("ai_dialog", "background", "collection", "config", "dialogs",
+               "review", "sync", "updates"):
+    importlib.import_module("internpearls." + module)
+
+_USER_FILES = Path(__file__).resolve().parents[1] / "internpearls" / "user_files"
+_PATH_BINDINGS = [
+    (module, name)
+    for module, mod in sorted(sys.modules.copy().items())
+    if module.startswith("internpearls.") and mod is not None
+    for name, value in sorted(vars(mod).items())
+    if isinstance(value, (str, os.PathLike))
+    and (Path(value) == _USER_FILES or _USER_FILES in Path(value).parents)
+]
+
+
+@pytest.mark.parametrize("module, name", _PATH_BINDINGS)
+def test_persistent_paths_write_only_under_tmp_path(tmp_path, module, name):
+    mod = importlib.import_module(module)
     from internpearls import config
 
-    for name in names:
-        path = Path(getattr(mod, name))
-        assert tmp_path in path.parents, (module, name, path)
-        config._save_json(str(path), {"isolated": True})
-        written = Path(config._collection_state_path(str(path)))
-        assert tmp_path in written.parents
-        assert config._load_json(str(path), {}) == {"isolated": True}
+    path = Path(getattr(mod, name))
+    assert tmp_path in path.parents, (module, name, path)
+    if name == "_USER_FILES":
+        assert path.is_dir()
+        return
+    config._save_json(str(path), {"isolated": True})
+    written = Path(config._collection_state_path(str(path)))
+    assert tmp_path in written.parents
+    assert config._load_json(str(path), {}) == {"isolated": True}
 
 
 @pytest.mark.parametrize("folder", ["deck_backups", "feedback_digests", "ai_draft_images"])

@@ -90,6 +90,7 @@ def anki(tmp_path, monkeypatch):
     installed = str(tmp_path / "installed.json")
     for mod in (config, sync, background, collection, dialogs):
         monkeypatch.setattr(mod, "INSTALLED", installed)
+    monkeypatch.setattr(config, "_new", installed)
     # Each of these modules does `from .config import STATE` (a direct name import), so
     # patching config.STATE alone doesn't reach them — every module holding its own
     # bound copy of the name needs patching individually, same as INSTALLED above.
