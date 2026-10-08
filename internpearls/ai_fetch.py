@@ -23,6 +23,10 @@ from .net import (_DOWNLOAD_TIMEOUT, _IMAGE_TYPES, _USER_AGENT, HttpStatusError,
 _MAX_REDIRECTS = 5
 _REDIRECTS = (301, 302, 303, 307, 308)
 _CHUNK = 64 * 1024
+_MAX_ABANDONED_LOOKUPS = 8
+_lookup_lock = threading.Lock()
+_running_lookups = 0
+_abandoned_lookups = 0
 
 
 def _is_public(ip):
@@ -49,18 +53,40 @@ def _timed_out():
 
 def _run_within(call, seconds):
     """Give up after `seconds`, leaving the callable to finish on its own thread."""
-    box = {}
+    global _running_lookups, _abandoned_lookups
+    box = {"finished": False, "abandoned": False}
 
     def run():
+        global _running_lookups, _abandoned_lookups
         try:
             box["result"] = call()
         except Exception as e:
             box["error"] = e
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
+        finally:
+            with _lookup_lock:
+                box["finished"] = True
+                if box["abandoned"]:
+                    _abandoned_lookups -= 1
+                else:
+                    _running_lookups -= 1
+    with _lookup_lock:
+        # Reserve a slot so concurrent timeouts cannot exceed the cap.
+        if _running_lookups + _abandoned_lookups >= _MAX_ABANDONED_LOOKUPS:
+            raise _timed_out()
+        _running_lookups += 1
+        try:
+            t = threading.Thread(target=run, daemon=True)
+            t.start()
+        except Exception:
+            _running_lookups -= 1
+            raise
     t.join(max(0.0, seconds))
-    if t.is_alive():
-        raise _timed_out()
+    with _lookup_lock:
+        if not box["finished"]:
+            box["abandoned"] = True
+            _running_lookups -= 1
+            _abandoned_lookups += 1
+            raise _timed_out()
     if "error" in box:
         raise box["error"]
     return box["result"]

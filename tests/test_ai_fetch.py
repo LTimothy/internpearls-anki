@@ -311,6 +311,97 @@ def test_a_slow_direct_connect_leaves_only_remaining_time_for_tls(
     assert hellos and hellos[0].startswith(b"\x16\x03")
 
 
+@pytest.mark.parametrize("fails", [False, True])
+def test_abandoned_lookups_are_capped_until_their_threads_finish(monkeypatch, fails):
+    import time
+    monkeypatch.setattr(ai_fetch, "_MAX_ABANDONED_LOOKUPS", 2, raising=False)
+    stop = threading.Event()
+    threads = []
+    real_thread = threading.Thread
+
+    def thread(*args, **kwargs):
+        t = real_thread(*args, **kwargs)
+        threads.append(t)
+        return t
+
+    def blocked():
+        stop.wait()
+        if fails:
+            raise OSError("lookup failed")
+        return "resolved"
+
+    monkeypatch.setattr(ai_fetch.threading, "Thread", thread)
+    try:
+        for _ in range(2):
+            with pytest.raises(ai_fetch.TransportError, match="timed out") as raised:
+                ai_fetch._run_within(blocked, 0.05)
+            assert str(raised.value) == str(ai_fetch._timed_out())
+        assert len(threads) == 2
+        assert all(t.is_alive() and t.daemon for t in threads)
+        start = time.monotonic()
+        with pytest.raises(ai_fetch.TransportError, match="timed out") as raised:
+            ai_fetch._run_within(blocked, 2)
+        assert str(raised.value) == str(ai_fetch._timed_out())
+        assert time.monotonic() - start < 0.5
+        assert len(threads) == 2
+    finally:
+        stop.set()
+        for t in threads:
+            t.join(3)
+    assert all(not t.is_alive() for t in threads)
+    assert ai_fetch._run_within(lambda: "resolved again", 1) == "resolved again"
+
+
+def test_fast_lookups_do_not_use_up_the_abandoned_lookup_cap(monkeypatch):
+    monkeypatch.setattr(ai_fetch, "_MAX_ABANDONED_LOOKUPS", 2, raising=False)
+    for _ in range(4):
+        assert ai_fetch._run_within(lambda: "resolved", 1) == "resolved"
+
+    def failed():
+        raise OSError("lookup failed")
+
+    with pytest.raises(OSError, match="lookup failed"):
+        ai_fetch._run_within(failed, 1)
+    assert ai_fetch._run_within(lambda: "resolved", 1) == "resolved"
+
+
+def test_running_lookups_reserve_slots_before_they_can_be_abandoned(monkeypatch):
+    monkeypatch.setattr(ai_fetch, "_MAX_ABANDONED_LOOKUPS", 2, raising=False)
+    stop = threading.Event()
+    started = [threading.Event(), threading.Event()]
+    workers, results = [], []
+
+    def blocked(index):
+        workers.append(threading.current_thread())
+        started[index].set()
+        stop.wait()
+        return index
+
+    def lookup(index):
+        try:
+            results.append(ai_fetch._run_within(lambda: blocked(index), 3))
+        except Exception as e:
+            results.append(e)
+
+    callers = [threading.Thread(target=lookup, args=(i,)) for i in range(2)]
+    try:
+        for i, t in enumerate(callers):
+            t.start()
+            assert started[i].wait(1)
+        with pytest.raises(ai_fetch.TransportError, match="timed out"):
+            ai_fetch._run_within(lambda: "extra lookup", 1)
+    finally:
+        stop.set()
+        for t in callers:
+            if t.ident is not None:
+                t.join(4)
+        for t in workers:
+            t.join(4)
+    assert all(not t.is_alive() for t in callers + workers)
+    assert sorted(results) == [0, 1]
+    assert ai_fetch._run_within(lambda: "resolved again", 1) == "resolved again"
+
+
 def test_a_lookup_that_hangs_is_abandoned_at_the_deadline(monkeypatch):
     import time
     web = _Web(monkeypatch, {"img.example": ["93.184.216.34"]},
