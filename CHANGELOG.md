@@ -3,6 +3,21 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.83.0
+
+Faster imports for decks with pictures, a choice when a deck can't be previewed, and a
+pointer to your saved feedback.
+
+- Importing a deck with many pictures is much quicker: the pictures are copied into the
+  import as they are instead of being unpacked and compressed again.
+- When Update my decks can't preview a deck, it now asks whether to retry the preview or
+  skip that deck for now, instead of importing cards you never got to see. A skipped deck,
+  and any of its retired, moved or reworded cards, waits for your next Update my decks.
+- The feedback window at the end of an update says where the saved copy is kept:
+  Advanced → Recent card feedback.
+- A deck package with file names that point outside its own folder is refused before
+  anything is imported.
+
 ## v0.82.0
 
 Undo that covers a deck restore, faster actions on long lists, and buttons you can see
