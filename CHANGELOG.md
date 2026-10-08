@@ -3,6 +3,34 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.81.0
+
+Lighter on memory, safer with your work, and AI drafts that survive closing the wizard.
+
+- A long Update my decks list no longer builds every row in the background while you
+  read: it stays a little ahead of where you are, so a first sync of thousands of cards
+  uses a fraction of the memory. A card's note box is created only when it has a note or
+  you open one.
+- Checking the deck source and checking for add-on updates no longer freeze Anki. A
+  slow source shows a small checking window with Cancel, and nothing else starts while it
+  runs.
+- Manage decks refuses a preserved field name that no note type has, and suggests the
+  closest one ("Did you mean 'Notes'?"), so a typo can't quietly stop protecting your
+  notes. Removing Notes from the list asks first.
+- An unfinished Generate cards (AI) draft is kept until you import it or discard it, and
+  the wizard offers to resume it next time, with your edits, notes, checks and
+  pictures. Attachments themselves are not kept. Cards from a draft that were already
+  imported are recognised, even after Edit > Undo.
+- Declined cards is now Later and declined cards, with search, decision filters, your
+  saved notes, and a line saying when Offer again takes effect.
+- Showing a folded group of cards no longer counts them all as opened, so "Update, and
+  leave N unopened for later" still leaves the ones you never looked at.
+- Scan for duplicates leaves pairs the AI judge did not answer as they were, instead of
+  calling them different, and says how many it assessed or why it failed.
+- Anki starts faster: the AI wizard and other dialogs load the first time you open them.
+  Group-wide decisions, duplicate scans and the background auto-sync check do less
+  repeated work.
+
 ## v0.80.0
 
 A shorter card feedback digest that survives being texted, and a saved copy of each recent one.
