@@ -193,3 +193,14 @@ def test_a_named_question_cannot_be_agreed_to_by_pressing_return():
     assert box.defaultButton() is safe, "Return would consent to a schema change"
     assert box.escapeButton() is safe, "Escape and the close box answer nothing"
     assert answer is False, "a dialog dismissed without a click read as a yes"
+
+
+def test_retry_question_defaults_to_retry_and_dismisses_as_skip():
+    harness.app()
+    _, q = harness.bootstrap()
+    answer, box = _capture_ask(q, yes_label="Retry preview", no_label="Skip for now",
+                               default_yes=True)
+
+    assert box.defaultButton().text() == "Retry preview"
+    assert box.escapeButton().text() == "Skip for now"
+    assert answer is False

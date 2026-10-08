@@ -90,7 +90,7 @@ def _warn(text, **kw):
     return showWarning(text, **kw)
 
 
-def _ask(text, yes_label=None, no_label=None, **kw):
+def _ask(text, yes_label=None, no_label=None, default_yes=False, **kw):
     """A yes/no confirmation, with buttons that can name the action instead.
 
     Pass both labels for a question whose two answers cost different things ("Apply the
@@ -106,8 +106,9 @@ def _ask(text, yes_label=None, no_label=None, **kw):
     which is exactly the agreeing-by-not-reading this add-on refuses everywhere else.
     Below, the declining answer carries RejectRole and is both the default and the
     escape button, so Return, Escape and the close box all mean the safe answer and
-    only a deliberate click can consent. Qt orders the two by role, so the affirming
-    action still sits where the running platform puts it.
+    only a deliberate click can consent. Pass `default_yes=True` when Return should
+    choose the affirming answer; Escape and closing still decline. Qt orders the two
+    by role, so the affirming action still sits where the running platform puts it.
     """
     kw.setdefault("title", APP_NAME)
     if yes_label and no_label:
@@ -118,7 +119,7 @@ def _ask(text, yes_label=None, no_label=None, **kw):
         box.setText(text)
         yes = box.addButton(yes_label, QMessageBox.ButtonRole.AcceptRole)
         no = box.addButton(no_label, QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(no)
+        box.setDefaultButton(yes if default_yes else no)
         box.setEscapeButton(no)
         box.exec()
         answered = box.clickedButton() is yes

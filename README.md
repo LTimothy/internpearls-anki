@@ -54,7 +54,7 @@ The main button. It fetches `manifest.json` from your deck source and works out 
 
 Every question whose two answers cost different things names them on its buttons, and Return, Escape or closing the window all choose the one that costs nothing.
 
-**On confirm**, content applies first, then retired cards archive and moved cards relocate, so a replacement is in your collection before its predecessor archives. Nothing downloaded for the preview is fetched again; a deck the preview couldn't download ("couldn't preview · still imports") is fetched again before anything is backed up. For each changed deck it:
+**On confirm**, content applies first, then retired cards archive and moved cards relocate, so a replacement is in your collection before its predecessor archives. If a deck cannot be previewed, you can retry its preview or skip it for now before the confirmation. A skipped deck stays pending for the next Update my decks; decks that preview successfully reuse their downloads when you confirm. For each changed deck it:
 
 1. Backs up the decks the run will change (see "How history is preserved"). Nothing else runs until this succeeds, or you explicitly continue without one.
 2. Adds any missing fields to the note type (never removes or renames).

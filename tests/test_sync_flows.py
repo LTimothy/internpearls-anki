@@ -4980,67 +4980,193 @@ def test_update_confirmation_says_a_conversion_is_coming(anki, tmp_path):
     assert "changed format" in "\n".join(_label_texts(trees[0]))
 
 
-def _fetch_that_fails_during_preview(sync, monkeypatch):
-    """Make every deck download raise while the preview runs, and succeed afterwards.
-
-    A transient source hiccup, pinned to the phase rather than to the attempt number so
-    it survives Runner's replay (which re-runs the whole flow from a snapshot per
-    dialog, and would reset any counter-based flakiness).
-    """
-    phase = {"previewing": False}
-    real_preview, real_fetch = sync._preview_content_changes, sync._cached_fetch
+def _preview_without_retained_downloads(sync, monkeypatch):
+    """Keep the card preview but make its files unavailable to the apply step."""
+    real_preview = sync._preview_content_changes
 
     def preview(*a, **kw):
-        phase["previewing"] = True
-        try:
-            return real_preview(*a, **kw)
-        finally:
-            phase["previewing"] = False
-
-    def flaky(fetch, d, on_chunk=None):
-        if phase["previewing"]:
-            raise RuntimeError("the source hiccuped")
-        return real_fetch(fetch, d, on_chunk=on_chunk)
+        cards, _downloaded, cancelled = real_preview(*a, **kw)
+        return cards, {}, cancelled
 
     monkeypatch.setattr(sync, "_preview_content_changes", preview)
+
+
+def _fail_preview_fetches(sync, monkeypatch, failures):
+    """Fail selected fetch attempts, resetting counts for each replayed run."""
+    calls, batches = [], []
+    attempts = {}
+    real_manifest = sync._fetch_manifest_gated
+    real_preview, real_fetch = sync._preview_content_changes, sync._cached_fetch
+
+    def manifest(*a, **kw):
+        calls.clear()
+        batches.clear()
+        attempts.clear()
+        return real_manifest(*a, **kw)
+
+    def preview(fetch, todo, *a, **kw):
+        batches.append([d["name"] for d in todo])
+        return real_preview(fetch, todo, *a, **kw)
+
+    def flaky(fetch, d, on_chunk=None):
+        name = d["name"]
+        calls.append(name)
+        attempts[name] = attempts.get(name, 0) + 1
+        if attempts[name] <= failures.get(name, 0):
+            raise RuntimeError("The source could not be reached")
+        return real_fetch(fetch, d, on_chunk=on_chunk)
+
+    monkeypatch.setattr(sync, "_fetch_manifest_gated", manifest)
+    monkeypatch.setattr(sync, "_preview_content_changes", preview)
     monkeypatch.setattr(sync, "_cached_fetch", flaky)
+    return calls, batches
 
 
-def test_a_deck_that_could_not_be_previewed_really_does_still_import(anki, tmp_path,
-                                                                     monkeypatch):
-    """The row promises the deck still imports, and now it does. The preview's own
-    download failure used to be cached and re-raised at apply time, so a deck whose
-    preview failed was guaranteed to fail the import too: the row said one thing and the
-    run always did the other. The apply step fetches it again instead."""
+def test_update_retry_previews_only_failed_decks_and_lists_their_cards(
+        anki, tmp_path, monkeypatch):
     from internpearls import sync
     _configure(anki, _write_source(tmp_path, {
-        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
-    _fetch_that_fails_during_preview(sync, monkeypatch)
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None),
+        NEW_DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)}))
+    calls, batches = _fail_preview_fetches(sync, monkeypatch, {DECK: 1})
 
     trees = _update(anki)
 
-    assert "couldn't preview · still imports" in "\n".join(_label_texts(trees[0]))
+    assert batches == [[DECK, NEW_DECK], [DECK]]
+    assert calls == [DECK, NEW_DECK, DECK]
+    texts = "\n".join(_label_texts(trees[0]))
+    assert "Front one" in texts and "Front two" in texts
+    assert "couldn't preview" not in texts
+    assert anki.gui.ask_buttons[0] == ("Retry preview", "Skip for now")
+    assert anki.gui.ask_defaults[0] == "Retry preview"
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
-    assert json.load(open(sync.INSTALLED, encoding="utf8")) == {DECK: "v1"}
+    assert sync._load_json(sync.INSTALLED, {}) == {DECK: "v1", NEW_DECK: "v1"}
 
 
-def test_a_deck_the_retry_cannot_fetch_either_reports_a_failed_row(anki, tmp_path):
-    """The honest other half: a deck that is broken rather than briefly unreachable
-    still ends the run with a ✗ row naming it, rather than the retry papering over a
-    real failure."""
+def test_update_retry_that_fails_again_asks_again_then_skips(anki, tmp_path):
     from internpearls import sync
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
     with open(os.path.join(folder, "Pharm.apkg"), "wb") as fh:
         fh.write(b"not an apkg at all")
     _configure(anki, folder)
+    answers = iter([True, False])
+    questions = []
 
+    def ask(text):
+        questions.append(text)
+        return next(answers)
+
+    trees = _update(anki, ask=ask)
+
+    assert len(questions) == 2
+    assert all("Pharm" in text for text in questions)
+    assert not trees and not anki.col.imports and not anki.col.exports
+    assert sync._load_json(sync.INSTALLED, {}) == {}
+
+
+@pytest.mark.parametrize("escape", [False, True])
+def test_update_skip_keeps_failed_deck_pending_and_updates_other_decks(
+        anki, tmp_path, monkeypatch, escape):
+    from internpearls import sync
+    _existing_card(anki, "g1", "Old front one")
+    _existing_card(anki, "g2", "Old front two", deck=NEW_DECK)
+    sync._save_json(sync.INSTALLED, {DECK: "v1", NEW_DECK: "v1"})
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one"), TAGS)], None),
+        NEW_DECK: ("v2", [("g2", _fields("Front two"), TAGS)], None)}))
+    anki.mw._config["export_deck"] = NEW_DECK
+    failures = {DECK: 99}
+    calls, _ = _fail_preview_fetches(sync, monkeypatch, failures)
+    anki.gui.escape_asks = escape
+
+    trees = _update(anki, ask=lambda _text: False)
+
+    assert calls == [DECK, NEW_DECK]
+    assert "Pharm" not in _label_texts(trees[0])
+    assert len(anki.col.imports) == 1
+    assert anki.col.note_by_guid("g1")["Front"] == "Old front one"
+    assert anki.col.note_by_guid("g2")["Front"] == "Front two"
+    assert _backed_up_decks(anki) == [NEW_DECK]
+    assert sync._load_json(sync.INSTALLED, {}) == {DECK: "v1", NEW_DECK: "v2"}
+    anki.gui.interactive = False
+    manifest, _, _ = sync._fetch_manifest(sync._cfg())
+    installed = sync.installed_matching_collection(
+        sync._load_json(sync.INSTALLED, {}), SCOPE)
+    assert [d["name"] for d in sync.decks_to_update(manifest, installed)] == [DECK]
+    failures[DECK] = 0
+    trees = _update(anki, ask=lambda _text: True)
+    assert "Front one" in "\n".join(_label_texts(trees[0]))
+
+
+def test_update_skipping_only_pending_deck_names_it_for_next_time(
+        anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    name = "Intern Pearls::Intern Custom::A < B & C"
+    _configure(anki, _write_source(tmp_path, {
+        name: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    _fail_preview_fetches(sync, monkeypatch, {name: 99})
+
+    trees = _update(anki, ask=lambda _text: False)
+
+    assert not trees and not anki.col.imports and not anki.col.exports
+    assert sync._load_json(sync.INSTALLED, {}) == {}
+    question = anki.gui.asks[0]
+    assert "A &lt; B &amp; C" in question and "Intern Custom" not in question
+    assert "review" in question and "next Update my decks" in question
+    assert "<li>" not in question
+    assert any("Nothing was updated" in text and "A &lt; B &amp; C" in text
+               and "next time" in text for text in anki.gui.infos)
+
+
+def test_update_cancel_during_retry_changes_nothing(anki, tmp_path, monkeypatch):
+    import aqt.qt as q
+    from internpearls import sync
+    _existing_card(anki, "g1", "Old front one")
+    sync._save_json(sync.INSTALLED, {DECK: "v1"})
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one"), TAGS)], None),
+        NEW_DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)}))
+    _, batches = _fail_preview_fetches(sync, monkeypatch, {DECK: 1})
+
+    real_preview = sync._preview_content_changes
+
+    def preview(fetch, todo, *a, **kw):
+        q.QProgressDialog.cancel_after = ({"Checking for updates": 0}
+                                         if len(todo) == 1 else {})
+        return real_preview(fetch, todo, *a, **kw)
+
+    monkeypatch.setattr(sync, "_preview_content_changes", preview)
     trees = _update(anki)
 
-    assert "couldn't preview · still imports" in "\n".join(_label_texts(trees[0]))
-    assert "✗ <b>Pharm</b>" in _summary_text(trees)
-    assert not anki.col.find_notes(f'"tag:{SCOPE}"')
-    assert json.load(open(sync.INSTALLED, encoding="utf8")) == {}
+    assert batches == [[DECK, NEW_DECK], [DECK]]
+    assert not trees and not anki.col.imports and not anki.col.exports
+    assert anki.col.note_by_guid("g1")["Front"] == "Old front one"
+    assert not any(n.guid == "g2" for n in anki.col._notes.values())
+    assert sync._load_json(sync.INSTALLED, {}) == {DECK: "v1"}
+    assert any("cancelled" in text.lower() for text in anki.gui.infos)
+
+
+def test_update_retry_question_names_only_decks_still_failing(
+        anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None),
+        NEW_DECK: ("v1", [("g2", _fields("Front two"), TAGS)], None)}))
+    _fail_preview_fetches(sync, monkeypatch, {DECK: 1, NEW_DECK: 99})
+    questions = []
+
+    def ask(text):
+        questions.append(text)
+        return len(questions) == 1
+
+    trees = _update(anki, ask=ask)
+
+    assert len(questions) == 2
+    assert "Pharm" in questions[0] and NEW_DECK.split("::")[-1] in questions[0]
+    assert "Pharm" not in questions[1] and NEW_DECK.split("::")[-1] in questions[1]
+    assert "Front one" in "\n".join(_label_texts(trees[0]))
+    assert sync._load_json(sync.INSTALLED, {}) == {DECK: "v1"}
 
 
 def test_a_deck_whose_file_only_failed_to_parse_keeps_the_file(anki, tmp_path):
@@ -5568,19 +5694,13 @@ def test_a_sync_writes_its_personalized_copy_outside_the_source_folder(anki, tmp
     assert not [f for f in os.listdir(folder) if f.endswith(".sync.apkg")]
 
 
-# ------------------------------------------- consent a failed preview used to swallow
-def test_a_conversion_in_a_deck_the_preview_could_not_fetch_is_still_asked_about(
+# ------------------------------------------- consent after a preview file is lost
+def test_a_conversion_in_a_deck_whose_preview_file_is_lost_is_still_asked_about(
         anki, tmp_path, monkeypatch):
-    """Update my decks reads the run's schema changes out of the preview's own
-    downloads. A deck whose preview download failed contributed nothing to that, so its
-    note-type conversion was never disclosed and never asked about, while the apply
-    step's retry imported it anyway with convert=False: the learner's cards stayed on
-    the old type, no question was ever put on screen, and the deck was recorded as
-    installed, so nothing offered it again until the source bumped that deck's
-    version."""
+    """A file fetched again after the preview still gets consent for its conversion."""
     from internpearls import sync
     _cloze_conversion_source(anki, tmp_path)
-    _fetch_that_fails_during_preview(sync, monkeypatch)
+    _preview_without_retained_downloads(sync, monkeypatch)
     asked = []
 
     def ask(text):
@@ -5593,17 +5713,14 @@ def test_a_conversion_in_a_deck_the_preview_could_not_fetch_is_still_asked_about
     assert anki.col.note_by_guid("g1").note_type()["name"] == "Study Deck - Cloze"
 
 
-def test_a_look_change_a_failed_preview_hid_is_offered_rather_than_dropped(
+def test_a_look_change_in_a_deck_whose_preview_file_is_lost_is_offered(
         anki, tmp_path, monkeypatch):
-    """Same gap, other schema change. The look checkbox is built from the preview too,
-    so a deck the preview couldn't fetch had no checkbox naming it. Applying it on a
-    tick that never mentioned it would be consent by accident and dropping it would
-    mean never offering it again, so it is asked outright, once, after the import."""
+    """A look change missing from the confirmation gets its own question."""
     from internpearls import sync
     _existing_card(anki, "g1", "Front one")
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one"), TAGS)], make_model(css=NEW_CSS))}))
-    _fetch_that_fails_during_preview(sync, monkeypatch)
+    _preview_without_retained_downloads(sync, monkeypatch)
 
     trees = _update(anki, ask=lambda _text: True)
 
@@ -6202,7 +6319,7 @@ def test_cancelling_the_retry_download_stops_the_run_cleanly(anki, tmp_path,
     _existing_card(anki, "g1", "Front one")
     _configure(anki, _write_source(tmp_path, {
         DECK: ("v2", [("g1", _fields("Front one", back="new"), TAGS)], None)}))
-    _fetch_that_fails_during_preview(sync, monkeypatch)
+    _preview_without_retained_downloads(sync, monkeypatch)
     aqt_qt.QProgressDialog.cancel_after = {"Downloading decks": 0}
 
     _update(anki)
@@ -7745,15 +7862,22 @@ def test_a_finished_conversion_is_reported_rather_than_discarded(anki, tmp_path)
 
 # --------------------------------- a conversion only the apply step gets to see
 def _fetch_that_fails_until_apply(sync, monkeypatch):
-    """Every download raises until _run_sync's own fetch: the preview fails, the
-    pre-question retry fails too, and only the third attempt succeeds. Pinned to the
-    phase rather than to an attempt count so it survives Runner's replay."""
-    phase = {"early": True}
+    """Preview succeeds, its files become unavailable, and fetching works at apply."""
+    phase = {"early": True, "previewing": False}
+    real_preview = sync._preview_content_changes
     real_fetch, real_run = sync._cached_fetch, sync._run_sync
 
+    def preview(*a, **kw):
+        phase["previewing"] = True
+        try:
+            cards, _downloaded, cancelled = real_preview(*a, **kw)
+            return cards, {}, cancelled
+        finally:
+            phase["previewing"] = False
+
     def flaky(fetch, d, on_chunk=None):
-        if phase["early"]:
-            raise RuntimeError("the source hiccuped")
+        if phase["early"] and not phase["previewing"]:
+            raise RuntimeError("The source could not be reached")
         return real_fetch(fetch, d, on_chunk=on_chunk)
 
     def run(*a, **kw):
@@ -7763,17 +7887,15 @@ def _fetch_that_fails_until_apply(sync, monkeypatch):
         finally:
             phase["early"] = True
 
+    monkeypatch.setattr(sync, "_preview_content_changes", preview)
     monkeypatch.setattr(sync, "_cached_fetch", flaky)
     monkeypatch.setattr(sync, "_run_sync", run)
 
 
 def test_a_conversion_only_the_apply_step_finds_defers_the_deck(anki, tmp_path,
                                                                 monkeypatch):
-    """The run's one conversion question is decided before the apply loop. A deck that
-    failed both the preview and the retry contributed nothing to it, so the loop found
-    its conversion with convert=False and declined it on the learner's behalf: their
-    cards stayed on the old type, the new ones landed beside them, and the deck was
-    recorded as installed, so nothing offered it again."""
+    """A conversion discovered only during apply leaves the deck pending without
+    importing anything until its format change can be offered."""
     from internpearls import sync
     _cloze_conversion_source(anki, tmp_path)
     _fetch_that_fails_until_apply(sync, monkeypatch)

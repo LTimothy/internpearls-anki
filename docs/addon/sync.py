@@ -1693,11 +1693,9 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
     count them. `downloaded` is {deck_name: local_path_or_Exception}, in the same shape
     background.py's auto-sync poll already uses, so the caller can hand it straight to
     _run_sync afterward instead of downloading every deck a second time. A per-deck
-    failure here is recorded, not raised, so one bad download only blanks that deck's
-    preview ("couldn't preview") rather than blocking the whole confirmation; the deck
-    stays in the run and the apply step fetches it again (see update_decks), which is
-    what makes that row's "still imports" true rather than a promise it can't keep. A
-    deck whose file downloaded fine and only failed to parse keeps the file.
+    failure here is recorded, not raised, so update_decks can offer to retry or skip
+    those decks before building the confirmation. A deck whose file downloaded fine
+    and only failed to parse keeps the file.
     `cancelled` means the learner clicked Cancel partway through: nothing has touched
     the collection at this point, so the caller can just stop outright.
 
@@ -2022,13 +2020,48 @@ def update_decks():
 
     preview, downloaded, collisions = {}, {}, []
     if todo:
-        preview, downloaded, cancelled = _preview_content_changes(
-            fetch, todo, _existing_front_to_guid(cfg["scope_tag"]),
-            manifest.get("front_aliases", {}), _existing_guid_to_fields(cfg["scope_tag"]),
-            manifest.get("note_protected_fields", {}))
+        preview_args = (_existing_front_to_guid(cfg["scope_tag"]),
+                        manifest.get("front_aliases", {}),
+                        _existing_guid_to_fields(cfg["scope_tag"]),
+                        manifest.get("note_protected_fields", {}))
+        preview, downloaded, cancelled = _preview_content_changes(fetch, todo, *preview_args)
         if cancelled:
             _info(NOTHING_CHANGED)
             return
+        while True:
+            failed = [d for d in todo if preview[d["name"]] is None]
+            if not failed:
+                break
+            names = "".join(f"<p>{_text(d['name'].split('::')[-1])}</p>" for d in failed)
+            one = len(failed) == 1
+            retry = _ask(
+                ("This deck could not be previewed:" if one
+                 else "These decks could not be previewed:") + names
+                + ("Its cards" if one else "Their cards")
+                + " cannot be shown for review. Retry the preview, or skip "
+                  + ("it" if one else "them") + " for now. Skipping leaves "
+                  + ("it" if one else "them") + " for the next Update my decks.",
+                yes_label="Retry preview", no_label="Skip for now", default_yes=True)
+            if not retry:
+                failed_names = {d["name"] for d in failed}
+                todo = [d for d in todo if d["name"] not in failed_names]
+                for name in failed_names:
+                    preview.pop(name, None)
+                    downloaded.pop(name, None)
+                if not todo and not fresh and not moves and not stranded:
+                    _refresh_reconcile_action_label(0)
+                    _info("Nothing was updated. "
+                          + ("This deck is" if one else "These decks are")
+                          + " still waiting and will be offered again next time:" + names)
+                    return
+                break
+            retried, fetched_again, cancelled = _preview_content_changes(
+                fetch, failed, *preview_args)
+            if cancelled:
+                _info(NOTHING_CHANGED)
+                return
+            preview.update(retried)
+            downloaded.update(fetched_again)
 
     # Every card this update would add, in deck order then .apkg order. `new_index` maps
     # each one's GUID back to where it came from, because the review dialog only knows
@@ -2040,10 +2073,6 @@ def update_decks():
     new_cards, incoming_hashes = [], {}
     for d in todo:
         pc = preview.get(d["name"])
-        if not pc:
-            # This deck couldn't be previewed; its row already says so, and the apply
-            # step fetches it again, so it is only missing from this list, not the run.
-            continue
         for _, fields, guid in pc[2]:
             new_cards.append((d["name"], note_display_label(fields), guid))
             incoming_hashes[guid] = note_fields_hash(fields)
@@ -2146,12 +2175,7 @@ def update_decks():
         actually has.
         """
         short = d["name"].split("::")[-1]
-        pc = preview.get(d["name"])
-        if pc is None:
-            # Say what happens anyway: the download failed here, but the deck is still
-            # in this run and Update still tries to import it, so a bare "couldn't
-            # preview" reads as "this deck is being skipped", which it isn't.
-            return ("deck", _text(short), "couldn't preview · still imports")
+        pc = preview[d["name"]]
         changing = len(pc[3]) - suppressed_changed.get(d["name"], 0)
         held_back = waiting_changed.get(d["name"], 0)
         waits = f", {held_back} waiting at Later" if held_back else ""
