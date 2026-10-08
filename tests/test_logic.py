@@ -9,6 +9,7 @@ import json
 import os
 import sqlite3
 import sys
+import warnings
 import zipfile
 
 import pytest
@@ -1712,6 +1713,115 @@ def test_write_personalized_preserves_media_and_manifest(tmp_path):
         assert z.read("0") == b"\xff\xd8\xff-mock-jpeg-bytes"
     # and the GUID rewrite still took effect
     assert logic.apkg_notes(out)[0][2] == "new-guid"
+
+
+def test_write_personalized_stores_media_in_source_order(tmp_path, monkeypatch):
+    src, out = str(tmp_path / "src.apkg"), str(tmp_path / "out.apkg")
+    _make_mock_apkg(src, [(1, "g1", "Front 1"), (2, "g2", "Front 2")])
+    with zipfile.ZipFile(src) as z:
+        collection = z.read("collection.anki2")
+    members = [
+        ("media", b'{"0": "a.jpg", "1": "b.png", "2": "c.jpg"}'),
+        ("2", b"\xff\xd8\xff" + b"jpeg" * 300000),
+        ("collection.anki2", collection),
+        ("0", b"\xff\xd8\xff-other-jpeg"),
+        ("extras/", b""),
+        ("extras/info.json", b'{"version": 1}'),
+        ("1", b"\x89PNG\r\n\x1a\n-image"),
+    ]
+    with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in members:
+            z.writestr(name, data)
+
+    read = zipfile.ZipExtFile.read
+
+    def bounded_read(self, n=-1):
+        if self.name != "collection.anki2":
+            assert n >= 0, "media must be read in chunks"
+        return read(self, n)
+
+    def prepare(con):
+        assert con.execute("select id, guid from notes").fetchall() == [(1, "new-guid")]
+        con.execute("update notes set mid=123 where id=1")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(zipfile.ZipExtFile, "read", bounded_read)
+        logic.write_personalized(src, {1: "new-guid"}, out, drop={2},
+                                 prepare_notetypes=prepare)
+
+    with zipfile.ZipFile(out) as z:
+        assert z.namelist() == [name for name, _ in members]
+        for info, (name, data) in zip(z.infolist(), members):
+            if name == "collection.anki2":
+                assert info.compress_type == zipfile.ZIP_DEFLATED
+                z.extract(info, tmp_path / "check")
+            else:
+                assert z.read(info) == data
+                assert info.compress_type == zipfile.ZIP_STORED
+    assert logic.apkg_notes(out) == [(1, ["Front 1", "back text"], "new-guid")]
+    with sqlite3.connect(str(tmp_path / "check" / "collection.anki2")) as con:
+        assert con.execute("select mid from notes").fetchall() == [(123,)]
+
+
+def test_write_personalized_extracts_only_the_collection(tmp_path):
+    src, out = str(tmp_path / "src.apkg"), str(tmp_path / "out.apkg")
+    _make_mock_apkg(src, [(1, "g1", "Front 1")])
+    with zipfile.ZipFile(src, "a") as z:
+        z.writestr("media", b'{"0": "a.jpg"}')
+        z.writestr("0", b"jpeg-image")
+        z.writestr("extras/info.json", b"{}")
+
+    def prepare(con):
+        db = con.execute("pragma database_list").fetchone()[2]
+        assert os.listdir(os.path.dirname(db)) == ["collection.anki2"]
+
+    logic.write_personalized(src, {}, out, prepare_notetypes=prepare)
+
+
+def test_write_personalized_copies_fallback_collection_unchanged(tmp_path):
+    src = _make_dual_legacy_apkg(
+        tmp_path / "src.apkg",
+        [(1, "operative-guid", "Operative front"), (3, "drop-guid", "Drop front")],
+        [(2, "fallback-guid", "Fallback front")],
+    )
+    out = str(tmp_path / "out.apkg")
+    with zipfile.ZipFile(src) as z:
+        fallback = z.read("collection.anki2")
+
+    def prepare(con):
+        db = con.execute("pragma database_list").fetchone()[2]
+        assert set(os.listdir(os.path.dirname(db))) <= {
+            "collection.anki21", "collection.anki21-journal"}
+
+    logic.write_personalized(src, {1: "rewritten-guid", 2: "unused-guid"}, out,
+                             drop={2, 3}, prepare_notetypes=prepare)
+
+    assert logic.apkg_notes(out) == [
+        (1, ["Operative front", "back text"], "rewritten-guid")]
+    with zipfile.ZipFile(out) as z:
+        assert z.namelist() == ["collection.anki21", "collection.anki2"]
+        assert z.read("collection.anki2") == fallback
+        assert z.getinfo("collection.anki2").compress_type == zipfile.ZIP_STORED
+        assert z.getinfo("collection.anki21").compress_type == zipfile.ZIP_DEFLATED
+
+
+def test_write_personalized_preserves_duplicate_media_members(tmp_path):
+    src, out = str(tmp_path / "src.apkg"), str(tmp_path / "out.apkg")
+    _make_mock_apkg(src, [(1, "g1", "Front 1")])
+    with zipfile.ZipFile(src, "a") as z:
+        z.writestr("0", b"first-image")
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            z.writestr("0", b"second-image")
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Duplicate name")
+        logic.write_personalized(src, {}, out)
+
+    with zipfile.ZipFile(out) as z:
+        assert z.namelist() == ["collection.anki2", "0", "0"]
+        assert [z.read(info) for info in z.infolist()[1:]] == [
+            b"first-image", b"second-image"]
+        assert all(info.compress_type == zipfile.ZIP_STORED for info in z.infolist()[1:])
 
 
 def test_apkg_notes_splits_every_field_and_tolerates_no_mid_column(tmp_path):

@@ -1611,9 +1611,9 @@ def write_personalized(src, remap, out, drop=frozenset(), prepare_notetypes=None
             names = z.namelist()
             if "collection.anki21b" in names:
                 raise RuntimeError(NEWER_APKG_ERROR)
-            z.extractall(d)
-        member = ("collection.anki21" if "collection.anki21" in names
-                  else "collection.anki2")
+            member = ("collection.anki21" if "collection.anki21" in names
+                      else "collection.anki2")
+            z.extract(member, d)
         with contextlib.closing(sqlite3.connect(os.path.join(d, member))) as con:
             drop = set(drop)
             if drop:
@@ -1631,11 +1631,16 @@ def write_personalized(src, remap, out, drop=frozenset(), prepare_notetypes=None
             if prepare_notetypes is not None:
                 prepare_notetypes(con)
             con.commit()
-        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-            for root, _, files in os.walk(d):
-                for f in files:
-                    full = os.path.join(root, f)
-                    z.write(full, os.path.relpath(full, d))
+        with zipfile.ZipFile(src) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as zout:
+            for info in zin.infolist():
+                if info.filename == member:
+                    zout.write(os.path.join(d, member), member,
+                               compress_type=zipfile.ZIP_DEFLATED)
+                else:
+                    copy = zipfile.ZipInfo(info.filename, info.date_time)
+                    copy.file_size = info.file_size
+                    with zin.open(info) as fin, zout.open(copy, "w") as fout:
+                        shutil.copyfileobj(fin, fout, 1024 * 1024)
 
 
 def remap_cards(src, existing_fronts, aliases):
