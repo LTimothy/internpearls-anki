@@ -2302,7 +2302,7 @@ def _actions_for(widget):
     if isinstance(widget, QDialog):
         return ["key", "close"]
     name = _class_name(widget)
-    if name == "QPushButton":
+    if any(base.__name__ == "QPushButton" for base in type(widget).__mro__):
         return ["activate"]
     if name in ("QCheckBox", "QRadioButton"):
         return ["toggle"]

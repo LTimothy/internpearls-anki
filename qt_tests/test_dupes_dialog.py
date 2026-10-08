@@ -673,6 +673,7 @@ def test_restored_verdicts_compare_the_text_sent_to_the_judge(monkeypatch):
 
 
 def test_judge_close_cancels_worker_stops_timer_and_cleans_scratch(monkeypatch):
+    from aqt.qt import QPushButton
     from internpearls import ai_cli
     mock, _ = harness.bootstrap()
     harness.app()
@@ -694,7 +695,7 @@ def test_judge_close_cancels_worker_stops_timer_and_cleans_scratch(monkeypatch):
     monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)
     dlg._judge_with_ai()
     assert entered.wait(2)
-    close_button = next(button for button in dlg.findChildren(type(dlg.judge_btn))
+    close_button = next(button for button in dlg.findChildren(QPushButton)
                         if button.text() == "Close")
     close_button.click()
     release.set()

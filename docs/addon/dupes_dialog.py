@@ -206,19 +206,10 @@ def _breakable(text):
 
 
 def _link(label, on_click=None, tooltip_text=None, align_left=False):
-    """`ui.link_button` that Enter never activates, Tab reaches, and that shows a
-    ring while focused and a muted colour while disabled: the plain link's own
-    stylesheet pins one colour, so focus and disabled both looked like rest."""
+    """A shared link with compact sizing for the duplicate screen's rows."""
     btn = link_button(label, on_click, tooltip_text, align_left)
-    c = colors()
-    align = " text-align: left;" if align_left else ""
-    btn.setStyleSheet(
-        f"QPushButton {{ color: {c['accent']}; font-size: 12px;{align}"
-        " border: 1px solid transparent; border-radius: 3px; }"
-        f"QPushButton:focus {{ border: 1px solid {c['accent']}; }}"
-        f"QPushButton:disabled {{ color: {c['muted']}; }}")
-    btn.setAutoDefault(False)
-    btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    btn.setStyleSheet(btn.styleSheet() +
+                     "QPushButton { border: 1px solid transparent; border-radius: 3px; }")
     return btn
 
 

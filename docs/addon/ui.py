@@ -666,12 +666,33 @@ def hint_label(text, top_margin=0, cls=QLabel):
     return lbl
 
 
+class _FocusButton(QPushButton):
+    """An inset focus ring that leaves the button's sizing and borders alone."""
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self.hasFocus() or not self.isEnabled():
+            return
+        from aqt.qt import QColor, QPainter, QPen, QRectF
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(colors()['accent']), 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(2, 2, -2, -2), 3, 3)
+        painter.end()
+
+
 def link_button(label, on_click=None, tooltip_text=None, align_left=False):
     """A flat, accent-colored button that reads as a link rather than a push button."""
-    btn = QPushButton(label)
+    btn = _FocusButton(label)
     btn.setFlat(True)
+    btn.setAutoDefault(False)
+    btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    c = colors()
     align = " text-align: left;" if align_left else ""
-    btn.setStyleSheet(f"color: {colors()['accent']}; font-size: 12px;{align}")
+    btn.setStyleSheet(
+        f"QPushButton {{ color: {c['accent']}; font-size: 12px;{align} }}"
+        f"QPushButton:disabled {{ color: {c['muted']}; }}")
     if tooltip_text:
         btn.setToolTip(tooltip_text)
     if on_click:

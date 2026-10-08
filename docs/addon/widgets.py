@@ -18,7 +18,7 @@ from aqt.qt import (QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton, Q
 
 from .palette import colors
 from .platform import new_work_request, platform, platform_owner_id
-from .ui import hint_label, section_label
+from .ui import _FocusButton, hint_label, section_label
 
 # The chip labels. Their colours come from the palette, so only the wording lives here.
 # "changed" reads UPDATED rather than CHANGED to match the wording review.py's rows
@@ -439,12 +439,14 @@ def decision_cell(options, state, on_change, card_label=""):
 
     def _style(value, checked, index):
         base = f"{_shape(index)} padding: 2px 9px; font-size: 11px;"
+        disabled = (f"QPushButton:disabled {{ color: {c['muted']};"
+                    " background: transparent; }")
         if not checked:
             return (f"QPushButton {{ {base}"
-                    f" color: {c['dim']}; background: transparent; }}")
+                    f" color: {c['dim']}; background: transparent; }}" + disabled)
         role = _SELECTED_ROLE.get(value, "retired")
         return (f"QPushButton {{ {base} font-weight: 600;"
-                f" color: {c[role + '_fg']}; background: {c[role + '_bg']}; }}")
+                f" color: {c[role + '_fg']}; background: {c[role + '_bg']}; }}" + disabled)
 
     def set_state(value):
         for i, (v, b) in enumerate(cell.buttons.items()):
@@ -454,8 +456,9 @@ def decision_cell(options, state, on_change, card_label=""):
     cell.set_state = set_state
 
     for value, label in options:
-        b = QPushButton(label)
+        b = _FocusButton(label)
         b.setCheckable(True)
+        b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         b.setAccessibleName(f"{label}: {card_label}" if card_label else label)
         b.clicked.connect(lambda _=False, v=value: (set_state(v), on_change(v)))

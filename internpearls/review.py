@@ -617,8 +617,8 @@ def _rewrite_row(detail, name, old, new, card_label):
     # without border and padding rules a flat button still carries the platform's
     # native button metrics (32px on macOS), which stretched every receipt line to
     # double its text and read as a band of dead space between the rows.
-    link.setStyleSheet(f"color: {colors()['accent']}; font-size: 12px;"
-                       " border: none; padding: 0;")
+    link.setStyleSheet(link.styleSheet() +
+                      "QPushButton { border: none; padding: 0; }")
     link.setCursor(Qt.CursorShape.PointingHandCursor)
     hlay.addWidget(link, 0)
     hlay.addStretch()

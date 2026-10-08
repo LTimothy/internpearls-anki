@@ -300,7 +300,7 @@ Everything that touches Anki is split by concern:
 - `updates.py`: self-update. `background.py`: the startup update check and the auto-sync poll, dispatched through `platform.py`.
 - `dialogs.py`: Manage decks, Settings, Night mode dimming, About, source configuration.
 - `review.py`: card rows and the feedback digest for the update and summary screens (kept out of `dialogs.py`, which imports `sync.py`). Update rows create a note editor only for an existing note or when the reader opens it; a decision caption can appear without an editor.
-- `widgets.py`: chips, headings, rows and `StreamingList`, shared by every list screen. Idle prefetch builds at most 100 rows ahead of the rows shown and resumes as more batches are revealed. Item replacement and removal retain the other row widgets and invalidate pending prefetch deliveries.
+- `widgets.py`: chips, headings, rows and `StreamingList`, shared by every list screen. Links and row decision buttons show an inset accent ring for keyboard focus and muted text when disabled. Disabled decisions have no selected fill. Tab reaches these buttons and Space activates them; Enter never activates a link. Idle prefetch builds at most 100 rows ahead of the rows shown and resumes as more batches are revealed. Item replacement and removal retain the other row widgets and invalidate pending prefetch deliveries.
 - `ai_cli.py`, `ai_setup.py`, `ai_dialog.py`, `dupes_dialog.py`, `nightmode.py`: the Experimental features.
 - `ai_draft.py`: atomic draft storage, validation and saved image files for the AI wizard. Saved per-card indices stay within the current card list; imported note identities let resume check which notes still exist.
 
