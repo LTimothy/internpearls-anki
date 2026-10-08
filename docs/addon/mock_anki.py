@@ -565,6 +565,16 @@ class MockCollection:
         self.mod = int(time.time() * 1000)
 
     # === undo: add_custom_undo_entry / merge_undo_entries / undo ===
+    def close(self):
+        self.db = None
+        self._undo_entries.clear()
+        self._undo_counter = 0
+
+    def reopen(self):
+        if self.db is not None:
+            raise Exception("reopen() called with open db")
+        self.db = _Db(self)
+
     def add_custom_undo_entry(self, name):
         import copy
         self._undo_counter += 1
@@ -575,8 +585,10 @@ class MockCollection:
         return self._undo_counter
 
     def merge_undo_entries(self, target):
-        index = next(i for i, e in enumerate(self._undo_entries)
-                     if e["counter"] == target)
+        index = next((i for i, e in enumerate(self._undo_entries)
+                      if e["counter"] == target), None)
+        if index is None:
+            raise RuntimeError("target undo op not found")
         entry = self._undo_entries[index]
         for e in self._undo_entries[index + 1:]:
             entry["notes"].extend(e["notes"])
@@ -892,8 +904,12 @@ class MockCollection:
         self.import_options.append(options)
         if options["merge_notetypes"]:
             self.scm += 1
-        rows, models_by_mid, deck_by_nid = _read_apkg(request.package_path)
-        scheduling = _read_apkg_scheduling(request.package_path)
+        try:
+            rows, models_by_mid, deck_by_nid = _read_apkg(request.package_path)
+            scheduling = _read_apkg_scheduling(request.package_path)
+        except Exception:
+            self._undo_entries.clear()
+            raise
         self.add_custom_undo_entry("Import")
         self._register_models(models_by_mid)
         by_guid = {n.guid: n for n in self._notes.values()}

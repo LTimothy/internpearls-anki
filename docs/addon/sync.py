@@ -17,6 +17,7 @@ import os
 import re
 import stat
 import tempfile
+import weakref
 
 from aqt import mw
 from aqt.utils import getFile
@@ -665,11 +666,10 @@ def _load_shipped():
 
 UPDATE_UNDO_NAME = "Intern Pearls deck update"
 RESTORE_UNDO_NAME = "Intern Pearls deck restore"
-# Undo step id -> (deck name, installed version before the step, {guid: prior baseline},
-# version the step applied). Anki's undo stack lives only as long as the open
-# collection, so memory is enough.
+# (collection ref, database ref, counter) -> (deck name, prior installed version,
+# {guid: prior baseline}, applied version).
 _update_undo_steps = {}
-# Undo step id -> ({deck: (present, prior version)}, {guid: (present, prior baseline)}).
+# Same key -> ({deck: (present, prior version)}, {guid: (present, prior baseline)}).
 _restore_undo_steps = {}
 # (collection key, deck, version) updates the learner undid this session: auto-sync
 # leaves them for a manual Update my decks rather than applying them again unasked.
@@ -677,11 +677,31 @@ _restore_undo_steps = {}
 undone_updates = set()
 
 
+def clear_undo_steps():
+    _update_undo_steps.clear()
+    _restore_undo_steps.clear()
+
+
+def _undo_key(counter):
+    col = mw.col
+    db = getattr(col, "db", None)
+    if col is None or db is None:
+        clear_undo_steps()
+        return None
+    # Reopening the same Collection replaces its database and restarts its counters.
+    for steps in (_update_undo_steps, _restore_undo_steps):
+        for key in list(steps):
+            if key[0]() is not col or key[1]() is not db:
+                steps.pop(key)
+    return weakref.ref(col), weakref.ref(db), counter
+
+
 def restore_pending_after_undo(changes):
     """Put installed versions and shipped baselines back after an update or restore."""
     try:
+        key = _undo_key(getattr(changes, "counter", None))
         if getattr(changes, "operation", None) == RESTORE_UNDO_NAME:
-            step = _restore_undo_steps.pop(getattr(changes, "counter", None), None)
+            step = _restore_undo_steps.pop(key, None)
             if step is None:
                 return
             for path, prior in zip((INSTALLED, SHIPPED), step):
@@ -696,7 +716,7 @@ def restore_pending_after_undo(changes):
             return
         if getattr(changes, "operation", None) != UPDATE_UNDO_NAME:
             return
-        step = _update_undo_steps.pop(getattr(changes, "counter", None), None)
+        step = _update_undo_steps.pop(key, None)
         if step is None:
             return
         name, prior_version, prior_shipped, undone_version = step
@@ -904,7 +924,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # cloze markup has actually landed on the note.
             seed_converted_siblings(changed_nids)
             mw.col.merge_undo_entries(conversion_undo)
-            _update_undo_steps[conversion_undo] = (
+            _update_undo_steps[_undo_key(conversion_undo)] = (
                 d["name"], prior_installed.get(d["name"]),
                 {guid: baseline.get(guid) for guid in deck_shipped}, d.get("version"))
             conversion_undo = None

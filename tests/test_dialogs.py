@@ -150,7 +150,7 @@ def test_addon_startup_defers_menu_only_modules():
         assert gui_hooks.card_will_show.count() == 1
         assert gui_hooks.webview_will_set_content.count() == 1
         assert gui_hooks.state_did_undo.count() == 1
-        assert gui_hooks.profile_will_close.count() == 1
+        assert gui_hooks.profile_will_close.count() == 2
         assert gui_hooks.main_window_did_init.count() == 2
         assert gui_hooks.profile_did_open.count() == 1
     """)

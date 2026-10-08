@@ -1489,7 +1489,7 @@ def import_deck():
     everything by GUID directly: no front-text personalization needed the way Sync and
     Import single deck need it for a spec-authored deck from someone else's collection.
     """
-    from .sync import RESTORE_UNDO_NAME, _restore_undo_steps
+    from .sync import RESTORE_UNDO_NAME, _restore_undo_steps, _undo_key
     src = getFile(mw, "Choose an Intern Pearls .apkg", cb=None,
                  filter="*.apkg", dir=_deck_backup_folder())
     if not src:
@@ -1526,7 +1526,13 @@ def import_deck():
             undo = mw.col.add_custom_undo_entry(RESTORE_UNDO_NAME)
             try:
                 result = _import_apkg(checked, with_scheduling=True)
-            finally:
+            except Exception:
+                try:
+                    mw.col.merge_undo_entries(undo)
+                except Exception:
+                    pass
+                raise
+            else:
                 mw.col.merge_undo_entries(undo)
         except Exception as e:
             _warn(f"Import failed: {html.escape(str(e), quote=False)}")
@@ -1560,17 +1566,18 @@ def import_deck():
         shipped = _load_json(SHIPPED, {})
         shipped = shipped if isinstance(shipped, dict) else {}
         prior_names = names or set(installed) | set(deck_names)
-        _restore_undo_steps[undo] = (
+        key = _undo_key(undo)
+        _restore_undo_steps[key] = (
             {name: (name in installed, installed.get(name)) for name in prior_names},
             {guid: (guid in shipped, shipped.get(guid)) for guid in guids})
     try:
         invalidate_installed(names or None)
     except Exception:
         if guids:
-            _restore_undo_steps[undo] = (
+            _restore_undo_steps[key] = (
                 {name: (name in installed, installed.get(name))
                  for name in set(installed) | set(deck_names)},
-                _restore_undo_steps[undo][1])
+                _restore_undo_steps[key][1])
         invalidate_installed()
     _reset_baseline(src, log)
     mw.reset()

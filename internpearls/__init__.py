@@ -34,7 +34,7 @@ from aqt.qt import QAction, QMenu
 from .background import _schedule_background_checks
 from .nightmode import dim_images_in_night_mode, dim_webviews_in_night_mode
 from .review import flush_update_notes
-from .sync import register_reconcile_action, restore_pending_after_undo
+from .sync import clear_undo_steps, register_reconcile_action, restore_pending_after_undo
 from .ui import _safe
 from .updates import register_update_action
 
@@ -120,5 +120,6 @@ gui_hooks.card_will_show.append(dim_images_in_night_mode)
 gui_hooks.webview_will_set_content.append(dim_webviews_in_night_mode)
 gui_hooks.state_did_undo.append(restore_pending_after_undo)
 gui_hooks.profile_will_close.append(flush_update_notes)
+gui_hooks.profile_will_close.append(clear_undo_steps)
 gui_hooks.main_window_did_init.append(_menu)
 gui_hooks.main_window_did_init.append(_schedule_background_checks)

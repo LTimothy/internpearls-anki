@@ -848,3 +848,97 @@ def test_a_package_import_needs_merging_into_its_custom_undo_step(anki, tmp_path
 
     assert undone.operation != "Custom restore"
     assert anki.col.note_by_guid("g1")["Front"] == "Current"
+
+
+def _deck_file_undo(anki, action):
+    from internpearls import collection, config, sync
+    note = anki.col.add_note("g1", _fields("Backup"), TAGS.split(), deck=DECK)
+    src = collection._backup_deck(DECK, "manual")
+    note["Front"] = "Current"
+    collection._save_json(collection.INSTALLED, {DECK: "v2"})
+    collection._save_json(collection.SHIPPED, {"g1": {"Notes": "before"}})
+    if action == "restore":
+        anki.gui.file_picks.append(src)
+        anki.gui.answers.append(True)
+        collection.import_deck()
+        assert sync._restore_undo_steps
+    else:
+        deck = {"name": DECK, "version": "v3"}
+        outcome = sync._run_sync(config._cfg(), {"decks": [deck]}, lambda d: src, [deck])
+        assert not any("✗" in line for line in outcome[0]), outcome
+        assert sync._update_undo_steps
+    assert not anki.gui.warnings
+    return src, anki.col._undo_entries[-1]["counter"]
+
+
+@pytest.mark.parametrize("action", ["restore", "update"])
+@pytest.mark.parametrize("reopen", ["same object", "new object", "closed"])
+def test_file_undo_belongs_to_the_open_collection(anki, monkeypatch, action, reopen):
+    import types
+    from internpearls import collection, sync
+    src, old_counter = _deck_file_undo(anki, action)
+    old_col = anki.col
+    old_col.close()
+    if reopen == "same object":
+        old_col.reopen()
+    elif reopen == "new object":
+        anki.mw.col = mock_anki.MockCollection()
+    else:
+        anki.mw.col = None
+    operation = sync.RESTORE_UNDO_NAME if action == "restore" else sync.UPDATE_UNDO_NAME
+    if reopen != "closed":
+        if action == "restore":
+            monkeypatch.setattr(collection, "_import_apkg", lambda *a, **kw:
+                                types.SimpleNamespace(log=types.SimpleNamespace(new=[], updated=[])))
+            anki.gui.file_picks.append(src)
+            anki.gui.answers.append(True)
+            collection.import_deck()
+            assert not anki.gui.warnings
+        else:
+            counter = anki.col.add_custom_undo_entry(operation)
+            anki.col.merge_undo_entries(counter)
+        undone = anki.col.undo()
+        assert undone.counter == old_counter
+    else:
+        undone = types.SimpleNamespace(operation=operation, counter=old_counter)
+    installed = {DECK: "v9", "Other": "v7"}
+    shipped = {"g1": {"Notes": "current"}, "other": {"Notes": "untouched"}}
+    collection._save_json(collection.INSTALLED, installed)
+    collection._save_json(collection.SHIPPED, shipped)
+
+    sync.restore_pending_after_undo(undone)
+
+    assert collection._load_json(collection.INSTALLED, {}) == installed
+    assert collection._load_json(collection.SHIPPED, {}) == shipped
+    assert not sync.undone_updates
+    assert not sync._restore_undo_steps
+    assert not sync._update_undo_steps
+
+
+def test_profile_close_clears_both_file_undo_ledgers(anki):
+    from internpearls import sync
+    mock_anki.load_addon_init()
+    _deck_file_undo(anki, "update")
+    _deck_file_undo(anki, "restore")
+    assert sync._update_undo_steps and sync._restore_undo_steps
+
+    sys.modules["aqt"].gui_hooks.profile_will_close()
+
+    assert not sync._update_undo_steps
+    assert not sync._restore_undo_steps
+
+
+def test_failed_restore_reports_the_database_error(anki, tmp_path):
+    import zipfile
+    from internpearls import collection
+    src = tmp_path / "broken.apkg"
+    with zipfile.ZipFile(src, "w") as archive:
+        archive.writestr("collection.anki2", b"not a database")
+        archive.writestr("media", "{}")
+    anki.gui.file_picks.append(str(src))
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert anki.gui.warnings == ["Import failed: file is not a database"]
+    assert not anki.gui.infos
