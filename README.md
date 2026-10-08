@@ -324,6 +324,8 @@ No Anki install is needed. `tests/` runs against `tests/mock_anki.py`, stub `aqt
 
 `qt_tests/` renders the real dialogs with real PyQt6 and asserts on what they paint, because Qt silently drops a stylesheet rule it dislikes. It runs as a separate command, since real and mock Qt can't share a process; see `CONTRIBUTING.md`.
 
+Both suites redirect persistent add-on state into temporary folders and fail the session if files under `internpearls/user_files/` are added, changed or removed.
+
 The [live demo](https://ltimothy.github.io/internpearls-anki/) is generated from the code: `./build.sh` mirrors `internpearls/` into `docs/addon/` (byte equality enforced by `tests/test_demo_parity.py`), and the page runs those modules under Pyodide against the example deck's real files. `browser_tests/` checks the demo against a generated contract (`python3 tools/demo_npm.py run test:demo-contract`).
 
 ### Seeing a dialog actually render

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -1962,6 +1963,8 @@ def test_demo_boots_without_ssl_or_threads(tmp_path):
         "scope_tag": tag, "export_deck": "Example Decks",
     }), encoding="utf8")
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    shutil.copytree(os.path.join(root, "internpearls"), tmp_path / "internpearls",
+                    ignore=shutil.ignore_patterns("user_files", "__pycache__"))
     environment = dict(os.environ)
     environment["DEMO_SOURCE"] = str(source)
     environment["PYTHONPATH"] = os.pathsep.join(
@@ -1978,6 +1981,10 @@ menu = json.loads(harness.handle_worker_message(
     json.dumps({"type": "menu", "payload": {}})))
 assert menu["menu"], menu
 """],
-        cwd=root, env=environment, capture_output=True, text=True)
+        cwd=tmp_path, env=environment, capture_output=True, text=True)
 
     assert probe.returncode == 0, probe.stdout + probe.stderr
+
+    user_files = tmp_path / "internpearls" / "user_files"
+    assert (user_files / "installed.json").is_file()
+    assert (user_files / "shipped_fields.json").is_file()

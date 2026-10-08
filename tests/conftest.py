@@ -8,6 +8,7 @@ without ever executing __init__.py.
 import os
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -31,15 +32,41 @@ import internpearls.widgets  # noqa: E402
 
 internpearls.widgets.chip_column_width()
 
+_USER_FILES_DIR = Path(_pkg.__path__[0]) / "user_files"
 
-@pytest.fixture
+
+def _user_files_snapshot():
+    return {str(path.relative_to(_USER_FILES_DIR)): path.stat().st_mtime_ns
+            for path in _USER_FILES_DIR.rglob("*") if path.is_file()}
+
+
+def pytest_sessionstart(session):
+    session._ip_user_files_start = _user_files_snapshot()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    before = session._ip_user_files_start
+    after = _user_files_snapshot()
+    if after != before:
+        changed = sorted(name for name in before.keys() | after.keys()
+                         if before.get(name) != after.get(name))
+        reporter = session.config.pluginmanager.getplugin("terminalreporter")
+        if reporter is not None:
+            reporter.write_sep("=", "internpearls/user_files changed: " + ", ".join(changed))
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+@pytest.fixture(autouse=True)
 def anki(tmp_path, monkeypatch):
     """A fresh mock-Anki world per test: empty collection, empty dialog record,
     and all persistent add-on state (installed.json, deck backups) redirected
     into tmp_path so tests never touch the repo's real user_files/."""
+    import internpearls.ai_dialog as ai_dialog
     import internpearls.background as background
     import internpearls.collection as collection
     import internpearls.config as config
+    import internpearls.dialogs as dialogs
     import internpearls.review as review
     import internpearls.sync as sync
     import internpearls.updates as updates
@@ -61,25 +88,29 @@ def anki(tmp_path, monkeypatch):
     mock_anki.reset_run()
 
     installed = str(tmp_path / "installed.json")
-    for mod in (config, sync, background, collection):
+    for mod in (config, sync, background, collection, dialogs):
         monkeypatch.setattr(mod, "INSTALLED", installed)
     # Each of these modules does `from .config import STATE` (a direct name import), so
     # patching config.STATE alone doesn't reach them — every module holding its own
     # bound copy of the name needs patching individually, same as INSTALLED above.
     state = str(tmp_path / "state.json")
-    for mod in (config, background, updates):
+    for mod in (config, background, updates, dialogs):
         monkeypatch.setattr(mod, "STATE", state)
     user_files = tmp_path / "user_files"
     user_files.mkdir(exist_ok=True)
-    monkeypatch.setattr(collection, "_USER_FILES", str(user_files))
+    for mod in (config, collection):
+        monkeypatch.setattr(mod, "_USER_FILES", str(user_files))
     # FEEDBACK (review.py), SHIPPED (sync.py), and DECLINED (config.py) are real on-disk
     # paths too, and were not test-isolated like INSTALLED/STATE above, until now. A test
     # that left a card flagged, a field baseline, or a declined entry behind used to leak
     # into whatever test happened to run after it in the same session, since all live fixed
     # under the add-on's own user_files/ rather than under tmp_path.
-    monkeypatch.setattr(review, "FEEDBACK", str(user_files / "card_feedback.json"))
-    monkeypatch.setattr(sync, "SHIPPED", str(user_files / "shipped_fields.json"))
-    monkeypatch.setattr(collection, "SHIPPED", str(user_files / "shipped_fields.json"))
+    for mod in (config, review):
+        monkeypatch.setattr(mod, "FEEDBACK", str(user_files / "card_feedback.json"))
+    for mod in (config, sync, collection):
+        monkeypatch.setattr(mod, "SHIPPED", str(user_files / "shipped_fields.json"))
+    for mod in (config, ai_dialog):
+        monkeypatch.setattr(mod, "AI_LAST_RUN_LOG", str(user_files / "ai_last_run.log"))
     monkeypatch.setattr(config, "DECLINED", str(user_files / "declined.json"))
     monkeypatch.setattr(config, "DECK_SKILL", str(user_files / "deck_skill.json"))
     monkeypatch.setattr(config, "AI_USAGE", str(user_files / "ai_usage.json"))
