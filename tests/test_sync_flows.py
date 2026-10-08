@@ -5099,6 +5099,167 @@ def test_update_skip_keeps_failed_deck_pending_and_updates_other_decks(
     assert "Front one" in "\n".join(_label_texts(trees[0]))
 
 
+def test_update_skip_defers_ledger_retirement_and_its_backup(
+        anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    outside = "Other Root::Kept"
+    _existing_card(anki, "old1", "Skipped retirement", deck=outside)
+    _existing_card(anki, "new1", "Skipped replacement")
+    _existing_card(anki, "old2", "Active retirement", deck=NEW_DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("new1", _fields("Skipped replacement"), TAGS)], None),
+        NEW_DECK: ("v1", [("new2", _fields("Active replacement"), TAGS)], None)},
+        retired={
+            DECK: {"old1": {"identity": "Skipped retirement", "reason": "split",
+                            "superseded_by": ["new1"]}},
+            NEW_DECK: {"old2": {"identity": "Active retirement", "reason": "split",
+                                "superseded_by": ["new2"]}}}))
+    anki.mw._config["export_deck"] = NEW_DECK
+    failures = {DECK: 99}
+    _fail_preview_fetches(sync, monkeypatch, failures)
+
+    _update(anki, ask=lambda _text: False)
+
+    old1 = anki.col.note_by_guid("old1")
+    assert RETIRED_TAG not in old1.tags
+    assert anki.col.get_card(old1.card_ids()[0]).queue == 0
+    assert anki.col.decks.name(anki.col.get_card(old1.card_ids()[0]).did) == outside
+    assert RETIRED_TAG in anki.col.note_by_guid("old2").tags
+    assert _backed_up_decks(anki) == [NEW_DECK]
+    failures[DECK] = 0
+    trees = _update(anki, accept=False)
+    assert "Skipped retirement" in "\n".join(_label_texts(trees[0]))
+    tree = _reconcile_tree(anki, accept=False)
+    assert "Skipped retirement" in "\n".join(_label_texts(tree))
+    _reconcile_tree(anki, accept=True)
+    assert RETIRED_TAG in anki.col.note_by_guid("old1").tags
+
+
+@pytest.mark.parametrize("suffix", ["", "::Subdeck"])
+def test_update_skip_defers_moves_to_the_failed_deck(
+        anki, tmp_path, monkeypatch, suffix):
+    from internpearls import sync
+    outside = "Other Root::Original"
+    destination = DECK + suffix
+    _existing_card(anki, "moving", "Skipped move", deck=outside)
+    _existing_card(anki, "active", "Active card", deck=NEW_DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("new1", _fields("Skipped content"), TAGS)], None),
+        NEW_DECK: ("v1", [("active", _fields("Active card"), TAGS)], None)},
+        deck_moves={"moving": {"from": outside, "to": destination}}))
+    anki.mw._config["export_deck"] = NEW_DECK
+    failures = {DECK: 99}
+    _fail_preview_fetches(sync, monkeypatch, failures)
+
+    _update(anki, ask=lambda _text: False)
+
+    card = anki.col.get_card(anki.col.note_by_guid("moving").card_ids()[0])
+    assert anki.col.decks.name(card.did) == outside
+    assert _backed_up_decks(anki) == [NEW_DECK]
+    failures[DECK] = 0
+    trees = _update(anki, accept=False)
+    assert "Skipped move" in "\n".join(_label_texts(trees[0]))
+    tree = _reconcile_tree(anki, accept=False)
+    assert "Skipped move" in "\n".join(_label_texts(tree))
+    _reconcile_tree(anki, accept=True)
+    card = anki.col.get_card(anki.col.note_by_guid("moving").card_ids()[0])
+    assert anki.col.decks.name(card.did) == destination
+
+
+@pytest.mark.parametrize("suffix", ["", "::Subdeck"])
+def test_update_skip_defers_stranded_pairs_and_their_backups(
+        anki, tmp_path, monkeypatch, suffix):
+    from internpearls import sync
+    old = _existing_card(anki, "old1", "Skipped old wording", deck="Other Root::Kept")
+    _existing_card(anki, "new1", "Skipped new wording", deck=DECK + suffix)
+    _sched(anki, old, reps=4, ivl=12, type=2, queue=2)
+    active = _existing_card(anki, "old2", "Active old wording", deck=NEW_DECK)
+    _existing_card(anki, "new2", "Active new wording", deck=NEW_DECK)
+    _sched(anki, active, reps=6, ivl=20, type=2, queue=2)
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("new1", _fields("Skipped new wording"), TAGS)], None),
+        NEW_DECK: ("v1", [("new2", _fields("Active new wording"), TAGS)], None)})
+    path = os.path.join(folder, "manifest.json")
+    manifest = sync._load_json(path, {})
+    manifest["superseded_fronts"] = {"Skipped old wording": "Skipped new wording",
+                                     "Active old wording": "Active new wording"}
+    sync._save_json(path, manifest)
+    _configure(anki, folder)
+    anki.mw._config["export_deck"] = NEW_DECK
+    failures = {DECK: 99}
+    _fail_preview_fetches(sync, monkeypatch, failures)
+
+    trees = _update(anki, ask=lambda _text: False)
+
+    assert RETIRED_TAG not in anki.col.note_by_guid("old1").tags
+    kept = anki.col.get_card(anki.col.note_by_guid("new1").card_ids()[0])
+    assert kept.reps == 0 and kept.ivl == 0
+    assert RETIRED_TAG in anki.col.note_by_guid("old2").tags
+    current = anki.col.get_card(anki.col.note_by_guid("new2").card_ids()[0])
+    assert current.reps == 6 and current.ivl == 20
+    assert _backed_up_decks(anki) == [NEW_DECK]
+    assert "Skipped old wording" not in "\n".join(_label_texts(trees[0]))
+    failures[DECK] = 0
+    trees = _update(anki, accept=False)
+    assert "Skipped old wording" in "\n".join(_label_texts(trees[0]))
+    tree = _reconcile_tree(anki, accept=False)
+    assert "Skipped old wording" in "\n".join(_label_texts(tree))
+    _reconcile_tree(anki, accept=True)
+    assert RETIRED_TAG in anki.col.note_by_guid("old1").tags
+
+
+def test_update_skip_omits_retired_and_moved_confirmation_rows(
+        anki, tmp_path, monkeypatch):
+    from internpearls import sync, widgets
+    _existing_card(anki, "old1", "Skipped retirement")
+    _existing_card(anki, "moving", "Skipped move", deck=NEW_DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("new1", _fields("Skipped content"), TAGS)], None),
+        NEW_DECK: ("v1", [("active", _fields("Active content"), TAGS)], None)},
+        retired={DECK: {"old1": {"identity": "Skipped retirement", "reason": "split",
+                                 "superseded_by": ["new1"]}}},
+        deck_moves={"moving": {"from": NEW_DECK, "to": DECK}}))
+    _fail_preview_fetches(sync, monkeypatch, {DECK: 99})
+
+    trees = _update(anki, accept=False, ask=lambda _text: False)
+
+    texts = _label_texts(trees[0])
+    assert "Skipped retirement" not in "\n".join(texts)
+    assert "Skipped move" not in "\n".join(texts)
+    assert widgets.CHIPS["retired"] not in texts
+    assert widgets.CHIPS["moved"] not in texts
+    assert "Active content" in "\n".join(texts)
+
+
+@pytest.mark.parametrize("kind", ["retired", "move", "stranded"])
+def test_update_skip_with_only_deferred_reconciliation_does_nothing(
+        anki, tmp_path, monkeypatch, kind):
+    from internpearls import sync
+    _existing_card(anki, "old1", "Old wording")
+    _existing_card(anki, "new1", "New wording")
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("new1", _fields("New wording"), TAGS)], None)},
+        retired={DECK: {"old1": {"identity": "Old wording", "reason": "split",
+                                 "superseded_by": ["new1"]}}} if kind == "retired" else {},
+        deck_moves={"old1": {"from": DECK, "to": DECK + "::Subdeck"}}
+        if kind == "move" else {})
+    if kind == "stranded":
+        path = os.path.join(folder, "manifest.json")
+        manifest = sync._load_json(path, {})
+        manifest["superseded_fronts"] = {"Old wording": "New wording"}
+        sync._save_json(path, manifest)
+    _configure(anki, folder)
+    _fail_preview_fetches(sync, monkeypatch, {DECK: 99})
+
+    trees = _update(anki, ask=lambda _text: False)
+
+    assert not trees and not anki.col.imports and not anki.col.exports
+    assert RETIRED_TAG not in anki.col.note_by_guid("old1").tags
+    assert sync._load_json(sync.INSTALLED, {}) == {}
+    assert any("Nothing was updated" in text and "next time" in text
+               for text in anki.gui.infos)
+
+
 def test_update_skipping_only_pending_deck_names_it_for_next_time(
         anki, tmp_path, monkeypatch):
     from internpearls import sync

@@ -1338,7 +1338,7 @@ def _content_backup_decks(srcs, aliases, scope_tag):
     return decks_holding(guids, _existing_guid_to_nid(scope_tag)) if guids else []
 
 
-def _reworded_backup_decks(superseded, scope_tag):
+def _reworded_backup_decks(superseded, scope_tag, skipped=()):
     """Decks holding either wording of any pair the source has ever reworded.
 
     Wider than the pairs found before a run, and deliberately: update_decks recomputes
@@ -1353,8 +1353,14 @@ def _reworded_backup_decks(superseded, scope_tag):
         return []
     wanted = set(superseded) | set(superseded.values())
     existing_decks = _existing_guid_to_deck(scope_tag)
+    existing_fronts = _existing_front_to_guid(scope_tag)
+    if skipped:
+        for p in find_stranded_pairs(superseded, existing_fronts):
+            if _deck_opted_out(existing_decks.get(p["successor_guid"]), skipped):
+                wanted.discard(p["front"])
+                wanted.discard(p["successor_front"])
     decks = []
-    for front, guid in _existing_front_to_guid(scope_tag).items():
+    for front, guid in existing_fronts.items():
         deck = existing_decks.get(guid) if front in wanted else None
         if deck:
             decks.append(deck)
@@ -2019,6 +2025,7 @@ def update_decks():
         return
 
     preview, downloaded, collisions = {}, {}, []
+    skipped = set()
     if todo:
         preview_args = (_existing_front_to_guid(cfg["scope_tag"]),
                         manifest.get("front_aliases", {}),
@@ -2044,10 +2051,17 @@ def update_decks():
                 yes_label="Retry preview", no_label="Skip for now", default_yes=True)
             if not retry:
                 failed_names = {d["name"] for d in failed}
+                skipped.update(failed_names)
                 todo = [d for d in todo if d["name"] not in failed_names]
                 for name in failed_names:
                     preview.pop(name, None)
                     downloaded.pop(name, None)
+                fresh = [r for r in fresh if not _deck_opted_out(r["deck"], skipped)]
+                moves = [m for m in moves if not _deck_opted_out(m["to"], skipped)]
+                existing_decks = _existing_guid_to_deck(cfg["scope_tag"])
+                stranded = [p for p in stranded
+                            if not _deck_opted_out(
+                                existing_decks.get(p["successor_guid"]), skipped)]
                 if not todo and not fresh and not moves and not stranded:
                     _refresh_reconcile_action_label(0)
                     _info("Nothing was updated. "
@@ -2576,7 +2590,8 @@ def update_decks():
         + _content_backup_decks([v for v in downloaded.values() if _is_local(v)],
                                 aliases, cfg["scope_tag"])
         + _reconcile_backup_decks(fresh, moves, stranded, existing_nids)
-        + _reworded_backup_decks(manifest.get("superseded_fronts", {}), cfg["scope_tag"]),
+        + _reworded_backup_decks(manifest.get("superseded_fronts", {}), cfg["scope_tag"],
+                                 skipped),
         cfg["scope_tag"])
     if not proceed:
         # Same as the retry-cancel above: the registry write already happened, so
@@ -2706,7 +2721,8 @@ def update_decks():
             and not is_generated_guid(p["successor_guid"])
             and tag not in mw.col.get_note(existing_nids[p["guid"]]).tags
             and not _deck_opted_out(existing_decks.get(p["guid"]), cfg["excluded"])
-            and not _deck_opted_out(existing_decks.get(p["successor_guid"]), cfg["excluded"])]
+            and not _deck_opted_out(existing_decks.get(p["successor_guid"]), cfg["excluded"])
+            and not _deck_opted_out(existing_decks.get(p["successor_guid"]), skipped)]
         # The same one-card-one-outcome rule _reconcile_pending applies to its own two
         # lists, reapplied because this recompute can pair a card that pass had already
         # put in `fresh`: the merge below carries its scheduling forward and archives
