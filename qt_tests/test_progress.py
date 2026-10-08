@@ -9,8 +9,47 @@ Also covers the two things ui.cancellable_progress's pump promises: that it repo
 Cancel, and that pumping is safe because the window is modal.
 """
 import contextlib
+import sys
 
 import harness
+import pytest
+
+
+def _native_mouse_event():
+    import ctypes
+
+    from PyQt6 import QtGui
+
+    try:
+        library = ctypes.CDLL(QtGui.__file__)
+        post = getattr(library, "_ZN22QWindowSystemInterface16handleMouseEvent"
+                       "INS_20AsynchronousDeliveryEEEbP7QWindowRK7QPointFS6_"
+                       "6QFlagsIN2Qt11MouseButtonEES9_N6QEvent4TypeES7_"
+                       "INS8_16KeyboardModifierEENS8_16MouseEventSourceE")
+    except (AttributeError, OSError):
+        pytest.skip("native mouse input is unavailable in this Qt build")
+    post.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int] * 5
+    post.restype = ctypes.c_bool
+    return post
+
+
+def _post_mouse_click(widget, pos):
+    """Queue window-system input, which Qt's input-exclusion flag can defer.
+
+    QTest mouse clicks and posted QMouseEvents bypass that queue.
+    """
+    from PyQt6 import sip
+    from aqt.qt import QEvent, QPointF, Qt
+
+    post = _native_mouse_event()
+    window = widget.window().windowHandle()
+    local = QPointF(widget.mapTo(widget.window(), pos))
+    global_pos = QPointF(widget.mapToGlobal(pos))
+    for event, buttons in ((QEvent.Type.MouseButtonPress, Qt.MouseButton.LeftButton),
+                           (QEvent.Type.MouseButtonRelease, Qt.MouseButton.NoButton)):
+        post(sip.unwrapinstance(window), sip.unwrapinstance(local),
+             sip.unwrapinstance(global_pos), buttons.value,
+             Qt.MouseButton.LeftButton.value, event.value, 0, 0)
 
 
 @contextlib.contextmanager
@@ -82,6 +121,7 @@ def test_the_pump_reports_cancel_without_advancing_the_bar():
             "only place an import may be skipped")
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="native mouse input requires macOS")
 def test_slow_fetch_keeps_events_running_and_cancel_returns_promptly(monkeypatch):
     import threading
     import time
@@ -91,6 +131,7 @@ def test_slow_fetch_keeps_events_running_and_cancel_returns_promptly(monkeypatch
     from internpearls import ui
     from internpearls.config import APP_NAME
 
+    _native_mouse_event()
     app = harness.app()
     parent = QWidget()
     monkeypatch.setattr(ui, "mw", parent)
@@ -108,7 +149,8 @@ def test_slow_fetch_keeps_events_running_and_cancel_returns_promptly(monkeypatch
                                 dlg.minimum(), dlg.maximum(),
                                 dlg.findChild(QLabel).textFormat(),
                                 dlg.findChild(QLabel).text(), time.monotonic()))
-                dlg.findChild(QPushButton).click()
+                cancel = dlg.findChild(QPushButton)
+                _post_mouse_click(cancel, cancel.rect().center())
         if time.monotonic() - started > 1.5:
             release.set()
 
@@ -161,6 +203,123 @@ def test_fast_fetch_does_not_show_a_progress_window(monkeypatch):
         assert ui.run_with_progress("Checking the deck source", lambda: "ready") == "ready"
         assert not shown
     finally:
+        parent.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="native mouse input requires macOS")
+def test_mouse_click_skips_when_the_native_symbol_is_unavailable(monkeypatch):
+    import ctypes
+
+    monkeypatch.setattr(ctypes, "CDLL", lambda _path: object())
+    with pytest.raises(pytest.skip.Exception, match="native mouse input"):
+        _post_mouse_click(None, None)
+
+
+def test_fetch_excludes_input_until_visible_and_cancel_returns(monkeypatch):
+    import threading
+
+    from aqt.qt import QEventLoop, QProgressDialog, QPushButton, QTimer, QWidget
+    from internpearls import ui
+
+    app = harness.app()
+    parent = QWidget()
+    monkeypatch.setattr(ui, "mw", parent)
+    release = threading.Event()
+    calls, cancelled = [], []
+    process_events = ui.QApplication.processEvents
+    timer = QTimer(parent)
+
+    def record(flags=QEventLoop.ProcessEventsFlag.AllEvents):
+        visible = any(dlg.isVisible() for dlg in parent.findChildren(QProgressDialog))
+        calls.append((visible, flags))
+        process_events(flags)
+
+    def cancel():
+        for dlg in parent.findChildren(QProgressDialog):
+            if dlg.isVisible() and any(visible for visible, _flags in calls):
+                cancelled.append(True)
+                dlg.findChild(QPushButton).click()
+                timer.stop()
+
+    monkeypatch.setattr(ui.QApplication, "processEvents", record)
+    timer.timeout.connect(cancel)
+    timer.start(10)
+    try:
+        with pytest.raises(ui.ProgressCancelled):
+            ui.run_with_progress("Checking the deck source", lambda: release.wait(2))
+        assert cancelled == [True]
+        assert not release.is_set(), "Cancel must return before the fetch finishes"
+        hidden = [flags for visible, flags in calls if not visible]
+        shown = [flags for visible, flags in calls if visible]
+        assert hidden and shown, "the pump must run before and after the window appears"
+        exclude = QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
+        assert all(flags & exclude for flags in hidden)
+        assert all(not flags & exclude for flags in shown)
+    finally:
+        release.set()
+        timer.stop()
+        parent.deleteLater()
+        process_events()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="native mouse input requires macOS")
+@pytest.mark.parametrize("duration", [150, 650], ids=["hidden", "shown"])
+def test_fetch_defers_menu_input_and_modality_blocks_the_queued_click(monkeypatch, duration):
+    import threading
+
+    from aqt.qt import QMainWindow, QProgressDialog, QTimer
+    from internpearls import ui
+
+    _native_mouse_event()
+    app = harness.app()
+    parent = QMainWindow()
+    menu = parent.menuBar()
+    menu.setNativeMenuBar(False)
+    action = menu.addAction("Run another flow")
+    calls, clicks, visible = [], [], []
+    action.triggered.connect(lambda: calls.append("triggered"))
+    parent.show()
+    app.processEvents()
+    monkeypatch.setattr(ui, "mw", parent)
+    release = threading.Event()
+    click_timer = QTimer(parent)
+    click_timer.setSingleShot(True)
+    finish_timer = QTimer(parent)
+    finish_timer.setSingleShot(True)
+    observe_timer = QTimer(parent)
+
+    def click():
+        clicks.append(any(dlg.isVisible() for dlg in parent.findChildren(QProgressDialog)))
+        _post_mouse_click(menu, menu.actionGeometry(action).center())
+
+    def observe():
+        if any(dlg.isVisible() for dlg in parent.findChildren(QProgressDialog)):
+            visible.append(True)
+
+    click_timer.timeout.connect(click)
+    finish_timer.timeout.connect(release.set)
+    observe_timer.timeout.connect(observe)
+    click_timer.start(30)
+    finish_timer.start(duration)
+    observe_timer.start(10)
+    try:
+        assert ui.run_with_progress("Checking the deck source", lambda: release.wait(2))
+        assert clicks == [False], "the click must be queued before the window appears"
+        assert not calls, "menu input ran before the fetch returned"
+        assert bool(visible) == (duration == 650)
+        app.processEvents()
+        assert calls == ([] if visible else ["triggered"])
+        calls.clear()
+        click()
+        app.processEvents()
+        assert calls == ["triggered"], "the menu must work after the check"
+    finally:
+        release.set()
+        click_timer.stop()
+        finish_timer.stop()
+        observe_timer.stop()
+        parent.close()
         parent.deleteLater()
         app.processEvents()
 

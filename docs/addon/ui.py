@@ -11,7 +11,7 @@ _ask_with_widget. Nothing in the add-on renders an HTML bullet list any more.
 
 The interleave guard (`_manual_flow`, `manual_sync_in_progress`) lives here for a
 different reason: every menu action that writes the collection has to hold it, and
-those are split across sync.py and collection.py, which cannot share a flag of their
+those are split across sync.py and collection.py, which cannot share a guard of their
 own without a circular import.
 
 The label/button helpers at the bottom exist for the same reason: every dialog's
@@ -26,7 +26,7 @@ import traceback
 from contextlib import contextmanager
 
 from aqt import mw
-from aqt.qt import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFrame,
+from aqt.qt import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QEventLoop, QFrame,
                     QLabel, QMessageBox, QProgressDialog, QPushButton, QScrollArea,
                     QSizePolicy, Qt, QVBoxLayout)
 from aqt.utils import askUser, getText, showInfo, showWarning, tooltip
@@ -36,7 +36,7 @@ from .palette import colors
 from .platform import new_work_request, platform, wait_for_mock_work
 
 
-# True while an interactive flow that writes the collection is running: the sync,
+# Depth of interactive flows that write the collection: the sync,
 # reconcile and import flows in sync.py, and the Advanced actions in collection.py that
 # import, restore, delete, or reconcile note types. The unattended auto-sync poll
 # checks it and skips its tick rather than interleaving, since both write the
@@ -45,36 +45,36 @@ from .platform import new_work_request, platform, wait_for_mock_work
 # sitting inside a modal dialog's own event loop.
 #
 # It lives here rather than in sync.py or collection.py because both of those need it
-# and sync.py imports collection.py, so a flag in either would be a circular import.
+# and sync.py imports collection.py, so a guard in either would be a circular import.
 # ui.py is imported by both, imports neither, and already owns the other decorator
 # every menu action wears (_safe).
-_manual_in_progress = False
+_manual_flow_depth = 0
 
 
 def manual_sync_in_progress():
     """Whether an interactive flow that writes the collection is running right now.
 
     Read by background.py's poll, which stays quiet and retries on the next tick rather
-    than queueing behind this. A plain flag rather than a lock: nothing here nests, and
-    the poll has nothing to wait for.
+    than queueing behind this. A depth counter keeps nested flows guarded until the
+    outermost flow returns.
     """
-    return _manual_in_progress
+    return _manual_flow_depth > 0
 
 
 def _manual_flow(fn):
     """Hold `manual_sync_in_progress()` for the whole of an interactive flow.
 
-    Applied under @_safe so the flag is released even when the flow raises, which is the
+    Applied under @_safe so the guard is released even when the flow raises, which is the
     one thing @_safe's own warning dialog would otherwise leave stuck on.
     """
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        global _manual_in_progress
-        _manual_in_progress = True
+        global _manual_flow_depth
+        _manual_flow_depth += 1
         try:
             return fn(*args, **kwargs)
         finally:
-            _manual_in_progress = False
+            _manual_flow_depth -= 1
     return wrapper
 
 
@@ -578,7 +578,10 @@ def run_with_progress(label, fn):
             lambda error: finished(None, error))
         handle.start()
         while True:
-            QApplication.processEvents()
+            if dlg.isVisible():
+                QApplication.processEvents()
+            else:
+                QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
             if not _window_alive() or dlg.wasCanceled():
                 raise ProgressCancelled()
             if not handle.is_alive():

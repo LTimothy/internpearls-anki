@@ -4355,11 +4355,11 @@ def test_auto_sync_skips_a_tick_while_a_manual_flow_is_running(anki, tmp_path):
     folder = _write_source(tmp_path, {
         DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)})
     anki.mw._config = {"decks_dir": folder, "auto_sync_decks": True}
-    ui._manual_in_progress = True
-    try:
+    @ui._manual_flow
+    def check():
         background._auto_sync_check()
-    finally:
-        ui._manual_in_progress = False
+
+    check()
 
     assert not anki.col.imports
     assert not anki.gui.tooltips
@@ -4384,6 +4384,35 @@ def test_auto_sync_releases_its_guard_when_a_poll_finds_nothing(anki, tmp_path):
     background._auto_sync_check()   # this one finds nothing to do
 
     assert not background._auto_sync_in_progress
+
+
+@pytest.mark.parametrize("inner_raises", [False, True])
+def test_nested_manual_flows_hold_the_guard_until_the_outer_returns(anki, inner_raises):
+    from internpearls import ui
+    held = []
+
+    @ui._manual_flow
+    def inner():
+        held.append(ui.manual_sync_in_progress())
+        if inner_raises:
+            raise RuntimeError("inner failed")
+        return "inner result"
+
+    @ui._manual_flow
+    def outer():
+        held.append(ui.manual_sync_in_progress())
+        if inner_raises:
+            with pytest.raises(RuntimeError, match="inner failed"):
+                inner()
+        else:
+            assert inner() == "inner result"
+        held.append(ui.manual_sync_in_progress())
+        return "outer result"
+
+    assert not ui.manual_sync_in_progress()
+    assert outer() == "outer result"
+    assert held == [True, True, True]
+    assert not ui.manual_sync_in_progress()
 
 
 def test_a_manual_sync_is_guarded_from_its_first_call_to_its_last(anki, tmp_path,

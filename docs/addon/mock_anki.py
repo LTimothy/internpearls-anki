@@ -3530,7 +3530,7 @@ def install():
             pass
 
         @staticmethod
-        def processEvents():
+        def processEvents(flags=None):
             from internpearls.platform import platform
             replay = platform()
             settle = getattr(replay, "settle_frontier", None)
@@ -3639,13 +3639,21 @@ def install():
         def wasCanceled(self):
             return self._canceled
 
+        def isVisible(self):
+            return False
+
         def close(self):
             pass
 
         def deleteLater(self):
             self.deleted = True
 
+    class _QEventLoop:
+        class ProcessEventsFlag:
+            ExcludeUserInputEvents = 1
+
     for name, obj in (("Qt", _Qt), ("QApplication", _QApplication),
+                      ("QEventLoop", _QEventLoop),
                       ("QTimer", _QTimer), ("QProgressDialog", _QProgressDialog),
                       ("QFileDialog", _QFileDialog), ("QKeySequence", _QKeySequence),
                       ("QFontDatabase", _QFontDatabase), ("QFontMetrics", QFontMetrics),
