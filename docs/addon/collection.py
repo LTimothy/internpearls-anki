@@ -1489,6 +1489,7 @@ def import_deck():
     everything by GUID directly: no front-text personalization needed the way Sync and
     Import single deck need it for a spec-authored deck from someone else's collection.
     """
+    from .sync import RESTORE_UNDO_NAME, _restore_undo_steps
     src = getFile(mw, "Choose an Intern Pearls .apkg", cb=None,
                  filter="*.apkg", dir=_deck_backup_folder())
     if not src:
@@ -1522,7 +1523,11 @@ def import_deck():
                                                 cfg["scope_tag"], keep=src)[0]:
             return
         try:
-            result = _import_apkg(checked, with_scheduling=True)
+            undo = mw.col.add_custom_undo_entry(RESTORE_UNDO_NAME)
+            try:
+                result = _import_apkg(checked, with_scheduling=True)
+            finally:
+                mw.col.merge_undo_entries(undo)
         except Exception as e:
             _warn(f"Import failed: {html.escape(str(e), quote=False)}")
             return
@@ -1541,12 +1546,33 @@ def import_deck():
     # import did roll back a tracked deck, so clearing all is correct here, not merely a
     # conservative fallback. Done before the baseline reset, so a failure there can't
     # leave restored cards reading as current.
+    installed = _load_json(INSTALLED, {})
+    installed = installed if isinstance(installed, dict) else {}
+    deck_names = []
     try:
-        names = manifest_decks_for(apkg_deck_names(src), list(_load_json(INSTALLED, {})))
+        deck_names = apkg_deck_names(src)
+        names = manifest_decks_for(deck_names, list(installed))
+    except Exception:
+        names = None
+    log = getattr(result, "log", None)
+    guids = _restored_baseline_guids(src, log)
+    if guids:
+        shipped = _load_json(SHIPPED, {})
+        shipped = shipped if isinstance(shipped, dict) else {}
+        prior_names = names or set(installed) | set(deck_names)
+        _restore_undo_steps[undo] = (
+            {name: (name in installed, installed.get(name)) for name in prior_names},
+            {guid: (guid in shipped, shipped.get(guid)) for guid in guids})
+    try:
         invalidate_installed(names or None)
     except Exception:
+        if guids:
+            _restore_undo_steps[undo] = (
+                {name: (name in installed, installed.get(name))
+                 for name in set(installed) | set(deck_names)},
+                _restore_undo_steps[undo][1])
         invalidate_installed()
-    _reset_baseline(src, getattr(result, "log", None))
+    _reset_baseline(src, log)
     mw.reset()
     _info(f"Imported <code>{html.escape(str(os.path.basename(src)), quote=False)}</code>.")
 
@@ -1564,6 +1590,17 @@ def _restore_decks(src):
     return decks_holding(guids, {g: nid for g, nid in found.items() if nid})
 
 
+def _restored_baseline_guids(src, log=None):
+    """The GUIDs whose baselines a restore will replace or drop."""
+    try:
+        if log is not None:
+            return {mw.col.get_note(row.id.nid).guid
+                    for row in list(log.new) + list(log.updated)}
+        return {guid for _rid, _fields, guid in apkg_notes(src)}
+    except Exception:
+        return set()
+
+
 def _reset_baseline(src, log=None):
     """Give each restored note the shipped-field baseline its backup was taken with, so
     the next update reads restored source text as the source's rather than as the
@@ -1573,13 +1610,8 @@ def _reset_baseline(src, log=None):
     Limited to the notes Anki's import `log` says it added or changed: a note it matched
     unchanged still holds what its current baseline describes. Without a log, every
     note in the file counts."""
-    try:
-        if log is not None:
-            guids = {mw.col.get_note(row.id.nid).guid
-                     for row in list(log.new) + list(log.updated)}
-        else:
-            guids = {guid for _rid, _fields, guid in apkg_notes(src)}
-    except Exception:
+    guids = _restored_baseline_guids(src, log)
+    if not guids:
         return
     own = os.path.dirname(os.path.realpath(src)) == os.path.realpath(_deck_backup_folder())
     saved = _load_json(_baseline_path(src), {}) if own and src.endswith(".apkg") else {}

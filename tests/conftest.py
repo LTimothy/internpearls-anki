@@ -88,6 +88,8 @@ def anki(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "USER_SKILL", str(user_files / "user_skill.md"))
     background._memories.clear()   # session-scoped auto-sync memory, same reason
     sync.undone_updates.clear()
+    sync._update_undo_steps.clear()
+    sync._restore_undo_steps.clear()
     aqt_qt.QTimer.single_shots.clear()
     sys.modules["aqt"].gui_hooks.profile_did_open = mock_anki.Hook()
     sync._reconcile_action = None   # a prior test's registered stub must not leak in

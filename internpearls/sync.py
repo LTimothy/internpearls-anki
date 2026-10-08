@@ -664,10 +664,13 @@ def _load_shipped():
 
 
 UPDATE_UNDO_NAME = "Intern Pearls deck update"
+RESTORE_UNDO_NAME = "Intern Pearls deck restore"
 # Undo step id -> (deck name, installed version before the step, {guid: prior baseline},
 # version the step applied). Anki's undo stack lives only as long as the open
 # collection, so memory is enough.
 _update_undo_steps = {}
+# Undo step id -> ({deck: (present, prior version)}, {guid: (present, prior baseline)}).
+_restore_undo_steps = {}
 # (collection key, deck, version) updates the learner undid this session: auto-sync
 # leaves them for a manual Update my decks rather than applying them again unasked.
 # Keyed per collection so an undo in one profile never holds back another.
@@ -675,10 +678,22 @@ undone_updates = set()
 
 
 def restore_pending_after_undo(changes):
-    """state_did_undo hook: undoing a deck update puts the old content back, so that
-    deck's installed version and shipped baselines go back to what they were and the
-    deck is offered again."""
+    """Put installed versions and shipped baselines back after an update or restore."""
     try:
+        if getattr(changes, "operation", None) == RESTORE_UNDO_NAME:
+            step = _restore_undo_steps.pop(getattr(changes, "counter", None), None)
+            if step is None:
+                return
+            for path, prior in zip((INSTALLED, SHIPPED), step):
+                current = _load_json(path, {})
+                current = current if isinstance(current, dict) else {}
+                for key, (present, value) in prior.items():
+                    if present:
+                        current[key] = value
+                    else:
+                        current.pop(key, None)
+                _save_json(path, current)
+            return
         if getattr(changes, "operation", None) != UPDATE_UNDO_NAME:
             return
         step = _update_undo_steps.pop(getattr(changes, "counter", None), None)

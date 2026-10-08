@@ -194,7 +194,7 @@ Both are schema-neutral, reversible by hand, backed up first, and no-ops when re
 
 **Backup intern pearls deck** makes an on-demand backup of `export_deck` with scheduling, like the automatic one.
 
-**Restore intern pearls deck** re-imports a backup or export (the picker opens at the backups folder). Matching cards take the file's content in place, wherever you keep them, and keep their own scheduling; a card no longer in your collection comes back with the scheduling it had in the file. The decks the matched cards sit in are backed up first, and that backup never deletes the file you chose. The decks it restores are re-offered on your next update, and restored cards get back the shipped-field baselines saved with their backup, so that update tells the source's older text from your own edits.
+**Restore intern pearls deck** re-imports a backup or export (the picker opens at the backups folder). Matching cards take the file's content in place, wherever you keep them, and keep their own scheduling; a card no longer in your collection comes back with the scheduling it had in the file. The decks the matched cards sit in are backed up first, and that backup never deletes the file you chose. The decks it restores are re-offered on your next update, and restored cards get back the shipped-field baselines saved with their backup, so that update tells the source's older text from your own edits. A restore that adds or changes notes is one Edit > Undo step; undoing it also puts its installed-version records and shipped-field baselines back as they were.
 
 **Export intern pearls deck** writes a standalone `.apkg` of `export_deck` with history, options and media, wherever you choose.
 
@@ -235,7 +235,7 @@ A deck package is refused before it is opened if it is over 512 MB, holds more t
 
 **Tags.** An updated card takes the source's tags under `scope_tag` and keeps every other tag it had: `leech`, `marked`, your own tags, and the archive markers Reconcile and duplicate cleanup add under the scope tag.
 
-**Imports.** Source content is applied even when your local edit is newer; restoring a backup applies the backup's content. Anki's own import results decide which fields get a new shipped baseline. A rejected import stays pending and its deck operation is rolled back. Each deck's update, restore included, is one Edit > Undo step, and undoing it offers that deck again on the next update. Legacy packages with a `collection.anki21` are read from that database, not the placeholder beside it.
+**Imports.** Source content is applied even when your local edit is newer; restoring a backup applies the backup's content. Anki's own import results decide which fields get a new shipped baseline. A rejected import stays pending and its deck operation is rolled back. Each deck update and each deck restore is one Edit > Undo step. Undoing an update offers that deck again on the next update. Undoing a restore that added or changed notes puts its installed-version records and shipped-field baselines back as they were before the restore. Legacy packages with a `collection.anki21` are read from that database, not the placeholder beside it.
 
 **Note types.** Note types only gain fields; your customizations stay. A conversion never deletes a card: one that would is not applied, and the note is kept as a local copy with the new version beside it. An approved conversion between note types is refused if it would drop non-empty protected content with no destination field. Choosing "Import them as new" keeps your original note and its history as a local copy outside future matching, and later updates match the new note without repeated copies. If the following import fails, the conversion is rolled back.
 
@@ -305,6 +305,8 @@ Everything that touches Anki is split by concern:
 - `ai_draft.py`: atomic draft storage, validation and saved image files for the AI wizard. Saved per-card indices stay within the current card list; imported note identities let resume check which notes still exist.
 
 Note-type checks reuse one scoped map while the collection is unchanged, then rebuild it after a write, including imports, conversions and undo. Shipped-field capture resolves touched GUIDs in SQL batches and reads only those notes within the existing scope search. Idle auto-sync polls keep the reconcile count in memory for the open collection and source. The key includes the full manifest, scope, deck settings, collection modification time and SQLite's connection write count. A reopened database, a write or an unavailable change marker forces a fresh check. Polls with downloaded packages always recompute so the live-card guard sees those packages.
+
+Deck updates and restores keep their prior file entries in memory under Anki's custom undo counter. The first Undo consumes that record. Anki's Redo does not call the undo hook, so it reapplies collection changes without changing these files; a later Undo has no saved file entries to replay. Only an undone update holds its version back from auto-sync. Undoing a restore returns to the versions recorded before the restore.
 
 ### Running tests
 

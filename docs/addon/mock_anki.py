@@ -546,15 +546,10 @@ class MockCollection:
         self.exports = []   # (path, options, limit) passed to export_anki_package
         self.updated_cards = []   # nids passed to update_card, for assertions
         self.notetype_changes = []   # note-id batches converted, for assertions
-        # Undo entries the AI-import path relies on: each is {name, notes, cards}.
-        # Every note-adding op below pushes its OWN entry (real Anki does this per
-        # backend op too) unless _undo_merge_open points at one still being collected
-        # (add_custom_undo_entry opens it, merge_undo_entries closes it), in which
-        # case the op folds into that one instead. That's what lets a caller squash a
-        # whole run of adds into a single undo() later. Scoped to notes/cards only;
-        # nothing else here needs undo modeling.
+        # Each backend operation gets its own counter and entry until explicitly
+        # merged. Snapshots cover the notes and cards these tests exercise.
         self._undo_entries = []
-        self._undo_merge_open = None
+        self._undo_counter = 0
         self._add_note_fail_after = None   # [n, exc], armed by fail_add_note_after()
         # Anki exposes suspend via col.sched and tag edits via col.tags; the add-on's
         # archive path (Reconcile) uses set_deck + these two. All are incremental (no
@@ -572,20 +567,21 @@ class MockCollection:
     # === undo: add_custom_undo_entry / merge_undo_entries / undo ===
     def add_custom_undo_entry(self, name):
         import copy
+        self._undo_counter += 1
         self._undo_entries.append({"name": name, "notes": [], "cards": [],
+                                   "counter": self._undo_counter,
                                    "snapshot": copy.deepcopy((self._notes, self._cards)),
                                    "mod": self.mod})
-        target = len(self._undo_entries) - 1
-        self._undo_merge_open = target
-        return target
+        return self._undo_counter
 
     def merge_undo_entries(self, target):
-        entry = self._undo_entries[target]
-        for e in self._undo_entries[target + 1:]:
+        index = next(i for i, e in enumerate(self._undo_entries)
+                     if e["counter"] == target)
+        entry = self._undo_entries[index]
+        for e in self._undo_entries[index + 1:]:
             entry["notes"].extend(e["notes"])
             entry["cards"].extend(e["cards"])
-        del self._undo_entries[target + 1:]
-        self._undo_merge_open = None
+        del self._undo_entries[index + 1:]
 
     def undo(self):
         if not self._undo_entries:
@@ -593,12 +589,12 @@ class MockCollection:
         entry = self._undo_entries.pop()
         self._record_write(len(entry["notes"]) + len(entry["cards"]) or 1)
         self.mod = entry.get("mod", self.mod)
-        counter = len(self._undo_entries)   # the id add_custom_undo_entry returned
+        counter = entry["counter"]
+        self._undo_counter += 1
         if "snapshot" in entry:
             self._notes, self._cards = entry["snapshot"]
             for note in self._notes.values():
                 note.model = self.models.by_name(note.model["name"]) or note.model
-            self._undo_merge_open = None
             return types.SimpleNamespace(operation=entry["name"], counter=counter)
         for nid in entry["notes"]:
             note = self._notes.pop(nid, None)
@@ -660,8 +656,10 @@ class MockCollection:
         # Real Anki gives every add its own undo entry; merge_undo_entries is what
         # collapses a run of them into one. Modelling that faithfully is what makes a
         # missing merge observable in a test rather than silently equivalent.
+        self._undo_counter += 1
         self._undo_entries.append(
-            {"name": "Add Note", "notes": [note.id], "cards": list(note._card_ids)})
+            {"name": "Add Note", "notes": [note.id], "cards": list(note._card_ids),
+             "counter": self._undo_counter})
         self._record_write(1 + len(note._card_ids))
         return types.SimpleNamespace(note_id=note.id)
 
@@ -896,6 +894,7 @@ class MockCollection:
             self.scm += 1
         rows, models_by_mid, deck_by_nid = _read_apkg(request.package_path)
         scheduling = _read_apkg_scheduling(request.package_path)
+        self.add_custom_undo_entry("Import")
         self._register_models(models_by_mid)
         by_guid = {n.guid: n for n in self._notes.values()}
         for nid, guid, flds, tags, mid in rows:

@@ -791,7 +791,7 @@ def test_an_unrelated_undo_leaves_installed_versions_alone(anki, tmp_path):
     from internpearls import sync
     cfg, manifest, fetch, todo = _two_deck_update(anki, tmp_path)
     sync._run_sync(cfg, manifest, fetch, todo)
-    step = len(anki.col._undo_entries) - 1
+    step = anki.col._undo_entries[-1]["counter"]
 
     sync.restore_pending_after_undo(types.SimpleNamespace(operation="Update Note",
                                                           counter=step))

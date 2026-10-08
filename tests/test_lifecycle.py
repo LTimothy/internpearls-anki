@@ -700,3 +700,151 @@ def test_an_update_undone_in_one_profile_still_auto_syncs_in_another(anki, tmp_p
     background._auto_sync_check()
 
     assert second.note_by_guid("g1")["Front"] == "Front one"
+
+
+@pytest.mark.parametrize("saved_baselines", [False, True])
+def test_undoing_a_deck_restore_restores_its_file_entries(anki, tmp_path, saved_baselines):
+    from internpearls import collection, sync
+    notes = [anki.col.add_note(g, _fields("Backup " + g), TAGS.split(), deck=DECK)
+             for g in ("g1", "g2", "g3")]
+    collection._save_json(collection.SHIPPED, {
+        "g1": {"Notes": "backup source"}, "g2": {"Notes": "backup annotation"}})
+    if saved_baselines:
+        src = collection._backup_deck(DECK, "manual")
+    else:
+        src = str(tmp_path / "export.apkg")
+        collection._export_deck_to(src, DECK)
+    for note in notes:
+        note["Front"] = "Current " + note.guid
+    installed = {DECK: "v2", "Other": "v9"}
+    shipped = {"g1": {"Notes": "current source", "extra": 7}, "g3": None,
+               "untouched": {"Notes": "leave alone"}}
+    collection._save_json(collection.INSTALLED, installed)
+    collection._save_json(collection.SHIPPED, shipped)
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+    assert not anki.gui.warnings
+    assert collection._load_json(collection.INSTALLED, {}) == {"Other": "v9"}
+    assert anki.col.note_by_guid("g1")["Front"] == "Backup g1"
+    undone = anki.col.undo()
+    sync.restore_pending_after_undo(undone)
+
+    assert anki.col.note_by_guid("g1")["Front"] == "Current g1"
+    assert collection._load_json(collection.INSTALLED, {}) == installed
+    assert collection._load_json(collection.SHIPPED, {}) == shipped
+    assert undone.operation == "Intern Pearls deck restore"
+    assert not sync.undone_updates
+
+
+def test_an_unrelated_undo_keeps_a_restores_file_entries(anki):
+    import types
+    from internpearls import collection, sync
+    note = anki.col.add_note("g1", _fields("Backup"), TAGS.split(), deck=DECK)
+    src = collection._backup_deck(DECK, "manual")
+    note["Front"] = "Current"
+    collection._save_json(collection.INSTALLED, {DECK: "v2"})
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+    collection.import_deck()
+    before = collection._load_json(collection.SHIPPED, {})
+    counter = anki.col._undo_entries[-1]["counter"]
+    sync.restore_pending_after_undo(types.SimpleNamespace(operation="Other action",
+                                                          counter=counter))
+    sync.restore_pending_after_undo(types.SimpleNamespace(
+        operation="Intern Pearls deck restore", counter=counter + 50))
+    step = anki.col.add_custom_undo_entry("Other action")
+    anki.col.merge_undo_entries(step)
+
+    sync.restore_pending_after_undo(anki.col.undo())
+
+    assert collection._load_json(collection.INSTALLED, {}) == {}
+    assert collection._load_json(collection.SHIPPED, {}) == before
+    sync.restore_pending_after_undo(anki.col.undo())
+    assert collection._load_json(collection.INSTALLED, {}) == {DECK: "v2"}
+
+
+def test_a_restore_that_writes_no_notes_records_no_file_undo(anki, monkeypatch):
+    import types
+    from internpearls import collection, sync
+    anki.col.add_note("g1", _fields("Unchanged"), TAGS.split(), deck=DECK)
+    src = collection._backup_deck(DECK, "manual")
+    before = dict(getattr(sync, "_restore_undo_steps", {}))
+    monkeypatch.setattr(collection, "_import_apkg", lambda *a, **kw:
+                        types.SimpleNamespace(log=types.SimpleNamespace(new=[], updated=[])))
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert not anki.gui.warnings
+    assert getattr(sync, "_restore_undo_steps", {}) == before
+
+
+@pytest.mark.parametrize("fallback", ["unreadable", "renamed"])
+def test_restore_undo_restores_all_invalidated_versions_on_fallback(
+        anki, tmp_path, monkeypatch, fallback):
+    from internpearls import collection, sync
+    note = anki.col.add_note("g1", _fields("Backup"), TAGS.split(), deck=DECK)
+    src = collection._backup_deck(DECK, "manual")
+    note["Front"] = "Current"
+    installed = {DECK: "v2", "Other": "v9"}
+    collection._save_json(collection.INSTALLED, installed)
+    def deck_names(path):
+        if fallback == "unreadable":
+            raise ValueError("unreadable names")
+        return ["Older name"]
+    monkeypatch.setattr(collection, "apkg_deck_names", deck_names)
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+    collection.import_deck()
+    assert collection._load_json(collection.INSTALLED, {}) == {}
+
+    sync.restore_pending_after_undo(anki.col.undo())
+
+    assert collection._load_json(collection.INSTALLED, {}) == installed
+
+
+def test_restore_undo_keeps_an_absent_installed_entry_absent(anki):
+    from internpearls import collection, sync
+    note = anki.col.add_note("g1", _fields("Backup"), TAGS.split(), deck=DECK)
+    src = collection._backup_deck(DECK, "manual")
+    note["Front"] = "Current"
+    collection._save_json(collection.INSTALLED, {})
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+    collection.import_deck()
+
+    collection._save_json(collection.INSTALLED, {DECK: "v3", "Unrelated": "v7"})
+    undone = anki.col.undo()
+    sync.restore_pending_after_undo(undone)
+
+    assert undone.operation == "Intern Pearls deck restore"
+    assert collection._load_json(collection.INSTALLED, {}) == {"Unrelated": "v7"}
+    assert not sync.undone_updates
+
+
+def test_custom_undo_counters_do_not_reuse_a_popped_step(anki):
+    first = anki.col.add_custom_undo_entry("First action")
+    anki.col.merge_undo_entries(first)
+    assert anki.col.undo().counter == first
+    second = anki.col.add_custom_undo_entry("Second action")
+    anki.col.merge_undo_entries(second)
+    assert second > first
+    assert anki.col.undo().counter == second
+
+
+def test_a_package_import_needs_merging_into_its_custom_undo_step(anki, tmp_path):
+    from internpearls import collection
+    note = anki.col.add_note("g1", _fields("Backup"), TAGS.split(), deck=DECK)
+    src = str(tmp_path / "restore.apkg")
+    collection._export_deck_to(src, DECK)
+    note["Front"] = "Current"
+    step = anki.col.add_custom_undo_entry("Custom restore")
+    collection._import_apkg(src, with_scheduling=True)
+
+    undone = anki.col.undo()
+
+    assert undone.operation != "Custom restore"
+    assert anki.col.note_by_guid("g1")["Front"] == "Current"
