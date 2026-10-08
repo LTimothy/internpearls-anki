@@ -3,6 +3,25 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning").
 
+## v0.82.0
+
+Undo that covers a deck restore, faster actions on long lists, and buttons you can see
+with the keyboard.
+
+- Edit > Undo after Restore intern pearls deck now also puts back what the restore changed
+  outside your collection: which deck versions count as installed, and the record of what
+  the source last shipped for each restored card. The next Update my decks reads your
+  fields correctly instead of mistaking the source's older text for your own edits.
+- In Scan for duplicates and Later and declined cards, Suspend, Ignore and Offer again
+  change just the row you acted on, so they are instant even far down a long list.
+- Long lists keep revealing more rows when you move with Down, Page Down, End or Space,
+  use the scroll bar, or resize the window, not only with the mouse wheel.
+- Every link and decision button shows a ring when it has keyboard focus and looks
+  muted when it is unavailable, on every screen and in both light and dark themes.
+- Picture downloads keep at most a few lookups waiting at once, so many slow lookups
+  can't pile up in the background.
+- A failed restore now names the real problem with the file.
+
 ## v0.81.0
 
 Lighter on memory, safer with your work, and AI drafts that survive closing the wizard.
