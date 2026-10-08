@@ -787,8 +787,9 @@ class _Session:
         # Cards whose fields changed after their verdict was dropped; cleared when
         # a check or a new draft lands.
         self.edited_since_check = set()
-        # Card indexes already written to the collection by a partly failed import.
+        # Card indexes already written to the collection.
         self.imported = set()
+        self.imported_notes = {}
 
 
 class _GenerateDialog(QDialog):
@@ -945,11 +946,18 @@ class _GenerateDialog(QDialog):
 
     def _restore_draft(self, saved):
         s = self.session
+        self._draft_active = False
+        self._reset_card_state()
         s.scratch = platform().allocate_scratch(platform_owner_id(self), "aigen")
         ai_draft.restore_images(saved, s.scratch)
         for key in ai_draft.STATE_FIELDS:
             setattr(s, key, saved[key])
         s.image_data = saved["image_data"]
+        s.imported = {i for i in s.imported if i in s.imported_notes
+                      and mw.col.db.scalar("select id from notes where guid = ?",
+                                           s.imported_notes[i]["guid"]) is not None}
+        s.imported_notes = {i: identity for i, identity in s.imported_notes.items()
+                            if i in s.imported}
         for i, card in enumerate(s.cards):
             if i not in s.image_data and card["images"]:
                 s.image_data[i] = [
@@ -975,6 +983,21 @@ class _GenerateDialog(QDialog):
         self._draft_active = True
         self._rebuild_review(keep_place=False)
         self.stack.setCurrentWidget(self.review_page)
+
+    def _reset_card_state(self):
+        s = self.session
+        for key in ai_draft.INDEX_MAPS:
+            setattr(s, key, {})
+        for key in ai_draft.INDEX_SETS:
+            if key != "decided":
+                setattr(s, key, set())
+        s.included, s.checks = [], []
+        self._decided = set()
+        self._near_moved = set()
+        self._expanded_rows = set()
+        self._image_busy = set()
+        self._img_results = {}
+        self._pending_prev_included = None
 
     def _discard_draft(self):
         self._draft_timer.stop()
@@ -2108,8 +2131,8 @@ class _GenerateDialog(QDialog):
                 # goes only by "is s.cards non-empty": left uncleared, a brand
                 # new draft would read as a revision of that stale one and
                 # report a bogus "updated N, kept M verbatim" diff against it.
-                s.cards, s.included, s.notes = [], [], {}
-                s.updated, s.image_data = set(), {}
+                s.cards = []
+                self._reset_card_state()
                 s.revision_shape_mismatch = False
         # Indexes the collection while the assistant drafts.
         self._refresh_near()
@@ -2483,9 +2506,6 @@ class _GenerateDialog(QDialog):
                                     now=platform().wall_now().timestamp())
         reg = ai_logic.record_duration(reg, s.backend, s.mode, res["duration_s"])
         save_ai_usage(reg)
-        s.verdicts = {}   # a new draft/revision makes any prior check stale
-        s.edited_since_check = set()
-
         # Card matching across a revision, by position: the prompt sends the
         # previous draft and instructs the model to return the SAME cards in the
         # SAME order, marking only the ones without a note "keep verbatim" (see
@@ -2496,6 +2516,7 @@ class _GenerateDialog(QDialog):
         # against yet); same_shape is False either for that first draft or for
         # a genuine reply-shape mismatch.
         prev_cards, prev_included = s.cards, s.included
+        self._reset_card_state()
         is_revision = bool(prev_cards)
         same_shape = is_revision and len(cards) == len(prev_cards)
         s.revision_shape_mismatch = is_revision and not same_shape
@@ -2511,15 +2532,12 @@ class _GenerateDialog(QDialog):
             s.updated = set()
 
         s.cards = cards
-        s.imported = set()
-        s.notes = {}
         # Carried through to _apply_review_state once images (if any) have
         # resolved: None means "not a revision", so every card falls back to
         # the mechanical-check default; otherwise it's the pre-revision
         # include list, consulted only for cards _rebuild_review's diff
         # didn't mark as updated.
         self._pending_prev_included = prev_included if same_shape else None
-        s.image_data = {}
         s.checks = ai_logic.mechanical_checks(
             s.cards, collection.existing_front_map(_cfg()["scope_tag"]))
         s.included = [prev_included[i] if same_shape and i not in s.updated
@@ -3546,7 +3564,7 @@ class _GenerateDialog(QDialog):
             n = collection.add_generated_notes(cards, media, s.deck_name,
                                                _cfg()["scope_tag"])
         except collection.PartialImport as partial:
-            s.imported.update(pairs[pos][0] for pos in partial.written)
+            self._record_imported(pairs, partial.written)
             mw.reset()
             self._rebuild_review()
             self._flush_draft()
@@ -3556,6 +3574,7 @@ class _GenerateDialog(QDialog):
                   f"{plural(len(pairs) - landed, 'card')}. Import again adds only "
                   "the rest, and Edit > Undo removes the cards already added.", textFormat="plain")
             return 0
+        self._record_imported(pairs, range(len(pairs)))
         # add_generated_notes only writes the collection; nothing about that tells
         # Anki's main window a new undo entry exists or that the deck list changed
         # underneath it. mw.reset() is the same notification every other
@@ -3565,7 +3584,15 @@ class _GenerateDialog(QDialog):
         # hooks the deck browser listens for (refreshing the deck list and its
         # counts) without needing a second, narrower call for either.
         mw.reset()
-        self._discard_draft()
+        self._schedule_draft()
+        self._flush_draft(quiet=True)
+        try:
+            self._discard_draft()
+        except OSError as exc:
+            self._retire_draft()
+            _warn("The cards were imported, but the saved draft couldn't be removed: "
+                  f"{exc}. It will be offered next time; cards already imported "
+                  "are recognised.", textFormat="plain")
         self._cleanup_scratch()
         # A transient toast, not a modal: this is what Anki's own Add shows after
         # adding notes, and a click-through confirmation here is one extra click
@@ -3574,6 +3601,13 @@ class _GenerateDialog(QDialog):
                f"This is one undo step: {_undo_shortcut()} reverts it.", period=6000, parent=mw)
         self.accept()
         return n
+
+    def _record_imported(self, pairs, positions):
+        s = self.session
+        for pos in positions:
+            i, card = pairs[pos]
+            s.imported.add(i)
+            s.imported_notes[i] = card["_imported_note"]
 
     def _cleanup_scratch(self):
         """Remove the session's scratch directory (extracted attachment images,

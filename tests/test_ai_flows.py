@@ -2914,6 +2914,126 @@ def test_import_deletes_saved_draft(anki, monkeypatch):
     assert dlg._draft_timer.started is None
 
 
+@pytest.mark.parametrize("revision", [False, True])
+def test_replacing_cards_resets_indices_before_the_first_save(anki, monkeypatch, revision):
+    from internpearls import ai_draft
+    dlg = _three_card_draft(anki, monkeypatch)
+    dlg.decision_cells[2].buttons["skip"].click()
+    dlg.session.notes = {2: "Shorten"}
+    dlg.session.verdicts = {2: {"verdict": "unverified", "note": "No source",
+                               "sources": [], "correction": None}}
+    dlg.session.edited_since_check = {2}
+    dlg.session.imported = {2}
+    dlg.session.imported_notes = {2: {"id": 123, "guid": "iplocal-old"}}
+    dlg._expanded_rows = {2}
+    dlg._near_moved = {2}
+    monkeypatch.setattr(dlg, "_start_image_phase", lambda: None)
+    dlg._start_generation(revision=revision)
+    dlg._wait_for_worker()
+    saved, damaged = ai_draft.load(_draft_path(), ai_dialog.FIELD_MAP)
+    assert not damaged and saved is not None
+    assert len(saved["cards"]) == 1
+    assert saved["decided"] == set()
+    assert saved["notes"] == saved["verdicts"] == saved["image_data"] == {}
+    assert saved["edited_since_check"] == saved["imported"] == set()
+    assert dlg.session.imported_notes == {}
+    assert dlg._expanded_rows == dlg._near_moved == set()
+
+
+def test_draft_save_drops_out_of_range_indices(anki, monkeypatch):
+    from internpearls import ai_draft
+    dlg = _drafted(anki, monkeypatch)
+    state = _saved_draft()
+    for key in ai_draft.INDEX_SETS:
+        state[key] = [-1, 0, 1]
+    for key in ai_draft.INDEX_MAPS:
+        if key != "image_data":
+            value = "Note" if key == "notes" else {
+                "verdict": "unverified", "note": "No source", "sources": []}
+            if key == "imported_notes":
+                value = {"id": 123, "guid": "iplocal-note"}
+            state[key] = {-1: value, 0: value, 1: value}
+    ai_draft.save(_draft_path(), state, {-1: [], 0: [], 1: []}, dlg.session.scratch)
+    saved, damaged = ai_draft.load(_draft_path(), ai_dialog.FIELD_MAP)
+    assert not damaged and saved is not None
+    for key in ai_draft.INDEX_SETS:
+        assert saved[key] == {0}
+    for key in ai_draft.INDEX_MAPS:
+        assert set(saved[key]) == {0}
+
+
+def test_restore_replaces_per_card_state(anki, monkeypatch):
+    from internpearls import ai_draft
+    dlg = _drafted(anki, monkeypatch)
+    dlg.decision_cells[0].buttons["skip"].click()
+    dlg._flush_draft()
+    saved, damaged = ai_draft.load(_draft_path(), ai_dialog.FIELD_MAP)
+    assert not damaged
+    dlg._decided = dlg._near_moved = dlg._expanded_rows = {2}
+    dlg._pending_prev_included = [True, True, True]
+    dlg._restore_draft(saved)
+    assert dlg._decided == {0}
+    assert dlg._near_moved == dlg._expanded_rows == set()
+    assert dlg._pending_prev_included is None
+    assert dlg.session.included == [False]
+
+
+@pytest.mark.parametrize("undo", [False, True])
+def test_resume_reconciles_partial_import_with_the_collection(anki, monkeypatch, undo):
+    dlg = _three_card_draft(anki, monkeypatch)
+    dlg.decision_cells[2].buttons["skip"].click()
+    anki.col.fail_add_note_after(2)
+    assert dlg._do_import() == 0
+    anki.gui.answers = [False]
+    dlg.reject()
+    if undo:
+        anki.col.undo()
+        assert not anki.col._notes
+    anki.gui.answers = [False]
+    resumed = _settled(ai_dialog._GenerateDialog())
+    assert resumed.session.included == [True, True, False]
+    assert resumed.session.imported == (set() if undo else {0})
+    assert (resumed.decision_cells[0] is None) is (not undo)
+    assert resumed._do_import() == (2 if undo else 1)
+    assert {n["Front"] for n in anki.col._notes.values()} == {"q", "Second question"}
+
+
+def test_partial_import_saves_note_id_and_guid(anki, monkeypatch):
+    dlg = _three_card_draft(anki, monkeypatch)
+    anki.col.fail_add_note_after(2)
+    dlg._do_import()
+    note = next(iter(anki.col._notes.values()))
+    assert _saved_draft()["imported_notes"] == {"0": {"id": note.id, "guid": note.guid}}
+
+
+def test_successful_import_finishes_when_draft_deletion_fails(anki, monkeypatch):
+    from internpearls import ai_draft
+    dlg = _drafted(anki, monkeypatch)
+    warnings = []
+    monkeypatch.setattr(ai_dialog, "_warn",
+                        lambda text, **kw: warnings.append((text, kw)))
+    def fail_delete(path):
+        raise PermissionError("Blocked <file> & folder")
+    monkeypatch.setattr(ai_draft, "discard", fail_delete)
+    assert dlg._do_import() == 1
+    assert dlg._result == ai_dialog.QDialog.DialogCode.Accepted
+    assert dlg.session.imported == {0}
+    assert dlg.session.scratch is None
+    note = next(iter(anki.col._notes.values()))
+    assert _saved_draft()["imported_notes"] == {"0": {"id": note.id, "guid": note.guid}}
+    assert warnings == [("The cards were imported, but the saved draft couldn't be removed: "
+                         "Blocked <file> & folder. It will be offered next time; "
+                         "cards already imported are recognised.", {"textFormat": "plain"})]
+    assert dlg._do_import() == 0
+    assert len(anki.col._notes) == 1
+    anki.gui.answers = [False]
+    resumed = _settled(ai_dialog._GenerateDialog())
+    assert resumed.session.imported == {0}
+    assert resumed.decision_cells[0] is None
+    assert resumed._do_import() == 0
+    assert len(anki.col._notes) == 1
+
+
 def test_partial_import_preserves_imported_marks_on_resume(anki, monkeypatch):
     dlg = _three_card_draft(anki, monkeypatch)
     original = anki.col.add_note

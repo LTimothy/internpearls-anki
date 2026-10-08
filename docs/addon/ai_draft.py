@@ -10,9 +10,9 @@ import tempfile
 from . import config
 
 STATE_FIELDS = ("cards", "included", "notes", "checks", "updated", "verdicts",
-                "edited_since_check", "imported", "deck_name", "mode", "count",
-                "source", "instructions", "note_types", "revision_shape_mismatch")
-INDEX_MAPS = ("notes", "verdicts", "image_data")
+                "edited_since_check", "imported", "imported_notes", "deck_name", "mode",
+                "count", "source", "instructions", "note_types", "revision_shape_mismatch")
+INDEX_MAPS = ("notes", "verdicts", "image_data", "imported_notes")
 INDEX_SETS = ("updated", "edited_since_check", "imported", "decided")
 
 
@@ -41,6 +41,12 @@ def _write(path, data):
 def save(path, state, image_data, scratch):
     state = dict(state, version=1, saved_at=datetime.datetime.now().isoformat(
         timespec="seconds"))
+    n = len(state["cards"])
+    for key in INDEX_MAPS:
+        per_card = image_data if key == "image_data" else state.get(key, {})
+        state[key] = {i: v for i, v in per_card.items() if type(i) is int and 0 <= i < n}
+    for key in INDEX_SETS:
+        state[key] = [i for i in state[key] if type(i) is int and 0 <= i < n]
     folder = _image_folder(path)
     images, used = {}, set()
     files = {}
@@ -63,7 +69,7 @@ def save(path, state, image_data, scratch):
                 _write(dest, data)
             used.add(asset)
             files[name] = asset
-    for i, per in image_data.items():
+    for i, per in state["image_data"].items():
         images[i] = []
         for j, result in enumerate(per):
             item = {k: result[k] for k in ("state", "kind", "name", "ext", "host", "error")
@@ -117,6 +123,7 @@ def _validate(state, field_map):
         if not isinstance(card["rationale"], str):
             raise ValueError("Invalid draft rationale")
     n = len(cards)
+    state.setdefault("imported_notes", {})
     if (not isinstance(state["included"], list) or len(state["included"]) != n
             or not all(isinstance(v, bool) for v in state["included"])):
         raise ValueError("Invalid draft decisions")
@@ -142,6 +149,11 @@ def _validate(state, field_map):
         state[key] = set(state[key])
     if not all(isinstance(v, str) for v in state["notes"].values()):
         raise ValueError("Invalid draft notes")
+    for identity in state["imported_notes"].values():
+        if (not isinstance(identity, dict) or type(identity.get("id")) is not int
+                or identity["id"] <= 0 or not isinstance(identity.get("guid"), str)
+                or not identity["guid"]):
+            raise ValueError("Invalid imported note identity")
     for verdict in state["verdicts"].values():
         if (not isinstance(verdict, dict)
                 or verdict.get("verdict") not in ("confirmed", "corrected", "unverified")

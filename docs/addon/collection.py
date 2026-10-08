@@ -1800,7 +1800,8 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
     Raises RuntimeError, before writing anything (media or notes), if a card names a
     note type outside _GENERATED_ALLOWED_TYPES or one absent from this collection, or
     has an empty primary field and no picture: an atomic check, so that failure mode never leaves anything behind. Returns the
-    number of notes added; 0 for an empty `cards`.
+    number of notes added; 0 for an empty `cards`. Each written card gets
+    `_imported_note` with the note's id and guid.
 
     A failure part-way through the actual writes (a media write erroring, a backend
     add_note call failing) is NOT rolled back (Anki gives no cheap way to undo mid
@@ -1891,6 +1892,7 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
             note.guid = ai_logic.generated_guid()
             note.tags = list(card.get("tags", [])) + [tag]
             col.add_note(note, did)
+            card["_imported_note"] = {"id": note.id, "guid": note.guid}
             count += 1
             landed.append(pos)
     except Exception as e:
