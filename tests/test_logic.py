@@ -1667,7 +1667,59 @@ def test_changed_templates_skips_notetypes_the_collection_lacks():
     assert logic.changed_templates({"Only in apkg": shape}, {}) == []
 
 
+# ------------------------------------------------------------------ check_apkg_limits
+@pytest.fixture(params=[
+    "../x", "a/../../x", "/abs/x", r"C:\x", r"..\x", r"\abs\x",
+    "C:x", "c:x", r"a\../x", r"a/..\x", "../", "nul\0member",
+])
+def unsafe_member_apkg(tmp_path, request):
+    path = tmp_path / "src.apkg"
+    _make_mock_apkg(str(path), [(1, "g1", "Front 1")])
+    name = request.param
+    stored_name = name.replace("\0", "~")
+    with zipfile.ZipFile(path, "a") as z:
+        z.writestr(stored_name, b"")
+    if "\0" in name:
+        # ZipInfo truncates NUL on write, so put it into both filename records.
+        path.write_bytes(path.read_bytes().replace(stored_name.encode(), name.encode()))
+    return path
+
+
+def test_check_apkg_limits_rejects_unsafe_member_names(unsafe_member_apkg):
+    with pytest.raises(RuntimeError) as error:
+        logic.check_apkg_limits(unsafe_member_apkg)
+    assert str(error.value) == ("This .apkg looks damaged or unsafe, "
+                                "so nothing was imported.")
+
+
+def test_check_apkg_limits_allows_safe_directories_and_numbered_media(tmp_path):
+    src, out = str(tmp_path / "src.apkg"), str(tmp_path / "out.apkg")
+    _make_mock_apkg(src, [(1, "g1", "Front 1")])
+    with zipfile.ZipFile(src, "a") as z:
+        z.writestr("extras/", b"")
+        z.writestr("media", b'{"0": "a.jpg"}')
+        z.writestr("0", b"jpeg-image")
+    logic.check_apkg_limits(src)
+    logic.write_personalized(src, {1: "new-guid"}, out)
+    with zipfile.ZipFile(out) as z:
+        assert z.namelist() == ["collection.anki2", "extras/", "media", "0"]
+        assert z.getinfo("extras/").is_dir()
+        assert z.read("media") == b'{"0": "a.jpg"}'
+        assert z.read("0") == b"jpeg-image"
+    assert logic.apkg_notes(out)[0][2] == "new-guid"
+
+
 # ------------------------------------------------------------------ write_personalized
+def test_write_personalized_rejects_unsafe_names_before_creating_output(
+        unsafe_member_apkg, tmp_path):
+    out = tmp_path / "out.apkg"
+    with pytest.raises(RuntimeError) as error:
+        logic.write_personalized(unsafe_member_apkg, {}, out)
+    assert str(error.value) == ("This .apkg looks damaged or unsafe, "
+                                "so nothing was imported.")
+    assert not out.exists()
+
+
 def test_write_personalized_rewrites_only_remapped_guids(tmp_path):
     src = str(tmp_path / "src.apkg")
     out = str(tmp_path / "out.apkg")

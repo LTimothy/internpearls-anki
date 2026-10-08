@@ -573,8 +573,9 @@ def _zip_directory_size(path):
 def check_apkg_limits(path):
     """Refuse a package whose size or shape no deck needs, from its zip directory alone.
 
-    Raises PackageLimitError naming what was over; a file that isn't a zip at all raises
-    zipfile.BadZipFile as before. The unpacked sizes are the ones the directory declares.
+    Raises PackageLimitError for excessive sizes or unsafe member names; a file that
+    isn't a zip at all raises zipfile.BadZipFile as before. The unpacked sizes are the
+    ones the directory declares.
     zipfile never writes more than that for a member and checks its CRC, but Anki's own
     importer reads the stream and ignores them, so a package handed to it directly goes
     through copy_apkg_checked first.
@@ -600,6 +601,12 @@ def check_apkg_limits(path):
     if len(infos) > APKG_MAX_MEMBERS:
         raise PackageLimitError(f"This .apkg holds more than {APKG_MAX_MEMBERS:,} files, "
                                 "more than any deck needs, so it wasn't opened.")
+    for info in infos:
+        name = info.orig_filename
+        if (name.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", name)
+                or ".." in name.replace("\\", "/").split("/") or "\0" in name):
+            raise PackageLimitError("This .apkg looks damaged or unsafe, "
+                                    "so nothing was imported.")
     if any(i.file_size > APKG_MAX_MEMBER for i in infos):
         raise PackageLimitError(f"A file in this .apkg would unpack to more than "
                                 f"{_size_text(APKG_MAX_MEMBER)}, so it wasn't opened.")

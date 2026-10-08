@@ -221,7 +221,7 @@ What the add-on does, a summary of your settings, a reminder that no deck conten
 
 Run Update my decks, or turn on automatic sync in Settings so content applies on its own (archiving and relocating always stay a manual confirm). Only changed decks import, and each run backs up first. Advanced > Backup full collection adds whole-collection protection on demand.
 
-A deck package is refused before it is opened if it is over 512 MB, holds more than 50,000 files, unpacks to more than 2 GB, or has any one file over 1 GB unpacked.
+A deck package is refused before it is opened if it is over 512 MB, holds more than 50,000 files, unpacks to more than 2 GB, or has any one file over 1 GB unpacked. Before preview or import, it is also refused if any member name starts with a slash or backslash, has a Windows drive prefix, contains a `..` path component using either separator, or contains a NUL byte. Safe directory entries are allowed.
 
 ## How history is preserved
 
