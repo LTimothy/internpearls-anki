@@ -634,8 +634,15 @@ class StreamingList(QScrollArea):
 
         self._last_scroll = 0.0
         self._scroll_value = 0
+        self._scroll_maximum = 0
+        self._range_shown = 0
+        self._view_size = None
+        self._check_bottom = False
         self._editing = False
-        self.verticalScrollBar().valueChanged.connect(self._maybe_extend)
+        bar = self.verticalScrollBar()
+        bar.valueChanged.connect(self._maybe_extend)
+        bar.actionTriggered.connect(self._scroll_action)
+        bar.rangeChanged.connect(self._range_changed)
 
         # Idle prefetch. Building a 50-row batch at the moment the reader scrolls to
         # the boundary is a visible hitch, so once the viewport is filled a bounded
@@ -649,6 +656,8 @@ class StreamingList(QScrollArea):
         self._idle = platform().create_timer(
             platform_owner_id(self), self._idle_extend, self.IDLE_DELAY_MS,
             single_shot=True)
+        self._geometry = platform().create_timer(
+            platform_owner_id(self), self._check_geometry, 0, single_shot=True)
         self._extend()
 
     PREFETCH_AHEAD = 100
@@ -759,6 +768,53 @@ class StreamingList(QScrollArea):
         if delta < 0 and self.shown() == shown:
             self._maybe_extend()
 
+    def _scroll_action(self, action):
+        bar = self.verticalScrollBar()
+        actions = bar.SliderAction
+        if (bar.value() == bar.maximum()
+                and action in (actions.SliderSingleStepAdd.value,
+                               actions.SliderPageStepAdd.value, actions.SliderToMaximum.value)):
+            self._maybe_extend()
+
+    def keyPressEvent(self, event):
+        shown = self.shown()
+        space = (event.key() == Qt.Key.Key_Space
+                 and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if space:
+            bar = self.verticalScrollBar()
+            bar.triggerAction(bar.SliderAction.SliderPageStepAdd)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+        if (self.shown() == shown
+                and (space or event.key() in (Qt.Key.Key_Down, Qt.Key.Key_PageDown,
+                                              Qt.Key.Key_End))):
+            self._maybe_extend()
+
+    def _range_changed(self, _minimum, maximum):
+        previous, self._scroll_maximum = self._scroll_maximum, maximum
+        shown, self._range_shown = self._range_shown, self.shown()
+        if maximum < previous:
+            self._scroll_value = self.verticalScrollBar().value()
+        if self._editing or self.viewport().height() <= 0:
+            return
+        # A growing range may come from the batch just revealed.
+        self._check_bottom = (self._check_bottom or maximum < previous
+                              or self.shown() <= shown)
+        self._geometry.start()
+
+    def _check_geometry(self):
+        check_bottom, self._check_bottom = self._check_bottom, False
+        if check_bottom:
+            self._refill()
+        elif not self._editing:
+            self._fill_viewport()
+
+    def _refill(self):
+        if not self._editing and self.viewport().height() > 0:
+            self._maybe_extend()
+            self._fill_viewport()
+
     def resizeEvent(self, event):
         """Refill after Qt has given this list its real height.
 
@@ -768,7 +824,11 @@ class StreamingList(QScrollArea):
         built rows leaves nothing to scroll, so `valueChanged` never fires again.
         """
         super().resizeEvent(event)
+        previous, self._view_size = self._view_size, (self.width(), self.height())
         self._fill_viewport()
+        if previous is not None and previous != self._view_size:
+            self._check_bottom = True
+            self._geometry.start()
 
     def _fill_viewport(self):
         """Build batches until the rows are taller than the viewport or run out.
@@ -842,6 +902,7 @@ class StreamingList(QScrollArea):
                 bar.setValue(position)
             self._scroll_value = bar.value()
             self._editing = False
+            self._refill()
             self._start_prefetch()
 
     def _focus_after_removal(self, index):

@@ -293,6 +293,41 @@ def _grown(lst, viewport_height, row_height):
         width=lambda: 0, height=lambda: lst.shown() * row_height)
 
 
+def test_streaming_list_downward_action_at_an_unchanged_maximum_reveals_rows():
+    from internpearls import widgets
+    lst = widgets.StreamingList(widgets.QWidget, list(range(500)))
+    bar = lst.verticalScrollBar()
+    bar.setMaximum(1000)
+    bar.setValue(1000)
+    before = lst.shown()
+    bar.triggerAction(bar.SliderAction.SliderPageStepAdd)
+    assert lst.shown() == before + 50
+
+
+def test_streaming_list_range_shrink_refills_the_viewport():
+    from internpearls import widgets
+    lst = widgets.StreamingList(lambda item: widgets.QWidget(), list(range(500)))
+    bar = lst.verticalScrollBar()
+    bar.setMaximum(1000)
+    _grown(lst, viewport_height=1000, row_height=10)
+    bar.setMaximum(0)
+    lst._geometry._fire()
+    assert lst.shown() == 150
+
+
+def test_streaming_list_upward_value_and_action_do_not_reveal_rows():
+    from internpearls import widgets
+    lst = widgets.StreamingList(lambda item: widgets.QWidget(), list(range(500)))
+    bar = lst.verticalScrollBar()
+    bar.setMaximum(1000)
+    bar.setValue(1000)
+    before = lst.shown()
+    _grown(lst, viewport_height=300, row_height=10)
+    bar.setValue(999)
+    bar.triggerAction(bar.SliderAction.SliderPageStepSub)
+    assert lst.shown() == before
+
+
 def test_streaming_list_fills_a_viewport_that_outgrew_its_rows():
     """The grow-before-scroll case. Enlarging the dialog leaves the content shorter than
     the viewport, so there is nothing to scroll and valueChanged never fires again: the

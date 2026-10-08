@@ -21,6 +21,32 @@ def _consistent(lst):
     assert 0 <= lst.shown() <= lst.built() <= lst.total()
 
 
+@pytest.mark.parametrize('operation', ['remove', 'replace'])
+def test_edit_near_the_bottom_reveals_more_rows(operation):
+    from test_widgets import _grown
+    lst, _ = _list()
+    bar = lst.verticalScrollBar()
+    bar.setMaximum(100)
+    bar.setValue(70)
+    _grown(lst, viewport_height=30, row_height=10)
+    before = lst.shown()
+    if operation == 'remove':
+        lst.remove_item(0)
+    else:
+        lst.replace_item(0, 100)
+    assert lst.shown() > before
+    _consistent(lst)
+
+
+def test_edit_refills_a_viewport_with_no_scroll_range():
+    from test_widgets import _grown
+    lst, _ = _list()
+    _grown(lst, viewport_height=35, row_height=10)
+    lst.remove_item(0)
+    assert lst.shown() == 7
+    _consistent(lst)
+
+
 @pytest.mark.parametrize('index', [0, 3, 5, 12])
 def test_replace_keeps_other_rows_and_later_builds_the_new_item(index):
     lst, calls = _list()

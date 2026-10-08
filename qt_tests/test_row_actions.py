@@ -129,7 +129,7 @@ def test_removal_at_the_built_boundary_focuses_the_next_control(index):
 
     lst = StreamingList(build, list(range(12)), batch=4)
     QVBoxLayout(dlg).addWidget(lst)
-    dlg.resize(300, 130)
+    dlg.resize(300, 70)
     dlg.show()
     _settle(app)
     if index == 7:
@@ -148,7 +148,8 @@ def test_removal_at_the_built_boundary_focuses_the_next_control(index):
     lst.remove_item(index)
     _settle(app)
     assert app.focusWidget().text() == str(index + 1)
-    assert calls == [index + 1]
+    assert calls[0] == index + 1
+    assert len(calls) <= lst._batch + 1
     dlg.close()
     dlg.deleteLater()
 
@@ -170,7 +171,7 @@ def test_removing_the_last_entry_focuses_the_previous_control(tmp_path, monkeypa
     dlg.deleteLater()
 
 
-def test_ignore_at_the_scroll_boundary_does_not_build_another_batch():
+def test_ignore_at_the_scroll_boundary_reveals_another_batch():
     mock, _ = harness.bootstrap()
     app = harness.app()
     harness._ai_backend_available('claude')
@@ -188,9 +189,11 @@ def test_ignore_at_the_scroll_boundary_does_not_build_another_batch():
         bar.setValue(bar.maximum())
         bar.blockSignals(False)
         _settle(app)
+        before = lst.shown()
         calls, position = _measure(app, lst, lambda: dlg._ignore(dlg._pairs[150]),
                                    'dupes boundary ignore')
-        assert len(calls) <= 1
+        assert lst.shown() > before
+        assert len(calls) <= lst._batch
         assert bar.value() == min(position, bar.maximum())
     finally:
         dlg.close()

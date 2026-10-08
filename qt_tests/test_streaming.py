@@ -8,12 +8,13 @@ the first batch is never built. Rows here are fixed-height labels so "how many r
 is arithmetic rather than a font measurement.
 """
 import harness
+import pytest
 
 _ROW_H = 30
 _ITEMS = 400
 
 
-def _open(height, batch=5):
+def _open(height, batch=5, tall=()):
     """A StreamingList of fixed-height rows, alone in a shown dialog of `height`."""
     harness.bootstrap()
     app = harness.app()
@@ -22,7 +23,7 @@ def _open(height, batch=5):
 
     def build(item):
         row = QLabel(f"Row {item}")
-        row.setFixedHeight(_ROW_H)
+        row.setFixedHeight(600 if item in tall else _ROW_H)
         return row
 
     dlg = QDialog()
@@ -32,8 +33,164 @@ def _open(height, batch=5):
     lay.addWidget(lst)
     dlg.resize(360, height)
     dlg.show()
-    app.processEvents()
+    _settle(app)
     return app, dlg, lst
+
+
+def _settle(app):
+    from PyQt6.QtTest import QTest
+    for _ in range(3):
+        app.processEvents()
+    QTest.qWait(1)
+
+
+def _bottom(lst):
+    bar = lst.verticalScrollBar()
+    bar.blockSignals(True)
+    bar.setValue(bar.maximum())
+    bar.blockSignals(False)
+    return bar
+
+
+@pytest.mark.parametrize('operation', ['remove', 'replace'])
+def test_shortening_a_tall_row_at_the_bottom_reveals_more_rows(operation):
+    app, dlg, lst = _open(300, batch=100, tall=(0, 1))
+    try:
+        _settle(app)
+        bar = _bottom(lst)
+        maximum = bar.maximum()
+        before = lst.shown()
+        if operation == 'remove':
+            lst.remove_item(0)
+        else:
+            lst.replace_item(0, 400)
+        _settle(app)
+        assert lst.shown() > before
+        assert bar.value() <= maximum
+        assert lst.shown() < lst.total()
+    finally:
+        dlg.close()
+
+
+@pytest.mark.parametrize('action', ['down', 'page_down', 'end', 'ctrl_end',
+                                    'space', 'page_step', 'resize', 'resize_width',
+                                    'resize_shrink'])
+def test_downward_navigation_after_a_tall_row_removal_reveals_more_rows(action):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QAbstractSlider
+    app, dlg, lst = _open(300, batch=100, tall=(0, 1))
+    try:
+        _settle(app)
+        _bottom(lst)
+        lst.remove_item(0)
+        _settle(app)
+        dlg.activateWindow()
+        lst.setFocus()
+        _settle(app)
+        bar = _bottom(lst)
+        before = lst.shown()
+        assert bar.value() == bar.maximum()
+        assert before < lst.total()
+        if action == 'page_step':
+            bar.triggerAction(QAbstractSlider.SliderAction.SliderPageStepAdd)
+        elif action == 'resize':
+            dlg.resize(360, 350)
+        elif action == 'resize_width':
+            dlg.resize(400, 300)
+        elif action == 'resize_shrink':
+            dlg.resize(360, 250)
+        else:
+            key = {'down': Qt.Key.Key_Down, 'page_down': Qt.Key.Key_PageDown,
+                   'end': Qt.Key.Key_End, 'ctrl_end': Qt.Key.Key_End,
+                   'space': Qt.Key.Key_Space}[action]
+            modifier = (Qt.KeyboardModifier.ControlModifier if action == 'ctrl_end'
+                        else Qt.KeyboardModifier.NoModifier)
+            QTest.keyClick(lst, key, modifier)
+        _settle(app)
+        assert lst.shown() > before
+        assert lst.shown() < lst.total()
+    finally:
+        dlg.close()
+
+
+def test_removals_refill_a_viewport_with_rows_still_unshown():
+    app, dlg, lst = _open(140, batch=5)
+    try:
+        _settle(app)
+        before = lst.shown()
+        for _ in range(before - 2):
+            lst.remove_item(0)
+        _settle(app)
+        assert lst.shown() > 2
+        assert lst._rows_container.sizeHint().height() > lst.viewport().height()
+        assert lst.shown() < lst.total()
+    finally:
+        dlg.close()
+
+
+@pytest.mark.parametrize('height', [_ROW_H, 650])
+def test_a_changed_scroll_range_reveals_more_rows_near_the_bottom(height):
+    app, dlg, lst = _open(300, batch=100, tall=(0, 1))
+    try:
+        _settle(app)
+        _bottom(lst)
+        before = lst.shown()
+        lst.rows()[0].setFixedHeight(height)
+        _settle(app)
+        assert lst.shown() > before
+    finally:
+        dlg.close()
+
+
+@pytest.mark.parametrize('action', ['single_step', 'page_step'])
+def test_a_downward_action_that_moves_the_scrollbar_reveals_one_batch(action):
+    from PyQt6.QtWidgets import QAbstractSlider
+    app, dlg, lst = _open(300, batch=100, tall=(0, 1))
+    try:
+        bar = lst.verticalScrollBar()
+        bar.blockSignals(True)
+        bar.setValue(bar.maximum() - 50)
+        bar.blockSignals(False)
+        lst._scroll_value = bar.value()
+        before = lst.shown()
+        actions = QAbstractSlider.SliderAction
+        bar.triggerAction(actions.SliderSingleStepAdd if action == 'single_step'
+                          else actions.SliderPageStepAdd)
+        _settle(app)
+        assert lst.shown() == before + 100
+    finally:
+        dlg.close()
+
+
+@pytest.mark.parametrize('action', ['value', 'up', 'page_up', 'page_step', 'shift_space'])
+def test_scrolling_up_near_the_bottom_does_not_reveal_rows(action):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QAbstractSlider
+    app, dlg, lst = _open(300, batch=100, tall=(0, 1))
+    try:
+        _settle(app)
+        dlg.activateWindow()
+        lst.setFocus()
+        _settle(app)
+        bar = _bottom(lst)
+        lst._scroll_value = bar.value()
+        before = lst.shown()
+        if action == 'value':
+            bar.setValue(bar.value() - 1)
+        elif action == 'page_step':
+            bar.triggerAction(QAbstractSlider.SliderAction.SliderPageStepSub)
+        else:
+            key = {'up': Qt.Key.Key_Up, 'page_up': Qt.Key.Key_PageUp,
+                   'shift_space': Qt.Key.Key_Space}[action]
+            modifier = (Qt.KeyboardModifier.ShiftModifier if action == 'shift_space'
+                        else Qt.KeyboardModifier.NoModifier)
+            QTest.keyClick(lst, key, modifier)
+        _settle(app)
+        assert lst.shown() == before
+    finally:
+        dlg.close()
 
 
 def test_a_list_fills_the_viewport_it_opens_with():
@@ -186,8 +343,7 @@ def test_pages_follow_the_list_width_so_wrapped_rows_are_not_clipped():
 
     def settle():
         # A scrollbar appearing or going narrows the list, which takes a second pass.
-        for _ in range(3):
-            app.processEvents()
+        _settle(app)
 
     dlg.resize(700, 500)
     dlg.show()
@@ -213,6 +369,7 @@ def test_wheeling_down_after_a_removal_at_the_bottom_reveals_the_next_rows():
     lst.remove_item(0)
     for _ in range(3):
         app.processEvents()
+    _bottom(lst)
     before = lst.shown()
     assert bar.value() == bar.maximum()
     pos = lst.viewport().rect().center()

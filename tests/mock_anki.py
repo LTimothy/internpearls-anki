@@ -50,6 +50,7 @@ import tempfile
 import time
 import types
 import zipfile
+from enum import IntEnum
 
 from demo_contract_generated import ACTION_KINDS, NODE_KINDS, REQUIRED_FIELDS
 
@@ -2142,10 +2143,21 @@ class QScrollBar:
     that might not exist.
     """
 
+    class SliderAction(IntEnum):
+        SliderSingleStepAdd = 1
+        SliderSingleStepSub = 2
+        SliderPageStepAdd = 3
+        SliderPageStepSub = 4
+        SliderToMinimum = 5
+        SliderToMaximum = 6
+        SliderMove = 7
+
     def __init__(self):
         self._value = 0
         self._maximum = 0
         self.valueChanged = Signal()
+        self.actionTriggered = Signal()
+        self.rangeChanged = Signal()
 
     def value(self):
         return self._value
@@ -2158,7 +2170,13 @@ class QScrollBar:
         return self._maximum
 
     def setMaximum(self, v):
+        previous = self._maximum
         self._maximum = v
+        if v != previous:
+            self.rangeChanged.emit(0, v)
+
+    def triggerAction(self, action):
+        self.actionTriggered.emit(action)
 
 
 class QScrollArea(QWidget):
