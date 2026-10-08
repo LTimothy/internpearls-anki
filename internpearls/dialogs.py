@@ -822,8 +822,7 @@ class _DeclinedDialog(QDialog):
     changed and re-offers the card. It never touches the collection itself: a kept-back
     card the learner already has stays exactly as the learner left it.
 
-    Reads and writes the registry directly rather than caching it on the instance, so
-    _rebuild() always reflects whatever _offer_again() just changed.
+    Reads the registry for each action so the list reflects the saved decisions.
     """
 
     def __init__(self, parent):
@@ -918,14 +917,34 @@ class _DeclinedDialog(QDialog):
             save_declined(reg)
             if isinstance(entry, dict) and entry.get("deck"):
                 invalidate_installed([entry["deck"]])
-        self._rebuild()
+        items = self._list_items(reg)
+        index = self._list.index_of(lambda item: item[0] == "row" and item[1] == guid)
+        if index is None:
+            self._rebuild()
+            return
+        removed = [index]
+        current = self._list._items
+        if (index and current[index - 1][0] == "heading"
+                and (index + 1 == len(current) or current[index + 1][0] == "heading")):
+            removed.append(index - 1)
+        remaining = [item for i, item in enumerate(current) if i not in removed]
+        if not reg and len(current) == 2 and index == 1:
+            self._list.replace_item(0, ("empty",))
+            self._list.remove_item(index)
+            self._fit_list()
+            return
+        if remaining != items:
+            self._rebuild()
+            return
+        for i in sorted(removed, reverse=True):
+            self._list.remove_item(i)
+        self._fit_list()
 
     def _refilter(self, mode, query):
         self._filter_mode, self._filter_query = mode, query
         self._rebuild(preserve_scroll=False)
 
-    def _rebuild(self, preserve_scroll=True):
-        reg = load_declined()
+    def _list_items(self, reg):
         known_states = {state for state, _ in _DECLINE_GROUPS}
         query = self._filter_query.strip().casefold()
         matched = {}
@@ -974,8 +993,10 @@ class _DeclinedDialog(QDialog):
 
         if not reg:
             items.append(("empty",))
-        # Offer again rebuilds the list; build back down to where the reader was and
-        # put the scroll position back, so the next row is where they left it.
+        return items
+
+    def _rebuild(self, preserve_scroll=True):
+        items = self._list_items(load_declined())
         bar = self._list.verticalScrollBar()
         position, shown = ((bar.value(), self._list.shown()) if preserve_scroll
                            else (0, 0))

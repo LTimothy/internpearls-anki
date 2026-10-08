@@ -198,3 +198,30 @@ def test_pages_follow_the_list_width_so_wrapped_rows_are_not_clipped():
         settle()
         assert fits(), f"at {width}px a page kept the height of the previous width"
     dlg.close()
+
+
+def test_wheeling_down_after_a_removal_at_the_bottom_reveals_the_next_rows():
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QWheelEvent
+    app, dlg, lst = _open(90, batch=5)
+    for _ in range(3):
+        app.processEvents()
+    bar = lst.verticalScrollBar()
+    bar.blockSignals(True)
+    bar.setValue(bar.maximum())
+    bar.blockSignals(False)
+    lst.remove_item(0)
+    for _ in range(3):
+        app.processEvents()
+    before = lst.shown()
+    assert bar.value() == bar.maximum()
+    pos = lst.viewport().rect().center()
+    event = QWheelEvent(QPointF(pos), QPointF(lst.viewport().mapToGlobal(pos)),
+                        QPoint(), QPoint(0, -120), Qt.MouseButton.NoButton,
+                        Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.ScrollUpdate, False)
+    app.sendEvent(lst.viewport(), event)
+    app.processEvents()
+    assert lst.shown() > before
+    assert [row.text() for row in lst.rows()[:lst.shown()]] == [
+        f'Row {i}' for i in range(1, lst.shown() + 1)]
+    dlg.close()

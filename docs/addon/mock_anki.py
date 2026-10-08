@@ -1329,8 +1329,28 @@ class QWidget:
     def accessibleName(self):
         return getattr(self, "_accessible", "")
 
+    _focused = None
+
     def setFocus(self, *a):
+        QWidget._focused = self
         self.focused = True
+
+    def findChildren(self, kind):
+        children = []
+
+        def walk(layout):
+            if layout is None:
+                return
+            for child in layout._children:
+                if isinstance(child, QWidget):
+                    if isinstance(child, kind):
+                        children.append(child)
+                    walk(child.layout())
+                elif isinstance(child, _Layout):
+                    walk(child)
+
+        walk(self.layout())
+        return children
 
     def setFocusPolicy(self, policy):
         self._focus_policy = policy
@@ -3519,6 +3539,10 @@ def install():
         @staticmethod
         def instance():
             return _QApplication._instance
+
+        @staticmethod
+        def focusWidget():
+            return QWidget._focused
 
         @staticmethod
         def setOverrideCursor(cursor):

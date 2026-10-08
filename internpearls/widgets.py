@@ -11,7 +11,9 @@ May import config, logic, palette, platform and ui. Must NOT import sync, dialog
 or review: that's the boundary that keeps this module out of the same import cycle
 review.py was built to dodge.
 """
-from aqt.qt import (QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
+from contextlib import contextmanager
+
+from aqt.qt import (QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
                      QSize, Qt, QVBoxLayout, QWidget)
 
 from .palette import colors
@@ -628,6 +630,8 @@ class StreamingList(QScrollArea):
         self.setWidget(body)
 
         self._last_scroll = 0.0
+        self._scroll_value = 0
+        self._editing = False
         self.verticalScrollBar().valueChanged.connect(self._maybe_extend)
 
         # Idle prefetch. Building a 50-row batch at the moment the reader scrolls to
@@ -659,7 +663,7 @@ class StreamingList(QScrollArea):
                 for page in self._pages for i in range(page.layout().count())]
 
     def _page(self, index):
-        """The page for batch `index`, created hidden and appended if it is new."""
+        """The page at `index`, created hidden and appended if it is new."""
         while len(self._pages) <= index:
             page = _Page()
             lay = QVBoxLayout(page)
@@ -674,7 +678,10 @@ class StreamingList(QScrollArea):
         """Build rows up to item `end` into their (still hidden) pages."""
         while self._built < end:
             row = self._build_row(self._items[self._built])
-            self._page(self._built // self._batch).layout().addWidget(row)
+            if (not self._pages or self._pages[-1].layout().count() == self._batch
+                    or self._built == self._shown):
+                self._page(len(self._pages))
+            self._pages[-1].layout().addWidget(row)
             self._built += 1
 
     def _idle_extend(self):
@@ -735,8 +742,19 @@ class StreamingList(QScrollArea):
     def _maybe_extend(self, _value=None):
         self._last_scroll = platform().monotonic()
         bar = self.verticalScrollBar()
+        previous, self._scroll_value = self._scroll_value, bar.value()
+        # A shrinking range can clamp the value without the reader scrolling.
+        if self._editing or (_value is not None and bar.value() <= previous):
+            return
         if bar.maximum() - bar.value() <= self.viewport().height():
             self._extend()
+
+    def wheelEvent(self, event):
+        shown = self.shown()
+        super().wheelEvent(event)
+        delta = event.pixelDelta().y() or event.angleDelta().y()
+        if delta < 0 and self.shown() == shown:
+            self._maybe_extend()
 
     def resizeEvent(self, event):
         """Refill after Qt has given this list its real height.
@@ -771,13 +789,125 @@ class StreamingList(QScrollArea):
         self._build_upto(end)
         # Shown here rather than on Qt's next layout pass, so _fill_viewport measures
         # the batch it just revealed.
-        self._page(self._shown // self._batch).setVisible(True)
-        self._shown = end
+        start = 0
+        for page in self._pages:
+            count = page.layout().count()
+            if start == self._shown:
+                page.setVisible(True)
+                self._shown += count
+                break
+            start += count
         self._start_prefetch()
 
     def fill_all(self):
         while self._shown < self.total():
             self._extend()
+
+    def index_of(self, predicate):
+        """The first matching item's index, or None if it is absent."""
+        return next((i for i, item in enumerate(self._items) if predicate(item)), None)
+
+    def _row_at(self, index):
+        for page in self._pages:
+            if index < page.layout().count():
+                return page, index
+            index -= page.layout().count()
+        return None, None
+
+    @staticmethod
+    def _controls(row):
+        return [w for w in [row] + row.findChildren(QWidget)
+                if w.focusPolicy() != Qt.FocusPolicy.NoFocus and w.isEnabled()]
+
+    @staticmethod
+    def _discard(widget):
+        widget.setVisible(False)
+        widget.setParent(None)
+        widget.deleteLater()
+
+    @contextmanager
+    def _edit(self):
+        bar = self.verticalScrollBar()
+        position = bar.value()
+        self._editing = True
+        self._generation += 1
+        self._prefetching = False
+        try:
+            yield
+        finally:
+            if bar.value() != position:
+                bar.setValue(position)
+            self._scroll_value = bar.value()
+            self._editing = False
+            self._start_prefetch()
+
+    def _focus_after_removal(self, index):
+        end = min(self.total(), max(self.built(), index + self._batch))
+        for i in range(index, end):
+            self._build_upto(i + 1)
+            page, offset = self._row_at(i)
+            controls = self._controls(page.layout().itemAt(offset).widget())
+            if controls:
+                start = 0
+                for page in self._pages:
+                    page.setVisible(True)
+                    start += page.layout().count()
+                    if start > i:
+                        self._shown = max(self._shown, start)
+                        break
+                controls[0].setFocus()
+                return
+        for row in reversed(self.rows()[:index]):
+            controls = self._controls(row)
+            if controls:
+                controls[0].setFocus()
+                return
+
+    def replace_item(self, index, item):
+        """Replace one item, rebuilding only its row if it is already built."""
+        if not 0 <= index < self.total():
+            raise IndexError(index)
+        with self._edit():
+            if index < self.built():
+                page, offset = self._row_at(index)
+                layout = page.layout()
+                old = layout.itemAt(offset).widget()
+                controls = self._controls(old)
+                focus = QApplication.focusWidget()
+                focus_index = controls.index(focus) if focus in controls else None
+                row = self._build_row(item)
+                layout.takeAt(offset)
+                layout.insertWidget(offset, row)
+                self._discard(old)
+                row.setVisible(True)
+                if focus_index is not None:
+                    controls = self._controls(row)
+                    if controls:
+                        controls[min(focus_index, len(controls) - 1)].setFocus()
+            self._items[index] = item
+
+    def remove_item(self, index):
+        """Remove one item and its row, retaining every later row and page."""
+        if not 0 <= index < self.total():
+            raise IndexError(index)
+        with self._edit():
+            focused = False
+            if index < self.built():
+                page, offset = self._row_at(index)
+                row = page.layout().takeAt(offset).widget()
+                focused = QApplication.focusWidget() in self._controls(row)
+                self._discard(row)
+                self._built -= 1
+                if index < self.shown():
+                    self._shown -= 1
+                if not page.layout().count():
+                    page_index = self._pages.index(page)
+                    self._rows_layout.takeAt(page_index)
+                    self._pages.pop(page_index)
+                    self._discard(page)
+            del self._items[index]
+            if focused:
+                self._focus_after_removal(index)
 
     def reset(self, items):
         """Replace the items and rebuild only the first batch. Anything holding the old

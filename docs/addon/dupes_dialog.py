@@ -747,9 +747,7 @@ class _DuplicateScanDialog(QDialog):
         return _row_rule()
 
     def _rebuild_list(self):
-        """Replace the list's items. Only the first batch of rows is built, plus as many
-        as the reader had already scrolled through, so an action on a long list costs
-        what the reader has seen rather than what the scan found."""
+        """Rebuild after the scan or the list's grouping changes."""
         self.summary_label.setText(self._summary_text())
         bar = self._list.verticalScrollBar()
         value, depth = bar.value(), self._list.shown()
@@ -761,6 +759,16 @@ class _DuplicateScanDialog(QDialog):
 
         self._restore_value = value
         self._restore_timer.start()
+
+    def _refresh_pair(self, pair):
+        items = self._list_items()
+        if items != self._list._items:
+            self._rebuild_list()
+            return
+        index = self._list.index_of(lambda item: item[0] == "pair" and item[1] is pair)
+        if index is not None:
+            self._list.replace_item(index, ("pair", pair))
+        self.summary_label.setText(self._summary_text())
 
     @_delivery
     def _restore_scroll(self):
@@ -924,7 +932,7 @@ class _DuplicateScanDialog(QDialog):
         pair["suspended"].add(side)
         pair.setdefault("partly_suspended", set()).discard(side)
         pair.setdefault("suspension_counts", {})[side] = (total, total)
-        self._rebuild_list()
+        self._refresh_pair(pair)
 
     @_safe
     def _unsuspend(self, pair, side):
@@ -934,13 +942,28 @@ class _DuplicateScanDialog(QDialog):
         pair.setdefault("partly_suspended", set()).discard(side)
         total = len(mw.col.get_note(row[0]).card_ids())
         pair.setdefault("suspension_counts", {})[side] = (0, total)
-        self._rebuild_list()
+        self._refresh_pair(pair)
 
     @_safe
     def _ignore(self, pair):
         add_dupes_ignored(pair["key"])
         self._pairs.remove(pair)
-        self._rebuild_list()
+        index = self._list.index_of(lambda item: item[0] == "pair" and item[1] is pair)
+        if index is None or pair["judged"] == "different":
+            self._rebuild_list()
+            return
+        removed = [index]
+        if index:
+            removed.append(index - 1)
+        elif self._list.total() > 1:
+            removed.append(1)
+        items = [item for i, item in enumerate(self._list._items) if i not in removed]
+        if items != self._list_items():
+            self._rebuild_list()
+            return
+        for i in sorted(removed, reverse=True):
+            self._list.remove_item(i)
+        self.summary_label.setText(self._summary_text())
 
     @_safe
     def _copy_list(self, *_):
