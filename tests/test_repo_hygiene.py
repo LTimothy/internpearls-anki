@@ -1,7 +1,4 @@
-"""The public repo must not name the learner or assume her gender.
-
-Both have happened: a first name was scrubbed from history in August and another
-appeared in September. A sweep is a moment; this is what makes it hold.
+"""Tracked prose refers to the learner without a gendered pronoun.
 
 Line-based text scanning, not git grep: git grep silently drops \\b word-boundary
 anchors from an -E pattern rather than erroring, so a check built on it can report
