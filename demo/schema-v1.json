@@ -116,6 +116,7 @@
       "focus_policy",
       "readonly",
       "style_roles",
+      "style",
       "actions"
     ],
     "request": [
@@ -181,7 +182,7 @@
         "id", "kind", "parent_id", "children", "visible", "effective_visible",
         "enabled", "effective_enabled", "accessible_name",
         "accessible_description", "tooltip", "focus_policy", "readonly",
-        "style_roles", "actions"
+        "style_roles", "style", "actions"
       ]
     },
     "alignment": {
@@ -551,7 +552,7 @@
     "node": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "parent_id", "children", "visible", "effective_visible", "enabled", "effective_enabled", "accessible_name", "accessible_description", "tooltip", "focus_policy", "readonly", "style_roles", "actions"],
+      "required": ["id", "kind", "parent_id", "children", "visible", "effective_visible", "enabled", "effective_enabled", "accessible_name", "accessible_description", "tooltip", "focus_policy", "readonly", "style_roles", "style", "actions"],
       "properties": {
         "id": {"$ref": "#/$defs/identifier"},
         "kind": {"enum": ["box", "button", "buttons", "check", "col", "combo", "form", "frame", "grid", "hline", "label", "line", "radio", "row", "scroll", "spacer", "spin", "stack", "textarea"]},
@@ -567,6 +568,7 @@
         "focus_policy": {"enum": ["none", "click", "tab", "strong"]},
         "readonly": {"type": "boolean"},
         "style_roles": {"type": "array", "uniqueItems": true, "items": {"enum": ["primary", "secondary", "danger", "warning", "success", "muted", "heading", "monospace"]}},
+        "style": {"$ref": "#/$defs/text"},
         "actions": {"type": "array", "uniqueItems": true, "items": {"enum": ["activate", "toggle", "select-option", "edit-text", "finish-edit", "activate-link", "key", "scroll", "select-files", "advance", "close"]}},
         "format": {"enum": ["plain", "rich", "markdown"]},
         "text": {"$ref": "#/$defs/text"},

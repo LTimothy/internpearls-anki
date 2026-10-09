@@ -182,6 +182,30 @@ def test_dialog_button_box_exposes_default_and_escape_semantics():
     assert buttons["Cancel"]["escape"] is True
 
 
+def test_layout_stretch_flat_buttons_and_dialog_width_reach_the_demo():
+    dialog = mock_anki.QDialog()
+    dialog.setMinimumWidth(560)
+    dialog.resize(880, 600)
+    row = mock_anki.QHBoxLayout(dialog)
+    text = mock_anki.QLabel("A card")
+    text.setStyleSheet("color: #123456;")
+    link = mock_anki.QPushButton("Add note")
+    link.setFlat(True)
+    row.addWidget(text, 1)
+    row.addStretch()
+    row.addWidget(link)
+    nodes = {node["id"]: node for node in mock_anki.serialize_widget(dialog)["nodes"]}
+    layout = nodes[row.wid]
+    kinds = [nodes[child]["kind"] for child in layout["children"]]
+    assert kinds == ["label", "spacer", "button"]
+    assert layout["stretches"] == [1, 0, 0]
+    assert nodes[text.wid]["style"] == "color: #123456;"
+    assert "border: none" in nodes[link.wid]["style"]
+    assert "min-width: 880px" in nodes[dialog.wid]["style"]
+    # The spacer is the demo's alone: code walking the layout still sees two items.
+    assert row.count() == 2
+
+
 def test_worker_python_boundary_rejects_unknown_message_types():
     result = _run_harness_validation_probe("""
 valid = harness.validate_worker_message({"type": "state", "payload": {"action": "read"}})

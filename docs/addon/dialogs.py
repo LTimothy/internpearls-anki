@@ -1460,7 +1460,7 @@ def about():
         warning = colors()["warning"]
         latest_text = html.escape(str(latest_known), quote=False)
         update_suffix = (f" &nbsp;<span style='color:{warning};'>(v{latest_text} "
-                         f"available — Advanced → Check for add-on updates)</span>")
+                         f"is available: Advanced → Check for add-on updates)</span>")
 
     muted = colors()["muted"]
     protected = ", ".join(html.escape(str(f), quote=False) for f in cfg["protected"])

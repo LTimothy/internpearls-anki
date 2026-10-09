@@ -1408,13 +1408,13 @@ class QWidget:
         pass
 
     def setMinimumWidth(self, v):
-        pass
+        self._min_w = v
 
     def setMinimumHeight(self, v):
         pass
 
     def setMinimumSize(self, w, h):
-        pass
+        self._min_w = w
 
     def setMaximumWidth(self, v):
         pass
@@ -1429,7 +1429,7 @@ class QWidget:
         pass
 
     def resize(self, w, h):
-        pass
+        self._open_w = max(getattr(self, "_open_w", 0), int(w or 0))
 
     def setCursor(self, c):
         pass
@@ -1546,7 +1546,7 @@ class QPushButton(QWidget):
         self._default = False
 
     def setFlat(self, v):
-        pass
+        self._flat = bool(v)
 
     def setAutoDefault(self, v):
         self._auto_default = bool(v)
@@ -1926,6 +1926,15 @@ class _LayoutItem:
         return self._widget
 
 
+class _Stretch:
+    """The spacer QBoxLayout.addStretch inserts, as the browser demo sees it."""
+    kind = "spacer"
+
+    def __init__(self):
+        self.wid = _new_wid(self)
+        self._parent_widget = None
+
+
 class _Layout:
     kind = "col"
 
@@ -1933,7 +1942,8 @@ class _Layout:
         self.wid = _new_wid(self)
         self._children = []
         self._owner = parent if isinstance(parent, QWidget) else None
-        self._spacing = 0
+        # Qt's default spacing between a box layout's items, until setSpacing.
+        self._spacing = 6
         # (left, top, right, bottom), recorded rather than dropped: a row's own indent
         # is a layout margin, and a suite with no geometry has nothing else to read it
         # from (review._card_row indents an expanded body by exactly this).
@@ -1942,10 +1952,23 @@ class _Layout:
         # one child the stretch has no other way to say so without geometry
         # (review._group_note_row gives its note label the stretch this way).
         self._stretch = {}
+        # addStretch's spacers, keyed by the wid of the child they sit before (None
+        # while nothing follows yet). Kept out of _children, which callers walk, and
+        # serialized as spacer nodes so the browser demo spreads a row the way Qt does.
+        self._stretch_before = {}
+        self._pending_stretch = None
         if parent is not None and isinstance(parent, QWidget):
             parent._layout = self
 
-    def addWidget(self, w, *a):
+    def _place_pending_stretch(self, child):
+        if self._pending_stretch is not None:
+            self._stretch_before[child.wid] = self._pending_stretch
+            self._pending_stretch = None
+
+    def addWidget(self, w, stretch=0, *a):
+        if stretch:
+            self._stretch[len(self._children)] = stretch
+        self._place_pending_stretch(w)
         self._children.append(w)
         self._adopt(w)
 
@@ -1979,7 +2002,8 @@ class _Layout:
     def stretch(self, index):
         return self._stretch.get(index, 0)
 
-    def addLayout(self, l):
+    def addLayout(self, l, *a):
+        self._place_pending_stretch(l)
         self._children.append(l)
         l._set_owner(self._owner)
 
@@ -2002,7 +2026,7 @@ class _Layout:
                 radio._implicit_group = radios
 
     def addStretch(self, *a):
-        pass
+        self._pending_stretch = _Stretch()
 
     def addSpacing(self, v):
         pass
@@ -2396,6 +2420,9 @@ def _node(widget, kind, **fields):
                                                 "none"),
         "readonly": bool(getattr(widget, "_readonly", False)),
         "style_roles": list(getattr(widget, "_style_roles", [])),
+        # A flat button paints no frame in Qt; said in the stylesheet's own terms so
+        # the browser demo draws it as the link it reads as.
+        "style": _demo_style(widget),
         "actions": _actions_for(widget),
     }
     node.update(fields)
@@ -2410,9 +2437,39 @@ def _children(widget):
     if isinstance(widget, QDialogButtonBox):
         return list(widget._buttons)
     if isinstance(widget, _Layout):
-        return list(widget._children)
+        out = []
+        for child in widget._children:
+            if child.wid in widget._stretch_before:
+                out.append(widget._stretch_before[child.wid])
+            out.append(child)
+        if widget._pending_stretch is not None:
+            out.append(widget._pending_stretch)
+        return out
     layout = getattr(widget, "_layout", None)
     return [layout] if layout is not None else []
+
+
+def _demo_style(widget):
+    """The widget's stylesheet as the browser demo paints it, plus what Qt draws
+    from other calls: a flat button has no frame, and a dialog opens as wide as its
+    setMinimumWidth or resize asked for. Other widgets' minimum widths come from font
+    metrics this mock does not have, so they are left out."""
+    style = str(getattr(widget, "_style", "") or "")
+    if getattr(widget, "_flat", False):
+        style = ("QPushButton { border: none; background: transparent; padding: 2px 0; }"
+                 + style)
+    width = max(getattr(widget, "_min_w", 0), getattr(widget, "_open_w", 0))
+    if isinstance(widget, QDialog) and width:
+        style = f"QDialog {{ min-width: {int(width)}px; }}" + style
+    return style
+
+
+def _layout_stretches(layout):
+    """One factor per serialized child: addWidget's stretch, 0 for a spacer."""
+    if not layout._stretch:
+        return []
+    factor = {c.wid: layout._stretch.get(i, 0) for i, c in enumerate(layout._children)}
+    return [factor.get(c.wid, 0) for c in _children(layout)]
 
 
 def _layout_fields(layout):
@@ -2420,8 +2477,10 @@ def _layout_fields(layout):
     return {
         "margins": {"left": left, "top": top, "right": right, "bottom": bottom},
         "gap": layout._spacing,
-        "stretches": [],
-        "alignment": "start",
+        "stretches": _layout_stretches(layout),
+        # Qt's box layouts fill the cross axis unless told otherwise; a column of
+        # widgets is as wide as the column.
+        "alignment": "justify" if layout.kind != "row" else "start",
     }
 
 
@@ -2483,12 +2542,14 @@ def _specific_fields(widget, kind):
     if kind in ("row", "col", "box", "frame"):
         if isinstance(widget, _Layout):
             return _layout_fields(widget)
+        # A widget's own layout fills it.
         return {"margins": {"left": 0, "top": 0, "right": 0, "bottom": 0},
-                "gap": 0, "stretches": [], "alignment": "start"}
+                "gap": 0, "stretches": [], "alignment": "justify"}
     if kind == "grid":
         cells = [{"id": child.wid, "row": row, "column": column,
                   "row_span": row_span, "column_span": column_span,
-                  "alignment": _alignment(alignment)}
+                  # A widget placed without an alignment fills its cell.
+                  "alignment": "justify" if alignment is None else _alignment(alignment)}
                  for child, row, column, row_span, column_span, alignment
                  in widget._placements]
         ids = [cell["id"] for cell in cells]
@@ -2519,7 +2580,9 @@ def _specific_fields(widget, kind):
         return {"offset": bar.value(), "extent": bar.maximum(),
                 "shown_count": shown, "total_count": total,
                 "row_ids": [child.wid for child in children]}
-    if kind in ("spacer", "hline"):
+    if kind == "spacer":
+        return {"orientation": "horizontal", "size_policy": "expanding"}
+    if kind == "hline":
         return {"orientation": "horizontal", "size_policy": "preferred"}
     raise ProtocolError(f"unknown node kind: {kind}")
 
@@ -2529,7 +2592,7 @@ def _kind(widget):
         return "grid"
     if isinstance(widget, QFormLayout):
         return "form"
-    if isinstance(widget, _Layout):
+    if isinstance(widget, (_Layout, _Stretch)):
         return widget.kind
     if isinstance(widget, QLabel):
         return "label"

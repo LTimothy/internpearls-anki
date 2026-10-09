@@ -285,7 +285,7 @@ function validateContractTree(tree) {
     for (const name of ["visible", "effective_visible", "enabled", "effective_enabled", "readonly"]) {
       if (typeof node[name] !== "boolean") fail();
     }
-    for (const name of ["accessible_name", "accessible_description", "tooltip", "focus_policy"]) {
+    for (const name of ["accessible_name", "accessible_description", "tooltip", "focus_policy", "style"]) {
       if (typeof node[name] !== "string") fail();
     }
     validateNodeKind(node);

@@ -113,6 +113,7 @@ export const REQUIRED_FIELDS = Object.freeze({
     "focus_policy",
     "readonly",
     "style_roles",
+    "style",
     "actions"
   ],
   "node_kinds": {

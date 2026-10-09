@@ -13,6 +13,7 @@ const COMMON = {
   focus_policy: "none",
   readonly: false,
   style_roles: [],
+  style: "",
   actions: [],
 };
 

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Intern Pearls Deck Tools — live demo (real code)</title>
-<meta name="description" content="Update shared Anki decks without losing your review history or personal notes. This demo runs the add-on's actual Python code in your browser.">
+<title>Intern Pearls Deck Tools live demo</title>
+<meta name="description" content="Update shared Anki decks without losing your review history or personal notes. This demo runs the add-on's own Python code in your browser.">
 <style>
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #6b7280;
@@ -118,7 +118,7 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .vstack { display: flex; flex-direction: column; gap: 8px; }
   .hstack { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .scrollbox { max-height: 260px; overflow: auto; }
+  .scrollbox { max-height: min(440px, 55vh); overflow: auto; }
   .qframe { border: 1px solid var(--line); border-radius: 6px; padding: 8px 11px; }
   /* An HLine frame: the Qt stylesheet sets its color, so paint from currentColor. */
   .qhline { height: 1px; background: currentColor; }
@@ -127,6 +127,10 @@
             border: 1px solid var(--line); border-radius: 6px;
             background: var(--bg); color: var(--ink); }
   input.dspin { width: 90px; }
+  .demo-combo { display: flex; gap: 6px; min-width: 0; }
+  .demo-combo select { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 5px 6px;
+            border: 1px solid var(--line); border-radius: 6px;
+            background: var(--bg); color: var(--ink); }
   textarea.dinput { display: block; resize: vertical; }
   /* The digest view: read-only and fixed-pitch, like the real QPlainTextEdit it
      stands in for, still on the sunken field background so it reads as a payload. */
@@ -161,8 +165,8 @@
 <header>
   <h1>Intern Pearls Deck Tools</h1>
   <p class="tag">Update shared Anki decks without losing your review history or the
-  notes you've written on cards. Free, open source, no server — your decks live in a
-  GitHub repo or a folder.</p>
+  notes you've written on cards. The add-on is free and open source and needs no server:
+  your decks live in a GitHub repo or a local folder.</p>
   <div class="links">
     <a href="https://github.com/LTimothy/internpearls-anki">GitHub</a>
     <a href="https://github.com/LTimothy/internpearls-anki/releases/latest">Download the add-on</a>
@@ -176,9 +180,9 @@
     <span class="dot" style="background:#f66"></span>
     <span class="dot" style="background:#fc3"></span>
     <span class="dot" style="background:#4c4"></span>
-    <span style="margin-left:8px">Anki is simulated — but the Intern Pearls menu runs the
-      add-on's <b>actual Python code</b> (via WebAssembly), against the real example
-      deck repo.</span>
+    <span style="margin-left:8px">Anki is simulated here. The Intern Pearls menu runs the
+      add-on's own Python code (through WebAssembly) against the example deck repo's
+      files.</span>
   </div>
   <div class="menubar">
     <span>File</span><span>Edit</span><span>Tools</span>
@@ -199,9 +203,9 @@
   <h2>You are also the deck maintainer</h2>
   <p>Publish an update to the deck repo (these buttons edit the real
      <span class="kbd">.apkg</span> and <span class="kbd">manifest.json</span> the add-on
-     syncs from), then use the <b>Intern Pearls</b> menu above. Tip: click any note in
-     the “your notes” column and type your own annotation first, then watch a sync keep
-     it.</p>
+     syncs from), then use the <b>Intern Pearls</b> menu above. To test your own notes,
+     click a cell in the "Your notes on the card" column and type an annotation before you
+     sync; the sync keeps it.</p>
   <div class="btnrow">
     <button class="btn" data-ship="fix" disabled>Fix an answer</button>
     <button class="btn" data-ship="reword" disabled>Reword a question</button>
@@ -224,51 +228,50 @@
 
 <!-- ======================= explainer ======================= -->
 <div class="explain">
-  <h2>What you're actually looking at</h2>
+  <h2>How this demo works</h2>
   <div class="card">
     <p style="margin-top:0">This page downloads the add-on's real Python modules (the
     same files shipped inside <span class="kbd">internpearls.ankiaddon</span>) plus the
     example deck repo's real <span class="kbd">manifest.json</span> and
-    <span class="kbd">.apkg</span> files, and executes them with Pyodide. Only Anki
-    itself is mocked — by the same test harness the project's pytest suite uses. Every
-    dialog you see is built by the add-on's own code; every count, warning, and menu
-    item comes out of it at runtime, so this demo cannot drift from the shipped
-    behavior.</p>
+    <span class="kbd">.apkg</span> files, and runs them with Pyodide. Only Anki itself is
+    mocked, using the same test harness as the project's pytest suite. The add-on's own
+    code builds every dialog you see and produces every count, warning and menu item at
+    runtime, so the demo behaves the same way as the shipped add-on.</p>
     <ul style="font-size:13.5px; color:var(--muted); padding-left:20px">
-      <li><b style="color:var(--ink)">A backup first, always.</b> Every sync starts with a
-        timestamped backup (try Advanced → Restore intern pearls deck to actually roll one
-        back).</li>
-      <li><b style="color:var(--ink)">History survives edits.</b> Cards match by a stable
-        GUID first, then by front text — reword a question above and sync to see the
-        interval survive.</li>
-      <li><b style="color:var(--ink)">Your annotations survive too.</b> The notes column is
-        the real protected <span class="kbd">Notes</span> field, snapshotted and restored
-        around every import.</li>
-      <li><b style="color:var(--ink)">Appearance changes ask first.</b> Restyle the
-        template above and sync: the real consent dialog explains the one-time full
-        AnkiWeb sync. Auto-sync (Settings; demo minutes last 5 seconds) refuses to apply
-        it unattended.</li>
-      <li><b style="color:var(--ink)">Card generation needs an assistant you install.</b>
-        The AI wizard opens here and its AI Backends window works, but drafting cards
-        runs an assistant's command-line tool on your own machine, which a browser tab
-        has no way to start. This demo stops at the setup screen; real Anki goes on to
-        draft, review, and import.</li>
+      <li>Each sync backs up the decks it changes before importing, with a timestamp.
+        Advanced → Restore intern pearls deck rolls a backup back in.</li>
+      <li>Cards match by a stable GUID first, then by front text, so a reworded card keeps
+        its history. Reword a question above and sync to see the interval carry over.</li>
+      <li>The notes column is the protected <span class="kbd">Notes</span> field. The
+        add-on reads it before each import and writes it back afterward, so your
+        annotations stay.</li>
+      <li>Appearance changes ask first. Restyle the template above and sync, and the
+        consent dialog explains the one-time full AnkiWeb sync the change costs.
+        Auto-sync (in Settings; a demo minute lasts 5 seconds) won't apply it
+        unattended.</li>
+      <li>Card generation needs an AI assistant installed on your computer. The AI wizard
+        opens here and its AI Backends window works, but drafting runs the assistant's
+        command-line tool on your own machine, which a browser tab cannot start. The demo
+        stops at the setup screen; in Anki the wizard goes on to draft, review and import
+        cards.</li>
     </ul>
     <p style="margin-bottom:0">Install the
       <a href="https://github.com/LTimothy/internpearls-anki/releases/latest">add-on</a>,
-      open <b>Manage decks → Configure source → Try the example deck</b>, and this all
-      works identically inside real Anki. Hosting your own decks is a
-      <span class="kbd">manifest.json</span> plus <span class="kbd">.apkg</span> files in
-      any repo — fork the
-      <a href="https://github.com/LTimothy/internpearls-example-deck">example deck source</a>.</p>
+      open <b>Manage decks → Configure source → Try the example deck</b>, and the same
+      flows run inside Anki. To host your own decks, put a
+      <span class="kbd">manifest.json</span> and your <span class="kbd">.apkg</span> files
+      in any repo, or start from the
+      <a href="https://github.com/LTimothy/internpearls-example-deck">example deck source</a>,
+      which is a template repository.</p>
   </div>
 </div>
 
 <footer>
-  Runs entirely in your browser; nothing you do here leaves the page. Only Anki is
-  simulated — the add-on code is real and mirrored verbatim from
-  <span class="kbd">internpearls/</span> (enforced by the repo's test suite). MIT
-  licensed. Scriptable via <span class="kbd">window.demo</span>.
+  This page runs in your browser, and nothing you do here leaves it. Only Anki is
+  simulated. The add-on code is copied byte for byte from
+  <span class="kbd">internpearls/</span>, and the repo's test suite checks that the copy
+  is current. The add-on is MIT licensed, and the page can be scripted through
+  <span class="kbd">window.demo</span>.
 </footer>
 </div>
 

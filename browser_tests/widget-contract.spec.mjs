@@ -411,3 +411,53 @@ test("a container does not re-enable a control the protocol disabled", async ({ 
   expect(result.live).toBe(false);
   expect(result.dead).toBe(true);
 });
+
+test("paints a widget's Qt stylesheet and its layout stretch", async ({ page }) => {
+  await page.goto("/browser_tests/contract-page.html");
+  const result = await page.evaluate(async () => {
+    const { renderWidgetTree } = await import("/docs/demo-renderer.js");
+    const base = (id, kind, extra) => ({
+      id, kind, parent_id: null, children: [], style_roles: [], style: "", actions: [],
+      visible: true, effective_visible: true, enabled: true, effective_enabled: true,
+      readonly: false, accessible_name: "", accessible_description: "",
+      tooltip: "", focus_policy: "", ...extra,
+    });
+    const label = { format: "plain", wrap: false, alignment: "start", strike: false,
+                    selectable: false, link_actions: [] };
+    const tree = {
+      root_id: "row",
+      nodes: [
+        base("row", "row", { children: ["chip", "text", "gap", "go"],
+          margins: { left: 0, top: 0, right: 0, bottom: 0 },
+          gap: 6, stretches: [0, 1, 0, 0], alignment: "start" }),
+        base("chip", "label", { ...label, parent_id: "row", text: "NEW",
+          style: "background-color: #a0c4f0; color: #102040; border-radius: 3px;"
+            + " background-image: url(https://example.invalid/x.png);" }),
+        base("text", "label", { ...label, parent_id: "row", text: "A card" }),
+        base("gap", "spacer", { parent_id: "row", orientation: "horizontal",
+          size_policy: "expanding" }),
+        base("go", "button", { parent_id: "row", text: "Apply", checkable: false,
+          checked: false, role: "other", default: false, escape: false,
+          style: "QPushButton { color: rgb(1, 2, 3); }"
+            + " QPushButton:disabled { color: rgb(4, 5, 6); }" }),
+      ],
+    };
+    const rendered = renderWidgetTree(tree, { nodes: new Map(tree.nodes.map((n) => [n.id, n])) });
+    document.body.appendChild(rendered);
+    const at = (id) => rendered.querySelector(`[data-wid="${id}"]`);
+    return {
+      chipBackground: at("chip").style.backgroundColor,
+      chipImage: at("chip").style.backgroundImage,
+      buttonColor: at("go").style.color,
+      disabledRule: rendered.querySelector("style")?.textContent || "",
+      textFlex: at("text").style.flex,
+      spacerFlex: at("gap").style.flex,
+    };
+  });
+  expect(result.chipBackground).toBe("rgb(160, 196, 240)");
+  expect(result.chipImage).toBe("");
+  expect(result.buttonColor).toBe("rgb(1, 2, 3)");
+  expect(result.disabledRule).toContain('[data-wid="go"]:disabled');
+  expect(result.textFlex).toBe("1 1 0px");
+  expect(result.spacerFlex).toBe("0 0 0px");
+});

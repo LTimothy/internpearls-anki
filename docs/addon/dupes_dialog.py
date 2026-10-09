@@ -858,8 +858,8 @@ class _DuplicateScanDialog(QDialog):
         def suspension_button(side, text, action, possessive):
             count, total = pair.get("suspension_counts", {}).get(side, (0, 1))
             if action == self._unsuspend:
-                description = (f"Unsuspend all {possessive} cards — "
-                               f"{count} of {total} currently suspended")
+                description = (f"Unsuspend all {possessive} cards "
+                               f"({count} of {total} currently suspended)")
             else:
                 description = f"Suspend all {total} cards on {possessive} note"
             if gone[side]:

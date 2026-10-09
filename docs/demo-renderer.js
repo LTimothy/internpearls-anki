@@ -109,7 +109,9 @@ function applyMargins(element, node) {
   element.style.margin = ["top", "right", "bottom", "left"]
     .map((side) => `${margins[side] || 0}px`).join(" ");
   element.style.gap = `${node.gap || 0}px`;
-  if (node.alignment) element.style.alignItems = node.alignment;
+  if (node.alignment) {
+    element.style.alignItems = node.alignment === "justify" ? "stretch" : node.alignment;
+  }
 }
 
 function renderChildren(node, context, ids = node.children) {
@@ -126,6 +128,25 @@ function renderBox(node, context) {
   if (node.kind === "frame") element.classList.add("qframe");
   applyMargins(element, node);
   element.appendChild(renderChildren(node, context));
+  // A Qt stretch factor: the child takes the spare room and may shrink to let its
+  // neighbours keep their size, the way a wrapping label gives way in a row.
+  // As in Qt, a stretch factor outranks an addStretch spacer: the spacer only
+  // takes room when no sibling asked for it.
+  if ((node.stretches || []).some(Boolean)) {
+    for (const child of element.children) {
+      if (child.classList.contains("demo-spacer")) child.style.flex = "0 0 0";
+    }
+  }
+  (node.stretches || []).forEach((factor, index) => {
+    const child = element.children[index];
+    if (!factor || !child) return;
+    if (node.kind === "row") {
+      child.style.flex = `${factor} 1 0`;
+      child.style.minWidth = "0";
+    } else {
+      child.style.flex = `${factor} 0 auto`;
+    }
+  });
   return element;
 }
 
@@ -237,6 +258,7 @@ function renderGrid(node, context) {
   const element = document.createElement("div");
   element.className = "demo-grid";
   element.style.display = "grid";
+  element.style.gap = "6px 8px";
   const columns = Math.max(node.column_minimums.length, node.column_stretches.length);
   if (columns) {
     element.style.gridTemplateColumns = Array.from({ length: columns }, (_, index) => {
@@ -249,7 +271,8 @@ function renderGrid(node, context) {
     const child = renderWidget(nodeById(context, cell.id), context);
     child.style.gridArea = `${cell.row + 1} / ${cell.column + 1} / `
       + `span ${cell.row_span} / span ${cell.column_span}`;
-    child.style.justifySelf = cell.alignment;
+    child.style.justifySelf = cell.alignment === "justify" ? "stretch" : cell.alignment;
+    child.style.alignSelf = "center";
     element.appendChild(child);
   }
   return element;
@@ -314,6 +337,7 @@ function renderSpacer(node) {
   element.className = "demo-spacer";
   element.dataset.orientation = node.orientation;
   element.dataset.sizePolicy = node.size_policy;
+  if (node.size_policy === "expanding") element.style.flex = "1 1 0";
   return element;
 }
 
@@ -363,7 +387,13 @@ export const RENDERERS = Object.freeze({
   form: renderForm,
   frame: renderBox,
   grid: renderGrid,
-  hline: () => document.createElement("hr"),
+  hline: () => {
+    // The UA's auto inline margins would shrink an <hr> to a dot in a flex column.
+    const element = document.createElement("hr");
+    element.style.marginInline = "0";
+    element.style.alignSelf = "stretch";
+    return element;
+  },
   label: renderLabel,
   line: renderLine,
   radio: (node, context) => renderToggle(node, context, "radio"),
@@ -377,6 +407,66 @@ export const RENDERERS = Object.freeze({
 
 if (Object.keys(RENDERERS).join("\0") !== NODE_KINDS.join("\0")) {
   throw new DemoContractError("unknown-node-kind", { kind: "renderer-registry" });
+}
+
+// A widget's Qt stylesheet, carried as written, painted in CSS. Every add-on
+// stylesheet targets the widget it is set on, so each block applies to this
+// element whatever its type or #name selector; pseudo-states become rules scoped
+// to the element's id. Only plain colour, box and font properties pass: nothing
+// that can load a URL.
+const QSS_PROPERTIES = new Set([
+  "background", "background-color", "color", "border", "border-top", "border-right",
+  "border-bottom", "border-left", "border-color", "border-style", "border-width",
+  "border-radius", "border-top-left-radius", "border-top-right-radius",
+  "border-bottom-left-radius", "border-bottom-right-radius", "padding",
+  "padding-top", "padding-right", "padding-bottom", "padding-left", "margin",
+  "margin-top", "margin-right", "margin-bottom", "margin-left", "font-size",
+  "font-weight", "font-style", "font-family", "min-height", "max-height",
+  "min-width", "max-width", "text-align", "text-decoration",
+]);
+const QSS_PSEUDO = {
+  hover: ":hover", focus: ":focus-visible", disabled: ":disabled",
+  pressed: ":active", checked: "[aria-pressed=\"true\"]",
+};
+
+function qssDeclarations(body) {
+  const out = [];
+  for (const part of body.split(";")) {
+    const colon = part.indexOf(":");
+    if (colon < 0) continue;
+    const name = part.slice(0, colon).trim().toLowerCase();
+    let value = part.slice(colon + 1).trim();
+    if (!QSS_PROPERTIES.has(name) || !value || /[\\<>@{}]|url\s*\(/i.test(value)) continue;
+    value = value.replace(/palette\(\s*base\s*\)/gi, "var(--card)")
+      .replace(/palette\(\s*\w+\s*\)/gi, "inherit");
+    out.push([name, value]);
+  }
+  return out;
+}
+
+function applyQss(element, node, context) {
+  const qss = node.style;
+  if (!qss) return;
+  const blocks = qss.includes("{")
+    ? Array.from(qss.matchAll(/([^{}]*)\{([^{}]*)\}/g), (m) => [m[1], m[2]])
+    : [["", qss]];
+  for (const [selectors, body] of blocks) {
+    const declarations = qssDeclarations(body);
+    for (const selector of (selectors.trim() ? selectors.split(",") : [""])) {
+      const pseudo = /:(\w+)\s*$/.exec(selector.trim());
+      if (!pseudo) {
+        for (const [name, value] of declarations) {
+          // A Qt line takes its stroke from `color`; an <hr> draws with its border.
+          const target = node.kind === "hline" && name === "color" ? "border-color" : name;
+          element.style.setProperty(target, value);
+        }
+      } else if (QSS_PSEUDO[pseudo[1]] && declarations.length && context.qssRules) {
+        const rule = declarations.map(([name, value]) => `${name}: ${value} !important`);
+        context.qssRules.push(`[data-wid="${CSS.escape(node.id)}"]`
+          + `${QSS_PSEUDO[pseudo[1]]} { ${rule.join("; ")} }`);
+      }
+    }
+  }
 }
 
 function applyCommonState(element, node, context) {
@@ -411,6 +501,7 @@ function applyCommonState(element, node, context) {
     if (node.tooltip) target.title = node.tooltip;
   }
   for (const role of node.style_roles) element.classList.add(`demo-role-${role}`);
+  applyQss(element, node, context);
   if (node.actions?.includes("key") && typeof context.key === "function") {
     element.onkeydown = (event) => {
       const modifiers = [];
@@ -438,6 +529,12 @@ export function renderWidget(node, context = {}) {
 
 export function renderWidgetTree(tree, context = {}) {
   const nodes = new Map(tree.nodes.map((node) => [node.id, node]));
-  const renderContext = { ...context, nodes };
-  return renderWidget(nodeById(renderContext, tree.root_id), renderContext);
+  const renderContext = { ...context, nodes, qssRules: [] };
+  const root = renderWidget(nodeById(renderContext, tree.root_id), renderContext);
+  if (renderContext.qssRules.length) {
+    const sheet = document.createElement("style");
+    sheet.textContent = renderContext.qssRules.join("\n");
+    root.prepend(sheet);
+  }
+  return root;
 }

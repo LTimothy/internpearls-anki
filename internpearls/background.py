@@ -275,7 +275,7 @@ def _auto_sync_check():
             if schema not in memory.schema_notified:
                 memory.schema_notified.add(schema)
                 tooltip(
-                    "Intern Pearls: the deck source needs a newer add-on version — "
+                    "Intern Pearls: the deck source needs a newer add-on version, so "
                     "auto-sync is paused until you update. Advanced → Check for add-on "
                     "updates.", period=8000, parent=mw)
             return
@@ -316,7 +316,7 @@ def _auto_sync_check():
             tooltip(
                 f"Intern Pearls: {plural(pending, 'card')} "
                 f"{'is' if pending == 1 else 'are'} ready to tidy up (retired, "
-                "reworded, or moved by a deck update) — Advanced → Reconcile my "
+                "reworded, or moved by a deck update). Advanced → Reconcile my "
                 "decks.",
                 period=8000, parent=mw)
         memory.reconcile_notified = pending

@@ -355,8 +355,8 @@ def _fetch_manifest_gated(cfg):
         _warn(
             f"This deck source needs a newer version of Intern Pearls Deck Tools than "
             f"the one installed (v{ADDON_VERSION}).<br><br>"
-            "Update the add-on first — <b>Intern Pearls → Advanced → Check for add-on "
-            "updates</b> — then try again. Syncing against a manifest format this "
+            "Update the add-on first (<b>Intern Pearls → Advanced → Check for add-on "
+            "updates</b>), then try again. Syncing against a manifest format this "
             "version doesn't understand is refused rather than attempted, so nothing "
             "here has been touched."
         )
@@ -1442,7 +1442,7 @@ def reconcile_decks():
                   f"{'is' if already == 1 else 'are'} already archived (suspended and "
                   f"moved to <b>{RETIRED_DECK_LEAF}</b>). Nothing more to do.")
         else:
-            _info("No retired cards or reorganized decks found in your collection — "
+            _info("No retired cards or reorganized decks found in your collection, so "
                   f"nothing to tidy up. (Source: {source}.)")
         return
 
@@ -1450,7 +1450,7 @@ def reconcile_decks():
     # alarming without context — say up front that it's a one-time catch-up, not what to
     # expect going forward, so the length itself doesn't feel like something went wrong.
     catch_up_note = (
-        "<i>This looks like a one-time catch-up — likely your first Reconcile since a "
+        "<i>This looks like a one-time catch-up, likely your first Reconcile since a "
         "larger update. Future runs should be much shorter.</i>"
         if len(fresh) + len(moves) + len(stranded) > 20 else "")
 
@@ -1474,8 +1474,9 @@ def reconcile_decks():
     if fresh:
         items.append(("note",
                       f"<b>{plural(len(fresh), 'retired card')}</b> "
-                      f"{'is' if len(fresh) == 1 else 'are'} still in your collection — "
-                      "split or reworded since, with the replacements already added "
+                      f"{'is' if len(fresh) == 1 else 'are'} still in your collection. "
+                      f"{'It was' if len(fresh) == 1 else 'They were'} split or reworded "
+                      "since, with the replacements already added "
                       "separately, so "
                       f"{'it just duplicates' if len(fresh) == 1 else 'these just duplicate'} "
                       f"your reviews now.{already_note}"))
@@ -1484,7 +1485,7 @@ def reconcile_decks():
         if missing:
             items.append(("note",
                           f"<b>Note:</b> {missing} of these don't have their "
-                          "replacement cards in your collection yet — run <b>Sync "
+                          "replacement cards in your collection yet. Run <b>Sync "
                           "decks</b> first if you want the new versions before "
                           "archiving the old ones."))
     if stranded:
@@ -1537,7 +1538,7 @@ def reconcile_decks():
     mw.reset()
     _refresh_reconcile_action_label(0)   # this run just handled everything found
     backup_line = ("" if backed_up else
-                   "<br><br>(No backup was taken this time — nothing to back up yet, or "
+                   "<br><br>(No backup was taken this time: there was nothing to back up yet, or "
                    "it failed and you chose to continue.)")
     result_lines = []
     if n_archived:
@@ -1557,8 +1558,8 @@ def reconcile_decks():
     if n_moved:
         result_lines.append(
             f"Moved <b>{plural(n_moved, 'card')}</b> to "
-            f"{'its' if n_moved == 1 else 'their'} reorganized deck — content and "
-            "scheduling untouched.")
+            f"{'its' if n_moved == 1 else 'their'} reorganized deck. Content and "
+            "scheduling are untouched.")
     _info("<br><br>".join(result_lines) + backup_line)
 
 
@@ -2230,7 +2231,7 @@ def update_decks():
     # A big first run (a large backlog accumulated before Update was run even once)
     # reads as alarming without context — say up front it's a one-time catch-up.
     catch_up_note = (
-        "<i>This looks like a one-time catch-up — likely your first update in a "
+        "<i>This looks like a one-time catch-up, likely your first update in a "
         "while. Future updates should be much shorter.</i>"
         if len(fresh) + len(moves) + len(stranded) > 20 else "")
     # {"keep": "...", "never": "..."} counts, read off `decisions` below

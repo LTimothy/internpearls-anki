@@ -1017,6 +1017,13 @@ function renderDialogTree(payload) {
   const rendered = renderWidgetTree(tree, dialogContext());
   $("dtitle").textContent = payload.title || "Intern Pearls";
   stablePatch($("dbody"), rendered);
+  // The width the add-on opens this dialog at in Anki rides on its root; it sizes
+  // the window here, never wider than the page.
+  const root = $("dbody").firstChild;
+  const openWidth = parseInt(root?.style?.minWidth, 10);
+  if (root) root.style.minWidth = "";
+  $("dbody").closest(".dialog").style.width = openWidth
+    ? `min(${openWidth + 34}px, 100%)` : "";
   $("dbtns").replaceChildren();
   showModal();
 }
