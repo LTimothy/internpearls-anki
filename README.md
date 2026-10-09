@@ -5,17 +5,17 @@
 
 **Update shared Anki decks without losing your review history or the notes you've written on cards.**
 
-**[Try the live demo](https://ltimothy.github.io/internpearls-anki/)**: the add-on's actual Python code running in your browser, with only Anki itself simulated. Publish a deck update, sync it through the real dialogs, and watch scheduling and personal notes survive. Nothing leaves the page.
+**[Try the live demo](https://ltimothy.github.io/internpearls-anki/)**. It runs the add-on's Python code in your browser and simulates only Anki itself. You can publish a deck update, sync it through the add-on's dialogs, and check that scheduling and personal notes come through. Nothing you do there leaves the page.
 
-Shared decks have no update path. Re-importing an updated `.apkg` overwrites every field, wiping the annotations people keep on their cards, and a reworded card silently loses its scheduling. This add-on gives a shared deck a real one: point it at a GitHub repo or a local folder once, and Update my decks handles the rest.
+Anki has no way to update a shared deck in place. Re-importing an updated `.apkg` overwrites every field, which wipes the annotations people keep on their cards, and a reworded card loses its scheduling without any warning. This add-on adds an update step: you point it at a GitHub repo or a local folder once, and from then on Update my decks does the work.
 
-- **Syncs only what changed.** A version hash per deck means editing one deck doesn't re-import ten.
-- **Keeps review history.** Cards match by GUID, with fallbacks for reworded fronts, so intervals and ease survive every update.
-- **Keeps your annotations.** Fields you mark as yours (`Notes` by default) come through every import untouched.
-- **Backs up first, always.** A timestamped `.apkg` of each affected deck is saved before any import, keeping the last 10 per deck.
-- **Stays current on its own.** Optional background deck sync, and self-update for the add-on.
+- It syncs only what changed. Each deck carries a version hash, so editing one deck doesn't re-import ten.
+- It keeps review history. Cards match by GUID, with fallbacks for reworded fronts, so intervals and ease carry over through every update.
+- It keeps your annotations. Fields you mark as yours (`Notes` by default) come through every import untouched.
+- It backs up before importing. A timestamped `.apkg` of each affected deck is saved first, and the last 10 per deck are kept.
+- It can run on its own. Background deck sync is optional, and the add-on can update itself.
 
-**Maintaining a deck of your own?** The add-on ships with no deck content. Host a small `manifest.json` next to your `.apkg` files and everyone studying from your deck gets the same one-click updates. See [Using this for your own decks](#using-this-for-your-own-decks). `CHANGELOG.md` records what changed in each version.
+The add-on ships with no deck content. If you maintain a deck, host a small `manifest.json` next to your `.apkg` files and everyone studying from it gets the same one-click updates. See [Using this for your own decks](#using-this-for-your-own-decks). `CHANGELOG.md` records what changed in each version.
 
 ## Install
 
@@ -24,25 +24,23 @@ Shared decks have no update path. Re-importing an updated `.apkg` overwrites eve
 
 An "Intern Pearls" menu appears between Tools and Help. Update my decks and Manage decks sit at the top; occasional tools are under Advanced, newer features under Experimental, and Settings and About at the bottom.
 
-No deck source yet? Open Manage decks, choose Configure source, and pick "Try the example deck" to watch a sync work end to end.
+If you don't have a deck source yet, open Manage decks, choose Configure source, and pick "Try the example deck" to run a sync from start to finish.
 
 ## Menu reference
 
 ### Update my decks
 
-A slow deck source shows a checking window with Cancel.
+This is the main command. It fetches `manifest.json` from your deck source and works out everything pending in one pass: changed decks, retired cards still in your collection, and cards a deck reorganization needs to relocate. While a slow source is being checked, a checking window with Cancel is shown. Each changed deck is downloaded and matched against your collection before the confirmation opens, so it shows real counts ("12 kept · 3 new", plus "changed" for cards rewritten upstream). A progress bar with a working Cancel covers the download and the apply step. Cancel stops a transfer but never stops an import partway through. The confirmation is a preview, and nothing applies until you click Update.
 
-The main button. It fetches `manifest.json` from your deck source and works out everything pending in one pass: changed decks, retired cards still in your collection, and cards a deck reorganization needs to relocate. Each changed deck is downloaded and matched against your collection first, so the confirmation shows real counts ("12 kept · 3 new", plus "changed" for cards rewritten upstream). A progress bar with a working Cancel covers the download and the apply step; Cancel stops a transfer, never a half-finished import. The confirmation is a preview: nothing applies until you click Update.
-
-**The card list.** Every pending card is a row with a chip: NEW (you don't have it), UPDATED (its content changed upstream, with your current field values shown under it), RETIRED (being archived because a split, reword or removal replaced it, with the source's reason when there is one), or MOVED (being relocated to match a reorganized deck). Click a NEW or UPDATED row to read the whole card. The list builds in batches as you scroll, so it opens instantly however much is pending. Downward keyboard and scroll bar actions reveal more rows even at the bottom. Editing rows and resizing the window keep the remaining rows reachable.
+**The card list.** Every pending card is a row with a chip: NEW (you don't have it), UPDATED (its content changed upstream, with your current field values shown under it), RETIRED (being archived because a split, reword or removal replaced it, with the source's reason when there is one), or MOVED (being relocated to match a reorganized deck). Click a NEW or UPDATED row to read the whole card. The list builds in batches as you scroll, so it opens quickly however many cards are pending. Moving down with the keyboard or the scroll bar loads more rows even when you are already at the bottom, and editing rows or resizing the window keeps the remaining rows reachable.
 
 **Filter and search.** With 20 or more cards pending, a bar above the list narrows it: All, New, Changed, Later or Not reviewed (cards you haven't decided on this run), plus a Search cards box that matches the front of each card without regard to case. A line under the bar says "Showing X of Y cards" while either is active. Filtering only hides rows: every decision and note you've made is kept and comes back when the row does. A deck heading with nothing left under it is hidden, a folded group counts and opens to just its matching cards, Escape in the search box clears it, and Enter applies the search at once. Retired and moved rows show only under All, where a search matches them too; the per-deck summary shows only while nothing is filtered.
 
-**Decisions.** NEW rows offer Import / Later / Never; UPDATED rows offer Apply / Keep yours / Later / Never. The default is the choice that costs nothing. Keep yours and Never open a note box for an optional reason; Later does not, and any row has an "Add note" link once opened. Never collapses the row to "won't be offered again". On an updated card it means no more updates for that card. A kept card returns only when that card's source content changes, pre-set to Keep yours and wearing a KEPT YOURS chip, with a "changed since" hint if the source moved since your decision. Never cards don't return as rows; the run reports how many are hidden. Nothing here deletes a card you already have, and every decision can be undone from Manage decks > Later and declined cards.
+**Decisions.** NEW rows offer Import / Later / Never; UPDATED rows offer Apply / Keep yours / Later / Never. The default is the choice that costs nothing. Keep yours and Never open a note box for an optional reason; Later does not, and any row has an "Add note" link once opened. Never collapses the row to "won't be offered again". On an updated card it means no more updates for that card. A kept card returns only when that card's source content changes, pre-set to Keep yours and marked with a KEPT YOURS chip, with a "changed since" hint if the source moved since your decision. Never cards don't return as rows; the run reports how many are hidden. Nothing here deletes a card you already have, and every decision can be undone from Manage decks > Later and declined cards.
 
-**Later.** Later keeps a card out of your collection, including through auto-sync, and brings it back the next time you run Update my decks, whether or not its deck shipped anything. It returns set to Import or Apply (whichever that row would start on) with a LATER chip, so accepting it takes one click. A Later card that has a note waits for the fix: it returns set to Later, shows "Your note: ..." and "Not updated yet", and stays that way until the card's source content changes. Once it has changed it returns set to Import or Apply with the hint "Updated since your note", and your note is cleared once you decide on the card. A Later card without a note comes back set to Import or Apply. Earlier versions had a Skip choice. Any card you skipped then is now a Later card. The first update after the upgrade shows it set to Later, with a line above the list reading "Skip is now Later. N cards you skipped earlier are below, still set to Later.", so nothing you set aside is imported by accident. After that run it behaves like any other Later card. A card set to Later when it arrives still counts in its deck's summary line, which names it: "8 new (1 waiting at Later)".
+**Later.** Later keeps a card out of your collection, including through auto-sync, and brings it back the next time you run Update my decks, whether or not its deck shipped anything. It returns set to Import or Apply (whichever that row would start on) with a LATER chip, so accepting it takes one click. A Later card that has a note waits for the fix: it returns set to Later, shows "Your note: ..." and "Not updated yet", and stays that way until the card's source content changes. Once it has changed it returns set to Import or Apply with the hint "Updated since your note", and your note is cleared once you decide on the card. A Later card without a note comes back set to Import or Apply. Versions before 0.77.0 had a Skip choice, and any card you skipped with it is treated as a Later card. The first update after the upgrade shows it set to Later, with a line above the list reading "Skip is now Later. N cards you skipped earlier are below, still set to Later.", so nothing you set aside is imported by accident. After that run it behaves like any other Later card. A card set to Later when it arrives still counts in its deck's summary line, which names it: "8 new (1 waiting at Later)".
 
-**Leave the rest for later.** Short on time? **Update, and leave N unopened for later** applies the cards you opened or decided on (showing a group does not count its cards as opened) and leaves the N you haven't opened that carry no earlier decision as Later, without a note. The line above the buttons says how many of the unopened cards already carry an earlier decision, such as Keep yours or a Later card still waiting on its note; those keep that choice, and the button leaves them alone. The run's summary says how many cards were left for later, and a tooltip at startup says how many are waiting, but only when there are more than your last Update my decks run left. With a local folder source it leaves out cards the source has since retired, which your next update releases.
+**Leave the rest for later.** The **Update, and leave N unopened for later** button applies the cards you opened or decided on (showing a group does not count its cards as opened) and leaves the N you haven't opened that carry no earlier decision as Later, without a note. The line above the buttons says how many of the unopened cards already carry an earlier decision, such as Keep yours or a Later card still waiting on its note; those keep that choice, and the button leaves them alone. The run's summary says how many cards were left for later, and a tooltip at startup says how many are waiting, but only when there are more than your last Update my decks run left. With a local folder source it leaves out cards the source has since retired, which your next update releases.
 
 **Why a card changed.** A deck source can ship a note with a changed or new card. Reviewer feedback appears quoted under the card's header, marked "from feedback"; a maintainer's note appears unquoted. Older feedback stays underneath as dated "earlier feedback". Maintainer notes show only for the exact content they describe. A first sync of a deck shows none. When one note explains several cards, it appears once with every row it caused indented beneath it. A maintainer's group of five or more is folded into a box that counts its cards, names the first three, and has a "Show N cards" button; a group driven by reviewer feedback is never folded. A group whose cards are all one kind has one control for all of them (Apply all / Keep all yours / Later all, or Import all / Later all), which reads "mixed" once any card is set differently. A group's control never offers Never. Folded cards still apply when you press Update. A line above the buttons counts the cards not opened yet, how many are folded and how many were already decided on an earlier update, and says that showing a group does not count its cards as opened. Each deck's summary line says how many of its cards are folded. A source can also label where a card came from (a question number, say); the label sits above any note, and labelled cards sort by it in numeric order within each deck.
 
@@ -107,9 +105,9 @@ Newer features: **Generate cards (AI)**, **Night mode dimming**, and **Scan for 
 
 Drafts cards from material you paste or attach, through an AI coding-assistant CLI you have already installed and signed into. The add-on has no API key field and never reads, sends or stores a credential; it only runs a CLI you set up yourself.
 
-**AI Backends** (opened from the wizard: "Set up an assistant", or the Setup link) holds everything about backends. Each backend is one row: a chip for what the check found (found, not responding, not found, ignored), its command, badges for image input and free-tier limits, the subscription it needs, and an install-guide link. The check is a free `--version` call, so "found" means the binary runs, not that you're signed in. One backend is preferred ("Use ..." switches; "ignore" sets one aside). Below the rows, a panel for the preferred backend sets its executable path (blank auto-detects), Model, Effort, and has Test connection, which runs one tiny real prompt and reports working or not working in plain words. It is disabled for a backend that wasn't found.
+**AI Backends** (opened from the wizard through "Set up an assistant" or the Setup link) is where every backend setting lives. Each backend is one row: a chip for what the check found (found, not responding, not found, ignored), its command, badges for image input and free-tier limits, the subscription it needs, and an install-guide link. The check is a free `--version` call, so "found" means the binary runs, not that you're signed in. One backend is the preferred one: "Use ..." switches to another, and "ignore" sets one aside. Below the rows, a panel for the preferred backend sets its executable path (blank auto-detects), Model, Effort, and has Test connection, which runs one tiny real prompt and reports working or not working in plain words. It is disabled for a backend that wasn't found.
 
-- **Claude Code** (Claude Pro or Max): tools fully restricted by the add-on. The strongest of the three.
+- **Claude Code** (Claude Pro or Max): the add-on restricts its tools completely. This is the tightest sandbox of the three.
 - **Codex CLI** (any ChatGPT account; the free tier is capped at roughly 50 agentic messages a day): sandboxed read-only with no writes; its own web search is used when the installed version has it. Read-only still means it can read files on your machine and fold them into drafts.
 - **Antigravity CLI** (a free, throttled Google tier; it replaced Gemini CLI for personal Google AI Pro and Ultra accounts): gets `--sandbox` when its help documents it, never a file-writing tool, and otherwise relies on its own approval defaults.
 
@@ -150,7 +148,7 @@ Add my rules (Edit my rules once saved) opens a plain-text box for standing inst
 
 #### Night mode dimming
 
-Softens bright content while Anki is in Night Mode, never in Day mode, for every deck in your collection. Native windows such as menus and dialogs are not affected.
+Dims bright content while Anki is in Night Mode, never in Day mode, for every deck in your collection. Native windows such as menus and dialogs are not affected.
 
 - **Dim in Night Mode**, off by default.
 - **Dim by N%**, default 30, range 0-90, with a live Normal/Dimmed preview using the exact transform Night Mode renders.
@@ -186,7 +184,7 @@ Both are schema-neutral, reversible by hand, backed up first, and no-ops when re
 
 **Recent card feedback** lists the last 20 saved digests for this collection and source, newest first. Show reopens a digest so you can read it and copy it again.
 
-**Clean up duplicate cards** finds notes sharing a note type and front but with different GUIDs (usually left by a reorganization), keeps the copy with the most reviews (ties prefer the source's canonical deck), carries personal notes over, and archives the rest like Reconcile. Backed up first; nothing deleted.
+**Clean up duplicate cards** finds notes sharing a note type and front but with different GUIDs (usually left by a reorganization), keeps the copy with the most reviews (ties prefer the source's canonical deck), carries personal notes over, and archives the rest like Reconcile. It backs up first and deletes nothing.
 
 **Remove empty cards** removes cards with nothing left to show, such as the "No cloze 3 found on card" leftovers when a source drops blanks from a card. It is Anki's Tools > Empty Cards limited to your scope tag, listing every card and missing blank number before acting. It is the one action that deletes rather than archives, because an empty card holds nothing: its note keeps every field. It never leaves a note with zero cards, skips any note whose cards are all empty, re-checks the report after you confirm, and backs up first.
 
@@ -215,7 +213,7 @@ How automatic the add-on is, kept apart from Manage decks (which decks, which fi
 
 ### About
 
-What the add-on does, a summary of your settings, a reminder that no deck content ships with it, and a link to this repo.
+Shows the installed version (and a newer one, if the last update check found it), what the add-on does, a summary of your current settings, a reminder that no deck content ships with it, and a link to this repo.
 
 ## Updating decks
 
@@ -249,7 +247,7 @@ A deck package is refused before it is opened if it is over 512 MB, holds more t
 
 ## Using this for your own decks
 
-**The easy way: start from the example deck.** [LTimothy/internpearls-example-deck](https://github.com/LTimothy/internpearls-example-deck) is a template repository: click "Use this template", edit the JSON card specs in your browser, and its GitHub Action rebuilds the `.apkg` files and manifest when the cards change. Its README walks through creating, sharing and updating a deck.
+The simplest start is the example deck. [LTimothy/internpearls-example-deck](https://github.com/LTimothy/internpearls-example-deck) is a template repository: click "Use this template", edit the JSON card specs in your browser, and its GitHub Action rebuilds the `.apkg` files and manifest when the cards change. Its README walks through creating, sharing and updating a deck.
 
 For your own tooling, host a `manifest.json` in a GitHub repo (private or public) or a local folder, beside the `.apkg` files it references:
 
@@ -328,7 +326,7 @@ Both suites redirect persistent add-on state into temporary folders and fail the
 
 The [live demo](https://ltimothy.github.io/internpearls-anki/) is generated from the code: `./build.sh` mirrors `internpearls/` into `docs/addon/` (byte equality enforced by `tests/test_demo_parity.py`), and the page runs those modules under Pyodide against the example deck's real files. `browser_tests/` checks the demo against a generated contract (`python3 tools/demo_npm.py run test:demo-contract`).
 
-### Seeing a dialog actually render
+### Rendering a dialog to an image
 
 `tools/render_dialog.py` renders a real dialog to a PNG with real PyQt6 and no Anki:
 

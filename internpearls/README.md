@@ -1,5 +1,5 @@
 # Intern Pearls Deck Tools
 
-Anki add-on source. See the repository README (one level up) for install, configuration,
-and usage. Configure the deck source in-app via Intern Pearls → Manage decks → Configure source.
-Nothing about the deck source is hardcoded here.
+This folder holds the Anki add-on's source. See the repository README (one level up) for
+install, configuration, and usage. Configure the deck source inside Anki through Intern
+Pearls → Manage decks → Configure source. Nothing about the deck source is hardcoded here.

@@ -10,8 +10,8 @@ and they cannot share a process.
     .venv-qt/bin/pip install PyQt6 pytest
     QT_QPA_PLATFORM=offscreen .venv-qt/bin/python -m pytest qt_tests/ -q
 
-No display and no Anki install are needed. `QT_QPA_PLATFORM=offscreen` is what makes
-that true; without it Qt tries to open a window.
+No display and no Anki install are needed, because `QT_QPA_PLATFORM=offscreen` keeps Qt
+from opening a window.
 
 Anki's bundled interpreter has PyQt6 but no pytest, and installing pytest into Anki's
 own runtime is not something this repo does. A plain pip venv gives both, and it is the
@@ -43,5 +43,6 @@ rule paint, does this text contrast its background, does this row align, does th
 fit. Anything answerable from structure belongs in `tests/`, which is faster and needs
 no PyQt6.
 
-Assertions must hold on both macOS (Qt 6.9, via Anki) and ubuntu CI (Qt 6.10, via pip).
-Fonts differ between them, so assert presence and relationships, never magnitudes.
+Assertions must hold on both macOS and the Ubuntu CI runner. Both install PyQt6 from pip
+without a pinned version, and their fonts differ, so assert presence and relationships,
+never magnitudes.

@@ -29,23 +29,22 @@ QT_QPA_PLATFORM=offscreen .venv-qt/bin/python -m pytest qt_tests/ -q
 The two cannot run in one process, which is why the second one names its path. See
 `qt_tests/README.md` for why. Both run in CI on every release tag.
 
-Tests run against `internpearls/logic.py` only and need no Anki install. To
-try your change in Anki itself, run `./build.sh` and install the resulting
+Neither suite needs an Anki install. To try your change in Anki itself, run `./build.sh` and install the resulting
 `internpearls.ankiaddon` via Tools > Add-ons > Install from file (restart
 Anki after).
 
 ## Where code goes
 
-The one structural rule: code that could run without Anki goes in
-`internpearls/logic.py` (no `aqt`/`anki` imports — apkg handling, GUID
-matching, version comparison, formatting). If your new function can be tested
+Code that could run without Anki goes in `internpearls/logic.py`, which has no
+`aqt`/`anki` imports (apkg handling, GUID matching, version comparison,
+formatting). If your new function can be tested
 with plain Python, it belongs in `logic.py`, with a test in
 `tests/test_logic.py`. Code that touches `mw`, `col`, or Qt goes in the module
-matching its concern — `collection.py` (collection reads/writes), `sync.py`
+matching its concern: `collection.py` (collection reads/writes), `sync.py`
 (sync flows), `dialogs.py` (panels), `net.py` (fetches), `ui.py` (dialog
 wrappers and styling), `updates.py` (self-update), `background.py` (unattended
-checks), `config.py` (constants and config) — with `__init__.py` holding only
-the menu and startup wiring. See "Code layout" in the README.
+checks) or `config.py` (constants and config). `__init__.py` holds only the
+menu and startup wiring. See "Code layout" in the README.
 
 ## Conventions
 
@@ -67,21 +66,6 @@ the menu and startup wiring. See "Code layout" in the README.
 
 ## Pull requests
 
-### Browser demo parity
-
-The browser demo supports the non-AI flows covered by its parity tests. Changes to
-that supported surface carry all of the following coverage obligations:
-
-- Add every new widget node kind or action kind to the shared schema and its boundary
-  tests.
-- Add a real Qt test when the change depends on signal, focus, keyboard, layout, or
-  other Qt semantics.
-- Add or update a browser parity case when a supported flow changes.
-- Do not treat registry equality as proof of parity. It proves that names line up, not
-  that a person can complete the flow or observe the same result.
-- Name unsupported capabilities as explicit limitations. Do not imply parity for a
-  path the browser cannot execute.
-
 - Publish only source, tests, user documentation, and release assets. Keep local
   notes, machine configuration, and working documents outside the tracked tree.
   New root files or Pages content require an explicit `.gitignore` allowlist change.
@@ -89,11 +73,26 @@ that supported surface carry all of the following coverage obligations:
   the existing style even where you'd do it differently.
 - Add or update a test in `tests/test_logic.py` for any `logic.py` change.
 - Run `python3 -m pytest tests/ -v` and `./build.sh` before opening the PR.
-- Changed a stylesheet, border, spacing, or color? Render it and look:
-  `python3 tools/render_dialog.py --list`. The test suite uses mock Qt and cannot
-  tell you whether Qt painted anything. See "Seeing a dialog actually render" and
-  "Colors" in `README.md`.
+- If you change a stylesheet, border, spacing, or color, render it and look at it
+  (`python3 tools/render_dialog.py --list` shows what can be rendered). The `tests/`
+  suite uses mock Qt and cannot tell you whether Qt painted anything. See "Rendering a
+  dialog to an image" and "Colors" in `README.md`.
 - Don't bump the version, edit `CHANGELOG.md`, or rebuild
-  `internpearls.ankiaddon` in your PR — releases (semver bump in
-  `internpearls/config.py` + `version.json`, tag, changelog entry, repackage) are done
-  by the maintainer, as described under "Versioning" in the README.
+  `internpearls.ankiaddon` in your PR. The maintainer does releases (semver bump in
+  `internpearls/config.py` and `version.json`, tag, changelog entry, repackage), as
+  described under "Versioning" in the README.
+
+### Browser demo parity
+
+The browser demo supports the non-AI flows covered by its parity tests. A change to
+one of those flows needs all of the following:
+
+- Add every new widget node kind or action kind to the shared schema and its boundary
+  tests.
+- Add a real Qt test when the change depends on signal, focus, keyboard, layout, or
+  other Qt semantics.
+- Add or update a browser parity case when a supported flow changes.
+- Don't treat registry equality as proof of parity. Matching registries show that the
+  names line up, but not that a person can complete the flow or see the same result.
+- List anything the browser cannot run as a stated limitation, and don't imply parity
+  for it.

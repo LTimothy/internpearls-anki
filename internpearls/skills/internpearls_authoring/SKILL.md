@@ -27,7 +27,7 @@ reviews every card before import.
   review queue. Never state a sibling's answer on this card's front either: after a split,
   read each front against every other back.
 - Never let a front answer itself: if rephrasing it answers it, strip the giveaway. One
-  correct answer per front, and if the answer is a set, say how many — but only when the
+  correct answer per front, and if the answer is a set, say how many, but only when the
   set is genuinely closed; otherwise reframe around the subset that is.
 - Producing the answer should take a few seconds. Longer means fewer facts on the card.
 - Answers stay short: the tested clause, not a paragraph, since reading a paragraph to

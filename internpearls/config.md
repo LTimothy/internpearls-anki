@@ -1,14 +1,14 @@
 ## github_decks_repo
 
 A GitHub repo to sync decks from, as `owner/name`. Leave empty to use `decks_dir`
-instead. Easier to set via the Configure source / Change source button inside Intern
-Pearls → Manage decks.
+instead. It is easier to set with the Configure source / Change source button inside
+Intern Pearls → Manage decks.
 
 ## github_token
 
 A read-only, fine-grained GitHub personal access token scoped to `github_decks_repo`.
-Only needed when that repo is private; leave empty for a public repo. Stored locally in
-this config only; never shared or committed anywhere.
+You need one only when that repo is private; leave it empty for a public repo. The token
+is stored only in this local config and is sent only to GitHub.
 
 ## github_ref
 
@@ -37,8 +37,8 @@ Editable in Intern Pearls → Manage decks (the "Preserved fields" box).
 
 Full names of decks you've opted out of syncing, e.g.
 `["Intern Pearls::Intern Custom::Example Deck"]`. Decks listed here are skipped by Sync
-decks and auto-sync. Easiest to manage via Intern Pearls → Manage decks (unchecking a
-deck adds it here); an empty list syncs everything the source offers. Unchecking a deck
+decks and auto-sync. It is easiest to manage in Intern Pearls → Manage decks (unchecking
+a deck adds it here); an empty list syncs everything the source offers. Unchecking a deck
 does not delete cards you already imported.
 
 ## export_deck
@@ -50,10 +50,9 @@ if you've adapted this add-on for a different deck hierarchy.
 ## notify_addon_updates
 
 Whether to check, once per Anki launch, if a newer version of this add-on is out and
-show a brief tooltip if so. This alone never installs anything; "Check for add-on
-updates" (or `auto_update_addon` below) stays the action that does that. Notifies at
-most once per new release, so it won't repeat on every launch once you've seen the
-notice. Defaults to `true`. Editable in Intern Pearls → Settings.
+show a brief tooltip if so. This setting never installs anything on its own; "Check for
+add-on updates" (or `auto_update_addon` below) does that. It notifies at most once per
+new release, so the notice doesn't repeat on every launch once you've seen it. Defaults to `true`. Editable in Intern Pearls → Settings.
 
 ## auto_update_addon
 
@@ -76,16 +75,17 @@ restart to take effect.
 
 ## auto_sync_interval_minutes
 
-How often the background poll checks the source when `auto_sync_decks` is on. Floored at
-1 minute regardless of what's set here, to keep a typo or a 0 from becoming a busy loop,
-and capped at a week. A value that isn't a finite number (text, `Infinity`, `NaN`) reads
-as the default. GitHub's request volume at that floor is still trivial: one small
-`manifest.json` fetch a minute, well under even the unauthenticated 60-per-hour limit.
-Defaults to `15`. Editable in Intern Pearls → Settings.
+How often the background poll checks the source when `auto_sync_decks` is on. Any value
+below 1 minute is raised to 1 minute, so a typo or a 0 can't turn into a busy loop, and
+anything above a week is lowered to a week. A value that isn't a finite number (text,
+`Infinity`, `NaN`) reads as the default. Each poll of a GitHub source makes one small
+`manifest.json` request through GitHub's API, so at the 1-minute floor a public repo with
+no token uses all of GitHub's unauthenticated limit of 60 requests an hour; with a token
+the limit is 5,000. Defaults to `15`. Editable in Intern Pearls → Settings.
 
 ## ai_backend
 
-Which AI backend the "Generate cards with AI" wizard should prefer when more than one
+Which AI backend the Generate cards (AI) wizard should prefer when more than one
 is detected and working (`claude`, `codex`, or `agy`). Empty uses whichever one is
 found and working first. Defaults to `""`.
 
@@ -158,9 +158,9 @@ flag isn't hard-broken by receiving it anyway.
 
 ## ai_default_count
 
-How many cards the "Generate cards with AI" wizard should ask for by default. `0` (the
+How many cards the Generate cards (AI) wizard should ask for by default. `0` (the
 default) means automatic: no number is sent at all, and the assistant makes one card per
-point the source actually teaches, up to 40. A value from 1 to 40 pre-fills the wizard's
+point the source teaches, up to 40. A value from 1 to 40 pre-fills the wizard's
 Advanced panel with that exact number instead. Anything else, including a negative or a
 value past 40, reads as automatic. This only seeds the control; changing the number in
 the wizard applies to that session and is never written back here.
@@ -178,17 +178,17 @@ is never written back here.
 ## dim_images_night_mode
 
 When on, bright pictures are dimmed while Anki itself is in Night Mode, so a
-white-background diagram doesn't glare out of a dark card. Never applies in Day mode.
-Applies to every deck in your collection, not just this add-on's, since it works by
-styling images themselves rather than one note type. Takes effect immediately, with no
-Anki restart. Defaults to `false`. Editable in Intern Pearls → Experimental → Night
+white-background diagram doesn't glare out of a dark card. It never applies in Day mode.
+It applies to every deck in your collection, not only this add-on's, because it works by
+styling the images themselves rather than one note type. It takes effect immediately,
+with no Anki restart. Defaults to `false`. Editable in Intern Pearls → Experimental → Night
 mode dimming.
 
 ## dim_images_night_mode_percent
 
 How much dimmer, as a percentage, `dim_images_night_mode` makes those images: higher
-dims more. Clamped to 0-90 (past that an image reads as blacked out rather than
-dimmed). Defaults to `30`, the fixed dim level applied before this became
+dims more. The value is clamped to 0-90 (past that an image reads as blacked out rather
+than dimmed). Defaults to `30`, the fixed dim level applied before this became
 configurable, so an existing `dim_images_night_mode` setting keeps its exact look
 until the percentage is changed. Editable in Intern Pearls → Experimental → Night mode
 dimming.
@@ -197,8 +197,8 @@ dimming.
 
 What `dim_images_night_mode` dims. `"images"` dims bright images only, the original
 behaviour. `"content"` dims everything Anki draws in a web view: cards, the deck
-list, the overview, and the editor. Takes effect the next time a screen loads; never
-the menu bar or dialogs. Defaults to `"images"`; an unrecognized value falls back to
+list, the overview, and the editor, but never the menu bar or dialogs. It takes effect
+the next time a screen loads. Defaults to `"images"`; an unrecognized value falls back to
 it. Editable in Intern Pearls → Experimental → Night mode dimming.
 
 ## dupes_threshold
@@ -223,5 +223,5 @@ that pair offered again. Defaults to `[]`.
 
 Your own standing instructions for the AI wizard ("My rules"), plain text, live in
 `user_files/user_skill.md`, not in this config file, so they survive an add-on update.
-Editable from the wizard's input page (Add/Edit my rules link). An empty save removes the
-file entirely rather than leaving an empty one behind.
+Editable from the wizard's input page (Add/Edit my rules link). Saving an empty box
+removes the file rather than leaving an empty one behind.

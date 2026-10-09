@@ -473,7 +473,7 @@ Restart Anki after updating.
 
 Earlier learner feedback now stays visible when a card is revised again. The current
 request and maintainer explanation still appear first; older comments follow as dated
-“earlier feedback,” so a repeated Skip or Keep yours decision no longer hides the
+"earlier feedback", so a repeated Skip or Keep yours decision no longer hides the
 context that led to prior versions. Implementation notes remain tied to the exact card
 version they describe.
 
@@ -1968,15 +1968,15 @@ Dialog and flow fixes:
 
 - Fixed a real bug in the collection-revert reconciliation added in v0.25.2: it
   required an *exact* match between a manifest deck's name and an Anki deck you
-  actually have, but a deck spec's `deck_name` is routinely just the parent path —
+  actually have, but a deck spec's `deck_name` is routinely just the parent path:
   cards land in `deck_name::<subdeck>` for any spec using subdecks, which is the
   normal case (the public example deck included). That meant every subdeck-based
   deck was silently treated as "not installed" on every single check, forever,
-  forcing a pointless resync each time — caught via the live demo constantly
+  forcing a pointless resync each time. It was caught via the live demo constantly
   offering an update with nothing actually changed. Now matches the manifest name
   itself or any subdeck beneath it.
 - Update my decks' confirmation now downloads and matches each pending deck before
-  showing it, the same way the old "Check what will sync" preview did — real
+  showing it, the same way the old "Check what will sync" preview did, with real
   "N kept · M new" counts per deck, not just how big the deck is. A progress window
   covers the check itself, since it's a live download per deck. Nothing already
   downloaded for this preview is fetched again during the actual update.
@@ -1988,19 +1988,19 @@ Dialog and flow fixes:
 ## v0.26.0
 
 - Added **Update my decks**, a new top-level menu item and the recommended way to
-  stay current from now on. It computes everything pending in one pass — deck
+  stay current from now on. It computes everything pending in one pass (deck
   content changes, retired cards still in your collection, and cards a reorg needs
-  to relocate — and shows one confirmation covering all of it, instead of the old
+  to relocate) and shows one confirmation covering all of it, instead of the old
   multi-step dance of syncing, then separately digging into Advanced to reconcile.
   Content updates apply first, then archiving/relocating, so a retired card's
   replacement is already there before the old card archives out. Sync decks and
   Reconcile my decks still exist under Advanced for running either half on its own.
-- Manage decks no longer has its own "Check what will sync" preview button — that
+- Manage decks no longer has its own "Check what will sync" preview button. That
   same preview is now Update my decks' own confirmation, so there was no reason to
   ask twice. "Save and sync now" is renamed "Save and update now" and routes through
   the new unified flow.
 - Auto-sync (Settings) still only ever applies deck content on its own, never
-  archives or relocates — but it now keeps the "Reconcile my decks" menu item
+  archives or relocates, but it now keeps the "Reconcile my decks" menu item
   labeled with a live pending count (e.g. "Reconcile my decks (3 pending)") and
   shows a one-time tooltip when a backlog first appears or grows, so retired or
   reorganized cards can no longer pile up silently between manual checks just
@@ -2010,8 +2010,8 @@ Dialog and flow fixes:
 
 - Fixed a gap in v0.25.1's collection-revert fix: it only detected a *total* wipe
   (every synced note gone at once), so a revert that only rolled back part of the
-  collection — the common case, e.g. one deck's cards erased while others stayed
-  intact — still left that one deck wrongly reporting "up to date". The check is now
+  collection (the common case, e.g. one deck's cards erased while others stayed
+  intact) still left that one deck wrongly reporting "up to date". The check is now
   per deck: a deck counts as synced only if the collection currently has a note under
   it actually sitting in an Anki deck of that name, so a partial revert is caught and
   recovered the same way a full one is.
@@ -2022,7 +2022,7 @@ Dialog and flow fixes:
   sync could leave Sync decks, Check what will sync, and the Manage decks status pills
   all reporting "up to date" even though the revert had erased the synced cards. The
   add-on's own sync bookkeeping (`installed.json`) lives outside the collection file,
-  so it never rolled back along with it — nothing was actually being compared against
+  so it never rolled back along with it, so nothing was actually being compared against
   the collection's real contents. All three now reconcile that bookkeeping against the
   collection first, so a deck the collection has lost is treated as not-yet-synced
   again and a normal sync recovers it. Same fix applies to the unattended auto-sync
@@ -2031,7 +2031,7 @@ Dialog and flow fixes:
 ## v0.25.0
 
 - Fixed a real bug: Reconcile my decks' confirmation could become unusable after a
-  large backlog (e.g. dozens of cards relocated by one reorg) — it used a plain
+  large backlog (e.g. dozens of cards relocated by one reorg): it used a plain
   message box with no scroll area, so a long enough list pushed the Yes/No buttons
   off-screen with no way to reach them. The confirmation now scrolls in a fixed-height
   viewport with the buttons pinned outside it, so they're always reachable regardless
@@ -2047,8 +2047,8 @@ Dialog and flow fixes:
 ## v0.24.0
 
 - "Check what will sync" (Manage decks) now also reports what Reconcile my decks has
-  pending — retired cards still in your collection and cards a deck reorg needs to
-  relocate — not just the per-deck kept/new breakdown. Read-only, same as the rest of
+  pending (retired cards still in your collection and cards a deck reorg needs to
+  relocate), not just the per-deck kept/new breakdown. Read-only, same as the rest of
   the preview; nothing is archived or moved until you actually run Reconcile.
 
 ## v0.23.0
@@ -2057,7 +2057,7 @@ Dialog and flow fixes:
   newer than this add-on version understands, with a clear message to update first,
   instead of attempting an import against a manifest shape it can't fully interpret.
   Auto-sync applies the same check and pauses quietly (one tooltip per session) rather
-  than looping every poll interval. This is a forward-looking safety net — today's
+  than looping every poll interval. This is a forward-looking safety net; today's
   manifest schema (2) is unchanged and every existing source keeps syncing normally.
 - Add-on updates are no longer only visible in the 8-second startup tooltip: the
   "Check for add-on updates" menu item now shows the known-available version right on
@@ -2069,7 +2069,7 @@ Dialog and flow fixes:
 
 - "Reconcile my decks" now also relocates cards a deck reorg has moved to a
   different deck without changing their identity (e.g. a topic getting split
-  into its own deck) — a normal sync updates such a card's content in place but
+  into its own deck). A normal sync updates such a card's content in place but
   never its deck, since only a brand-new card gets filed into the source's
   declared deck. Reconcile reads a new `deck_moves` ledger the source ships in
   its manifest and moves any card still sitting exactly where the source last
@@ -2078,14 +2078,14 @@ Dialog and flow fixes:
   archiving this action already did.
 - Reconcile also now carries a personal note (or any other protected field) from
   a retired card onto its replacement(s) before archiving it, as long as the
-  replacement's field is still blank — so annotating a card doesn't get stranded
+  replacement's field is still blank, so annotating a card doesn't get stranded
   the moment it's superseded by a split or reword.
 
 ## v0.21.0
 
 - New Advanced action, "Reconcile my decks": finds retired cards still in your
-  collection — older versions of cards a deck has since split into focused ones or
-  reworded — and archives them so they stop showing up as duplicates in your reviews.
+  collection (older versions of cards a deck has since split into focused ones or
+  reworded) and archives them so they stop showing up as duplicates in your reviews.
   Each is moved to an `…::Retired` subdeck, suspended, and tagged; **nothing is
   deleted**, review history is kept, and anything can be brought back by unsuspending
   it or moving it out of the Retired deck. A backup is taken automatically first.
@@ -2107,7 +2107,7 @@ Dialog and flow fixes:
 - Cards now match by GUID first, before front text and `front_aliases`. Deck sources
   that keep GUIDs stable (an explicit per-card `id` in the spec) can reword a card's
   front any number of times without an alias entry, and the learner's review history
-  still carries over — the single-hop limit of `front_aliases` no longer applies to
+  still carries over. The single-hop limit of `front_aliases` no longer applies to
   those cards. Front-text and alias matching remain as fallbacks for collections whose
   GUIDs predate stable ids.
 - Sync now detects when an updated deck changes a card template or its CSS (the one
@@ -2117,7 +2117,7 @@ Dialog and flow fixes:
   either way. Import single deck gets the same offer.
 - The unattended auto-sync poll never applies a template change (no one is there to
   consent to a full sync): a deck update that includes one is held back, stays
-  pending, and a tooltip points at Sync decks to review it — mentioned once per
+  pending, and a tooltip points at Sync decks to review it, mentioned once per
   session, not on every poll.
 
 ## v0.19.0
@@ -2232,14 +2232,14 @@ Dialog and flow fixes:
 ## v0.15.0
 
 - Startup update notice: once per launch, a silent check compares your version against
-  the public repo's and shows a brief tooltip if a newer one exists — at most once per
+  the public repo's and shows a brief tooltip if a newer one exists, at most once per
   new release, not every launch. Never auto-installs; "Check for add-on updates" is
   still the explicit action that does that. Fixes the confusing case where pushing a
   fix to GitHub doesn't change what's running until you notice and update yourself.
   Toggle with the new `notify_addon_updates` config key (default on).
 - Auto-sync decks: a new checkbox in Manage decks ("Automatically sync when updates are
-  available", off by default). When on, decks sync in the background — once shortly
-  after startup, then on a repeating poll (default every 60 minutes, floored at 15) —
+  available", off by default). When on, decks sync in the background (once shortly
+  after startup, then on a repeating poll, default every 60 minutes, floored at 15)
   without asking each time. A backup is still taken first, same guarantee as a manual
   sync; if the backup fails, that round is skipped rather than importing unprotected.
   Results show as a transient tooltip, never a blocking dialog, since this can fire
@@ -2260,9 +2260,9 @@ Dialog and flow fixes:
 
 - Manage decks can now preview changes in place: a "Check what will sync" button
   downloads the changed decks and fills in each row with how many cards would update in
-  place (history kept) vs. be added as new — read-only, nothing is imported. It runs on
+  place (history kept) vs. be added as new. It is read-only; nothing is imported. It runs on
   click, not on open, so the panel still opens instantly.
-- Retired the separate Preview sync menu item — it's now fully covered by the button
+- Retired the separate Preview sync menu item; it's now fully covered by the button
   above, so there's one place to see what a sync will do instead of two. (Sync decks
   still shows its own confirmation and backs up before importing.)
 
@@ -2287,7 +2287,7 @@ Dialog and flow fixes:
   Uncheck a deck to stop syncing it (already-imported cards are left alone); Select
   all / none for quick toggling. Sync and Preview sync now honor the selection.
 - The same panel edits Preserved fields (the fields snapshotted and restored around
-  every import so your personal annotations are never overwritten) — previously only
+  every import so your personal annotations are never overwritten), which was previously only
   reachable by hand-editing the add-on config.
 - Save, or Save and sync now, straight from the panel.
 - New config key `excluded_decks` backs the selection; an empty list (the default)
@@ -2298,12 +2298,12 @@ Dialog and flow fixes:
 - Fixed the biggest source of post-sync friction: after syncing, AnkiWeb often forced a
   one-way "upload from local" full sync instead of a normal incremental one. Cause: the
   importer ran with `merge_notetypes=True`, which rewrites note types on every import and
-  bumps Anki's schema modification time — and any schema change forces AnkiWeb into a
+  bumps Anki's schema modification time, and any schema change forces AnkiWeb into a
   full sync. Imports now run with `merge_notetypes=False`; note types are still kept
   compatible ahead of time by the existing Fix-note-types step, which only touches the
   schema when it genuinely adds a missing field. Steady-state syncs now leave the schema
   alone, so AnkiWeb stays incremental. (Trade-off: a changed card *template/CSS* no
-  longer propagates automatically — run Advanced → Fix note types, or accept one full
+  longer propagates automatically. Run Advanced → Fix note types, or accept one full
   sync, when a template itself changes.)
 - Fail fast when offline: network calls used a 30-second timeout on Anki's UI thread, so
   an unreachable host or captive portal froze the app (beachball) for 10+ seconds.
@@ -2313,8 +2313,8 @@ Dialog and flow fixes:
 
 ## v0.12.0
 
-- Added Preview sync: a dry run that shows exactly what Sync would change — per deck,
-  how many cards update in place (history kept) versus get added as new — without
+- Added Preview sync: a dry run that shows exactly what Sync would change (per deck,
+  how many cards update in place with history kept versus get added as new) without
   taking a backup, importing, or writing anything. The "show me first" companion to
   Sync decks.
 - Factored the "which decks are pending" decision into `logic.decks_to_update` so Sync
