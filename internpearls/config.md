@@ -1,227 +1,146 @@
+Where a setting has a place in the Intern Pearls menu, it is named below.
+
 ## github_decks_repo
 
-A GitHub repo to sync decks from, as `owner/name`. Leave empty to use `decks_dir`
-instead. It is easier to set with the Configure source / Change source button inside
-Intern Pearls → Manage decks.
+The GitHub repo to sync decks from, as `owner/name`. Leave empty to use `decks_dir`.
+Set it with Manage decks > Configure source.
 
 ## github_token
 
-A read-only, fine-grained GitHub personal access token scoped to `github_decks_repo`.
-You need one only when that repo is private; leave it empty for a public repo. The token
-is stored only in this local config and is sent only to GitHub.
+A read-only, fine-grained GitHub token for `github_decks_repo`, needed only if that repo
+is private. It stays in this config and is sent only to GitHub.
 
 ## github_ref
 
-The branch or tag to pull the manifest and decks from. Defaults to `main`.
+The branch or tag to sync from. Defaults to `main`.
 
 ## decks_dir
 
-A local folder containing `manifest.json` and the `.apkg` files, used instead of GitHub
-when `github_decks_repo` is empty. (Configure source sets one and clears the other, so
-they don't normally both exist.)
+A local folder with `manifest.json` and the `.apkg` files, used when
+`github_decks_repo` is empty. Configure source sets one and clears the other.
 
 ## scope_tag
 
-The root tag identifying cards this add-on manages. Field snapshotting and GUID matching
-are scoped to this tag (and its subtags); everything else in your collection is ignored.
-Defaults to `InternPearls`.
+The root tag of the cards this add-on manages. Field preservation and card matching
+look only at this tag and its subtags. Defaults to `InternPearls`.
 
 ## protected_fields
 
-Field names to snapshot before an import and restore after, so personal annotations
-survive a re-import even though Anki's importer overwrites every field on a matched
-note. Defaults to `["Notes"]`; add any other field name you keep your own content in.
-Editable in Intern Pearls → Manage decks (the "Preserved fields" box).
+Fields kept through every import, so your own notes survive. Defaults to `["Notes"]`.
+Edit in Manage decks (Preserved fields).
 
 ## excluded_decks
 
-Full names of decks you've opted out of syncing, e.g.
-`["Intern Pearls::Intern Custom::Example Deck"]`. Decks listed here are skipped by Sync
-decks and auto-sync. It is easiest to manage in Intern Pearls → Manage decks (unchecking
-a deck adds it here); an empty list syncs everything the source offers. Unchecking a deck
-does not delete cards you already imported.
+Full names of decks you have opted out of, such as
+`["Intern Pearls::Intern Custom::Example Deck"]`. Sync and auto-sync skip them; cards
+already imported stay. Unchecking a deck in Manage decks adds it here.
 
 ## export_deck
 
-The deck that Export/Restore/Backup intern pearls deck (Advanced menu) and the automatic
-pre-sync backup all operate on. Defaults to `Intern Pearls::Intern Custom`. Change this
-if you've adapted this add-on for a different deck hierarchy.
+The deck that Advanced > Backup, Restore and Export intern pearls deck use, and that is
+backed up before each sync. Defaults to `Intern Pearls::Intern Custom`.
 
 ## notify_addon_updates
 
-Whether to check, once per Anki launch, if a newer version of this add-on is out and
-show a brief tooltip if so. This setting never installs anything on its own; "Check for
-add-on updates" (or `auto_update_addon` below) does that. It notifies at most once per
-new release, so the notice doesn't repeat on every launch once you've seen it. Defaults to `true`. Editable in Intern Pearls → Settings.
+Check once per Anki launch for a newer add-on version and show a short notice, once per
+release. Installs nothing. Defaults to `true`. Edit in Settings.
 
 ## auto_update_addon
 
-When `true`, a newer add-on version installs itself as part of the same once-per-launch
-check `notify_addon_updates` runs, instead of just notifying you. A restart is still
-needed either way to load it. Defaults to `false`. Editable in Intern Pearls → Settings.
+Install a newer add-on version during that same launch check instead of only notifying.
+Restart Anki to load it. Defaults to `false`. Edit in Settings.
 
 ## auto_sync_decks
 
-When `true`, decks sync automatically in the background: once shortly after a profile
-opens, then again every `auto_sync_interval_minutes` while Anki stays open, without
-asking each time. A backup is still taken first; if it fails, or your cards sit in no
-deck the add-on can back up, that round is skipped instead of importing unprotected.
-What it has held back or already told you about is remembered per profile. Results show
-as a brief tooltip, never a blocking dialog, since this can fire mid-review. The check
-itself runs off the main thread when possible, so it stays quick and doesn't freeze Anki
-even at a short interval. Defaults to `false`. Editable in Intern Pearls → Settings,
-which also restarts the running timer immediately so a change here doesn't need an Anki
-restart to take effect.
+Sync decks in the background shortly after a profile opens and then every
+`auto_sync_interval_minutes`. Each round backs up first and is skipped if the backup
+fails. Results show as a short notice, never a dialog. Defaults to `false`. Edit in
+Settings; a change there applies without a restart.
 
 ## auto_sync_interval_minutes
 
-How often the background poll checks the source when `auto_sync_decks` is on. Any value
-below 1 minute is raised to 1 minute, so a typo or a 0 can't turn into a busy loop, and
-anything above a week is lowered to a week. A value that isn't a finite number (text,
-`Infinity`, `NaN`) reads as the default. Each poll of a GitHub source makes one small
-`manifest.json` request through GitHub's API, so at the 1-minute floor a public repo with
-no token uses all of GitHub's unauthenticated limit of 60 requests an hour; with a token
-the limit is 5,000. Defaults to `15`. Editable in Intern Pearls → Settings.
+Minutes between background checks. Values outside 1 to 10080 (one week) are clamped,
+and a value that is not a number reads as `15`, the default. Each check of a GitHub source is one API request:
+without a token, GitHub allows 60 an hour, so a 1-minute interval uses all of them;
+with a token, 5,000. Edit in Settings.
 
 ## ai_backend
 
-Which AI backend the Generate cards (AI) wizard should prefer when more than one
-is detected and working (`claude`, `codex`, or `agy`). Empty uses whichever one is
-found and working first. Defaults to `""`.
+The AI tool Generate cards (AI) prefers when more than one works: `claude`, `codex` or
+`agy`. Empty uses the first one that works. Defaults to `""`.
 
 ## ai_cli_path
 
-An explicit path to each backend's own CLI binary, used instead of searching `PATH` and
-the usual install locations. Stored per backend kind, as an object with `claude`,
-`codex`, and `agy` keys (`{"claude": "", "codex": "", "agy": ""}`); an empty entry
-searches normally for that backend. Editable from the AI Backends window's Executable
-path field, per backend; that window opens from the Generate cards (AI) wizard's own
-Setup link, and has no menu item of its own. Defaults to `{"claude": "", "codex": "", "agy": ""}`.
-
-A config written before this became per-backend stored `ai_cli_path` as a single
-string, meaning "the path for the backend named in `ai_backend`"; that shape is read
-once and folded into the map above (into whichever backend `ai_backend` named, or
-dropped if it named none), so nobody loses a configured path on upgrade.
+The path to each tool's program, keyed `claude`, `codex` and `agy`. Empty searches
+`PATH` and the usual install folders. Edit in the AI Backends window (the wizard's
+Setup link). An older single-string value is read as the entry for `ai_backend`.
 
 ## ai_backend_enabled
 
-Whether each backend is offered at all, as an object with `claude`, `codex`, and `agy`
-keys (`{"claude": true, "codex": true, "agy": true}`). A backend set to `false` is
-skipped entirely: not detected, not chosen, not shown as a candidate anywhere the wizard
-or the AI Backends window looks. Editable from the AI Backends window's "ignore" and
-"use again" links, per backend. Defaults to `{"claude": true, "codex": true, "agy":
-true}`.
+Whether each tool is offered at all, keyed `claude`, `codex` and `agy`. `false` hides
+it everywhere. Edit with the ignore and use again links in the AI Backends window.
 
 ## ai_model
 
-The model to request from each backend, e.g. `sonnet` or `opus` for Claude Code, or a
-full model name for Codex CLI. Stored per backend kind, as an object with `claude`,
-`codex`, and `agy` keys (`{"claude": "", "codex": "", "agy": ""}`), so a value set while
-one backend is active never pre-fills, or gets sent for, another: switching backends
-shows and uses only that backend's own entry. Empty (the default for every key) means
-"use the backend's own default": for Claude Code that default is `sonnet` (set inside
-the add-on, not this file, so an empty value here still sends an explicit, cheaper
-model rather than whatever the account's own default happens to be); for Codex CLI an
-empty value passes no `--model` flag at all, deferring entirely to Codex's own default,
-and a non-empty value is only passed when the installed Codex CLI's own help documents
-the flag (see "Codex CLI's model flag" below). Antigravity CLI behaves the same way as
-Codex CLI: an empty value sends no `--model` at all and lets `agy` pick its own default
-(already a cheap Flash tier), and a non-empty value is passed only when `agy --help`
-documents the flag. Run `agy models` to see the ids it accepts, such as
-`gemini-3.8-flash-medium`. Defaults to `{"claude": "", "codex": "", "agy": ""}`.
-Editable from the AI Backends window, per backend.
+The model to request from each tool, keyed `claude`, `codex` and `agy`. Empty uses the
+tool's default, which is `sonnet` for Claude Code. For Codex and `agy`, empty sends no
+`--model` flag, and a value is sent only if that tool's help lists the flag (Codex is
+checked under `codex exec --help` too). `agy models` lists `agy`'s ids. Edit in the AI
+Backends window.
 
 ## ai_effort
 
-The reasoning-effort level to request. Claude Code accepts `low`, `medium`, `high`,
-`xhigh`, `max`; Antigravity CLI accepts `low`, `medium`, `high`. Codex CLI has no
-verified effort flag, so the control is absent from its box in the AI Backends window
-and its entry here is ignored. Stored the same per-backend shape as `ai_model` above,
-for the same reason. Empty means "use the backend's own default": for Antigravity CLI
-that sends no `--effort` flag at all, and a non-empty value is passed only when
-`agy --help` documents the flag. For Claude Code, empty (or any value that isn't one of
-its five levels, e.g. a hand-edited typo) means `medium`, chosen to stay smart enough
-for card drafting without burning a Max subscription's credits the way the account's
-own top-model default would across Thorough mode's up-to-15-turn loop; the AI Backends
-window's Effort combo always shows this same effective value, never a typo it can't
-find in its own list. Defaults to `{"claude": "", "codex": "", "agy": ""}`. Editable
-from the AI Backends window, per backend.
-
-### Codex CLI's model flag
-
-Codex CLI documents `-m, --model` under its `exec` subcommand's own help
-(`codex exec --help`), not under `codex --help`. The wizard probes for the long form,
-matched as a whole flag token (not a substring another flag might contain, like
-`--model-provider`), against both `codex --help` and `codex exec --help`; it's passed
-only when the installed CLI's own help documents it, so an older Codex CLI without the
-flag isn't hard-broken by receiving it anyway.
+The reasoning effort for each tool, keyed the same way. Claude Code takes `low`,
+`medium`, `high`, `xhigh` or `max`, and empty or unknown means `medium`. `agy` takes
+`low`, `medium` or `high`, and empty sends no flag. Codex has no effort setting. Edit in
+the AI Backends window.
 
 ## ai_default_count
 
-How many cards the Generate cards (AI) wizard should ask for by default. `0` (the
-default) means automatic: no number is sent at all, and the assistant makes one card per
-point the source teaches, up to 40. A value from 1 to 40 pre-fills the wizard's
-Advanced panel with that exact number instead. Anything else, including a negative or a
-value past 40, reads as automatic. This only seeds the control; changing the number in
-the wizard applies to that session and is never written back here.
+How many cards the wizard asks for. `0`, the default, lets the assistant decide, up to
+40. A value from 1 to 40 fills in that number; anything else reads as `0`. The wizard
+never writes back here.
 
 ## ai_default_depth
 
-Which depth the wizard should start on: `thorough` (drafts, may verify online, then
-self-reviews) or `quick` (one drafting pass with no fact-checking, which may still
-search the web for card images; how far each backend can reach is in the README's
-Modes). Defaults to `auto`, which lets the material decide: thorough for a source over
-1,500 characters or any attachment, quick for a short paste. As with the count above,
-this only seeds the control; picking a depth in the wizard applies to that session and
-is never written back here.
+The wizard's starting depth: `thorough` (drafts, may check facts online, then reviews
+its own cards) or `quick` (one pass, no fact checks). The default, `auto`, picks
+thorough for 1,500 characters or more or any attachment, quick otherwise. The wizard
+never writes back here.
 
 ## dim_images_night_mode
 
-When on, bright pictures are dimmed while Anki itself is in Night Mode, so a
-white-background diagram doesn't glare out of a dark card. It never applies in Day mode.
-It applies to every deck in your collection, not only this add-on's, because it works by
-styling the images themselves rather than one note type. It takes effect immediately,
-with no Anki restart. Defaults to `false`. Editable in Intern Pearls → Experimental → Night
-mode dimming.
+Dim bright pictures while Anki is in Night Mode, in every deck. Applies at once.
+Defaults to `false`. Edit in Experimental > Night mode dimming.
 
 ## dim_images_night_mode_percent
 
-How much dimmer, as a percentage, `dim_images_night_mode` makes those images: higher
-dims more. The value is clamped to 0-90 (past that an image reads as blacked out rather
-than dimmed). Defaults to `30`, the fixed dim level applied before this became
-configurable, so an existing `dim_images_night_mode` setting keeps its exact look
-until the percentage is changed. Editable in Intern Pearls → Experimental → Night mode
-dimming.
+How much to dim, from 0 to 90 percent. Defaults to `30`. Edit in Experimental > Night
+mode dimming.
 
 ## dim_night_mode_scope
 
-What `dim_images_night_mode` dims. `"images"` dims bright images only, the original
-behaviour. `"content"` dims everything Anki draws in a web view: cards, the deck
-list, the overview, and the editor, but never the menu bar or dialogs. It takes effect
-the next time a screen loads. Defaults to `"images"`; an unrecognized value falls back to
-it. Editable in Intern Pearls → Experimental → Night mode dimming.
+`"images"` dims bright pictures only. `"content"` dims everything Anki draws in a web
+view (cards, deck list, overview, editor) but not menus or dialogs. Applies when a
+screen next loads. Defaults to `"images"`. Edit in Experimental > Night mode dimming.
 
 ## dupes_threshold
 
-The Scan for duplicates Sensitivity: `0.6` (Strict), `0.5` (Normal) or `0.4` (Loose).
-Any other value reads as `0.5`. Set by the Sensitivity choice in Intern Pearls →
-Experimental → Scan for duplicates, which remembers it here.
+Scan for duplicates sensitivity: `0.6` (Strict), `0.5` (Normal) or `0.4` (Loose). Any
+other value reads as `0.5`. Set by the scan's Sensitivity choice.
 
 ## dupes_excluded_decks
 
-Deck names, or parts of names, that Scan for duplicates leaves out of both sides of the
-comparison, e.g. `["Archive", "Shared"]`. Defaults to `[]`. Set by the scan's Exclude
-decks box.
+Deck names, or parts of names, the duplicate scan leaves out, such as
+`["Archive", "Shared"]`. Defaults to `[]`. Set by the scan's Exclude decks box.
 
 ## dupes_ignored
 
-Pairs you told Scan for duplicates are not duplicates (Ignore pair), so a rescan never
-offers them again. Each entry identifies one pair of notes; remove an entry to have
-that pair offered again. Defaults to `[]`.
+Note pairs marked Ignore pair in the duplicate scan, so a rescan skips them. Remove an
+entry to see that pair again. Defaults to `[]`.
 
-## Not a config.json key: user_files/user_skill.md
+## My rules (not in this file)
 
-Your own standing instructions for the AI wizard ("My rules"), plain text, live in
-`user_files/user_skill.md`, not in this config file, so they survive an add-on update.
-Editable from the wizard's input page (Add/Edit my rules link). Saving an empty box
-removes the file rather than leaving an empty one behind.
+Your standing instructions for the AI wizard live in `user_files/user_skill.md`, so they
+survive add-on updates. Edit them with the wizard's Add my rules or Edit my rules link.
+Saving an empty box deletes the file.

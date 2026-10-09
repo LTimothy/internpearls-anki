@@ -1,24 +1,23 @@
 # Contributing
 
-Bug reports, fixes, and small features are welcome. Open an issue first for
-anything bigger than a bug fix so we can agree on the approach before you
-write code.
+Bug reports, fixes and small features are welcome. For anything bigger than a
+bug fix, open an issue first so we can agree on the approach.
 
 ## Setup
 
-No install step beyond Python 3 and pytest:
+You need Python 3 and pytest. No Anki install is needed.
 
 ```bash
 python3 -m pip install pytest
-python3 -m pytest tests/ -v
+python3 -m pytest tests/ -q
 ```
 
-That suite runs a fake Qt, so it needs no PyQt6, no display, and no Anki. It proves
-structure: which widgets exist, how they nest, what a click calls.
+That suite runs against a mock Qt and checks structure: which widgets exist,
+how they nest, and what a click calls.
 
-There is a second suite that renders the real dialogs with real PyQt6 and asserts on
-what they paint, because Qt drops a stylesheet rule it dislikes without raising and a
-fake Qt cannot see that:
+A second suite renders the real dialogs with real PyQt6 and checks what they
+paint. Run it as its own command, because the two cannot share a process (see
+`qt_tests/README.md`):
 
 ```bash
 python3 -m venv .venv-qt
@@ -26,73 +25,80 @@ python3 -m venv .venv-qt
 QT_QPA_PLATFORM=offscreen .venv-qt/bin/python -m pytest qt_tests/ -q
 ```
 
-The two cannot run in one process, which is why the second one names its path. See
-`qt_tests/README.md` for why. Both run in CI on every release tag.
-
-Neither suite needs an Anki install. To try your change in Anki itself, run `./build.sh` and install the resulting
-`internpearls.ankiaddon` via Tools > Add-ons > Install from file (restart
-Anki after).
+CI runs both on every release tag. To try a change in Anki, run `./build.sh`,
+install `internpearls.ankiaddon` with Tools > Add-ons > Install from file, and
+restart Anki.
 
 ## Where code goes
 
-Code that could run without Anki goes in `internpearls/logic.py`, which has no
-`aqt`/`anki` imports (apkg handling, GUID matching, version comparison,
-formatting). If your new function can be tested
-with plain Python, it belongs in `logic.py`, with a test in
-`tests/test_logic.py`. Code that touches `mw`, `col`, or Qt goes in the module
-matching its concern: `collection.py` (collection reads/writes), `sync.py`
-(sync flows), `dialogs.py` (panels), `net.py` (fetches), `ui.py` (dialog
-wrappers and styling), `updates.py` (self-update), `background.py` (unattended
-checks) or `config.py` (constants and config). `__init__.py` holds only the
-menu and startup wiring. See "Code layout" in the README.
+Code that plain Python can test goes in a module with no `aqt` or `anki`
+imports: `internpearls/logic.py`, `ai_logic.py` or `dupes.py`, with a test in
+`tests/`. Code that touches `mw`, `col` or Qt goes in the module for its
+concern. "For developers" in the README lists them. `__init__.py` holds only
+the menu and startup wiring.
 
 ## Conventions
 
-- **Dialogs** go through the `_info` / `_warn` / `_ask` / `_prompt` wrappers
-  in `internpearls/ui.py`, never raw `aqt.utils` calls.
-- **Menu items** are sentence case ("Import single deck", not "Import Single
-  Deck") with no trailing ellipses.
-- **Persistent state** (anything that must survive an add-on update) lives
-  under `internpearls/user_files/`, nowhere else in the add-on folder.
-- **Imports stay `merge_notetypes=False`.** Flipping it to `True` forces
-  AnkiWeb full syncs on every import; note types are reconciled by the
-  Fix-note-types step instead. See "How history is preserved" in the README.
-- **Fetches from this repo's GitHub** (version.json, the .ankiaddon) go
-  through the contents API (`_gh_public_raw`), not raw.githubusercontent.com,
-  which can serve stale files for minutes after a push.
-- **No deck content.** This repo ships tooling only; card content, deck
-  names beyond the configurable defaults, and anything tied to a specific
-  private deck source don't belong here.
+- Dialogs go through the `_info`, `_warn`, `_ask` and `_prompt` wrappers in
+  `internpearls/ui.py`, never raw `aqt.utils` calls.
+- Menu items use sentence case ("Import single deck") with no trailing
+  ellipsis.
+- State that must survive an add-on update lives in
+  `internpearls/user_files/` and nowhere else.
+- Imports keep `merge_notetypes=False`. `True` forces a full AnkiWeb sync on
+  every import. See "How history is preserved" in the README.
+- Fetches from this repo (`version.json`, the `.ankiaddon`) go through the
+  GitHub contents API (`_gh_public_raw`). raw.githubusercontent.com can serve
+  stale files for minutes after a push.
+- Colours live in `internpearls/palette.py`. See "Colors" in the README.
+- The repo holds tooling only: no card content, and nothing tied to a
+  particular deck source.
 
 ## Pull requests
 
-- Publish only source, tests, user documentation, and release assets. Keep local
-  notes, machine configuration, and working documents outside the tracked tree.
-  New root files or Pages content require an explicit `.gitignore` allowlist change.
-- Keep changes surgical: touch only what the fix or feature needs, and match
-  the existing style even where you'd do it differently.
-- Add or update a test in `tests/test_logic.py` for any `logic.py` change.
-- Run `python3 -m pytest tests/ -v` and `./build.sh` before opening the PR.
-- If you change a stylesheet, border, spacing, or color, render it and look at it
-  (`python3 tools/render_dialog.py --list` shows what can be rendered). The `tests/`
-  suite uses mock Qt and cannot tell you whether Qt painted anything. See "Rendering a
-  dialog to an image" and "Colors" in `README.md`.
-- Don't bump the version, edit `CHANGELOG.md`, or rebuild
-  `internpearls.ankiaddon` in your PR. The maintainer does releases (semver bump in
-  `internpearls/config.py` and `version.json`, tag, changelog entry, repackage), as
-  described under "Versioning" in the README.
+- Commit only source, tests, user docs and release assets. A new root file or
+  Pages file needs an explicit `.gitignore` allowlist entry.
+- Keep the diff to what the fix or feature needs, and match the existing
+  style.
+- Every change comes with a test in the matching suite.
+- Run `python3 -m pytest tests/ -q` and `./build.sh` before opening the pull
+  request. After any edit under `internpearls/`, the tests fail until
+  `./build.sh` refreshes the package and the demo's copy of the code.
+- If you change a stylesheet, border, spacing or colour, render the dialog
+  and look at it (`python3 tools/render_dialog.py --list`). The mock suite
+  cannot tell whether Qt painted anything.
+- Leave the version, `CHANGELOG.md` and `internpearls.ankiaddon` alone. The
+  maintainer does releases, as described under "Versioning" in the README.
 
-### Browser demo parity
+### Browser demo
 
-The browser demo supports the non-AI flows covered by its parity tests. A change to
-one of those flows needs all of the following:
+The demo at `docs/` runs the non-AI flows that its parity tests cover. A
+change to one of those flows needs:
 
-- Add every new widget node kind or action kind to the shared schema and its boundary
-  tests.
-- Add a real Qt test when the change depends on signal, focus, keyboard, layout, or
-  other Qt semantics.
-- Add or update a browser parity case when a supported flow changes.
-- Don't treat registry equality as proof of parity. Matching registries show that the
-  names line up, but not that a person can complete the flow or see the same result.
-- List anything the browser cannot run as a stated limitation, and don't imply parity
-  for it.
+- every new widget node kind or action kind in the shared schema, with
+  boundary tests
+- a real-Qt test when it depends on signals, focus, keys or layout
+- a new or updated browser parity case
+
+Run the browser suite with `python3 tools/demo_npm.py run test:demo-contract`.
+Matching registries only show that names line up, not that a person can
+finish the flow. Anything the browser cannot run is listed as a limitation.
+
+## Commit style
+
+Conventional Commits:
+
+```
+type(scope): subject
+```
+
+- Types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`,
+  `chore`. A release commit is `chore(release): vX.Y.Z`.
+- Scope is optional. Common ones are `sync`, `review`, `later`, `feedback`,
+  `backup`, `collection`, `net`, `update`, `ai`, `dupes`, `nightmode`,
+  `platform`, `ui`, `config` and `demo`.
+- The subject is lowercase and imperative, with no trailing period, and at
+  most 72 characters.
+- Add a body only when the reason is not obvious from the subject. No
+  trailers.
+- Describe what the change does now.

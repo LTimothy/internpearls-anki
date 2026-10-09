@@ -3,253 +3,151 @@
 [![Latest release](https://img.shields.io/github/v/release/LTimothy/internpearls-anki)](https://github.com/LTimothy/internpearls-anki/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/LTimothy/internpearls-anki)](LICENSE)
 
-**Update shared Anki decks without losing your review history or the notes you've written on cards.**
+Update shared Anki decks without losing your review history or the notes you keep on cards. It is for people who study from a deck someone else maintains, and for the people who maintain those decks.
 
-**[Try the live demo](https://ltimothy.github.io/internpearls-anki/)**. It runs the add-on's Python code in your browser and simulates only Anki itself. You can publish a deck update, sync it through the add-on's dialogs, and check that scheduling and personal notes come through. Nothing you do there leaves the page.
+[Try the live demo](https://ltimothy.github.io/internpearls-anki/). It runs the add-on's own Python code in your browser against a simulated Anki, so you can publish a deck update and sync it through the real dialogs. Nothing leaves the page.
 
-Anki has no way to update a shared deck in place. Re-importing an updated `.apkg` overwrites every field, which wipes the annotations people keep on their cards, and a reworded card loses its scheduling without any warning. This add-on adds an update step: you point it at a GitHub repo or a local folder once, and from then on Update my decks does the work.
+Re-importing an updated `.apkg` overwrites every field on every matched card, and a card whose GUID changed with its wording imports as a new card with no history. This add-on replaces that with an update step. You point it at a GitHub repo or a local folder once, then run Update my decks when the source changes. It:
 
-- It syncs only what changed. Each deck carries a version hash, so editing one deck doesn't re-import ten.
-- It keeps review history. Cards match by GUID, with fallbacks for reworded fronts, so intervals and ease carry over through every update.
-- It keeps your annotations. Fields you mark as yours (`Notes` by default) come through every import untouched.
-- It backs up before importing. A timestamped `.apkg` of each affected deck is saved first, and the last 10 per deck are kept.
-- It can run on its own. Background deck sync is optional, and the add-on can update itself.
+- imports only the decks whose version changed
+- matches cards by GUID, with fallbacks for reworded fronts, so intervals and ease carry over
+- keeps the fields you mark as yours (`Notes` by default) through every import
+- backs up each affected deck first and keeps the last 10 backups per deck
 
-The add-on ships with no deck content. If you maintain a deck, host a small `manifest.json` next to your `.apkg` files and everyone studying from it gets the same one-click updates. See [Using this for your own decks](#using-this-for-your-own-decks). `CHANGELOG.md` records what changed in each version.
+The add-on ships with no deck content. To publish a deck for it, see [Using this for your own decks](#using-this-for-your-own-decks). [CHANGELOG.md](CHANGELOG.md) lists what changed in each version.
 
 ## Install
 
 1. Download `internpearls.ankiaddon` from the [latest release](https://github.com/LTimothy/internpearls-anki/releases/latest).
-2. In Anki, go to Tools > Add-ons > Install from file, pick the file, and restart Anki.
+2. In Anki, choose Tools > Add-ons > Install from file, pick the file, and restart Anki.
 
-An "Intern Pearls" menu appears between Tools and Help. Update my decks and Manage decks sit at the top; occasional tools are under Advanced, newer features under Experimental, and Settings and About at the bottom.
-
-If you don't have a deck source yet, open Manage decks, choose Configure source, and pick "Try the example deck" to run a sync from start to finish.
+An Intern Pearls menu appears before Help. To try it without a deck source, open Manage decks, choose Configure source, then Try the example deck.
 
 ## Menu reference
 
 ### Update my decks
 
-This is the main command. It fetches `manifest.json` from your deck source and works out everything pending in one pass: changed decks, retired cards still in your collection, and cards a deck reorganization needs to relocate. While a slow source is being checked, a checking window with Cancel is shown. Each changed deck is downloaded and matched against your collection before the confirmation opens, so it shows real counts ("12 kept · 3 new", plus "changed" for cards rewritten upstream). A progress bar with a working Cancel covers the download and the apply step. Cancel stops a transfer but never stops an import partway through. The confirmation is a preview, and nothing applies until you click Update.
+This is the main command. It fetches the source's `manifest.json`, downloads each changed deck and matches it against your collection before showing anything, so the confirmation shows real counts. It also lists retired cards still in your collection and cards that a deck reorganization moves. Nothing changes until you click Update. Cancel stops a download but never an import partway through.
 
-**The card list.** Every pending card is a row with a chip: NEW (you don't have it), UPDATED (its content changed upstream, with your current field values shown under it), RETIRED (being archived because a split, reword or removal replaced it, with the source's reason when there is one), or MOVED (being relocated to match a reorganized deck). Click a NEW or UPDATED row to read the whole card. The list builds in batches as you scroll, so it opens quickly however many cards are pending. Moving down with the keyboard or the scroll bar loads more rows even when you are already at the bottom, and editing rows or resizing the window keeps the remaining rows reachable.
+Each pending card is a row marked NEW, UPDATED (with your current field values under it), RETIRED (with the source's reason, if any) or MOVED. Open a row to read the whole card. With 20 or more cards pending, a bar above the list filters by kind or by cards you have not decided on, and a search box matches card fronts. Filtering only hides rows; your decisions and notes stay.
 
-**Filter and search.** With 20 or more cards pending, a bar above the list narrows it: All, New, Changed, Later or Not reviewed (cards you haven't decided on this run), plus a Search cards box that matches the front of each card without regard to case. A line under the bar says "Showing X of Y cards" while either is active. Filtering only hides rows: every decision and note you've made is kept and comes back when the row does. A deck heading with nothing left under it is hidden, a folded group counts and opens to just its matching cards, Escape in the search box clears it, and Enter applies the search at once. Retired and moved rows show only under All, where a search matches them too; the per-deck summary shows only while nothing is filtered.
+Each new card offers Import, Later or Never. Each updated card offers Apply, Keep yours, Later or Never. The default is the choice that costs nothing.
 
-**Decisions.** NEW rows offer Import / Later / Never; UPDATED rows offer Apply / Keep yours / Later / Never. The default is the choice that costs nothing. Keep yours and Never open a note box for an optional reason; Later does not, and any row has an "Add note" link once opened. Never collapses the row to "won't be offered again". On an updated card it means no more updates for that card. A kept card returns only when that card's source content changes, pre-set to Keep yours and marked with a KEPT YOURS chip, with a "changed since" hint if the source moved since your decision. Never cards don't return as rows; the run reports how many are hidden. Nothing here deletes a card you already have, and every decision can be undone from Manage decks > Later and declined cards.
+- Later keeps the card out of your collection, automatic sync included, and offers it again on your next run. A Later card with a note waits until its source content changes.
+- Keep yours comes back only when that card's source content changes.
+- Never stops offering the card, or its updates. The run reports how many cards it hides.
+- Manage decks > Later and declined cards undoes any of these.
 
-**Later.** Later keeps a card out of your collection, including through auto-sync, and brings it back the next time you run Update my decks, whether or not its deck shipped anything. It returns set to Import or Apply (whichever that row would start on) with a LATER chip, so accepting it takes one click. A Later card that has a note waits for the fix: it returns set to Later, shows "Your note: ..." and "Not updated yet", and stays that way until the card's source content changes. Once it has changed it returns set to Import or Apply with the hint "Updated since your note", and your note is cleared once you decide on the card. A Later card without a note comes back set to Import or Apply. Versions before 0.77.0 had a Skip choice, and any card you skipped with it is treated as a Later card. The first update after the upgrade shows it set to Later, with a line above the list reading "Skip is now Later. N cards you skipped earlier are below, still set to Later.", so nothing you set aside is imported by accident. After that run it behaves like any other Later card. A card set to Later when it arrives still counts in its deck's summary line, which names it: "8 new (1 waiting at Later)".
+The "Update, and leave N unopened for later" button applies the cards you opened or decided on and sets the rest to Later. Cards with an earlier decision keep it.
 
-**Leave the rest for later.** The **Update, and leave N unopened for later** button applies the cards you opened or decided on (showing a group does not count its cards as opened) and leaves the N you haven't opened that carry no earlier decision as Later, without a note. The line above the buttons says how many of the unopened cards already carry an earlier decision, such as Keep yours or a Later card still waiting on its note; those keep that choice, and the button leaves them alone. The run's summary says how many cards were left for later, and a tooltip at startup says how many are waiting, but only when there are more than your last Update my decks run left. With a local folder source it leaves out cards the source has since retired, which your next update releases.
+A deck source can attach a note to a changed card. Reviewer feedback shows quoted, a maintainer's note unquoted. Cards that share a note are grouped under it, with one control for the whole group. A maintainer's group of five or more cards is folded, and its cards still apply when you click Update. A feedback group is never folded. A source can also label cards (with a question number, say), and labelled cards sort by it.
 
-**Why a card changed.** A deck source can ship a note with a changed or new card. Reviewer feedback appears quoted under the card's header, marked "from feedback"; a maintainer's note appears unquoted. Older feedback stays underneath as dated "earlier feedback". Maintainer notes show only for the exact content they describe. A first sync of a deck shows none. When one note explains several cards, it appears once with every row it caused indented beneath it. A maintainer's group of five or more is folded into a box that counts its cards, names the first three, and has a "Show N cards" button; a group driven by reviewer feedback is never folded. A group whose cards are all one kind has one control for all of them (Apply all / Keep all yours / Later all, or Import all / Later all), which reads "mixed" once any card is set differently. A group's control never offers Never. Folded cards still apply when you press Update. A line above the buttons counts the cards not opened yet, how many are folded and how many were already decided on an earlier update, and says that showing a group does not count its cards as opened. Each deck's summary line says how many of its cards are folded. A source can also label where a card came from (a question number, say); the label sits above any note, and labelled cards sort by it in numeric order within each deck.
+Notes you type on rows are saved as you type. At the end of the run they appear in a digest, along with your standing Never and Keep yours cards, that you can copy or save. Nothing is sent anywhere. Advanced > Recent card feedback keeps the last 20 digests.
 
-**Your notes are kept.** What you type in a note box is saved to disk as you type. At the end of the run your notes, plus a snapshot of every standing Never and Keep yours card, arrive as a digest you can copy or save as a file and send yourself; nothing is transmitted. Later cards appear only as a count, since leaving a card for later says nothing about it, but a note you typed on one is still in the digest. The snapshot is read after the run, so a card the run retired is not listed. Notes from an interrupted run are picked up by your next update. The last 20 digests are kept and can be reopened under Advanced > Recent card feedback.
+A change to a card's template or CSS costs a one-time full AnkiWeb sync, so it is a checkbox on the confirmation, off by default. A change of card format (Q&A to fill-in-the-blank, or back) costs the same and gets one yes or no for the whole run. Saying no imports those cards as new cards beside the old ones. A conversion that would delete any of a note's cards is never applied. Each of these questions names the cost on its buttons, and Return, Escape or closing the window picks the free choice.
 
-**How cards are shown.** A fill-in-the-blank card shows its blanks filled in. When a field holds more than one blank group, each blank carries its group number (c1, c2). A hint shows in brackets beside its answer, and a change that only moves a hint is named as one. Pictures are named while a row is closed and rendered from the already-downloaded deck when you open it.
+When you confirm, for each changed deck it:
 
-**Look and format changes.** A change to how cards look (a template or its CSS) is a checkbox on the confirmation, unticked by default, because applying it costs a one-time full AnkiWeb sync; leaving it keeps your current appearance and imports everything else. A change to a card's format (Q&A becoming fill-in-the-blank, or back) costs the same and gets one yes or no after you click Update and after the backup, covering the whole run. Saying no imports those cards as new cards beside your old ones. A card whose conversion would delete any of its cards (a fill-in-the-blank with several blanks becoming one Q&A card) is never converted: it stays as it is, with its history, and the new version imports beside it, which the confirmation and the question say. A deck whose download failed twice, or whose new format needs a note type you don't have yet, stays pending with the reason given. Cards you kept yours, said Never to or left for later are never part of this; a Later or declined card you set back to Import or Apply on the same screen is.
-
-Every question whose two answers cost different things names them on its buttons, and Return, Escape or closing the window all choose the one that costs nothing.
-
-**On confirm**, content applies first, then retired cards archive and moved cards relocate, so a replacement is in your collection before its predecessor archives. If a deck cannot be previewed, you can retry its preview or skip it for now before the confirmation. Skipping also defers retirements recorded under that deck or its subdecks, including reworded pairs involving those cards, moves into it or its subdecks, and reworded pairs whose newer copy currently sits there. Cards in the skipped retirement ledger stay put for this run and do not cause reconciliation backups. These stay pending for the next Update my decks or Reconcile my decks. Decks that preview successfully reuse their downloads when you confirm. For each changed deck it:
-
-1. Backs up the decks the run will change (see "How history is preserved"). Nothing else runs until this succeeds, or you explicitly continue without one.
-2. Adds any missing fields to the note type (never removes or renames).
-3. Snapshots your protected fields and tags on every card in scope.
-4. Matches each incoming card to yours: by GUID, then front text, then the manifest's rename maps.
+1. Backs up the decks the run will change. Nothing else runs until this succeeds or you choose to continue without a backup.
+2. Adds any missing fields to the note type. It never removes or renames a field.
+3. Snapshots your protected fields and tags.
+4. Matches each incoming card to yours by GUID, then front text, then the manifest's rename maps.
 5. Imports through Anki's importer without touching scheduling.
 6. Restores your protected fields and your own tags.
 
-The run ends with one summary dialog, including the digest when you flagged or declined anything. If no source is configured it points you to Manage decks; if nothing is pending it says you're up to date. If the source can't be used it says whether the host never answered (check your connection) or answered with something unusable (a bad token, wrong repo or branch, missing or invalid `manifest.json`: change the source).
+Retired cards are archived and moved cards relocated after that, so a replacement is in your collection before the card it replaces is archived. A deck that fails to preview can be retried or skipped. Skipping also leaves its retirements and moves for the next run. If the source fails, the message says whether the host never answered (check your connection) or answered with something unusable (check the token, repo, branch or manifest).
 
 ### Manage decks
 
-Lists every deck the source offers, with a checkbox, its card count, and a NEW or UPDATED chip where one applies. Unchecking a deck stops future syncs for it; its cards stay in your collection and Reconcile leaves them alone. The panel also edits `protected_fields`. With a collection open, an unknown field name is refused with a suggestion when a close match exists. Removing Notes from the list asks for confirmation before saving. Save keeps your choices; Save and update now also runs Update my decks.
+The panel lists the source's decks, each with a checkbox. Unchecking a deck stops syncing it and leaves its cards alone. This panel also edits the list of protected fields.
 
-**Later and declined cards (N)** lists every card you left for later, kept your version of, or said Never to, grouped by decision (Later first, as one group), each with its deck and date. Search by front, deck name, or saved note, and filter by decision. Later cards show your saved note. Offer again forgets the decision so the card comes back on your next Update my decks. It removes that row in place, keeps your filters and scroll position, and moves keyboard focus to the next card, or the previous card at the end.
+Later and declined cards lists every card set to Later, Keep yours or Never, with search and a filter. Offer again forgets the decision, so the card returns on your next update.
 
-**Configure source** (or Change source) sits beside the Source line and offers three sources, the example deck first:
+Configure source offers three sources:
 
-- **GitHub repo**: `owner/name`, plus a read-only personal access token only for a private repo. The token is masked, stored only in your local config, and sent only to GitHub; a redirect to another host goes without it.
-- **Local folder**: a directory holding `manifest.json` and the `.apkg` files.
-- **Try the example deck**: points at [`LTimothy/internpearls-example-deck`](https://github.com/LTimothy/internpearls-example-deck) and temporarily sets `scope_tag` and `export_deck` to its values (if you hadn't customized them); choosing a real source later resets exactly those.
+- GitHub repo: `owner/name`, plus a read-only token for a private repo. The token is stored only in your local config and sent only to GitHub.
+- Local folder: a folder with `manifest.json` and the `.apkg` files.
+- Try the example deck: [LTimothy/internpearls-example-deck](https://github.com/LTimothy/internpearls-example-deck). It sets `scope_tag` and `export_deck` to the example's values if you had not changed them, and choosing a real source later resets them.
 
-After saving, the add-on connects. If the manifest recommends a scope tag and backup deck, you're offered them; nothing changes unless you say yes. Manage decks then reopens showing either the decks found or exactly what went wrong. With nothing configured it still opens, with an empty list and the Configure source button.
-
-The same settings are under Tools > Add-ons > Intern Pearls Deck Tools > Config:
+If a manifest recommends a scope tag and backup deck, you are asked before either is applied. The same settings are under Tools > Add-ons > Intern Pearls Deck Tools > Config, and [`config.md`](internpearls/config.md) describes every key. The main ones:
 
 | Key | What it does |
 |---|---|
-| `github_decks_repo` | GitHub repo, e.g. `owner/repo-name` |
-| `github_token` | Read-only fine-grained token; blank for a public repo |
-| `github_ref` | Branch or tag to pull from (default `main`) |
+| `github_decks_repo`, `github_token`, `github_ref` | GitHub source, read-only token (blank for a public repo), and branch or tag (default `main`) |
 | `decks_dir` | Local folder, used when `github_decks_repo` is empty |
-| `scope_tag` | Root tag of the cards this add-on manages (default `InternPearls`). Scopes snapshots and matching so other decks are never touched. |
-| `protected_fields` | Fields kept as yours through every import (default `["Notes"]`). |
-| `excluded_decks` | Decks opted out of syncing. |
-| `export_deck` | The deck the automatic backup and the Backup/Restore/Export actions use (default `Intern Pearls::Intern Custom`). |
-| `auto_sync_decks`, `auto_sync_interval_minutes`, `notify_addon_updates`, `auto_update_addon` | Automation; see Settings and `config.md`. |
-| `dim_images_night_mode`, `dim_images_night_mode_percent`, `dim_night_mode_scope` | Night Mode dimming for every deck (0-90%, images or whole screens); see Experimental. |
-| `ai_backend`, `ai_cli_path`, `ai_backend_enabled`, `ai_model`, `ai_effort` | The AI wizard's preferred backend and, per backend, its CLI path, whether it is used, and its model and effort; set in AI Backends. |
-| `ai_default_count`, `ai_default_depth` | Starting values for the wizard's card count (0 is automatic) and depth (`auto`, `thorough` or `quick`). |
-| `dupes_threshold`, `dupes_excluded_decks`, `dupes_ignored` | Scan for duplicates' Sensitivity, excluded decks and ignored pairs. |
+| `scope_tag` | Root tag of the cards the add-on manages (default `InternPearls`). Other cards are never touched. |
+| `protected_fields` | Fields kept as yours through every import (default `["Notes"]`) |
+| `excluded_decks` | Decks you opted out of |
+| `export_deck` | The deck that backups, restore and export use (default `Intern Pearls::Intern Custom`) |
 
-A numeric setting that isn't a finite number reads as its default. Each key is described in `config.md`.
+Keys for automatic sync, Night Mode dimming, AI card generation and the duplicate scan are set from their own windows.
 
-### Experimental submenu
+### Advanced
 
-Newer features: **Generate cards (AI)**, **Night mode dimming**, and **Scan for duplicates**.
+- Sync decks: the import half of Update my decks on its own. It lists decks rather than cards, and archives or moves nothing.
+- Reconcile my decks: the other half, driven by ledgers in the manifest. A retired card (split, merged or reworded) has its protected-field text copied into the replacement's blank fields, then moves to a `::Retired` subdeck, suspended and tagged. A card the source moved to another deck follows it, unless you refiled it yourself. Nothing is deleted, and running it again changes nothing. With automatic sync on, the menu item shows how many are pending.
+- Import single deck (manual): imports one `.apkg` from outside your source, with the same backup, matching and field protection.
+- Recent card feedback: reopens the last 20 digests.
+- Clean up duplicate cards: finds notes with the same note type and front but different GUIDs, keeps the copy with the most reviews, carries notes over and archives the rest.
+- Remove empty cards: Anki's Empty Cards, limited to your scope tag, for blanks a source dropped. It is the one action that deletes cards, and it never leaves a note with no cards.
+- Fix note types: adds missing fields to the managed note types. Every sync runs it.
+- Backup, Restore and Export intern pearls deck: work on `export_deck`, with scheduling. Restore puts the file's content into matching cards and keeps their scheduling. It backs up first, is one Edit > Undo step, and the restored decks are offered again on your next update.
+- Backup full collection and Restore full collection: Anki's own backups. A full restore offers every managed deck again on your next update.
+- Check for add-on updates: compares your version with the repo's `version.json` and offers a newer one. Without a token, GitHub allows 60 checks an hour per IP address. A token set in Manage decks raises that to 5,000.
 
-#### Generate cards (AI)
+### Experimental
 
-Drafts cards from material you paste or attach, through an AI coding-assistant CLI you have already installed and signed into. The add-on has no API key field and never reads, sends or stores a credential; it only runs a CLI you set up yourself.
-
-**AI Backends** (opened from the wizard through "Set up an assistant" or the Setup link) is where every backend setting lives. Each backend is one row: a chip for what the check found (found, not responding, not found, ignored), its command, badges for image input and free-tier limits, the subscription it needs, and an install-guide link. The check is a free `--version` call, so "found" means the binary runs, not that you're signed in. One backend is the preferred one: "Use ..." switches to another, and "ignore" sets one aside. Below the rows, a panel for the preferred backend sets its executable path (blank auto-detects), Model, Effort, and has Test connection, which runs one tiny real prompt and reports working or not working in plain words. It is disabled for a backend that wasn't found.
-
-- **Claude Code** (Claude Pro or Max): the add-on restricts its tools completely. This is the tightest sandbox of the three.
-- **Codex CLI** (any ChatGPT account; the free tier is capped at roughly 50 agentic messages a day): sandboxed read-only with no writes; its own web search is used when the installed version has it. Read-only still means it can read files on your machine and fold them into drafts.
-- **Antigravity CLI** (a free, throttled Google tier; it replaced Gemini CLI for personal Google AI Pro and Ultra accounts): gets `--sandbox` when its help documents it, never a file-writing tool, and otherwise relies on its own approval defaults.
-
-They are not equally sandboxed, and AI Backends says so. All three read attached images.
-
-**Input.** Paste material, attach images or PDFs, or both. Attachments are read in the background with a Cancel; each file is limited to 25 MiB, and a PDF to 100 pages, 500,000 characters of text, and 50 images totalling 25 MiB. Add an optional focus line. Four status rows summarise the run, each with a link:
-
-- **Backend**: the preferred assistant, model and effort, or NOT SET UP.
-- **Cards and depth**: AUTO, THOROUGH or QUICK. By default the assistant decides the count, one card per point the source teaches, up to 40, and depth is Thorough for 1,500+ characters or any attachment, Quick otherwise. Advanced pins an exact count or a depth for that run only.
-- **Deck**: the destination and the note types in play (Basic and Cloze; Image ID isn't offered, since a generated card can't fill an image-only field). Basic and Cloze are recognized by their shape, so a profile in another language uses its own stock types and their field names. Changed under Advanced.
-- **Skills**: what is sent every run (the bundled authoring skill, a consented deck skill, your own rules), with View and Add/Edit my rules links.
-
-**Modes.** Thorough (about 1 to 3 minutes) drafts and then self-reviews; Quick (about 15 seconds to a minute) is one drafting pass that may search only for images. What that means for web access differs by backend, and the Cards and depth row states it for yours:
-
-- **Claude Code**: Quick gets up to 6 turns, web search for images, and read access to your attachments; Thorough gets up to 15 turns and web search.
-- **Codex CLI**: commands sandboxed (read-only in Quick); Thorough verifies online and Quick searches for images with Codex's own web search. No turn cap.
-- **Antigravity CLI**: modes differ only in the prompt; its own defaults may allow web access in either. No turn cap.
-
-Claude Code defaults to `sonnet` at `medium` effort, because an unset model runs the account's default, which on Max is the top model and burns credits across Thorough's turns. Model and effort are stored per backend. Codex CLI and Antigravity CLI receive `--model` (and Antigravity `--effort`, with ids from `agy models`) only when you set one and the installed binary's help documents the flag.
-
-**Progress.** A status row shows the phase, elapsed time (with the median of your last 10 runs in that mode once there are some), and a Cancel link; Escape also cancels. A feed below lists what the assistant is doing and counts cards as they stream. A run stops only after two minutes of silence (three in Thorough) or a 15 or 30 minute ceiling. A failed run's raw output is kept in `user_files/ai_last_run.log`, with any line that repeats your material, rules or the prompt left out.
-
-**Review.** Drafted cards come back as rows like Update my decks, each with Include/Skip (Include by default) and a chip for its note type. Every field is sanitised first: scripts, frames, event handlers, links that aren't https or point at a local address, remote pictures, styles that fetch anything and MathJax links are removed, so the preview shows what the card will carry. Mechanical checks (likely duplicate of an existing card or of an earlier draft card, empty front, invalid cloze, overlong answer, image that failed to resolve) flag a card and default it to Skip. Besides exact fronts, each draft is compared with every card in your collection the way Scan for duplicates compares them at Normal sensitivity, so a reworded copy of a card you already have is flagged with that card's front and deck; a pair that differs on a class-like token or on a negation is not. That comparison runs in the background, so its flag can arrive a moment after the list shows; a line beside Import says while it is running and how many cards it moved to Skip, and a card you already set by hand keeps your choice. Edit opens every field and the tags in one dialog; changing a field drops the card's fact-check verdict, and the row says it was edited since the check. Rebuilding the list after an edit or a correction keeps open rows, scroll position and focus. A note on an included card is feedback for the next revision; on a skipped card it says what should change. Revise all sends the set back with your notes; unnoted cards come back unchanged. **Check facts** asks for a verdict per card in Thorough mode: Confirmed (with source links), Correction suggested (with the proposed text and Accept / Keep mine, then Correction applied or Original kept), or Unverified with a reason; on a Codex CLI without web search every card is Unverified. A note beside Import counts suggestions not yet reviewed, without blocking it. A new draft or revision clears old verdicts. Import writes only the cards on Include. If an import stops part-way, the cards that landed show as Imported, Import again adds only the rest, and Edit > Undo removes what landed. Imported cards keep their picture credits, and cards with a confirmed or applied verdict get a Sources line of links on the explanation field.
-
-**Images.** No card ever carries an AI-generated raster image. An image comes from a real web source the assistant cites, a file you attached, or SVG the model draws (checked for scripts). With web tools available, in either mode, a figure of a real thing (an ECG, anatomy, radiology, a device) must be a found and cited image, and drawing is kept for simple schematics; without web tools, the figure is skipped. A PDF's embedded images usually can't be extracted without Pillow, which Anki's Python lacks; the wizard says so, and attaching figures as image files works. A card whose image resolved starts on Include; one whose image failed starts on Skip, with Retry, Remove and Replace links beside the failed picture. Images are resolved in the background during review, with a thumbnail and, for a web image, its host shown on the row. That download is the add-on itself contacting the host the model named, in every mode, including Quick. It uses https on every hop, redirects included, refuses a host that resolves to a private or local address, stops at one time limit for the whole fetch, and uses the system's https proxy when one is set, still checking the host's own addresses first. DNS and proxy lookups share eight worker slots; when all are occupied, another lookup reports a timeout immediately. A timed-out lookup keeps its slot until it finishes. Import writes exactly what review resolved.
-
-**Where cards land.** In `export_deck::Generated`, tagged `Generated` under your scope tag, each with a fresh local GUID no deck source uses, so no sync, reconcile or duplicate cleanup ever touches them. Import is one undoable step.
-
-**What's kept.** One unfinished draft is saved under `user_files/` per collection and deck source as soon as cards arrive, then as you edit. It includes every card field, note type, tags, Include/Skip choices, revision notes, feedback on the set, fact-check verdicts and correction decisions, edited-since-check marks, destination deck, depth, count, focus line and pasted source text. Resolved card images are kept with the draft. Opening the wizard offers Resume draft or Start new; Start new keeps the saved draft until new cards are generated. Closing defaults to Keep draft and close, with Discard draft as the other choice. If saving fails while closing, Keep window open is the default; Close without saving closes the wizard and keeps the last successfully saved draft. A successful import deletes the draft; if deletion fails after saving the imported note identities, the wizard finishes and warns that the draft will be offered next time. If both saving and deletion fail, the wizard stays open with the added cards marked Imported. Close it when the folder is writable again, or choose Discard draft when closing to retry deletion. An import that stops part-way keeps the draft and remembers each added note by its ID and GUID. Resume recognises imported cards whose notes still exist and offers any removed by Edit > Undo for import again, keeping their Include/Skip choices. It also checks exact fronts against the collection again and sets matching cards without an imported record to Skip. Other cards keep their saved choices.
-
-Attachments themselves (PDFs and source images), extracted source text, exchanged prompts and CLI output are not kept in the draft. Reattach source files if you need them for another revision. The add-on also keeps your backend choice and CLI path, deck-skill consent, a 7-day per-backend usage log (runs and approximate tokens), and the last 10 run durations per backend and mode. Leftover scratch folders from a crash are swept after startup (older than a day, or oldest first above 200 MB), only ever the add-on's own.
-
-**Skills.** View shows exactly what is sent on top of your material: the bundled InternPearls authoring skill, a deck-specific skill only if your source offers one and you consented (the same link enables or disables it), and your own rules.
-
-##### My rules
-
-Add my rules (Edit my rules once saved) opens a plain-text box for standing instructions, sent after the bundled and deck skills on every run, up to 20,000 characters. They are yours alone. On style, wording and emphasis your rules win over the bundled skill; the output format and the no-raster-image rule always win. Saving an empty box clears them.
-
-#### Night mode dimming
-
-Dims bright content while Anki is in Night Mode, never in Day mode, for every deck in your collection. Native windows such as menus and dialogs are not affected.
-
-- **Dim in Night Mode**, off by default.
-- **Dim by N%**, default 30, range 0-90, with a live Normal/Dimmed preview using the exact transform Night Mode renders.
-- Scope: **Bright images only** (default), or **Everything on cards and deck screens** (cards, deck list, overview and editor, dimmed as whole pages).
-
-The images scope applies from the next card shown; the whole-page scope from the next screen that loads.
-
-#### Scan for duplicates
-
-Finds cards elsewhere in your collection that restate a fact your managed cards already carry, in different words, by comparing the words each card uses weighted by how rare they are. By default it compares this add-on's cards against the rest of your collection; either side can be narrowed to one deck, and a filtered deck's cards count under their home deck. It runs in the background over text already in your collection, with no network call.
-
-- **Sensitivity** (Strict / Normal / Loose, remembered): Strict and Normal also require a pair to share at least two informative words (three for long cards) carrying a real share of the shorter card's vocabulary, so one shared rare word can't carry a match; Loose uses the raw score. A side with fewer than 50 cards is flagged as a thin comparison. Short class-like tokens (T3, Type II, alpha-2, mu vs kappa) count, any language's words are compared, and a pair that differs on one of them, or on whether it negates, scores low enough to appear only at Loose, with a "Differs:" line naming the difference. A number or roman numeral right after a word like type, class, grade, stage, phase, factor, group, lead or nerve counts (Type 1 vs Type 2, factor VIII vs factor IX); a differing plain number (a dose, a time) or a standalone IV does not.
-- **Exclude decks**: comma-separated names or partial names, applied to both sides. The summary reports what was excluded and flags an entry that matches no deck.
-
-Each candidate row shows its band and score, both fronts, the other card's deck and note type, and the shared words that drove the match (an image filename never counts). Suspend ours, Suspend theirs, Keep both and Ignore pair are on the row; all are reversible, and Ignore pair keeps the pair from returning. Opening a row shows both answers. Copy list copies the candidates as text. Long lists load as you scroll. Suspend and Unsuspend replace only that pair's row; Ignore pair removes it and its separator. These actions keep your scroll position and keyboard focus. Ignoring a pair under "Judged different" or changing the grouping rebuilds the list. Enter never triggers Rescan, and AI verdicts stay on their rows through a rescan as long as neither card's front or back has changed.
-
-**Judge with AI** sends each pair's front and back text (no ids, no scheduling data) to your assistant in one Thorough turn and marks rows DUPLICATE or OVERLAPS; pairs judged different fold below "Judged different". Pairs it does not assess stay as they were. It only changes what rows say.
-
-### Advanced submenu
-
-Occasional tools, in four groups: acting on the deck source, repairing the collection, backup and restore, and the add-on's own update check.
-
-**Sync decks** is the content-only half of Update my decks: it imports only decks whose version changed, with the same backup, matching and field protection. Its confirmation lists decks rather than cards, since nothing is downloaded yet, and it doesn't archive or relocate.
-
-**Reconcile my decks** is the other half, run on its own, driven by ledgers in the manifest:
-
-- *Retired cards.* When a source splits, merges or reword-replaces a card, sync adds the new cards but never removes your old copy. Reconcile copies your protected-field text onto the replacement (only into a blank field), then moves the old card to a `…::Retired` subdeck, suspends it and tags it. **It never deletes anything.** Run alone, it warns if replacements aren't in your collection yet. A card that a current deck still carries, by GUID or front, is never archived, and a chain of rewordings moves your progress onto the newest wording.
-- *Reorganized decks.* When a source moves a card to another deck, sync updates its content but leaves it where it is. Reconcile moves it, but only if it's still exactly where the source last put it; a card you refiled yourself is left alone.
-
-Both are schema-neutral, reversible by hand, backed up first, and no-ops when re-run. With auto-sync on, a pending backlog shows on this menu item ("Reconcile my decks (3 pending)").
-
-**Import single deck (manual)** imports one `.apkg` from outside your source, with the same matching, backup, field protection and format-change question.
-
-**Recent card feedback** lists the last 20 saved digests for this collection and source, newest first. Show reopens a digest so you can read it and copy it again.
-
-**Clean up duplicate cards** finds notes sharing a note type and front but with different GUIDs (usually left by a reorganization), keeps the copy with the most reviews (ties prefer the source's canonical deck), carries personal notes over, and archives the rest like Reconcile. It backs up first and deletes nothing.
-
-**Remove empty cards** removes cards with nothing left to show, such as the "No cloze 3 found on card" leftovers when a source drops blanks from a card. It is Anki's Tools > Empty Cards limited to your scope tag, listing every card and missing blank number before acting. It is the one action that deletes rather than archives, because an empty card holds nothing: its note keeps every field. It never leaves a note with zero cards, skips any note whose cards are all empty, re-checks the report after you confirm, and backs up first.
-
-**Fix note types** adds missing fields to the managed note types (Study Deck - Basic, Cloze, Image ID). It never removes or renames fields or touches scheduling. Every sync runs it.
-
-**Backup intern pearls deck** makes an on-demand backup of `export_deck` with scheduling, like the automatic one.
-
-**Restore intern pearls deck** re-imports a backup or export (the picker opens at the backups folder). Matching cards take the file's content in place, wherever you keep them, and keep their own scheduling; a card no longer in your collection comes back with the scheduling it had in the file. The decks the matched cards sit in are backed up first, and that backup never deletes the file you chose. The decks it restores are re-offered on your next update, and restored cards get back the shipped-field baselines saved with their backup, so that update tells the source's older text from your own edits. A restore that adds or changes notes is one Edit > Undo step; undoing it also puts its installed-version records and shipped-field baselines back as they were.
-
-**Export intern pearls deck** writes a standalone `.apkg` of `export_deck` with history, options and media, wherever you choose.
-
-**Backup full collection** takes a whole-collection backup on demand, kept per Anki's own backup settings. If nothing has changed since the last one, it says that backup is already up to date.
-
-**Restore full collection** opens Anki's backup picker. It replaces your entire collection, and every managed deck is re-offered on your next update. Cancelling the picker changes nothing.
-
-**Check for add-on updates** compares your version with the repo's `version.json` and offers to install a newer one (restart required). If Anki refuses the downloaded package, it says so and the installed version stays. It reads GitHub's API without a token, limited to 60 requests an hour per IP address; when that's exhausted it says so and when it resets. Setting a GitHub token in Manage decks (any repo, read access) raises the limit to 5,000.
+- Generate cards (AI): drafts cards from pasted text, images or PDFs through an AI coding-assistant CLI you have already installed and signed into (Claude Code, Codex CLI or Antigravity CLI). The add-on stores no API key or credential. The three are not sandboxed the same way: Claude Code runs with its tools restricted, Codex CLI runs read-only but can still read files on your computer, and Antigravity CLI mostly relies on its own defaults. The AI Backends window says this per backend, and shows whether each CLI was found, is not responding or was not found. Drafts come back as rows you can edit, fact-check, include or skip. Fields are sanitised, likely duplicates are flagged, and pictures come from a cited web source, your attachments or a drawn diagram, never an AI-generated image. The add-on downloads web pictures itself, over https only, and refuses private or local addresses. Imported cards go to `export_deck::Generated` with fresh GUIDs that no sync touches, in one undoable step. An unfinished draft is saved, without its attachments, and offered next time.
+- Night mode dimming: dims bright images, or whole card and deck screens, by 0 to 90% while Anki is in Night Mode.
+- Scan for duplicates: finds cards elsewhere in your collection that restate one of your managed cards in other words. It runs locally. You can suspend either card, keep both or ignore the pair, and all of these are reversible. Judge with AI sends each pair's text, without ids or scheduling, to your AI assistant.
 
 ### Settings
 
-How automatic the add-on is, kept apart from Manage decks (which decks, which fields, from where):
-
-- **Sync decks automatically when updates are available**, off by default. Checks the source in the background, first shortly after a profile opens, and applies changed decks, backing up first. It never applies a change that forces a full AnkiWeb sync (a template or a format change): that deck is held for the rest of the session with a tooltip pointing to Sync decks. A check that was already running when you change the source, turn auto-sync off or uncheck a deck applies nothing. It never archives or relocates; Reconcile my decks shows the backlog instead. What it held back and what it already told you are kept per profile, so switching profiles never hides an update from the other one.
-- **Check every N minutes**, default 15, from 1 minute to a week. Checks run off the main thread and fail fast if the source is unreachable.
-- **Notify me when a new add-on version is out**, on by default, checked once per launch.
-- **Install add-on updates automatically**, off by default. Installs during that check; a restart loads it.
+- Sync decks automatically when updates are available: off by default. Checks the source in the background (every 15 minutes by default, from 1 minute to a week) and applies changed decks after a backup. It never applies a template or format change, which would force a full AnkiWeb sync; those are held back for a manual run. It never archives or moves cards.
+- Notify me when a new add-on version is out: on by default.
+- Install add-on updates automatically: off by default. A restart loads the new version.
 
 ### About
 
-Shows the installed version (and a newer one, if the last update check found it), what the add-on does, a summary of your current settings, a reminder that no deck content ships with it, and a link to this repo.
-
-## Updating decks
-
-Run Update my decks, or turn on automatic sync in Settings so content applies on its own (archiving and relocating always stay a manual confirm). Only changed decks import, and each run backs up first. Advanced > Backup full collection adds whole-collection protection on demand.
-
-A deck package is refused before it is opened if it is over 512 MB, holds more than 50,000 files, unpacks to more than 2 GB, or has any one file over 1 GB unpacked. Before preview or import, it is also refused if any member name starts with a slash or backslash, has a Windows drive prefix, contains a `..` path component using either separator, or contains a NUL byte. Safe directory entries are allowed.
+About shows the installed version, your current settings and a link to this repo.
 
 ## How history is preserved
 
-**Your collection holds exactly the cards you said yes to.** Every Later, Keep yours and Never is checked before any import, interactive or background, and a declined card is removed from the downloaded package before it reaches your collection. A decline always wins over a match, follows its card when the source moves it to another deck, and is forgotten only once no deck holds the card any more. A declined card's format change is neither asked about nor applied. Nothing deletes a card you have: Later offers it again next run, Never stops offering it, and Keep yours lasts until that card's source content changes or you choose Offer again.
+Your collection holds only the cards you accepted. Later, Keep yours and Never are checked before every import, background sync included, and a declined card is removed from the package before it is imported. Nothing deletes a card you have, except Remove empty cards.
 
-**Backups.** Every sync and manual import starts with a timestamped, self-contained backup of the decks it is about to change, including scheduling: normally exactly `export_deck`, and one backup per top-level deck when a run reaches outside it. What counts as changed is read from where the affected cards actually sit, including archiving, relocating and merging. Backups are kept 10 per deck, each deck's files kept apart by a hash of its name. If a backup can't be made you're asked whether to continue (a background sync skips that round instead), and the same applies when your cards sit in no deck the add-on can export. A first sync, with nothing yet in your collection, skips the backup.
+### Backups
 
-**Matching.** Cards match by GUID, so intervals, ease and review counts carry over. Matching runs strongest signal first: a GUID match needs no text comparison, so a source with stable GUIDs can reword fronts freely. When the GUID doesn't match (typically cards that predate stable ids), your card's current front is compared against the current wording, then against renamed wordings the manifest records (`front_aliases` for the most recent rename, `superseded_fronts` for any reworded card). If that map can't be fetched you're warned before importing. Each of your cards is matched by at most one incoming card, whatever order the package lists them in: a GUID match is settled first, then front text, then renamed wordings. A card that matches nothing, or whose match is already taken, imports as a new card beside your old one; nothing is lost. Matching uses every scoped note even when several share a front, never guesses on an ambiguous front, and refuses a deck whose incoming GUID already belongs to a note outside your scope tag.
+Every sync and import first saves a self-contained backup, with scheduling, of the decks it will change. That is usually `export_deck`, or each top-level deck the run reaches outside it. The last 10 per deck are kept. If a backup fails you are asked whether to continue, and a background sync skips that round. A first sync, with nothing yet to back up, skips it.
 
-**Protected fields.** Your `protected_fields` (`Notes` by default, any field names you choose) are snapshotted by GUID before import and compared three ways against the value the source last shipped: an untouched field takes the source's correction, a field you edited keeps your version, and a clash with a source change is reported. A deck source can also protect one field on one card (`note_protected_fields` in its manifest); that protection follows the card even when your copy is matched by front text rather than GUID. Without a prior baseline, a non-empty value you already have is kept, and a baseline file that can't be read counts as none. Each deck's fields and tags are restored straight after its own import, before the next deck is fetched, so a run stopped partway never leaves an overwrite standing; if restoring fails, that deck's import is rolled back.
+### Matching
 
-**Tags.** An updated card takes the source's tags under `scope_tag` and keeps every other tag it had: `leech`, `marked`, your own tags, and the archive markers Reconcile and duplicate cleanup add under the scope tag.
+Cards match by GUID first, so intervals, ease and review counts carry over and a source with stable GUIDs can reword fronts freely. Without a GUID match, your card's front is compared with the current wording, then with renamed wordings the manifest records (`front_aliases`, `superseded_fronts`). Each of your cards matches at most one incoming card. An ambiguous front never matches, and a card that matches nothing imports as a new card beside yours. A deck whose GUID already belongs to a note outside your scope tag is refused.
 
-**Imports.** Source content is applied even when your local edit is newer; restoring a backup applies the backup's content. Anki's own import results decide which fields get a new shipped baseline. A rejected import stays pending and its deck operation is rolled back. Each deck update and each deck restore is one Edit > Undo step. Undoing an update offers that deck again on the next update. Undoing a restore that added or changed notes puts its installed-version records and shipped-field baselines back as they were before the restore. Legacy packages with a `collection.anki21` are read from that database, not the placeholder beside it.
+### Protected fields
 
-**Note types.** Note types only gain fields; your customizations stay. A conversion never deletes a card: one that would is not applied, and the note is kept as a local copy with the new version beside it. An approved conversion between note types is refused if it would drop non-empty protected content with no destination field. Choosing "Import them as new" keeps your original note and its history as a local copy outside future matching, and later updates match the new note without repeated copies. If the following import fails, the conversion is rolled back.
+Before import, each protected field is compared with the value the source last shipped. A field you never edited takes the source's correction, a field you edited keeps your text, and a clash with a source change is reported. A source can also protect one field on one card (`note_protected_fields`). Fields are restored right after each deck's import, and if that fails the import is rolled back.
 
-**Appearance.** Imports never merge note types, which keeps AnkiWeb syncs incremental (see "For developers"), so a template or CSS change is only ever applied with your consent. Background sync never applies one.
+### Tags and note types
 
-**Scope.** The snapshot and matching cover only cards under `scope_tag` (default `InternPearls`); everything else is ignored. The backup is always a real Anki export.
+Updated cards take the source's tags under `scope_tag` and keep every other tag, such as `leech`, `marked` and your own. Note types only gain fields. Imports never merge note types, which keeps AnkiWeb syncs incremental, so a template or CSS change applies only with your consent and never in background sync.
 
-**State.** Synced versions, shipped-field baselines, declined and Later cards, unsent card notes, the deck source's consented skill and backups (each with the shipped-field baselines it was taken with) live in the add-on's `user_files/` folder, which survives add-on updates but not an uninstall, so export anything you want to keep before removing the add-on. They are separated by collection path and source under `user_files/collections/`, so two profiles, or two sources, never share decisions. Older unscoped synced versions and baselines are left on disk but not trusted, so the next sync may re-offer decks; an older declined-cards file, skill or unsent notes move to the first collection and source that opens them. Backup filenames carry the full deck identity and a unique suffix. Restoring a backup clears the matching sync records (Restore full collection clears them all; Restore intern pearls deck clears only the decks in the file), so what came back is re-offered rather than reported up to date. A file the add-on did not back up itself carries no baselines, and neither does a backup an older version of the add-on made, so restoring one drops those cards' baselines and keeps every non-blank restored value as yours. The AI wizard's own rules (`user_skill.md`), its 7-day usage log and run durations (`ai_usage.json`) and the last failed run's output (`ai_last_run.log`) live there too, shared by every profile.
+### Undo and restore
 
-**Generated cards** sit outside all of this: their fresh local GUIDs never match anything a source ships, so no update, reconcile or cleanup ever touches them.
+Each deck update and each restore is one Edit > Undo step. Undoing an update offers that deck again on your next update. Redo puts the cards back but not the add-on's own records. Restoring a backup clears the matching sync records, so what came back is offered again rather than reported up to date.
+
+### Scope and state
+
+Only cards under `scope_tag` are snapshotted and matched. Synced versions, shipped-field baselines, decisions, unsent notes and backups live in the add-on's `user_files/` folder, kept apart per collection and source so profiles never share decisions. That folder survives add-on updates but not uninstalling. The AI feature's rules, usage log and last failed run log are there too, shared by all profiles.
+
+### Package checks
+
+A deck package is refused before it is opened if it is over 512 MB, holds more than 50,000 files, unpacks to more than 2 GB, or has any one file over 1 GB unpacked. It is also refused if a file name inside it is an absolute path, has a drive prefix, contains `..` or contains a NUL byte.
 
 ## Using this for your own decks
 
-The simplest start is the example deck. [LTimothy/internpearls-example-deck](https://github.com/LTimothy/internpearls-example-deck) is a template repository: click "Use this template", edit the JSON card specs in your browser, and its GitHub Action rebuilds the `.apkg` files and manifest when the cards change. Its README walks through creating, sharing and updating a deck.
+The quickest start is [LTimothy/internpearls-example-deck](https://github.com/LTimothy/internpearls-example-deck), a template repository. Click "Use this template", edit the JSON card specs in your browser, and its GitHub Action rebuilds the `.apkg` files and manifest. Its README covers creating, sharing and updating a deck.
 
-For your own tooling, host a `manifest.json` in a GitHub repo (private or public) or a local folder, beside the `.apkg` files it references:
+With your own tooling, put a `manifest.json` in a GitHub repo (public or private) or a local folder, beside the `.apkg` files it lists:
 
 ```json
 {
@@ -269,94 +167,44 @@ For your own tooling, host a `manifest.json` in a GitHub repo (private or public
 }
 ```
 
-- `decks`: every deck to manage. `name` is its Anki deck name; `apkg` is its path relative to the root; `spec` is informational; `version` is any string that changes when the deck changes; `cards` is an optional count for the confirmation.
-- `scope_tag`, `export_deck`: your recommended values for those config keys, offered to each subscriber when they configure your source.
-- `front_aliases`: `{current front: previous front}` for cards whose front changed. `superseded_fronts` (`{old front: current front}`) covers every reworded card, so subscribers holding both wordings are merged onto one.
-- **Stable GUIDs matter most.** Tools that derive a GUID from the front change it on every reword. Derive it from an explicit per-card id instead, and fronts can change freely. This add-on syncs pre-built decks; how you build GUIDs is up to your tooling.
-- Optional ledgers for Reconcile my decks: `retired` (`{deck: {guid: {identity, reason, superseded_by}}}`) for split, merged or removed cards, and `deck_moves` (`{guid: {from, to, front}}`, full deck paths) for relocated cards.
-- Optional per-card extras: `change_notes` (`{guid: [{on, kind, note}]}`, shown on the confirmation), `note_sources` (`{guid: label}`), `note_protected_fields` (`{guid: [field]}`), and `skill` (`{path, version}`, a card-authoring skill the AI wizard can use with the subscriber's consent).
-- `schema` is the manifest format version. An add-on refuses a manifest newer than it understands, so raise it only for a change older add-ons can't read. Older add-ons ignore keys they don't know.
+- `decks`: `name` is the Anki deck name, `apkg` the path from the root, `version` any string that changes when the deck changes, and `cards` an optional count. `spec` is informational.
+- `scope_tag`, `export_deck`: the values you recommend to subscribers.
+- `front_aliases` (`{current front: previous front}`) and `superseded_fronts` (`{old front: current front}`): renamed fronts, so a card matched by text survives a reword.
+- Stable GUIDs matter most. Derive each GUID from an explicit per-card id, not the front, and fronts can change freely.
+- Optional ledgers for Reconcile my decks: `retired` (`{deck: {guid: {identity, reason, superseded_by}}}`) and `deck_moves` (`{guid: {from, to, front}}`, full deck paths).
+- Optional extras: `change_notes` (`{guid: [{on, kind, note}]}`), `note_sources` (`{guid: label}`), `note_protected_fields` (`{guid: [field]}`) and `skill` (`{path, version}`, card-writing instructions the AI feature can use with the subscriber's consent).
+- `schema` is the manifest format version. The add-on refuses a newer schema than it knows, so raise it only for a change older versions cannot read. Unknown keys are ignored.
 
-Then use Configure source in Manage decks, and everything above works against your content.
+Then choose Configure source in Manage decks.
 
 ## For developers
 
-### Code layout
+[CONTRIBUTING.md](CONTRIBUTING.md) covers setup, both test suites, conventions and pull requests. Neither suite needs Anki: `tests/` runs against `tests/mock_anki.py`, and `qt_tests/` renders the real dialogs with PyQt6.
 
-Pure Python with no `aqt`/`anki` imports lives in `internpearls/logic.py` (apkg reading and rewriting, GUID matching, version comparison, the update decision, formatting), `ai_logic.py` and `dupes.py`. A new function belongs there if plain Python can test it.
+Code that plain Python can test lives in `internpearls/logic.py`, `ai_logic.py` and `dupes.py`, with no `aqt` or `anki` imports. Code that touches Anki is split by concern:
 
-Everything that touches Anki is split by concern:
+- `__init__.py`: menu and startup wiring only
+- `config.py`: constants, config and the state files under `user_files/`
+- `ui.py`: dialog wrappers and error handling
+- `palette.py`: every colour
+- `platform.py`: background work and timers
+- `net.py`: fetches
+- `collection.py`: collection reads and writes, and the Advanced actions
+- `sync.py`: the sync, reconcile and import flows
+- `updates.py`, `background.py`: self-update and the background checks
+- `dialogs.py`, `review.py`, `widgets.py`: panels, the update and result screens, and the shared rows and lists
+- `ai_*.py`, `dupes_dialog.py`, `nightmode.py`: the Experimental features
 
-- `__init__.py`: menu and startup wiring only. Menu actions import their target on click. Modules needed by startup hooks load eagerly; the AI wizard, AI setup, duplicate scan and general dialogs load when first opened.
-- `config.py`: constants (including `ADDON_VERSION`), config access, and state under `user_files/`: `installed.json`, `card_feedback.json`, `ai_draft.json` (saved review state, with resolved pictures in `ai_draft_images/`), `shipped_fields.json`, `deck_skill.json`, `later_seen.json` (how many Later cards the last Update my decks run left), `state.json`, and the declined-card registry `declined.json` (`{guid: {state, front, deck, decided, hash}}`, where Later is state `held` and may carry a `note`; entries from the old Skip choice are converted on load). All but `state.json` are kept per collection and source, as are `feedback_digests/`, `deck_backups/` and the baselines saved beside them in `deck_backup_baselines/`. The AI files `user_skill.md`, `ai_usage.json` and `ai_last_run.log` are not.
-- `ui.py`: the `_info` / `_warn` / `_ask` / `_prompt` dialog wrappers, the `_safe` / `_bg_safe` error decorators, and styling helpers. Source checks defer clicks and keys until they finish or their delayed modal progress window appears, where Cancel works. Fast checks show no window. Nested manual flows keep auto-sync paused until the outermost flow exits.
-- `palette.py`: every colour, in a light and a dark set.
-- `platform.py`: background work and timers. Native work runs on a worker thread and delivers on the main thread; timers are parented to the widget that owns them and release their callbacks when destroyed. The AI draft debounce uses an owner timer and stops saving when the wizard closes. `supports_blocking_work` indicates whether work can deliver while the caller pumps Qt events. Platforms without this capability, such as the demo replay, run source checks inline without a progress window.
-- `net.py`: HTTP and GitHub contents-API fetches, timeouts, and `TransportError` for a host that never answered.
-- `collection.py`: everything that reads or writes `mw.col`: note types, backups, the protected-field snapshot and restore, import and export, and the Advanced actions.
-- `sync.py`: source resolution, Sync decks, Reconcile my decks, Update my decks, and Import single deck.
-- `updates.py`: self-update. `background.py`: the startup update check and the auto-sync poll, dispatched through `platform.py`.
-- `dialogs.py`: Manage decks, Settings, Night mode dimming, About, source configuration.
-- `review.py`: card rows and the feedback digest for the update and summary screens (kept out of `dialogs.py`, which imports `sync.py`). Update rows create a note editor only for an existing note or when the reader opens it; a decision caption can appear without an editor.
-- `widgets.py`: chips, headings, rows and `StreamingList`, shared by every list screen. Links and row decision buttons show an inset accent ring for keyboard focus and muted text when disabled. Disabled decisions have no selected fill. Tab reaches these buttons and Space activates them; Enter never activates a link. Idle prefetch builds at most 100 rows ahead of the rows shown and resumes as more batches are revealed. Item replacement and removal retain the other row widgets and invalidate pending prefetch deliveries. Downward navigation reveals the next batch near the bottom even when the scroll position cannot change. Edits, resize and scroll range changes refill the viewport; scrolling up does not reveal batches.
-- `ai_cli.py`, `ai_setup.py`, `ai_dialog.py`, `dupes_dialog.py`, `nightmode.py`: the Experimental features.
-- `ai_draft.py`: atomic draft storage, validation and saved image files for the AI wizard. Saved per-card indices stay within the current card list; imported note identities let resume check which notes still exist.
-
-Note-type checks reuse one scoped map while the collection is unchanged, then rebuild it after a write, including imports, conversions and undo. Shipped-field capture resolves touched GUIDs in SQL batches and reads only those notes within the existing scope search. Idle auto-sync polls keep the reconcile count in memory for the open collection and source. The key includes the full manifest, scope, deck settings, collection modification time and SQLite's connection write count. A reopened database, a write or an unavailable change marker forces a fresh check. Polls with downloaded packages always recompute so the live-card guard sees those packages.
-
-Deck updates and restores keep their prior file entries in memory under the open collection, its database connection and Anki's custom undo counter. Records hold weak references and apply only to that open collection and connection. Closing the profile clears them; reopening a collection discards entries from its previous connection. The first Undo consumes that record. Anki's Redo does not call the undo hook, so it reapplies collection changes without changing these files; a later Undo has no saved file entries to replay. Only an undone update holds its version back from auto-sync. Undoing a restore returns to the versions recorded before the restore.
-
-### Running tests
-
-```bash
-python3 -m pip install pytest
-python3 -m pytest tests/ -q
-```
-
-No Anki install is needed. `tests/` runs against `tests/mock_anki.py`, stub `aqt`/`anki` modules plus a mock collection that reproduces the importer behaviour everything here defends against (a GUID-matched import overwrites every field):
-
-- `test_release_integrity.py`: the committed `.ankiaddon` matches `internpearls/`, and `version.json` matches `ADDON_VERSION`.
-- `test_logic.py`: `logic.py` against minimal `.apkg` files.
-- `test_sync_flows.py`: the real sync, collection and background modules end to end, with dialog answers scripted.
-- `test_dialogs.py`: the real dialogs and menu, serialized to a tree and driven by scripted clicks through the same protocol the live demo uses.
-
-`qt_tests/` renders the real dialogs with real PyQt6 and asserts on what they paint, because Qt silently drops a stylesheet rule it dislikes. It runs as a separate command, since real and mock Qt can't share a process; see `CONTRIBUTING.md`.
-
-Both suites redirect persistent add-on state into temporary folders and fail the session if files under `internpearls/user_files/` are added, changed or removed.
-
-The [live demo](https://ltimothy.github.io/internpearls-anki/) is generated from the code: `./build.sh` mirrors `internpearls/` into `docs/addon/` (byte equality enforced by `tests/test_demo_parity.py`), and the page runs those modules under Pyodide against the example deck's real files. `browser_tests/` checks the demo against a generated contract (`python3 tools/demo_npm.py run test:demo-contract`).
-
-### Rendering a dialog to an image
-
-`tools/render_dialog.py` renders a real dialog to a PNG with real PyQt6 and no Anki:
-
-```bash
-python3 -m pip install PyQt6
-python3 tools/render_dialog.py --list
-python3 tools/render_dialog.py confirm --expand 1 --feedback --out confirm.png
-python3 tools/render_dialog.py confirm --dark          # see "Colors" below
-```
-
-It reuses `tests/mock_anki.py` for the fake Anki world and swaps in real Qt. Its card content is synthetic unless you pass `--apkg`. Use it for any change to a stylesheet, border, spacing or colour.
+The [live demo](https://ltimothy.github.io/internpearls-anki/) runs the same modules under Pyodide. `./build.sh` packages `internpearls/` into `internpearls.ankiaddon` and copies it to `docs/addon/`, and a test checks the copy matches. `tools/render_dialog.py` renders a real dialog to a PNG (`--list` shows which, `--dark` uses the dark palette).
 
 ### Colors
 
-Colours live in `internpearls/palette.py`, in a light and a dark set chosen from Anki's `theme_manager.night_mode`. No single mid-tone clears WCAG AA on both Anki backgrounds, so there is no theme-neutral value. `tests/test_palette.py` checks the values.
-
-**If you hardcode a background, hardcode its foreground from the same set.** Text otherwise follows the platform palette, which flips with the theme while your background doesn't. A colour-only style is safe; a background-only style is not. When a block just needs to look sunken, use `background: palette(base); color: palette(text); border: 1px solid palette(mid)` and let Qt resolve it per theme. A source lint over every `setStyleSheet` call (`tests/test_review.py`) and the real-Qt contrast suite (`qt_tests/test_contrast.py`) back this up.
-
-`--dark` selects the real dark set and approximates Anki's window colours through Qt's colour-scheme hint, so `palette()`-based colours may look slightly different from the real app.
-
-### Repackage after editing
-
-```bash
-./build.sh          # zips internpearls/ into internpearls.ankiaddon and refreshes docs/addon/
-```
+Colours live in `internpearls/palette.py`, in a light and a dark set, because no single mid-tone is readable on both of Anki's backgrounds. If you set a background, set its text colour from the same set; otherwise the text follows the system theme and the background does not. For a plain sunken block, use `background: palette(base); color: palette(text); border: 1px solid palette(mid)` and let Qt pick per theme. `tests/test_palette.py`, a stylesheet check in `tests/test_review.py` and `qt_tests/test_contrast.py` enforce this.
 
 ### Versioning
 
-Three-part semver: PATCH for a fix or internal change, MINOR for a new feature, MAJOR for a change that requires reconfiguring.
+Versions follow semver: PATCH for a fix or internal change, MINOR for a new feature, MAJOR for a change that requires reconfiguring.
 
-To release, bump `ADDON_VERSION` in `internpearls/config.py` and `version` in `version.json`, add a `CHANGELOG.md` entry, run `./build.sh`, commit, then push a `vX.Y.Z` tag. `.github/workflows/release.yml` runs both test suites, checks the tag against `version.json`, takes the notes from that version's changelog section, and attaches the committed `.ankiaddon`; any failure means no release. `tests/test_release_integrity.py` checks the same things locally, except the tag.
+To release, bump `ADDON_VERSION` in `internpearls/config.py` and `version` in `version.json` together, add a `CHANGELOG.md` entry, run `./build.sh`, commit, and push a `vX.Y.Z` tag. The release workflow runs both test suites, checks the tag against `version.json` and attaches the committed `.ankiaddon`. `tests/test_release_integrity.py` checks the same locally, except the tag.
 
-The release page is not how anyone gets the add-on. Self-update reads `version.json` and `internpearls.ankiaddon` from `main` through the contents API, so a late or missing release changes nothing about what people receive.
+Self-update reads `version.json` and `internpearls.ankiaddon` from `main` through the GitHub contents API, so the release page does not affect what people receive.

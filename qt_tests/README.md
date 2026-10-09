@@ -1,7 +1,7 @@
 # Real-Qt render tests
 
-These render the add-on's real dialogs with real PyQt6 and assert on what gets painted.
-`tests/` does the opposite: it runs a fake Qt and asserts on structure. Both are needed,
+These tests render the add-on's real dialogs with real PyQt6 and check what
+gets painted. `tests/` runs a mock Qt and checks structure. Both are needed,
 and they cannot share a process.
 
 ## Running them
@@ -10,39 +10,35 @@ and they cannot share a process.
     .venv-qt/bin/pip install PyQt6 pytest
     QT_QPA_PLATFORM=offscreen .venv-qt/bin/python -m pytest qt_tests/ -q
 
-No display and no Anki install are needed, because `QT_QPA_PLATFORM=offscreen` keeps Qt
-from opening a window.
-
-Anki's bundled interpreter has PyQt6 but no pytest, and installing pytest into Anki's
-own runtime is not something this repo does. A plain pip venv gives both, and it is the
+The offscreen platform means no display and no Anki install are needed.
+Anki's own Python has PyQt6 but no pytest, so use a separate venv. It is the
 same PyQt6.
 
-## Why a separate directory and a separate invocation
+## Why a separate command
 
-Every internpearls module binds its Qt names at import time (`from aqt.qt import
-QLabel`). Whichever Qt is installed into `aqt.qt` first therefore wins for the whole
-process, and swapping it afterward does not reach modules that already imported. So if
-these tests were collected alongside `tests/`, one of the two suites would silently
-assert against the wrong widgets and still pass.
+Each add-on module binds its Qt names at import time (`from aqt.qt import
+QLabel`), so the first Qt installed into `aqt.qt` wins for the whole process.
+If both suites ran together, one would test the wrong widgets and still pass.
 
-`pytest.ini` pins `testpaths = tests`, so a bare `pytest` runs only the mock suite and
-this one is opt-in by path. `harness.bootstrap()` raises if internpearls was imported
-before it ran, or if aqt.qt already holds mock widgets, which turns that mistake into
-a loud failure rather than a quiet one. `addon/conftest.py` adds a second guard that
-rejects any command-line invocation naming both tests/ and qt_tests/.
+Three guards prevent that:
 
-Known limitation: both guards read command-line arguments, so a programmatic
-`pytest.main(['tests', 'qt_tests'])` call, which never puts those paths in argv, can
-still slip past them. That path can end the process with a native crash rather than
-a clean error message.
+- `pytest.ini` sets `testpaths = tests`, so a bare `pytest` runs only the mock
+  suite.
+- `harness.bootstrap()` raises if the add-on was imported first, or if
+  `aqt.qt` already holds mock widgets.
+- `conftest.py` at the repo root exits if one command names both `tests/` and
+  `qt_tests/`.
+
+The root `conftest.py` reads `sys.argv`, so a programmatic
+`pytest.main(['tests', 'qt_tests'])` gets past it and can end in a native
+crash instead of a clean error.
 
 ## What belongs here
 
-Anything that can only be answered by looking at pixels or real font metrics: does this
-rule paint, does this text contrast its background, does this row align, does this label
-fit. Anything answerable from structure belongs in `tests/`, which is faster and needs
-no PyQt6.
+Questions only pixels or real font metrics can answer: does this rule paint,
+does this text contrast with its background, does this row align, does this
+label fit. Anything structure can answer belongs in `tests/`, which is faster.
 
-Assertions must hold on both macOS and the Ubuntu CI runner. Both install PyQt6 from pip
-without a pinned version, and their fonts differ, so assert presence and relationships,
-never magnitudes.
+Tests must pass on macOS and on the Ubuntu CI runner. Both install an unpinned
+PyQt6 and have different fonts, so assert presence and relationships, never
+exact sizes.

@@ -1,2423 +1,812 @@
 # Changelog
 
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
-this repo's `README.md` ("Versioning").
+this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
 ## v0.83.0
 
-Faster imports for decks with pictures, a choice when a deck can't be previewed, and a
-pointer to your saved feedback.
+Faster imports for decks with pictures, and a choice when a deck can't be previewed.
 
-- Importing a deck with many pictures is much quicker: the pictures are copied into the
-  import as they are instead of being unpacked and compressed again.
-- When Update my decks can't preview a deck, it now asks whether to retry the preview or
-  skip that deck for now, instead of importing cards you never got to see. A skipped deck,
-  and any of its retired, moved or reworded cards, waits for your next Update my decks.
-- The feedback window at the end of an update says where the saved copy is kept:
-  Advanced → Recent card feedback.
-- A deck package with file names that point outside its own folder is refused before
-  anything is imported.
+- When Update my decks can't preview a deck, it asks whether to retry or skip it. A
+  skipped deck waits for your next update.
+- The end-of-update feedback window says the saved copy is under Advanced > Recent card
+  feedback.
+- A deck package with file names that point outside its own folder is refused.
 
 ## v0.82.0
 
-Undo that covers a deck restore, faster actions on long lists, and buttons you can see
-with the keyboard.
+Undo covers a deck restore, long lists act faster, and buttons show keyboard focus.
 
-- Edit > Undo after Restore intern pearls deck now also puts back what the restore changed
-  outside your collection: which deck versions count as installed, and the record of what
-  the source last shipped for each restored card. The next Update my decks reads your
-  fields correctly instead of mistaking the source's older text for your own edits.
-- In Scan for duplicates and Later and declined cards, Suspend, Ignore and Offer again
-  change just the row you acted on, so they are instant even far down a long list.
-- Long lists keep revealing more rows when you move with Down, Page Down, End or Space,
-  use the scroll bar, or resize the window, not only with the mouse wheel.
-- Every link and decision button shows a ring when it has keyboard focus and looks
-  muted when it is unavailable, on every screen and in both light and dark themes.
-- Picture downloads keep at most a few lookups waiting at once, so many slow lookups
-  can't pile up in the background.
-- A failed restore now names the real problem with the file.
+- Edit > Undo after Restore intern pearls deck also undoes the add-on's own records for
+  that restore.
+- Suspend, Ignore and Offer again are instant even far down a long list, and long lists
+  keep loading when you use the keyboard or scroll bar.
+- A failed restore names the real problem with the file.
 
 ## v0.81.0
 
-Lighter on memory, safer with your work, and AI drafts that survive closing the wizard.
+Lower memory use, safer settings, and AI drafts that survive closing the wizard.
 
-- A long Update my decks list no longer builds every row in the background while you
-  read: it stays a little ahead of where you are, so a first sync of thousands of cards
-  uses a fraction of the memory. A card's note box is created only when it has a note or
-  you open one.
-- Checking the deck source and checking for add-on updates no longer freeze Anki. A
-  slow source shows a small checking window with Cancel, and nothing else starts while it
-  runs.
-- Manage decks refuses a preserved field name that no note type has, and suggests the
-  closest one ("Did you mean 'Notes'?"), so a typo can't quietly stop protecting your
-  notes. Removing Notes from the list asks first.
-- An unfinished Generate cards (AI) draft is kept until you import it or discard it, and
-  the wizard offers to resume it next time, with your edits, notes, checks and
-  pictures. Attachments themselves are not kept. Cards from a draft that were already
-  imported are recognised, even after Edit > Undo.
-- Declined cards is now Later and declined cards, with search, decision filters, your
-  saved notes, and a line saying when Offer again takes effect.
-- Showing a folded group of cards no longer counts them all as opened, so "Update, and
-  leave N unopened for later" still leaves the ones you never looked at.
-- Scan for duplicates leaves pairs the AI judge did not answer as they were, instead of
-  calling them different, and says how many it assessed or why it failed.
-- Anki starts faster: the AI wizard and other dialogs load the first time you open them.
-  Group-wide decisions, duplicate scans and the background auto-sync check do less
-  repeated work.
+- A long Update my decks list builds rows only a little ahead of where you are, so a
+  first sync of thousands of cards uses far less memory.
+- Checking the deck source or for add-on updates no longer freezes Anki.
+- Manage decks refuses a preserved field name that no note type has and suggests the
+  closest one.
+- An unfinished Generate cards (AI) draft is kept until you import or discard it.
+  Attachments are not kept.
+- Declined cards is now Later and declined cards, with search and filters.
 
 ## v0.80.0
 
-A shorter card feedback digest that survives being texted, and a saved copy of each recent one.
+A shorter card feedback digest that survives being texted, and a saved copy of each one.
 
-- The standing declines at the end of a digest take one line per deck: each card is
-  listed by its ID, grouped by when you decided, instead of four lines per card. Every
-  card is still listed, so the digest still says which earlier choices are in force; a
-  long list of declines now adds a few lines rather than hundreds. Two decks that share
-  a name are shown by their full path.
-- A digest is written in plain ASCII wherever a character has an exact ASCII spelling:
-  dashes, curly quotes, the ellipsis on a shortened front, Greek letters, subscripts and
-  accents. Sent as a text message, it no longer turns those into question marks. Other
-  scripts are left as written.
-- The last 20 digests are kept. Advanced > Recent card feedback lists them, newest first,
-  and reopens any of them to copy again, so a digest that never got sent is not lost.
-  If a copy can't be saved, your notes are kept and come back on your next update.
-- The digest view has Save as file, so a digest can be attached to a message instead of
-  pasted into it.
-- Notes typed on Update my decks are saved if Anki closes while the screen is still open.
+- Standing declines take one line per deck, and the digest uses plain ASCII where it
+  can, so a text message doesn't turn it into question marks.
+- The last 20 digests are kept under Advanced > Recent card feedback, and a digest can
+  be saved as a file.
+- Notes typed on Update my decks are saved if Anki closes while the screen is open.
 
 ## v0.79.0
 
-Card pictures through a proxy, AI verdicts that survive a rescan, and text that always
-shows as written.
+Card pictures through a proxy, AI verdicts that survive a rescan, and text shown as
+written.
 
-- A web card picture downloads through your system's https proxy when one is set, so a
-  network that only allows proxied traffic no longer loses those pictures. The address
-  is still checked first and refused if it points at a private or local network, a
-  `no_proxy` entry is honoured (with or without a port), and the whole download, proxy
-  included, stays inside one time limit. Proxy credentials never appear in a message.
-- Scan for duplicates keeps its AI verdicts when you change scope, sensitivity or
-  exclusions, or click Rescan, as long as neither card's front or back has changed since
-  it was judged. Rescan no longer asks first, since nothing is lost.
-- Deck names, file names, folder paths, version numbers, error messages and the AI's
-  notes show exactly as written in every message, label and tooltip, including the
-  progress window, so a "<" or "&" in one no longer cuts the line or turns into
-  formatting.
-- A value of the wrong type in the add-on's config falls back to its default instead of
-  misbehaving: `"false"` written as text no longer switches a setting on, and a single
-  field name such as `"Notes"` counts as a list of one.
-- On Windows, saving a settings or state file retries briefly when another program (a
-  virus scanner, for example) holds it for a moment.
-- A drawn picture whose size can't be read is left exactly as drawn.
+- A web card picture downloads through your system's https proxy when one is set.
+- Scan for duplicates keeps its AI verdicts when you rescan, as long as neither card
+  has changed.
+- Deck names, file names and error messages show exactly as written, so a "<" or "&"
+  no longer breaks a line.
+- A config value of the wrong type falls back to its default.
 
 ## v0.78.0
 
-Safer deck sources and AI output, a smarter and faster Scan for duplicates, and fixes to
-restore, auto-sync and Update my decks.
+Safer deck sources and AI output, a better Scan for duplicates, and fixes to restore
+and auto-sync.
 
-- A deck package is checked before anything in it is unpacked. One over 512 MB, holding
-  more than 50,000 files, or that would unpack to more than 2 GB (1 GB for any one file)
-  is refused with a message saying why. Restore intern pearls deck checks the file you
-  pick the same way, before taking its backup.
-- Deck and skill paths in a manifest must stay inside the deck source, and a local folder
-  source reads only regular files inside that folder. A suggested scope tag with quotes,
-  spaces or a wildcard is refused.
-- Your GitHub token is sent only to the address it was meant for, never on a redirect to
-  another host. Every download has an overall time limit, so a connection that stalls no
-  longer keeps auto-sync stuck until you restart Anki.
-- The deck skill question shows the skill's text and version exactly as written, says
-  when the AI can search the web (Quick drafts for card images, Thorough drafts and Check
-  facts to verify), and points out hidden characters, which are removed before the AI
-  reads the skill. A skill you allowed earlier is cleaned the same way without asking.
-- Deck names, card labels and messages from the deck source show as written, so a "<" in
-  a front or deck name no longer cuts the line short.
-- Generate cards (AI) keeps only ordinary card formatting in what the assistant writes.
-  Scripts, frames, links that aren't https and web pictures inside a field are removed
-  before review, so the preview shows exactly what will be imported, and a link shows the
-  site it points to. Your edits and accepted corrections are cleaned the same way.
-- A web card picture is downloaded over https on every step, never from a private or
-  local network address, within one time limit, and only if it really is an image. It
-  does not use a system proxy. Drawn and attached pictures are checked by content before
-  they reach your media.
-- Each draft is checked against every card in your collection the way Scan for
-  duplicates checks at Normal. A likely copy of a card you have is flagged with that
-  card's front and deck and set to Skip, unless you already chose for that row. The check
-  runs in the background, and a line beside Import says while it is still running.
-- Basic and Cloze are recognized by their shape, so a profile in another language
-  generates onto its own stock note types.
-- The wizard and AI Backends open at once and show each assistant as checking until it
-  answers. Messages from an assistant show as plain text.
-- Claude's file access stays inside the wizard's scratch folder in every mode that reads
-  files, including Quick with an attached picture.
-- On Windows, assistants start without a console window, an Antigravity .cmd or .bat
-  launcher is swapped for the agy program beside it, and a prompt too long for the
-  command line is refused with a clear message.
-- Scan for duplicates counts short tokens that carry meaning (T3, Type II, alpha-2,
-  Greek letters, a number after type, grade, stage, factor or nerve) and compares words
-  in any language. Two cards that differ on one of those, or on whether they negate,
-  show only at Loose, with a Differs line naming the difference.
-- Scan for duplicates opens quickly with long lists and loads as you scroll. Long deck
-  paths wrap, links show keyboard focus, Enter no longer starts a Rescan, and Rescan asks
-  before dropping AI verdicts.
-- A deck's summary line in Update my decks counts cards waiting at Later and names them,
-  for example "8 new (1 waiting at Later)". A card's decision and note box line up with
-  its text, and a change group's cards are indented under its note.
-- The startup reminder about waiting cards leaves out cards a local folder source has
-  retired, and the feedback digest keeps a literal "<" or ">" ("MAP <65 and HR >100").
-- Manage decks > Declined cards opens quickly with thousands of entries, shows a short
-  list in full, and keeps your place after Offer again.
-- Scan for duplicates shows a card you deleted while the list is open as "(note deleted)"
-  instead of failing, and a closed scan never touches your collection afterwards.
-- Restore intern pearls deck says plainly when a file isn't an Anki deck package.
-- Quitting Anki with Generate cards, AI Backends or Scan for duplicates open no longer
-  logs errors.
-- Restore intern pearls deck backs up every deck it changes, and restored cards get back
-  the field baselines saved with their backup, so the next update tells the source's
-  older text from your own edits. Backups made by earlier versions carry none.
-- Auto-sync checks shortly after a profile opens, keeps what it held back, what it told
-  you and updates you undid per profile, and says so when it skips a round because new
-  decks have nothing to back up yet.
-- Backup full collection says when your latest backup is already up to date. Check for
-  add-on updates says in plain words when Anki refuses the download, and keeps the version
-  you have. A setting that isn't a finite number reads as its default.
+### Deck sources
 
-Restart Anki after updating.
+- A deck package over 512 MB, with more than 50,000 files, or that would unpack to more
+  than 2 GB (1 GB for one file) is refused with a reason. Restore intern pearls deck
+  checks your file the same way.
+- Deck and skill paths in a manifest must stay inside the deck source.
+- Your GitHub token is never sent on a redirect to another host, and every download has
+  an overall time limit.
+
+### Generate cards (AI)
+
+- The deck skill question shows the skill as written and points out hidden characters,
+  which are removed.
+- Only ordinary card formatting is kept from the assistant. Scripts, frames and
+  non-https links are removed before review.
+- Web pictures download over https only, never from a private address, and only if they
+  are real images.
+- Each draft is checked against your collection, and likely duplicates start on Skip.
+
+### Other
+
+- Scan for duplicates counts short tokens that carry meaning (T3, Type II, alpha-2), and
+  long lists load as you scroll.
+- Restore intern pearls deck backs up every deck it changes.
+- Auto-sync keeps its state per profile.
 
 ## v0.77.1
 
 Card text shows apostrophes, ampersands and quotes as themselves.
 
-- The card previews in a folded group on Update my decks, the source tag under a card, and
-  attached file names in Generate cards no longer show characters such as `'` as `&#x27;`.
-
-Restart Anki after updating.
-
 ## v0.77.0
 
 Later replaces Skip.
 
-- New cards now offer Import / Later / Never, and changed cards Apply / Keep yours /
-  Later / Never. Later keeps a card out of your collection and brings it back the next
-  time you run Update my decks, set to Import or Apply, whether or not its deck changed.
-  A group offers Later all. Choosing Later does not open the note box.
-- A Later card with a note waits for the fix: it comes back set to Later, with your note
-  and "Not updated yet", until the card is updated. Once it has changed it comes back set
-  to Import or Apply with "Updated since your note".
+- New cards offer Import / Later / Never; changed cards offer Apply / Keep yours /
+  Later / Never. A Later card comes back on your next Update my decks, whether or not
+  its deck changed.
 - Cards you had skipped become Later cards. The first update after upgrading shows them
-  set to Later, under a line saying so, so none are imported by accident.
-- The hold button now reads **Update, and leave N unopened for later**, the Held filter
-  is called Later, and Manage decks > Declined cards lists Later cards as one group.
-- The feedback digest lists only Never and Kept yours cards, plus a count of cards left
-  for later, and no longer lists a card the run itself retired.
-- The startup reminder about waiting cards shows only when there are more of them than
-  your last Update my decks run left.
-
-Restart Anki after updating.
+  set to Later so none are imported by accident.
+- The feedback digest lists only Never and Kept yours cards, plus a count left for later.
 
 ## v0.76.3
 
-Update my decks explains its two counts.
-
-- The hold button now reads **Update reviewed, hold N undecided for later**, and the line
-  above the buttons says how many of the unopened cards were already decided on an
-  earlier update (they keep that choice, so hold leaves them alone).
-- A card whose earlier choice no longer fits (for example Keep yours on a card that now
-  arrives as new) is held like any undecided card, instead of being applied at its
-  default without anyone choosing.
-
-Restart Anki after updating.
+Update my decks says how many unopened cards were already decided earlier, and holds a
+card whose earlier choice no longer fits.
 
 ## v0.76.2
 
-Safer updates. A round of fixes for cases where an update, a restore or an undo could
-lose something of yours.
+Fixes for cases where an update, restore or undo could lose something of yours.
 
-- A card that changed format in a way that would remove some of your cards (a
-  fill-in-the-blank with several blanks becoming a single question and answer) is no
-  longer converted. Your card stays as it is, with all its cards and review history, and
-  the new version is added beside it. The format question now says so.
-- Updates keep your own tags, such as leech, marked and anything you added.
-- Your notes on cards are put back as each deck finishes updating, so an update that is
-  interrupted or stopped part-way no longer leaves them blank.
-- Edit > Undo after an update now undoes the whole deck at once, and that deck is offered
-  again next time. Auto-sync leaves an undone update for you to run by hand.
-- Restoring your oldest deck backup no longer deletes it first, and cancelling a
-  collection restore no longer makes every deck re-apply.
-- Cards sitting in a filtered deck no longer make their deck look uninstalled (which
-  could re-apply it on every auto-sync).
-- Pressing Enter in the Update my decks search box searches instead of applying the
-  update.
-- A card you skipped or turned away stays that way when the deck source moves it to
-  another deck.
-- Two cards from the source can no longer land on the same card of yours.
-- Reconcile my decks never offers to archive a card the source still ships.
-
-Restart Anki after updating.
+- A cloze card that would lose cards by changing format is no longer converted. The new
+  version is added beside it.
+- Updates keep your own tags, such as leech and marked.
+- Your notes on cards are restored as each deck finishes, so a stopped update can't
+  leave them blank.
+- Edit > Undo after an update undoes the whole deck, and that deck is offered again.
+- Restoring your oldest deck backup no longer deletes it first.
 
 ## v0.76.1
 
-Update my decks stays quick with a long list of cards. Scrolling far down a big catch-up
-used to slow down with every batch of cards it showed, and could stall and jump for
-seconds, and switching between All, New, Changed, Held and Not reviewed could pause
-while the list rebuilt. Both now take about the same time however long the list is.
-
-Restart Anki after updating.
+Update my decks stays quick with a very long list, including when switching filters.
 
 ## v0.76.0
 
-Update my decks and Generate cards (AI) get a round of fixes and a few new tools.
+Fixes and new tools in Update my decks and Generate cards (AI).
 
-Update my decks:
-
-- A card you held for later whose format changed (a question and answer that became a
-  fill-in-the-blank) now gets the usual question when you release it: move your card
-  across and keep its review history, or import the new one beside it. It used to be
-  imported as a separate card without asking.
-- Long updates (20 or more cards) get a filter bar: All, New, Changed, Held or Not
-  reviewed, plus a search box. Filtering never changes a decision.
-- Declined and held cards, a deck source's consented skill and unsent card notes are
-  now kept per profile and deck source, so two profiles no longer share them. Your
-  existing decisions move to the first profile that opens after updating.
-- Auto-sync no longer applies a download that started before you changed the deck
-  source, turned auto-sync off, or excluded that deck.
-
-Generate cards (AI):
-
-- A card with an empty front is flagged and never imported, and two drafted cards with
-  the same front are flagged too.
-- Editing a card clears its old fact-check result, and the row says it was edited since
-  the check.
-- Fact-check corrections are labelled Correction suggested, then Correction applied or
-  Original kept, and a note beside Import counts suggestions you have not reviewed. A
-  suggested correction can no longer add a picture straight from the web.
-- A picture that failed to load has Retry, Remove and Replace beside it.
-- Imported cards keep their picture credits, and cards with a confirmed or applied fact
-  check get a Sources line of links.
-- If an import stops part-way, the cards that made it are marked Imported and Import
-  again adds only the rest.
-- Editing a card or deciding a correction keeps your place in the list, and the note
-  box under an included card no longer says it was skipped.
-
-Restart Anki after updating.
+- Updates with 20 or more cards get a filter bar and a search box.
+- Declined and held cards, consented skills and unsent notes are kept per profile.
+  Existing decisions move to the first profile opened after updating.
+- In Generate cards (AI), cards with an empty or duplicate front are flagged, a failed
+  picture has Retry, Remove and Replace, and an interrupted import adds only the rest
+  when run again.
 
 ## v0.75.0
 
-Update my decks makes it harder to miss a group of changed cards.
+Groups of changed cards are harder to miss.
 
-- Cards changed because of reviewer feedback are never folded away, however many there
-  are, since they are the ones most worth checking.
-- A folded group now sits in its own box that says what it holds ("12 cards updated"),
-  names its first three cards, and has a real **Show 12 cards** button.
-- One control decides a whole group: **Apply all** or **Keep all yours** for updated
-  cards, **Import all** or **Skip all** for new ones. It reads "mixed" once any card in
-  the group is set differently.
-- Opening a folded group counts its cards as looked at, so **Update reviewed, hold N
-  for later** no longer holds cards you read there.
-- A line above the buttons counts the cards you have not opened yet and how many of them
-  are folded, and each deck's summary line says how many of its cards are folded.
-- Reviewer feedback shown on a card is no longer greyed out, and the question labels
-  under a card's marker are a little larger.
-
-Restart Anki after updating.
+- Cards changed because of reviewer feedback are never folded away.
+- A folded group sits in its own box with a Show N cards button.
+- One control decides a whole group: Apply all or Keep all yours, Import all or Skip
+  all.
 
 ## v0.74.1
 
-Update my decks opens faster when a large group of cards is folded behind a shared
-note. The folded cards are now built only when you press **Show N cards**, instead of
-being built hidden in the background. What the screen shows, and what Update applies,
-is unchanged.
-
-Restart Anki after updating.
+Update my decks opens faster when a large group of cards is folded.
 
 ## v0.74.0
 
-Short on time during an update? The confirmation now has an **Update reviewed, hold N
-for later** button. It applies the cards you opened or decided on and holds the rest.
-Held cards come back, marked HELD and ready to import, the next time you run Update my
-decks, and a tooltip at startup reminds you they are waiting. They are also listed
-under Manage decks > Declined cards.
-
-Restart Anki after updating.
+The update confirmation has an "Update reviewed, hold N for later" button. It applies
+the cards you opened or decided on and holds the rest until your next Update my decks.
 
 ## v0.73.1
 
-A connection that drops partway through a download now reads as a network problem,
-with advice to check your internet connection, instead of sending you to check your
-GitHub token.
+Clearer network errors and a safer self-update.
 
-The add-on's own update now checks that the file it downloaded is the version it just
-announced. If GitHub is still serving the previous release, nothing is installed and
-you are asked to try again in a few minutes.
-
-On Windows, cancelling a card-generation run now stops the assistant completely, not
-just the program that launched it.
-
-Changing a setting in Scan for duplicates now stops the scan it replaces instead of
-letting it run to the end in the background.
-
-A hidden update list no longer keeps waking up in the background while it has nothing
-to do.
-
-Restart Anki after updating.
+- A connection that drops mid-download reads as a network problem, not a token problem.
+- Self-update checks that it downloaded the version it announced. If not, nothing is
+  installed and you are asked to try again later.
 
 ## v0.73.0
 
-Generated cards now come with pictures much more often. When a card is about something
-you look at, such as a waveform, anatomy or an imaging finding, the assistant searches
-for a real image and attaches it. This now happens in Quick mode too, not only in
-Thorough, and Quick can take up to about a minute when it looks for images.
-
-Codex CLI now uses its own web search when the installed version has it. Thorough runs
-on Codex can check facts online, Check facts gives real verdicts, and both modes can
-find images.
-
-A card whose picture downloaded starts on Include, like any other card. One whose
-picture could not be used still starts on Skip.
-
-A link to a Wikipedia or Wikimedia Commons file page, or to an SVG diagram there, now
-downloads as the image itself instead of failing.
-
-One unusable image in a draft now affects only that card instead of failing the whole
-draft. An image the assistant typed into a card's text as a web link is removed, so
-every picture on a card is a downloaded copy that works offline.
-
-Restart Anki after updating.
+Generated cards come with real pictures much more often. The assistant searches for a
+real image when a card is about something visual, in Quick mode as well as Thorough, and
+Codex CLI uses its own web search when available.
 
 ## v0.72.4
 
-A protected field you empty on purpose now stays empty when your decks update, instead
-of getting the deck's text back. Update my decks no longer lists it as about to change.
-
-When a reworded card takes over the review history of its older wording, it now keeps
-your FSRS memory state as well as the interval, so the scheduler picks up where you
-left off.
-
-Automatic deck syncing no longer applies anything if you switch or close your profile
-while it is still downloading.
-
-A card-generation run that finished normally no longer occasionally reports that the
-assistant produced no reply.
-
-Restart Anki after updating.
+Emptied protected fields stay empty, reworded cards keep their FSRS state, and
+auto-sync applies nothing if you switch profile mid-download.
 
 ## v0.72.3
 
-Update my decks now lists a change to a protected field when the update will actually
-apply it: the field is empty on your card, or still holds what the deck last shipped.
-A protected field you have edited stays yours and stays off the list, as before.
-
-A long list on the update screen no longer shows some cards twice and leaves others
-out when you scroll while it is still loading.
-
-Restart Anki after updating.
+Update my decks lists a protected field change only when the update will apply it, and
+no longer shows some cards twice while loading.
 
 ## v0.72.2
 
-Closing a window while its background work is still running no longer keeps that work
-held in memory for the rest of the session.
-
-A card image the assistant suggests that no longer exists now reads "no image at that
-address" on the review page, instead of advice to check a repository name, branch, and
-file path.
-
-Restart Anki after updating.
+Closing a window during background work frees that work, and a missing card image reads
+"no image at that address".
 
 ## v0.72.1
 
-Closing Update my decks while its list is still loading no longer raises an error
-afterwards. Every background timer now ends with the window that started it.
-
-Restart Anki after updating.
+Closing Update my decks while its list is loading no longer raises an error.
 
 ## v0.72.0
 
-A deck source can now protect one field on one card. A note in a deck spec may list
-its own fields under `protected_fields`, and the manifest carries them as
-`note_protected_fields`. Sync decks and Import single deck add those fields to the
-configured Preserved fields for that card alone, through the same three-way merge: a
-field you have not edited still takes the deck's corrections, and a field you have
-edited keeps your version, with any conflicting source change reported in the results.
-This works for cards matched by front text as well as by guid.
+Per-card protected fields and folded change groups.
 
-Update my decks folds a large group of cards that share one change note. Five or more
-cards under the same note now show the note once with a Show N cards button; the cards
-stay hidden until you open it and still apply when you press Update. Smaller groups are
-unchanged. The list keeps filling in the background, so decks listed after a folded
-group still appear without scrolling.
-
-When an AI run's completion fails, the run now stops before the error message appears,
-instead of continuing while the message stays open.
-
-Restart Anki after updating.
+- A deck source can protect one field on one card. The manifest carries these as
+  `note_protected_fields`.
+- Five or more cards that share one change note are folded behind a Show N cards
+  button. They still apply when you press Update.
 
 ## v0.71.0
 
-Keep yours now remembers the exact revision you declined. Updates to other cards in
-that deck no longer offer the same change again. A kept card returns only when its own
-source content changes, still defaulted to Keep yours; Manage decks → Declined cards
-can offer it again at any time. Existing content and review history stay protected.
-Skip and Never retain their existing behavior.
-
-Restart Anki after updating.
+Keep yours remembers the exact revision you declined. A kept card comes back only when
+its own content changes.
 
 ## v0.70.0
 
-Every card-feedback digest now ends with a snapshot of the learner's current standing
-declines, grouped as Never imported, Kept yours with updates disabled, Skipped for now,
-and Kept yours. Each row carries the card, deck, decision date, and GUID, so one pasted
-digest communicates both what changed in that run and which earlier choices remain in
-force. Content hashes remain internal.
-
-Restart Anki after updating.
+Every card feedback digest ends with your current standing declines, grouped by
+decision.
 
 ## v0.69.0
 
-Earlier learner feedback now stays visible when a card is revised again. The current
-request and maintainer explanation still appear first; older comments follow as dated
-"earlier feedback", so a repeated Skip or Keep yours decision no longer hides the
-context that led to prior versions. Implementation notes remain tied to the exact card
-version they describe.
-
-Restart Anki after updating.
+Earlier feedback stays visible, dated, when a card is revised again.
 
 ## v0.68.0
 
-Cards with optional source labels now sort naturally within each deck on **Update my decks**: `T10Q01`, `T10Q02`, then `T10Q10`. Numeric ordering also works without zero-padding. Unlabelled cards follow in their existing order.
-
-Shared change-note groups stay together, ordered by their earliest source label, with labelled cards sorted inside each group. Cards without source labels keep the existing ordering when no labels are present.
-
-The v0.67.0 changelog below has also been expanded to describe the individual fixes shipped earlier, rather than compressing them into a few paragraphs.
-
-Restart Anki after updating.
+Cards with source labels sort in natural order within each deck, so Q2 comes before Q10.
 
 ## v0.67.1
 
-Fix deck updates rejected because older note types have different internal IDs or lack newer fields such as Source.
+Deck updates no longer fail when older note types have different IDs or lack newer
+fields. Fields are matched by name, and missing ones are added during a manual update.
 
-- Match legacy note types and align their fields by name while preserving existing notes, review history, personal fields, and card templates.
-- Add missing incoming fields during a manual update. Packages with and without newer fields can then be imported into the same collection without losing previously imported references.
-- Roll back field additions if the import fails.
-- Defer background updates that require field additions to a manual update.
-- Show the specific rejection reason when an import fails.
-- Explain in the update summary that older cards stay in review until their replacements have been imported.
-
-Restart Anki after updating, then run **Update my decks** again. A one-time field
-addition may require a full AnkiWeb sync; repeated deck updates do not add fields
-again.
+After updating, run Update my decks again. A one-time field addition may need a full
+AnkiWeb sync.
 
 ## v0.67.0
 
-### Deck updates and review-history protection
+Fixes across deck updates, Scan for duplicates and Generate cards (AI).
 
-- Read and personalize the database Anki actually imports when a package contains both legacy database formats, so previewed changes match the imported content.
-- Preserve GUID matching even when multiple cards have the same front text. Skipped cards with duplicate fronts no longer produce incorrect preview counts.
-- Refuse imports that would overwrite a matching GUID outside the configured deck scope, including single-deck imports.
-- Explicitly apply source updates to older notes, and check Anki's actual import result. Rejected or partial imports stay pending rather than being reported as successful.
-- Roll back note-type conversions and local identity changes when an import fails, preserving the original answer and review history.
-- Block format conversions that would discard nonempty protected fields, including protected field names written with different capitalization.
-- Make **Import them as new** preserve the original note and its review history as a local copy; the new-format note receives future source updates. This also works for cards matched by a renamed front.
-- Restore personal annotations before saving update bookkeeping, and still restore them if a progress callback or bookkeeping step fails.
-- Keep predecessor cards active when their replacement fails to import, so the only available copy is not retired.
-- Isolate installed versions and shipped baselines by collection and source. Switching profiles or sources no longer reuses another collection's update state or a stale downloaded package.
-- Prevent backup filename collisions and keep backup retention separate across profiles, including backups created at the same clock time.
-
-### Scan for duplicates
-
-- Invalidate the old results immediately when a deck scope changes and disable actions until the new scan is ready.
-- Refill the result list after top candidates are ignored, so later candidates remain discoverable.
-- Count vocabulary unique to the queried card when calculating similarity, reducing inflated matches from a small shared fragment.
-- Require Normal sensitivity's documented minimum of two shared informative words.
-- Identify which side of a pair is suspended, recognize partly suspended cloze notes, and offer explicit recovery for their cards.
-- Cancel pending AI judgments and discard late results after a rescan or dialog close; stop polling and clean up temporary files on success, cancellation, or error.
-
-### Generate cards with AI and PDF attachments
-
-- Allow generation from attachments alone, without requiring typed text; count only the sources actually provided.
-- Let attachments be removed and omit removed material from generation. Failed removal no longer claims success, and attachments with matching filenames no longer overwrite one another.
-- Extract PDFs in the background to keep the dialog responsive. Cancellation stops between parser calls and discards unfinished results; closing waits for an in-progress parser call before cleaning up temporary files.
-- Update the bundled PDF reader and enforce limits on input size, pages, extracted text, image count, image bytes, and parser memory. Reject an incompatible preloaded reader before parsing.
-- Discard stale connection-test results when the configured executable or auto-detected executable changes.
-- Dispose of closed generation and assistant-setup dialogs, and stop their timers, even when background work is finishing.
-
-### Dialogs, previews, and settings
-
-- Keep the generation wizard and card editor resizable and their action buttons reachable on short screens and with larger fonts.
-- Add descriptive accessible names and label-to-control focus behavior across settings, assistant setup, duplicate review, and card feedback; expansion controls identify their current state.
-- Preserve the supported weekly auto-sync interval when opening and saving Settings.
-- Render SVG previews in temporary storage without writing into collection media, and avoid preview filename collisions.
-
-Restart Anki after updating.
+- The preview reads the same data Anki imports, so it matches the result.
+- An import that would overwrite a matching card outside your deck scope is refused.
+- A rejected or partial import stays pending instead of being reported as done.
+- A failed import rolls back note type conversions and keeps the original card.
+- Update state and backups are kept separately per collection and source.
+- Generate cards (AI) can work from attachments alone, with limits on PDF size and
+  pages.
+- Dialogs stay usable on short screens and have screen reader labels.
 
 ## v0.66.2
 
-Eight fixes from a review of the whole add-on.
-
-In Scan for duplicates, changing Sensitivity or the Exclude decks field while a
-scan was still running used to leave the earlier scan polling: the list rebuilt
-about ten times a second and lost the judgements and suspensions already
-recorded on those rows. Choosing the same deck on both sides compared every card
-with itself at a perfect score, and both Suspend links on such a row pointed at
-the same card. A deck whose name contains an underscore or an asterisk is now
-searched for by name; Anki reads both as wildcards, so a deck called
-"Step_2 Pearls" was also pulling in cards from "Step 2 Pearls".
-
-In Generate cards with AI, cancelling while images are still resolving now takes
-you back where you were. It used to let the run finish and mark every image it
-had not reached as failed, which blocked those cards on the review page with no
-way to resolve them again. Test connection keeps working after switching
-assistants while a test is in flight. A run no longer stalls when the prompt is
-long or the assistant writes a lot of diagnostics, and a prompt carrying
-characters like a subscript two or a greater-or-equal sign now reaches the
-assistant on Windows instead of leaving the run stuck. An image the assistant
-names in its own scratch folder is read only if it really sits there, so a link
-pointing elsewhere on the computer cannot be pulled onto a card.
+Fixes to Scan for duplicates and Generate cards (AI). A deck name with `_` or `*` is
+matched literally, cancelling while images resolve returns you where you were, and an
+image outside the scratch folder is never read.
 
 ## v0.66.1
 
-The idle prefetch in Update my cards was too eager: it built rows at about 200 a
-second, and each one grew the list, so the scrollbar kept shifting and the screen
-stuttered. Prefetched rows now stay hidden until scrolling reveals them, so the
-content height only changes when the reader scrolls, and the prefetch runs three
-rows every 150 ms and pauses while the list is being scrolled.
+Update my decks scrolls smoothly while it builds rows in the background.
 
 ## v0.66.0
 
-Scan for duplicates no longer freezes Anki while it reads the collection. It used
-to fetch every note, its card list and that card one call at a time, three round
-trips per note across the whole collection, and did so again on every sensitivity
-or exclusion change; it now reads the collection in one query, once per dialog,
-and only the Rescan link reads it again. A second right-hand scope, "Other cards
-under Intern Pearls", compares the add-on's cards against just the other cards
-in that deck tree, which is where a learner's filtered decks of imported cards
-sit, instead of the whole collection. Update my cards keeps building its list a
-few rows at a time while the reader is idle, so scrolling to the end of what was
-built no longer stalls on the next batch.
+Scan for duplicates reads the collection in one query and no longer freezes Anki. A new
+scope compares the add-on's cards with only the other cards in its deck tree.
 
 ## v0.65.1
 
-Four fixes to Scan for duplicates from a real run against a small collection.
-Exclude decks now applies to both sides always; it used to skip the left side
-whenever it was left on "Cards this add-on manages," so excluding a deck that sat
-on that side did nothing. A tiny comparison pool used to let a single shared rare
-word carry a pair to "Likely duplicate" on its own; a pair now needs at least two
-shared informative words (three once either card runs past twelve), carrying a
-real share of the shorter card's own vocabulary, not just a passing score. Strict
-and Normal show "Likely duplicate" or "Possible" based on that evidence; Loose
-drops the requirement and goes back to the raw score. The summary now says
-plainly when either side has fewer than 50 cards, so a thin comparison doesn't
-read as a clean bill. A picture-only front's image name no longer counts toward
-the shared vocabulary, so two unrelated picture cards can't match on a shared
-figure's filename alone.
+Scan for duplicates needs at least two shared informative words for a likely
+duplicate, applies Exclude decks to both sides, and warns when either side has fewer
+than 50 cards.
 
 ## v0.65.0
 
-A note that explains more than one card, or a retired card and the replacement a note
-also explains, now shows once, as a single explanation above every row it caused,
-instead of the same words repeated on each row. A retired card's row can also carry a
-short reason from the deck source, shown as a second line under its identity, when the
-deck source recorded one. Feedback and a maintainer's own note on the same card now
-always show feedback first, whatever their dates, since it explains why the card was
-touched at all. Sync decks' own per-deck row now reads its size as a deck total
-("6 cards in deck") rather than a bare count, so it doesn't look like a count of what's
-about to change.
+A note that explains several cards shows once above them, and a retired card can show a
+short reason from the deck source.
 
 ## v0.64.0
 
-Three fixes to Scan for duplicates from a second real-use round. The candidate list's
-scroll bar used to appear and disappear as its word-wrapped rows reflowed, which read
-as flashing and made the list unscrollable; the vertical bar is always on now and the
-horizontal one always off, so nothing about the list's own width ever changes. The
-Exclude decks field used to rescan on every focus loss, including one with nothing
-typed, which is why clicking into the list right after typing felt like it rebuilt
-underfoot; it now rescans only when the text actually changed since the last scan (Enter
-and Rescan still always work). That field's effect is visible now too: the summary
-reports "Excluding N deck(s) (M cards)" when an entry matches something, and flags any
-entry that matches no deck at all ("No deck matches '...'") in the warning colour,
-instead of a typo looking identical to it working.
-
-The score itself reads as something now instead of a bare number. Each candidate's chip
-shows a band ("Likely duplicate", "Similar", "Weak match") alongside the number, and its
-row names the shared vocabulary that actually drove the match ("shares: fenoldopam,
-agonist, receptor"). A one-line hint under the summary explains what the score means. A
-new Sensitivity control (Strict / Normal / Loose) sets how high a match has to score to
-show up at all, remembered across sessions and rescanning on change.
+Scan for duplicates shows a band (Likely duplicate, Similar, Weak match) and the words
+behind each match, and a Sensitivity control (Strict, Normal, Loose) sets how close a
+match must be.
 
 ## v0.63.1
 
-Two fixes to Scan for duplicates from its first real use. Rescan and Judge with AI
-failed with "takes 1 positional argument but 2 were given": a flat link is a real
-button, so its click hands the handler a checked flag, and the error guard forwarded it
-into a method that took none. Both handlers accept it now. A card whose front is only a
-picture (an image-identification note) showed an empty "ours:" line; the row now names
-the picture the way the update screen does, and falls back to the next filled field.
-
-Menu labels are sentence case throughout: "Generate cards (AI)" and "Night mode dimming"
-under Experimental match the rest of the menu.
+Rescan and Judge with AI work again in Scan for duplicates, and menu labels are
+sentence case throughout.
 
 ## v0.63.0
 
-Scan for duplicates, a new Experimental tool. It compares two scopes of your
-collection (the cards this add-on manages against everything else, by default, or
-either side pinned to a single deck) by the words each card actually uses rather than
-by exact text, so a card restating the same fact in different words still turns up. A
-filtered deck's cards are credited to their real home deck. An "Exclude decks" field
-leaves out any note whose home deck path contains one of a comma-separated list of
-names, so a reference deck you don't review doesn't count as coverage. Each row's
-chip, body and action links (Suspend ours, Suspend
-theirs, Keep both, Ignore pair) follow the update screen's own row layout, so the
-links show whether or not the row is open; Copy list puts the whole list on the
-clipboard. Judge with AI, once a backend is set up, sends the candidate pairs' front
-and back text only (no note ids, no scheduling data) to your assistant in one Thorough
-turn and turns a verdict into a chip, folding anything judged different out of the way.
+New Experimental tool: Scan for duplicates. It compares the add-on's cards with the
+rest of your collection, or any two decks, by the words they use. Judge with AI sends
+only the pairs' front and back text to your assistant.
 
 ## v0.62.0
 
-The AI wizard's image policy is web-first now: when the backend has web tools and
-they're actually in play (Thorough, not Codex), a figure of a real thing (an ECG or
-capnography trace, anatomy, radiology, histology, a chemical structure, a device, a
-waveform) has to be a real image found online and cited by URL, never drawn. Drawing an
-SVG is still available for a simple schematic when no real image fits, and only as a
-last resort. Quick mode and a backend with no web access skip the figure entirely
-instead of drawing one, since neither can check it. A drawn SVG's review thumbnail also
-renders correctly now: the root shape that used to leave a white square in one corner
-with the drawing spilling past it is normalized before it ever reaches the card, and the
-review row rasterizes it directly instead of trusting Qt's own SVG plugin.
-
-A review row's collapsed line now always names every picture on the card, open or not:
-it used to drop the name for good the first time you opened the row, which read as
-inconsistent next to the "Has a picture" reason line that stayed.
-
-Edit, on the review page, opens one dialog for the whole card instead of a prompt per
-field: every field at once, sized to what it typically holds, plus a tags line, with
-OK and Cancel.
+The AI wizard uses real web images for real things and draws an SVG only for a simple
+schematic. Edit opens one dialog for the whole card.
 
 ## v0.61.0
 
-Check facts, a new button beside Revise all on the AI wizard's review page. It sends
-the drafted cards back for one more turn, always in Thorough mode, asking for a
-verdict per card instead of a revised set: confirmed, corrected, or unverified, each
-with a one-sentence reason and, when the backend actually opened one, a cited source
-shown as a link. A corrected card shows the assistant's proposed text under your own,
-with Accept and Keep mine links; nothing changes without a click. Codex CLI has no
-network in its own sandbox, so it answers honestly there too: every card comes back
-"Unverified: no web access" rather than a confirmation it can't back up.
+New Check facts button in the AI wizard. The assistant gives each card a verdict
+(confirmed, corrected or unverified) with a reason and source. A correction changes
+nothing until you accept it.
 
 ## v0.60.0
 
-Thorough mode now gives each backend a scoped, sandboxed toolset instead of leaving it
-tool-free. Claude Code runs with `--restricted`, file tools plus web search, confined
-to the scratch folder, no shell. Codex CLI runs under its own OS sandbox, commands and
-writes confined to scratch. Antigravity CLI still can't write a file in headless mode,
-so its own safety line says exactly that rather than claiming otherwise, and stays
-read-only there. The toolset lets a drafted figure save as a file in scratch instead of
-inlining it in the JSON reply, re-read as the assistant keeps working; raster images and
-anything that isn't SVG, an attachment, or a cited URL are still rejected.
+Sandboxed tools in Thorough mode, and per-assistant defaults.
 
-Every backend now has its own add-on default model and effort, the way Claude Code
-already did. Antigravity CLI defaults to its fastest catalogue entry, the one that
-doesn't burn its turn thinking. Codex CLI has no listable catalogue outside a terminal,
-so the add-on reads the pair straight out of its own config file and shows that instead
-of guessing. Every backend's row in AI Backends now says plainly whether what's shown is
-the add-on's default or your own setting.
-
-The review rows on Generate cards with AI now match Update my decks: an Include/Skip
-control at the header's right edge in place of the checkbox, the note type moved to a
-small tag under the chip, and Skip revealing a note box under the header for what should
-change, sent along on the next Revise all. A card gated for an unreviewed picture, or
-blocked outright, starts on Skip with its reason showing, same as before.
+- Thorough mode gives each assistant tools confined to the scratch folder. Claude Code
+  gets file tools and web search with no shell, Codex CLI runs in its own sandbox, and
+  Antigravity CLI stays read-only.
+- Each assistant has its own default model and effort.
 
 ## v0.59.1
 
-An Antigravity run reported "SUCCESS" and still produced no cards. It had spent nearly
-its whole turn thinking, tried to look outside its scratch folder and run a command,
-had both refused by the headless sandbox, and then stopped without ever writing a
-reply. The add-on caught this as "no usable reply," with the raw stream JSON pasted
-into the dialog, which was neither readable nor actionable. It now recognizes an empty
-reply as its own case: a single plain sentence naming how long the run took and how
-many tools the sandbox refused, and the add-on retries once on its own, telling the
-assistant plainly not to touch any tool or folder outside scratch. If the retry also
-comes back empty, the dialog says so and points at trying again, picking a lower-effort
-model, or using another assistant. Antigravity's own prompt now spells out the same
-scratch-folder restriction up front, so a run is less likely to wander outside it in
-the first place.
+An Antigravity run that returns an empty reply is retried once and then explained in
+one plain sentence.
 
 ## v0.59.0
 
-A run used to be stopped by a fixed clock: 120 seconds for a Quick draft, 360 for a
-Thorough one, whether or not the assistant was still working. A revision on
-Antigravity CLI that was streaming six cards and a drawn figure was killed at exactly
-120 seconds and reported as a timeout. The add-on now watches for silence instead: a
-run fails only when the assistant has sent nothing for two minutes (three in Thorough),
-under a hard ceiling of 15 and 30 minutes that no healthy run reaches. Codex CLI reports
-nothing until a step finishes, so it keeps the ceiling alone rather than a silence
-rule that would cut it off mid-thought. Antigravity's own five-minute print limit is
-raised to match. The two failure messages now say which rule fired.
-
-The progress page narrates the run. Under the status row, a muted feed lists what the
-assistant is doing as it happens (viewed a file, searched the web, ran a command), and
-once the reply starts streaming the detail line counts the cards drafted so far. Claude
-Code streams partial replies through a flag the add-on now passes; Antigravity already
-did; Codex reports only finished steps, so its feed is sparser. Tool arguments, web
-queries, and reply text never reach the feed, and file names are shortened to a
-basename.
-
-Review rows follow the update screen's conventions. The front text opens the row, not
-only the caret. A card carrying a picture names it on the collapsed line ("[image:
-drawn figure]", "[image: attached file]", or "[image: from host]") until the row has
-been opened and the picture painted, so a card with a figure never reads as if it had
-none. A card that starts unchecked only because its picture has not been looked at yet
-says so under its header, and the line clears the moment it is included.
+AI runs fail after two minutes of silence (three in Thorough) instead of on a fixed
+timer, and the progress page shows what the assistant is doing without showing prompts
+or reply text.
 
 ## v0.58.2
 
-A failed generation used to leave nothing behind: the wizard showed one line and the
-whole subprocess stream was gone, which made a run that failed only sometimes, on
-material that worked fine when replayed by hand outside Anki, impossible to chase
-down after the fact. Every run now writes its own evidence to `ai_last_run.log` in
-the add-on's `user_files` folder: the argv it ran (the prompt itself elided, never
-written), every raw stdout line, stderr, the exit code, and how long it took,
-overwritten by the next run and capped at 2 MB kept from the tail. The "no usable
-reply" error itself is more specific too, naming how many stream lines it saw and
-echoing the last non-empty one, rather than a single unhelpful sentence.
-
-Antigravity CLI's own stream narrates the whole reply as it goes, one chunk per
-step, well before its terminal result line. A real run reproduced the failure this
-release fixes: that terminal result reported success but carried an empty reply,
-even though the narrated chunks amounted to a complete, valid one. The add-on now
-falls back to those accumulated chunks whenever this happens, rather than treating
-a working reply as a failure because its last line forgot to carry it.
-
-The AI Backends window's settings panel (executable path, Model, Effort, Test
-connection) got a regression test pinning down that all four already share one left
-edge, after a report that they didn't.
-
-That regression test checked geometry, not what was actually drawn: on a real Mac,
-macOS's native style insets a combo box's and a spin box's own bezel a few pixels
-right of the geometry Qt gives them, so the settings panel's Model and Effort combos,
-and the wizard's Advanced grid (its count spinbox, note-type checkboxes, and deck
-combo alike), came out visibly indented past the fields beside them despite passing
-that check. Both grids now measure each field against the running style and nudge
-the others over to match, so every field's drawn edge lines up, not just its geometry.
+Each AI run writes a log to `user_files/ai_last_run.log`, without the prompt, replaced by
+the next run and capped at 2 MB.
 
 ## v0.58.1
 
-The AI Backends window's rows could still clip their own muted third line ("Works
-with a ... . Tools fully restricted (strongest)."), cut off mid-glyph, on first open.
-An earlier attempt at this fix tried to grow the window from right inside a wrapped
-label's own resize, by reading the window's minimumSizeHint() synchronously and
-resizing from it there and then, but that read is not reliable at that exact moment:
-the box layouts between a row and the window do not all catch up to a layout change
-within the same pass it happened in, so the value read there could still be short,
-and the window's first paint went out at the too-small geometry it computed. Any
-later repaint (a Re-check, or just moving the window) showed it correctly, which is
-why it never seemed to persist. Fixed by settling the window's size after its own
-showEvent instead, once its layout has actually finished activating, with one more
-pass on the next event-loop turn as a backstop; the window's top-level layout also
-now enforces its own real minimum on every layout pass, not only at first paint.
-
-The wizard's input page is a little simpler. The Deck row's own Change link opened
-the same Advanced panel the Advanced link already does, so it's gone, with the row's
-detail pointing at Advanced instead. The horizontal rule introducing that panel now
-collapses and reappears with it, instead of always sitting there whether the panel is
-open or not.
-
-The Advanced panel's own grid is fixed: "Exact number of cards" no longer overflows
-into the spinbox beside it, which is now wide enough for its own "auto" special value
-too. Note types lines up with the first of its four checkboxes now, rather than
-centred against all of them.
-
-My rules is easier to find and use. Its wizard link now reads "Add my rules" until
-you've saved any and "Edit my rules" after, and View skills no longer prints "My
-rules: none" when there's nothing there, just one line pointing at where to add some.
-The editor's own hint states plainly how your rules rank against the bundled skill:
-they win on style, wording, and emphasis where the two disagree, but the output
-format and the rule against raster images always win regardless, and shows three
-short examples. That ranking now actually reaches the assistant, not just the
-editor's own hint text: your rules are sent with a heading stating the same thing.
-
-A few smaller fixes round out this release: a usage-count fallback scoped to the one
-backend it was ever needed for, a cloze-rule wording fix in the bundled skill, and a
-depth-row hedge that no longer claims Quick draft verifies anything online.
+Layout fixes in AI Backends and the AI wizard. Your My rules win on style and wording,
+but never on output format, and the assistant is told so.
 
 ## v0.58.0
 
-The "Generate cards with AI" wizard picks its own card count now. Left alone, the
-assistant drafts one card per point the source actually teaches, up to a ceiling of
-40, and is told plainly not to pad to a number or merge points just to save cards. An
-exact count is still available in the input page's new Advanced disclosure for anyone
-who wants to pin one. On Claude Code, a per-backend turn cap (one turn for Quick, up
-to 15 for Thorough) still bounds a single generation call regardless of how many cards
-a reply carries, so a larger automatic count doesn't also mean a slower or costlier
-run there; Codex CLI and Antigravity CLI have no turn cap and are bounded only by the
-run timeout.
+The AI wizard picks its own card count and depth.
 
-Depth now defaults from what you're actually pasting in, rather than a manual choice
-every time. Thorough kicks in once the source reaches 1,500 characters or carries any
-attachment; anything shorter starts on Quick. Two new config keys, `ai_default_count`
-and `ai_default_depth`, let you seed the wizard's starting point ahead of time; both
-only seed the control, and neither is ever written back from a single session's pick.
-
-The input page itself is rebuilt around four status rows (Backend, Cards and depth,
-Deck, Skills), each with a chip and a link into more detail, with the count spin box,
-depth radios, note-type checkboxes, and destination deck combo moved into the new
-Advanced disclosure underneath them. Each row's own honesty holds per backend: the
-Cards and depth row's detail line is built from that backend's own mode text rather
-than one shared sentence, since what Thorough actually reaches (a real web check on
-Claude Code, nothing on Codex CLI, whatever Antigravity's own approval defaults allow)
-is not the same claim on all three.
-
-The progress page is now one status row too: a chip and phase, elapsed time, and a
-trailing Cancel link, instead of three separate labels and a dialog button box. Escape
-now does exactly what Cancel does here, ending the run in place, rather than closing
-the whole dialog out from under it. The review page's header now names what a run
-actually produced, "3 cards drafted" and, when you attached files, "from 2 sources", so
-you're not left counting rows yourself.
-
-A few smaller fixes round out this batch. Codex CLI runs that finish quickly used to
-report zero tokens even when usage was there the whole time, sitting on the stream's
-`token_count` event instead of the terminal result the add-on was already reading; the
-add-on now tracks the last usage figure it saw across the whole run and falls back to
-it. Antigravity CLI's model hint in AI Backends now names `gemini-3.8-flash-low` as its
-fastest option. And the bundled authoring skill now says plainly to keep cloze text
-plain, no bold or underline inside the sentence, since the blank itself is already the
-emphasis.
+- The count is one card per point the source teaches, up to 40. An exact count is in
+  the new Advanced panel.
+- Depth starts on Thorough for sources of 1,500 characters or more, or with any
+  attachment. `ai_default_count` and `ai_default_depth` set the starting values.
 
 ## v0.57.1
 
-"Check for add-on updates" now tells the truth when GitHub's request limit runs out.
-The add-on's own update check calls the public GitHub API with no token, since the
-add-on repo is public, and that API allows only 60 unauthenticated requests per hour
-per IP address, shared by everyone on the same connection and by every unattended
-check this add-on runs on its own. Once that's used up, GitHub answers with the same
-403 status a bad token gets, and the add-on said "access denied (check that your token
-is valid and can read this repo)" to a person who had never entered a token at all.
-The add-on now recognizes the rate limit specifically and says so, with the time it
-resets, and no longer implies a token exists to check when none was sent.
-
-A configured GitHub token now also speeds up and backs up this same check. Signing in
-with a token in Manage decks (read access to any repo is enough) raises the request
-limit from 60 to 5,000 per hour, so the check now sends it when one is set. If the API
-is still rate limited even so, the check falls back to fetching the file straight from
-GitHub's raw CDN instead, which carries no request quota at all.
+Check for add-on updates says when GitHub's hourly request limit has run out, and uses
+your GitHub token, if you set one, to raise that limit.
 
 ## v0.57.0
 
-Antigravity CLI runs now actually reach the model. Its print mode takes the prompt as
-the value of its own `-p` flag and never reads standard input, so the argv the add-on
-built (`agy -p --output-format stream-json`, prompt on stdin) made `agy` treat
-`--output-format` as the whole prompt and fail. The prompt is now passed as that flag's
-value and goes last, where nothing after it can be mistaken for it, with the scratch
-folder handed over as `--add-dir` and slash-command expansion turned off so a `/word`
-in your own source material stays text. A prompt over 200,000 characters is refused
-with a readable sentence rather than an operating-system argument-size error.
-
-Antigravity's streamed progress is read correctly too. Its lines are keyed by `event`
-rather than `type`, and its final reply, token count, and error message all sit inside
-a nested `result` object, so the phase line during a run and the token count after one
-were both blank, and a failed run could report nothing useful. A refused file write and
-an empty prompt each get one short sentence now instead of the CLI's own long line.
-
-Antigravity CLI gains real Model and Effort controls. `agy` documents `--model` and
-`--effort` in its own help and lists the ids it accepts under `agy models`, so both are
-yours to set, and each is sent only when you set one and only when the installed binary
-documents that flag. Left blank, Antigravity runs its own default, already a cheap
-Flash tier. The wizard's one-line backend summary reads the configured model, or
-"default model", for every backend.
-
-Attached images work with all three assistants. Antigravity reads the scratch copy of
-exactly the files you attach, the same as Claude Code and Codex CLI, so its row now
-carries the "image attach: supported" badge. No backend is ever given a file-writing
-tool.
-
-Leftover scratch folders get cleaned up. Each run copies your attachments into a folder
-in the system temp directory and removes it when the wizard closes; a crash used to
-leave it behind for good. Shortly after Anki starts, the add-on now removes its own
-leftovers older than a day, and trims the oldest if what remains still exceeds 200 MB.
-Nothing outside its own named folders is touched.
-
-The account each assistant needs is stated more precisely. Codex CLI works with a free
-ChatGPT account, at roughly 50 agentic coding messages a day, with more on Go, Plus, or
-Pro; Claude Code has no free tier; Antigravity CLI stays a free, throttled Google
-account tier, and its row notes that it replaces Gemini CLI, which stopped serving
-personal Google AI Pro and Ultra accounts on 2026-06-18.
-
-When a run fails, the wizard now shows the same one-line summary of the CLI's error
-that Test connection already used, for every backend: the first line of the message,
-trimmed, with a sign-in hint when it looks like an authentication failure.
+Antigravity CLI works properly and gets Model and Effort controls, attached images work
+with every assistant, and leftover scratch folders older than a day are removed.
 
 ## v0.56.1
 
-The AI Backends rows no longer cut off their own last line. Each row's muted line
-("Works with a Claude Pro or Max. Tools fully restricted") wraps to two lines at the
-width the window opens at, and a wrapped label reports a minimum height of one line
-whatever it wraps to, so the window could open shorter than its own text and every row
-was squeezed until that line was clipped mid-glyph. Each wrapped line now holds the
-height it really needs.
-
-AI Backends has left the Experimental menu and opens from the "Generate cards with AI"
-wizard alone, which is the only thing it is ever about: a "Set up an assistant" button
-on the first-run page, and a Setup link beside the backend summary on the input page.
-The window itself is unchanged.
-
-The Night mode dimming preview holds still. The hint under the scope radios is one
-line for bright images only and three for everything on cards and deck screens, so the
-Dim by row and the preview below it slid down as soon as the second scope was picked;
-the hint now stands as tall as the longer of the two either way.
-
-Both Test connection buttons, the one in AI Backends and the one on the wizard's input
-page, now run through the same off-thread runner rather than two copies of it.
+AI Backends opens from the Generate cards wizard instead of the Experimental menu, and
+its rows no longer clip their last line.
 
 ## v0.56.0
 
-A new Experimental item, AI Backends, is now where the three assistants are set up.
-Each one is a single row: a chip for what the check found, its name and command, small
-badges for image support and a free account tier, the subscription it needs and how
-restricted it is, and a link to its own install guide. The preferred backend is marked
-as such and the others offer a Use link; an ignore link sets one aside and reads use
-again afterwards. One settings panel below the rows covers the preferred backend only,
-since that is the one a run will use: its executable path override, its default model
-and effort, and a Test connection button that runs one real, trivial prompt. So to set a
-path for an assistant that is not found yet, click its Use link first, then fill in the
-path in the panel that follows it. The model
-and effort controls moved here from the "Generate cards with AI" wizard, whose input
-page now shows a one-line summary of the backend in use with an AI Backends link beside
-it, and whose first-run page is a single Open AI Backends button. Defaults for Claude
-Code stay at sonnet with medium effort, chosen so a Thorough run does not spend a
-subscription's credits on the top model by default. The honesty rules are unchanged:
-Codex is only handed a model flag when its own help documents one, and Antigravity's
-model cannot be set from here at all. `ai_cli_path` in config.json is now per backend
-rather than one flat string; a path already saved under the old shape carries over
-automatically to the preferred backend.
+New AI Backends window, wider Night mode dimming, and My rules.
 
-Night mode dimming can now dim more than images. A scope choice under the checkbox
-picks between bright images only, the previous behaviour, and everything Anki draws as
-a web page: cards, the deck list, the overview, and the editor. The menu bar and
-dialogs are native windows and stay as they are. A changed scope or percentage shows
-on the next screen that loads, and the confirmation after Save now says which scope
-was saved.
-
-My rules is a third skill, written by you. Plain text, edited from an "Edit my rules"
-link beside "View skills" on the wizard, stored in the add-on's user files so it
-survives updates, and sent to the assistant on every run after the bundled skill and
-any deck skill. It is capped at 20,000 characters and View skills shows it in full.
+- AI Backends shows one row per assistant, plus path, model, effort and Test connection
+  for the preferred one. `ai_cli_path` is now per assistant; an old value carries over.
+- Night mode dimming can dim everything Anki draws as a web page, images included.
+- My rules holds your own instructions for the assistant, up to 20,000 characters.
 
 ## v0.55.1
 
-Two small fixes to the "Generate cards with AI" wizard. The Model field, for a
-backend with known aliases (currently Claude Code), is now a closed list of
-those aliases plus a Custom entry, rather than a free-text box; picking Custom
-reveals a line edit for typing any other model name. This also fixes a visible
-misalignment on macOS, where the old free-text Model field rendered at a
-different height and left inset than the Effort field beside it, so the two
-rows never lined up. Also, every stray double-hyphen dash in the add-on's own
-text (dialog copy, the bundled skill, this changelog, and more) has been
-rewritten as ordinary punctuation.
+The Model field is a list of known aliases plus Custom.
 
 ## v0.55.0
 
-The "Generate cards with AI" wizard's backend row can now pick a model and, for
-Claude Code, a reasoning-effort level, instead of every backend running whatever
-it defaults to on its own. Claude Code now runs with `--model sonnet --effort
-medium` unless overridden, rather than silently inheriting the signed-in
-account's own default model, the top model for a Max subscriber, which used to
-burn through a subscription's credits fast across Thorough mode's up-to-15-turn
-loop. A hand-edited effort value the CLI wouldn't recognize now falls back to
-`medium` instead of reaching `claude --effort <typo>` and dying with an opaque
-CLI error, and the Effort combo always shows that same effective value. Codex
-CLI's Model field passes `--model` only when a model is set and the installed
-CLI's own help documents that flag (probed against both `codex --help` and
-`codex exec --help`, since a subcommand's own options often live only under its
-own help), so an older Codex isn't hard-broken. Antigravity CLI's Model field is
-read-only text, since headless mode has no verified way to honor a model choice
-at all (its default is already the cheap tier). Two new config keys, `ai_model`
-and `ai_effort`, hold whatever's picked, stored per backend so a value set while
-one backend is active is never pre-filled or sent for another.
-
-The Experimental menu's dimming item is renamed to "Night mode dimming", title
-case, and its dialog now shows a live side-by-side Normal/Dimmed preview so a
-chosen dim percent can be judged before it's applied, rather than only after
-closing the dialog and opening a real card. "Generate cards (AI)" is now
-"Generate cards (AI)", title case to match.
-
-The bundled internpearls-authoring skill (used by the AI wizard's prompts) is
-replaced with a distilled version of the house card-authoring rules covering
-card scope, atomicity, the "why" field, table/list/cloze shape, and image
-sourcing.
+The AI wizard can pick a model and, for Claude Code, an effort level. Claude Code
+defaults to sonnet at medium effort. Night mode dimming shows a side-by-side preview.
 
 ## v0.54.2
 
-The "Generate cards with AI" wizard's review rows are rebuilt on the same shape the
-Update my decks screen already uses, visual only, no behavior change. Each row is now
-a caret, a fixed chip column, and a bold front line, with the back, why, dosing and any
-image tucked into a body the caret reveals, and Edit/Note as quiet links at the end of
-that body instead of two native push buttons on every row. A card a check flagged now
-shows its own reason underneath, and a duplicate names the existing card it matched:
-both used to be invisible, with only a bracketed word saying something was wrong. A
-queued revision note shows on its row instead of only living inside a prompt's memory.
-The two quality radios on the input page now carry just their short name (Thorough,
-Quick draft); the full per-backend disclosure sentence moved to a wrapped line
-underneath, since it used to force the whole dialog to roughly 1000px wide trying to
-fit unwrapped on one radio button.
+The AI wizard's review rows use the same layout as Update my decks, and a flagged card
+shows its reason.
 
 ## v0.54.1
 
-Layout and control fixes for the "Generate cards with AI" wizard, no behavior change.
-Every page now hands its own leftover height to something that owns it instead of
-leaving it to spread across every widget, so a page never floats a dead band above its
-buttons and the Import button on the review page stays reachable no matter how many
-cards were drafted. Every loose row of push buttons is a proper button box now (a
-visible default action, Cancel on the platform's usual side), and Re-check on the setup
-page reads as a link next to a plain status line rather than a full-width button. View
-skills routes through the same scrollable, button-outside-the-body dialog on both of
-its branches, so the bundled skill's own length can never push its Close button off the
-screen. The review page's status line is split: what you're deciding (how many cards,
-how many are included) stays under the title, and run facts (token spend, rate limits,
-what a revision changed) move to a line under the list. A successful import shows a
-brief tooltip instead of a dialog to click through, the same way Anki's own Add does.
+Layout fixes in the AI wizard. Buttons stay reachable however many cards were drafted.
 
 ## v0.54.0
 
-New "Experimental" menu, a sibling of Advanced for features that are new or still
-settling: "Generate cards (AI)" (moved off the top level, same feature, renamed to fit
-the menu's sentence-case/no-ellipses style) and a new "Night mode dimming" dialog.
-
-Night mode image dimming used to be a single on/off toggle in Settings. It's now its
-own dialog under Experimental, with a percentage control for how much dimmer bright
-images get while Anki itself is in Night Mode (it never applies in Day mode, and never
-applies to anything but images). The existing on/off setting keeps working exactly as
-before: an install that already had it on keeps today's exact look, since the new
-percentage defaults to 30, the fixed amount every prior build applied.
+New Experimental menu holding Generate cards (AI) and Night mode dimming, which now has
+a percentage control. The default, 30, matches the old fixed amount.
 
 ## v0.53.5
 
-Fixed a crash risk in the "Generate cards with AI" wizard's undo-shortcut helper.
-Asking Qt to render the standard Undo key sequence with no live application running
-dereferences a null pointer inside Qt itself, which is not a catchable Python
-exception: it hard-crashes the whole process. That path is unreachable in the
-running add-on, where Anki's own app is always live, but is now guarded either way:
-the helper checks for a live application first and falls back to a plain literal
-when there isn't one.
+Fixed a crash risk in the AI wizard's undo shortcut helper.
 
 ## v0.53.4
 
-Four more defects in "Generate cards with AI", again found only by running the add-on
-for real.
-
-The most important: a successful import genuinely wrote one clean, undoable batch of
-notes (a headless test calling `col.undo()` really did remove the whole thing in one
-step), but nothing ever told Anki's own main window that a new undo entry existed, so
-Edit > Undo stayed greyed out in the running app no matter how quickly you tried it.
-The deck list had the same problem: a new deck's cards and counts only showed up after
-manually clicking "Decks". Both are fixed by the same call this add-on already makes
-after every other collection-writing action, right after the import succeeds.
-
-The completion message also hardcoded "Ctrl+Z" on every platform, which is simply
-wrong on macOS. It now asks Qt for the platform's own rendering of the standard Undo
-key sequence, so it reads "Cmd+Z" (or whatever glyph the OS actually uses) there
-instead.
-
-And the review page's import button, its header counts, and the completion message
-could all read a grammatically bare "1 cards" when exactly one card was involved; all
-three now use the same singular/plural helper the rest of the add-on already relies on.
+After an AI import, Edit > Undo is available at once, the deck list updates, and the
+message shows the right Undo shortcut on macOS.
 
 ## v0.53.3
 
-Two more defects in "Generate cards with AI", again found only by running the add-on
-for real, not by the automated test suites.
-
-The crash guard added in v0.53.2 covered every wizard button, but missed the one path
-that matters most: generation completes off a timer, not a click, so an exception
-there still showed Anki's own raw crash box. Worse, it left the wizard stuck: the
-progress page kept showing "Generating cards" with a Cancel button wired to a run that
-had already finished, so clicking it did nothing, repeatedly, and closing the window
-was the only way out. Completion now goes through the same guard as every button, and
-a failure there tears the run down properly and returns you to the input page (or
-your existing draft, if you were mid-revision) instead of leaving you stranded.
-
-Separately, a single missing folder used to crash every write of the add-on's own
-saved state (usage stats, deck skill consent, and more): the shared atomic-write
-helper behind all of them now creates its target folder if it isn't there.
-
-Also re-verified: the note-type availability check from v0.53.2 already behaves
-correctly against a real collection with neither managed note type present. It now
-has a real-Qt-widget test alongside the existing one, so a genuine rendering
-regression there can't go unnoticed the way this round's re-check first seemed to
-suggest.
+An error when generation finishes returns you to the input page instead of leaving the
+wizard stuck.
 
 ## v0.53.2
 
-Fixed two defects in "Generate cards with AI" found by hand, neither reachable by the
-automated test suites.
-
-The input page used to offer "Study Deck - Basic" and "Study Deck - Cloze" checked by
-default even before you had ever synced a deck, which is the only thing that creates
-them. Picking one before that first sync meant writing source material, waiting
-through a whole generation, and only discovering at the very last click that Import
-rejected the entire batch. Only note types actually present in your collection are
-offered now; a managed type you don't have yet shows disabled with a short reason
-instead of disappearing outright.
-
-Also, a bug in any of the wizard's buttons (Import, Revise all, Edit, Note, Test
-connection, Attach, Generate) used to show Anki's own raw "encountered a problem" box
-instead of this add-on's dialog, since a Qt button's click doesn't run through the
-same protection a menu action gets. Every one of those now shows a plain, titled
-Intern Pearls dialog with the actual error instead.
-
-Separately, the review page's include/exclude checkboxes did not visibly respond to a
-click: the underlying state was in fact changing, but nothing ever refreshed the "N
-included" count or the "Import N cards" button label, so a toggle that worked read as
-one that didn't. Both now update immediately.
+The AI wizard offers only note types already in your collection, and its errors show in
+the add-on's own dialog.
 
 ## v0.53.1
 
-Fixed a shipped defect: extracting a PDF's embedded images relies on Pillow, which
-Anki's own bundled Python doesn't carry, so those images silently extracted nothing
-for every real user, indistinguishable from a PDF that never had any. PDF text
-extraction was never affected. Attaching a PDF now says plainly, once per session,
-when its images couldn't be decoded here, so figures you want on a card can be
-attached separately as image files instead.
+Attaching a PDF says when its images can't be extracted in Anki, so you can attach them
+as image files instead.
 
 ## v0.53.0
 
-A new "Generate cards with AI" menu item drafts cards from source material you paste
-in or attach, through a coding-assistant CLI you install and sign into yourself:
-Claude Code, Codex CLI, or Antigravity CLI, whichever you have running. There is no
-API key field anywhere in the add-on; it only shells out to a CLI already signed in
-on your own machine, and never reads, sends, or stores a credential of any kind.
+New Generate cards with AI. It drafts cards from text you paste or files you attach,
+using Claude Code, Codex CLI or Antigravity CLI already installed and signed in on your
+computer. The add-on has no API key field and never handles credentials.
 
-The three backends are not equally sandboxed, and the setup screen says so plainly
-for each rather than folding them into one reassurance: including what Quick draft
-and Thorough actually restrict, which differs by backend: Claude Code is the only one
-the add-on itself caps by mode (Quick gets one turn and no tools beyond reading files
-you attach; Thorough gets more turns and web-search tools), Codex CLI is sandboxed
-read-only in both modes so neither can reach the network, and Antigravity CLI isn't
-restricted by mode at all, so it may still reach the web even under Quick. Separately,
-and in every mode: if a drafted card proposes a picture it found online, the add-on
-itself (not the assistant) fetches that image during review so you can see it, and
-shows the host it came from. No card here ever carries an AI-generated picture: an
-image can only come from a real web source, an image file you attached, or SVG the
-model draws itself. An attached PDF's text is always pulled in; its embedded images
-generally are not, since Anki's own bundled Python lacks the library needed to
-decode them.
-
-Cards you generate land in their own `Generated` subdeck and tag with a fresh local
-GUID, so a shared deck source's own sync and reconcile machinery can never match,
-retire, or overwrite one. Nothing about a session (the source text, drafts, your
-feedback, the exchange with the CLI) is saved once the dialog closes; only your
-backend choice, a deck skill you've explicitly consented to, a rolling usage log, and
-a rolling log of recent run durations (for the progress screen's learned time
-estimate) persist between sessions.
+- Pictures come only from a real web source, a file you attached, or an SVG the model
+  draws.
+- Generated cards go into their own `Generated` subdeck with new GUIDs, so deck syncs
+  never touch them.
+- Nothing from a session is kept after the dialog closes except your assistant choice,
+  consented deck skills and usage logs.
 
 ## v0.52.1
 
-The receipt lines sit tight now. The Show yours link, though flat, still
-carried the platform's native button height, which stretched every receipt row
-to double its text and read as a band of dead space between the lines; it sits
-at text height now, like the row's expand caret. The summary phrase also no
-longer folds itself onto three short lines beside the link: it is a one-liner
-by design and renders as one.
+The rewritten-field line on a changed card no longer wastes vertical space.
 
 ## v0.52.0
 
-A rewritten field now reads as a receipt, not a wall. Two treatments had been
-tried and both fell short: marking a rewrite up word by word buried the change
-in strikethrough and highlights, and showing the old text plainly parked a
-second full paragraph under every rewritten card. Two independent design
-reviews converged on the same answer, and this is it:
-
-- The default is one line: "Why  rewritten, shortened (104 → 66 words)", with
-  the word counts appearing only when the length really moved. The new version
-  is already the card shown above, so at a glance that line is everything an
-  Apply decision needs.
-- A "Show yours" link (the same quiet link style as Add note, named in the
-  Keep yours button's own vocabulary) reveals the old version in place: clean,
-  unmarked, behind a grey rule that mirrors the green rule on the card's own
-  explanation, so the two read as the same kind of block from two moments. It
-  is built only when clicked, so long lists stay as fast as before.
-- The word-diff line for small edits keeps its place, with its bar raised: a
-  change now takes the diff treatment only while the marked words stay well
-  under half the line, so a mostly-marked line can no longer ship.
-- In the blanks-moved line, the named blank is bold now rather than blue,
-  keeping blue for things that actually respond to a click.
+A rewritten field shows as one line, such as "Why rewritten, shortened (104 > 66 words)",
+with a Show yours link to see your old version.
 
 ## v0.51.0
 
-Two refinements to the What changed group, from its first day in real use:
-
-- A rewritten explanation no longer renders as a word diff. On a paragraph
-  where most of the words moved, striking the old ones and highlighting the new
-  ones made a wall of markup harder to read than either version alone, so a
-  change below difflib's own similarity floor now shows the old value plainly
-  instead. Small edits keep the diff, which is where it earns its keep.
-- A card's question-ID label ([T11Q4]) moved out of the card's own text, where
-  it read as a weirdly placed line, into the chip column: it stacks as a small
-  tag under the row's NEW or UPDATED chip, one tag per reference. It is
-  metadata about the card, so it lives in the row's metadata gutter and the
-  text column stays purely the card.
+A heavily rewritten field shows the old text plainly instead of a word diff, and a
+card's source label moves into the chip column.
 
 ## v0.50.0
 
-An opened changed card now says what changed instead of making you find it.
-
-Each field's old value used to render in full directly under its new one, so an
-expanded card read as an alternation of card and ghost: the note, then the old
-text, then the explanation, then the old explanation, with the actual difference
-buried in two near-identical paragraphs. The card now reads clean top to bottom,
-followed by one quiet "What changed" group that states each field's delta once:
-
-- A reworded field shows as a single line with the dropped words struck through
-  and the added words highlighted, so a corrected dose reads as "Give ~~1~~ 1.5
-  mg/kg over ~~10~~ 2 to 3 minutes" rather than as two sentences to compare by
-  eye.
-- A fill-in-the-blank card whose words survived but whose blanks moved names the
-  moved blanks ("no longer blanked: pencil-point") instead of reprinting the
-  whole sentence. Old cloze text also never renders as raw {{c1::…}} markup any
-  more; where the full old version is still the honest thing to show (the
-  sentence was reworded too), its blanks render filled and blue, the same way
-  the card's own line does.
-- A field carrying a table, list, or picture keeps the verbatim old value, since
-  a word diff would tear its structure apart.
+An opened changed card ends with a "What changed" group. A reworded field shows as one
+line with removed words struck and added words highlighted. Moved cloze blanks are named.
 
 ## v0.49.1
 
-Room to read the update screen, which had grown dense enough that the cards it
-lists were the part with the least space:
-
-- It opens noticeably larger now, sized to your screen rather than to the small
-  floor it used to start at, and it is still resizable either way. The extra
-  height goes to the list of cards.
-- The standing reassurance below the list is shorter and set as small print. It
-  says the same things, in four lines rather than nine, so it stops being the
-  tallest block on a screen that exists to show cards.
-- The Apply / Keep yours / Never buttons no longer look cut off. They were being
-  drawn flush against the list's own edge, so the last button's border sat under
-  the frame line and the scrollbar could pass over it.
-
-Separately, the message you get when a deck brings a card format your collection
-has never held now says what it is: the import adds that format, so one more run
-of Update my decks finishes moving your existing cards onto it. It reported this
-as a bare absence before, which read as an error rather than as the second half
-of a normal two-step update.
+The update screen opens larger and its reassurance text is shorter.
 
 ## v0.49.0
 
-A deck source can now also ship a short label saying where a card came from, such
-as a question number in the bank it was written from. It shows above any note on
-the card's row, on newly added and changed cards alike, since it says where the
-card came from rather than why it changed.
-
-Turning a card down with Never now opens the same note box that Skip and Keep yours
-do. It was the one decision the dialog would not take a reason for, which left the
-strongest thing you can say about a card as the only silent one.
-
-A changed card now offers Never alongside Apply and Keep yours, the same three-way
-choice a new card has always had. Keep yours sets one change aside and the card comes
-back the next time the deck changes; Never keeps your version and stops offering
-changes to that card at all. Both leave your card exactly as it is, and Never here is
-undone from Manage decks → Declined cards, where those cards get their own group
-rather than being filed as never imported.
+A changed card offers Never alongside Apply and Keep yours, Never opens a note box, and
+a deck source can ship a short label saying where a card came from.
 
 ## v0.48.0
 
-A deck source can now attach a short note to a changed or newly added card
-explaining why it changed. Reviewer feedback shows quoted, marked "from
-feedback"; a maintainer's own note shows the same way, unquoted. Either kind
-only appears when it describes the exact content on offer.
+A deck source can attach a short note to a new or changed card explaining why it
+changed. Reviewer feedback shows quoted.
 
 ## v0.47.3
 
-What a review round found in the card-declining feature, and a few older things
-it turned up along the way:
+Fixes to declining cards.
 
-- A card you declined can no longer have its note type changed underneath it.
-  Declining stopped the new content from being imported, but the format change
-  that came with it was still applied, so a card you turned away could end up
-  converted to a fill-in-the-blank type holding no blanks. The format change now
-  follows the decline: not applied, not asked about, and a deck whose only
-  format change belongs to a declined card is no longer held back from
-  unattended syncing forever.
-- A hand-edited or corrupted declined-card file can no longer cost you your
-  annotations. It used to fail in the one window between an import and the step
-  that puts your own notes back; the file is now checked when it is read, and
-  that step can no longer be skipped by anything failing after it.
-- Agreeing to a format change that has nowhere to land (the first time a deck
-  sends a card type your collection has never held) used to do nothing at all,
-  silently, and mark the deck up to date anyway. It now says what happened and
-  leaves the deck pending, so the next update completes the change for real.
-- Cards you skipped or kept are no longer counted in the update's "new" and
-  "changing" totals, since they aren't going to be imported.
-- A skipped or kept card wears a single chip again, so its own words get the
-  full width of the row instead of sharing it with a stack of badges, and an
-  opened card's text lines up with its own row.
-- The feedback box no longer claims your note is "sent to the deck author":
-  nothing is sent anywhere automatically, and the digest at the end of a run now
-  says plainly that it is on your clipboard for you to paste and send.
-- Skip and Keep say when the card really comes back (the next time that deck
-  changes, or any time from Manage decks) rather than promising a next update
-  that may never arrive on a quiet deck.
-- Being offline is described as being offline again, instead of advising you to
-  check your token or folder for a source that was never reached.
-- Cancelling an update at the download step now says the run stopped and nothing
-  changed, the way cancelling at any other step already did.
-- Import single deck now handles a deck whose card format changed, instead of
-  claiming it would keep the history of cards it cannot.
-- The decision buttons and the caret on each card now name the card they belong
-  to for screen readers.
-- Smaller fixes: a deck held back for a look or format change is announced again
-  when a newer version of it arrives; one deck's backups can no longer be pruned
-  early by another deck whose name starts the same way; an unusable poll interval
-  in a hand-edited config no longer breaks startup; a failed automatic add-on
-  update now tells you an update is waiting; a card that is both retired and
-  reworded is counted once; the Settings summary lists only real settings; the
-  cleared-exclusions line says it takes effect on save; "Keep yours" is worded
-  the same way everywhere; and the demo shows the struck-through Never state.
+- A declined card's note type is no longer changed.
+- A damaged declined-cards file can no longer lose your annotations.
+- The feedback box no longer says notes are sent anywhere. The digest is on your
+  clipboard for you to send.
 
 ## v0.47.2
 
-A layout fix for the decline controls' macOS debut:
-
-- Wider card text in the update preview: the confirmation opens wider now, so a
-  card's own words no longer get crushed into a narrow column beside its Import /
-  Skip / Never buttons.
-- Tidier decision buttons: the segmented control reads as one control again, not a
-  row of square, individually bordered buttons with a doubled line between them.
-- Two of that control's labels are shorter (Skip, Keep mine), so they fit the
-  control instead of stretching it.
-- "Add note" now sits at the end of a card's own expanded view instead of its
-  collapsed header, so a closed row doesn't carry a column for it.
+Layout fixes for the decline controls on macOS.
 
 ## v0.47.1
 
-Polish on the new decline controls, from the v0.47.0 review round:
-
-- The per-deck counts atop Update my decks no longer count cards you've said
-  Never to: a deck whose only pending card is hidden now reads the same as the
-  list below it, instead of promising cards that never appear.
-- Declined cards now lists every registry entry, including one a hand-edited
-  file left unreadable: it renders under Other, named by its internal id, with
-  a working Offer again, so there is always an in-app way back. Previously such
-  an entry silently kept its card declined while the dialog showed nothing.
-- The Manage decks "Declined cards (N)" count updates when that dialog closes,
-  instead of staying stale after you offer cards again.
-- Each Offer again button is named for its card ("Offer again: ..."), so screen
-  readers no longer announce an undifferentiated list of identical buttons.
-- Internal cleanups and new test coverage behind all of the above; no other
-  behavior changes.
+Declined cards lists every entry, even one from a damaged file, and per-deck counts
+leave out cards you said Never to.
 
 ## v0.47.0
 
-Per-card decline controls on Update my decks, replacing the old all-or-nothing
-"flag problems" checkbox with a decision on each card:
+Per-card decisions on Update my decks replace the "flag problems" setting.
 
-- Every new-card row now carries an Import / Skip for now / Never choice
-  (Import is the default), and every changed-card row carries an Apply / Keep
-  mine for now choice (Apply is the default). Choosing Skip for now or Keep
-  mine for now opens a small, optional feedback box for that card; every other
-  row still carries a quiet "Add note" link, so writing something down never
-  requires declining a card.
-- Choosing Never collapses the row to a single struck-through line reading
-  "won't be offered again." A card you skip or keep comes back on that deck's
-  next update, already pre-set to the same choice and marked SKIPPED or KEPT
-  YOURS, with a hint if the upstream content changed since you decided; a
-  card you've said Never to isn't shown as a row again at all, and the run
-  just reports how many are being held back.
-- Declined cards are filtered out of the downloaded package before any
-  import, so nothing you skipped, kept back, or said Never to can land in or
-  overwrite your collection, whether you ran Update my decks yourself or
-  auto-sync applied it in the background. Nothing already in your collection
-  is ever deleted.
-- Manage decks has a new "Declined cards" button listing everything you've
-  declined, grouped by why, each with an Offer again button that undoes the
-  decision and re-offers the card on your next update.
-- The end-of-run digest now includes a line for every decision you made this
-  run, with or without a note attached.
-- The "Let me flag problems with cards as they sync" setting is gone;
-  feedback is contextual now, tied to a card's own row instead of a global
-  toggle. An install that had it on or off just drops the setting silently on
-  its next save.
+- New cards offer Import / Skip for now / Never; changed cards offer Apply / Keep mine
+  for now. Any row can take a note.
+- Declined cards are removed from the package before import, including during
+  auto-sync. Nothing in your collection is deleted.
+- Manage decks has a Declined cards list with Offer again.
 
 ## v0.46.2
 
-Fixes from a third review round, mostly where the v0.46.x fixes meet:
+Safer consent dialogs and backups.
 
-- A deck whose preview download failed no longer skips its consent questions.
-  The retry that v0.46.1 added downloaded the deck at apply time but never
-  looked inside it, so a note-type format change went unasked (and Anki then
-  quietly skipped those cards while the deck was marked up to date). Failed
-  previews are now retried right after you confirm, and anything found in
-  them joins the same single consent flow as every other deck.
-- Backups of two decks whose names reduce to the same filename (names in
-  another alphabet, or differing only in punctuation) no longer overwrite
-  each other; each name now carries a short unique suffix, and older backup
-  files are folded into the same pruning so they don't pile up.
-- Remove empty cards and Clean up duplicates now back up the decks the
-  affected cards actually sit in, not just the configured deck; content
-  updates do the same for cards you've refiled (on Update my decks and
-  auto-sync), and the README now says exactly which flows cover what.
-- The renamed consent dialogs can be dismissed again: Escape and the close
-  button now mean the safe answer, which is also the default, so pressing
-  Enter can never agree to a full AnkiWeb sync unread. The remaining
-  consequential questions (continuing without a backup, importing a file,
-  restoring, installing an update) got named buttons with safe defaults too.
-- Moved, superseded, and kept-back cards on the confirmation and summary
-  screens now show a readable card name instead of raw markup (an image
-  card no longer renders as a broken picture, a cloze card no longer shows
-  its braces).
-- Cancelling an update no longer discards a ticked "apply the new card look"
-  for the decks that finished before the cancel.
-- A deck held back for a template change no longer makes auto-sync
-  re-download it and take a fresh backup on every poll, and a failing backup
-  nags once per session instead of every poll.
-- Reconcile now leaves decks you've opted out of alone, matching what Manage
-  decks promises, and Manage decks shows opt-outs for decks the current
-  source doesn't offer, with a link to clear them.
-- Broken deck sources are no longer announced as "Couldn't reach the deck
-  source" when the source was reached but its manifest is unusable; the two
-  cases now read differently, and a manifest that isn't even a JSON object
-  gets the same plain diagnosis.
-- Smaller fixes: a card both retired and relocated by the same update stays
-  in the Retired deck; the look-change checkbox sits directly under the
-  sentence it answers when a format change is also listed; a blank repo on
-  the GitHub source form warns instead of silently discarding what you typed
-  (including a token); the Settings summary reports the card-feedback
-  toggle; deck backups survive Anki builds missing newer export options; and
-  the demo's "N more not shown" line counts cards rather than list rows and
-  its consent dialogs show the real button labels.
+- Escape and the close button pick the safe answer, and Enter can't agree to a full
+  AnkiWeb sync.
+- Backups of two decks with similar names no longer overwrite each other.
+- Remove empty cards and Clean up duplicates back up the decks they touch.
 
 ## v0.46.1
 
-Follow-up fixes to v0.46.0, from a second review of that release:
+Follow-up fixes to v0.46.0.
 
-- A deck whose preview download failed really does still import now. The
-  confirmation said so, but the apply step used to replay the failed preview
-  instead of trying again; it now retries the download (with Cancel still
-  live), and a file that downloaded fine but couldn't be previewed is kept
-  and used rather than fetched twice.
-- Opening Manage decks while your source was unreachable could silently erase
-  every deck opt-out on Save, and Change source carried that empty state into
-  the reopened dialog. Exclusions now survive a dialog that couldn't show the
-  deck list, a source switch, and decks the current source doesn't offer.
-- The backup taken before a run now also covers the decks touched by
-  retired-card archiving, relocations, and reworded-card merges, wherever
-  those cards actually sit; unattended auto-sync scopes its backup the same
-  way (and skips the run when it can't); Import single deck backs up the
-  decks named inside the chosen file. A run that backed up some decks but not
-  others now says exactly which, instead of claiming no backup was taken, and
-  each deck's backups are pruned separately so one deck's history can't evict
-  another's.
-- These backups are also written in the older package format again, so the
-  add-on's own tools (and older Anki versions) can read them back.
-- Background auto-sync now also waits for the Advanced actions (Clean up
-  duplicates, both Restore actions, Remove empty cards) instead of
-  possibly applying an update while one of their confirmations was open, and
-  Remove empty cards re-checks which cards are still empty after you confirm.
-- Two decks whose files share a name in different folders of the deck source
-  no longer overwrite each other's downloads, and a download in progress can
-  no longer be read half-written.
-- A GitHub source with a broken or empty manifest.json now says so plainly
-  instead of "Couldn't reach the deck source" or "No deck source configured";
-  a manifest entry missing its name no longer breaks Manage decks.
-- The template and format-change questions now use buttons naming the action
-  (such as "Apply the new look") instead of bare Yes/No, and the look-change
-  checkbox sits at the top of the confirmation next to the sentence
-  explaining it rather than below the card list.
-- Cancelling an update no longer drops the report of fields that were kept
-  back from decks that did finish, and a field whose update matches what you
-  had written yourself is no longer reported as a conflict.
-- Everywhere the add-on mentions a held-back "card-template update" it now
-  also names a note-type format change, since both are held for a manual run.
-- Smaller fixes: a long source error wraps instead of stretching the dialog;
-  Select all/none no longer appear when there are no decks to select; wide
-  deck names elide by actual width; the local-folder option says which folder
-  to pick (macOS never showed the picker's own caption); a deck synced from a
-  local folder no longer writes its temporary copy into that folder. In the
-  demo, card rows now start collapsed like the real thing, and a list longer
-  than the demo builds shows how many more rows it holds.
+- A deck whose preview failed retries its download when you apply the update.
+- Deck opt-outs survive an unreachable source and a source switch.
+- The pre-update backup covers every deck the run touches and says which it backed up.
 
 ## v0.46.0
 
-Safety fixes:
+Safety and dialog fixes.
 
-- A `.apkg` in Anki's newer export format no longer imports as if it were nearly
-  empty. Import single deck used to read only the compatibility stub inside such a
-  file: the preview matched nothing, the import then overwrote every field
-  (protected ones included), and the restore had nothing to restore onto. Deck
-  names, card matching, and note-type checks now read the file's real data where
-  possible, and anything that can't (inside Anki, which ships no zstd decoder)
-  stops up front with a clear ask to re-export with "Support older Anki versions"
-  ticked, before anything touches your collection.
-- If a step after a deck's import failed, that deck's protected fields could be
-  left un-restored for the run. The restore bookkeeping now happens immediately
-  after the import, so a later failure can't skip it.
-- The pre-update backup now covers every top-level deck the run is about to touch,
-  not only the configured export deck, and speaks up when your cards exist but
-  nothing exportable covers them, instead of proceeding silently.
-- Import single deck no longer modifies the note type (which could force a full
-  AnkiWeb sync) before you've confirmed the import and the backup has run.
-- Background auto-sync and a manual sync can no longer interleave: each waits its
-  turn, and a finished run merges its results instead of overwriting what a
-  concurrent run just recorded.
-- Downloaded files and the self-update package now land in private, unpredictable
-  temp locations, and saved state files are written atomically.
-
-Dialog and flow fixes:
-
-- Enlarging the update confirmation before scrolling could leave the card list
-  silently ending at the first batch; the list now keeps filling the taller
-  window (and still builds lazily as you scroll).
-- Cancel in the progress dialog now responds during a deck's download, not only
-  between decks, and a cancelled download reads as cancelled rather than failed.
-- A note-type format change (for example Q&A to cloze) is disclosed on the update
-  confirmation and asked about once, before the run applies anything, instead of
-  as a pop-up part-way through.
-- A configured source that fails to load now shows what's actually wrong (missing
-  folder, missing or invalid manifest.json) in warning colouring, instead of
-  claiming nothing is configured, and the button beside it stays "Change source".
-- The local-folder source is picked with a real folder picker instead of a typed
-  path.
-- Manage decks keeps your unsaved checkbox and protected-field edits when you
-  open Change source; two decks sharing a leaf name are disambiguated and every
-  row carries its full path as a tooltip; the auto-sync interval control follows
-  its checkbox; closed dialogs release their memory instead of holding it until
-  Anki exits.
-- The demo page now renders the card-feedback boxes and the end-of-run digest,
-  and follows your browser's dark mode with the add-on's real dark palette.
-- A manifest with a malformed schema or deck entry now degrades gracefully (the
-  "update the add-on" notice, or skipping the bad entry) instead of erroring out.
+- A `.apkg` in Anki's newer export format is read correctly where possible. Otherwise
+  the add-on stops before changing anything and asks you to re-export it with "Support
+  older Anki versions" ticked.
+- Protected fields are restored straight after each import.
+- Auto-sync and a manual sync can't run at the same time.
+- Cancel works during a download.
 
 ## v0.45.2
 
-- Formulas now read as formulas in the review dialogs. A card written with MathJax
-  markup used to reach the new-card review (and the "was" rows) as raw backslash
-  code like `\(\text{PaCO}_2\)`; the preview now renders the constructs the decks
-  use as plain text with real sub/superscripts (PaCO₂ = 1.5 × HCO₃⁻ + 8), and
-  fractions as an inline slash. Only the preview changes; the card itself always
-  typeset correctly during actual reviews.
+Formulas written in MathJax show as readable text in the review dialogs.
 
 ## v0.45.1
 
-- Fixed Update my decks ending in "Something went wrong: wrapped C/C++ object of type
-  QTimer has been deleted". The run itself was fine, but the step that saves any notes
-  you flagged and cleans up afterwards ran a moment too late, once Anki had already
-  taken the screen's widgets away. It now runs while they are still there. Present in
-  v0.44.0 and v0.45.0.
+Fixed Update my decks ending with a "QTimer has been deleted" error.
 
 ## v0.45.0
 
-- Every card in a list now starts at the same place. A row's chip sits in a column of
-  its own rather than inline with the text, so the fronts line up down the whole list
-  instead of starting wherever the chip beside them happened to end, and the chips
-  themselves are rounded pills of one width.
-- Retired and relocated cards sit under the deck they belong to, alongside that deck's
-  new and changed cards, rather than in their own sections at the bottom.
-- No screen shows a bulleted list any more. Sync decks, Reconcile my decks, Clean up
-  duplicate cards, Remove empty cards, and every end-of-run summary use the same rows
-  the update screen does, and the lists that used to stop at fifteen entries with an
-  "and N more" now show everything.
-- Choosing where decks come from is a proper screen: each source gets its own button
-  with a line explaining it, and the one to pick first says so.
-- Manage decks shows each deck's state as a chip, the same chips a sync uses, instead of
-  coloured text.
-- Settings is ruled off into its four groups, and each explanation is cut back to what
-  actually changes the decision.
-- Counts read as sentences: "1 deck has updates", "2 retired cards", never "1 deck(s)"
-  or "1 cards".
-- The caret that opens a card is legible now, and rows separate as clearly on the light
-  theme as on the dark one.
+Every list uses the same aligned rows, with chips in their own column, and long lists
+show everything. Choosing a deck source is its own screen.
 
 ## v0.44.0
 
-- Pending cards now sit directly on the update screen, as rows in one list under the
-  summary and above the Update button, instead of behind a separate Review button.
-- Retired and relocated cards are rows in that same list too, each carrying its own
-  chip, so every kind of pending change reads as one list rather than a summary with a
-  button below it.
-- The list streams: it builds its first batch of rows and adds more as you scroll, so
-  the screen opens instantly whether a handful of cards are pending or a whole backlog.
-- The end of a run now uses the same row and heading look the update screen does, so a
-  run reads as one product from open to close.
+New, changed, retired and relocated cards appear as rows in one list on the update
+screen, which loads as you scroll.
 
 ## v0.43.0
 
-- Every colour now comes in a light and a dark version, picked from Anki's own theme. The
-  explanation text on a card, the cloze fills, the links and the muted help text were all
-  hard to read in Night Mode; all of them now meet the WCAG AA contrast standard on both
-  themes, as does every block that carries its own background.
-- The NEW and UPDATED markers in the review read as chips rather than as tinted text.
-- The update confirmation starts at the top of its window instead of floating in the middle.
-- Advanced is regrouped so its items sit with the ones they belong with: acting on the deck
-  source, repairing the collection, then the backup and restore pairs.
-- "Import intern pearls deck" is now "Restore intern pearls deck", which is what it does and
-  matches "Restore full collection".
+Every colour has a light and a dark version that meets WCAG AA contrast. "Import intern
+pearls deck" is renamed "Restore intern pearls deck".
 
 ## v0.42.0
 
-- The review dialog shows a card's pictures. Opening a row extracts just that card's
-  images from the deck file already downloaded and renders them in place; a collapsed
-  row still names them, so a long list stays cheap and a review nobody opens extracts
-  nothing.
-- Review now covers cards an update would change, not only cards it would add. A card
-  whose content was rewritten upstream used to import silently because it matched an
-  existing card; it is now counted per deck, named on the confirmation, and readable
-  before anything applies, with what it says today shown under each field that moved.
-- Rows carry a NEW or UPDATED marker, and the review button names whichever kinds it
-  covers.
-- Fixed Configure source: choosing a local folder while a GitHub repo was already
-  configured left the repo in effect, so the folder was silently ignored. Picking a
-  local folder now actually switches the source to it, and no longer clears the
-  GitHub token, so switching back doesn't cost the saved credential.
+The review shows pictures, covers changed cards as well as new ones, and marks each row
+NEW or UPDATED.
 
 ## v0.41.1
 
-- Fixed the flagged-card summary being unreadable in Night Mode. The text block set its
-  own near-white background but left the text colour to the theme, so the text came out
-  light grey on near-white: measured at 1.34:1, against the 4.5:1 needed to read
-  comfortably. It now takes both colours from the theme, so it is readable in either one
-  and no longer a white box on a dark screen. Copying was never affected, only reading.
+The flagged-card summary is readable in Night Mode.
 
 ## v0.41.0
 
-- Notes you write about a new card are now saved as you type, not only when the review
-  closes. They used to live in memory until the summary at the very end of a run, so
-  anything that ended the run in between (a crash, a force quit, an error partway
-  through the import) threw them away without saying so. Anything still unsent is picked
-  up automatically by your next update and included in that summary, with no recovery
-  prompt to click through.
-- Fewer dialogs in an update. The question about applying a deck's new card look has
-  moved onto the one confirmation as a checkbox, so it no longer interrupts the run
-  after the import has started; unticked still means your current card look is kept.
-  A deck whose new cards can't be read is named inside the card list instead of as its
-  own warning. And the completion summary and the flagged-card summary now arrive as
-  one dialog rather than two back to back. A busy update goes from six dialogs to three.
+Notes on new cards are saved as you type, and a busy update shows half as many dialogs.
 
 ## v0.40.0
 
-- Reviewing new cards now shows which fill-in-the-blank belongs to which card. A card
-  with more than one group of blanks is really several cards sharing one field, and
-  every blank rendering the same colour gave no way to see where one card ended and the
-  next began. Each blank now carries its group number as a small superscript (c1, c2),
-  so a table whose rows are separate cards reads as separate cards. A field with only
-  one group is left unlabelled, since there is no distinction to draw there.
+Cloze blanks in the review show their group number (c1, c2) when a field has more than
+one group.
 
 ## v0.39.0
 
-- New Advanced menu item, "Remove empty cards." When a deck rewrites a fill-in-the-blank
-  card to use fewer blanks, the cards generated for the blanks that are gone stay in your
-  collection and come up in review reading "No cloze 3 found on card." This is Anki's own
-  Tools > Empty Cards scoped to your deck: same report, filtered to the notes under your
-  scope tag, with every card it proposes to remove listed first. It is the one action here
-  that deletes rather than archives, since an empty card has no content to keep, and it
-  never leaves a note with zero cards, so no note can be deleted by it.
+New Advanced item: Remove empty cards. It runs Anki's Empty Cards report limited to your
+scope tag and never leaves a note with zero cards. It is the one action that deletes
+rather than archives.
 
 ## v0.38.3
 
-- The new-card review now shows a card the way the card is written. Tables and bulleted
-  lists were being reduced to plain text first, so a card whose answer is a comparison
-  table arrived as one run-on line of cell text and read as unusable when it was fine.
-  Tables, lists, bold and line breaks are kept; anything else is still stripped, and
-  pictures are still named rather than drawn, since the review runs before the deck's
-  media is on disk.
+The new-card review keeps tables, lists, bold and line breaks.
 
 ## v0.38.2
 
-- Fixed a false alarm: cards in decks that had no update at all were being reported as
-  having a conflict between your own notes and the deck's. Nothing had imported over
-  those cards, so nothing of yours was overwritten and there was no update to conflict
-  with. Only cards an update actually wrote are considered now.
-- Reworded that report, which said "your edits sit on a field the deck source also
-  changed" without saying what had happened or what to do about it. It now says plainly
-  that your version was kept, the update to that one field was skipped, and nothing you
-  wrote was lost.
+Cards in decks with no update are no longer reported as conflicting with your notes.
 
 ## v0.38.1
 
-- Fixes an update failing with 'Protocol message ChangeNotetypeRequest has no
-  "new_notetype_name" field' on any deck that reformats a card. The add-on was setting
-  a field that does not exist on the real message. Decks that reported this were not
-  applied and were not marked as installed, so simply running Update my decks again on
-  this version picks them up; nothing was left half-imported.
+Fixed updates failing with a `ChangeNotetypeRequest` error on decks that reformat a
+card. Run Update my decks again to apply the decks that failed.
 
 ## v0.38.0
 
-- Fixes v0.37.0 for anyone using FSRS. FSRS schedules from a card's memory state rather
-  than from its interval, so seeding an extra blank with an interval alone left the
-  number saying one thing and the scheduler computing another. The parent's memory
-  state, desired retention and decay now travel with the interval, at half the
-  parent's stability since stability is what the interval is derived from. Difficulty
-  carries over unchanged, since how hard the material is does not depend on which blank
-  is asking about it. No effect on a collection not using FSRS.
+When a card splits into several cloze blanks, FSRS memory state carries over with the
+interval.
 
 ## v0.37.0
 
-- When a card is reformatted into several fill-in-the-blanks, all of them keep your
-  progress, not just the first. Anki carries the original card's scheduling onto one
-  blank and creates the rest as brand new, which would have dropped a very large new
-  queue on you the first time a whole deck was reformatted, for facts you have been
-  reviewing for months. Each extra blank now inherits the original's ease and standing
-  at half its interval: producing one blank cold is harder than recognising the
-  paragraph the original tested, so it comes back sooner to prove itself rather than
-  either starting from scratch or coasting on the old interval.
-- A blank whose original card had never been studied still starts new, and a card with
-  reviews of its own is never overwritten.
+When a card is reformatted into several cloze blanks, every blank keeps your progress,
+at half the original interval. A card with its own reviews is never overwritten.
 
 ## v0.36.0
 
-- The format conversion added in v0.35.0 now actually finds your cards. Anki keeps both
-  note types and adds a "+" when an imported one collides with an existing name, so a
-  collection that has synced these decks across several updates holds cards on
-  "Study Deck - Basic", "Basic+", "Basic++" and so on. The check was matching the exact
-  name, so on a real collection it would have converted 30 cards and skipped 595.
-- Understands deck sources using the newer manifest format, which is what lets a deck
-  ship a reformatted card as the same card you already have rather than a new one.
+Format conversion finds cards on renamed copies of a note type (such as "Basic+"), and
+the newer manifest format is supported.
 
 ## v0.35.0
 
-- A card that changes format keeps its review history. When a question-and-answer card
-  becomes a fill-in-the-blank, its note type changes, and Anki's importer will not move
-  an existing note to a different type, so until now the deck had to retire your card and
-  give you a new one starting from zero. Sync now offers to move your own cards to the
-  new format first, so the update lands on the card you already have. You keep one card,
-  with its history and your personal notes. Anki treats this as a schema change, so it
-  asks first and warns about the one-time full AnkiWeb sync, the same as a card-styling
-  change. Declining still imports them, just as separate new cards.
-- Background auto-sync never does this on its own, for the same reason it never applies a
-  styling change unattended: the deck is held back for a manual sync instead.
-- Only the deck's own note types are ever converted, never one of your own.
+A card that changes from Q&A to cloze can keep its review history: sync offers to move
+your cards to the new note type first, which needs a one-time full AnkiWeb sync.
+Auto-sync never does this on its own.
 
 ## v0.34.0
 
-- A preserved field no longer means a frozen field. Preserving a field used to restore
-  your copy of it over every sync forever, so protecting anything the decks actually
-  ship a value for (Dosing, say) meant never receiving a correction to it again. The
-  add-on now records what the deck source last shipped for each preserved field, so it
-  can tell your edit apart from the author's: a field you have never touched takes the
-  update, and one you have edited keeps your version. That makes preserving every field
-  a reasonable thing to do rather than a trade-off.
-- Where your edit and an update land on the same field, yours is kept and the sync
-  summary now names those cards, so you can send them back to be folded in instead of
-  the two versions quietly drifting apart.
-- A preserved field name now matches whatever its capitalisation. "notes" used to
-  protect nothing at all, with no error, and the first sign was an annotation gone.
+A preserved field takes the deck's corrections until you edit it. When your edit and an
+update hit the same field, yours is kept and the summary names the card.
 
 ## v0.33.0
 
-- Update my decks now repairs a card you ended up holding twice. When a card's wording
-  changes, the deck source freezes its identity so the new wording lands on the copy you
-  already have. If your copy's identity had drifted before that freeze, the new wording
-  arrived as a second card instead, leaving your review progress on the outdated one and
-  the current one starting from zero. Update my decks now spots those pairs, moves your
-  progress and your personal notes onto the current wording, and archives the outdated
-  copy along with everything else it archives. Nothing is deleted, the outdated copy
-  keeps its own history, and a card you were already further along on is never rolled
-  back to an older schedule. Reconcile my decks does the same thing on its own.
+Update my decks repairs a card you hold twice after a reword: it moves your progress and
+notes onto the current wording and archives the old copy. Nothing is deleted.
 
 ## v0.32.3
 
-- Retired cards are found and archived even when your copy carries an older GUID than
-  the one the deck source retired. Reconcile matched on GUID alone, so a card you
-  imported before its identity was frozen was invisible to it: the replacement cards
-  arrived, the old bulky one was never archived, and it duplicated them in every
-  review with nothing to indicate anything was wrong. It now falls back to matching by
-  front text, the same signal a content sync already uses, exactly as relocating a
-  reorganized card has done since v0.29.1.
+Reconcile finds retired cards by front text when your copy has an older GUID.
 
 ## v0.32.2
 
-- A new card's dosing block is readable in Night Mode again. It set its own light
-  background but left the text color to the theme, so the text turned white on a
-  near-white block. Found by rendering the dialog on a dark background, which is
-  something the add-on's tests, running on a mock Qt, cannot see.
+The dosing block on a new card is readable in Night Mode.
 
 ## v0.32.1
 
-- The new-card review list is much tighter to read. Each row's caret was an
-  unconstrained push button sitting at its platform minimum width, which left a wide
-  empty gutter down the whole list, and nested layouts each added their own default
-  margins on top. A card's tag now shares one line with its text rather than sitting
-  in a separate widget beside it, so every row's text starts at the same place and
-  wraps against the row's edge instead of the tag's.
-- Fixed the doubled hairline under every card. The rule was a border on the row
-  itself, and a stylesheet with no selector propagates into a widget's children, so
-  each row drew an inset second copy under its own header. It's now one rule between
-  each pair of cards, and none after the last.
-- The green rule beside a card's "why" now actually appears. Qt ignores a lone
-  border-left on a label unless the border shorthand is set first, so it had never
-  painted; the indent it created made it look intentional.
+The new-card review list is tighter and its rules draw correctly.
 
 ## v0.32.0
 
-- A restore is now re-detected. The add-on's record of which deck versions you've
-  already applied lives outside your collection, so restoring a backup used to roll
-  your cards back to older content while Update my decks kept reporting you were up
-  to date. Both restore paths now clear the relevant part of that record: Restore
-  full collection clears it entirely, and Import intern pearls deck clears just the
-  decks in the file you're restoring (falling back to clearing all of them if the
-  file can't be read). Your next Update my decks re-offers whatever rolled back, and
-  the re-import still matches by GUID, so review history carries over.
-- New Settings toggle, "Let me flag problems with new cards as they sync," off by
-  default. With it off, reviewing the new cards an update would add is a quick,
-  read-only preview: no note boxes, nothing to send afterward. Turn it on to get
-  both back.
-- The new-card review itself now reads as a scannable list instead of a stack of
-  full note dumps: one row per card, with a caret, its tag, and its primary line
-  collapsed by default, expanding on click to the answer, why, and dosing. A cloze
-  card shows its deletions filled in rather than raw markup, and an image is named
-  rather than rendered, since the review has no access to the deck's media on disk.
-- The flagged-card summary is easier to use once you have it: a monospace,
-  read-only view styled like the payload it is, with a Copy again button in case
-  something else lands on your clipboard first.
+Restoring a backup clears the add-on's record of installed decks, so the next update
+re-offers whatever rolled back. The new-card review is a list of collapsible rows.
 
 ## v0.31.0
 
-- You can now read the cards an update would add, before it adds them. "Update my
-  decks" already listed retired and relocated cards by name, but a card being *added*
-  only ever showed up as a count ("3 new"), so new cards were the one kind that
-  arrived without ever being seen first. The confirmation now names them like
-  everything else, and a "Review N new card(s)" button opens each one in full: every
-  field, labeled, grouped by deck. Reviewing doesn't cost you the decision, since the
-  confirmation stays open behind it, and nothing is applied until you choose Update.
-- Cards you review can be flagged with a note, and closing the review hands you a
-  plain-text summary of everything you flagged, copied to your clipboard and shown so
-  you can see exactly what it says before sending it back to whoever maintains the
-  decks. Each entry names the deck, the card, and its id, so a fix doesn't have to
-  start by working out which card you meant. The summary is offered whether you go
-  ahead with the update or back out of it: notes you took are worth keeping either
-  way. Flagging changes nothing about what imports; it's a message, not a veto.
+Update my decks can show every new card in full before it is added. You can flag a card
+with a note; the notes become a plain-text summary on your clipboard to send to the
+deck maintainer.
 
 ## v0.30.0
 
-- Configuring a deck source now offers that source's recommended settings. A deck
-  author's manifest can carry `scope_tag` and `export_deck` (both optional; older
-  add-on versions ignore them), and right after Configure source connects, it offers
-  to apply whichever of the two differ from your current config. Accepting means
-  field protection and the automatic pre-sync backup cover that source's decks
-  without hand-editing raw config keys, which used to be the only way when
-  subscribing to a source with its own tag and deck names. Nothing applies without a
-  yes, and background auto-sync never touches these settings on its own.
+Configuring a deck source offers its recommended `scope_tag` and `export_deck`.
 
 ## v0.29.2
 
-- Made the "Clean up duplicate cards" confirmation actually readable. Each line now
-  leads with a readable label for the card, so an image card identifies itself by its
-  prompt or image filename instead of rendering as a broken-image icon with no way to
-  tell what it is. When both copies sit in the same deck the line reads as a copy count
-  ("2 copies in <deck>: keeping the one with N reviews...") rather than repeating the
-  deck name twice, and the summary heading is reworded ("Found N duplicate copies of M
-  cards") so it no longer reuses the word "card" to mean two different things. Behavior
-  is unchanged: this only affects what the dialog shows, not which copy is archived.
+The Clean up duplicate cards confirmation is easier to read.
 
 ## v0.29.1
 
-- Fixed a bug where a reorganized deck could be offered as "needs update" forever,
-  even right after applying it, with nothing actually changing. It happened to a
-  card whose deck source changed its internal ID (so a long-time collection holds it
-  under an older ID than the current one) and which a later reorg moved to a new deck:
-  Reconcile matched the relocation by ID only, so it never moved that card, the new
-  deck looked permanently empty, and it kept getting re-offered. Reconcile now also
-  matches such a card by its front text (the same signal a normal sync already uses),
-  so it relocates on the next "Update my decks" and stops re-offering. Requires the
-  deck source's manifest to include each move's front; an older manifest is handled
-  gracefully (unchanged behavior).
+A reorganised deck that kept being offered as "needs update" now relocates its cards by
+front text and stops being offered.
 
 ## v0.29.0
 
-- New Advanced menu item, "Clean up duplicate cards." Finds sync duplicates (the same
-  card imported twice under different GUIDs, most often right after a deck
-  reorganization) and archives the losing copy: suspended, moved to the Retired deck,
-  and tagged, exactly like a retired card. Keeps whichever copy has more reviews;
-  ties prefer the copy already under the deck source's current deck path. Personal
-  notes on the archived copy carry over to the kept one first. Nothing is ever
-  deleted, and a backup is taken automatically before anything changes.
+New Advanced item: Clean up duplicate cards. It archives the copy with fewer reviews,
+carries its notes to the kept copy, and backs up first. Nothing is deleted.
 
 ## v0.28.0
 
-- New Settings toggle, "Dim bright images in Night Mode." When on, applies a
-  brightness and contrast reduction to every image in every deck (not just
-  Intern Pearls ones) whenever Anki's Night Mode is active, so a white
-  background image no longer renders at full brightness during a night review
-  session. Off by default. Takes effect immediately, no restart needed.
+New setting to dim bright images in Night Mode, off by default.
 
 ## v0.27.1
 
-- Update my decks now caches each pending deck's download for the session, so opening
-  it, looking at the preview, and cancelling no longer re-downloads every deck the next
-  time you open it. Since v0.26.1 made the preview a real per-deck download, a "just
-  checking" habit was multiplying source requests and running into sporadic "server not
-  available" hiccups more often; a deck is only re-fetched when its content actually
-  changed (the cache is keyed by the content-hash version).
-- Loosened the first-contact network timeout from 6 to 10 seconds. This only affects
-  user-initiated fetches (never the unattended background poll, which keeps its own tight
-  bound), so a connection that's alive but briefly slow no longer fails a click that
-  would have succeeded a couple seconds later.
+Update my decks reuses downloads within a session, and the first network timeout is 10
+seconds.
 
 ## v0.27.0
 
-- Update my decks and Sync decks now show a real, cancellable progress dialog
-  (an actual "N of M decks" bar, not just a static label) while checking for and
-  applying updates, with a working Cancel button. Previously `mw.progress`'s
-  simple busy indicator gave no percentage and no cancel support at all, which on
-  a slow connection reads as a frozen add-on with no way out. Cancelling always
-  happens between whole decks, never mid-import, so whatever already completed
-  stays applied and persisted; cancelling during Update my decks skips
-  archiving/relocating retired cards for that run, since that step assumes every
-  content update already landed.
-- Update my decks' confirmation now says outright that it's a preview and nothing
-  has been applied yet, since Cancel there was already safe and read-only, just
-  not obviously so.
+Update my decks and Sync decks show a progress bar with Cancel. Cancelling happens
+between decks, never mid-import.
 
 ## v0.26.1
 
-- Fixed a real bug in the collection-revert reconciliation added in v0.25.2: it
-  required an *exact* match between a manifest deck's name and an Anki deck you
-  actually have, but a deck spec's `deck_name` is routinely just the parent path:
-  cards land in `deck_name::<subdeck>` for any spec using subdecks, which is the
-  normal case (the public example deck included). That meant every subdeck-based
-  deck was silently treated as "not installed" on every single check, forever,
-  forcing a pointless resync each time. It was caught via the live demo constantly
-  offering an update with nothing actually changed. Now matches the manifest name
-  itself or any subdeck beneath it.
-- Update my decks' confirmation now downloads and matches each pending deck before
-  showing it, the same way the old "Check what will sync" preview did, with real
-  "N kept · M new" counts per deck, not just how big the deck is. A progress window
-  covers the check itself, since it's a live download per deck. Nothing already
-  downloaded for this preview is fetched again during the actual update.
-- The live demo now shows a busy indicator while a menu action is running, instead
-  of appearing to do nothing until the next dialog pops up (add-on progress dialogs
-  and wait cursors are mocked out in the browser, so they were never visible there;
-  this doesn't change the real add-on, only the demo page).
+Decks with subdecks are no longer treated as uninstalled on every check, and the update
+confirmation shows real per-deck counts.
 
 ## v0.26.0
 
-- Added **Update my decks**, a new top-level menu item and the recommended way to
-  stay current from now on. It computes everything pending in one pass (deck
-  content changes, retired cards still in your collection, and cards a reorg needs
-  to relocate) and shows one confirmation covering all of it, instead of the old
-  multi-step dance of syncing, then separately digging into Advanced to reconcile.
-  Content updates apply first, then archiving/relocating, so a retired card's
-  replacement is already there before the old card archives out. Sync decks and
-  Reconcile my decks still exist under Advanced for running either half on its own.
-- Manage decks no longer has its own "Check what will sync" preview button. That
-  same preview is now Update my decks' own confirmation, so there was no reason to
-  ask twice. "Save and sync now" is renamed "Save and update now" and routes through
-  the new unified flow.
-- Auto-sync (Settings) still only ever applies deck content on its own, never
-  archives or relocates, but it now keeps the "Reconcile my decks" menu item
-  labeled with a live pending count (e.g. "Reconcile my decks (3 pending)") and
-  shows a one-time tooltip when a backlog first appears or grows, so retired or
-  reorganized cards can no longer pile up silently between manual checks just
-  because auto-sync is unattended.
+New top-level Update my decks. It finds everything pending (content changes, retired
+cards, cards to relocate) and shows one confirmation. Auto-sync still applies content
+only.
 
 ## v0.25.2
 
-- Fixed a gap in v0.25.1's collection-revert fix: it only detected a *total* wipe
-  (every synced note gone at once), so a revert that only rolled back part of the
-  collection (the common case, e.g. one deck's cards erased while others stayed
-  intact) still left that one deck wrongly reporting "up to date". The check is now
-  per deck: a deck counts as synced only if the collection currently has a note under
-  it actually sitting in an Anki deck of that name, so a partial revert is caught and
-  recovered the same way a full one is.
+A partial collection revert is caught per deck.
 
 ## v0.25.1
 
-- Fixed a real bug: restoring an Anki collection backup ("collection revert") after a
-  sync could leave Sync decks, Check what will sync, and the Manage decks status pills
-  all reporting "up to date" even though the revert had erased the synced cards. The
-  add-on's own sync bookkeeping (`installed.json`) lives outside the collection file,
-  so it never rolled back along with it, so nothing was actually being compared against
-  the collection's real contents. All three now reconcile that bookkeeping against the
-  collection first, so a deck the collection has lost is treated as not-yet-synced
-  again and a normal sync recovers it. Same fix applies to the unattended auto-sync
-  poll.
+After restoring a collection backup, decks the backup lost are synced again instead of
+reported as up to date.
 
 ## v0.25.0
 
-- Fixed a real bug: Reconcile my decks' confirmation could become unusable after a
-  large backlog (e.g. dozens of cards relocated by one reorg): it used a plain
-  message box with no scroll area, so a long enough list pushed the Yes/No buttons
-  off-screen with no way to reach them. The confirmation now scrolls in a fixed-height
-  viewport with the buttons pinned outside it, so they're always reachable regardless
-  of content length, and the card list itself is capped to the first 15 plus a "...and
-  N more" summary so it also reads as a short list rather than a wall of text. A large
-  first run also now says up front that it's a one-time catch-up, since the length
-  alone can otherwise read as something having gone wrong.
-- Tightened the archive/relocate confirmation's copy: one shared "nothing is deleted,
-  here's how to undo it" note instead of repeating the same reassurance once per
-  section, and action-specific buttons ("Archive", "Relocate", "Archive and relocate")
-  instead of a generic Yes/No.
+The Reconcile my decks confirmation scrolls, so its buttons stay reachable with a long
+list.
 
 ## v0.24.0
 
-- "Check what will sync" (Manage decks) now also reports what Reconcile my decks has
-  pending (retired cards still in your collection and cards a deck reorg needs to
-  relocate), not just the per-deck kept/new breakdown. Read-only, same as the rest of
-  the preview; nothing is archived or moved until you actually run Reconcile.
+Check what will sync also reports what Reconcile my decks has pending.
 
 ## v0.23.0
 
-- Sync now refuses to run against a deck source whose `manifest.json` `schema` is
-  newer than this add-on version understands, with a clear message to update first,
-  instead of attempting an import against a manifest shape it can't fully interpret.
-  Auto-sync applies the same check and pauses quietly (one tooltip per session) rather
-  than looping every poll interval. This is a forward-looking safety net; today's
-  manifest schema (2) is unchanged and every existing source keeps syncing normally.
-- Add-on updates are no longer only visible in the 8-second startup tooltip: the
-  "Check for add-on updates" menu item now shows the known-available version right on
-  the label (persists across the tooltip fading and across restarts, seeded from the
-  last check), and About shows the same "latest known" line next to the installed
-  version.
+Sync refuses a manifest schema newer than the add-on understands and asks you to update
+the add-on. The menu and About show the latest known add-on version.
 
 ## v0.22.0
 
-- "Reconcile my decks" now also relocates cards a deck reorg has moved to a
-  different deck without changing their identity (e.g. a topic getting split
-  into its own deck). A normal sync updates such a card's content in place but
-  never its deck, since only a brand-new card gets filed into the source's
-  declared deck. Reconcile reads a new `deck_moves` ledger the source ships in
-  its manifest and moves any card still sitting exactly where the source last
-  filed it; a card you've since filed somewhere of your own choosing is left
-  alone. Schema-neutral and trivially reversible, same as the retired-card
-  archiving this action already did.
-- Reconcile also now carries a personal note (or any other protected field) from
-  a retired card onto its replacement(s) before archiving it, as long as the
-  replacement's field is still blank, so annotating a card doesn't get stranded
-  the moment it's superseded by a split or reword.
+Reconcile my decks relocates cards a deck reorganisation moved, unless you've filed them
+somewhere else.
 
 ## v0.21.0
 
-- New Advanced action, "Reconcile my decks": finds retired cards still in your
-  collection (older versions of cards a deck has since split into focused ones or
-  reworded) and archives them so they stop showing up as duplicates in your reviews.
-  Each is moved to an `…::Retired` subdeck, suspended, and tagged; **nothing is
-  deleted**, review history is kept, and anything can be brought back by unsuspending
-  it or moving it out of the Retired deck. A backup is taken automatically first.
-  Reading a new `retired` ledger the deck source ships in its manifest; older add-on
-  versions ignore it.
+New Advanced item: Reconcile my decks. It archives retired cards (moves them to a
+Retired subdeck, suspends and tags them) after a backup. Nothing is deleted.
 
 ## v0.20.1
 
-- "Try the example deck" now scopes its automatic backups to the parent
-  `Example Decks` deck instead of a single subdeck, so all of the example repo's
-  decks (it now ships more than one) are covered by the pre-sync backup.
-- Live demo: the default source is the example GitHub repo (exactly what "Try the
-  example deck" configures in real Anki) instead of a local folder; the demo serves
-  that repo's files from its in-page copy so the maintainer buttons still take
-  effect instantly.
+Try the example deck backs up all of the example decks.
 
 ## v0.20.0
 
-- Cards now match by GUID first, before front text and `front_aliases`. Deck sources
-  that keep GUIDs stable (an explicit per-card `id` in the spec) can reword a card's
-  front any number of times without an alias entry, and the learner's review history
-  still carries over. The single-hop limit of `front_aliases` no longer applies to
-  those cards. Front-text and alias matching remain as fallbacks for collections whose
-  GUIDs predate stable ids.
-- Sync now detects when an updated deck changes a card template or its CSS (the one
-  thing `merge_notetypes=False` imports deliberately never propagate) and offers to
-  apply the new look, explaining that doing so makes the next AnkiWeb sync a one-time
-  full sync. Declining keeps the current appearance; content and history import
-  either way. Import single deck gets the same offer.
-- The unattended auto-sync poll never applies a template change (no one is there to
-  consent to a full sync): a deck update that includes one is held back, stays
-  pending, and a tooltip points at Sync decks to review it, mentioned once per
-  session, not on every poll.
+Cards match by GUID first, then front text, then `front_aliases`. Sync offers to apply a
+changed card template, warning that it needs a one-time full AnkiWeb sync.
 
 ## v0.19.0
 
-- Sync decks now shows Anki's progress window while each deck downloads and imports
-  ("Syncing <deck> (2 of 5)"), instead of appearing frozen on a slow connection. The
-  unattended auto-sync poll is unchanged; it already ran its downloads off the main
-  thread and reports through tooltips.
-- The GitHub source setup is one dialog with both fields (repo, optional masked
-  token) instead of two prompts in a row, so cancelling the token question no longer
-  throws away the repo you just typed.
-- The blocking waits that remain on the main thread (opening Manage decks, testing a
-  just-saved source, "Check what will sync") now show the busy cursor while they run.
+Sync decks shows progress for each deck, and GitHub source setup is one dialog.
 
 ## v0.18.2
 
-- Internal restructure, no behavior change: the single 1,600-line `__init__.py` is now
-  nine modules split by concern (`config`, `ui`, `net`, `collection`, `sync`,
-  `updates`, `background`, `dialogs`, with `__init__.py` reduced to menu and startup
-  wiring). `ADDON_VERSION` moved to `internpearls/config.py`. See "Code layout" in the
-  README.
-- Dialog headings, hints, and link-style buttons now share styling helpers in `ui.py`
-  instead of per-dialog stylesheet strings; the three link-style buttons in Manage
-  decks now render at one consistent size.
-- `build.sh` packages every `internpearls/*.py` file (the previous hardcoded two-file
-  list would have shipped a broken add-on after this split) and removes the old
-  archive before zipping, so a deleted module can't linger inside the package.
+Internal restructure. No change in behaviour.
 
 ## v0.18.1
 
-- Auto-sync no longer downloads decks on the main thread. Only the manifest check
-  moved off-thread in earlier work; the per-deck `.apkg` download (the part that can
-  actually take a while on a big deck or a slow link) still ran inside the completion
-  callback, so it could still freeze Anki mid-review, which is exactly what background
-  sync is supposed to avoid. Downloads now happen alongside the manifest fetch in the
-  background step; a per-deck download failure is still reported per-deck (not a fetch
-  that takes down the whole sync), same as before.
+Auto-sync downloads decks in the background instead of on the main thread.
 
 ## v0.18.0
 
-- Fixed public GitHub repos as a deck source: the token is now genuinely optional.
-  Previously a GitHub source was only used when a token was set, so following the
-  documented "leave the token blank for a public repo" advice silently fell through to
-  "no source configured".
-- Added "Try the example deck" to the Configure source dialog: one click points the
-  add-on at the public `internpearls-example-deck` demo repo, so someone with no deck
-  source of their own can watch a sync work end to end. It also points `scope_tag` and
-  `export_deck` at the example deck's values (only when they're still at their
-  defaults), so field preservation and the pre-sync backup work in the demo too;
-  configuring a GitHub repo or local folder later resets exactly those injected values.
-- The Sync completion dialog no longer claims a pre-sync backup was saved when none was
-  taken (first sync, or the backup failed and you chose to continue); it now says so.
-- "Check what will sync" can be run again after it completes (the button re-enables as
-  "Check again"), instead of sticking disabled at "Preview updated".
-- The background auto-sync poll's manifest fetch now actually uses the tight unattended
-  timeout the docs already claimed for it, rather than the interactive 6-second one.
-- Docs: token-optional-for-public-repos everywhere the token is mentioned; corrected
-  `decks_dir` precedence (GitHub wins when both are somehow set); noted that deck
-  backups live in `user_files/` and are removed by an add-on uninstall.
+A GitHub token is optional for a public repo, and a new Try the example deck button
+sets up a demo source.
 
 ## v0.17.0
 
-- Cleaned up the menu bar. Top level is now just Sync decks and Manage decks; everything
-  occasional, including the manual "Check for add-on updates" (most people never need it
-  since the background notice already covers that job), moved under Advanced; Settings
-  and About now sit together at the bottom, in that order.
-- Configure deck source is no longer its own menu item. It lives inside Manage decks now,
-  behind a "Configure source" (nothing set up yet) or "Change source" (something is)
-  button next to the Source line, since it only ever mattered in the context of what
-  decks are available to manage.
-- Manage decks no longer dead-ends when no source is configured or the configured one is
-  unreachable. It still opens, with an empty deck list, the reason shown right in the
-  Source line, and the same button waiting, instead of a warning that sends you off to a
-  different menu item that no longer exists.
-- Tests: full coverage of the new bootstrap paths (nothing configured, source unreachable,
-  source working, and the change-source-then-reopen flow) plus an exact assertion on the
-  new menu structure, exercised against a mocked Anki environment.
+The top-level menu is Sync decks and Manage decks; the rest moved under Advanced.
+Configure source lives inside Manage decks.
 
 ## v0.16.0
 
-- Fixed the root cause of "Check for add-on updates" sometimes not seeing a version
-  that had already shipped: the add-on's own version check fetched `version.json` from
-  `raw.githubusercontent.com`, a CDN endpoint that can lag well behind a push. Confirmed
-  directly: right after a push, the GitHub contents API reflected the new file
-  immediately while the raw CDN link for the same file and branch still served the old
-  one more than two minutes later. Both the version check and the package download now
-  go through the contents API instead, the same way deck content already did.
-- Added a Settings dialog (moved out of Manage decks, since "which decks" and "how
-  automatic" are different kinds of choices): sync automation and add-on update
-  behavior in one place, with an interval field instead of a fixed hourly check.
-- Added "Install add-on updates automatically," off by default, alongside the existing
-  notify-only option. When on, a newer version downloads and installs itself as part of
-  the once-per-launch check; a restart is still needed to load it either way.
-- Lowered the auto-sync poll's default to 15 minutes and its floor to 1 minute (previously
-  60 and 15), so decks that need to land within the hour actually can. To make a 1-minute
-  floor safe, both background checks (add-on updates and the deck poll) now run their
-  network fetch through Anki's QueryOp, off the main thread, so neither one can freeze
-  Anki no matter how often it fires. Only backing up and importing, which happens on the
-  main thread just like a manual sync, and only once something actually changed, is
-  unaffected; the check that runs constantly is what needed to stop blocking. Falls back
-  to a short, bounded synchronous call on an Anki build old enough to lack QueryOp.
-- Generalized "Notes restored on N card(s)" to "Preserved fields restored on N card(s)"
-  everywhere it appears, since the add-on has supported any configured field, or
-  several, for a while now, not just Notes.
-- Expanded About: it now shows your current auto-sync, add-on update, and preserved-
-  field settings, not just a static description.
-- Test suite grown to 51: full coverage of the new pure decision logic (interval
-  clamping, which action a version check should take given the notify/auto-update
-  toggles) plus the auto-sync fetch/apply split and the QueryOp/fallback dispatch,
-  exercised with a mocked Anki environment.
+Faster update detection, a Settings dialog, and an option to install add-on updates
+automatically. Auto-sync defaults to every 15 minutes and checks off the main thread.
 
 ## v0.15.0
 
-- Startup update notice: once per launch, a silent check compares your version against
-  the public repo's and shows a brief tooltip if a newer one exists, at most once per
-  new release, not every launch. Never auto-installs; "Check for add-on updates" is
-  still the explicit action that does that. Fixes the confusing case where pushing a
-  fix to GitHub doesn't change what's running until you notice and update yourself.
-  Toggle with the new `notify_addon_updates` config key (default on).
-- Auto-sync decks: a new checkbox in Manage decks ("Automatically sync when updates are
-  available", off by default). When on, decks sync in the background (once shortly
-  after startup, then on a repeating poll, default every 60 minutes, floored at 15)
-  without asking each time. A backup is still taken first, same guarantee as a manual
-  sync; if the backup fails, that round is skipped rather than importing unprotected.
-  Results show as a transient tooltip, never a blocking dialog, since this can fire
-  mid-review. Toggling the checkbox takes effect immediately, no restart needed.
-- The interactive Sync decks and the new background auto-sync now share one
-  implementation of the actual import sequence (`_run_sync`) instead of two, so there's
-  exactly one place the history-preserving logic lives.
-- GitHub load at the default cadence is trivial: one small `manifest.json` fetch per
-  poll, well under the unauthenticated 60-req/hour limit even at the 15-minute floor.
+A startup notice shows when a newer add-on version exists, and a new auto-sync option
+(off by default) backs up first and skips the round if the backup fails.
 
 ## v0.14.1
 
-- When every deck in Manage decks is already up to date, the "Check what will sync"
-  button now shows "All decks up to date" and is disabled, instead of looking like
-  there's something to check and then reporting nothing on click.
+Check what will sync is disabled when every deck is up to date.
 
 ## v0.14.0
 
-- Manage decks can now preview changes in place: a "Check what will sync" button
-  downloads the changed decks and fills in each row with how many cards would update in
-  place (history kept) vs. be added as new. It is read-only; nothing is imported. It runs on
-  click, not on open, so the panel still opens instantly.
-- Retired the separate Preview sync menu item; it's now fully covered by the button
-  above, so there's one place to see what a sync will do instead of two. (Sync decks
-  still shows its own confirmation and backs up before importing.)
+Manage decks has a Check what will sync button, replacing the Preview sync menu item.
 
 ## v0.13.1
 
-- Clearer Manage decks flow. After Save (without syncing), the confirmation now says
-  plainly that nothing has synced yet and to run Sync decks when ready, instead of the
-  misleading "N decks will sync". Added an inline hint next to the buttons explaining
-  that Save keeps the choices for the next sync while Save and sync now also pulls right
-  away.
-- Decluttered the top menu: Preview sync moved under Advanced (Sync decks already shows
-  a per-deck confirmation and takes a backup, so a separate dry run is a power-user
-  tool, not a primary action). Top level is now Sync decks, Manage decks, Configure
-  deck source, Check for add-on updates.
-- Field parsing for the preserved-fields box moved into a tested pure helper
-  (`parse_fields`) that also de-dupes.
+Clearer Manage decks save messages, and Preview sync moved under Advanced.
 
 ## v0.13.0
 
-- Added Manage decks: a clean panel listing every deck the source offers, each with a
-  checkbox and a status pill (New / Update available / Up to date) and its card count.
-  Uncheck a deck to stop syncing it (already-imported cards are left alone); Select
-  all / none for quick toggling. Sync and Preview sync now honor the selection.
-- The same panel edits Preserved fields (the fields snapshotted and restored around
-  every import so your personal annotations are never overwritten), which was previously only
-  reachable by hand-editing the add-on config.
-- Save, or Save and sync now, straight from the panel.
-- New config key `excluded_decks` backs the selection; an empty list (the default)
-  syncs everything, so existing setups are unchanged.
+New Manage decks panel: choose which decks to sync and edit Preserved fields
+(`excluded_decks`).
 
 ## v0.12.1
 
-- Fixed the biggest source of post-sync friction: after syncing, AnkiWeb often forced a
-  one-way "upload from local" full sync instead of a normal incremental one. Cause: the
-  importer ran with `merge_notetypes=True`, which rewrites note types on every import and
-  bumps Anki's schema modification time, and any schema change forces AnkiWeb into a
-  full sync. Imports now run with `merge_notetypes=False`; note types are still kept
-  compatible ahead of time by the existing Fix-note-types step, which only touches the
-  schema when it genuinely adds a missing field. Steady-state syncs now leave the schema
-  alone, so AnkiWeb stays incremental. (Trade-off: a changed card *template/CSS* no
-  longer propagates automatically. Run Advanced → Fix note types, or accept one full
-  sync, when a template itself changes.)
-- Fail fast when offline: network calls used a 30-second timeout on Anki's UI thread, so
-  an unreachable host or captive portal froze the app (beachball) for 10+ seconds.
-  First-contact calls (manifest, update check) now use a 6-second timeout and show a
-  clear "network isn't responding" message; only the actual deck download keeps a longer
-  timeout, and it's reached only after connectivity is already confirmed.
+Imports use `merge_notetypes=False`, so AnkiWeb no longer asks for a full sync after
+every deck update. Network checks time out instead of freezing Anki.
 
 ## v0.12.0
 
-- Added Preview sync: a dry run that shows exactly what Sync would change (per deck,
-  how many cards update in place with history kept versus get added as new) without
-  taking a backup, importing, or writing anything. The "show me first" companion to
-  Sync decks.
-- Factored the "which decks are pending" decision into `logic.decks_to_update` so Sync
-  and Preview sync compute the identical set and can't drift apart.
+New Preview sync shows what a sync would change without changing anything.
 
 ## v0.11.0
 
-- Sync's confirmation dialog now flags any deck you've never synced before as a new
-  deck, separately from its card count.
-- Network errors (bad token, wrong repo/branch, unreachable host) now show a specific,
-  actionable message instead of a raw urllib exception.
-- Every menu action is wrapped so an unexpected bug shows a plain warning dialog
-  instead of Anki's traceback box; the full traceback still prints to Anki's debug
-  console for troubleshooting.
-- Split the add-on's code: `internpearls/logic.py` holds everything that doesn't touch
-  `aqt`/`anki` (apkg reading/rewriting, GUID matching, version comparison), so it's
-  unit-testable with plain `pytest`, no Anki install needed. Added a test suite
-  covering it.
-- Deck `.apkg` and spec paths in the manifest can now include subfolders (the private
-  decks repo moved its built decks into a `decks/` folder); fixed a bug where the
-  GitHub-fetch path assumed a flat filename and would have failed to write the
-  downloaded file.
+Clearer error messages, a marker for new decks, and manifest paths with subfolders.
 
 ## v0.10.2
 
-- Fixed a factual error in About and the README: the add-on doesn't ship with any deck
-  content, it only syncs whatever you point it at.
-- "Notes restored on 0 card(s)" no longer shows on a fresh sync, where it's always zero
-  and reads like something's missing.
+About and the README say the add-on ships with no deck content.
 
 ## v0.10.1
 
-- Fixed a crash on every use of Import intern pearls deck (`getFile()` rejects being
-  passed both `dir` and `key`).
-- Removed Restore my notes. Modernizing Import single deck to do a full one-click
-  import, matching how Sync already worked, meant nothing wrote the notes-snapshot
-  file anymore, so the button had quietly stopped doing anything.
-- Renamed for consistency: Backup intern pearls deck now to Backup intern pearls deck,
-  Full collection backup now to Backup full collection, Restore from backup to Restore
-  full collection.
+Fixed a crash in Import intern pearls deck, removed Restore my notes, and renamed the
+backup items for consistency.
 
 ## v0.10.0
 
-- Dropped "..." from every menu item, including ones that open a file picker.
-- "Intern Pearls" goes lowercase inside Advanced submenu labels (still capitalized as
-  the top-level menu name and in dialog titles).
-- `export_deck` is a config key now instead of a hardcoded constant, so the
-  deck-scoped backup/export/import tools work against any deck hierarchy.
-- Added `config.md` so Anki's Config editor documents every key in place.
-- Expanded About and added a "Using this for your own decks" section to the README.
+No ellipses in menu items, `export_deck` is a config key, and `config.md` documents
+every config key.
 
 ## v0.9.0
 
-- The automatic pre-sync backup now defaults to a fast, self-contained export of just
-  the configured deck instead of the whole collection, pruned to the 10 most recent.
-- Added Backup/Import intern pearls deck (the deck-scoped pair) and Full collection
-  backup now (kept for anyone who wants broader protection).
-- On a genuinely first sync, before the deck exists, the backup step is skipped rather
-  than failing and asking to proceed.
+The automatic pre-sync backup exports only the configured deck and keeps the 10 most
+recent. Added deck backup and restore, and full collection backup.
 
 ## v0.8.0
 
-- Added Export intern pearls deck: a standalone `.apkg` of just the configured deck,
-  with scheduling, deck options, and media included, meant to be kept or shared.
+Added Export intern pearls deck.
 
 ## v0.7.1
 
-- Every dialog now carries the "Intern Pearls" title bar (Anki's helpers default to
-  the generic "Anki") and list-style messages render as real HTML bullets.
-- Dropped the ellipsis from "About", which doesn't need one.
+Every dialog carries the Intern Pearls title.
 
 ## v0.7.0
 
-- Fixed sync state getting reset on every add-on update: `installed.json` and the
-  notes snapshot used to live next to `__init__.py`, which Anki's add-on manager wipes
-  and re-extracts on every update. Both now live under `user_files/`, the one
-  subfolder Anki preserves across reinstalls.
-- Added Restore from backup, opening Anki's own backup picker.
+Sync state is kept in `user_files/`, so add-on updates no longer reset it. Added Restore
+from backup.
 
 ## v0.6.0
 
-- Sync decks and Import single deck take a real backup automatically before touching
-  anything, instead of just asking the user to remember to export one first.
-- Confirmation dialogs show per-deck card counts and say plainly what's about to happen.
-- Configure deck source became a proper multi-button dialog instead of a Yes/No
-  question standing in for a choice; the access token field is masked; saving tests
-  the connection immediately.
-- Fixed a silent failure: if the front-alias list can't be fetched, the user is now
-  warned instead of reworded cards quietly losing history.
+Sync decks and Import single deck back up automatically first, and confirmations show
+per-deck card counts.
 
 ## v0.5.1
 
-- Fixed menu items vanishing on macOS: Qt auto-detects labels like "Configure..." and
-  "About..." and relocates those actions into the native app menu, which can hide them
-  entirely if Anki already owns that role slot.
+Fixed menu items disappearing on macOS.
 
 ## v0.5.0
 
-- Adopted three-part semver (`0.5.0`, not `0.5`) and made the update comparator treat
-  `0.5` and `0.5.0` as equal.
+Version numbers use three parts.
 
 ## Earlier
 
-Menu, one-click history-safe sync (fix note types, snapshot notes, match GUIDs, import,
-restore notes), and GitHub-based distribution were built out before this changelog
-started; see the deck repo's own notes for that history.
+The menu, history-safe sync and GitHub-based distribution.
