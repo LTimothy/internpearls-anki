@@ -284,6 +284,10 @@ class _Models:
     def by_name(self, name):
         return next((m for m in self._models if m["name"] == name), None)
 
+    def get(self, mid):
+        """Anki's models.get(): the note type with that id, None if there is none."""
+        return next((m for m in self._models if m["id"] == mid), None)
+
     def new_field(self, name):
         return {"name": name}
 
@@ -418,9 +422,28 @@ class _Db:
         return [n.id for n in sorted(self._col._notes.values(), key=lambda n: n.id)
                 if n.guid in guids]
 
-    def all(self, query, *_args):
-        """The one join collection._note_rows_sql runs: (nid, flds, mid, did, odid)
-        per note with at least one card, first card standing in for `group by`."""
+    def all(self, query, *args):
+        """The two joins collection.py runs. _note_rows_sql: (nid, flds, mid, did, odid)
+        per note with at least one card, first card standing in for `group by`.
+        _scoped_notes: one row per card of each listed note, (nid, guid, mid, flds,
+        cid, did, odid, reps), a card-less note as one row of NULL card columns."""
+        scoped = re.fullmatch(
+            r"select n\.id, n\.guid, n\.mid, n\.flds, c\.id, c\.did, c\.odid, c\.reps "
+            r"from notes n left join cards c on c\.nid = n\.id "
+            r"where n\.id in \((\d+(?:,\d+)*)\) order by n\.id, c\.ord, c\.id", query)
+        if scoped:
+            assert not args, args
+            wanted = {int(i) for i in scoped.group(1).split(",")}
+            rows = []
+            for n in sorted(self._col._notes.values(), key=lambda n: n.id):
+                if n.id not in wanted:
+                    continue
+                head = (n.id, n.guid, n.model["id"], FS.join(n.fields))
+                cards = sorted((self._col._cards[c] for c in n._card_ids),
+                               key=lambda c: (c.ord, c.id))
+                rows += [head + (c.id, c.did, getattr(c, "odid", 0) or 0, c.reps)
+                         for c in cards] or [head + (None, None, None, None)]
+            return rows
         assert "from notes n join cards c" in query, query
         rows = []
         for n in sorted(self._col._notes.values(), key=lambda n: n.id):

@@ -601,18 +601,40 @@ class _NoteIdentity(dict):
         self.guids = set()
 
 
-def _existing_front_to_guid(scope_tag):
+def _scoped_notes(scope_tag, exclude_tag=None):
+    """`[(nid, guid, mid, fields, cards)]` for every note under the scope tag, in
+    find_notes order, `cards` being `[(home did, reps)]` in card_ids() order. One query
+    instead of a get_note, card_ids and get_card per note, which on a real collection
+    froze the main thread on every auto-sync check."""
     search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    if exclude_tag:
+        search = f'({search}) -"tag:{exclude_tag}"'
+    nids = mw.col.find_notes(search)
+    if not nids:
+        return []
+    notes = {}
+    # Ids inlined rather than bound: a large scope would pass SQLite's variable limit.
+    for nid, guid, mid, flds, cid, did, odid, reps in mw.col.db.all(
+            "select n.id, n.guid, n.mid, n.flds, c.id, c.did, c.odid, c.reps "
+            "from notes n left join cards c on c.nid = n.id "
+            f"where n.id in ({','.join(str(int(i)) for i in nids)}) "
+            "order by n.id, c.ord, c.id"):
+        note = notes.setdefault(nid, (nid, guid, mid, flds.split("\x1f"), []))
+        if cid is not None:
+            note[4].append((odid or did, reps))
+    return [notes[nid] for nid in nids if nid in notes]
+
+
+def _existing_front_to_guid(scope_tag):
     out = _NoteIdentity()
     ambiguous = set()
-    for nid in mw.col.find_notes(search):
-        note = mw.col.get_note(nid)
-        out.guids.add(note.guid)
-        front = note.fields[0]
-        if front in out and out[front] != note.guid:
+    for _nid, guid, _mid, fields, _cards in _scoped_notes(scope_tag):
+        out.guids.add(guid)
+        front = fields[0]
+        if front in out and out[front] != guid:
             ambiguous.add(front)
         else:
-            out[front] = note.guid
+            out[front] = guid
     for front in ambiguous:
         out.pop(front, None)
     return out
@@ -636,12 +658,12 @@ def _existing_guid_to_fields(scope_tag):
     position, so this zips each note's values against its own note type's field names
     rather than assuming every note type agrees on an order.
     """
-    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    names = {}
     out = {}
-    for nid in mw.col.find_notes(search):
-        note = mw.col.get_note(nid)
-        names = [f["name"] for f in note.note_type()["flds"]]
-        out[note.guid] = dict(zip(names, note.fields))
+    for _nid, guid, mid, fields, _cards in _scoped_notes(scope_tag):
+        if mid not in names:
+            names[mid] = [f["name"] for f in mw.col.models.get(mid)["flds"]]
+        out[guid] = dict(zip(names[mid], fields))
     return out
 
 
@@ -649,8 +671,7 @@ def _existing_guid_to_nid(scope_tag):
     """{note guid: note id} for every card under the scope tag. The reconcile flow needs
     to go from a retired card's GUID (what the ledger lists) back to the learner's note
     to archive it."""
-    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
-    return {mw.col.get_note(nid).guid: nid for nid in mw.col.find_notes(search)}
+    return {guid: nid for nid, guid, *_rest in _scoped_notes(scope_tag)}
 
 
 def _home_did(card):
@@ -658,19 +679,21 @@ def _home_did(card):
     return getattr(card, "odid", 0) or card.did
 
 
+def _deck_names():
+    """{deck id: name} in one call; a card's deck id missing from it (a damaged
+    collection) still gets whatever decks.name says."""
+    names = {d.id: d.name for d in mw.col.decks.all_names_and_ids()}
+    return lambda did: names.get(did) or mw.col.decks.name(did)
+
+
 def _existing_guid_to_deck(scope_tag):
     """{note guid: current deck name} for every note under the scope tag, keyed off
     its first card's deck (all cards of a note normally share one deck). The deck-move
     step needs this to tell "still where the source last filed it" (safe to relocate)
     from "the learner has moved or customized it themself" (leave it alone)."""
-    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
-    out = {}
-    for nid in mw.col.find_notes(search):
-        note = mw.col.get_note(nid)
-        cids = note.card_ids()
-        if cids:
-            out[note.guid] = mw.col.decks.name(_home_did(mw.col.get_card(cids[0])))
-    return out
+    deck_name = _deck_names()
+    return {guid: deck_name(cards[0][0])
+            for _nid, guid, _mid, _fields, cards in _scoped_notes(scope_tag) if cards}
 
 
 def _existing_notes_summary(scope_tag, exclude_tag=None):
@@ -682,25 +705,22 @@ def _existing_notes_summary(scope_tag, exclude_tag=None):
     duplicate-cleanup run already archived (see sync.clean_up_duplicates) is never
     considered again, making a repeat run idempotent on what it already handled.
     """
-    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
-    if exclude_tag:
-        search = f'({search}) -"tag:{exclude_tag}"'
+    deck_name = _deck_names()
+    models = {}
     out = []
-    for nid in mw.col.find_notes(search):
-        note = mw.col.get_note(nid)
-        cids = note.card_ids()
-        if not cids:
+    for nid, guid, mid, fields, cards in _scoped_notes(scope_tag, exclude_tag):
+        if not cards:
             continue
-        reps = sum(mw.col.get_card(cid).reps for cid in cids)
-        deck = mw.col.decks.name(_home_did(mw.col.get_card(cids[0])))
+        if mid not in models:
+            models[mid] = mw.col.models.get(mid)["name"]
         out.append({
-            "guid": note.guid,
+            "guid": guid,
             "nid": nid,
-            "model": note.note_type()["name"],
-            "front": note.fields[0],
-            "label": note_display_label(note.fields),
-            "reps": reps,
-            "deck": deck,
+            "model": models[mid],
+            "front": fields[0],
+            "label": note_display_label(fields),
+            "reps": sum(reps for _did, reps in cards),
+            "deck": deck_name(cards[0][0]),
         })
     return out
 

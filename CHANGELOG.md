@@ -10,6 +10,7 @@ this repo's `README.md` ("Versioning"). Restart Anki after installing any update
 - Automatic sync waits while the AI card generator or the duplicate scan is open.
 - Judge with AI runs with no tools or web access, so it uses Claude Code or Codex CLI,
   never Antigravity CLI.
+- Automatic sync checks no longer freeze Anki for a moment on a large collection.
 - Claude Code runs no longer load your own MCP servers, and on an older Claude Code
   its file tools are approved only inside the scratch folder.
 - Codex CLI runs can no longer write to the system temp folders or use the network

@@ -9644,7 +9644,7 @@ def test_multi_deck_collection_read_counts(anki, tmp_path, monkeypatch):
     idle = {name: reader.call_count for name, reader in readers.items()}
     print('collection reads', {'update': update, 'idle': idle})
     assert update['get_note'] < 300000
-    assert idle['get_note'] == 5100
+    assert idle['get_note'] == 0 and idle['get_card'] == 0
 
 
 def test_collection_marker_catches_edits_with_the_same_timestamp(anki, monkeypatch):
