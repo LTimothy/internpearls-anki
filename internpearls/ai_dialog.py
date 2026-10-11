@@ -322,11 +322,12 @@ def _resolve_one_image(im, scratch):
         return err
 
 
-def _resolve_with_thumb(im, scratch, i, j):
+def _resolve_with_thumb(im, scratch, i, j, cancelled=lambda: False):
     """_resolve_one_image, plus a thumbnail file for a picture that only exists in
-    memory (a download or a drawn figure), so Qt has a path to load it from."""
+    memory (a download or a drawn figure), so Qt has a path to load it from. A run
+    cancelled while it downloaded writes none: a newer run may own that name now."""
     res = _resolve_one_image(im, scratch)
-    if res["state"] == "ok" and res["kind"] != "attached":
+    if res["state"] == "ok" and res["kind"] != "attached" and not cancelled():
         ext = res["ext"] if res["kind"] == "url" else "svg"
         thumb = os.path.join(scratch, f"_thumb-{i}-{j}.{ext}")
         try:
@@ -2557,7 +2558,8 @@ class _GenerateDialog(QDialog):
                         per.append({"state": "error", "kind": "cancelled",
                                    "error": "cancelled"})
                         continue
-                    res = _resolve_with_thumb(im, private_scratch, i, image_index)
+                    res = _resolve_with_thumb(im, private_scratch, i, image_index,
+                                              context.cancelled)
                     context.checkpoint(
                         f"image:{i + 1}:{image_index + 1}:publish")
                     per.append(res)
@@ -2594,7 +2596,8 @@ class _GenerateDialog(QDialog):
     def _poll_image_worker(self):
         if self._img_done:
             return
-        if self._img_worker.is_alive():
+        # Cancel only reaches the worker between downloads, and one can run a minute.
+        if self._img_worker.is_alive() and not self._img_cancel_flag.is_set():
             return
         if not self._img_ready:
             return   # awaiting delivery; see _poll_worker on why not processEvents

@@ -1264,6 +1264,37 @@ def test_image_card_whose_image_failed_starts_excluded(anki, monkeypatch):
     assert dlg.session.included == [False]
 
 
+def test_cancel_during_image_resolution_leaves_without_waiting_for_the_download(
+        anki, monkeypatch):
+    import threading
+    started, release = threading.Event(), threading.Event()
+
+    def stalled(url):
+        started.set()
+        release.wait(15)
+        return b"PNGDATA", "png"
+
+    monkeypatch.setattr(ai_dialog, "fetch_card_image", stalled)
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")
+    dlg._start_generation()
+    dlg._worker.join(15)
+    wait_for_mock_work(dlg._worker)
+    dlg._timer.fire()
+    assert started.wait(5)
+
+    dlg._cancel_generation()
+    dlg._img_timer.fire()
+    assert dlg.stack.currentWidget() is dlg.input_page
+    assert dlg._img_worker.is_alive()   # the download is still stuck
+
+    release.set()
+    dlg._img_worker.join(5)
+    # A late download from the cancelled run must not leave a thumbnail behind for a
+    # new run's card to pick up.
+    assert not [n for n in os.listdir(dlg.session.scratch) if n.startswith("_thumb-")]
+    assert not anki.gui.warnings
+
+
 def _failed_image_dialog(anki, monkeypatch):
     _stub_fetch_image(monkeypatch, error="network is down")
     dlg = _ready_dialog(anki, monkeypatch, cli_mode="with_image")

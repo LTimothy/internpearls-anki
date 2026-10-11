@@ -11,6 +11,8 @@ this repo's `README.md` ("Versioning"). Restart Anki after installing any update
   is asked about on its own, with how many notes and No as the default.
 - Cancel during AI card generation goes back to your inputs or draft instead of
   staying on the progress screen.
+- Cancel while card pictures download takes effect at once rather than after the
+  download finishes.
 - Automatic sync waits while the AI card generator or the duplicate scan is open.
 - Judge with AI runs with no tools or web access, so it uses Claude Code or a Codex CLI
   that can skip your own Codex config, never Antigravity CLI.
