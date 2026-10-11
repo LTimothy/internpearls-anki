@@ -2143,10 +2143,9 @@ def test_depth_row_reads_the_assistants_own_decision(anki, monkeypatch):
 
 def test_depth_row_names_what_each_backend_actually_does(anki, monkeypatch):
     """The Cards-and-depth row's detail is derived from ai_cli.BACKENDS' own
-    per-mode description, not a hardcoded clause: Codex's sandbox in Thorough
-    allows writes inside scratch but no network unless Codex is configured
-    for it, and the row has to say so rather than repeating claude's "may
-    verify online" story for every backend."""
+    per-mode description, not a hardcoded clause: Codex in Thorough reads
+    anywhere but writes only inside scratch, and the row has to say so rather
+    than repeating claude's "may verify online" story for every backend."""
     dlg = _ready_dialog(anki, monkeypatch)
     dlg.thorough_radio.setChecked(True)
     claude_text = dlg.depth_row.text()
@@ -2156,7 +2155,7 @@ def test_depth_row_names_what_each_backend_actually_does(anki, monkeypatch):
     codex_text = dlg.depth_row.text()
 
     assert claude_text != codex_text
-    assert "sandbox" in codex_text.lower()
+    assert "write only in the scratch folder" in codex_text.lower()
     assert "verify" in codex_text and "online" in codex_text
 
 

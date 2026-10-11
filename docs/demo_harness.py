@@ -40,6 +40,10 @@ SOURCE = os.environ.get("DEMO_SOURCE", "/source")   # env override for local smo
 INTERVALS = ["2.3 mo", "11 d", "27 d", "6 d", "3.1 mo", "16 d", "9 d", "1.2 mo"]
 SEED_NOTES = {0: "mnemonic: A for A", 4: "review the dosing example"}
 
+# Outside user_files, so replay snapshots skip downloaded decks and test runs of
+# this harness never write into the package's own folder.
+sync.DECK_CACHE = tempfile.mkdtemp(prefix="internpearls-demo-cache-")
+
 RUNNER = mock_anki.Runner(MOCK, paths=[config.INSTALLED, config.STATE,
                                        collection._USER_FILES, SOURCE])
 

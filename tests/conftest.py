@@ -118,6 +118,9 @@ def anki(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AI_DRAFT", str(user_files / "ai_draft.json"), raising=False)
     monkeypatch.setattr(config, "LATER_SEEN", str(user_files / "later_seen.json"))
     monkeypatch.setattr(config, "USER_SKILL", str(user_files / "user_skill.md"))
+    for mod in (config, sync):
+        monkeypatch.setattr(mod, "DECK_CACHE", str(user_files / "deck_cache"))
+    monkeypatch.setattr(sync, "_scratch_dir", None)
     background._memories.clear()   # session-scoped auto-sync memory, same reason
     sync.undone_updates.clear()
     sync._update_undo_steps.clear()

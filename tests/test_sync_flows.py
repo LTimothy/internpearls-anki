@@ -5720,6 +5720,31 @@ def test_two_deck_paths_never_share_a_scratch_file(anki):
     assert sync._scratch_path("decks/basics/Deck.apkg").endswith("Deck.apkg")
 
 
+def test_scratch_dir_lives_in_the_deck_cache_and_clears_earlier_sessions(anki, tmp_path):
+    """Not the system temp dir, which an AI backend's sandbox can write to. Earlier
+    sessions' dirs go, since user_files outlives every session."""
+    import shutil
+    import stat
+    from internpearls import config, sync
+
+    cache = config.DECK_CACHE
+    assert cache.startswith(str(tmp_path))
+    assert sync.DECK_CACHE == cache
+    os.makedirs(os.path.join(cache, "internpearls-old"))
+    os.makedirs(os.path.join(cache, "not-ours"))
+
+    current = sync._scratch()
+    assert os.path.dirname(current) == cache
+    assert stat.S_IMODE(os.stat(current).st_mode) == 0o700
+    assert not os.path.exists(os.path.join(cache, "internpearls-old"))
+    assert os.path.isdir(os.path.join(cache, "not-ours"))
+    assert sync._scratch() == current
+
+    shutil.rmtree(current)
+    again = sync._scratch()
+    assert again != current and os.path.isdir(again)
+
+
 def test_a_download_is_renamed_into_place_rather_than_written_over(anki, monkeypatch):
     """The background poll writes these from a worker thread while an interactive
     preview can be reading the same keyed path. A plain write is readable half finished;

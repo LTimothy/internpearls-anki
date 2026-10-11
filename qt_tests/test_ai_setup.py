@@ -464,7 +464,9 @@ def test_ai_backends_rows_show_the_v0_60_default_and_setting_wording(
     dlg = _dialog(monkeypatch, found=("claude", "codex", "agy"))
     monkeypatch.setattr(ai_cli, "configured_default",
                         lambda path=None: ("gpt-5.1-codex", "high"))
-    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    # A codex that skips its config file would not use that model.
+    monkeypatch.setattr(ai_cli, "supports_flag",
+                        lambda path, flag, **kw: flag != "--ignore-user-config")
     mw.addonManager.writeConfig("internpearls", {
         **mw.addonManager.getConfig("internpearls"),
         "ai_model": {"claude": "opus", "codex": "", "agy": ""},

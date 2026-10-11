@@ -79,15 +79,16 @@ def user_files(tmp_path, monkeypatch):
         monkeypatch.setattr(mod, "_USER_FILES", str(folder))
     for name in ("INSTALLED", "STATE", "FEEDBACK", "SHIPPED", "DECLINED",
                  "DECK_SKILL", "AI_USAGE", "AI_LAST_RUN_LOG", "AI_DRAFT",
-                 "LATER_SEEN", "USER_SKILL", "_new"):
+                 "LATER_SEEN", "USER_SKILL", "DECK_CACHE", "_new"):
         monkeypatch.setattr(config, name, str(folder / os.path.basename(getattr(config, name))))
     # Direct imports keep their own path bindings; harness overrides still run afterward.
     for mod, names in ((background, ("INSTALLED", "STATE")),
                        (collection, ("INSTALLED", "SHIPPED")),
                        (dialogs, ("INSTALLED", "STATE")),
-                       (sync, ("INSTALLED", "SHIPPED")),
+                       (sync, ("INSTALLED", "SHIPPED", "DECK_CACHE")),
                        (updates, ("STATE",)),
                        (review, ("FEEDBACK",)),
                        (ai_dialog, ("AI_LAST_RUN_LOG",))):
         for name in names:
             monkeypatch.setattr(mod, name, getattr(config, name))
+    monkeypatch.setattr(sync, "_scratch_dir", None)

@@ -650,6 +650,45 @@ def test_build_argv_codex_judge_is_read_only_without_search(monkeypatch):
     assert "--search" not in argv
 
 
+_CODEX_SANDBOX_OVERRIDES = ("sandbox_workspace_write.exclude_tmpdir_env_var=true",
+                            "sandbox_workspace_write.exclude_slash_tmp=true",
+                            "sandbox_workspace_write.network_access=false")
+
+
+@pytest.mark.parametrize("mode", ["quick", "thorough", "judge"])
+def test_build_argv_codex_keeps_writes_to_scratch_and_skips_user_config(
+        monkeypatch, mode):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", mode, "/tmp/s", [])
+    after_exec = argv[argv.index("exec") + 1:]
+    for setting in _CODEX_SANDBOX_OVERRIDES:
+        assert after_exec[after_exec.index(setting) - 1] == "-c"
+    assert "--ignore-user-config" in after_exec
+
+
+def test_build_argv_codex_keeps_user_config_flag_off_when_unsupported(monkeypatch):
+    seen = []
+
+    def fake_supports_flag(path, flag, subcommand=None):
+        seen.append((flag, subcommand))
+        return flag != "--ignore-user-config"
+    monkeypatch.setattr(ai_cli, "supports_flag", fake_supports_flag)
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "thorough", "/tmp/s", [])
+    assert ("--ignore-user-config", "exec") in seen
+    assert "--ignore-user-config" not in argv
+    for setting in _CODEX_SANDBOX_OVERRIDES:
+        assert setting in argv
+
+
+def test_codex_safety_text_does_not_claim_reads_are_confined():
+    safety = ai_cli.BACKENDS["codex"]["safety"].lower()
+    assert "commands and writes confined" not in safety
+    assert "read any file" in safety
+    assert "network" in safety
+    assert "config file" in safety
+    assert "config file" not in ai_cli.BACKENDS["codex"]["model_hint"]
+
+
 def test_build_argv_agy_refuses_judge(monkeypatch):
     monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
     with pytest.raises(ai_cli.GenerationError):
@@ -1075,8 +1114,10 @@ def test_codex_argv_sandbox_differs_by_mode_and_text_matches():
     modes = ai_cli.BACKENDS["codex"]["modes"]
     for text in modes.values():
         assert "verifies facts online" not in text.lower()
-    assert "sandbox" in modes["thorough"].lower()
-    assert "read-only" in modes["quick"].lower()
+    assert "write only in the scratch folder" in modes["thorough"].lower()
+    assert "write nothing" in modes["quick"].lower()
+    for text in modes.values():
+        assert "read any file" in text.lower()
 
 
 def test_agy_argv_is_mode_invariant_so_quick_must_not_claim_no_web_access():
@@ -1285,6 +1326,15 @@ def test_model_effort_line_codex_names_its_own_default_when_config_is_bare(
         monkeypatch):
     monkeypatch.setattr(ai_cli, "configured_default", lambda path=None: ("", ""))
     assert ai_cli.model_effort_line("codex", "", "") == "Model: Codex's own default"
+
+
+def test_model_effort_line_codex_skips_its_config_when_runs_ignore_it(monkeypatch):
+    monkeypatch.setattr(ai_cli, "configured_default",
+                        lambda path=None: ("gpt-5.1-codex", "high"))
+    monkeypatch.setattr(ai_cli, "supports_flag",
+                        lambda path, flag, **kw: flag == "--ignore-user-config")
+    assert (ai_cli.model_effort_line("codex", "", "", path="/bin/codex")
+            == "Model: Codex's own default")
 
 
 def test_model_effort_line_codex_your_setting_skips_the_config_file(

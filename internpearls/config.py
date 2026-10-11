@@ -75,6 +75,9 @@ DECLINED = os.path.join(_USER_FILES, "declined.json")
 # How many Later cards the startup reminder last mentioned, so it speaks again only
 # when the count grows.
 LATER_SEEN = os.path.join(_USER_FILES, "later_seen.json")
+# Per-session dirs of downloaded decks; kept out of the system temp dir, which an
+# AI backend's sandbox may be able to write.
+DECK_CACHE = os.path.join(_USER_FILES, "deck_cache")
 
 AUTO_SYNC_INTERVAL_FLOOR_MIN = 1     # refuse to poll more often than this, however configured
 AUTO_SYNC_INTERVAL_DEFAULT_MIN = 15  # used when the setting is missing or unreadable

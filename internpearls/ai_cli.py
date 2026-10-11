@@ -5,7 +5,8 @@ No aqt imports: callers hand in paths and callbacks, so this stays testable
 with a fake CLI script. The security posture lives in build_argv: no backend
 ever gets shell access; thorough mode allowlists a small set of file and web
 tools, confined to the scratch folder (claude: --restricted plus an
-allowlist; codex: an OS sandbox around the scratch cwd); quick stays
+allowlist; codex: an OS sandbox that reads anywhere but writes only to the
+scratch cwd, with no shell network); quick stays
 tool-free except claude's Read, scoped to the scratch dir, when images are
 attached (that is how it views them). judge (the duplicate scan's verdicts) gets
 no tools at all, and claude never loads the user's MCP servers.
@@ -66,9 +67,9 @@ BACKENDS = {
                               "messages a day; more on Go, Plus, or Pro)",
               "free_tier": "capped",
               "install_url": "https://github.com/openai/codex",
-              "safety": "OS sandbox: commands and writes confined to the "
-                       "scratch folder; Codex's own web search is on when this "
-                       "version has it",
+              "safety": "Can read any file you can, writes only to the "
+                       "scratch folder (Thorough), no shell network; web search "
+                       "on and your Codex config file skipped if supported",
               # No forced default here: --model is only passed when the user sets
               # one (see build_argv), and only when supports_flag confirms this
               # codex actually documents it (probed as `codex exec --help`, where
@@ -79,16 +80,16 @@ BACKENDS = {
               "default_effort": "",
               "model_aliases": [],
               "model_hint": "e.g. gpt-5.1-codex, o3, or a full model name; leave "
-                            "blank to use the model set in codex's own "
-                            "config file",
+                            "blank to use codex's default model",
               "modes": {
                   "thorough": "Thorough: asked to draft, verify online with "
                               "Codex's web search, then self-review; commands "
-                              "sandboxed to the scratch folder, writes allowed "
-                              "there (1 to 3 min)",
+                              "can read any file you can and write only in the "
+                              "scratch folder (1 to 3 min)",
                   "quick": "Quick draft: asked for a single pass with no "
                           "verification, but it may search the web for card "
-                          "images; commands sandboxed read-only (15 s to 1 min)"}},
+                          "images; commands can read any file you can and "
+                          "write nothing (15 s to 1 min)"}},
     "agy": {"label": "Antigravity CLI", "exe": "agy",
             "subscription": "Google account (free tier, throttled)",
             "free_tier": "throttled",
@@ -462,6 +463,10 @@ def model_effort_line(kind, cfg_model="", cfg_effort="", path=None):
         effort = cfg_effort or meta["default_effort"]
         tag = "your setting"
     elif kind == "codex":
+        # build_argv skips codex's config file when this binary allows it.
+        if path is not None and supports_flag(path, "--ignore-user-config",
+                                              subcommand="exec"):
+            return "Model: Codex's own default"
         model, effort = configured_default()
         if not model:
             return "Model: Codex's own default"
@@ -643,14 +648,23 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
             argv += ["--permission-mode", "acceptEdits"]
         return argv, True
     if kind == "codex":
-        # Thorough gets a real OS sandbox around scratch (reads and writes
-        # there, nothing outside it); quick stays read-only, tool-free.
+        # Thorough may write in scratch; quick and judge write nothing. Reads
+        # are never confined by codex's sandbox.
         sandbox = "workspace-write" if mode == "thorough" else "read-only"
         # --search is top-level: `codex exec --search` is a parse error.
         search = (["--search"] if mode != "judge" and supports_flag(path, "--search")
                   else [])
         argv = [path] + search + ["exec", "--json", "--sandbox", sandbox,
-                                  "--skip-git-repo-check", "-C", scratch]
+                                  "--skip-git-repo-check", "-C", scratch,
+                                  # Without these, workspace-write also opens /tmp
+                                  # and $TMPDIR, and shell network follows the
+                                  # user's config.
+                                  "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+                                  "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
+                                  "-c", "sandbox_workspace_write.network_access=false"]
+        # Drops the user's MCP servers and settings; an older codex lacks it.
+        if supports_flag(path, "--ignore-user-config", subcommand="exec"):
+            argv += ["--ignore-user-config"]
         if model and supports_flag(path, "--model", subcommand="exec"):
             argv += ["--model", model]
         for p in _image_args(scratch, image_paths):

@@ -12,6 +12,11 @@ this repo's `README.md` ("Versioning"). Restart Anki after installing any update
   never Antigravity CLI.
 - Claude Code runs no longer load your own MCP servers, and on an older Claude Code
   its file tools are approved only inside the scratch folder.
+- Codex CLI runs can no longer write to the system temp folders or use the network
+  from the shell, and skip your own Codex config (MCP servers, settings) when your
+  Codex supports that. The AI Backends text now says Codex can read any file you can.
+- Downloaded decks wait for import in the add-on's own folder instead of the system
+  temp folder, and leftovers from earlier sessions are cleared.
 
 ## v0.83.0
 

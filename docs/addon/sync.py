@@ -15,6 +15,7 @@ import html
 import json
 import os
 import re
+import shutil
 import stat
 import tempfile
 import weakref
@@ -38,7 +39,8 @@ from .collection import (NoteTypeFieldsRequired, _NoteTypeCache, _apply_deck,
                          archive_notes, carry_over_protected_fields,
                          carry_scheduling_forward, decks_holding,
                          installed_matching_collection, invalidate_installed)
-from .config import (ADDON_VERSION, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_DECK_LEAF,
+from .config import (ADDON_VERSION, DECK_CACHE, DUPLICATE_TAG_LEAF, INSTALLED,
+                     RETIRED_DECK_LEAF,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, collection_key, load_declined, load_deck_skill,
                      replace_file, save_declined, save_deck_skill, save_later_seen)
@@ -113,7 +115,13 @@ def _scratch():
     """
     global _scratch_dir
     if _scratch_dir is None or not os.path.isdir(_scratch_dir):
-        _scratch_dir = tempfile.mkdtemp(prefix="internpearls-")
+        os.makedirs(DECK_CACHE, exist_ok=True)
+        _scratch_dir = tempfile.mkdtemp(prefix="internpearls-", dir=DECK_CACHE)
+        # user_files outlives sessions, so earlier sessions' dirs would pile up.
+        for name in os.listdir(DECK_CACHE):
+            path = os.path.join(DECK_CACHE, name)
+            if name.startswith("internpearls-") and path != _scratch_dir:
+                shutil.rmtree(path, ignore_errors=True)
     return _scratch_dir
 
 
