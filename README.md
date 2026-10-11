@@ -69,7 +69,7 @@ Configure source offers three sources:
 - Local folder: a folder with `manifest.json` and the `.apkg` files.
 - Try the example deck: [LTimothy/internpearls-example-deck](https://github.com/LTimothy/internpearls-example-deck). It sets `scope_tag` and `export_deck` to the example's values if you had not changed them, and choosing a real source later resets them.
 
-If a manifest recommends a scope tag and backup deck, you are asked before either is applied. A recommended scope tag that notes in your collection already carry is not applied. The same settings are under Tools > Add-ons > Intern Pearls Deck Tools > Config, and [`config.md`](internpearls/config.md) describes every key. The main ones:
+If a manifest recommends a scope tag and backup deck, you are asked before either is applied. A recommended scope tag that notes in your collection already carry is asked about on its own, with No as the default. The same settings are under Tools > Add-ons > Intern Pearls Deck Tools > Config, and [`config.md`](internpearls/config.md) describes every key. The main ones:
 
 | Key | What it does |
 |---|---|
@@ -168,7 +168,7 @@ With your own tooling, put a `manifest.json` in a GitHub repo (public or private
 ```
 
 - `decks`: `name` is the Anki deck name, `apkg` the path from the root, `version` any string that changes when the deck changes, and `cards` an optional count. `spec` is informational.
-- `scope_tag`, `export_deck`: the values you recommend to subscribers. A `scope_tag` already on a subscriber's notes is not applied.
+- `scope_tag`, `export_deck`: the values you recommend to subscribers. A `scope_tag` already on a subscriber's notes needs their explicit yes.
 - `front_aliases` (`{current front: previous front}`) and `superseded_fronts` (`{old front: current front}`): renamed fronts, so a card matched by text survives a reword.
 - Stable GUIDs matter most. Derive each GUID from an explicit per-card id, not the front, and fronts can change freely.
 - Optional ledgers for Reconcile my decks: `retired` (`{deck: {guid: {identity, reason, superseded_by}}}`) and `deck_moves` (`{guid: {from, to, front}}`, full deck paths).

@@ -3705,16 +3705,17 @@ def test_the_scope_offer_escapes_what_the_manifest_suggests(anki):
     assert "<b>Deck &lt;b&gt;bold&lt;/b&gt; &amp; more</b>" in texts
 
 
-def _scope_offer(anki, manifest, click=None):
-    """Run the scope offer, clicking `click` on a list dialog; returns what surfaced."""
+def _scope_offer(anki, manifest, click=None, use_tag=False):
+    """Run the scope offer, answering an in-use tag's question with `use_tag` and
+    clicking `click` on the list dialog; returns what surfaced."""
     from internpearls import dialogs
     anki.gui.interactive = True
     seen = []
 
     def respond(p):
         seen.append(p)
-        if p.get("kind") == "info":
-            return {}
+        if p.get("kind") == "ask":
+            return {"answer": use_tag}
         return {"events": [{"id": find(p["tree"], t="button", label=click)["id"],
                             "click": True}]}
 
@@ -3730,20 +3731,29 @@ def test_the_scope_offer_still_offers_a_tag_no_note_carries(anki):
     assert anki.mw._config["export_deck"] == "Cardio"
 
 
-def test_the_scope_offer_refuses_a_tag_notes_already_carry(anki):
+def test_the_scope_offer_asks_before_a_tag_notes_already_carry(anki):
     anki.col.add_note("b1", ["One", "a"], ["Big_Deck"])
     anki.col.add_note("b2", ["Two", "b"], ["Big_Deck::Sub"])
     seen = _scope_offer(anki, {"scope_tag": "Big_Deck"})
-    assert [p.get("kind") for p in seen] == ["info"]
+    assert [p.get("kind") for p in seen] == ["ask"]
     assert "<b>Big_Deck</b>" in seen[0]["text"] and "2 notes" in seen[0]["text"]
+    assert anki.gui.ask_defaults[-1] == seen[0]["buttons"][1]   # Return declines
     assert "scope_tag" not in anki.mw._config
 
 
-def test_the_scope_offer_keeps_the_backup_deck_when_it_refuses_the_tag(anki):
+def test_the_scope_offer_applies_an_in_use_tag_only_when_chosen(anki):
+    anki.col.add_note("b1", ["One", "a"], ["Big_Deck"])
+    seen = _scope_offer(anki, {"scope_tag": "Big_Deck"}, "Apply", use_tag=True)
+    assert [p.get("kind") for p in seen][0] == "ask" and len(seen) == 2
+    assert "<b>Big_Deck</b>" in _all_text(seen[1]["tree"])
+    assert anki.mw._config["scope_tag"] == "Big_Deck"
+
+
+def test_the_scope_offer_keeps_the_backup_deck_when_the_tag_is_declined(anki):
     anki.col.add_note("b1", ["One", "a"], ["Big_Deck"])
     seen = _scope_offer(anki, {"scope_tag": "Big_Deck", "export_deck": "Cardio"}, "Apply")
-    assert len(seen) == 1
-    texts = _all_text(seen[0]["tree"])
-    assert "<b>Cardio</b>" in texts and "1 note " in texts
+    assert [p.get("kind") for p in seen][0] == "ask" and len(seen) == 2
+    texts = _all_text(seen[1]["tree"])
+    assert "<b>Cardio</b>" in texts and "Big_Deck" not in texts
     assert anki.mw._config["export_deck"] == "Cardio"
     assert "scope_tag" not in anki.mw._config

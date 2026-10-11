@@ -304,16 +304,19 @@ def _offer_manifest_scope(manifest):
         manifest, cfg["scope_tag"], cfg["export_deck"])
     if not scope_tag and not export_deck:
         return
-    changes = []
-    # A tag notes already carry (another deck's, say) would put them under this add-on.
+    # A tag notes already carry (another deck's, say) would put them under this add-on,
+    # so it is asked about on its own, with declining as the default.
     in_use = scope_tag and scope_note_count(scope_tag)
-    if in_use:
-        changes.append(f"Scope tag: <b>{html.escape(scope_tag)}</b> not applied, since "
-                       f"it is already on {plural(in_use, 'note')} in your collection")
+    if in_use and not _ask(
+            f"This deck source recommends the scope tag <b>{html.escape(scope_tag)}</b>, "
+            f"which is already on {plural(in_use, 'note')} in your collection. With it, "
+            "this add-on manages and protects those notes, and deck updates can change "
+            "them. Use it only if they came from this deck source.",
+            yes_label="Use this tag", no_label="Skip this tag"):
         scope_tag = None
         if not export_deck:
-            _info(f"This deck source recommends a setting:<br><br>{changes[0]}.")
             return
+    changes = []
     if scope_tag:
         changes.append(f"Scope tag: <b>{html.escape(scope_tag)}</b> (which cards this "
                        "add-on manages and protects)")
