@@ -695,6 +695,33 @@ def test_build_argv_agy_refuses_judge(monkeypatch):
         ai_cli.build_argv("agy", "/usr/bin/agy", "judge", "/tmp/s", [], prompt="x")
 
 
+def test_build_argv_codex_refuses_judge_when_it_cannot_skip_user_config(monkeypatch):
+    # Its own config would load the user's MCP servers next to untrusted card text.
+    monkeypatch.setattr(ai_cli, "supports_flag",
+                        lambda path, flag, **kw: flag != "--ignore-user-config")
+    with pytest.raises(ai_cli.GenerationError):
+        ai_cli.build_argv("codex", "/usr/bin/codex", "judge", "/tmp/s", [])
+
+
+@pytest.mark.parametrize("preferred, ok, skips_config, expected", [
+    ("claude", {"claude", "codex"}, True, "claude"),
+    ("codex", {"claude", "codex"}, True, "codex"),
+    ("codex", {"claude", "codex"}, False, "claude"),
+    ("agy", {"agy", "codex"}, True, "codex"),
+    ("agy", {"agy", "codex"}, False, None),
+    ("agy", {"agy"}, True, None),
+    (None, set(), True, None),
+])
+def test_judge_backend_picks_one_that_can_run_without_tools(
+        monkeypatch, preferred, ok, skips_config, expected):
+    monkeypatch.setattr(ai_cli, "supports_flag",
+                        lambda path, flag, **kw: skips_config)
+    detected = {"chosen": preferred if preferred in ok else None,
+                "backends": {k: {"ok": k in ok, "path": f"/usr/bin/{k}"}
+                             for k in ("claude", "codex", "agy")}}
+    assert ai_cli.judge_backend(detected) == expected
+
+
 def test_judge_mode_is_not_offered_to_the_user():
     for kind in ai_cli.BACKENDS:
         assert "judge" not in ai_cli.BACKENDS[kind]["modes"]

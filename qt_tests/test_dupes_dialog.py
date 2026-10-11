@@ -374,6 +374,20 @@ def test_judge_button_disabled_when_only_antigravity_is_set_up(monkeypatch):
     dlg.deleteLater()
 
 
+def test_judge_button_disabled_for_a_codex_that_cannot_skip_its_config(monkeypatch):
+    mock, _ = harness.bootstrap()
+    harness.app()
+    from internpearls import ai_cli
+    _found_backends(monkeypatch, {"codex"})
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    assert dlg._judge_backend is None
+    assert not dlg.judge_btn.isEnabled()
+    assert "Claude Code or Codex CLI" in dlg.judge_btn.toolTip()
+    dlg.deleteLater()
+
+
 def test_judge_skips_preferred_antigravity_for_claude(monkeypatch):
     mock, _ = harness.bootstrap()
     harness.app()

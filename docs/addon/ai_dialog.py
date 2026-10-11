@@ -1901,9 +1901,8 @@ class _GenerateDialog(QDialog):
         self._attach_worker = platform().start_work(
             request, work, on_result, on_error, on_event,
             scratch_path=extract_dir)
-        self._attach_timer = platform().create_timer(
-            platform_owner_id(self), lambda: self._guard_completion(self._poll_attachment_worker),
-            _IMG_POLL_MS)
+        self._attach_timer = self._new_poll_timer(
+            "_attach_timer", self._poll_attachment_worker, _IMG_POLL_MS)
         self._attach_worker.start()
         self._attach_timer.start()
 
@@ -1946,17 +1945,22 @@ class _GenerateDialog(QDialog):
                   "couldn't be read in Anki's own Python. If you want any of "
                   "its figures on a card, attach them separately as image files.")
 
+    def _new_poll_timer(self, name, poll, interval_ms):
+        """A poll timer for `poll`, freeing the one an earlier run left in `name`."""
+        old = getattr(self, name, None)
+        if old is not None:
+            old.deleteLater()
+        return platform().create_timer(
+            platform_owner_id(self), lambda: self._guard_completion(poll), interval_ms)
+
     def _cancel_attachments(self):
         if not self._attachment_in_progress():
             return
         self._attach_cancel_flag.set()
         self._attach_worker.cancel()
         self._attach_ready = True
-        if self._attach_timer is not None:
-            self._attach_timer.deleteLater()
-        self._attach_timer = platform().create_timer(
-            platform_owner_id(self), lambda: self._guard_completion(self._poll_attachment_worker),
-            _IMG_POLL_MS)
+        self._attach_timer = self._new_poll_timer(
+            "_attach_timer", self._poll_attachment_worker, _IMG_POLL_MS)
         self._attach_timer.start()
         self.attach_cancel_btn.setEnabled(False)
         self.attach_status.setText("Cancelling attachments…")
@@ -2222,8 +2226,7 @@ class _GenerateDialog(QDialog):
             inputs={"check": bool(check), "revision": bool(revision)})
         self._worker = platform().start_work(
             request, work, on_result, on_error, on_event)
-        self._timer = platform().create_timer(
-            platform_owner_id(self), lambda: self._guard_completion(self._poll_worker), 200)
+        self._timer = self._new_poll_timer("_timer", self._poll_worker, 200)
         self._worker.start()
         self._timer.start()
         verb = "Checking facts with " if check else "Drafting cards with "
@@ -2575,9 +2578,8 @@ class _GenerateDialog(QDialog):
                     "image_count": sum(len(card["images"]) for card in cards)})
         self._img_worker = platform().start_work(
             request, work, on_result, on_error, scratch_path=s.scratch)
-        self._img_timer = platform().create_timer(
-            platform_owner_id(self), lambda: self._guard_completion(self._poll_image_worker),
-            _IMG_POLL_MS)
+        self._img_timer = self._new_poll_timer(
+            "_img_timer", self._poll_image_worker, _IMG_POLL_MS)
         self._img_worker.start()
         self._img_timer.start()
         # The row's detail (phase/elapsed) is left exactly as the CLI phase

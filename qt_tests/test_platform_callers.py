@@ -71,7 +71,8 @@ def test_duplicate_dialog_callers_capture_safe_work_requests(monkeypatch):
     mock.mw.col.add_note("one", ["alpha", "beta"], ["Scope"], deck="one")
     mock.mw.col.add_note("two", ["alpha", "gamma"], ["Other"], deck="two")
     monkeypatch.setattr(ai_cli, "detect_backends", lambda _cfg: {
-        "chosen": "claude", "backends": {"claude": {"path": "/bin/true"}}})
+        "chosen": "claude", "judge": "claude",
+        "backends": {"claude": {"path": "/bin/true"}}})
     native = _RecordingPlatform()
     with use_platform(native):
         dialog = dupes_dialog._DuplicateScanDialog("Scope")

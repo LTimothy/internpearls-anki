@@ -212,7 +212,7 @@ def test_backend_answering_while_judging_does_not_reenable_the_button(monkeypatc
     _populate_many(mock, pairs=3)
     dlg = _open(mock)
     dlg._judging = True
-    dlg._backends_found({"chosen": "claude",
+    dlg._backends_found({"chosen": "claude", "judge": "claude",
                          "backends": {"claude": {"path": "/bin/true"}}})
     assert not dlg.judge_btn.isEnabled()
     dlg._judging = False

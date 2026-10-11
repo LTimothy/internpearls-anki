@@ -178,6 +178,29 @@ def image_capable(kind):
     return _IMAGE_CAPABLE.get(kind, False)
 
 
+def judge_capable(kind, path):
+    """Whether `kind` can judge duplicates with no tools: the pairs include card text
+    from other decks. agy cannot turn its tools off, and a codex that cannot skip its
+    own config file would load the user's MCP servers."""
+    return kind == "claude" or (kind == "codex" and supports_flag(
+        path, "--ignore-user-config", subcommand="exec"))
+
+
+def judge_backend(detected):
+    """The backend Judge with AI uses, from detect_backends' result: the chosen one if
+    it can judge, else the first working one that can, else None. Runs CLIs, so call
+    it off the main thread."""
+    backends = detected.get("backends") or {}
+    chosen = detected.get("chosen")
+    for kind in (chosen, "claude", "codex"):
+        info = backends.get(kind) or {}
+        # detect_backends only chooses a working backend.
+        if (kind == chosen or info.get("ok")) and kind and judge_capable(
+                kind, info.get("path")):
+            return kind
+    return None
+
+
 def web_capable(kind, path=None):
     """`path`, when given, answers for the installed binary: a codex without
     --search has no web search to turn on."""
@@ -593,6 +616,9 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
     agy only get --model when a model was actually set AND supports_flag
     confirms this binary understands it, and agy's --effort is gated the same
     way, so an older build of either is never handed a flag it would die on."""
+    if mode == "judge" and not judge_capable(kind, path):
+        raise GenerationError(f"{BACKENDS[kind]['label']} cannot run without tools, "
+                              "so it cannot judge duplicates")
     if kind == "claude":
         argv = [path, "-p", "--output-format", "stream-json", "--verbose",
                 "--max-turns", str(_MAX_TURNS[mode]),
@@ -671,9 +697,6 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
             argv += ["--image", p]
         return argv, True
     if kind == "agy":
-        if mode == "judge":
-            raise GenerationError("Antigravity cannot run without tools, so it cannot "
-                                  "judge duplicates")
         path = _agy_program(path)
         # --add-dir makes the scratch dir readable, which is how agy views an
         # attached image (view_file); writes stay off, headlessly auto-denied.

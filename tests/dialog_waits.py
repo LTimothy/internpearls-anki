@@ -105,7 +105,6 @@ def _wait_for_scan(self, timeout=15):
 def _wait_for_judge(self, timeout=15):
     """Run the judging call to completion synchronously, without a
     live QTimer, the same shape `_wait_for_scan` uses."""
-    seq = self._judge_seq
     worker = self._judge_worker
     timer = self._judge_timer
     end = time.time() + timeout

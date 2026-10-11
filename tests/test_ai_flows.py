@@ -1888,6 +1888,18 @@ def test_cancel_during_revision_returns_to_review_with_draft_intact(anki, monkey
     assert dlg.session.notes[0] == "make it a cloze"
 
 
+def test_a_new_run_frees_the_previous_runs_poll_timer(anki, monkeypatch):
+    cli_mode = ["ok"]
+    dlg = _revisable_dialog(anki, monkeypatch, cli_mode)
+    dlg._start_generation()
+    dlg._wait_for_worker()
+    first = dlg._timer._timer
+    dlg._revise_all()
+    dlg._wait_for_worker()
+    assert dlg._timer._timer is not first
+    assert first.deleted
+
+
 def test_failed_revision_after_retry_returns_to_review_with_draft_intact(anki, monkeypatch):
     cli_mode = ["ok"]
     dlg = _revisable_dialog(anki, monkeypatch, cli_mode)

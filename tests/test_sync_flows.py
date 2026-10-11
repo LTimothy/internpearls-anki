@@ -5745,6 +5745,32 @@ def test_scratch_dir_lives_in_the_deck_cache_and_clears_earlier_sessions(anki, t
     assert again != current and os.path.isdir(again)
 
 
+def test_two_threads_starting_the_deck_cache_share_one_dir(anki, monkeypatch):
+    """The background poll and an interactive preview can both be first; the second
+    one's sweep must not delete the dir the first is about to write into."""
+    import tempfile
+    import threading
+    import time
+    from internpearls import sync
+
+    real_mkdtemp = tempfile.mkdtemp
+
+    def slow_mkdtemp(**kw):
+        made = real_mkdtemp(**kw)
+        time.sleep(0.05)
+        return made
+
+    monkeypatch.setattr(sync.tempfile, "mkdtemp", slow_mkdtemp)
+    got = []
+    threads = [threading.Thread(target=lambda: got.append(sync._scratch()))
+               for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert got[0] == got[1] and os.path.isdir(got[0])
+
+
 def test_a_download_is_renamed_into_place_rather_than_written_over(anki, monkeypatch):
     """The background poll writes these from a worker thread while an interactive
     preview can be reading the same keyed path. A plain write is readable half finished;

@@ -18,6 +18,7 @@ import re
 import shutil
 import stat
 import tempfile
+import threading
 import weakref
 
 from aqt import mw
@@ -100,6 +101,7 @@ def _refresh_reconcile_action_label(pending):
 
 
 _scratch_dir = None
+_scratch_lock = threading.Lock()
 
 
 def _scratch():
@@ -114,15 +116,17 @@ def _scratch():
     did before.
     """
     global _scratch_dir
-    if _scratch_dir is None or not os.path.isdir(_scratch_dir):
-        os.makedirs(DECK_CACHE, exist_ok=True)
-        _scratch_dir = tempfile.mkdtemp(prefix="internpearls-", dir=DECK_CACHE)
-        # user_files outlives sessions, so earlier sessions' dirs would pile up.
-        for name in os.listdir(DECK_CACHE):
-            path = os.path.join(DECK_CACHE, name)
-            if name.startswith("internpearls-") and path != _scratch_dir:
-                shutil.rmtree(path, ignore_errors=True)
-    return _scratch_dir
+    # The background poll and a preview can both get here first.
+    with _scratch_lock:
+        if _scratch_dir is None or not os.path.isdir(_scratch_dir):
+            os.makedirs(DECK_CACHE, exist_ok=True)
+            _scratch_dir = tempfile.mkdtemp(prefix="internpearls-", dir=DECK_CACHE)
+            # user_files outlives sessions, so earlier sessions' dirs would pile up.
+            for name in os.listdir(DECK_CACHE):
+                path = os.path.join(DECK_CACHE, name)
+                if name.startswith("internpearls-") and path != _scratch_dir:
+                    shutil.rmtree(path, ignore_errors=True)
+        return _scratch_dir
 
 
 def _scratch_path(apkg_path, version=None):

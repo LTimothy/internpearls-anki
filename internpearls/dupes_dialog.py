@@ -356,6 +356,7 @@ class _DuplicateScanDialog(QDialog):
         def work(context):
             context.checkpoint("connection:start")
             result = ai_cli.detect_backends(cfg)
+            result["judge"] = ai_cli.judge_backend(result)
             context.checkpoint("connection:complete")
             return result
 
@@ -370,20 +371,15 @@ class _DuplicateScanDialog(QDialog):
     @_delivery
     def _backends_found(self, result):
         backends = result.get("backends") or {}
-        chosen = result.get("chosen")
-        agy_chosen = chosen == "agy"
-        if agy_chosen:
-            # The judge runs tool-free; Antigravity cannot turn its tools off.
-            chosen = next((k for k in ("claude", "codex")
-                           if (backends.get(k) or {}).get("ok")), None)
-        self._judge_backend = chosen
-        self._judge_path = (backends.get(chosen) or {}).get("path") if chosen else None
+        judge = result.get("judge")
+        self._judge_backend = judge
+        self._judge_path = (backends.get(judge) or {}).get("path") if judge else None
         self._backends_ready = True
         self.judge_btn.setToolTip(
-            "" if chosen else
-            "Judge with AI needs Claude Code or Codex CLI: Antigravity cannot run "
-            "without tools." if agy_chosen else
-            "Set up an AI backend first (Generate cards (AI) > Setup).")
+            "" if judge else
+            "Judge with AI needs Claude Code or Codex CLI (a version that can skip "
+            "your own Codex config), so it runs with no tools." if result.get("chosen")
+            else "Set up an AI backend first (Generate cards (AI) > Setup).")
         self._sync_judge_button()
 
     def _sync_judge_button(self):
