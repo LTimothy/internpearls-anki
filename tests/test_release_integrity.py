@@ -112,3 +112,14 @@ def test_changelog_documents_the_current_version():
     section = next(s for s in body if s.startswith(f"v{ADDON_VERSION}"))
     text = section.split("\n", 1)[1].strip()
     assert text, f"the {heading!r} section is empty; the release notes would be blank."
+
+
+def test_test_helpers_stay_out_of_the_package():
+    """Synchronous wait helpers exist for the test suites only; tests/dialog_waits.py
+    attaches them to the dialogs, so the add-on itself never ships them."""
+    shipped = []
+    for name in sorted(os.listdir(ADDON)):
+        if name.endswith(".py"):
+            source = _read(os.path.join(ADDON, name)).decode("utf8")
+            shipped += [f"{name}: {m}" for m in re.findall(r"def _wait_for_\w+", source)]
+    assert not shipped, "test-only helpers in internpearls/:\n  " + "\n  ".join(shipped)

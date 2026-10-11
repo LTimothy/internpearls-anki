@@ -11,7 +11,6 @@ import shutil
 import sys
 import tempfile
 import threading
-import time
 import traceback
 import urllib.parse
 from collections import Counter, deque
@@ -33,8 +32,7 @@ from .config import (AI_LAST_RUN_LOG, APP_NAME, TARGET_FIELDS, _cfg,
 from .logic import cloze_filled_html, field_preview_html, note_display_label, plural
 from .ai_fetch import fetch_card_image
 from .palette import colors
-from .platform import (new_work_request, platform, platform_owner_id,
-                       wait_for_mock_work)
+from .platform import new_work_request, platform, platform_owner_id
 from .review import (_CARET_CLOSED, _CARET_OPEN, _ClickableLabel, _image_tag,
                      _preview_style, _rich_label, _separator)
 from .ui import (_ask, _ask_scrollable, _info, _manual_flow, _safe, _warn,
@@ -362,15 +360,6 @@ def _image_lines(session, i, card):
         tag = _image_tag(res["path"]) if res.get("path") else None
         lines.append((j, (tag or "[image]") + host_txt, False))
     return lines
-
-
-def _image_row_html(session, i, card):
-    """The review row's image line(s): a rendered thumbnail when one resolved
-    to a local file Qt can decode, a plain failure message when it didn't, and
-    for a web image the URL's host either way, so the user sees what they're
-    accepting and a card with an image never reviews as if it had none. Returns "" for a card with no images at all.
-    """
-    return "<br>".join(line for _, line, _ in _image_lines(session, i, card))
 
 
 # The chip kinds the review row can actually show, in the priority order a card's
@@ -2334,53 +2323,6 @@ class _GenerateDialog(QDialog):
         self._gen_done = True
         self._finish_generation()
 
-    def _wait_for_worker(self, timeout=15):
-        """Test helper: run the poll loop synchronously, without a live QTimer.
-
-        A draft with images kicks off a second background phase once the CLI
-        call itself finishes (see _start_image_phase), still on its own
-        worker/timer pair rather than this one: drain that too, so a caller
-        gets exactly the same end state a live QTimer eventually reaches,
-        without needing to know a second phase happened at all.
-        """
-        end = time.time() + timeout
-        worker = self._worker
-        while worker.is_alive() and time.time() < end:
-            time.sleep(0.05)
-        wait_for_mock_work(worker)
-        fire = getattr(self._timer, "fire", None) or self._timer.timeout.emit
-        while not self._gen_done and time.time() < end:
-            QApplication.processEvents()
-            if self._worker is worker and not self._gen_done:
-                fire()
-            if self._worker is not worker:
-                return
-            time.sleep(0.005)
-        if not self._gen_done:
-            self._timer.stop()
-            return
-        while (hasattr(self, "_img_worker") and not self._img_done
-              and time.time() < end):
-            while self._img_worker.is_alive() and time.time() < end:
-                time.sleep(0.05)
-            wait_for_mock_work(self._img_worker)
-            while not self._img_ready and time.time() < end:
-                QApplication.processEvents()
-                time.sleep(0.005)
-            fire = getattr(self._img_timer, "fire", None)
-            if fire is not None:
-                fire()
-            else:
-                self._img_timer.timeout.emit()
-            if not self._img_done:
-                self._img_timer.stop()
-                self._img_done = True
-                if self._img_cancel_flag.is_set():
-                    self._abandon_image_phase()
-                    break
-                self.session.image_data = self._img_results
-                self._apply_review_state()
-
     def _abandon_image_phase(self):
         """Cancelling during image resolution goes back the way cancelling the
         CLI phase does, rather than committing what the worker filled in. The
@@ -3335,18 +3277,6 @@ class _GenerateDialog(QDialog):
             text_cursor = box.textCursor()
             text_cursor.setPosition(min(cursor, len(box.toPlainText())))
             box.setTextCursor(text_cursor)
-
-    def _wait_for_near(self, timeout=15):
-        """Test helper: deliver the duplicate lookup, and any lookup it queued,
-        without a live event loop."""
-        end = time.time() + timeout
-        while self._near_worker is not None and time.time() < end:
-            worker = self._near_worker
-            worker.join(max(0.0, end - time.time()))
-            wait_for_mock_work(worker)
-            if self._near_worker is worker:
-                QApplication.processEvents()
-                time.sleep(0.005)
 
     def _edit_card(self, i):
         """Hand-edit one card's fields and tags, right in the review list, in

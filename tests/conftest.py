@@ -42,6 +42,8 @@ def _user_files_snapshot():
 
 def pytest_sessionstart(session):
     session._ip_user_files_start = _user_files_snapshot()
+    import dialog_waits
+    dialog_waits.install()
 
 
 @pytest.hookimpl(trylast=True)

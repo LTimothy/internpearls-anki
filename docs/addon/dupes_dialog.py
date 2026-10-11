@@ -13,14 +13,12 @@ machine here would be a rewrite of this screen for a single optional button.
 import functools
 import re
 import shutil
-import threading
-import time
 import traceback
 
 from aqt import mw
-from aqt.qt import (QApplication, QComboBox, QDialog, QDialogButtonBox, QFrame,
-                    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, Qt,
-                    QTimer, QVBoxLayout, QWidget)
+from aqt.qt import (QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
+                    QLabel, QLineEdit, QPushButton, QScrollArea, Qt, QTimer,
+                    QVBoxLayout, QWidget)
 
 from . import ai_cli, ai_logic
 from .collection import deck_search, note_rows, suspend_notes, unsuspend_notes
@@ -30,8 +28,7 @@ from .dupes import (DEFAULT_MIN_SHARED, DEFAULT_THRESHOLD, contrast_label,
                     find_candidates, pair_key)
 from .logic import field_preview_text, plain_text, scope_search
 from .palette import colors
-from .platform import (new_work_request, platform, platform_owner_id,
-                       wait_for_mock_work)
+from .platform import new_work_request, platform, platform_owner_id
 from .ui import (_manual_flow, _safe, copy_to_clipboard, hint_label, link_button,
                  plain_tooltip, section_label, title_label)
 from .widgets import CARET_GAP, CARET_W, StreamingList
@@ -269,7 +266,6 @@ class _DuplicateScanDialog(QDialog):
         self._scan_finished = False
         self._judge_worker = None
         self._judge_timer = None
-        self._judge_cancel = None
 
         outer = QVBoxLayout(self)
         outer.addWidget(title_label("Scan for duplicates"))
@@ -393,17 +389,6 @@ class _DuplicateScanDialog(QDialog):
     def _sync_judge_button(self):
         self.judge_btn.setEnabled(bool(
             self._judge_backend and self._pairs and not self._judging))
-
-    def _wait_for_backends(self, timeout=15):
-        """Test helper: let the backend probe finish and deliver, like `_wait_for_scan`."""
-        end = time.time() + timeout
-        probe = self._probe
-        while probe.is_alive() and time.time() < end:
-            time.sleep(0.02)
-        wait_for_mock_work(probe)
-        while not self._backends_ready and time.time() < end:
-            QApplication.processEvents()
-            time.sleep(0.005)
 
     # ------------------------------------------------------------------ scope
     def _excluded_decks(self):
@@ -578,7 +563,7 @@ class _DuplicateScanDialog(QDialog):
     def _poll_scan(self):
         # Latched like ai_dialog's _gen_done: on_result drives this poll directly as
         # soon as the platform delivers, so the timer tick that follows (or the one
-        # _wait_for_scan fires) must not run the finish path a second time.
+        # a test fires) must not run the finish path a second time.
         if self._scan_finished:
             return
         if self._worker.is_alive() or not self._scan_ready:
@@ -632,22 +617,6 @@ class _DuplicateScanDialog(QDialog):
                                "differs": contrast_label(left[1], right[1])})
         self._sync_judge_button()
         self._rebuild_list()
-
-    def _wait_for_scan(self, timeout=15):
-        """Test helper: run the scan to completion synchronously, without a live
-        QTimer, the same shape ai_dialog._wait_for_worker uses."""
-        end = time.time() + timeout
-        while self._worker.is_alive() and time.time() < end:
-            time.sleep(0.02)
-        wait_for_mock_work(self._worker)
-        while not self._scan_ready and time.time() < end:
-            QApplication.processEvents()
-            time.sleep(0.005)
-        fire = getattr(self._timer, "fire", None)
-        if fire is not None:
-            fire()
-        else:
-            self._timer.timeout.emit()
 
     # ------------------------------------------------------------------ list
     def _exclusion_feedback(self):
@@ -1009,8 +978,6 @@ class _DuplicateScanDialog(QDialog):
         self._judge_ready = False
         self._judge_finished = False
         self._judge_t0 = platform().monotonic()
-        cancel = threading.Event()
-        self._judge_cancel = cancel
 
         def work(context):
             try:
@@ -1050,10 +1017,8 @@ class _DuplicateScanDialog(QDialog):
         self.summary_label.setText("Judging with AI...")
 
     def _cancel_judge(self):
-        cancel = getattr(self, "_judge_cancel", None)
         worker = getattr(self, "_judge_worker", None)
-        if cancel is not None and worker is not None and worker.is_alive():
-            cancel.set()
+        if worker is not None and worker.is_alive():
             worker.cancel()
         timer = getattr(self, "_judge_timer", None)
         if timer is not None:
@@ -1146,25 +1111,6 @@ class _DuplicateScanDialog(QDialog):
                 self._verdicts[pair["key"]] = {"judged": v["verdict"], "note": v["note"],
                                               "texts": self._judge_texts[i]}
         self._rebuild_list()
-
-    def _wait_for_judge(self, timeout=15):
-        """Test helper: run the judging call to completion synchronously, without a
-        live QTimer, the same shape `_wait_for_scan` uses."""
-        seq = self._judge_seq
-        worker = self._judge_worker
-        timer = self._judge_timer
-        end = time.time() + timeout
-        while worker.is_alive() and time.time() < end:
-            time.sleep(0.02)
-        wait_for_mock_work(worker)
-        while not self._judge_ready and time.time() < end:
-            QApplication.processEvents()
-            time.sleep(0.005)
-        fire = getattr(timer, "fire", None)
-        if fire is not None:
-            fire()
-        else:
-            timer.timeout.emit()
 
 
 @_safe

@@ -466,19 +466,6 @@ def _bg_safe(fn):
 
 
 @contextmanager
-def wait_cursor():
-    """Show the busy cursor around a blocking call on the main thread (a manifest
-    fetch, a preview download). The work still blocks; this makes the wait read as
-    "working" instead of "frozen". Restores the cursor even if the call raises.
-    """
-    QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-    try:
-        yield
-    finally:
-        QApplication.restoreOverrideCursor()
-
-
-@contextmanager
 def cancellable_progress(title, total):
     """A determinate, cancellable progress dialog for a loop of `total` steps.
 
