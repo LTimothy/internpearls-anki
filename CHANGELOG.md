@@ -3,25 +3,25 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
-## Unreleased
+## v0.84.0
 
-- A scope tag with `_` or `*` in it now selects only that tag and its subtags, not
-  lookalike tags such as `MyXDeck` for `My_Deck`.
-- A deck source's recommended scope tag that notes in your collection already carry
-  is asked about on its own, with how many notes and No as the default.
+Cancel works during AI drafting, and the AI tools get tighter limits.
+
 - Cancel during AI card generation goes back to your inputs or draft instead of
-  staying on the progress screen.
-- Cancel while card pictures download takes effect at once rather than after the
-  download finishes.
-- Automatic sync waits while the AI card generator or the duplicate scan is open.
+  staying on the progress screen, including while card pictures download.
 - Judge with AI runs with no tools or web access, so it uses Claude Code or a Codex CLI
   that can skip your own Codex config, never Antigravity CLI.
-- Automatic sync checks no longer freeze Anki for a moment on a large collection.
 - Claude Code runs no longer load your own MCP servers, and on an older Claude Code
   its file tools are approved only inside the scratch folder.
 - Codex CLI runs can no longer write to the system temp folders or use the network
   from the shell, and skip your own Codex config (MCP servers, settings) when your
   Codex supports that. The AI Backends text now says Codex can read any file you can.
+- A deck source's recommended scope tag that notes in your collection already carry
+  is asked about on its own, with how many notes and No as the default.
+- A scope tag with `_` or `*` in it now selects only that tag and its subtags, not
+  lookalike tags such as `MyXDeck` for `My_Deck`.
+- Automatic sync checks no longer freeze Anki for a moment on a large collection, and
+  they wait while the AI card generator or the duplicate scan is open.
 - Downloaded decks wait for import in the add-on's own folder instead of the system
   temp folder, and leftovers from earlier sessions are cleared.
 
