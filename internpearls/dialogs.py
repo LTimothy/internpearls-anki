@@ -13,7 +13,8 @@ from aqt.qt import (QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QFileDia
                     QScrollArea, QSizePolicy, QSpinBox, Qt, QVBoxLayout, QWidget)
 
 from .background import _restart_auto_sync_timer, _stop_auto_sync_timer
-from .collection import installed_matching_collection, invalidate_installed
+from .collection import (installed_matching_collection, invalidate_installed,
+                         scope_note_count)
 from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      AUTO_SYNC_INTERVAL_CEILING_MIN, AUTO_SYNC_INTERVAL_FLOOR_MIN,
                      EXAMPLE_DECK_NAME, EXAMPLE_REPO,
@@ -304,6 +305,15 @@ def _offer_manifest_scope(manifest):
     if not scope_tag and not export_deck:
         return
     changes = []
+    # A tag notes already carry (another deck's, say) would put them under this add-on.
+    in_use = scope_tag and scope_note_count(scope_tag)
+    if in_use:
+        changes.append(f"Scope tag: <b>{html.escape(scope_tag)}</b> not applied, since "
+                       f"it is already on {plural(in_use, 'note')} in your collection")
+        scope_tag = None
+        if not export_deck:
+            _info(f"This deck source recommends a setting:<br><br>{changes[0]}.")
+            return
     if scope_tag:
         changes.append(f"Scope tag: <b>{html.escape(scope_tag)}</b> (which cards this "
                        "add-on manages and protects)")

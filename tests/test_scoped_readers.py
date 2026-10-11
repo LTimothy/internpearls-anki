@@ -88,3 +88,17 @@ def test_scoped_readers_make_no_per_note_backend_calls(anki, monkeypatch):
     collection._existing_notes_summary(SCOPE, exclude_tag="Archived")
 
     assert calls == []
+
+
+def test_a_scope_tag_with_an_underscore_matches_only_itself_and_its_children(anki):
+    add = anki.col.add_note
+    m1 = add("m1", ["Mine", "a"], ["My_Deck"]).id
+    m2 = add("m2", ["Child", "b"], ["My_Deck::Sub"]).id
+    m3 = add("m3", ["Kept", "c"], ["My_Deck", "MyXDeck::Sub"]).id
+    lookalike = add("x1", ["Lookalike", "d"], ["MyXDeck"]).id
+    # The mock reads `_` as Anki does, or this test could not fail.
+    assert lookalike in anki.col.find_notes('"tag:My_Deck"')
+
+    assert {row[0] for row in collection._scoped_notes("My_Deck")} == {m1, m2, m3}
+    assert {row[0] for row in collection._scoped_notes("My_Deck", "My_Deck::Sub")} == {
+        m1, m3}

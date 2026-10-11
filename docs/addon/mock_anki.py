@@ -550,6 +550,26 @@ class MockMedia:
             return self.write_data(os.path.basename(path), fh.read())
 
 
+def _search_term_re(rest):
+    """The quoted `tag:` or `deck:` term starting `rest`, as Anki matches it: the name
+    or its `::` children, with an unescaped "_" matching any single character and "*"
+    any run, and a backslash escaping either (which logic.scope_search and
+    collection.deck_search rely on). Matched the same way here, or a name the add-on
+    forgot to escape would look exact in tests and act as a wildcard in a real
+    collection."""
+    pattern, esc = "", False
+    for ch in rest:
+        if esc:
+            pattern, esc = pattern + re.escape(ch), False
+        elif ch == "\\":
+            esc = True
+        elif ch == '"':
+            break
+        else:
+            pattern += {"_": ".", "*": ".*"}.get(ch, re.escape(ch))
+    return re.compile(f"{pattern}(::.*)?$")
+
+
 class MockCollection:
     def __init__(self):
         self._notes = {}
@@ -780,23 +800,7 @@ class MockCollection:
         if search == "":
             return list(self._notes.keys())
         if 'deck:"' in search:
-            # A deck: term is a wildcard pattern in Anki, not a literal name:
-            # an unescaped "_" matches any single character and "*" any run,
-            # and a backslash escapes either (which is what
-            # collection.deck_search relies on). Matched the same way here, or
-            # a name the add-on forgot to escape would look exact in tests and
-            # behave as a wildcard against a real collection.
-            rest, pattern, esc = search.split('deck:"', 1)[1], "", False
-            for ch in rest:
-                if esc:
-                    pattern, esc = pattern + re.escape(ch), False
-                elif ch == "\\":
-                    esc = True
-                elif ch == '"':
-                    break
-                else:
-                    pattern += {"_": ".", "*": ".*"}.get(ch, re.escape(ch))
-            deck_re = re.compile(f"{pattern}(::.*)?$")
+            deck_re = _search_term_re(search.split('deck:"', 1)[1])
             out = []
             for nid, n in self._notes.items():
                 if not n._card_ids:
@@ -809,14 +813,13 @@ class MockCollection:
         exclude = None
         if ' -"tag:' in search:
             search, excl_part = search.split(' -"tag:', 1)
-            exclude = excl_part.rstrip('"')
-        tag = search.split('"tag:', 1)[1].split('"', 1)[0] if "tag:" in search else ""
+            exclude = _search_term_re(excl_part)
+        tag = _search_term_re(search.split('"tag:', 1)[1] if "tag:" in search else '"')
         out = []
         for nid, n in self._notes.items():
-            if not any(t == tag or t.startswith(tag + "::") for t in n.tags):
+            if not any(tag.match(t) for t in n.tags):
                 continue
-            if exclude and any(t == exclude or t.startswith(exclude + "::")
-                               for t in n.tags):
+            if exclude and any(exclude.match(t) for t in n.tags):
                 continue
             out.append(nid)
         return out

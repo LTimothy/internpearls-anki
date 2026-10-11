@@ -31,7 +31,7 @@ from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
                     empty_cards_dialog_rows, fields_to_carry_over, manifest_decks_for,
                     merge_learner_tags, model_shape, note_display_label,
                     plan_notetype_changes, plural, protected_for, remap_cards,
-                    select_empty_cards, write_personalized)
+                    scope_search, select_empty_cards, write_personalized)
 from .platform import platform, platform_owner_id
 from .review import _CONFIRM_HEIGHT, append_rows, build_list_body, show_result
 from .ui import _ask, _ask_with_widget, _info, _manual_flow, _safe, _warn
@@ -338,7 +338,7 @@ def _pre_sync_backup_or_confirm_skip(deck_name, decks=None, scope_tag=None, keep
             yes_label="Continue without a backup", no_label="Cancel")
         return proceed, bool(covered)
 
-    if scope_tag and mw.col.find_notes(f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'):
+    if scope_tag and mw.col.find_notes(scope_search(scope_tag)):
         return _ask(
             "Couldn't find a deck to back up: your cards aren't under a deck this "
             "add-on knows how to export on its own.<br><br>Proceed without a backup? "
@@ -369,7 +369,7 @@ def _pre_sync_backup_or_skip_silently(deck_name, decks=None, scope_tag=None):
     if not targets:
         # Nothing to back up on a first sync. Cards under `scope_tag` with no deck to
         # export are what the interactive path asks about, so skip the round instead.
-        if scope_tag and mw.col.find_notes(f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'):
+        if scope_tag and mw.col.find_notes(scope_search(scope_tag)):
             return "no-deck"
         return "ok"
     saved = [_backup_deck(d, d) for d in targets]
@@ -392,7 +392,7 @@ def _note_field(note, name):
 
 
 def _snapshot(protected, scope_tag, per_note=None):
-    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    search = scope_search(scope_tag)
     snap = {}
     for nid in mw.col.find_notes(search):
         note = mw.col.get_note(nid)
@@ -429,7 +429,7 @@ def _snapshot_fields(guid, fields):
 
 
 def _snapshot_tags(scope_tag):
-    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    search = scope_search(scope_tag)
     snap = {}
     for nid in mw.col.find_notes(search):
         note = mw.col.get_note(nid)
@@ -469,7 +469,7 @@ def _capture_shipped(protected, scope_tag, touched, per_note=None):
     """
     if not touched:
         return {}
-    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    search = scope_search(scope_tag)
     out = {}
     touched_ids = set()
     guids = list(touched)
@@ -601,14 +601,16 @@ class _NoteIdentity(dict):
         self.guids = set()
 
 
+def scope_note_count(scope_tag):
+    """How many notes carry `scope_tag` or one of its `::` children."""
+    return len(mw.col.find_notes(scope_search(scope_tag)))
+
 def _scoped_notes(scope_tag, exclude_tag=None):
     """`[(nid, guid, mid, fields, cards)]` for every note under the scope tag, in
     find_notes order, `cards` being `[(home did, reps)]` in card_ids() order. One query
     instead of a get_note, card_ids and get_card per note, which on a real collection
     froze the main thread on every auto-sync check."""
-    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
-    if exclude_tag:
-        search = f'({search}) -"tag:{exclude_tag}"'
+    search = scope_search(scope_tag, exclude_tag)
     nids = mw.col.find_notes(search)
     if not nids:
         return []
@@ -1011,7 +1013,7 @@ class _NoteTypeCache:
 
 def _existing_note_types(scope_tag):
     """{note guid: notetype name} for every note under the scope tag."""
-    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    search = scope_search(scope_tag)
     out = {}
     for nid in mw.col.find_notes(search):
         note = mw.col.get_note(nid)
@@ -1718,7 +1720,7 @@ def find_empty_cards(scope_tag):
     `ords` are 1-based to match what the learner reads on the dead card ("No cloze 3
     found on card" is ord 2 internally).
     """
-    search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"' if scope_tag else ""
+    search = scope_search(scope_tag)
     scoped = set(mw.col.find_notes(search))
     report = mw.col.get_empty_cards()
     raw = [{"nid": int(n.note_id), "card_ids": [int(c) for c in n.card_ids],
@@ -1996,7 +1998,7 @@ def note_rows(col, scope_tag=None, deck_name=None):
     `deck:"X"` search already resolves a filtered deck's cards to their original deck.
     """
     if scope_tag:
-        search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'
+        search = scope_search(scope_tag)
     elif deck_name:
         search = deck_search(deck_name)
     else:

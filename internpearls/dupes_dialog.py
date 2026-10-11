@@ -28,7 +28,7 @@ from .config import (APP_NAME, _cfg, add_dupes_ignored, set_dupes_excluded_decks
                      set_dupes_threshold)
 from .dupes import (DEFAULT_MIN_SHARED, DEFAULT_THRESHOLD, contrast_label,
                     find_candidates, pair_key)
-from .logic import field_preview_text, plain_text
+from .logic import field_preview_text, plain_text, scope_search
 from .palette import colors
 from .platform import (new_work_request, platform, platform_owner_id,
                        wait_for_mock_work)
@@ -470,7 +470,7 @@ class _DuplicateScanDialog(QDialog):
         `deck:"X"` matches X's subdecks and cards currently sitting in a filtered
         deck under X, which is what makes a deck tree a usable comparison pool."""
         if scope_tag:
-            search = f'"tag:{scope_tag}" OR "tag:{scope_tag}::*"'
+            search = scope_search(scope_tag)
         else:
             search = deck_search(deck_name)
         ids = set(mw.col.find_notes(search))

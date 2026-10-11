@@ -5,6 +5,10 @@ this repo's `README.md` ("Versioning"). Restart Anki after installing any update
 
 ## Unreleased
 
+- A scope tag with `_` or `*` in it now selects only that tag and its subtags, not
+  lookalike tags such as `MyXDeck` for `My_Deck`.
+- A deck source's recommended scope tag is not applied when notes in your
+  collection already carry it; you are told how many.
 - Cancel during AI card generation goes back to your inputs or draft instead of
   staying on the progress screen.
 - Automatic sync waits while the AI card generator or the duplicate scan is open.

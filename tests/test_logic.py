@@ -2449,6 +2449,26 @@ def test_manifest_scope_suggestion_refuses_a_tag_that_breaks_a_search(tag):
         {"scope_tag": tag, "export_deck": "Cardio"}, "A", "B") == (None, "Cardio")
 
 
+# ------------------------------------------------------------------- scope_search
+def test_scope_search_escapes_what_anki_reads_as_search_syntax():
+    """`_` matches any one character and `*` any run in an Anki search, so a scope tag
+    holding either would also select lookalike tags unless escaped."""
+    assert logic.scope_search("My_Deck") == r'"tag:My\_Deck" OR "tag:My\_Deck::*"'
+    assert logic.scope_search('a*b"c\\d') == (
+        r'"tag:a\*b\"c\\d" OR "tag:a\*b\"c\\d::*"')
+    assert logic.scope_search("Plain") == '"tag:Plain" OR "tag:Plain::*"'
+
+
+def test_scope_search_excludes_a_tag_escaped_the_same_way():
+    assert logic.scope_search("A", exclude_tag="Old_Tag") == (
+        r'("tag:A" OR "tag:A::*") -"tag:Old\_Tag"')
+
+
+def test_scope_search_with_no_tag_is_every_note():
+    assert logic.scope_search("") == ""
+    assert logic.scope_search(None) == ""
+
+
 # ------------------------------------------------------------------- apkg_deck_names
 def test_apkg_notes_prefers_anki21_over_anki2(tmp_path):
     apkg = _make_dual_legacy_apkg(

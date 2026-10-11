@@ -183,6 +183,22 @@ def manifest_scope_suggestion(manifest, scope_tag, export_deck):
     return tag, pick("export_deck", export_deck)
 
 
+def scope_search(tag, exclude_tag=None):
+    """The Anki search for notes under `tag` or its `::` children, less any under
+    `exclude_tag`, or "" (every note) when there is no tag. Anki reads `_` in a search
+    as any one character and `*` as any run, so both are escaped, as are a backslash
+    and a quote, or `My_Deck` would also select `MyXDeck`."""
+    def esc(t):
+        for ch in ("\\", '"', "*", "_"):
+            t = t.replace(ch, "\\" + ch)
+        return t
+
+    if not tag:
+        return ""
+    search = f'"tag:{esc(tag)}" OR "tag:{esc(tag)}::*"'
+    return f'({search}) -"tag:{esc(exclude_tag)}"' if exclude_tag else search
+
+
 def parse_fields(text, default=("Notes",)):
     """Parse the deck manager's comma-separated "preserved fields" box into a clean list.
 
