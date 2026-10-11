@@ -824,7 +824,7 @@ sentence saying why."""
 
 
 def build_dupes_judge_prompt(pairs):
-    """The duplicate scan's optional AI stage, in one Thorough turn: front and back of
+    """The duplicate scan's optional AI stage, in one tool-free turn: front and back of
     each side of every candidate pair, asked for a same/overlaps/different verdict.
 
     `pairs` is `[{"ours": {"front": ..., "back": ...}, "theirs": {"front": ..., "back":

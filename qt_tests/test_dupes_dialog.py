@@ -355,6 +355,38 @@ def test_judge_button_disabled_without_backend():
     dlg.deleteLater()
 
 
+def _found_backends(monkeypatch, kinds):
+    from internpearls import ai_cli
+    monkeypatch.setattr(ai_cli, "find_cli", lambda kind, override="":
+                        f"/usr/bin/{kind}" if kind in kinds else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "1.0.0"})
+
+
+def test_judge_button_disabled_when_only_antigravity_is_set_up(monkeypatch):
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _found_backends(monkeypatch, {"agy"})
+    _populate(mock)
+    dlg = _build_dialog(mock)
+    assert dlg._judge_backend is None
+    assert not dlg.judge_btn.isEnabled()
+    assert "Claude Code or Codex CLI" in dlg.judge_btn.toolTip()
+    dlg.deleteLater()
+
+
+def test_judge_skips_preferred_antigravity_for_claude(monkeypatch):
+    mock, _ = harness.bootstrap()
+    harness.app()
+    _found_backends(monkeypatch, {"agy", "claude"})
+    _populate(mock)
+    mock.mw._config["ai_backend"] = "agy"
+    dlg = _build_dialog(mock)
+    assert dlg._judge_backend == "claude"
+    assert dlg._judge_path == "/usr/bin/claude"
+    assert dlg.judge_btn.isEnabled()
+    dlg.deleteLater()
+
+
 def test_judge_with_ai_updates_chips_and_folds_different(monkeypatch):
     import json as _json
     mock, _ = harness.bootstrap()
@@ -373,15 +405,18 @@ def test_judge_with_ai_updates_chips_and_folds_different(monkeypatch):
     from internpearls import ai_cli
 
     scratch_paths = []
+    modes = []
 
     def fake_run_generation(kind, path, prompt, mode, scratch, **kw):
         assert "note_id" not in prompt.lower()
         scratch_paths.append(scratch)
+        modes.append(mode)
         return {"text": reply, "tokens": 10, "rate_limits": None, "duration_s": 0.1}
     monkeypatch.setattr(ai_cli, "run_generation", fake_run_generation)
 
     dlg._judge_with_ai()
     dlg._wait_for_judge()
+    assert modes == ["judge"]
 
     judged = {p["key"]: p["judged"] for p in dlg._pairs}
     assert "same" in judged.values()

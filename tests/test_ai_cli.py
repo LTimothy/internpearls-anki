@@ -626,6 +626,81 @@ def test_build_argv_claude_thorough_omits_new_flags_when_unsupported(monkeypatch
     assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep,Write,WebSearch,WebFetch"
 
 
+def test_build_argv_claude_judge_has_no_tools_at_all(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, stdin = ai_cli.build_argv("claude", "/usr/bin/claude", "judge",
+                                    "/tmp/scratch", [])
+    assert stdin is True
+    assert argv[argv.index("--tools") + 1] == ""
+    assert "--allowedTools" not in argv
+    for name in ("Read", "Glob", "Grep", "Write", "WebSearch", "WebFetch"):
+        assert not any(name in a for a in argv), name
+    assert argv[argv.index("--max-turns") + 1] == "2"
+    assert "acceptEdits" not in argv and "--permission-mode" not in argv
+    assert "--add-dir" not in argv and "--restricted" not in argv
+    assert argv[argv.index("--setting-sources") + 1] == ""
+    assert argv[argv.index("--output-format") + 1] == "stream-json"
+    assert argv[argv.index("--model") + 1] == "sonnet"
+
+
+def test_build_argv_codex_judge_is_read_only_without_search(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "judge", "/tmp/s", [])
+    assert argv[argv.index("--sandbox") + 1] == "read-only"
+    assert "--search" not in argv
+
+
+def test_build_argv_agy_refuses_judge(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    with pytest.raises(ai_cli.GenerationError):
+        ai_cli.build_argv("agy", "/usr/bin/agy", "judge", "/tmp/s", [], prompt="x")
+
+
+def test_judge_mode_is_not_offered_to_the_user():
+    for kind in ai_cli.BACKENDS:
+        assert "judge" not in ai_cli.BACKENDS[kind]["modes"]
+        assert "judge" not in ai_cli.backend_wording(kind)["modes"]
+
+
+@pytest.mark.parametrize("mode", ["quick", "thorough", "judge"])
+def test_build_argv_claude_skips_mcp_servers_when_supported(monkeypatch, mode):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", mode, "/tmp/s", [])
+    assert "--strict-mcp-config" in argv
+    assert "--mcp-config" not in argv
+
+
+def test_build_argv_claude_omits_strict_mcp_config_when_unsupported(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick", "/tmp/s", [])
+    assert "--strict-mcp-config" not in argv
+
+
+def test_build_argv_claude_unconfined_approves_file_tools_only_in_scratch(monkeypatch):
+    # No --restricted: the approval list scopes file tools to scratch, while --tools
+    # (what is available at all) keeps the bare names.
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "thorough",
+                                "/tmp/scratch", [])
+    assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep,Write,WebSearch,WebFetch"
+    assert argv[argv.index("--allowedTools") + 1] == (
+        "Read(//tmp/scratch/**),Edit(//tmp/scratch/**),WebSearch,WebFetch")
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick",
+                                "/tmp/s", ["/tmp/s/a.png"])
+    assert argv[argv.index("--tools") + 1] == "Read,WebSearch,WebFetch"
+    assert argv[argv.index("--allowedTools") + 1] == (
+        "Read(//tmp/s/**),WebSearch,WebFetch")
+
+
+def test_build_argv_claude_unconfined_writes_a_windows_scratch_in_posix_form(
+        monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: False)
+    argv, _ = ai_cli.build_argv("claude", "claude.exe", "quick",
+                                "C:\\Users\\A B\\Temp\\ip-x", ["a.png"])
+    assert argv[argv.index("--allowedTools") + 1] == (
+        "Read(//c/Users/A B/Temp/ip-x/**),WebSearch,WebFetch")
+
+
 def test_build_argv_claude_quick_stays_exactly_as_before(monkeypatch):
     monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
     argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick",

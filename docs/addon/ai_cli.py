@@ -7,7 +7,8 @@ ever gets shell access; thorough mode allowlists a small set of file and web
 tools, confined to the scratch folder (claude: --restricted plus an
 allowlist; codex: an OS sandbox around the scratch cwd); quick stays
 tool-free except claude's Read, scoped to the scratch dir, when images are
-attached (that is how it views them).
+attached (that is how it views them). judge (the duplicate scan's verdicts) gets
+no tools at all, and claude never loads the user's MCP servers.
 """
 import json
 import os
@@ -129,13 +130,15 @@ _COMMON_DIRS = ("/opt/homebrew/bin", "/usr/local/bin",
 # Idle: how long stdout can go silent before a run is considered hung. Cap: a
 # ceiling far above any healthy run, so it only ever catches an idle rule that
 # never fires (a backend with no per-line output at all).
-_IDLE_S = {"quick": 120, "thorough": 180}
-_CAP_S = {"quick": 900, "thorough": 1800}
+_IDLE_S = {"quick": 120, "thorough": 180, "judge": 120}
+_CAP_S = {"quick": 900, "thorough": 1800, "judge": 600}
 # Turn budget per generation call, not per card: an automatic (count=None)
 # draft still fits inside one call, it just returns more cards in the same
 # reply, so this ceiling stays put regardless of how many cards get drafted.
 # Quick's turns are for finding images; the prompt still asks for one drafting pass.
-_MAX_TURNS = {"quick": 6, "thorough": 15}
+# judge reads card text from other decks in the prompt and only replies, so it runs
+# tool-free; mode pickers show only BACKENDS' "modes", never this one.
+_MAX_TURNS = {"quick": 6, "thorough": 15, "judge": 2}
 # Image-input support per backend. All three read an attached image: agy does
 # it headlessly with view_file against the scratch dir build_argv passes as
 # --add-dir, verified against agy 1.1.24.
@@ -560,6 +563,16 @@ def _agy_program(path):
         "Backends to the agy program itself.")
 
 
+def _claude_path_rule(folder):
+    """`folder` as a claude permission-rule path covering everything inside it:
+    absolute, so a leading `//`, and a Windows path in claude's POSIX form
+    (C:\\x becomes /c/x)."""
+    p = folder.replace("\\", "/").rstrip("/")
+    if re.match(r"[A-Za-z]:/", p):
+        p = "/" + p[0].lower() + p[2:]
+    return "/" + p + "/**"
+
+
 def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
                prompt=""):
     """Returns (argv, prompt_via_stdin). claude and codex read the prompt on
@@ -589,12 +602,19 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
         # which is where the activity feed's delta text comes from.
         if supports_flag(path, "--include-partial-messages"):
             argv += ["--include-partial-messages"]
+        # No --mcp-config alongside it, so no MCP server loads at all.
+        if supports_flag(path, "--strict-mcp-config"):
+            argv += ["--strict-mcp-config"]
+        if mode == "judge":
+            return argv + ["--tools", ""], True
         tools = []
+        confined = False
         if mode == "thorough" or image_paths:
             # --restricted removes Bash and confines the file tools below to
-            # the working directories named by --add-dir; without it a named
-            # file tool can still reach outside the scratch folder.
-            if claude_reads_confined(path):
+            # the working directories named by --add-dir; without it only the
+            # scoped approvals below keep them in the scratch folder.
+            confined = claude_reads_confined(path)
+            if confined:
                 argv += ["--restricted"]
             argv += ["--add-dir", scratch]
         if mode == "thorough":
@@ -609,7 +629,14 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
         # NotebookEdit/Task) is what makes "worst case: bad card text" true
         # regardless of anything the model tries to do.
         tool_list = ",".join(tools)
-        argv += ["--tools", tool_list, "--allowedTools", tool_list]
+        allowed = tools
+        if "Read" in tools and not confined:
+            # Approve the file tools only inside scratch: claude applies a Read rule
+            # to Glob and Grep too, and an Edit rule to Write.
+            rule = _claude_path_rule(scratch)
+            allowed = ([f"Read({rule})"] + ([f"Edit({rule})"] if "Write" in tools else [])
+                       + ["WebSearch", "WebFetch"])
+        argv += ["--tools", tool_list, "--allowedTools", ",".join(allowed)]
         if mode == "thorough" and supports_flag(path, "--permission-mode"):
             # Write is on the allowlist above; without this, Claude Code still
             # stops to ask for edit approval it can never receive headlessly.
@@ -620,7 +647,8 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
         # there, nothing outside it); quick stays read-only, tool-free.
         sandbox = "workspace-write" if mode == "thorough" else "read-only"
         # --search is top-level: `codex exec --search` is a parse error.
-        search = ["--search"] if supports_flag(path, "--search") else []
+        search = (["--search"] if mode != "judge" and supports_flag(path, "--search")
+                  else [])
         argv = [path] + search + ["exec", "--json", "--sandbox", sandbox,
                                   "--skip-git-repo-check", "-C", scratch]
         if model and supports_flag(path, "--model", subcommand="exec"):
@@ -629,6 +657,9 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
             argv += ["--image", p]
         return argv, True
     if kind == "agy":
+        if mode == "judge":
+            raise GenerationError("Antigravity cannot run without tools, so it cannot "
+                                  "judge duplicates")
         path = _agy_program(path)
         # --add-dir makes the scratch dir readable, which is how agy views an
         # attached image (view_file); writes stay off, headlessly auto-denied.

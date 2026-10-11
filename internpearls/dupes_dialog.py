@@ -373,13 +373,20 @@ class _DuplicateScanDialog(QDialog):
 
     @_delivery
     def _backends_found(self, result):
+        backends = result.get("backends") or {}
         chosen = result.get("chosen")
+        agy_chosen = chosen == "agy"
+        if agy_chosen:
+            # The judge runs tool-free; Antigravity cannot turn its tools off.
+            chosen = next((k for k in ("claude", "codex")
+                           if (backends.get(k) or {}).get("ok")), None)
         self._judge_backend = chosen
-        self._judge_path = ((result.get("backends") or {}).get(chosen) or {}).get(
-            "path") if chosen else None
+        self._judge_path = (backends.get(chosen) or {}).get("path") if chosen else None
         self._backends_ready = True
         self.judge_btn.setToolTip(
             "" if chosen else
+            "Judge with AI needs Claude Code or Codex CLI: Antigravity cannot run "
+            "without tools." if agy_chosen else
             "Set up an AI backend first (Generate cards (AI) > Setup).")
         self._sync_judge_button()
 
@@ -1009,7 +1016,7 @@ class _DuplicateScanDialog(QDialog):
             try:
                 context.checkpoint("duplicate-judge:start")
                 result = ai_cli.run_generation(
-                    kind, path, prompt, "thorough", scratch,
+                    kind, path, prompt, "judge", scratch,
                     cancel=context.cancelled,
                     model=cfg["ai_model"].get(kind, ""),
                     effort=cfg["ai_effort"].get(kind, ""))
