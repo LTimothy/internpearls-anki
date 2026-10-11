@@ -218,13 +218,11 @@ def test_input_page_offers_to_edit_my_rules_once_some_are_saved(anki, monkeypatc
 # === Test connection (input page's own single-backend button) =========
 
 def _drain_conn_test(dlg, timeout=15):
-    """Test helper mirroring _wait_for_worker: joins the background thread a
-    Test connection click started, then fires its poll timer (the mock has no
-    live event loop) to run the completion callback."""
-    t, timer = dlg._conn_test_refs[-1]
-    t.join(timeout=timeout)
-    wait_for_mock_work(t)
-    timer.fire()
+    """Joins the work a Test connection click started and delivers it, since the
+    mock has no live event loop to run the completion callback."""
+    handle = dlg._conn_test_refs[-1]
+    handle.join(timeout=timeout)
+    wait_for_mock_work(handle)
 
 
 def test_input_page_test_connection_button_works(anki, monkeypatch):
@@ -232,6 +230,20 @@ def test_input_page_test_connection_button_works(anki, monkeypatch):
     dlg._test_backend_connection()
     _drain_conn_test(dlg)
     assert "working" in dlg.backend_test_status.text().lower()
+
+
+def test_closing_the_wizard_cancels_its_connection_test(anki, monkeypatch):
+    import threading
+    dlg = _ready_dialog(anki, monkeypatch)
+    release = threading.Event()
+    monkeypatch.setattr(ai_cli, "test_connection", lambda kind, path: (
+        release.wait(15), {"state": "working", "detail": "late"})[1])
+    dlg._test_backend_connection()
+    status = dlg.backend_test_status.text()
+    dlg._retire_for_delete()
+    release.set()
+    _drain_conn_test(dlg)
+    assert dlg.backend_test_status.text() == status   # nothing reached the closed wizard
 
 
 def test_mode_radio_labels_are_the_backends_own_truthful_text(anki, monkeypatch):
@@ -313,6 +325,7 @@ def test_cancel_generation_preserves_inputs(anki, monkeypatch):
     dlg._start_generation()
     dlg._cancel_generation()
     dlg._wait_for_worker(timeout=15)
+    assert not anki.gui.warnings
     assert dlg.stack.currentWidget() is dlg.input_page
     assert dlg.source_box.toPlainText() == "LAST toxicity source text"
     assert dlg.instructions_box.text() == ""
@@ -1868,6 +1881,7 @@ def test_cancel_during_revision_returns_to_review_with_draft_intact(anki, monkey
     dlg._cancel_generation()
     dlg._wait_for_worker(timeout=15)
 
+    assert not anki.gui.warnings
     assert dlg.stack.currentWidget() is dlg.review_page
     assert dlg.session.cards[0]["fields"]["Front"] == "hand-edited front"
     assert dlg.session.included[0] is False
@@ -1901,6 +1915,7 @@ def test_first_generation_cancel_still_falls_back_to_input_with_no_draft(anki, m
     dlg._start_generation()
     dlg._cancel_generation()
     dlg._wait_for_worker(timeout=15)
+    assert not anki.gui.warnings
     assert dlg.stack.currentWidget() is dlg.input_page
     assert not dlg.session.cards
 

@@ -5597,6 +5597,39 @@ def test_every_collection_writing_action_holds_the_manual_guard(anki, tmp_path,
     assert not ui.manual_sync_in_progress()   # and every one of them released it
 
 
+@pytest.mark.parametrize("module, entry, dialog", [
+    ("ai_dialog", "generate_cards", "_GenerateDialog"),
+    ("dupes_dialog", "open_duplicate_scan", "_DuplicateScanDialog"),
+])
+def test_modal_menu_windows_hold_the_manual_guard_while_open(anki, monkeypatch,
+                                                            module, entry, dialog):
+    """Either window can import or edit notes, so an auto-sync apply must not land
+    inside its modal loop."""
+    import importlib
+    from internpearls import ui
+    mod = importlib.import_module(f"internpearls.{module}")
+    held = []
+
+    class Window:
+        def __init__(self, *a, **kw):
+            pass
+
+        def exec(self):
+            held.append(ui.manual_sync_in_progress())
+
+        def _retire_for_delete(self):
+            pass
+
+        def deleteLater(self):
+            pass
+
+    monkeypatch.setattr(mod, dialog, Window)
+    getattr(mod, entry)()
+
+    assert held == [True]
+    assert not ui.manual_sync_in_progress()
+
+
 def test_remove_empty_cards_acts_on_the_cards_still_empty_after_the_confirmation(
         anki, monkeypatch):
     """The report is computed before a modal dialog someone can sit in indefinitely, and
@@ -8326,6 +8359,19 @@ def test_an_absurd_poll_interval_is_capped_rather_than_overflowing(anki):
     assert timer is not None and timer.started == 7 * 24 * 60 * 60 * 1000
     assert timer.started < 2 ** 31
     background._stop_auto_sync_timer()
+
+
+def test_restarting_or_stopping_the_auto_sync_poll_frees_the_old_timer(anki):
+    from internpearls import background
+
+    background._restart_auto_sync_timer(60)
+    first = background._auto_sync_timer
+    background._restart_auto_sync_timer(30)
+    second = background._auto_sync_timer
+    background._stop_auto_sync_timer()
+
+    assert first.deleted and first.started is None
+    assert second.deleted and second.started is None
 
 
 def test_startup_scheduling_never_reaches_ankis_own_error_dialog(anki):

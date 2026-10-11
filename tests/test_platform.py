@@ -398,3 +398,85 @@ def test_cancelled_work_is_released_once_its_thread_finishes(anki):
     handle._deliver_for_mock()
 
     assert native._live_work == []
+
+
+def test_cancellation_is_acknowledged_only_once_cancelled_work_has_finished(anki):
+    native = NativePlatform()
+    release = threading.Event()
+    running = native.start_work(_request(), lambda _context: release.wait(1),
+                                lambda _result: None, lambda _error: None)
+    running.start()
+    running.cancel()
+    assert not running.cancellation_acknowledged()   # cancelled, still running
+    release.set()
+    running.join(timeout=1)
+    assert running.cancellation_acknowledged()
+
+    finished = native.start_work(_request(), lambda _context: "done",
+                                 lambda _result: None, lambda _error: None)
+    finished.start()
+    finished.join(timeout=1)
+    assert not finished.cancellation_acknowledged()   # finished, never cancelled
+
+
+def test_an_event_emitted_as_the_work_finishes_is_not_lost(anki):
+    """The worker can append its last event and finish between the poll's drain
+    and its finished check; the poll must not release the handle past that event."""
+    from collections import deque
+
+    delivered = []
+    handle = NativePlatform().start_work(
+        _request(), lambda _context: None, delivered.append, delivered.append,
+        lambda event: delivered.append(event["type"]))
+
+    class FinishesAfterTheDrain(deque):
+        def __bool__(self):
+            if not len(self) and not handle._finished:
+                self.append({"type": "last"})
+                handle._result, handle._finished = "done", True
+                return False
+            return bool(len(self))
+
+    handle._events = FinishesAfterTheDrain()
+    handle._deliver_for_mock()
+    handle._deliver_for_mock()
+
+    assert delivered == ["last", "done"]
+
+
+def test_a_released_timer_handle_frees_its_qtimer_and_stays_stopped(anki):
+    calls = []
+    timer = NativePlatform().create_timer(17, lambda: calls.append("tick"), 25)
+    timer.start()
+    timer.deleteLater()
+    timer.start()
+
+    assert anki.qt_timers[-1].deleted
+    assert not timer.is_active()
+    timer.fire()
+    assert calls == []
+
+
+def test_work_frees_its_poll_timer_once_delivered_or_abandoned(anki):
+    native = NativePlatform()
+    delivered = native.start_work(_request(), lambda _context: "value",
+                                  lambda _result: None, lambda _error: None)
+    delivered_timer = anki.qt_timers[-1]
+    delivered.start()
+    wait_for_mock_work(delivered)
+
+    cancelled = native.start_work(_request(), lambda _context: "value",
+                                  lambda _result: None, lambda _error: None)
+    cancelled_timer = anki.qt_timers[-1]
+    cancelled.start()
+    cancelled.cancel()
+    wait_for_mock_work(cancelled)
+
+    abandoned = native.start_work(_request(), lambda _context: "value",
+                                  lambda _result: None, lambda _error: None)
+    abandoned_timer = anki.qt_timers[-1]
+    abandoned._release()   # what its QTimer's destroyed signal calls
+
+    assert delivered_timer.deleted and delivered_timer.started is None
+    assert cancelled_timer.deleted and cancelled_timer.started is None
+    assert abandoned_timer.deleted

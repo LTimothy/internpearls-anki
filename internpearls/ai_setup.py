@@ -11,12 +11,10 @@ from aqt.qt import (QApplication, QComboBox, QDesktopServices, QDialog,
 from . import ai_cli
 from .config import ADDON_PACKAGE, APP_NAME, _cfg
 from .palette import colors
-from .platform import new_work_request, platform, platform_owner_id
+from .platform import new_work_request, platform
 from .ui import (_safe, hint_label, link_button, section_label, section_rule,
                  title_label)
 from .widgets import CARET_GAP, align_field_column, chip_cell, field_slot
-
-_POLL_MS = 200
 
 # The width of a settings grid's label column, so every field in one starts at the
 # same x after it. Module level rather than only on _SettingsPanel: the wizard's own
@@ -542,15 +540,14 @@ def run_connection_test_async(owner, kind, path, on_status, on_done=None,
     """Run ai_cli.test_connection off the UI thread and report the one readable
     line it comes back with.
 
-    Shared by this window and the wizard, which ran the same daemon-thread-plus-
-    QTimer twice: a blocking call on the UI thread freezes Anki, and a thread or
-    timer held only in a local would be collected out from under the live poll, so
-    both are parked on `owner` for the run.
+    Shared by this window and the wizard: a blocking call on the UI thread freezes
+    Anki. The work handle is parked on `owner` so closing it can cancel the run, and
+    a cancelled run calls nothing back.
 
     `on_status(text)` is called once, from the poll and only from the poll, with the
     final line: never the CLI's own stderr, which ai_cli.test_connection has already
-    turned into one short sentence. `on_done()` runs first and always, so a caller's
-    own bookkeeping is cleaned up even when the result has nowhere left to go.
+    turned into one short sentence. `on_done()` runs first on every delivery, so a
+    caller's own bookkeeping is cleaned up even when the result has nowhere left to go.
     `is_live()` is that case: the AI Backends window rebuilds its settings panel when
     the preferred backend changes, so a result arriving after the rebuild is consumed
     and dropped rather than written into a panel about a different assistant.
@@ -572,12 +569,10 @@ def run_connection_test_async(owner, kind, path, on_status, on_done=None,
                       + result["detail"])
 
     def on_result(result):
-        timer.stop()
         (guard(lambda: deliver(result=result)) if guard else
          deliver(result=result))
 
     def on_error(error):
-        timer.stop()
         (guard(lambda: deliver(error=error)) if guard else deliver(error=error))
 
     request = new_work_request(
@@ -593,10 +588,8 @@ def run_connection_test_async(owner, kind, path, on_status, on_done=None,
     handle = platform().start_work(
         request, work, on_result,
         on_error)
-    timer = platform().create_timer(platform_owner_id(owner), lambda: None, _POLL_MS)
-    refs.append((handle, timer))
+    refs.append(handle)
     handle.start()
-    timer.start()
 
 
 class _AIBackendsDialog(QDialog):
@@ -805,11 +798,10 @@ def open_ai_backends(parent=None):
     try:
         dlg.exec()
     finally:
-        # A connection worker writes only to its private result box, so it can finish
-        # safely after this window closes. Stop its parented poll first: no completion
-        # callback may reach a widget tree that is now scheduled for deletion.
-        for _thread, timer in dlg.__dict__.get("_conn_test_refs", ()):
-            timer.stop()
+        # A connection worker can finish safely after this window closes, but a
+        # cancelled handle never delivers, so no callback reaches the closed window.
+        for handle in dlg.__dict__.get("_conn_test_refs", ()):
+            handle.cancel()
         try:
             dlg.deleteLater()
         except RuntimeError:    # Anki quitting already deleted it

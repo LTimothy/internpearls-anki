@@ -316,13 +316,11 @@ def test_backend_enabled_defaults_true(anki):
 # === Test connection, Re-check, and detection status =======================
 
 def _drain_conn_test(dlg, timeout=15):
-    """Mirrors ai_dialog's own test helper: joins the background thread a
-    Test connection click started, then fires its poll timer (the mock has
-    no live event loop) to run the completion callback."""
-    t, timer = dlg._conn_test_refs[-1]
-    t.join(timeout=timeout)
-    wait_for_mock_work(t)
-    timer.fire()
+    """Joins the work a Test connection click started and delivers it, since the
+    mock has no live event loop to run the completion callback."""
+    handle = dlg._conn_test_refs[-1]
+    handle.join(timeout=timeout)
+    wait_for_mock_work(handle)
 
 
 def test_connection_button_disabled_until_a_cli_is_found(anki, monkeypatch):
@@ -350,6 +348,37 @@ def test_connection_reports_working(anki, monkeypatch):
     _drain_conn_test(dlg)
     assert "working" in dlg.panel.test_status.text().lower()
     assert dlg.panel.test_btn.isEnabled()       # re-enabled once it's done
+
+
+def test_closing_ai_backends_cancels_its_connection_test(anki, monkeypatch):
+    """No completion callback may reach the window once it has closed."""
+    import threading
+    from internpearls import ai_cli, ai_setup
+    monkeypatch.setattr(
+        ai_cli, "find_cli",
+        lambda kind, override="": sys.executable if kind == "claude" else None)
+    monkeypatch.setattr(ai_cli, "probe", lambda kind, path: {"ok": True, "detail": "v1"})
+    release = threading.Event()
+    monkeypatch.setattr(ai_cli, "test_connection", lambda kind, path: (
+        release.wait(15), {"state": "working", "detail": "late"})[1])
+    opened = []
+
+    def exec_then_close(self):
+        _settled(self)._test("claude")
+        opened.append(self)
+        return 0
+
+    monkeypatch.setattr(ai_setup._AIBackendsDialog, "exec", exec_then_close)
+    ai_setup.open_ai_backends(anki.mw)
+    dlg = opened[0]
+    handle = dlg._conn_test_refs[-1]
+    status = dlg.panel.test_status.text()
+    release.set()
+    handle.join(timeout=15)
+    wait_for_mock_work(handle)
+
+    assert dlg.panel.test_status.text() == status
+    assert "claude" in dlg._testing   # not even on_done ran
 
 
 def test_recheck_mid_test_connection_does_not_reenable_or_double_run(anki, monkeypatch):
@@ -422,10 +451,9 @@ def test_switching_preference_mid_test_does_not_write_to_the_old_panel(anki, mon
     new_status = dlg.panel.test_status.text()
 
     release.set()
-    t, timer = dlg._conn_test_refs[-1]
-    t.join(timeout=15)
-    wait_for_mock_work(t)
-    timer.fire()      # must not raise, and must not touch the new (codex) panel
+    handle = dlg._conn_test_refs[-1]
+    handle.join(timeout=15)
+    wait_for_mock_work(handle)   # must not raise, and must not touch the new (codex) panel
 
     assert "claude" not in dlg._testing            # thread result still consumed
     assert dlg.panel.test_status.text() == new_status   # new panel left untouched

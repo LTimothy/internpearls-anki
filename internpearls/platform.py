@@ -135,6 +135,9 @@ class TimerHandle(Protocol):
     def is_active(self) -> bool:
         raise NotImplementedError
 
+    def deleteLater(self) -> None:
+        raise NotImplementedError
+
 
 class Platform(Protocol):
     epoch: int
@@ -223,6 +226,15 @@ class _NativeTimerHandle:
     def isActive(self):
         return self.is_active()
 
+    def deleteLater(self):
+        """Stop for good and free the QTimer now rather than with its owner."""
+        self.stop()
+        self._callback = None
+        try:
+            self._timer.deleteLater()
+        except RuntimeError:    # its owner was deleted, and the QTimer with it
+            pass
+
     def fire(self):
         """Drive a timer once in the lightweight Anki test harness."""
         fire = getattr(self._timer, "fire", None)
@@ -298,7 +310,7 @@ class _NativeWorkHandle:
         # than keeping it in _live_work for the rest of the session.
         destroyed = getattr(self._timer_handle._timer, "destroyed", None)
         if destroyed is not None:
-            destroyed.connect(self._abandon)
+            destroyed.connect(self._release)
 
     @property
     def cancel_event(self):
@@ -322,15 +334,14 @@ class _NativeWorkHandle:
     def _deliver(self):
         if self._delivered:
             return
+        finished = self._finished   # read before the drain, so its last event is in it
         while self._events:
             event = self._events.popleft()
             if not self._cancelled.is_set() and self._on_event is not None:
                 self._on_event(event)
-        if not self._finished:
+        if not finished:
             return
-        self._timer_handle.stop()
-        self._delivered = True
-        self._native._release_work(self)
+        self._release()
         if self._cancelled.is_set():
             return
         if self._error is not None:
@@ -357,8 +368,11 @@ class _NativeWorkHandle:
         if self._started:
             self._thread.join(timeout)
 
-    def _abandon(self, *_):
+    def _release(self, *_):
+        if self._delivered:
+            return
         self._delivered = True
+        self._timer_handle.deleteLater()
         self._native._release_work(self)
 
     def _deliver_for_mock(self):
@@ -366,6 +380,10 @@ class _NativeWorkHandle:
 
     def cancel(self):
         self._cancelled.set()
+
+    def cancellation_acknowledged(self):
+        # A cancelled handle never delivers, so this is how a poller knows it is over.
+        return self._cancelled.is_set() and self._finished
 
 
 class NativePlatform:

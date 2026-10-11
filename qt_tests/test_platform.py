@@ -142,6 +142,34 @@ def test_work_whose_owner_dies_mid_flight_is_released_not_delivered():
     assert native._live_work == []
 
 
+def test_finished_work_frees_its_poll_timer_rather_than_leaving_it_on_the_owner():
+    """Every start_work builds a poll QTimer parented to its owner; without the
+    release each finished run left one more behind until the owner closed."""
+    from PyQt6.QtCore import QCoreApplication, QEvent, QTimer
+    from aqt.qt import QWidget
+
+    harness.bootstrap()
+    app = harness.app()
+    native = NativePlatform()
+    owner = QWidget()
+    delivered = []
+    for ordinal in (1, 2, 3):
+        handle = native.start_work(
+            WorkRequest("test", native.owner_id(owner), ordinal, 1, {"action": "test"}),
+            lambda _context: "value", delivered.append, delivered.append)
+        handle.start()
+        handle.join(timeout=2)
+    deadline = time.monotonic() + 2
+    while len(delivered) < 3 and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+    assert delivered == ["value"] * 3
+    assert owner.findChildren(QTimer) == []
+    owner.deleteLater()
+
+
 def test_finding_an_owner_survives_a_weakref_callback_changing_the_registry():
     """A collected owner's weakref callback removes its registry entry, and the garbage
     collector can run it in the middle of a lookup iterating that registry."""

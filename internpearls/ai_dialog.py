@@ -37,9 +37,9 @@ from .platform import (new_work_request, platform, platform_owner_id,
                        wait_for_mock_work)
 from .review import (_CARET_CLOSED, _CARET_OPEN, _ClickableLabel, _image_tag,
                      _preview_style, _rich_label, _separator)
-from .ui import (_ask, _ask_scrollable, _info, _safe, _warn, hint_label,
-                 link_button, muted_label, section_label, section_rule, title_label,
-                 tooltip)
+from .ui import (_ask, _ask_scrollable, _info, _manual_flow, _safe, _warn,
+                 hint_label, link_button, muted_label, section_label, section_rule,
+                 title_label, tooltip)
 from .widgets import (CARET_GAP, CARET_W, align_field_column, chip_cell,
                       chip_column_width, decision_cell, field_slot,
                       row_text_indent)
@@ -1964,7 +1964,7 @@ class _GenerateDialog(QDialog):
         self._attach_worker.cancel()
         self._attach_ready = True
         if self._attach_timer is not None:
-            self._attach_timer.stop()
+            self._attach_timer.deleteLater()
         self._attach_timer = platform().create_timer(
             platform_owner_id(self), lambda: self._guard_completion(self._poll_attachment_worker),
             _IMG_POLL_MS)
@@ -2348,20 +2348,17 @@ class _GenerateDialog(QDialog):
         while worker.is_alive() and time.time() < end:
             time.sleep(0.05)
         wait_for_mock_work(worker)
-        while not self._worker_ready and time.time() < end:
+        fire = getattr(self._timer, "fire", None) or self._timer.timeout.emit
+        while not self._gen_done and time.time() < end:
             QApplication.processEvents()
+            if self._worker is worker and not self._gen_done:
+                fire()
+            if self._worker is not worker:
+                return
             time.sleep(0.005)
-        fire = getattr(self._timer, "fire", None)
-        if fire is not None:
-            fire()
-        else:
-            self._timer.timeout.emit()
-        if self._worker is not worker:
-            return
         if not self._gen_done:
             self._timer.stop()
-            self._gen_done = True
-            self._finish_generation()
+            return
         while (hasattr(self, "_img_worker") and not self._img_done
               and time.time() < end):
             while self._img_worker.is_alive() and time.time() < end:
@@ -3649,8 +3646,8 @@ class _GenerateDialog(QDialog):
 
         quietly(lambda: self._flush_draft(quiet=True))
         self._retire_draft()
-        for _thread, timer in own.get("_conn_test_refs", ()):
-            quietly(timer.stop)
+        for handle in own.get("_conn_test_refs", ()):
+            handle.cancel()
         for name in ("_attach_timer", "_timer", "_img_timer"):
             timer = own.get(name)
             if timer is not None:
@@ -3744,6 +3741,7 @@ class _GenerateDialog(QDialog):
 
 
 @_safe
+@_manual_flow
 def generate_cards():
     dlg = _GenerateDialog()
     finished = False

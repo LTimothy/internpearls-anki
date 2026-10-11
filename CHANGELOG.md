@@ -3,6 +3,12 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## Unreleased
+
+- Cancel during AI card generation goes back to your inputs or draft instead of
+  staying on the progress screen.
+- Automatic sync waits while the AI card generator or the duplicate scan is open.
+
 ## v0.83.0
 
 Faster imports for decks with pictures, and a choice when a deck can't be previewed.

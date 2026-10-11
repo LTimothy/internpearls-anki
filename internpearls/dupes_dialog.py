@@ -32,8 +32,8 @@ from .logic import field_preview_text, plain_text
 from .palette import colors
 from .platform import (new_work_request, platform, platform_owner_id,
                        wait_for_mock_work)
-from .ui import (_safe, copy_to_clipboard, hint_label, link_button, plain_tooltip,
-                 section_label, title_label)
+from .ui import (_manual_flow, _safe, copy_to_clipboard, hint_label, link_button,
+                 plain_tooltip, section_label, title_label)
 from .widgets import CARET_GAP, CARET_W, StreamingList
 
 # This dialog's own chip vocabulary. Unlike widgets.CHIPS, a candidate's label carries
@@ -1161,6 +1161,7 @@ class _DuplicateScanDialog(QDialog):
 
 
 @_safe
+@_manual_flow
 def open_duplicate_scan():
     """Experimental > Scan for duplicates."""
     dlg = _DuplicateScanDialog(_cfg()["scope_tag"])

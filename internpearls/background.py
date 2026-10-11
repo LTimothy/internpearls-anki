@@ -415,6 +415,7 @@ def _stop_auto_sync_timer():
     global _auto_sync_timer
     if _auto_sync_timer is not None:
         _auto_sync_timer.stop()
+        _auto_sync_timer.deleteLater()   # parented to mw, so it would outlive this poll
         _auto_sync_timer = None
 
 

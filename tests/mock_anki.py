@@ -3681,6 +3681,7 @@ def install():
             self.started = None
             self.interval = None
             self.single_shot = False
+            self.deleted = False
             self._callbacks = []
             _QTimer.registry.append(self)
 
@@ -3697,6 +3698,9 @@ def install():
 
         def stop(self):
             self.started = None
+
+        def deleteLater(self):
+            self.deleted = True
 
         def fire(self):
             for fn in self._callbacks:

@@ -262,10 +262,12 @@ def test_attachment_extraction_runs_off_thread_and_cancel_commits_nothing(
     assert started.wait(timeout=1)
     assert worker_thread == [dlg._attach_worker.ident]
     assert worker_thread[0] != gui_thread
+    replaced = dlg._attach_timer._timer
 
     dlg._cancel_attachments()
     _finish_attachment_worker(dlg)
 
+    assert replaced.deleted   # the poll timer cancel replaces is freed, not left on the dialog
     assert dlg.session.attachments == []
     assert not dlg.generate_btn.isEnabled()
     assert dlg.attach_btn.isEnabled()

@@ -512,8 +512,9 @@ def test_settings_labels_name_and_focus_their_controls(monkeypatch):
 
 def test_closed_backends_dialog_is_disposed_while_its_worker_finishes(
         monkeypatch):
-    """Closing the modal stops its Qt poll and releases the parent-owned widget
-    tree; the daemon worker may finish independently without keeping that tree alive."""
+    """Closing the modal cancels its connection test and releases the parent-owned
+    widget tree; the daemon worker may finish independently without keeping that tree
+    alive, and calls nothing back."""
     import threading
 
     harness.bootstrap()
@@ -534,7 +535,7 @@ def test_closed_backends_dialog_is_disposed_while_its_worker_finishes(
 
     def exec_then_close(self):
         self._test("claude")
-        captured["thread"], captured["timer"] = self._conn_test_refs[-1]
+        captured["handle"] = self._conn_test_refs[-1]
         self.reject()
         return 0
 
@@ -542,16 +543,16 @@ def test_closed_backends_dialog_is_disposed_while_its_worker_finishes(
     monkeypatch.setattr(ai_setup._AIBackendsDialog, "exec", exec_then_close)
     try:
         ai_setup.open_ai_backends(owner)
-        assert captured["thread"].is_alive()
-        assert not captured["timer"].isActive()
+        assert captured["handle"].is_alive()
+        assert captured["handle"].cancel_event.is_set()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         app.processEvents()
         assert owner.findChildren(ai_setup._AIBackendsDialog) == []
     finally:
         release.set()
-        captured["thread"].join(timeout=15)
+        captured["handle"].join(timeout=15)
 
-    assert not captured["thread"].is_alive()
+    assert not captured["handle"].is_alive()
 
 
 def test_rows_paint_checking_until_a_slow_cli_answers(monkeypatch):
