@@ -10158,6 +10158,20 @@ def test_update_preview_treats_a_hand_edited_field_as_kept(anki, tmp_path, monke
     assert len(kept) == 1 and isinstance(kept[0], logic.KeptEdit) and kept[0] == "Y"
 
 
+def test_a_shown_hand_edit_leaves_the_decks_kept_count_a_number(anki, tmp_path):
+    from internpearls import sync
+    from internpearls.config import _cfg
+    _kept_back_source(anki, tmp_path)
+    manifest, fetch, _source = sync._fetch_manifest(_cfg())
+
+    preview, _dl, _cancelled = sync._preview_content_changes(
+        fetch, manifest["decks"], {"Front one": "g1"}, {},
+        existing_fields={"g1": {"Front": "Front one", "Back": "Y"}},
+        edited={"g1": {"Back": "S"}})
+
+    assert preview[DECK][0] == 1
+
+
 def _kept_back_source(anki, tmp_path):
     """The learner edited Back to Y while the deck moved it to X; v2 is pending."""
     anki.col.add_note("g1", _fields("Front one", "S"), [TAGS], deck=DECK)

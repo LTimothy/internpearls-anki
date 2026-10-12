@@ -1891,9 +1891,9 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
                         matched, details, existing_fields,
                         protected=_cfg()["protected"], per_note=resolved_per_note,
                         baseline=baseline)
-                    for rid, kept in find_kept_edits(matched, details, existing_fields,
-                                                     edited or {}, baseline).items():
-                        changed.setdefault(rid, {}).update(kept)
+                    for rid, fields in find_kept_edits(matched, details, existing_fields,
+                                                       edited or {}, baseline).items():
+                        changed.setdefault(rid, {}).update(fields)
                 preview[d["name"]] = (kept, new, new_notes, changed)
             except DownloadCancelled:
                 # Cancel clicked mid-download rather than between decks. That is the
