@@ -501,12 +501,13 @@ def test_sync_records_field_hashes_and_keeps_text_baselines(anki, tmp_path):
     # A later release that leaves g1 as it is still refreshes its hashes and keeps
     # the protected field's text baseline.
     _configure(anki, _write_source(tmp_path, {
-        DECK: ("v2", [("g1", _fields("Front one", dosing="1 mg/kg"), TAGS),
+        DECK: ("v2", [("g1", _fields("Front one", back="new back", dosing="1 mg/kg"), TAGS),
                       ("g2", _fields("Front two"), TAGS)], None)}))
     anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
     _sync(anki)
     shipped = sync._load_shipped()
     assert shipped["g1"]["Dosing"] == "1 mg/kg"
+    assert shipped["g1"]["#Back"] == logic.note_fields_hash(["new back"])
     assert shipped["g1"]["#Front"] == logic.note_fields_hash(["Front one"])
     assert shipped["g2"]["#Back"] == logic.note_fields_hash(["the back"])
 
@@ -812,9 +813,9 @@ def test_undoing_a_deck_update_makes_that_deck_pending_again(anki, tmp_path):
     assert (other["Back"], other["Notes"]) == ("the back", "my annotation g2")
     assert anki.col.note_by_guid("g1")["Back"] == "v2"
     assert sync._load_json(sync.INSTALLED, {}) == {DECK: "v2", OTHER: "v1"}
-    shipped = {g: {k: v for k, v in e.items() if not k.startswith("#")}
-               for g, e in sync._load_json(sync.SHIPPED, {}).items()}
-    assert shipped == {**before, "g1": {"Notes": "", "Back": "v2"}}
+    shipped = sync._load_json(sync.SHIPPED, {})
+    assert shipped["g2"] == before["g2"]
+    assert "#Back" in shipped["g1"] and shipped["g1"]["Back"] == "v2"
     assert [d["name"] for d in sync.decks_to_update(
         manifest, sync._load_json(sync.INSTALLED, {}))] == [OTHER]
     assert (sync.collection_key(), OTHER, "v2") in sync.undone_updates
@@ -6826,16 +6827,19 @@ def test_run_sync_drops_declined_notes_before_import(anki, tmp_path):
 
 
 def test_run_sync_keep_leaves_the_learners_copy_untouched(anki, tmp_path):
-    from internpearls import config, sync
+    from internpearls import config, logic, sync
     deck = _source_updating_card_a(anki, tmp_path)   # has guid-a, source rewords it
     config.save_declined({
         "guid-a": {"state": "keep", "front": "front a", "deck": deck,
                    "decided": "2026-08-25", "hash": ""}})
     before = _existing_fields(anki, "guid-a")
+    old = logic.note_fields_hash(["front a"])
+    sync._save_json(sync.SHIPPED, {"guid-a": {"#Front": old}})
 
     drive(anki, sync.sync_decks, respond=_accept_everything)
 
     assert _existing_fields(anki, "guid-a") == before
+    assert sync._load_shipped()["guid-a"]["#Front"] == old
 
 
 def test_unattended_auto_sync_respects_the_registry(anki, tmp_path):

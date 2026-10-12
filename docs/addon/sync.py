@@ -753,6 +753,16 @@ def restore_pending_after_undo(changes):
         pass
 
 
+def _package_hashes(src, declined, expected_conflicts, package_matched):
+    """Per-field shipped hashes for one package's notes."""
+    details = apkg_note_details(src)
+    # Declined notes and held-back note-type conflicts never reached the
+    # collection, so they keep the hashes of what the learner actually holds.
+    unwritten = set(declined) | {d["guid"] for d in details
+                                 if d["rid"] in expected_conflicts}
+    return shipped_field_hashes(details, package_matched, unwritten)
+
+
 def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
               defer_template_changes=False, convert_notetypes=None,
               undisclosed_conversions=()):
@@ -930,12 +940,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # stops or fails later can't leave this import's overwrite standing, and a
             # failure here rolls the import back. The shipped values are read before
             # the restore puts the learner's own back over them.
-            details = apkg_note_details(src)
-            # Declined notes and held-back note-type conflicts never reached the
-            # collection, so they keep the hashes of what the learner actually holds.
-            unwritten = set(declined) | {d["guid"] for d in details
-                                         if d["rid"] in expected_conflicts}
-            hashes = shipped_field_hashes(details, package_matched, unwritten)
+            hashes = _package_hashes(src, declined, expected_conflicts, package_matched)
             deck_shipped = with_field_hashes(
                 _capture_shipped(cfg["protected"], cfg["scope_tag"], wrote, per_note),
                 baseline, hashes, wrote)
@@ -2938,10 +2943,7 @@ def import_single():
         baseline = _load_shipped()
         # Restore before any later bookkeeping or presentation can fail.
         try:
-            details = apkg_note_details(src)
-            unwritten = set(declined) | {d["guid"] for d in details
-                                         if d["rid"] in expected_conflicts}
-            hashes = shipped_field_hashes(details, package_matched, unwritten)
+            hashes = _package_hashes(src, declined, expected_conflicts, package_matched)
             shipped = with_field_hashes(
                 _capture_shipped(cfg["protected"], cfg["scope_tag"], touched, per_note),
                 baseline, hashes, touched)
