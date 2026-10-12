@@ -3,6 +3,19 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.85.0
+
+Cards you edit by hand keep your wording, and you can send those edits with your card feedback.
+
+- Your edits to a synced card are kept through deck updates, like preserved fields,
+  until the deck ships your wording. When the deck changed the same field, the card's
+  row says your version is kept and lets you see and use the deck's version instead.
+- The card feedback at the end of Update my decks now also lists cards you edited by
+  hand, with your wording. That feedback appears only when you flag a card or decide
+  on one during the update, so to send your edits, flag any card. Preserved fields are
+  not included.
+- When an update ships your edit as the deck's own wording, the summary says so.
+
 ## v0.84.0
 
 Cancel works during AI drafting, and the AI tools get tighter limits.
