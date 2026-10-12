@@ -44,7 +44,7 @@ from .collection import (NoteTypeFieldsRequired, _NoteTypeCache, _apply_deck,
                          installed_matching_collection, invalidate_installed)
 from .config import (ADDON_VERSION, DECK_CACHE, DUPLICATE_TAG_LEAF, INSTALLED,
                      RETIRED_DECK_LEAF,
-                     RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
+                     RECORDED_TEXT, RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, collection_key, load_declined, load_deck_skill,
                      replace_file, save_declined, save_deck_skill, save_later_seen)
 from .logic import (APKG_MAX_BYTES, HASH_KEY, MOD_KEY, apkg_deck_names, apkg_note_details, apkg_notes,
@@ -585,12 +585,17 @@ def _record_current_hashes(cfg, manifest, fetch, installed, todo, reg):
                   if g not in archived and g not in declined
                   and not any(k.startswith(HASH_KEY) for k in shipped.get(g, {}))}
     pending = {t["name"] for t in todo}
+    done = _load_json(RECORDED_TEXT, {})
+    done = done if isinstance(done, dict) else {}
     decks = []
     for d in manifest.get("decks", []):
+        if not isinstance(d, dict):
+            continue
         name = d.get("name")
         mine = {g for g, deck in candidates.items() if deck and name
                 and (deck == name or deck.startswith(f"{name}::"))}
         if (mine and name not in pending and installed.get(name) == d.get("version")
+                and done.get(name) != d.get("version")
                 and not _deck_opted_out(name, cfg["excluded"])):
             decks.append((d, mine))
     if not decks:
@@ -613,8 +618,10 @@ def _record_current_hashes(cfg, manifest, fetch, installed, todo, reg):
             hashes = hashes_unless_renamed(
                 {g: h for g, h in hashes.items() if g in mine}, _stored_fields(mine))
             updated.update({g: {**shipped.get(g, {}), **h} for g, h in hashes.items()})
+            done[d["name"]] = d.get("version")
     if updated:
         _save_json(SHIPPED, {**_load_shipped(), **updated})
+    _save_json(RECORDED_TEXT, done)
 
 
 def _adopted_items(edits):

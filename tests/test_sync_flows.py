@@ -9971,6 +9971,69 @@ def test_update_records_current_text_so_an_earlier_edit_is_kept(anki, tmp_path, 
     assert anki.col.note_by_guid("g1")["Back"] == "Y"
 
 
+def test_update_skips_a_malformed_manifest_row_while_recording(anki, tmp_path):
+    from internpearls import sync
+    _first_edited_card(anki, tmp_path, sync)
+    path = tmp_path / "source" / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf8"))
+    manifest["decks"].insert(0, "junk")
+    path.write_text(json.dumps(manifest), encoding="utf8")
+    anki.gui.infos.clear()
+    _update(anki)
+    assert any("up to date" in i for i in anki.gui.infos)
+    assert "#Back" in sync._load_shipped()["g1"]
+
+
+def _count_fetches(monkeypatch, sync):
+    calls = []
+    real = sync._cached_fetch
+
+    def spy(fetch, d, on_chunk=None):
+        calls.append(d["name"])
+        return real(fetch, d, on_chunk=on_chunk)
+    monkeypatch.setattr(sync, "_cached_fetch", spy)
+    return calls
+
+
+def test_update_records_a_deck_once_per_version_even_when_a_card_matches_nothing(
+        anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    _first_edited_card(anki, tmp_path, sync)
+    # The learner's own card carries the scope tag but no package ships it.
+    anki.col.add_note("mine", _fields("My own front"), [TAGS], deck=DECK)
+    calls = _count_fetches(monkeypatch, sync)
+    _update(anki)
+    assert calls and set(calls) == {DECK}
+    fetched = len(calls)   # the dialog driver replays the run, so count rather than equate
+    sync._apkg_cache.clear()
+    _update(anki)
+    assert len(calls) == fetched   # not fetched again for the same version
+
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", "S"), TAGS)], None)}))
+    _update(anki)   # v2 is pending: imported, so not bootstrapped as well
+    _forget_hashes(sync)
+    sync._apkg_cache.clear()
+    calls.clear()
+    _update(anki)
+    assert set(calls) == {DECK}   # the new version is attempted again
+
+
+def test_update_retries_recording_after_a_failed_fetch(anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    _first_edited_card(anki, tmp_path, sync)
+
+    def broken(*a, **kw):
+        raise OSError("offline")
+    real = sync._cached_fetch
+    monkeypatch.setattr(sync, "_cached_fetch", broken)
+    _update(anki)
+    assert not any(k.startswith("#") for k in sync._load_shipped()["g1"])
+    monkeypatch.setattr(sync, "_cached_fetch", real)
+    _update(anki)
+    assert "#Back" in sync._load_shipped()["g1"]
+
+
 def test_update_does_not_record_text_for_a_declined_note(anki, tmp_path):
     from internpearls import config, sync
     _first_edited_card(anki, tmp_path, sync)

@@ -68,6 +68,9 @@ AI_DRAFT = os.path.join(_USER_FILES, "ai_draft.json")
 # "the learner edited this" from "the deck author changed this" instead of freezing the
 # field forever. {guid: {field: value}}. See collection._restore.
 SHIPPED = os.path.join(_USER_FILES, "shipped_fields.json")
+# {deck name: version} the current-text bootstrap has already read, so a card no package
+# matches does not bring the same download back on every Update my decks.
+RECORDED_TEXT = os.path.join(_USER_FILES, "recorded_text.json")
 # The declined-card registry: {guid: {state, front, deck, decided, hash}}.
 # Lives in user_files/ like the feedback log and for the same reason: it must
 # survive add-on updates and reinstalls.
@@ -271,7 +274,7 @@ def collection_key():
 # reads it first, so existing decisions survive the upgrade without a second profile
 # inheriting them too.
 _SCOPED_STATE = ("installed.json", "shipped_fields.json", "later_seen.json",
-                 "ai_draft.json")
+                 "ai_draft.json", "recorded_text.json")
 _ADOPTED_STATE = ("declined.json", "deck_skill.json", "card_feedback.json")
 _REPLACE_RETRIES = 5 if os.name == "nt" else 1
 

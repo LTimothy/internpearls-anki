@@ -112,6 +112,8 @@ def anki(tmp_path, monkeypatch):
         monkeypatch.setattr(mod, "FEEDBACK", str(user_files / "card_feedback.json"))
     for mod in (config, sync, collection):
         monkeypatch.setattr(mod, "SHIPPED", str(user_files / "shipped_fields.json"))
+    for mod in (config, sync):
+        monkeypatch.setattr(mod, "RECORDED_TEXT", str(user_files / "recorded_text.json"))
     for mod in (config, ai_dialog):
         monkeypatch.setattr(mod, "AI_LAST_RUN_LOG", str(user_files / "ai_last_run.log"))
     monkeypatch.setattr(config, "DECLINED", str(user_files / "declined.json"))
