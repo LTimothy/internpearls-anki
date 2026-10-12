@@ -559,9 +559,10 @@ class _DeckManagerDialog(QDialog):
         outer.addWidget(_field_label("Preserved fields", self._pf_edit, section=True))
         outer.addWidget(self._pf_edit)
         outer.addWidget(hint_label(
-            "Comma-separated fields holding your own annotations. Sync "
-            "snapshots and restores them, so importing an updated deck "
-            "never overwrites what you've written."))
+            "Comma-separated fields holding your own annotations. They are kept "
+            "through updates and never listed in card feedback. Your edits to other "
+            "fields are kept too, until the deck ships your wording. To send your "
+            "edits, flag any card during an update."))
 
         outer.addWidget(hint_label(
             "Save keeps these choices for your next update. Save and update "

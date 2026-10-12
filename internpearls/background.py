@@ -365,7 +365,7 @@ def _auto_sync_check():
                 raise v
             return v
 
-        results, restored, _, deferred, _, _, _ = _run_sync(
+        results, restored, _, deferred, _, collisions, _ = _run_sync(
             live, result["manifest"], _already_fetched,
             todo, defer_template_changes=True)
         ok = sum(1 for r in results if r.startswith("✓"))
@@ -396,7 +396,10 @@ def _auto_sync_check():
                     "card-template or note-type format update, run Sync decks to "
                     "review it")
         if restored:
-            msg += f", preserved fields restored on {plural(restored, 'card')}"
+            msg += f", kept your own edits on {plural(restored, 'card')}"
+        if collisions:
+            cards = plural(len({g for g, _f in collisions}), "card")
+            msg += f", kept your version on {cards} the deck also changed"
         tooltip(msg, period=6000, parent=mw)
 
     try:

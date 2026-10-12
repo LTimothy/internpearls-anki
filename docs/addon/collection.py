@@ -29,9 +29,10 @@ from .logic import (HASH_KEY, apkg_deck_names, apkg_models, apkg_note_types, apk
                     cards_lost_in_conversion, changed_templates, check_apkg_limits,
                     copy_apkg_checked, declined_drop,
                     empty_cards_dialog_rows, fields_to_carry_over, manifest_decks_for,
-                    merge_learner_tags, model_shape, note_display_label,
+                    learner_owns, merge_learner_tags, model_shape, note_display_label,
                     plan_notetype_changes, plural, protected_for, remap_cards,
-                    scope_search, select_empty_cards, write_personalized)
+                    scope_search, select_empty_cards, source_changed,
+                    write_personalized)
 from .platform import platform, platform_owner_id
 from .review import _CONFIRM_HEIGHT, append_rows, build_list_body, show_result
 from .ui import _ask, _ask_with_widget, _info, _manual_flow, _safe, _warn
@@ -515,7 +516,8 @@ def _restore(snap, baseline=None, touched=None):
     conservative direction is the default and an upgrade never loses an annotation.
     A blank is the exception: without a baseline it can't be told from a field nobody
     has written yet, so the source's value stands. With one, a blank where the source
-    shipped text is the learner's own deletion and is kept like any other edit.
+    shipped text is the learner's own deletion and is kept like any other edit. A field with no text baseline but a recorded hash is judged
+    against the hash instead.
 
     `touched` is the guids this run's import actually wrote. Notes outside it are
     skipped entirely: an import that never ran over a note cannot have overwritten
@@ -544,11 +546,9 @@ def _restore(snap, baseline=None, touched=None):
         for f, v in saved.items():
             if f not in note:
                 continue
-            if f in was_shipped and was_shipped[f] == v:
+            if not learner_owns(was_shipped, f, v):
                 continue          # untouched by the learner; let the source's update stand
-            if f not in was_shipped and not v.strip():
-                continue          # blank with no baseline: nothing of theirs to keep
-            if f in was_shipped and note[f] != was_shipped[f] and note[f] != v:
+            if source_changed(was_shipped, f, note[f]) and note[f] != v:
                 # Only when the two versions actually differ. An update that changed a
                 # field to exactly what the learner had already written is agreement,
                 # not a conflict, and reporting it asked the learner to go and reconcile

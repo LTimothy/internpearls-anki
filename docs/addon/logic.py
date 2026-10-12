@@ -1809,6 +1809,36 @@ def find_learner_edits(shipped, existing_fields, protected=(), per_note=None, mo
     return out
 
 
+def learner_owns(entry, field, value):
+    """Whether a protected field's value is the learner's own, judged against what the
+    source last shipped: its text baseline, else its hash, else whether it is non-blank."""
+    entry = entry or {}
+    if field in entry:
+        return entry[field] != value
+    h = entry.get(HASH_KEY + field)
+    if isinstance(h, str):
+        return note_fields_hash([value or ""]) != h
+    return bool((value or "").strip())
+
+
+def source_changed(entry, field, incoming):
+    """Whether an incoming value differs from what the source last shipped."""
+    entry = entry or {}
+    if field in entry:
+        return entry[field] != incoming
+    h = entry.get(HASH_KEY + field)
+    return isinstance(h, str) and note_fields_hash([incoming or ""]) != h
+
+
+def with_edits_protected(per_note, pairs):
+    """`per_note` plus each (guid, field) the learner edited by hand, for one import."""
+    out = {g: list(fs) for g, fs in (per_note or {}).items()}
+    for guid, field in pairs:
+        if field not in out.setdefault(guid, []):
+            out[guid].append(field)
+    return out
+
+
 def merge_learner_tags(before, imported, scope_tag, markers=()):
     """A matched note's tags after an import: the source's own scope-tag subtree from
     `imported`, every tag in `before` the source does not manage (anything outside the
@@ -1907,8 +1937,7 @@ def find_changed_notes(matched, details, existing_fields, protected=(), per_note
             if name not in existing_value:
                 continue
             if str(name).lower() in skip:
-                mine = existing_value[name] or ""
-                if (shipped[name] != mine) if name in shipped else mine.strip():
+                if learner_owns(shipped, name, existing_value[name] or ""):
                     continue
             if (existing_value[name] or "").strip() != (value or "").strip():
                 changed[name] = existing_value[name]

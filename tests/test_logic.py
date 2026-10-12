@@ -3619,3 +3619,28 @@ def test_digest_groups_edits_by_deck_then_card():
 
 def test_edits_alone_do_not_make_a_digest():
     assert logic.build_feedback_digest([], edits=[_edit()]) == ""
+
+
+def test_learner_owns_prefers_text_then_hash_then_blankness():
+    h = logic.note_fields_hash
+    assert logic.learner_owns({"Back": "A"}, "Back", "A") is False
+    assert logic.learner_owns({"Back": "A"}, "Back", "mine") is True
+    assert logic.learner_owns({"#Back": h(["A"])}, "Back", "A") is False
+    assert logic.learner_owns({"#Back": h(["A"])}, "Back", "") is True   # a deliberate blank
+    assert logic.learner_owns({}, "Back", "") is False
+    assert logic.learner_owns({}, "Back", "text") is True
+
+
+def test_source_changed_uses_text_then_hash():
+    h = logic.note_fields_hash
+    assert logic.source_changed({"Back": "A"}, "Back", "B") is True
+    assert logic.source_changed({"#Back": h(["A"])}, "Back", "A") is False
+    assert logic.source_changed({"#Back": h(["A"])}, "Back", "B") is True
+    assert logic.source_changed({}, "Back", "B") is False
+
+
+def test_with_edits_protected_unions_without_mutating():
+    declared = {"g1": ["Dosing"]}
+    out = logic.with_edits_protected(declared, [("g1", "Back"), ("g1", "Dosing"), ("g2", "Why")])
+    assert out == {"g1": ["Dosing", "Back"], "g2": ["Why"]}
+    assert declared == {"g1": ["Dosing"]}

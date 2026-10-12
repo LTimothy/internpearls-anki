@@ -59,6 +59,7 @@ from .logic import (APKG_MAX_BYTES, HASH_KEY, MOD_KEY, apkg_deck_names, apkg_not
                     settle_held_outside_manifest,
                     manifest_needs_newer_addon,
                     note_display_label, note_fields_hash, per_note_for_package,
+                    with_edits_protected,
                     skill_version, unopened_line,
                     plain_text, plural, prune_declined, released_held_guids, remap_cards,
                     reveal_hidden, split_notetype_changes, strip_hidden,
@@ -523,7 +524,7 @@ def sync_decks():
     items = []
     append_rows(items, [("row", None, line, "") for line in results])
     if restored:
-        items.append(("note", f"Preserved fields restored on {plural(restored, 'card')}."))
+        items.append(("note", f"Kept your own edits on {plural(restored, 'card')}."))
     items += _converted_items(converted)
     items += _collision_items(collisions)
     items.append(("note", backup_line))
@@ -621,9 +622,10 @@ def _collision_items(collisions):
     items = [("note",
               f"On <b>{plural(len(collisions), 'card')}</b>, this update changed a "
               "field you had also written in yourself. <b>Your version was kept</b> "
-              "and the update to that field was skipped, so nothing you wrote was "
-              "lost. Worth passing these on to whoever maintains the decks if you want "
-              "your wording folded in, or theirs applied instead:")]
+              "and the deck's change to that field was skipped. If the field is one "
+              "you edited by hand, your next update shows the deck's version on the "
+              "card's row and you can take it there. A preserved field always keeps "
+              "yours.")]
     append_rows(items, [("row", None, front, "") for front in fronts])
     return items
 
@@ -859,9 +861,14 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     aliases = manifest.get("front_aliases", {})   # from the (private) manifest, not config
     per_note = manifest.get("note_protected_fields", {})
     _ensure_notetypes()
-    snap = _snapshot(cfg["protected"], cfg["scope_tag"], per_note)
-    tag_snap = _snapshot_tags(cfg["scope_tag"])
     baseline = _load_shipped()
+    # Hand edits are kept like preserved fields for this import only; the declared
+    # per_note alone still feeds _capture_shipped, so they never gain a text baseline.
+    edited = _hand_edits(cfg, per_note, _existing_guid_to_fields(cfg["scope_tag"]),
+                         baseline)
+    snap = _snapshot(cfg["protected"], cfg["scope_tag"],
+                     with_edits_protected(per_note, ((g, f) for g, f, _h, _v in edited)))
+    tag_snap = _snapshot_tags(cfg["scope_tag"])
     prior_installed = _load_json(INSTALLED, {})
     prior_installed = prior_installed if isinstance(prior_installed, dict) else {}
     existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
@@ -2113,7 +2120,8 @@ def update_decks():
         preview_args = (_existing_front_to_guid(cfg["scope_tag"]),
                         manifest.get("front_aliases", {}),
                         existing_fields,
-                        manifest.get("note_protected_fields", {}))
+                        with_edits_protected(manifest.get("note_protected_fields", {}),
+                                             ((e["guid"], e["field"]) for e in edits)))
         preview, downloaded, cancelled = _preview_content_changes(fetch, todo, *preview_args)
         if cancelled:
             _info(NOTHING_CHANGED)
@@ -2761,7 +2769,7 @@ def update_decks():
                           "up where this left off."))
             if restored:
                 items.append(
-                    ("note", f"Preserved fields restored on {plural(restored, 'card')}."))
+                    ("note", f"Kept your own edits on {plural(restored, 'card')}."))
             if looks:
                 items.append(("note", "The new card look was applied for the decks "
                                       "that finished before you stopped."))
@@ -2864,7 +2872,7 @@ def update_decks():
     items = []
     append_rows(items, [("row", None, line, "") for line in result_lines])
     if restored:
-        items.append(("note", f"Preserved fields restored on {plural(restored, 'card')}."))
+        items.append(("note", f"Kept your own edits on {plural(restored, 'card')}."))
     items += _converted_items(converted)
     items += _collision_items(collisions)
     items += _adopted_items(edits)
@@ -3013,7 +3021,7 @@ def import_single():
         _save_json(SHIPPED, {**_load_shipped(), **shipped})
     mw.reset()
     _offer_template_changes(tpl)
-    fields_line = (f" Preserved fields restored on {plural(restored, 'card')}."
+    fields_line = (f" Kept your own edits on {plural(restored, 'card')}."
                    if restored else "")
     moved_line = (f" Moved {plural(len(changed_nids), 'card')} to the new format."
                   if changed_nids else "")

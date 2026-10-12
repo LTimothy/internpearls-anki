@@ -783,7 +783,7 @@ def _scene_result_only(mock, opts):
     items = [("row", None, "Example Deck: 29 kept, 3 new", ""),
              ("sep",),
              ("row", None, "Gadget Care: 6 kept, 0 new", ""),
-             ("note", "Preserved fields restored on 12 cards."),
+             ("note", "Kept your own edits on 12 cards."),
              ("note", "On <b>2 cards</b>, this update changed a field you had also "
                       "written in yourself. <b>Your version was kept</b> and the update "
                       "to that field was skipped, so nothing you wrote was lost."),

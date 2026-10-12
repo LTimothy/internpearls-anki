@@ -3733,7 +3733,9 @@ def test_sync_re_offers_a_deck_whose_cards_were_rolled_back_to_older_content(
 
     # A restore rolls the card back to older content. It is still present and still
     # tagged, so the presence check is satisfied and nothing else can notice.
-    anki.col.note_by_guid("g1")["Front"] = "Front one"
+    note = anki.col.note_by_guid("g1")
+    note["Front"] = "Front one"
+    note.mod -= 1   # a real restore brings back the backup's older mod
     anki.gui.infos.clear()
     anki.gui.answers.append(True)   # "Continue?" on the restore confirmation
     collection.restore_from_backup()
@@ -9906,3 +9908,44 @@ def test_update_leaves_archived_cards_out_of_the_edits(anki, tmp_path, monkeypat
     seen = _spy_digest(monkeypatch)
     _update(anki)
     assert seen["edits"] == []
+
+
+def test_hand_edit_survives_a_deck_change_until_the_deck_adopts_it(anki, tmp_path, monkeypatch):
+    def ship(version, back):
+        _configure(anki, _write_source(tmp_path, {
+            DECK: (version, [("g1", _fields("Front one", back), TAGS)], None)}))
+
+    anki.col.add_note("g1", _fields("Front one", "S"), [TAGS], deck=DECK)
+    ship("v1", "S")
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "Y"
+    anki.col.update_note(note)
+
+    ship("v2", "X")   # the deck moves on while the learner is ahead of it
+    seen = _spy_digest(monkeypatch)
+    trees = _update(anki)
+    assert anki.col.note_by_guid("g1")["Back"] == "Y"
+    assert "changed a field you had also written in yourself" in _summary_text(trees)
+    assert [e["value"] for e in seen["edits"]] == ["Y"]
+
+    ship("v3", "Y")   # the deck adopts it
+    assert "The deck now uses your wording" in _summary_text(_update(anki))
+
+    ship("v4", "Z")   # no longer protected: a later correction lands
+    _update(anki)
+    assert anki.col.note_by_guid("g1")["Back"] == "Z"
+
+
+def test_sync_decks_keeps_a_hand_edit_too(anki, tmp_path):
+    anki.col.add_note("g1", _fields("Front one"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "mine"
+    anki.col.update_note(note)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", "theirs"), TAGS)], None)}))
+    _sync(anki)
+    assert anki.col.note_by_guid("g1")["Back"] == "mine"
