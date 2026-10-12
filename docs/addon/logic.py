@@ -1839,6 +1839,28 @@ def with_edits_protected(per_note, pairs):
     return out
 
 
+class KeptEdit(str):
+    """The learner's own value on a field the import keeps. Still the current value to
+    every reader of find_changed_notes' output; `guid` is the learner's note."""
+    guid = ""
+
+
+def find_kept_edits(matched, details, existing_fields, edited, shipped):
+    """{rid: {field: KeptEdit(current)}} for each hand-edited field the incoming package
+    also changes, so the confirmation can offer the deck's version."""
+    by_rid = {d["rid"]: d for d in details}
+    out = {}
+    for rid, _pkg, guid in matched:
+        mine = existing_fields.get(guid) or {}
+        for name, incoming in (by_rid.get(rid) or {}).get("fields", []):
+            if (name in edited.get(guid, ()) and name in mine and mine[name] != incoming
+                    and source_changed(shipped.get(guid), name, incoming)):
+                kept = KeptEdit(mine[name])
+                kept.guid = guid
+                out.setdefault(rid, {})[name] = kept
+    return out
+
+
 def merge_learner_tags(before, imported, scope_tag, markers=()):
     """A matched note's tags after an import: the source's own scope-tag subtree from
     `imported`, every tag in `before` the source does not manage (anything outside the

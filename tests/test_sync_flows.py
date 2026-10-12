@@ -9949,3 +9949,67 @@ def test_sync_decks_keeps_a_hand_edit_too(anki, tmp_path):
         DECK: ("v2", [("g1", _fields("Front one", "theirs"), TAGS)], None)}))
     _sync(anki)
     assert anki.col.note_by_guid("g1")["Back"] == "mine"
+
+
+def _update_clicking(anki, steps):
+    """Run update_decks, clicking each labelled button in `steps` that appears, then
+    accepting. Returns the label texts of every dialog shown."""
+    from internpearls import sync
+    steps, screens = list(steps), []
+
+    def respond(p):
+        if p["kind"] == "ask":
+            return _answer_ask(p, None)
+        if p["kind"] != "dialog":
+            return {}
+        screens.append(_label_texts(p["tree"]))
+        done = _dismiss_result(p["tree"])
+        if done:
+            return done
+        while steps:
+            btn = _find(p["tree"], t="button", label=steps.pop(0))
+            if btn:
+                return {"events": [{"id": btn["id"], "click": True}]}
+        accept = [n for n in _walk(p["tree"])
+                  if n.get("t") == "button" and n.get("label") != "Cancel"][-1]
+        return {"events": [{"id": accept["id"], "click": True}]}
+
+    drive(anki, sync.update_decks, respond)
+    return screens
+
+
+def test_learner_can_take_the_decks_version_of_a_field_they_edited(anki, tmp_path, monkeypatch):
+    anki.col.add_note("g1", _fields("Front one", "S"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", "S"), TAGS)], None)}))
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "Y"
+    anki.col.update_note(note)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", "X"), TAGS)], None)}))
+    seen = _spy_digest(monkeypatch)
+    screens = _update_clicking(anki, ["▸", "Show the deck's", "Use the deck's version"])
+    assert any("you edited this, so yours is kept" in t for s in screens for t in s)
+    assert anki.col.note_by_guid("g1")["Back"] == "X"
+    assert seen["edits"] == []
+
+
+def test_a_clash_in_sync_decks_is_offered_again_on_the_next_update(anki, tmp_path):
+    def ship(version, back):
+        _configure(anki, _write_source(tmp_path, {
+            DECK: (version, [("g1", _fields("Front one", back), TAGS)], None)}))
+
+    anki.col.add_note("g1", _fields("Front one", "S"), [TAGS], deck=DECK)
+    ship("v1", "S")
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "Y"
+    anki.col.update_note(note)
+    ship("v2", "X")
+    assert "Your version was kept" in _summary_text(_sync(anki))
+
+    ship("v3", "X")   # a later release still carries the deck's X
+    screens = _update_clicking(anki, ["▸"])
+    assert any("you edited this, so yours is kept" in t for s in screens for t in s)
+    assert anki.col.note_by_guid("g1")["Back"] == "Y"

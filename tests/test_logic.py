@@ -3644,3 +3644,15 @@ def test_with_edits_protected_unions_without_mutating():
     out = logic.with_edits_protected(declared, [("g1", "Back"), ("g1", "Dosing"), ("g2", "Why")])
     assert out == {"g1": ["Dosing", "Back"], "g2": ["Why"]}
     assert declared == {"g1": ["Dosing"]}
+
+
+def test_find_kept_edits_marks_edited_fields_the_deck_also_changed():
+    h = logic.note_fields_hash
+    details = [{"rid": 1, "guid": "pkg", "notetype": "B",
+                "fields": [("Front", "Q"), ("Back", "X"), ("Why", "W")]}]
+    existing = {"mine": {"Front": "Q", "Back": "Y", "Why": "my why"}}
+    shipped = {"mine": {"#Back": h(["S"]), "#Why": h(["W"])}}
+    out = logic.find_kept_edits([(1, "pkg", "mine")], details, existing,
+                                {"mine": {"Back", "Why"}}, shipped)
+    assert out == {1: {"Back": "Y"}}   # Why: the deck did not change it
+    assert isinstance(out[1]["Back"], logic.KeptEdit) and out[1]["Back"].guid == "mine"

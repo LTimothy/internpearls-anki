@@ -25,7 +25,7 @@ from aqt.qt import (QFontDatabase, QFrame, QHBoxLayout,
 from . import config
 from .config import (ADDON_VERSION, APP_NAME, FEEDBACK, _collection_state_path, _load_json,
                      _save_json)
-from .logic import (FILTER_MIN_CARDS, FILTER_MODES, apkg_media_index,
+from .logic import (FILTER_MIN_CARDS, FILTER_MODES, KeptEdit, apkg_media_index,
                     build_feedback_digest, cloze_answer_changes, cloze_filled_html,
                     cloze_hint_changes, count_cards, extract_apkg_media,
                     field_image_names, field_preview_html, field_preview_text,
@@ -579,7 +579,8 @@ def _old_version_html(detail, name, old):
     return rendered
 
 
-def _rewrite_row(detail, name, old, new, card_label):
+def _rewrite_row(detail, name, old, new, card_label, receipt=None, whose="yours",
+                 choice=None):
     """A rewritten field as a one-line receipt with the old version behind a click:
     "Why  rewritten, shortened (104 → 66 words)   Show yours".
 
@@ -604,15 +605,15 @@ def _rewrite_row(detail, name, old, new, card_label):
     hlay = QHBoxLayout(line)
     hlay.setContentsMargins(0, 0, 0, 0)
     hlay.setSpacing(8)
-    summary = _rich_label(f"<b>{html.escape(name)}</b>&nbsp;&nbsp;"
-                          f"{_rewrite_summary(old, new)}")
+    receipt = receipt or _rewrite_summary(old, new)
+    summary = _rich_label(f"<b>{html.escape(name)}</b>&nbsp;&nbsp;{receipt}")
     summary.setStyleSheet(f"color: {colors()['dim']};")
     # A one-line receipt by design, so it must not wrap: a word-wrapped QLabel asks
     # the layout for a "reasonable" width rather than its full text, and with the
     # link beside it the phrase folded onto three short lines in an all-but-empty row.
     summary.setWordWrap(False)
     hlay.addWidget(summary, 0)
-    link = link_button("Show yours")
+    link = link_button(f"Show {whose}")
     # Collapsed to its text height, the same styling that keeps the caret compact:
     # without border and padding rules a flat button still carries the platform's
     # native button metrics (32px on macOS), which stretched every receipt line to
@@ -633,11 +634,36 @@ def _rewrite_row(detail, name, old, new, card_label):
                             f" padding-left: 8px; color: {c['dim']};")
     lay.addWidget(old_label)
 
+    use = None
+    if choice is not None:
+        chosen, key = choice
+        use = link_button("")
+        use.setStyleSheet(link.styleSheet())
+        use.setCursor(Qt.CursorShape.PointingHandCursor)
+        use.setVisible(False)
+
+        def _use_label():
+            taking = key in chosen
+            text = "Keep your edit" if taking else "Use the deck's version"
+            use.setText(text)
+            use.setAccessibleName(f"{text}: {card_label}")
+            # The receipt carries the choice once the reveal is closed again.
+            summary.setText(_preview_style() + f"<b>{html.escape(name)}</b>&nbsp;&nbsp;"
+                            + ("taking the deck's version" if taking else receipt))
+
+        def _use(_checked=False):
+            chosen.symmetric_difference_update({key})
+            _use_label()
+
+        use.clicked.connect(_use)
+        _use_label()
+        lay.addWidget(use)
+
     def _name_link(showing):
         # Named for the card, like the caret and the decision buttons: a list of
         # forty links all called "Show yours" says nothing about which card's old
         # version any one of them opens.
-        verb = "Hide yours" if showing else "Show yours"
+        verb = f"Hide {whose}" if showing else f"Show {whose}"
         link.setText(verb)
         link.setAccessibleName(f"{verb}: {card_label}")
 
@@ -652,6 +678,8 @@ def _rewrite_row(detail, name, old, new, card_label):
             built.append(True)
             old_label.setText(_preview_style() + _old_version_html(detail, name, old))
         old_label.setVisible(showing)
+        if use is not None:
+            use.setVisible(showing)
         _name_link(showing)
 
     link.clicked.connect(_toggle)
@@ -659,12 +687,19 @@ def _rewrite_row(detail, name, old, new, card_label):
     return row
 
 
-def _change_row(detail, name, card_label):
+def _change_row(detail, name, card_label, take_deck=None):
     """One changed field's row in the What changed group: a plain line for a change
     one line can state honestly (`_inline_change_html`), or the receipt-and-reveal
     widget for a rewrite (`_rewrite_row`)."""
-    old = (detail.get("was") or {}).get(name) or ""
+    old = (detail.get("was") or {}).get(name)
     new = _field(detail, name)
+    if isinstance(old, KeptEdit):
+        # The import keeps the learner's text; the reveal offers the deck's instead.
+        return _rewrite_row(detail, name, new, old, card_label,
+                            receipt="you edited this, so yours is kept",
+                            whose="the deck's",
+                            choice=None if take_deck is None else (take_deck, (old.guid, name)))
+    old = old or ""
     inline = _inline_change_html(detail, name, old, new)
     if inline is None:
         return _rewrite_row(detail, name, old, new, card_label)
@@ -1116,7 +1151,7 @@ def _card_label(detail):
 
 
 def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=None,
-              on_open=None, register=None, on_box=None):
+              on_open=None, register=None, on_box=None, take_deck=None):
     """One card as a single row: a caret, its one chip column (see `_row_chip`), its
     tag if it has one, and its primary line. Clicking the row (the caret or the line
     itself) reveals the answer, the why behind a green left rule, and dosing when
@@ -1468,7 +1503,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     if changed_names:
         blay.addWidget(_changes_heading())
         for name in changed_names:
-            blay.addWidget(_change_row(detail, name, card_label))
+            blay.addWidget(_change_row(detail, name, card_label, take_deck))
 
     # Last in the body, past every field block: reading down to it is the same click
     # that opens the card at all, which is what keeps this quiet rather than a header
@@ -1674,7 +1709,7 @@ def open_recent_feedback():
 
 def build_update_body(items, sources, flags, new_index, decisions,
                       top_html, status_line, safety_html, touched=None, opened=None,
-                      on_review=None):
+                      on_review=None, take_deck=None):
     """The Update my decks screen's body: fixed summary text, the streaming list of
     pending new and changed cards plus any retired or relocated ones, then the
     status line and the safety note below it. `internpearls.ui._ask_with_widget`
@@ -1907,7 +1942,8 @@ def build_update_body(items, sources, flags, new_index, decisions,
         _, deck_name, detail = item
         row = _card_row(detail, flags, boxes, decisions, _on_decide,
                         resolve=resolvers.get(deck_name), chips=chips, on_open=_on_open,
-                        register=setters.__setitem__, on_box=_on_box)
+                        register=setters.__setitem__, on_box=_on_box,
+                        take_deck=take_deck)
         return row
 
     if items:

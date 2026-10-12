@@ -53,6 +53,7 @@ from .logic import (APKG_MAX_BYTES, HASH_KEY, MOD_KEY, apkg_deck_names, apkg_not
                     declined_drop, declined_guids,
                     decks_to_update, feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
+                    find_kept_edits,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, held_deck_names, held_entries,
                     held_outside_manifest, holdable_guids, later_count, later_status,
@@ -813,7 +814,7 @@ def _package_hashes(src, declined, expected_conflicts, package_matched):
 
 def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
               defer_template_changes=False, convert_notetypes=None,
-              undisclosed_conversions=()):
+              undisclosed_conversions=(), take_deck=frozenset()):
     """Apply every deck in `todo`: fix note types, snapshot protected fields and tags,
     remap and import each deck (keeping the learner's scheduling) and restore the
     snapshot onto it in the same undo step, then persist the new installed versions.
@@ -864,8 +865,9 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     baseline = _load_shipped()
     # Hand edits are kept like preserved fields for this import only; the declared
     # per_note alone still feeds _capture_shipped, so they never gain a text baseline.
-    edited = _hand_edits(cfg, per_note, _existing_guid_to_fields(cfg["scope_tag"]),
-                         baseline)
+    edited = [e for e in _hand_edits(cfg, per_note,
+                                     _existing_guid_to_fields(cfg["scope_tag"]), baseline)
+              if (e[0], e[1]) not in take_deck]
     snap = _snapshot(cfg["protected"], cfg["scope_tag"],
                      with_edits_protected(per_note, ((g, f) for g, f, _h, _v in edited)))
     tag_snap = _snapshot_tags(cfg["scope_tag"])
@@ -998,6 +1000,12 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 _capture_shipped(cfg["protected"], cfg["scope_tag"], wrote, per_note),
                 baseline, hashes, wrote)
             deck_restored, deck_collisions = _restore(snap, baseline, wrote)
+            # A clash keeps the hash the learner last took, so later updates still
+            # see the deck's change and offer it (find_kept_edits).
+            for guid, f in deck_collisions:
+                prior = baseline.get(guid, {}).get(HASH_KEY + f)
+                if prior is not None and guid in deck_shipped:
+                    deck_shipped[guid][HASH_KEY + f] = prior
             _restore_tags(tag_snap, cfg["scope_tag"], wrote)
             # After the import, not before: the extra cloze cards only exist once the
             # cloze markup has actually landed on the note.
@@ -1772,7 +1780,7 @@ def _is_local(entry):
 
 
 def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fields=None,
-                             per_note=None):
+                             per_note=None, edited=None):
     """Download every pending deck and match it against the collection, so the
     confirmation can show real "N kept · M new" counts instead of just each deck's
     total card count. A cancellable progress window covers it, since this is a live
@@ -1823,10 +1831,14 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
                     # a change the sync then refuses to make.
                     resolved_per_note = {**(per_note or {}),
                                         **per_note_for_package(per_note, matched)}
+                    details = apkg_note_details(src)
                     changed = find_changed_notes(
-                        matched, apkg_note_details(src), existing_fields,
+                        matched, details, existing_fields,
                         protected=_cfg()["protected"], per_note=resolved_per_note,
                         baseline=baseline)
+                    for rid, kept in find_kept_edits(matched, details, existing_fields,
+                                                     edited or {}, baseline).items():
+                        changed.setdefault(rid, {}).update(kept)
                 preview[d["name"]] = (kept, new, new_notes, changed)
             except DownloadCancelled:
                 # Cancel clicked mid-download rather than between decks. That is the
@@ -2113,6 +2125,10 @@ def update_decks():
 
     existing_fields = _existing_guid_to_fields(cfg["scope_tag"])
     edits = _learner_edits(cfg, manifest, existing_fields)
+    edited = {}
+    for e in edits:
+        edited.setdefault(e["guid"], set()).add(e["field"])
+    take_deck = set()
     preview, downloaded, collisions = {}, {}, []
     skipped = set()
     skipped_retired_guids = set()
@@ -2121,7 +2137,8 @@ def update_decks():
                         manifest.get("front_aliases", {}),
                         existing_fields,
                         with_edits_protected(manifest.get("note_protected_fields", {}),
-                                             ((e["guid"], e["field"]) for e in edits)))
+                                             ((e["guid"], e["field"]) for e in edits)),
+                        edited)
         preview, downloaded, cancelled = _preview_content_changes(fetch, todo, *preview_args)
         if cancelled:
             _info(NOTHING_CHANGED)
@@ -2498,7 +2515,7 @@ def update_decks():
     body, _boxes, flush = build_update_body(
         items, sources, flags, new_index, decisions, top_html,
         _status_line, _UPDATE_SAFETY_NOTE, touched, opened=opened,
-        on_review=_on_review)
+        on_review=_on_review, take_deck=take_deck)
     hold, refresh_hold = hold_control(reg, row_kind, lambda: touched | opened,
                                       decisions)
     hold_refresh.append(refresh_hold)
@@ -2738,7 +2755,10 @@ def update_decks():
              converted) = _run_sync(
                 cfg, manifest, _already_fetched, todo,
                 on_progress=lambda i, n, name: step(i, f"Applying {name} ({i} of {n})"),
-                convert_notetypes=convert, undisclosed_conversions=undisclosed)
+                convert_notetypes=convert, undisclosed_conversions=undisclosed,
+                take_deck=take_deck)
+            # An edit the learner just gave up is not worth sending.
+            edits[:] = [e for e in edits if (e["guid"], e["field"]) not in take_deck]
 
         if cancelled:
             # Stop here rather than falling through to archive/relocate: that step
