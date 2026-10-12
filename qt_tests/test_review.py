@@ -124,7 +124,7 @@ def test_old_svg_preview_never_changes_collection_media_bytes(tmp_path, monkeypa
         mw.col, "media", type("Media", (), {"dir": lambda self: str(media)})())
 
     rendered = review._old_version_html(
-        {"notetype": "Basic"}, "Front", '<img src="figure.svg">')
+        {"notetype": "Basic"}, "Front", '<img src="figure.svg">', review._collection_image)
 
     assert "<img" in rendered
     assert {path.name: path.read_bytes() for path in media.iterdir()} == before

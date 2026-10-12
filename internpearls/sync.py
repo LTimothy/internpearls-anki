@@ -53,7 +53,7 @@ from .logic import (APKG_MAX_BYTES, HASH_KEY, MOD_KEY, apkg_deck_names, apkg_not
                     declined_drop, declined_guids,
                     decks_to_update, feedback_entries, merge_saved_feedback,
                     duplicate_dialog_rows, find_changed_notes, find_deck_moves_needed,
-                    find_kept_edits,
+                    find_kept_edits, KeptEdit,
                     find_duplicate_groups, find_retired_in_collection,
                     find_stranded_pairs, held_deck_names, held_entries,
                     held_outside_manifest, holdable_guids, later_count, later_status,
@@ -2751,6 +2751,11 @@ def update_decks():
                 return v if _is_local(v) else _cached_fetch(fetch, d,
                                                             on_chunk=step.pump)
 
+            # Taking the deck's version only means something on a card that applies.
+            take_deck -= {(v.guid, n) for item in items if item[0] == "card"
+                          and decisions.get(item[2]["guid"])
+                          for n, v in (item[2].get("was") or {}).items()
+                          if isinstance(v, KeptEdit)}
             (results, restored, tpl_changes, _deferred, cancelled, collisions,
              converted) = _run_sync(
                 cfg, manifest, _already_fetched, todo,

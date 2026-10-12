@@ -271,6 +271,15 @@ def _field(detail, name):
     return next((v for n, v in detail.get("fields", []) if n == name), "")
 
 
+def _as_imported(detail):
+    """`detail` with each field the import keeps as the learner's own showing the
+    learner's text, so the card renders what will actually land. The package's text
+    stays in `detail` for `_change_row`, which offers it as the deck's version."""
+    was = detail.get("was") or {}
+    return {**detail, "fields": [(n, str(was[n]) if isinstance(was.get(n), KeptEdit) else v)
+                                 for n, v in detail.get("fields", [])]}
+
+
 def _is_cloze(detail):
     return "cloze" in (detail.get("notetype") or "").lower()
 
@@ -568,19 +577,19 @@ def _rewrite_summary(old, new):
     return "rewritten"
 
 
-def _old_version_html(detail, name, old):
+def _old_version_html(detail, name, old, image_html):
     """The old field rendered the way the card itself renders: structure kept,
-    pictures resolved from the learner's own collection (they are the learner's cards,
-    already on disk), and a cloze's deletions filled in blue like the header line,
+    pictures resolved by `image_html` (the learner's own collection, already on disk, or
+    the card's resolver), and a cloze's deletions filled in blue like the header line,
     never raw {{c1::…}} braces. Built on first reveal, not at batch-build time."""
-    rendered = field_preview_html(old, image_html=_collection_image)
+    rendered = field_preview_html(old, image_html=image_html)
     if _is_cloze(detail) and name == "Text":
         rendered = cloze_filled_html(rendered, escape=False)
     return rendered
 
 
 def _rewrite_row(detail, name, old, new, card_label, receipt=None, whose="yours",
-                 choice=None):
+                 choice=None, image_html=None):
     """A rewritten field as a one-line receipt with the old version behind a click:
     "Why  rewritten, shortened (104 → 66 words)   Show yours".
 
@@ -595,7 +604,16 @@ def _rewrite_row(detail, name, old, new, card_label, receipt=None, whose="yours"
     role, so ruled block reads as "a whole explanation" and the colour says which
     era it belongs to. Built lazily on the first click, so a 50-row batch pays for
     one short label and one flat button per rewritten field and decodes nothing.
+
+    `receipt` and `whose` word the row for the case where `old` is not the learner's:
+    a field they edited, which the import keeps, offers the deck's text behind "Show the
+    deck's". `choice`, a (set, key) pair, adds the "Use the deck's version" link inside
+    that reveal, toggling `key` in the set; the receipt then says the deck's version is
+    taken while the card above, rendered from the learner's text, stays as it is.
+    `image_html` resolves pictures in the revealed version (the learner's collection by
+    default).
     """
+    image_html = image_html or _collection_image
     row = QWidget()
     lay = QVBoxLayout(row)
     lay.setContentsMargins(0, 0, 0, 0)
@@ -649,7 +667,8 @@ def _rewrite_row(detail, name, old, new, card_label, receipt=None, whose="yours"
             use.setAccessibleName(f"{text}: {card_label}")
             # The receipt carries the choice once the reveal is closed again.
             summary.setText(_preview_style() + f"<b>{html.escape(name)}</b>&nbsp;&nbsp;"
-                            + ("taking the deck's version" if taking else receipt))
+                            + ("taking the deck's version (the card above still shows yours)"
+                               if taking else receipt))
 
         def _use(_checked=False):
             chosen.symmetric_difference_update({key})
@@ -676,7 +695,8 @@ def _rewrite_row(detail, name, old, new, card_label, receipt=None, whose="yours"
         showing = not old_label.isVisible()
         if showing and not built:
             built.append(True)
-            old_label.setText(_preview_style() + _old_version_html(detail, name, old))
+            old_label.setText(_preview_style()
+                              + _old_version_html(detail, name, old, image_html))
         old_label.setVisible(showing)
         if use is not None:
             use.setVisible(showing)
@@ -687,10 +707,17 @@ def _rewrite_row(detail, name, old, new, card_label, receipt=None, whose="yours"
     return row
 
 
-def _change_row(detail, name, card_label, take_deck=None):
+def _change_row(detail, name, card_label, take_deck=None, resolve=None):
     """One changed field's row in the What changed group: a plain line for a change
     one line can state honestly (`_inline_change_html`), or the receipt-and-reveal
-    widget for a rewrite (`_rewrite_row`)."""
+    widget for a rewrite (`_rewrite_row`).
+
+    `detail` is the package's own detail, not `_as_imported`'s: a field the import keeps
+    as the learner's has `was` holding their text as a KeptEdit and `new` the deck's, and
+    that row offers the deck's text behind a click, with a link to take it. `take_deck`
+    is the set that link toggles; `resolve` is the card's image resolver, so a picture in
+    the deck's version renders the same way the card body's do (the collection's own
+    resolver when None)."""
     old = (detail.get("was") or {}).get(name)
     new = _field(detail, name)
     if isinstance(old, KeptEdit):
@@ -698,7 +725,8 @@ def _change_row(detail, name, card_label, take_deck=None):
         return _rewrite_row(detail, name, new, old, card_label,
                             receipt="you edited this, so yours is kept",
                             whose="the deck's",
-                            choice=None if take_deck is None else (take_deck, (old.guid, name)))
+                            choice=None if take_deck is None else (take_deck, (old.guid, name)),
+                            image_html=resolve or _collection_image)
     old = old or ""
     inline = _inline_change_html(detail, name, old, new)
     if inline is None:
@@ -1175,7 +1203,9 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     """
     guid = detail["guid"]
     kind = detail.get("kind")
-    card_label = _card_label(detail)
+    # What the card renders is what lands; `detail` itself still feeds `_change_row`.
+    shown = _as_imported(detail)
+    card_label = _card_label(shown)
     row = QWidget()
     outer = QVBoxLayout(row)
     outer.setContentsMargins(0, 5, 0, 6)
@@ -1209,7 +1239,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         revealed.append(True)
         if resolve is None:
             return
-        image_names = _primary_images(detail)
+        image_names = _primary_images(shown)
         resolved_tags = {name: resolve(name) for name in image_names}
         succeeded = {name for name, tag in resolved_tags.items() if tag}
         for label, value in rerender:
@@ -1219,7 +1249,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
             images.setText(_preview_style() + rendered)
             images.setVisible(True)
         if answer_label is not None:
-            new_answer_html = _answer_html(detail, resolved=succeeded, image_html=resolve)
+            new_answer_html = _answer_html(shown, resolved=succeeded, image_html=resolve)
             answer_label.setText(_preview_style() + new_answer_html)
             answer_label.setVisible(bool(new_answer_html))
 
@@ -1284,7 +1314,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
     indent = row_text_indent(len(leading), chips)
 
-    primary = _ClickableLabel(_row_html(detail), _toggle)
+    primary = _ClickableLabel(_row_html(shown), _toggle)
     primary.setWordWrap(True)
     primary.setTextFormat(Qt.TextFormat.RichText)
     primary.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1462,12 +1492,12 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     # `_reveal_images` (a closure defined earlier in this function, called later) always
     # finds a bound name to check rather than raising on a card with no answer block.
     answer_label = None
-    answer_html = _answer_html(detail)
+    answer_html = _answer_html(shown)
     if answer_html:
         answer_label = _rich_label(answer_html)
         blay.addWidget(answer_label)
 
-    why_value = _field(detail, "Why")
+    why_value = _field(shown, "Why")
     why_html = field_preview_html(why_value)
     if why_html:
         why_label = _rich_label(why_html)
@@ -1482,7 +1512,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
 
     # Dosing is deliberately left out of rerender: it is a citation, never a picture,
     # and re-rendering it from field_preview_html would drop the "Dosing" label prefix.
-    dosing_html = field_preview_html(_field(detail, "Dosing"))
+    dosing_html = field_preview_html(_field(shown, "Dosing"))
     if dosing_html:
         dosing_label = _rich_label(f"<b>Dosing</b> &nbsp;{dosing_html}")
         c = colors()
@@ -1503,7 +1533,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     if changed_names:
         blay.addWidget(_changes_heading())
         for name in changed_names:
-            blay.addWidget(_change_row(detail, name, card_label, take_deck))
+            blay.addWidget(_change_row(detail, name, card_label, take_deck, resolve))
 
     # Last in the body, past every field block: reading down to it is the same click
     # that opens the card at all, which is what keeps this quiet rather than a header

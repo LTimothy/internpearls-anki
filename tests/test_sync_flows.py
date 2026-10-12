@@ -10041,3 +10041,41 @@ def test_update_preview_treats_a_hand_edited_field_as_kept(anki, tmp_path, monke
     changed = previews[DECK][3]
     kept = [v["Back"] for v in changed.values() if "Back" in v]
     assert len(kept) == 1 and isinstance(kept[0], logic.KeptEdit) and kept[0] == "Y"
+
+
+def _kept_back_source(anki, tmp_path):
+    """The learner edited Back to Y while the deck moved it to X; v2 is pending."""
+    anki.col.add_note("g1", _fields("Front one", "S"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", "S"), TAGS)], None)}))
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "Y"
+    anki.col.update_note(note)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", "X"), TAGS)], None)}))
+
+
+def test_a_kept_back_shows_the_learners_text_on_the_card_and_the_decks_in_the_reveal(
+        anki, tmp_path):
+    import re
+    _kept_back_source(anki, tmp_path)
+    screens = _update_clicking(anki, ["▸", "Show the deck's"])
+    bare = [[re.sub(r"<style>.*?</style>", "", t, flags=re.S) for t in s]
+            for s in screens]
+    # Expanded, before the reveal: the card is what lands, so the learner's Back.
+    assert "Y" in bare[0] and "X" not in bare[0]
+    # The reveal holds the deck's version and the card above does not change.
+    assert "X" in bare[2] and "Y" in bare[2]
+
+
+def test_taking_the_decks_version_then_keeping_yours_leaves_the_learners_text(
+        anki, tmp_path, monkeypatch):
+    _kept_back_source(anki, tmp_path)
+    seen = _spy_digest(monkeypatch)
+    screens = _update_clicking(anki, ["▸", "Show the deck's", "Use the deck's version",
+                                      "Keep yours"])
+    assert any("taking the deck's version (the card above still shows yours)" in t
+               for s in screens for t in s)
+    assert anki.col.note_by_guid("g1")["Back"] == "Y"
+    assert [e["value"] for e in seen["edits"]] == ["Y"]
