@@ -625,9 +625,9 @@ def _collision_items(collisions):
               f"On <b>{plural(len(collisions), 'card')}</b>, this update changed a "
               "field you had also written in yourself. <b>Your version was kept</b> "
               "and the deck's change to that field was skipped. If the field is one "
-              "you edited by hand, your next update shows the deck's version on the "
-              "card's row and you can take it there. A preserved field always keeps "
-              "yours.")]
+              "you edited by hand, the next update of that deck shows the deck's "
+              "version on the card's row and you can take it there. A preserved "
+              "field always keeps yours.")]
     append_rows(items, [("row", None, front, "") for front in fronts])
     return items
 
