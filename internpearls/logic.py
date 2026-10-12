@@ -1761,15 +1761,18 @@ def shipped_field_hashes(details, matched, skip=frozenset()):
 def with_field_hashes(captured, prior, hashes, wrote):
     """New shipped_fields.json entries for one deck plus this package's hashes. A note
     the import wrote takes this import's captured text baselines; one it did not write
-    keeps its prior ones."""
+    keeps its prior ones. A note without new hashes (the import skipped it) keeps its
+    prior hash keys too."""
     out = {}
     for guid in set(captured) | set(hashes):
+        old = prior.get(guid) or {}
         if guid in wrote:
             base = captured.get(guid, {})
         else:
-            base = {k: v for k, v in (prior.get(guid) or {}).items()
-                    if not k.startswith(HASH_KEY)}
-        out[guid] = {**base, **hashes.get(guid, {})}
+            base = {k: v for k, v in old.items() if not k.startswith(HASH_KEY)}
+        kept = {} if guid in hashes else {k: v for k, v in old.items()
+                                          if k.startswith(HASH_KEY)}
+        out[guid] = {**base, **kept, **hashes.get(guid, {})}
     return out
 
 

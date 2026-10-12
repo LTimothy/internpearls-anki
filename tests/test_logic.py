@@ -3538,6 +3538,12 @@ def test_with_field_hashes_refreshes_text_baselines_only_where_the_import_wrote(
                    "g3": {"Dosing": "fresh", "#Back": "h3"}}
 
 
+def test_with_field_hashes_keeps_earlier_hashes_for_a_note_the_import_skipped():
+    prior = {"g1": {"Dosing": "old", "#Back": "h", "#": "pkg1", "##mod": "5"}}
+    out = logic.with_field_hashes({"g1": {"Dosing": "fresh"}}, prior, {}, wrote={"g1"})
+    assert out == {"g1": {"Dosing": "fresh", "#Back": "h", "#": "pkg1", "##mod": "5"}}
+
+
 def test_find_learner_edits_reports_changed_unprotected_fields_only():
     h = logic.note_fields_hash
     shipped = {"g1": {"#Front": h(["Q"]), "#Back": h(["A"]), "#Notes": h([""])},
