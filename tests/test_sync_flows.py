@@ -9822,3 +9822,87 @@ def test_an_archived_duplicate_is_not_matched_by_its_recorded_source(anki, tmp_p
     _sync(anki)
     assert anki.col.note_by_guid("pkg")["Front"] == "Front one"
     assert anki.col.note_by_guid("mine")["Front"] == "Front one, archived copy"
+
+
+def _spy_digest(monkeypatch):
+    from internpearls import sync
+    seen = {}
+    real = sync.show_result_with_feedback
+
+    def spy(*a, **kw):
+        seen.update(kw)
+        return real(*a, **kw)
+    monkeypatch.setattr(sync, "show_result_with_feedback", spy)
+    return seen
+
+
+def test_update_hands_the_learners_hand_edits_to_the_digest(anki, tmp_path, monkeypatch):
+    anki.col.add_note("g1", _fields("Front one"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note["Back"], note["Notes"] = "PaCO₂ ≥ 35", "my own annotation"
+    anki.col.update_note(note)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)}))
+    seen = _spy_digest(monkeypatch)
+    _update(anki)
+    [edit] = seen["edits"]
+    assert (edit["guid"], edit["field"], edit["value"]) == (
+        "g1", "Back", "PaCO₂ ≥ 35")
+    assert edit["deck"] == DECK and edit["front"] == "Front one" and edit["source"] == "g1"
+
+
+def test_update_that_ships_the_learners_own_edit_says_so(anki, tmp_path, monkeypatch):
+    anki.col.add_note("g1", _fields("Front one"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "my wording"
+    anki.col.update_note(note)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", "my wording"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)}))
+    seen = _spy_digest(monkeypatch)
+    trees = _update(anki)
+    assert "The deck now uses your wording" in _summary_text(trees)
+    assert seen["edits"] == []
+    assert anki.col.note_by_guid("g1")["Back"] == "my wording"
+
+
+def test_update_does_not_report_a_card_rolled_back_to_an_older_copy(anki, tmp_path,
+                                                                   monkeypatch):
+    anki.col.add_note("g1", _fields("Front one", "old"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", "new"), TAGS)], None)}))
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "old"
+    note.mod -= 1   # a real restore brings back the backup's older mod
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", "new"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)}))
+    seen = _spy_digest(monkeypatch)
+    _update(anki)
+    assert seen["edits"] == []
+    assert anki.col.note_by_guid("g1")["Back"] == "new"
+
+
+def test_update_leaves_archived_cards_out_of_the_edits(anki, tmp_path, monkeypatch):
+    from internpearls.config import RETIRED_TAG_LEAF
+    anki.col.add_note("g1", _fields("Front one"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "edited, then retired"
+    note.tags.append(f"{SCOPE}::{RETIRED_TAG_LEAF}")
+    anki.col.update_note(note)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g2", _fields("Front two"), TAGS)], None)}))
+    seen = _spy_digest(monkeypatch)
+    _update(anki)
+    assert seen["edits"] == []

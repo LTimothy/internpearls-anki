@@ -27,6 +27,7 @@ from aqt.utils import getFile
 
 from .ai_logic import is_generated_guid
 from .collection import (NoteTypeFieldsRequired, _NoteTypeCache, _apply_deck,
+                         _archived_guids,
                          _apply_template_changes, _capture_shipped,
                          _check_protected_conversion,
                          _ensure_notetypes, change_note_types, fork_note_identities,
@@ -46,7 +47,7 @@ from .config import (ADDON_VERSION, DECK_CACHE, DUPLICATE_TAG_LEAF, INSTALLED,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, collection_key, load_declined, load_deck_skill,
                      replace_file, save_declined, save_deck_skill, save_later_seen)
-from .logic import (APKG_MAX_BYTES, MOD_KEY, apkg_deck_names, apkg_note_details, apkg_notes,
+from .logic import (APKG_MAX_BYTES, HASH_KEY, MOD_KEY, apkg_deck_names, apkg_note_details, apkg_notes,
                     change_notes_for, safe_source_path,
                     source_label_for, group_change_notes, sort_source_groups,
                     declined_drop, declined_guids,
@@ -61,7 +62,8 @@ from .logic import (APKG_MAX_BYTES, MOD_KEY, apkg_deck_names, apkg_note_details,
                     skill_version, unopened_line,
                     plain_text, plural, prune_declined, released_held_guids, remap_cards,
                     reveal_hidden, split_notetype_changes, strip_hidden,
-                    shipped_field_hashes, with_field_hashes, write_personalized)
+                    find_learner_edits, shipped_field_hashes, truncate, with_field_hashes,
+                    write_personalized)
 from .net import (_CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled,
                   TransportError, _gh_raw)
 from .palette import colors
@@ -544,6 +546,50 @@ def _converted_items(converted):
     return [("note", f"Moved {plural(converted, 'card')} to the new format, review "
                      "history kept. Your next AnkiWeb sync is the one-time full sync "
                      "this was asked about: choose \"Upload to AnkiWeb\".")]
+
+
+def _hand_edits(cfg, per_note, existing_fields, shipped):
+    """find_learner_edits over the cards not archived, with the rollback guard."""
+    archived = _archived_guids(cfg["scope_tag"])
+    live = {g: f for g, f in existing_fields.items() if g not in archived}
+    return find_learner_edits(shipped, live, cfg["protected"], per_note, _note_mods(live))
+
+
+def _learner_edits(cfg, manifest, existing_fields):
+    """The learner's hand edits as digest rows, read before anything imports, so an edit
+    the update then overwrites still reaches the digest."""
+    shipped = _load_shipped()
+    found = _hand_edits(cfg, manifest.get("note_protected_fields", {}), existing_fields,
+                        shipped)
+    if not found:
+        return []
+    decks = _existing_guid_to_deck(cfg["scope_tag"])
+    return [{"deck": decks.get(g, ""), "guid": g, "source": shipped[g].get(HASH_KEY, g),
+             "field": f, "shipped": h, "value": v,
+             "front": note_display_label(list(existing_fields[g].values()))}
+            for g, f, h, v in found]
+
+
+def _adopted_items(edits):
+    """Summary rows for edits this update shipped back as the deck's own text, capped
+    like _collision_items. Drops them from `edits` in place: nothing is left to send."""
+    shipped = _load_shipped()
+    adopted = [e for e in edits if shipped.get(e["guid"], {}).get(HASH_KEY + e["field"])
+               == note_fields_hash([e["value"]])]
+    if not adopted:
+        return []
+    edits[:] = [e for e in edits if e not in adopted]
+    cards = {}
+    for e in adopted:
+        cards.setdefault((e["guid"], e["front"]), []).append(e["field"])
+    rows = [f"{_text(truncate(front, 70))} ({_text(', '.join(fields))})"
+            for (_g, front), fields in list(cards.items())[:10]]
+    if len(cards) > 10:
+        rows.append(f"<i>and {len(cards) - 10} more</i>")
+    items = [("note", "The deck now uses your wording on "
+                      f"<b>{plural(len(cards), 'card')}</b> you had edited:")]
+    append_rows(items, [("row", None, r, "") for r in rows])
+    return items
 
 
 def _collision_items(collisions):
@@ -2058,13 +2104,15 @@ def update_decks():
         _info(f"You're all up to date (source: {source}).")
         return
 
+    existing_fields = _existing_guid_to_fields(cfg["scope_tag"])
+    edits = _learner_edits(cfg, manifest, existing_fields)
     preview, downloaded, collisions = {}, {}, []
     skipped = set()
     skipped_retired_guids = set()
     if todo:
         preview_args = (_existing_front_to_guid(cfg["scope_tag"]),
                         manifest.get("front_aliases", {}),
-                        _existing_guid_to_fields(cfg["scope_tag"]),
+                        existing_fields,
                         manifest.get("note_protected_fields", {}))
         preview, downloaded, cancelled = _preview_content_changes(fetch, todo, *preview_args)
         if cancelled:
@@ -2342,7 +2390,8 @@ def update_decks():
         if run_decisions is not None:
             save_later_seen(later_count(standing, cfg["excluded"]))
         archived = show_result_with_feedback(title, items, entries, nothing_note=nothing_note,
-                                             standing_declines=standing, excluded=cfg["excluded"])
+                                             standing_declines=standing, excluded=cfg["excluded"],
+                                             edits=edits)
         if entries:
             if archived:
                 clear_saved_feedback()
@@ -2722,6 +2771,7 @@ def update_decks():
             # the one thing here the learner may want to act on, so a stopped run
             # reports them too.
             items += _collision_items(collisions)
+            items += _adopted_items(edits)
             items += held_items
             items.append(("note", backup_line))
             _finish(f"Update stopped early (source: {source})", items, run_decisions)
@@ -2817,6 +2867,7 @@ def update_decks():
         items.append(("note", f"Preserved fields restored on {plural(restored, 'card')}."))
     items += _converted_items(converted)
     items += _collision_items(collisions)
+    items += _adopted_items(edits)
     items += held_items
     items.append(("note", backup_line))
     _finish(f"Update complete (source: {source})", items, run_decisions)
