@@ -1673,10 +1673,13 @@ def remap_cards(src, existing_fronts, aliases):
       1. GUID: the incoming note's GUID already belongs to one of the learner's cards.
          This is the durable path: deck specs give every card an explicit stable `id`,
          so a reworded front no longer changes the GUID and needs no alias at all.
-      2. Front text: the learner's card currently shows this exact front
+      2. Recorded source: the learner's card last synced as this incoming GUID
+         (`existing_fronts.sources`, kept in shipped_fields.json). Survives a front
+         the learner reworded.
+      3. Front text: the learner's card currently shows this exact front
          (`existing_fronts` is {front_text: guid}). Covers collections whose GUIDs
          predate stable ids.
-      3. `aliases` ({current_front: previous_front}): the learner's card still shows
+      4. `aliases` ({current_front: previous_front}): the learner's card still shows
          the one prior wording of a renamed front.
     Each tier runs over the whole package before the next, and a learner GUID is claimed
     by one incoming note only: a note whose text match is already taken imports as new,
@@ -1701,6 +1704,12 @@ def remap_cards(src, existing_fronts, aliases):
     resolved = {i: guid for i, (_rid, _fields, guid) in enumerate(notes)
                 if guid in existing_guids}
     claimed = set(resolved.values())
+    sources = getattr(existing_fronts, "sources", None) or {}
+    for i, (_rid, _fields, guid) in enumerate(notes):
+        mine = sources.get(guid)
+        if i not in resolved and mine is not None and mine not in claimed:
+            resolved[i] = mine
+            claimed.add(mine)
     for use_alias in (False, True):
         for i, (_rid, fields, _guid) in enumerate(notes):
             front = fields[0] if fields else ""

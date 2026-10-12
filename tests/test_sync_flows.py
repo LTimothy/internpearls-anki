@@ -9778,3 +9778,47 @@ def test_conversion_preview_reads_note_types_once(anki, tmp_path, monkeypatch, p
             d['name']: [] for d in todo}
     # The dialog runner executes the initial preview twice while replaying Cancel.
     assert reader.call_count == (2 if preview == 'initial' else 1)
+
+
+def test_front_matched_card_keeps_matching_after_its_front_is_edited(anki, tmp_path):
+    from internpearls import sync
+
+    def ship(version):
+        _configure(anki, _write_source(tmp_path, {
+            DECK: (version, [("pkg", _fields("Front one"), TAGS),
+                             ("g2", _fields("Front two", back=version), TAGS)], None)}))
+
+    anki.col.add_note("mine", _fields("Front one"), [TAGS], deck=DECK)   # GUID drifted
+    ship("v1")
+    _sync(anki)
+    assert sync._load_shipped()["mine"]["#"] == "pkg"
+    note = anki.col.note_by_guid("mine")
+    note["Front"] = "Front one, my wording"
+    anki.col.update_note(note)
+
+    ship("v2")
+    _sync(anki)
+    # No duplicate of Front one.
+    assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 2
+
+
+def test_an_archived_duplicate_is_not_matched_by_its_recorded_source(anki, tmp_path):
+    from internpearls.config import DUPLICATE_TAG_LEAF
+
+    def ship(version):
+        _configure(anki, _write_source(tmp_path, {
+            DECK: (version, [("pkg", _fields("Front one"), TAGS),
+                             ("g2", _fields("Front two", back=version), TAGS)], None)}))
+
+    anki.col.add_note("mine", _fields("Front one"), [TAGS], deck=DECK)   # GUID drifted
+    ship("v1")
+    _sync(anki)
+    note = anki.col.note_by_guid("mine")
+    note["Front"] = "Front one, archived copy"
+    note.tags.append(f"{SCOPE}::{DUPLICATE_TAG_LEAF}")
+    anki.col.update_note(note)
+
+    ship("v2")
+    _sync(anki)
+    assert anki.col.note_by_guid("pkg")["Front"] == "Front one"
+    assert anki.col.note_by_guid("mine")["Front"] == "Front one, archived copy"

@@ -25,7 +25,7 @@ from . import ai_logic
 from .config import (DECK_BACKUPS_KEEP, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_TAG_LEAF,
                      SHIPPED, TARGET_FIELDS, _USER_FILES, _cfg, _collection_state_path,
                      _load_json, _save_json)
-from .logic import (apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
+from .logic import (HASH_KEY, apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
                     cards_lost_in_conversion, changed_templates, check_apkg_limits,
                     copy_apkg_checked, declined_drop,
                     empty_cards_dialog_rows, fields_to_carry_over, manifest_decks_for,
@@ -599,6 +599,7 @@ class _NoteIdentity(dict):
     def __init__(self):
         super().__init__()
         self.guids = set()
+        self.sources = {}
 
 
 def scope_note_count(scope_tag):
@@ -639,7 +640,25 @@ def _existing_front_to_guid(scope_tag):
             out[front] = guid
     for front in ambiguous:
         out.pop(front, None)
+    shipped = _load_json(SHIPPED, {})
+    # The deck's guid each drifted card last synced under, so a card whose front the
+    # learner reworded still matches (see remap_cards).
+    sources = {guid: entry.get(HASH_KEY)
+               for guid, entry in (shipped if isinstance(shipped, dict) else {}).items()
+               if isinstance(entry, dict) and isinstance(entry.get(HASH_KEY), str)
+               and guid in out.guids}
+    archived = _archived_guids(scope_tag) if sources else set()
+    for guid, source in sources.items():
+        if guid not in archived:
+            out.sources[source] = guid
     return out
+
+
+def _archived_guids(scope_tag):
+    """Guids of notes archived under the scope's retired or duplicate leaves."""
+    nids = {nid for leaf in (RETIRED_TAG_LEAF, DUPLICATE_TAG_LEAF)
+            for nid in mw.col.find_notes(scope_search(f"{scope_tag}::{leaf}"))}
+    return {mw.col.get_note(nid).guid for nid in nids}
 
 
 def existing_front_map(scope_tag):
