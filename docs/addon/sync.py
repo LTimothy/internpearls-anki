@@ -64,7 +64,8 @@ from .logic import (APKG_MAX_BYTES, HASH_KEY, MOD_KEY, apkg_deck_names, apkg_not
                     skill_version, unopened_line,
                     plain_text, plural, prune_declined, released_held_guids, remap_cards,
                     reveal_hidden, split_notetype_changes, strip_hidden,
-                    find_learner_edits, shipped_field_hashes, stored_field_hashes,
+                    find_learner_edits, hashes_unless_renamed, shipped_field_hashes,
+                    stored_field_hashes,
                     truncate, with_field_hashes,
                     write_personalized)
 from .net import (_CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled,
@@ -571,6 +572,49 @@ def _learner_edits(cfg, manifest, existing_fields):
              "field": f, "shipped": h, "value": v,
              "front": note_display_label(list(existing_fields[g].values()))}
             for g, f, h, v in found]
+
+
+def _record_current_hashes(cfg, manifest, fetch, installed, todo, reg):
+    """Record the text each up-to-date deck ships for cards with no record yet, so a hand
+    edit made before hashes were kept is found by the next update. Nothing is imported,
+    and no mod is stamped: the next real import does that, and a stamp now would read
+    every earlier edit as a rolled-back note."""
+    scope, declined = cfg["scope_tag"], declined_guids(reg)
+    shipped, archived = _load_shipped(), _archived_guids(scope)
+    candidates = {g: deck for g, deck in _existing_guid_to_deck(scope).items()
+                  if g not in archived and g not in declined
+                  and not any(k.startswith(HASH_KEY) for k in shipped.get(g, {}))}
+    pending = {t["name"] for t in todo}
+    decks = []
+    for d in manifest.get("decks", []):
+        name = d.get("name")
+        mine = {g for g, deck in candidates.items() if deck and name
+                and (deck == name or deck.startswith(f"{name}::"))}
+        if (mine and name not in pending and installed.get(name) == d.get("version")
+                and not _deck_opted_out(name, cfg["excluded"])):
+            decks.append((d, mine))
+    if not decks:
+        return
+    updated = {}
+    with cancellable_progress("Recording your decks' current text", len(decks)) as step:
+        for i, (d, mine) in enumerate(decks, 1):
+            if not step(i, f"Recording {d['name'].split('::')[-1]} ({i} of {len(decks)})"):
+                break
+            try:
+                src = _cached_fetch(fetch, d, on_chunk=step.pump)
+                *_, matched = remap_cards(src, _existing_front_to_guid(scope),
+                                          manifest.get("front_aliases", {}))
+                hashes = shipped_field_hashes(apkg_note_details(src), matched,
+                                              skip=declined)
+            except DownloadCancelled:
+                break
+            except Exception:
+                continue    # this deck is recorded on a later run
+            hashes = hashes_unless_renamed(
+                {g: h for g, h in hashes.items() if g in mine}, _stored_fields(mine))
+            updated.update({g: {**shipped.get(g, {}), **h} for g, h in hashes.items()})
+    if updated:
+        _save_json(SHIPPED, {**_load_shipped(), **updated})
 
 
 def _adopted_items(edits):
@@ -2118,6 +2162,7 @@ def update_decks():
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     todo = decks_to_update(manifest, installed, cfg["excluded"],
                            held=held_deck_names(reg))
+    _record_current_hashes(cfg, manifest, fetch, installed, todo, reg)
     live_cards = _live_cards_loader(manifest, fetch)
     existing_nids, fresh, _already, moves, retired_deck, tag, stranded = _reconcile_pending(
         manifest, cfg, live_cards)

@@ -9937,6 +9937,58 @@ def test_hand_edit_survives_a_deck_change_until_the_deck_adopts_it(anki, tmp_pat
     assert anki.col.note_by_guid("g1")["Back"] == "Z"
 
 
+def _forget_hashes(sync):
+    """Shipped records as a version without hash recording left them."""
+    shipped = sync._load_shipped()
+    sync._save_json(sync.SHIPPED, {g: {k: v for k, v in e.items() if not k.startswith("#")}
+                                   for g, e in shipped.items()})
+
+
+def _first_edited_card(anki, tmp_path, sync):
+    anki.col.add_note("g1", _fields("Front one", "S"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", "S"), TAGS)], None)}))
+    _sync(anki)
+    _forget_hashes(sync)
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "Y"
+    anki.col.update_note(note)
+
+
+def test_update_records_current_text_so_an_earlier_edit_is_kept(anki, tmp_path, monkeypatch):
+    from internpearls import logic, sync
+    _first_edited_card(anki, tmp_path, sync)
+    _update(anki)   # nothing pending: the run still records what the deck ships
+    entry = sync._load_shipped()["g1"]
+    assert entry["#Back"] == logic.note_fields_hash(["S"]) and "##mod" not in entry
+
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", "T"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)}))
+    seen = _spy_digest(monkeypatch)
+    _update(anki)
+    assert [e["value"] for e in seen["edits"]] == ["Y"]
+    assert anki.col.note_by_guid("g1")["Back"] == "Y"
+
+
+def test_update_does_not_record_text_for_a_declined_note(anki, tmp_path):
+    from internpearls import config, sync
+    _first_edited_card(anki, tmp_path, sync)
+    config.save_declined({"g1": {"state": "keep", "front": "Front one", "deck": DECK,
+                                 "decided": "2026-09-01", "hash": "x"}})
+    _update(anki)
+    assert not any(k.startswith("#") for k in sync._load_shipped()["g1"])
+
+
+def test_update_does_not_record_text_for_a_deck_with_a_pending_version(anki, tmp_path):
+    from internpearls import sync
+    _first_edited_card(anki, tmp_path, sync)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", "T"), TAGS)], None)}))
+    _update(anki, accept=False)
+    assert not any(k.startswith("#") for k in sync._load_shipped()["g1"])
+
+
 def test_sync_decks_keeps_a_hand_edit_too(anki, tmp_path):
     anki.col.add_note("g1", _fields("Front one"), [TAGS], deck=DECK)
     _configure(anki, _write_source(tmp_path, {

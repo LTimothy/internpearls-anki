@@ -3530,6 +3530,15 @@ def test_stored_field_hashes_rehash_only_written_notes_from_the_stored_text():
         "u": {"#Back": h(["pkg"])}}
 
 
+def test_hashes_unless_renamed_reads_an_old_media_rename_as_the_decks_text():
+    h, sha = logic.note_fields_hash, "a" * 40
+    hashes = {"g": {"#Image": h(['<img src="f.png">']), "#Back": h(["pkg"]), "#": "src"}}
+    stored = {"g": {"Image": f'<img src="f-{sha}.png">', "Back": "my wording"}}
+    assert logic.hashes_unless_renamed(hashes, stored) == {"g": {
+        "#Image": h([f'<img src="f-{sha}.png">']), "#Back": h(["pkg"]), "#": "src"}}
+    assert logic.hashes_unless_renamed(hashes, {}) == hashes
+
+
 def test_shipped_field_hashes_leave_out_unwritten_notes():
     details = [{"rid": 1, "guid": "pkg1", "notetype": "B", "fields": [("Back", "A")]},
                {"rid": 2, "guid": "pkg2", "notetype": "B", "fields": [("Back", "B")]}]

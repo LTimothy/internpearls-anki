@@ -1781,6 +1781,24 @@ def stored_field_hashes(hashes, stored, wrote):
     return out
 
 
+_RENAMED_MEDIA = re.compile(r"-[0-9a-f]{40}(\.[A-Za-z0-9]+)")
+
+
+def hashes_unless_renamed(hashes, stored):
+    """`hashes` where a field that differs from the package only by Anki's renamed media
+    references (name-<sha1>.ext) is hashed from the `stored` text ({guid: {field:
+    value}}) instead, so a rename from an earlier import is not read as a hand edit."""
+    out = {}
+    for guid, fields in hashes.items():
+        text = stored.get(guid) or {}
+        out[guid] = {k: (note_fields_hash([text[k[len(HASH_KEY):]]])
+                         if k != HASH_KEY and k[len(HASH_KEY):] in text
+                         and note_fields_hash([_RENAMED_MEDIA.sub(
+                             r"\1", text[k[len(HASH_KEY):]])]) == v else v)
+                     for k, v in fields.items()}
+    return out
+
+
 def with_field_hashes(captured, prior, hashes, wrote):
     """New shipped_fields.json entries for one deck plus this package's hashes. A note
     the import wrote takes this import's captured text baselines; one it did not write
