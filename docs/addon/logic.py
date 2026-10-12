@@ -2439,7 +2439,7 @@ def ascii_text(text):
 
 
 def build_feedback_digest(entries, version="", date="", standing_declines=None,
-                          excluded=()):
+                          excluded=(), edits=()):
     """Render flagged-card feedback as plain text, ready to paste into a message.
 
     `entries` is a list of {"deck", "front", "guid", "note"}, grouped here by deck in
@@ -2459,6 +2459,10 @@ def build_feedback_digest(entries, version="", date="", standing_declines=None,
     by deck and decision date on one line per deck per state. Content hashes stay out
     because they are sync bookkeeping rather than a learner decision. Later cards in
     the `excluded` decks are left out of its count line.
+
+    `edits` are the learner's own hand edits, written after the entries as a readable
+    line plus exact JSON so the deck repo can apply them; they never make a digest on
+    their own.
 
     Returns "" for no entries, so a caller can treat empty as "nothing to send" without
     a separate check.
@@ -2486,11 +2490,36 @@ def build_feedback_digest(entries, version="", date="", standing_declines=None,
             if e.get("note"):
                 lines.append(ascii_text(f'  > {_one_line(e.get("note"))}'))
             lines.append("")
+    if edits:
+        lines.extend(_edit_lines(edits))
     if standing_declines is not None:
         lines.extend(_decline_snapshot_lines(standing_declines, excluded))
     while lines and not lines[-1]:
         lines.pop()
     return "\n".join(lines) + "\n"
+
+
+def _edit_lines(edits):
+    # The entries loop already ends on a blank line.
+    lines = ["Cards you edited (your current wording, so the deck can use it)"]
+    by_deck = {}
+    for e in edits:
+        by_deck.setdefault(e.get("deck") or "", {}).setdefault(e["guid"], []).append(e)
+    for deck, cards in by_deck.items():
+        lines.append("")
+        lines.append(ascii_text(deck.split("::")[-1] if deck else "(unknown deck)"))
+        for items in cards.values():
+            first = items[0]
+            lines.append(ascii_text(f'  "{plain_text(first.get("front"))}"'))
+            lines.append(f'  guid {first.get("source") or first["guid"]}')
+            for e in items:
+                readable = truncate(plain_text(e["value"]), 120)
+                lines.append(ascii_text(f'  > {e["field"]}: {readable}'))
+                # JSON, not ascii_text: the deck repo needs the value byte for byte.
+                lines.append(f'  edit {json.dumps(e["field"])} {e["shipped"]} '
+                             f'{json.dumps(e["value"])}')
+            lines.append("")
+    return lines
 
 
 def duplicate_dialog_rows(groups):

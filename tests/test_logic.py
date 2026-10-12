@@ -3581,3 +3581,41 @@ def test_find_learner_edits_ignores_a_note_rolled_back_to_an_older_copy():
                                      mods={"g1": 150, "g2": 200, "g3": 260})
     assert [g for g, *_ in found] == ["g2", "g3"]
     assert len(logic.find_learner_edits(shipped, existing)) == 3
+
+
+def _edit(**kw):
+    return {"deck": "Intern Pearls::Intern Custom::Pharm", "front": "Front one",
+            "guid": "g1", "source": "src1", "field": "Back",
+            "shipped": "1a2b3c4d5e6f7a8b", "value": "PaCO₂ ≥ 35", **kw}
+
+
+def test_digest_lists_edits_readably_and_exactly():
+    text = logic.build_feedback_digest([{"deck": "D", "front": "F", "note": "n"}],
+                                       edits=[_edit()])
+    assert "Cards you edited (your current wording, so the deck can use it)" in text
+    assert '\nPharm\n  "Front one"\n  guid src1\n  > Back: PaCO2 >= 35\n' in text
+    line = next(l for l in text.splitlines() if l.strip().startswith("edit "))
+    assert line == '  edit "Back" 1a2b3c4d5e6f7a8b "PaCO\\u2082 \\u2265 35"'
+    assert text.isascii()
+
+
+def test_digest_readable_line_is_plain_and_capped():
+    text = logic.build_feedback_digest(
+        [{"deck": "D", "front": "F", "note": "n"}],
+        edits=[_edit(value="<b>" + "x" * 300 + "</b>")])
+    readable = next(l for l in text.splitlines() if l.startswith("  > Back: "))
+    assert "<b>" not in readable and len(readable) <= len("  > Back: ") + 123
+
+
+def test_digest_groups_edits_by_deck_then_card():
+    text = logic.build_feedback_digest(
+        [{"deck": "D", "front": "F", "note": "n"}],
+        edits=[_edit(), _edit(field="Why", value="mine"),
+               _edit(guid="g2", source="src2", front="Front two")])
+    assert text.count("\nPharm\n") == 1
+    assert text.count("guid src1") == 1 and "guid src2" in text
+    assert '  edit "Why" 1a2b3c4d5e6f7a8b "mine"' in text
+
+
+def test_edits_alone_do_not_make_a_digest():
+    assert logic.build_feedback_digest([], edits=[_edit()]) == ""

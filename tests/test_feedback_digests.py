@@ -394,3 +394,9 @@ def test_save_as_file_picker_uses_digest_date_or_today(anki, monkeypatch, text, 
     anki.gui.file_picks.append(None)
     _save_from_view(anki, monkeypatch, text)
     assert picks == [(anki.mw, "Text file", ".txt", f"Intern Pearls feedback {date}.txt")]
+
+
+def test_digest_heading_counts_edited_cards(anki):
+    from internpearls import review
+    assert review._digest_count_heading(1, 0, 2) == "1 card flagged, 2 cards edited"
+    assert review._digest_count_heading(0, 0, 1) == "1 card edited"

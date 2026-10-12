@@ -2127,7 +2127,7 @@ NOTHING_CHANGED = "Update cancelled, nothing was changed."
 
 
 def show_result_with_feedback(title, items, entries, nothing_note="",
-                              standing_declines=None, excluded=()):
+                              standing_declines=None, excluded=(), edits=()):
     """The end of a run, as one dialog instead of two.
 
     Return whether the shown digest was archived, or True when there was no digest.
@@ -2165,10 +2165,11 @@ def show_result_with_feedback(title, items, entries, nothing_note="",
             _info(nothing_note)
         return True
     return offer_feedback_digest(None, entries, title=title, items=items,
-                                 standing_declines=standing_declines, excluded=excluded)
+                                 standing_declines=standing_declines, excluded=excluded,
+                                 edits=edits)
 
 
-def _digest_heading(entries):
+def _digest_heading(entries, edits=()):
     """What the digest is a digest of, counted as two separate things.
 
     An entry carries a note, a decision, or both (logic.feedback_entries builds one for
@@ -2178,18 +2179,20 @@ def _digest_heading(entries):
     """
     flagged = sum(1 for e in entries if (e.get("note") or "").strip())
     decided = sum(1 for e in entries if e.get("decision"))
-    return _digest_count_heading(flagged, decided) or plural(len(entries), "card")
+    edited = len({e["guid"] for e in edits})
+    return _digest_count_heading(flagged, decided, edited) or plural(len(entries), "card")
 
 
-def _digest_count_heading(flagged, decided):
+def _digest_count_heading(flagged, decided, edited=0):
     parts = [text for text, n in ((f"{plural(flagged, 'card')} flagged", flagged),
-                                  (f"{plural(decided, 'decision')} recorded", decided))
+                                  (f"{plural(decided, 'decision')} recorded", decided),
+                                  (f"{plural(edited, 'card')} edited", edited))
              if n]
     return ", ".join(parts)
 
 
 def offer_feedback_digest(parent, entries, title=None, items=(), standing_declines=None,
-                          excluded=()):
+                          excluded=(), edits=()):
     """Put the flagged-card summary on the clipboard and show it.
 
     Return whether the shown digest was archived, or True when there was no digest.
@@ -2214,11 +2217,11 @@ def offer_feedback_digest(parent, entries, title=None, items=(), standing_declin
     text = build_feedback_digest(entries, version=ADDON_VERSION,
                                  date=datetime.date.today().isoformat(),
                                  standing_declines=standing_declines,
-                                 excluded=excluded)
+                                 excluded=excluded, edits=edits)
     if not text:
         return True
     archived = save_feedback_digest(text, entries)
-    show_feedback_digest(parent, text, heading=_digest_heading(entries), title=title,
+    show_feedback_digest(parent, text, heading=_digest_heading(entries, edits), title=title,
                          items=items, archived=archived)
     return archived
 
