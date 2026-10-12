@@ -785,8 +785,11 @@ def _scene_result_only(mock, opts):
              ("row", None, "Gadget Care: 6 kept, 0 new", ""),
              ("note", "Kept your own edits on 12 cards."),
              ("note", "On <b>2 cards</b>, this update changed a field you had also "
-                      "written in yourself. <b>Your version was kept</b> and the update "
-                      "to that field was skipped, so nothing you wrote was lost."),
+                      "written in yourself. <b>Your version was kept</b> and the deck's "
+                      "change to that field was skipped. If the field is one you edited "
+                      "by hand, your next update shows the deck's version on the card's "
+                      "row and you can take it there. A preserved field always keeps "
+                      "yours."),
              ("row", None, "Which widget is this, in one short line? (Notes)", ""),
              ("sep",),
              ("row", None, "An untagged row, to check the left edge lines up? (Notes)",

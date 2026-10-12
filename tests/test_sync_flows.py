@@ -10013,3 +10013,31 @@ def test_a_clash_in_sync_decks_is_offered_again_on_the_next_update(anki, tmp_pat
     screens = _update_clicking(anki, ["▸"])
     assert any("you edited this, so yours is kept" in t for s in screens for t in s)
     assert anki.col.note_by_guid("g1")["Back"] == "Y"
+
+
+def test_update_preview_treats_a_hand_edited_field_as_kept(anki, tmp_path, monkeypatch):
+    from internpearls import logic, sync
+    anki.col.add_note("g1", _fields("Front one", "S"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", "S"), TAGS)], None)}))
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "Y"
+    anki.col.update_note(note)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", "X"), TAGS)], None)}))
+    calls, real = [], sync._preview_content_changes
+
+    def preview(*a, **kw):
+        out = real(*a, **kw)
+        calls.append((a, out[0]))
+        return out
+
+    monkeypatch.setattr(sync, "_preview_content_changes", preview)
+    _update(anki, accept=False)
+
+    args, previews = calls[0]
+    assert "Back" in args[5]["g1"]   # the preview protects what the import keeps
+    changed = previews[DECK][3]
+    kept = [v["Back"] for v in changed.values() if "Back" in v]
+    assert len(kept) == 1 and isinstance(kept[0], logic.KeptEdit) and kept[0] == "Y"

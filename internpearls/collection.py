@@ -516,8 +516,8 @@ def _restore(snap, baseline=None, touched=None):
     conservative direction is the default and an upgrade never loses an annotation.
     A blank is the exception: without a baseline it can't be told from a field nobody
     has written yet, so the source's value stands. With one, a blank where the source
-    shipped text is the learner's own deletion and is kept like any other edit. A field with no text baseline but a recorded hash is judged
-    against the hash instead.
+    shipped text is the learner's own deletion and is kept like any other edit. A field
+    with no text baseline but a recorded hash is judged against the hash instead.
 
     `touched` is the guids this run's import actually wrote. Notes outside it are
     skipped entirely: an import that never ran over a note cannot have overwritten

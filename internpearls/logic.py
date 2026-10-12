@@ -1924,7 +1924,8 @@ def find_changed_notes(matched, details, existing_fields, protected=(), per_note
     changed. A field named in `protected` follows collection._restore's own rule, so
     the preview and the import agree: the import's value stands, and is shown here,
     when the learner's field still equals what `baseline` ({guid: {field: value}}) says
-    the source last shipped, or, with no baseline for it, when the field is blank.
+    the source last shipped. With no text baseline for it, a hash baseline decides, and
+    with neither, the field stands when it is blank.
     Otherwise the restore puts the learner's value back, and nothing is shown. A field the learner's note type
     does not have is skipped too: the import's own note-type step adds a genuinely
     missing field, and until it does there is no existing value to show.
