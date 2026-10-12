@@ -429,7 +429,11 @@ class _Db:
         per note with at least one card, first card standing in for `group by`.
         _scoped_notes: one row per card of each listed note, (nid, guid, mid, flds,
         cid, did, odid, reps), a card-less note as one row of NULL card columns.
-        _note_mods: (guid, mod) per note."""
+        _note_mods: (guid, mod) per note. _stored_fields: (guid, mid, flds) per note."""
+        if query == "select guid, mid, flds from notes":
+            assert not args, args
+            return [(n.guid, n.model["id"], FS.join(n.fields))
+                    for n in sorted(self._col._notes.values(), key=lambda n: n.id)]
         if query == "select guid, mod from notes":
             assert not args, args
             return [(n.guid, n.mod)

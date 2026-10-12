@@ -3519,6 +3519,17 @@ def test_shipped_field_hashes_key_by_learner_guid():
                  "#Back": logic.note_fields_hash(["A2"])}}
 
 
+def test_stored_field_hashes_rehash_only_written_notes_from_the_stored_text():
+    h = logic.note_fields_hash
+    hashes = {"w": {"#Back": h(["pkg"]), "#Image": h(["a.png"]), "#": "src"},
+              "u": {"#Back": h(["pkg"])}}
+    stored = {"w": {"Back": "pkg", "Image": "a-1.png", "Notes": "x"},
+              "u": {"Back": "other"}}
+    assert logic.stored_field_hashes(hashes, stored, {"w"}) == {
+        "w": {"#Back": h(["pkg"]), "#Image": h(["a-1.png"]), "#": "src"},
+        "u": {"#Back": h(["pkg"])}}
+
+
 def test_shipped_field_hashes_leave_out_unwritten_notes():
     details = [{"rid": 1, "guid": "pkg1", "notetype": "B", "fields": [("Back", "A")]},
                {"rid": 2, "guid": "pkg2", "notetype": "B", "fields": [("Back", "B")]}]

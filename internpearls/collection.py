@@ -701,6 +701,21 @@ def _note_mods(guids):
     return {g: m for g, m in mw.col.db.all("select guid, mod from notes") if g in wanted}
 
 
+def _stored_fields(guids):
+    """{guid: {field name: value}} for the given guids as the collection holds them
+    now, in one query. Read right after an import, this is the text Anki actually
+    stored, which can differ from the package's (it renames a re-shipped image whose
+    bytes changed and rewrites the field to match)."""
+    wanted = set(guids)
+    names, out = {}, {}
+    for guid, mid, flds in mw.col.db.all("select guid, mid, flds from notes"):
+        if guid in wanted:
+            if mid not in names:
+                names[mid] = [f["name"] for f in mw.col.models.get(mid)["flds"]]
+            out[guid] = dict(zip(names[mid], flds.split("\x1f")))
+    return out
+
+
 def _home_did(card):
     """The deck a card belongs to: `odid` while it sits in a filtered deck, else `did`."""
     return getattr(card, "odid", 0) or card.did

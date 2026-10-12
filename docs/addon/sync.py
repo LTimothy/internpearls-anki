@@ -37,7 +37,7 @@ from .collection import (NoteTypeFieldsRequired, _NoteTypeCache, _apply_deck,
                          _existing_guid_to_fields, _existing_guid_to_nid,
                          _existing_notes_summary, _note_mods, _import_apkg,
                          _pre_sync_backup_or_confirm_skip, _restore, _restore_tags,
-                         _snapshot, _snapshot_fields, _snapshot_tags, _template_changes,
+                         _snapshot, _snapshot_fields, _snapshot_tags, _stored_fields, _template_changes,
                          apply_deck_moves,
                          archive_notes, carry_over_protected_fields,
                          carry_scheduling_forward, decks_holding,
@@ -64,7 +64,8 @@ from .logic import (APKG_MAX_BYTES, HASH_KEY, MOD_KEY, apkg_deck_names, apkg_not
                     skill_version, unopened_line,
                     plain_text, plural, prune_declined, released_held_guids, remap_cards,
                     reveal_hidden, split_notetype_changes, strip_hidden,
-                    find_learner_edits, shipped_field_hashes, truncate, with_field_hashes,
+                    find_learner_edits, shipped_field_hashes, stored_field_hashes,
+                    truncate, with_field_hashes,
                     write_personalized)
 from .net import (_CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled,
                   TransportError, _gh_raw)
@@ -802,14 +803,16 @@ def restore_pending_after_undo(changes):
         pass
 
 
-def _package_hashes(src, declined, expected_conflicts, package_matched):
-    """Per-field shipped hashes for one package's notes."""
+def _package_hashes(src, declined, expected_conflicts, package_matched, wrote):
+    """Per-field shipped hashes for one package's notes. A note the import wrote is
+    hashed as the collection stored it, so call this right after `_apply_deck`."""
     details = apkg_note_details(src)
     # Declined notes and held-back note-type conflicts never reached the
     # collection, so they keep the hashes of what the learner actually holds.
     unwritten = set(declined) | {d["guid"] for d in details
                                  if d["rid"] in expected_conflicts}
-    return shipped_field_hashes(details, package_matched, unwritten)
+    hashes = shipped_field_hashes(details, package_matched, unwritten)
+    return stored_field_hashes(hashes, _stored_fields(wrote) if wrote else {}, wrote)
 
 
 def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
@@ -995,7 +998,8 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # stops or fails later can't leave this import's overwrite standing, and a
             # failure here rolls the import back. The shipped values are read before
             # the restore puts the learner's own back over them.
-            hashes = _package_hashes(src, declined, expected_conflicts, package_matched)
+            hashes = _package_hashes(src, declined, expected_conflicts, package_matched,
+                                    wrote)
             deck_shipped = with_field_hashes(
                 _capture_shipped(cfg["protected"], cfg["scope_tag"], wrote, per_note),
                 baseline, hashes, wrote)
@@ -3027,7 +3031,8 @@ def import_single():
         baseline = _load_shipped()
         # Restore before any later bookkeeping or presentation can fail.
         try:
-            hashes = _package_hashes(src, declined, expected_conflicts, package_matched)
+            hashes = _package_hashes(src, declined, expected_conflicts, package_matched,
+                                    touched)
             shipped = with_field_hashes(
                 _capture_shipped(cfg["protected"], cfg["scope_tag"], touched, per_note),
                 baseline, hashes, touched)

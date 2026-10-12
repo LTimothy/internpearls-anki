@@ -1767,6 +1767,20 @@ def shipped_field_hashes(details, matched, skip=frozenset()):
     return out
 
 
+def stored_field_hashes(hashes, stored, wrote):
+    """`hashes` with each note in `wrote` re-hashed from `stored` ({guid: {field:
+    value}}, the text the collection holds after the import), so a field Anki rewrote on
+    the way in is hashed as it was stored. A field `stored` lacks, the source-guid key
+    and a note the import did not write keep what `hashes` has."""
+    out = {}
+    for guid, fields in hashes.items():
+        text = (stored.get(guid) or {}) if guid in wrote else {}
+        out[guid] = {k: (note_fields_hash([text[k[len(HASH_KEY):]]])
+                         if k != HASH_KEY and k[len(HASH_KEY):] in text else v)
+                     for k, v in fields.items()}
+    return out
+
+
 def with_field_hashes(captured, prior, hashes, wrote):
     """New shipped_fields.json entries for one deck plus this package's hashes. A note
     the import wrote takes this import's captured text baselines; one it did not write

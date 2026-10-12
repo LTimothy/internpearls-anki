@@ -10079,3 +10079,37 @@ def test_taking_the_decks_version_then_keeping_yours_leaves_the_learners_text(
                for s in screens for t in s)
     assert anki.col.note_by_guid("g1")["Back"] == "Y"
     assert [e["value"] for e in seen["edits"]] == ["Y"]
+
+
+def test_a_renamed_image_is_hashed_as_anki_stored_it(anki, tmp_path, monkeypatch):
+    from internpearls import logic, sync
+    real, stored = sync._apply_deck, '<img src="fig-1a2b3c.png">'
+
+    def renaming(*a, **kw):
+        out = real(*a, **kw)
+        for guid in out[2]:   # Anki renames a re-shipped image of different bytes
+            note = anki.col.note_by_guid(guid)
+            note["Image"] = stored
+            anki.col.update_note(note)
+        return out
+
+    monkeypatch.setattr(sync, "_apply_deck", renaming)
+    anki.col.add_note("g1", _fields("Front one", "S"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", "S", image='<img src="fig.png">'),
+                       TAGS)], None)}))
+    _sync(anki)
+    entry = sync._load_shipped()["g1"]
+    assert entry["#Image"] == logic.note_fields_hash([stored])
+    assert entry["#Back"] == logic.note_fields_hash(["S"])
+
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "Y"
+    anki.col.update_note(note)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", "S", image='<img src="fig.png">'), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)}))
+    monkeypatch.setattr(sync, "_apply_deck", real)
+    seen = _spy_digest(monkeypatch)
+    _update(anki)
+    assert [e["field"] for e in seen["edits"]] == ["Back"]
