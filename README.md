@@ -42,7 +42,7 @@ The "Update, and leave N unopened for later" button applies the cards you opened
 
 A deck source can attach a note to a changed card. Reviewer feedback shows quoted, a maintainer's note unquoted. Cards that share a note are grouped under it, with one control for the whole group. A maintainer's group of five or more cards is folded, and its cards still apply when you click Update. A feedback group is never folded. A source can also label cards (with a question number, say), and labelled cards sort by it.
 
-Notes you type on rows are saved as you type. At the end of the run they appear in a digest, along with your standing Never and Keep yours cards, that you can copy or save. Nothing is sent anywhere. Advanced > Recent card feedback keeps the last 20 digests.
+Notes you type on rows are saved as you type. At the end of the run they appear in a digest, along with your standing Never and Keep yours cards and any cards you edited by hand, that you can copy or save. Nothing is sent anywhere. Advanced > Recent card feedback keeps the last 20 digests.
 
 A change to a card's template or CSS costs a one-time full AnkiWeb sync, so it is a checkbox on the confirmation, off by default. A change of card format (Q&A to fill-in-the-blank, or back) costs the same and gets one yes or no for the whole run. Saying no imports those cards as new cards beside the old ones. A conversion that would delete any of a note's cards is never applied. Each of these questions names the cost on its buttons, and Return, Escape or closing the window picks the free choice.
 
@@ -121,11 +121,15 @@ Every sync and import first saves a self-contained backup, with scheduling, of t
 
 ### Matching
 
-Cards match by GUID first, so intervals, ease and review counts carry over and a source with stable GUIDs can reword fronts freely. Without a GUID match, your card's front is compared with the current wording, then with renamed wordings the manifest records (`front_aliases`, `superseded_fronts`). Each of your cards matches at most one incoming card. An ambiguous front never matches, and a card that matches nothing imports as a new card beside yours. A deck whose GUID already belongs to a note outside your scope tag is refused.
+Cards match by GUID first, so intervals, ease and review counts carry over and a source with stable GUIDs can reword fronts freely. Without a GUID match, the card is matched by the recorded source GUID (the deck's GUID a front-matched card last synced under), then by your card's front compared with the current wording, then by the renamed wordings the manifest records (`front_aliases`, `superseded_fronts`). Each of your cards matches at most one incoming card. An ambiguous front never matches, and a card that matches nothing imports as a new card beside yours. A deck whose GUID already belongs to a note outside your scope tag is refused.
 
 ### Protected fields
 
 Before import, each protected field is compared with the value the source last shipped. A field you never edited takes the source's correction, a field you edited keeps your text, and a clash with a source change is reported. A source can also protect one field on one card (`note_protected_fields`). Fields are restored right after each deck's import, and if that fails the import is rolled back.
+
+### Your own edits
+
+Each import records a hash of every field it shipped. A field whose text no longer matches that hash is an edit you made, unless the card is archived or the note was rolled back to before the record (a restored backup). Your edit is kept through later updates like a protected field until the deck ships your wording, and the summary then says so. When the deck changed the same field, your version is kept and the next update of that deck shows the deck's version on the card's row. Update my decks lists your edits in the feedback digest and nothing is sent on its own. A card you edited before this version was installed has no record until Update my decks runs once while its deck is unchanged; that run reads the deck's current package and records it without importing.
 
 ### Tags and note types
 

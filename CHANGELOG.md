@@ -15,6 +15,7 @@ Cards you edit by hand keep your wording, and you can send those edits with your
   on one during the update, so to send your edits, flag any card. Preserved fields are
   not included.
 - When an update ships your edit as the deck's own wording, the summary says so.
+- Update my decks records each deck's current text the first time it runs on this version, so edits you made earlier are kept from then on.
 
 ## v0.84.0
 
