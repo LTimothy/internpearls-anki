@@ -164,7 +164,8 @@ def make_apkg(path, notes, model=None, deck=None, media=None):
     # not the same names across our note types). Omitting it here would let the mock
     # pass with generic "Field N" labels that production never produces.
     con.execute("create table notes "
-                "(id integer primary key, guid text, mid integer, flds text, tags text)")
+                "(id integer primary key, guid text, mid integer, flds text, tags text, "
+                "mod integer default 0)")
     for i, (guid, fields, tags) in enumerate(notes, 1):
         con.execute("insert into notes (id, guid, mid, flds, tags) values (?, ?, ?, ?, ?)",
                     (i, guid, model["id"], FS.join(fields), tags))
@@ -199,6 +200,7 @@ class MockNote:
     def __init__(self, nid, guid, model, values, tags, deck=None):
         self.id, self.guid, self.model, self.tags = nid, guid, model, list(tags)
         self.deck = deck
+        self.mod = 0
         self._card_ids = []   # populated by MockCollection.add_note
         self._resize(values)
 
@@ -423,10 +425,15 @@ class _Db:
                 if n.guid in guids]
 
     def all(self, query, *args):
-        """The two joins collection.py runs. _note_rows_sql: (nid, flds, mid, did, odid)
+        """The queries collection.py runs. _note_rows_sql: (nid, flds, mid, did, odid)
         per note with at least one card, first card standing in for `group by`.
         _scoped_notes: one row per card of each listed note, (nid, guid, mid, flds,
-        cid, did, odid, reps), a card-less note as one row of NULL card columns."""
+        cid, did, odid, reps), a card-less note as one row of NULL card columns.
+        _note_mods: (guid, mod) per note."""
+        if query == "select guid, mod from notes":
+            assert not args, args
+            return [(n.guid, n.mod)
+                    for n in sorted(self._col._notes.values(), key=lambda n: n.id)]
         scoped = re.fullmatch(
             r"select n\.id, n\.guid, n\.mid, n\.flds, c\.id, c\.did, c\.odid, c\.reps "
             r"from notes n left join cards c on c\.nid = n\.id "
@@ -608,6 +615,10 @@ class MockCollection:
         self._total_changes += rows + 1
         self.mod = int(time.time() * 1000)
 
+    def _touch(self, note):
+        # Anki stamps a note's mod, in seconds, on every write it makes itself.
+        note.mod = int(time.time())
+
     # === undo: add_custom_undo_entry / merge_undo_entries / undo ===
     def close(self):
         self.db = None
@@ -700,6 +711,7 @@ class MockCollection:
         self._next_id += 1
         note.deck = self.decks.name(did)
         self._notes[note.id] = note
+        self._touch(note)
         cid = self._next_cid
         self._next_cid += 1
         self._cards[cid] = types.SimpleNamespace(
@@ -724,6 +736,7 @@ class MockCollection:
         model = model or self.models.all()[0]
         note = MockNote(self._next_id, guid, model, values, tags, deck)
         self._notes[self._next_id] = note
+        self._touch(note)
         self._next_id += 1
         cid = self._next_cid
         self._next_cid += 1
@@ -898,6 +911,7 @@ class MockCollection:
         self._record_write()
 
     def update_note(self, note):
+        self._touch(note)
         self._record_write()
 
     def _register_models(self, models_by_mid):
@@ -999,7 +1013,7 @@ class MockCollection:
             os.remove(db)
         con = sqlite3.connect(db)
         con.execute("create table notes (id integer primary key, guid text, "
-                    "flds text, tags text, mid integer)")
+                    "flds text, tags text, mid integer, mod integer)")
         con.execute("create table cards (id integer primary key, nid integer, "
                     "did integer, " + ", ".join(f"{k} integer" for k in _SCHEDULING)
                     + ")")
@@ -1009,9 +1023,9 @@ class MockCollection:
         for i, (nid, n) in enumerate(sorted(self._notes.items()), 1):
             did = deck_ids.setdefault(n.deck or "Default", len(deck_ids) + 1)
             decks[str(did)] = {"name": n.deck or "Default"}
-            con.execute("insert into notes values (?, ?, ?, ?, ?)",
+            con.execute("insert into notes values (?, ?, ?, ?, ?, ?)",
                         (nid, n.guid, FS.join(n.fields), " ".join(n.tags),
-                         n.model["id"]))
+                         n.model["id"], n.mod))
             card = self._cards[n._card_ids[0]] if n._card_ids else None
             sched = [getattr(card, k, 0) if with_scheduling and card else 0
                      for k in _SCHEDULING]

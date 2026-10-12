@@ -676,6 +676,12 @@ def _existing_guid_to_nid(scope_tag):
     return {guid: nid for nid, guid, *_rest in _scoped_notes(scope_tag)}
 
 
+def _note_mods(guids):
+    """{guid: note mod} for the given guids, in one query."""
+    wanted = set(guids)
+    return {g: m for g, m in mw.col.db.all("select guid, mod from notes") if g in wanted}
+
+
 def _home_did(card):
     """The deck a card belongs to: `odid` while it sits in a filtered deck, else `did`."""
     return getattr(card, "odid", 0) or card.did

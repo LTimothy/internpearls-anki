@@ -19,6 +19,7 @@ import shutil
 import stat
 import tempfile
 import threading
+import time
 import weakref
 
 from aqt import mw
@@ -33,7 +34,7 @@ from .collection import (NoteTypeFieldsRequired, _NoteTypeCache, _apply_deck,
                          seed_converted_siblings,
                          _existing_front_to_guid, _existing_guid_to_deck,
                          _existing_guid_to_fields, _existing_guid_to_nid,
-                         _existing_notes_summary, _import_apkg,
+                         _existing_notes_summary, _note_mods, _import_apkg,
                          _pre_sync_backup_or_confirm_skip, _restore, _restore_tags,
                          _snapshot, _snapshot_fields, _snapshot_tags, _template_changes,
                          apply_deck_moves,
@@ -45,7 +46,7 @@ from .config import (ADDON_VERSION, DECK_CACHE, DUPLICATE_TAG_LEAF, INSTALLED,
                      RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, collection_key, load_declined, load_deck_skill,
                      replace_file, save_declined, save_deck_skill, save_later_seen)
-from .logic import (APKG_MAX_BYTES, apkg_deck_names, apkg_note_details, apkg_notes,
+from .logic import (APKG_MAX_BYTES, MOD_KEY, apkg_deck_names, apkg_note_details, apkg_notes,
                     change_notes_for, safe_source_path,
                     source_label_for, group_change_notes, sort_source_groups,
                     declined_drop, declined_guids,
@@ -60,7 +61,7 @@ from .logic import (APKG_MAX_BYTES, apkg_deck_names, apkg_note_details, apkg_not
                     skill_version, unopened_line,
                     plain_text, plural, prune_declined, released_held_guids, remap_cards,
                     reveal_hidden, split_notetype_changes, strip_hidden,
-                    write_personalized)
+                    shipped_field_hashes, with_field_hashes, write_personalized)
 from .net import (_CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, DownloadCancelled,
                   TransportError, _gh_raw)
 from .palette import colors
@@ -916,6 +917,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             expected_conflicts = (
                 _planned_notetype_row_ids(src, existing_fronts, aliases, nt)
                 if missing else frozenset())
+            started = int(time.time())
             in_place, as_new, wrote = _apply_deck(
                 src, aliases, existing_fronts, declined,
                 expected_conflicting_rids=expected_conflicts,
@@ -928,13 +930,24 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # stops or fails later can't leave this import's overwrite standing, and a
             # failure here rolls the import back. The shipped values are read before
             # the restore puts the learner's own back over them.
-            deck_shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], wrote,
-                                            per_note)
+            details = apkg_note_details(src)
+            # Declined notes and held-back note-type conflicts never reached the
+            # collection, so they keep the hashes of what the learner actually holds.
+            unwritten = set(declined) | {d["guid"] for d in details
+                                         if d["rid"] in expected_conflicts}
+            hashes = shipped_field_hashes(details, package_matched, unwritten)
+            deck_shipped = with_field_hashes(
+                _capture_shipped(cfg["protected"], cfg["scope_tag"], wrote, per_note),
+                baseline, hashes, wrote)
             deck_restored, deck_collisions = _restore(snap, baseline, wrote)
             _restore_tags(tag_snap, cfg["scope_tag"], wrote)
             # After the import, not before: the extra cloze cards only exist once the
             # cloze markup has actually landed on the note.
             seed_converted_siblings(changed_nids)
+            # Anki keeps the package's own mod on an updated note, so anchor on this
+            # import's start.
+            for guid, mod in _note_mods(hashes).items():
+                deck_shipped[guid][MOD_KEY] = str(max(mod, started))
             mw.col.merge_undo_entries(conversion_undo)
             _update_undo_steps[_undo_key(conversion_undo)] = (
                 d["name"], prior_installed.get(d["name"]),
@@ -2914,19 +2927,30 @@ def import_single():
             existing_fronts, forked_guids = _fork_import_as_new(forked, cfg["scope_tag"])
         expected_conflicts = (_planned_notetype_row_ids(src, existing_fronts, aliases, nt)
                               if missing else frozenset())
+        package_matched = []
+        started = int(time.time())
         in_place, as_new, touched = _apply_deck(
             src, aliases, existing_fronts, declined,
-            expected_conflicting_rids=expected_conflicts)
+            expected_conflicting_rids=expected_conflicts, matched_out=package_matched)
         for guid in forked_guids:
             snap.pop(guid, None)
             tag_snap.pop(guid, None)
+        baseline = _load_shipped()
         # Restore before any later bookkeeping or presentation can fail.
         try:
-            shipped = _capture_shipped(cfg["protected"], cfg["scope_tag"], touched, per_note)
+            details = apkg_note_details(src)
+            unwritten = set(declined) | {d["guid"] for d in details
+                                         if d["rid"] in expected_conflicts}
+            hashes = shipped_field_hashes(details, package_matched, unwritten)
+            shipped = with_field_hashes(
+                _capture_shipped(cfg["protected"], cfg["scope_tag"], touched, per_note),
+                baseline, hashes, touched)
         finally:
-            restored, _ = _restore(snap, _load_shipped(), touched)
+            restored, _ = _restore(snap, baseline, touched)
             _restore_tags(tag_snap, cfg["scope_tag"], touched)
         seed_converted_siblings(changed_nids)
+        for guid, mod in _note_mods(hashes).items():
+            shipped[guid][MOD_KEY] = str(max(mod, started))
         mw.col.merge_undo_entries(undo)
     except Exception:
         mw.col.merge_undo_entries(undo)

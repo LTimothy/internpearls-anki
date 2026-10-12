@@ -7,6 +7,7 @@ things mocked are Anki itself and the dialogs, which are recorded and scripted.
 """
 import json
 import os
+import time
 
 import pytest
 
@@ -482,6 +483,50 @@ def test_sync_overwrites_content_but_restores_protected_notes(anki, tmp_path):
     assert len(anki.col.find_notes(f'"tag:{SCOPE}"')) == 1   # updated, not duplicated
 
 
+def test_sync_records_field_hashes_and_keeps_text_baselines(anki, tmp_path):
+    from internpearls import logic, sync
+    anki.col.add_note("g1", _fields("Front one", "old back", dosing="1 mg/kg"),
+                      [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", dosing="1 mg/kg"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
+    anki.col.note_by_guid("g1").mod = 5   # the import leaves an old mod, as Anki does
+    t0 = int(time.time())
+    _sync(anki)
+    entry = sync._load_shipped()["g1"]
+    assert entry["#Back"] == logic.note_fields_hash(["the back"])
+    assert entry["Dosing"] == "1 mg/kg"
+    assert anki.col.note_by_guid("g1").mod == 5 and int(entry["##mod"]) >= t0
+
+    # A later release that leaves g1 as it is still refreshes its hashes and keeps
+    # the protected field's text baseline.
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", dosing="1 mg/kg"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)}))
+    anki.mw._config["protected_fields"] = ["Notes", "Dosing"]
+    _sync(anki)
+    shipped = sync._load_shipped()
+    assert shipped["g1"]["Dosing"] == "1 mg/kg"
+    assert shipped["g1"]["#Front"] == logic.note_fields_hash(["Front one"])
+    assert shipped["g2"]["#Back"] == logic.note_fields_hash(["the back"])
+
+
+def test_import_single_records_field_hashes_and_mods(anki, tmp_path):
+    from internpearls import logic, sync
+    anki.col.add_note("mine", _fields("Front one"), [TAGS], deck=DECK)   # GUID drifted
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("pkg", _fields("Front one"), TAGS)], None)}))
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("pkg", _fields("Front one", back="new back"), TAGS)], deck=DECK)
+    anki.gui.file_picks = [src]
+    anki.gui.answers.append(True)          # Import now
+    t0 = int(time.time())
+    sync.import_single()
+    entry = sync._load_shipped()["mine"]
+    assert entry["#Back"] == logic.note_fields_hash(["new back"]) and entry["#"] == "pkg"
+    assert int(entry["##mod"]) >= t0
+
+
 def test_preserved_field_the_learner_never_touched_still_receives_updates(anki, tmp_path):
     """The point of preserving a field the learner can edit: protecting Dosing must not
     mean freezing it. First sync establishes what the source shipped; the second one is
@@ -767,7 +812,9 @@ def test_undoing_a_deck_update_makes_that_deck_pending_again(anki, tmp_path):
     assert (other["Back"], other["Notes"]) == ("the back", "my annotation g2")
     assert anki.col.note_by_guid("g1")["Back"] == "v2"
     assert sync._load_json(sync.INSTALLED, {}) == {DECK: "v2", OTHER: "v1"}
-    assert sync._load_json(sync.SHIPPED, {}) == {**before, "g1": {"Notes": "", "Back": "v2"}}
+    shipped = {g: {k: v for k, v in e.items() if not k.startswith("#")}
+               for g, e in sync._load_json(sync.SHIPPED, {}).items()}
+    assert shipped == {**before, "g1": {"Notes": "", "Back": "v2"}}
     assert [d["name"] for d in sync.decks_to_update(
         manifest, sync._load_json(sync.INSTALLED, {}))] == [OTHER]
     assert (sync.collection_key(), OTHER, "v2") in sync.undone_updates
