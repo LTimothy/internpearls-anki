@@ -1734,6 +1734,69 @@ def protected_for(guid, configured, per_note):
     return set(configured) | set((per_note or {}).get(guid) or ())
 
 
+# shipped_fields.json also keeps one hash per shipped field under "#<field>". Anki
+# rejects field names starting with "#", so these never collide with a text baseline.
+HASH_KEY = "#"
+MOD_KEY = "##mod"
+
+
+def shipped_field_hashes(details, matched, skip=frozenset()):
+    """{learner guid: {"#<field>": hash}} for every note in a package that reached the
+    collection, whether or not Anki had to write it. `skip` holds the package or learner
+    guids the import left out, which keep their earlier hashes."""
+    learner = {rid: existing for rid, _pkg, existing in matched}
+    out = {}
+    for d in details:
+        guid = learner.get(d["rid"], d["guid"])
+        if guid in skip or d["guid"] in skip:
+            continue
+        hashes = {HASH_KEY + name: note_fields_hash([value or ""])
+                  for name, value in d["fields"]}
+        if guid != d["guid"]:
+            hashes[HASH_KEY] = d["guid"]   # the source's own guid, for the digest
+        out[guid] = hashes
+    return out
+
+
+def with_field_hashes(captured, prior, hashes, wrote):
+    """New shipped_fields.json entries for one deck plus this package's hashes. A note
+    the import wrote takes this import's captured text baselines; one it did not write
+    keeps its prior ones."""
+    out = {}
+    for guid in set(captured) | set(hashes):
+        if guid in wrote:
+            base = captured.get(guid, {})
+        else:
+            base = {k: v for k, v in (prior.get(guid) or {}).items()
+                    if not k.startswith(HASH_KEY)}
+        out[guid] = {**base, **hashes.get(guid, {})}
+    return out
+
+
+def find_learner_edits(shipped, existing_fields, protected=(), per_note=None, mods=None):
+    """[(guid, field, shipped hash, current value)] for each field whose text no longer
+    matches what the source last shipped. Protected fields are the learner's by design,
+    and a field with no recorded hash is never reported. A note whose mod in `mods` is
+    older than the one recorded with its hashes was rolled back, not edited."""
+    out = []
+    for guid, fields in existing_fields.items():
+        entry = shipped.get(guid)
+        if not isinstance(entry, dict):
+            continue
+        recorded = str(entry.get(MOD_KEY, ""))
+        if recorded.isdigit() and (mods or {}).get(guid, int(recorded)) < int(recorded):
+            continue
+        # Per-card protection is keyed by the deck's own guid (the "#" entry).
+        skip = {str(p).lower() for p in protected_for(guid, protected, per_note)
+                | protected_for(entry.get(HASH_KEY, guid), protected, per_note)}
+        for name, value in fields.items():
+            h = entry.get(HASH_KEY + name)
+            if (isinstance(h, str) and str(name).lower() not in skip
+                    and note_fields_hash([value or ""]) != h):
+                out.append((guid, name, h, value or ""))
+    return out
+
+
 def merge_learner_tags(before, imported, scope_tag, markers=()):
     """A matched note's tags after an import: the source's own scope-tag subtree from
     `imported`, every tag in `before` the source does not manage (anything outside the

@@ -3499,3 +3499,79 @@ def test_split_notetype_changes_keeps_any_card_losing_conversion_beside():
     assert logic.split_notetype_changes([safe, lossy, unmeasured]) == (
         [safe, unmeasured], [lossy])
     assert logic.split_notetype_changes([]) == ([], [])
+
+
+# -------------------------------------------------------------- learner edits
+def test_field_hash_is_pinned_for_the_deck_repo():
+    assert logic.note_fields_hash(["abc"]) == "ba7816bf8f01cfea"
+
+
+def test_shipped_field_hashes_key_by_learner_guid():
+    details = [{"rid": 1, "guid": "pkg1", "notetype": "B",
+                "fields": [("Front", "Q"), ("Back", "A")]},
+               {"rid": 2, "guid": "new2", "notetype": "B",
+                "fields": [("Front", "Q2"), ("Back", "A2")]}]
+    out = logic.shipped_field_hashes(details, [(1, "pkg1", "mine1")])
+    assert out == {
+        "mine1": {"#Front": logic.note_fields_hash(["Q"]),
+                  "#Back": logic.note_fields_hash(["A"]), "#": "pkg1"},
+        "new2": {"#Front": logic.note_fields_hash(["Q2"]),
+                 "#Back": logic.note_fields_hash(["A2"])}}
+
+
+def test_shipped_field_hashes_leave_out_unwritten_notes():
+    details = [{"rid": 1, "guid": "pkg1", "notetype": "B", "fields": [("Back", "A")]},
+               {"rid": 2, "guid": "pkg2", "notetype": "B", "fields": [("Back", "B")]}]
+    matched = [(1, "pkg1", "mine1"), (2, "pkg2", "mine2")]
+    assert list(logic.shipped_field_hashes(details, matched, skip={"mine1"})) == ["mine2"]
+    assert list(logic.shipped_field_hashes(details, matched, skip={"pkg2"})) == ["mine1"]
+
+
+def test_with_field_hashes_refreshes_text_baselines_only_where_the_import_wrote():
+    prior = {"g1": {"Dosing": "1 mg/kg", "#Back": "old", "##mod": "5"},
+             "g2": {"Dosing": "stale", "#Back": "old"}, "g4": {"Notes": "x"}}
+    captured = {"g3": {"Dosing": "fresh"}}
+    hashes = {"g1": {"#Back": "new"}, "g2": {"#Back": "new2"}, "g3": {"#Back": "h3"}}
+    out = logic.with_field_hashes(captured, prior, hashes, wrote={"g2", "g3"})
+    assert out == {"g1": {"Dosing": "1 mg/kg", "#Back": "new"},
+                   "g2": {"#Back": "new2"},
+                   "g3": {"Dosing": "fresh", "#Back": "h3"}}
+
+
+def test_find_learner_edits_reports_changed_unprotected_fields_only():
+    h = logic.note_fields_hash
+    shipped = {"g1": {"#Front": h(["Q"]), "#Back": h(["A"]), "#Notes": h([""])},
+               "g2": {"#Back": h(["B"])}}
+    existing = {"g1": {"Front": "Q", "Back": "A, edited", "Notes": "mine"},
+                "g2": {"Back": "B"},
+                "g3": {"Back": "no baseline"}}
+    assert logic.find_learner_edits(shipped, existing, protected=["notes"]) == [
+        ("g1", "Back", h(["A"]), "A, edited")]
+
+
+def test_find_learner_edits_honours_per_note_protection():
+    h = logic.note_fields_hash
+    shipped = {"g1": {"#Back": h(["A"])}}
+    existing = {"g1": {"Back": "edited"}}
+    assert logic.find_learner_edits(shipped, existing, (), {"g1": ["Back"]}) == []
+
+
+def test_find_learner_edits_honours_protection_declared_on_the_source_guid():
+    # A front-matched note's per-card protection is keyed by the deck's own guid.
+    h = logic.note_fields_hash
+    shipped = {"mine": {"#": "pkg", "#Dosing": h(["1 mg/kg"]), "#Back": h(["A"])}}
+    existing = {"mine": {"Dosing": "my dose", "Back": "A, edited"}}
+    assert logic.find_learner_edits(shipped, existing, (), {"pkg": ["Dosing"]}) == [
+        ("mine", "Back", h(["A"]), "A, edited")]
+
+
+def test_find_learner_edits_ignores_a_note_rolled_back_to_an_older_copy():
+    h = logic.note_fields_hash
+    shipped = {"g1": {"#Back": h(["A"]), "##mod": "200"},
+               "g2": {"#Back": h(["B"]), "##mod": "200"},
+               "g3": {"#Back": h(["C"]), "##mod": "200"}}
+    existing = {"g1": {"Back": "older"}, "g2": {"Back": "edited"}, "g3": {"Back": "mine"}}
+    found = logic.find_learner_edits(shipped, existing,
+                                     mods={"g1": 150, "g2": 200, "g3": 260})
+    assert [g for g, *_ in found] == ["g2", "g3"]
+    assert len(logic.find_learner_edits(shipped, existing)) == 3
