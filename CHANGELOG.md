@@ -3,6 +3,11 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.85.1
+
+- Night mode dimming set to whole screens no longer shrinks a background image from
+  another add-on to the card area.
+
 ## v0.85.0
 
 Cards you edit by hand keep your wording, and you can send those edits with your card feedback.
