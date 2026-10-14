@@ -2200,9 +2200,11 @@ def test_night_mode_css_images_scope_matches_legacy():
     assert logic.night_mode_css(True, 30, "images") == logic.night_mode_image_css(True, 30)
 
 
-def test_night_mode_css_content_scope_filters_whole_body():
+def test_night_mode_css_content_scope_filters_root_not_body():
+    # A filter on body pins other add-ons' position: fixed backgrounds to the card box.
     css = logic.night_mode_css(True, 40, "content")
-    assert "body.nightMode" in css
+    assert css.startswith("html.night-mode {")
+    assert "body" not in css
     assert "brightness(0.60)" in css
     assert "img" not in css
 

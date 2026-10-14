@@ -25,12 +25,12 @@ def test_card_hook_appends_nothing_in_content_scope(anki):
     assert nightmode.dim_images_in_night_mode("<b>q</b>", None, "reviewQuestion") == "<b>q</b>"
 
 
-def test_webview_hook_injects_body_rule_only_in_content_scope(anki):
+def test_webview_hook_injects_root_rule_only_in_content_scope(anki):
     from internpearls import nightmode
     wc = types.SimpleNamespace(head="", body="", css=[], js=[])
     _cfg_with(anki, dim_night_mode_scope="content")
     nightmode.dim_webviews_in_night_mode(wc, None)
-    assert "<style>" in wc.head and "body.nightMode" in wc.head
+    assert "<style>" in wc.head and "html.night-mode" in wc.head
     wc2 = types.SimpleNamespace(head="", body="", css=[], js=[])
     _cfg_with(anki, dim_night_mode_scope="images")
     nightmode.dim_webviews_in_night_mode(wc2, None)
