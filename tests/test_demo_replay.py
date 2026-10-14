@@ -1088,6 +1088,8 @@ def test_real_fixture_manifest_and_source_reads_suspend_until_advances(tmp_path)
                    "apkg": package.name}],
     }), encoding="utf8")
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    shutil.copytree(os.path.join(root, "internpearls"), tmp_path / "internpearls",
+                    ignore=shutil.ignore_patterns("user_files", "__pycache__"))
     environment = dict(os.environ)
     environment["DEMO_SOURCE"] = str(source)
     environment["PYTHONPATH"] = os.pathsep.join(
@@ -1128,7 +1130,7 @@ response = harness.RUNNER.feed_protocol({
 })
 assert response["status"] == "done"
 """],
-        cwd=root, env=environment, capture_output=True, text=True)
+        cwd=tmp_path, env=environment, capture_output=True, text=True)
 
     assert probe.returncode == 0, probe.stdout + probe.stderr
 
@@ -1143,6 +1145,8 @@ def test_real_package_cache_reconstructs_before_later_work(tmp_path):
                    "apkg": package.name}],
     }), encoding="utf8")
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    shutil.copytree(os.path.join(root, "internpearls"), tmp_path / "internpearls",
+                    ignore=shutil.ignore_patterns("user_files", "__pycache__"))
     environment = dict(os.environ)
     environment["DEMO_SOURCE"] = str(source)
     environment["PYTHONPATH"] = os.pathsep.join(
@@ -1208,7 +1212,7 @@ assert response["pending"] == [{
 }]
 assert delivered == []
 """],
-        cwd=root, env=environment, capture_output=True, text=True)
+        cwd=tmp_path, env=environment, capture_output=True, text=True)
 
     assert probe.returncode == 0, probe.stdout + probe.stderr
 
@@ -1228,6 +1232,8 @@ def test_auto_sync_package_cache_is_private_until_delivery(tmp_path, outcome):
         ],
     }), encoding="utf8")
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    shutil.copytree(os.path.join(root, "internpearls"), tmp_path / "internpearls",
+                    ignore=shutil.ignore_patterns("user_files", "__pycache__"))
     environment = dict(os.environ)
     environment["DEMO_SOURCE"] = str(source)
     environment["PYTHONPATH"] = os.pathsep.join(
@@ -1354,7 +1360,7 @@ with use_platform(replay), patch.object(background, "_run_in_background", captur
         assert sync._apkg_cache == published
         assert errors == []
 """, outcome],
-        cwd=root, env=environment, capture_output=True, text=True)
+        cwd=tmp_path, env=environment, capture_output=True, text=True)
 
     assert probe.returncode == 0, probe.stdout + probe.stderr
 
