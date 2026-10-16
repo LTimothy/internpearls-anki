@@ -383,7 +383,7 @@ def atomic_write(path, data):
             fh.flush()
             os.fsync(fh.fileno())
         replace_file(tmp, path)
-    except Exception:
+    except BaseException:
         try:
             os.remove(tmp)
         except OSError:

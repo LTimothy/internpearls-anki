@@ -4632,11 +4632,9 @@ def test_save_json_leaves_the_old_file_intact_when_the_write_fails(tmp_path, mon
     def blow_up(*_a, **_k):
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr("json.dumps", blow_up)
-    try:
+    monkeypatch.setattr(config, "replace_file", blow_up)
+    with pytest.raises(RuntimeError):
         config._save_json(path, {"deck": "v2"})
-    except RuntimeError:
-        pass
 
     assert json.load(open(path, encoding="utf8")) == {"deck": "v1"}
     assert [f for f in os.listdir(tmp_path) if f.endswith(".tmp")] == []
