@@ -10308,3 +10308,25 @@ def test_a_renamed_image_is_hashed_as_anki_stored_it(anki, tmp_path, monkeypatch
     seen = _spy_digest(monkeypatch)
     _update(anki)
     assert [e["field"] for e in seen["edits"]] == ["Back"]
+
+
+def test_import_deck_refuses_before_writing_when_shipped_state_is_unreadable(
+        anki, tmp_path):
+    from internpearls import collection, config
+    from internpearls.config import INSTALLED, _load_json, _save_json
+    from test_logic import _legacy_apkg
+
+    src = _legacy_apkg(tmp_path / "one.apkg", [f"{DECK}::1. Basics"])
+    _save_json(INSTALLED, {DECK: "v1"})
+    path = config._collection_state_path(config.SHIPPED)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf8") as fh:
+        fh.write('{"g1": {"#Back": ')
+    anki.gui.file_picks.append(str(src))
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert not anki.col.imports
+    assert _load_json(INSTALLED, {}) == {DECK: "v1"}
+    assert "can't be read" in anki.gui.warnings[-1]

@@ -1565,6 +1565,9 @@ def import_deck():
                 yes_label="Import", no_label="Cancel"):
         return
     cfg = _cfg()
+    # Read before anything is written, so unreadable state refuses the restore up front.
+    shipped = _load_json(SHIPPED, {})
+    shipped = shipped if isinstance(shipped, dict) else {}
     # Anki's importer reads each member's stream and ignores the size the file declares
     # for it, so it imports a copy made through zipfile, which holds to those sizes.
     # Made first, so a file refused here costs no backup.
@@ -1625,8 +1628,6 @@ def import_deck():
     log = getattr(result, "log", None)
     guids = _restored_baseline_guids(src, log)
     if guids:
-        shipped = _load_json(SHIPPED, {})
-        shipped = shipped if isinstance(shipped, dict) else {}
         prior_names = names or set(installed) | set(deck_names)
         key = _undo_key(undo)
         _restore_undo_steps[key] = (
@@ -1641,7 +1642,7 @@ def import_deck():
                  for name in set(installed) | set(deck_names)},
                 _restore_undo_steps[key][1])
         invalidate_installed()
-    _reset_baseline(src, log)
+    _reset_baseline(src, log, shipped)
     mw.reset()
     _info(f"Imported <code>{html.escape(str(os.path.basename(src)), quote=False)}</code>.")
 
@@ -1670,7 +1671,7 @@ def _restored_baseline_guids(src, log=None):
         return set()
 
 
-def _reset_baseline(src, log=None):
+def _reset_baseline(src, log=None, shipped=None):
     """Give each restored note the shipped-field baseline its backup was taken with, so
     the next update reads restored source text as the source's rather than as the
     learner's edit. A file with no saved baseline drops those notes' baselines, which
@@ -1685,8 +1686,9 @@ def _reset_baseline(src, log=None):
     own = os.path.dirname(os.path.realpath(src)) == os.path.realpath(_deck_backup_folder())
     saved = _load_json(_baseline_path(src), {}) if own and src.endswith(".apkg") else {}
     saved = saved if isinstance(saved, dict) else {}
-    shipped = _load_json(SHIPPED, {})
-    shipped = shipped if isinstance(shipped, dict) else {}
+    if shipped is None:
+        shipped = _load_json(SHIPPED, {})
+        shipped = shipped if isinstance(shipped, dict) else {}
     for guid in guids:
         if isinstance(saved.get(guid), dict):
             shipped[guid] = saved[guid]
