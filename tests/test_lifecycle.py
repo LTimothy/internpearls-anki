@@ -57,6 +57,17 @@ def test_background_update_tooltip_escapes_the_network_version(anki, monkeypatch
     assert "<b>x</b>" not in anki.gui.tooltips[-1]
 
 
+def test_background_auto_update_asks_for_a_restart_afterwards(anki, monkeypatch):
+    from internpearls import background, updates
+    anki.mw._config = {"notify_addon_updates": True, "auto_update_addon": True}
+    monkeypatch.setattr(background, "_addon_update_work", lambda *a: {
+        "info": {"version": "99.0.0"}, "package_path": "package"})
+    monkeypatch.setattr(background, "_install_package", lambda path: None)
+    monkeypatch.setattr(background, "_remove_quietly", lambda path: None)
+    background._check_addon_updates_background()
+    assert updates.lazy_guard() is True
+
+
 def test_background_failure_tooltip_escapes_exception_text(anki):
     from internpearls import ui
     def fail():

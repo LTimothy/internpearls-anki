@@ -555,6 +555,7 @@ def test_edit_synced_in_after_an_unwritten_update_is_still_a_hand_edit(anki, tmp
                       ("g2", _fields("Front two"), TAGS)], None)}))
     _sync(anki)
     assert anki.col.note_by_guid("g1")["Back"] == "PHONE EDIT"
+    assert anki.col.note_by_guid("g1")["Dosing"] == "2 mg"
 
 
 def _hand_edited_then_imported(anki, tmp_path, shipped_back):
