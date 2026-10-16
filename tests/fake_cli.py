@@ -33,6 +33,8 @@
 #                   terminal result)
 #   verdicts_ok     claude-style result carrying a {"verdicts": [...]} reply,
 #                   one confirmed card with a source (Check facts tests)
+#   verdicts_one_bad  claude-style verdicts reply: card 0 confirmed with a source,
+#                   card 1 with an unknown verdict word
 #   with_image      one card carrying a url: image (I2 review-gate tests)
 #   hostile_fields  one card whose fields carry script, an event handler, a
 #                   javascript: link and an iframe, and whose image names a
@@ -194,6 +196,15 @@ if mode == "verdicts_ok":
                               "correction": None,
                               "sources": [{"title": "Ref",
                                           "url": "https://example.com/ref"}]}]}
+    print(json.dumps({"type": "result", "subtype": "success",
+                      "result": json.dumps(verdicts), "usage": USAGE}))
+    sys.exit(0)
+if mode == "verdicts_one_bad":
+    verdicts = {"verdicts": [
+        {"index": 0, "verdict": "confirmed", "note": "matches the cited reference",
+         "correction": None, "sources": [{"title": "Ref", "url": "https://example.com/ref"}]},
+        {"index": 1, "verdict": "partly confirmed", "note": "x", "correction": None,
+         "sources": []}]}
     print(json.dumps({"type": "result", "subtype": "success",
                       "result": json.dumps(verdicts), "usage": USAGE}))
     sys.exit(0)

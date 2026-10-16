@@ -2515,7 +2515,7 @@ class _GenerateDialog(QDialog):
         field_map = {i: FIELD_MAP[c["note_type"]] for i, c in enumerate(s.cards)}
         verdicts, errors = ai_logic.parse_verdicts_json(
             res["text"], len(s.cards), field_map, web=ai_cli.web_capable(s.backend, s.cli_path))
-        if errors:
+        if not verdicts:
             if not self._retried_json:
                 self._retried_json = True
                 self._start_generation(revision=self._last_revision, check=True,
@@ -2525,6 +2525,9 @@ class _GenerateDialog(QDialog):
                   "after a retry:\n" + "\n".join(errors[:5]), textFormat="plain")
             self._return_to_input_or_review()
             return
+        if errors:
+            _warn(f"{plural(len(errors), 'card')} came back without a usable verdict "
+                  "and show as unverified:\n" + "\n".join(errors[:5]), textFormat="plain")
         s.tokens_last_run = res["tokens"]
         reg = ai_logic.record_usage(load_ai_usage(), s.backend, res["tokens"],
                                     now=platform().wall_now().timestamp())

@@ -588,6 +588,23 @@ def test_check_facts_malformed_reply_retries_once_then_warns(anki, monkeypatch):
               for w in anki.gui.warnings)
 
 
+def test_check_facts_keeps_good_verdicts_when_one_entry_is_bad(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="two_cards")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    runs = []
+    monkeypatch.setattr(
+        ai_cli, "build_argv",
+        lambda kind, path, mode, scratch, imgs, **kw:
+            (runs.append(mode) or [sys.executable, FAKE, "verdicts_one_bad"], True))
+    dlg._check_facts()
+    dlg._wait_for_worker(timeout=15)
+    assert len(runs) == 1                                  # no paid retry
+    assert dlg.session.verdicts[0]["verdict"] == "confirmed"
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert any("unverified" in w.lower() for w in anki.gui.warnings)
+
+
 def test_check_facts_empty_reply_nudge_asks_for_verdicts(anki, monkeypatch):
     prompts = _prompt_capturing_run_generation(monkeypatch)
     dlg = _ready_dialog(anki, monkeypatch)
