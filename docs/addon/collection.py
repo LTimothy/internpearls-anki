@@ -2040,11 +2040,8 @@ def note_rows(col, scope_tag=None, deck_name=None):
 
 
 def _note_rows_sql(col, nids):
-    """`note_rows` in one query. The per-note path costs a get_note, a card_ids and a
-    get_card round trip for every note in the collection, which on a real collection
-    (thousands of notes) is seconds of frozen UI before the scan itself, which takes
-    a tenth of a second. One join over notes and cards gives the same tuples; the
-    `group by` keeps one card per note, the way the slow path read `card_ids()[0]`."""
+    """`note_rows` in one query: a join over notes and cards, with `group by` keeping
+    one card per note."""
     deck_names = {d.id: d.name for d in col.decks.all_names_and_ids()}
     model_names = {}
     rows = []

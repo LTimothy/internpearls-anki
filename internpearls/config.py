@@ -355,7 +355,7 @@ def _load_json(path, default, strict=False):
             raise
         if _must_parse(orig_path):
             raise CorruptStateError(
-                f"{os.path.basename(path)} in the add-on's user_files folder can't be "
+                f"{os.path.basename(path)} in the add-on's user_files/collections folder can't be "
                 "read. Restore it from a backup of that folder, or delete it to start "
                 "over (your Never/Later choices and hand-edit records are in it).") from e
         return default

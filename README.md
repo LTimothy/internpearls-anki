@@ -93,7 +93,7 @@ Keys for automatic sync, Night Mode dimming, AI card generation and the duplicat
 - Fix note types: adds missing fields to the managed note types. Every sync runs it.
 - Backup, Restore and Export intern pearls deck: work on `export_deck`, with scheduling. Restore puts the file's content into matching cards and keeps their scheduling. It backs up first, is one Edit > Undo step, and the restored decks are offered again on your next update.
 - Backup full collection and Restore full collection: Anki's own backups. A full restore offers every managed deck again on your next update.
-- Check for add-on updates: compares your version with the latest published release and offers a newer one. Install now downloads in the background, can be cancelled, and asks for a restart when it finishes. Without a token, GitHub allows 60 checks an hour per IP address. A token set in Manage decks raises that to 5,000.
+- Check for add-on updates: compares your version with the latest published release and offers a newer one. Install now downloads in the background, can be cancelled, and asks for a restart when it finishes. Each check makes two GitHub requests. Without a token GitHub allows 60 requests an hour per IP address; a token set in Manage decks raises that to 5,000.
 
 ### Experimental
 

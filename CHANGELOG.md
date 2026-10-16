@@ -16,8 +16,8 @@ this repo's `README.md` ("Versioning"). Restart Anki after installing any update
   package is deleted after install.
 - After an update installs, the menu items and the update check ask for a restart.
 - Judge with AI runs Codex with its shell turned off, and Claude and Codex runs keep
-  no session history.
-- Revise all after a partial import keeps the imported cards marked.
+  no session history where the CLI supports it.
+- Revise all after a partial import keeps the imported cards marked when the card count is unchanged.
 - Check facts keeps the valid verdicts when one entry is malformed.
 
 ## v0.85.1
