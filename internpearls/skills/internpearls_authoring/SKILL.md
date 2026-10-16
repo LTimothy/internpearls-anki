@@ -144,15 +144,17 @@ journal figure). Never draw one of these; a drawn ECG trace or drawn anatomy is 
 more often than not. Drawing an SVG, inline (svg:<svg...>) or saved in the scratch
 folder when you have file tools (file:<name>.svg), is allowed only for a simple
 schematic (a labelled box-and-arrow flow, a small comparison grid) when no real image
-fits, and only as a last resort. When you have no web tools in this run (Quick mode, or
-a backend with no web access), do not draw a figure of a real thing either: use only
+fits, and only as a last resort. When you have no web tools in this run (a backend with
+no web access), do not draw a figure of a real thing either: use only
 the files attached to this prompt for images, and skip the figure entirely rather than
 invent or draw one. This is a private study deck, so licensing is not a reason to leave
 a good figure out; pick the one that teaches best and record where it came from. Every
 image needs alt text.
-- Ask which job the figure does. This tool cannot make image-front cards, so a figure the
-  learner would have to read in order to answer stays on the answer side and the question
-  is asked in words; Basic and Cloze render Image on the answer side only.
+- Ask which job the figure does. A note type with an Image field shows the picture on
+  the answer side, so a figure the learner would have to read in order to answer goes
+  there and the question is asked in words. Anki's stock Basic and Cloze show the picture
+  with the question: use them for a figure that is the question (an image to identify,
+  arrows to name), never for one that prints its own answer.
 - A figure that prints its own labels cannot be the question. Crop the labels off, or keep
   it on the back and ask the question in words. Same for lettered panels.
 - A multi-panel figure is several cards: one per panel, all cropped to the same frame and

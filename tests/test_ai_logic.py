@@ -940,6 +940,13 @@ def test_bundled_skill_loads_and_reads_like_a_skill():
     assert "Never generate a raster image" in text
 
 
+def test_skill_says_where_stock_types_show_a_picture():
+    text = ai_logic.load_bundled_skill()
+    assert "cannot make image-front cards" not in text
+    assert "(Quick mode," not in text
+    assert "stock Basic and Cloze" in text
+
+
 def test_active_skills_ordering_and_disable():
     deck = {"text": "DECK SKILL", "enabled": True}
     both = ai_logic.active_skills(deck)
