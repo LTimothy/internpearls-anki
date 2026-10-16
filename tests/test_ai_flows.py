@@ -3446,3 +3446,19 @@ def test_deeply_damaged_draft_does_not_block_wizard(anki, monkeypatch):
     dlg = _ready_dialog(anki, monkeypatch)
     assert dlg.stack.currentWidget() is dlg.input_page
     assert os.path.isfile(path + ".bad")
+
+
+def test_check_reply_with_no_usable_verdict_retries_once(anki, monkeypatch):
+    dlg = _settled(ai_dialog._GenerateDialog())
+    dlg.session.cards = [{"note_type": "Basic"}, {"note_type": "Basic"}]
+    dlg._last_revision = None
+    calls = []
+    monkeypatch.setattr(dlg, "_start_generation", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(dlg, "_return_to_input_or_review", lambda: None)
+    bad = {"text": '{"verdicts": [{"index": 0, "verdict": "bogus", "note": "x"},'
+                   ' {"index": 1, "verdict": "bogus", "note": "x"}]}'}
+    dlg._finish_check(bad)
+    assert len(calls) == 1
+    dlg._finish_check(bad)
+    assert len(calls) == 1
+    assert "still could not be used" in anki.gui.warnings[-1]

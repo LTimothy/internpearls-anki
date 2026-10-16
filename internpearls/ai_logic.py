@@ -711,6 +711,9 @@ def build_check_prompt(skills, cards, field_map, backend="", web=True):
     return "\n\n".join(parts) + "\n"
 
 
+NO_VERDICT_NOTE = "the assistant returned no verdict for this card"
+
+
 def parse_verdicts_json(text, n_cards, field_map, web=True):
     """Parse a check run's reply into (verdicts, errors).
 
@@ -807,7 +810,7 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
     for i in range(n_cards):
         if i not in parsed:
             parsed[i] = {"verdict": "unverified",
-                        "note": "the assistant returned no verdict for this card",
+                        "note": NO_VERDICT_NOTE,
                         "correction": None, "sources": []}
     return parsed, errors
 

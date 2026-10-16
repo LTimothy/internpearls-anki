@@ -2515,7 +2515,7 @@ class _GenerateDialog(QDialog):
         field_map = {i: FIELD_MAP[c["note_type"]] for i, c in enumerate(s.cards)}
         verdicts, errors = ai_logic.parse_verdicts_json(
             res["text"], len(s.cards), field_map, web=ai_cli.web_capable(s.backend, s.cli_path))
-        if not verdicts:
+        if all(v["note"] == ai_logic.NO_VERDICT_NOTE for v in verdicts.values()):
             if not self._retried_json:
                 self._retried_json = True
                 self._start_generation(revision=self._last_revision, check=True,
