@@ -805,3 +805,36 @@ def test_a_fetch_made_inside_another_leaves_the_outer_deadline_in_place(monkeypa
 def test_the_deadline_message_counts_in_words(deadline, words):
     from internpearls import net
     assert words in str(net._too_slow(deadline))
+
+
+def test_a_429_with_no_remaining_quota_is_a_rate_limit(monkeypatch):
+    from internpearls import net
+    _urlopen(monkeypatch, _http_error(
+        429, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1700000700"}))
+    with pytest.raises(net.RateLimitedError):
+        net._http_get("http://example.invalid")
+
+
+def test_a_ref_with_a_hash_stays_in_the_query(monkeypatch):
+    from internpearls import net
+    seen = []
+    monkeypatch.setattr(net, "_http_get", lambda url, **kw: seen.append(url) or b"x")
+    net._gh_raw("o/r", "manifest.json", token="", ref="fix#2")
+    assert seen[0].endswith("?ref=fix%232")
+    seen.clear()
+    net._gh_public_raw("version.json", ref="a#b")
+    assert seen[0].endswith("?ref=a%23b")
+    seen.clear()
+    monkeypatch.setattr(net, "_http_get", lambda url, **kw: (
+        seen.append(url), (_ for _ in ()).throw(net.RateLimitedError("x")))[1]
+        if "api.github" in url else seen.append(url) or b"x")
+    net._gh_public_raw("version.json", ref="rel/v1#2")
+    assert seen[-1].endswith("/rel/v1%232/version.json")
+
+
+def test_a_token_with_stray_whitespace_is_stripped_before_the_header(monkeypatch):
+    from internpearls import net
+    seen = []
+    _urlopen(monkeypatch, _Response(b"{}"), capture=seen)
+    net._http_get("http://example.invalid", token="ghp_SECRET\n")
+    assert seen[0][0].get_header("Authorization") == "Bearer ghp_SECRET"

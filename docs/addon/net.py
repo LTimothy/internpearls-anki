@@ -334,6 +334,7 @@ def _read_body(r, on_chunk, max_bytes, deadline, watch):
 
 def _http_get_watched(url, token, accept, timeout, on_chunk, max_bytes, deadline,
                       watch):
+    token = (token or "").strip()
     headers = {"User-Agent": _USER_AGENT}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -344,7 +345,7 @@ def _http_get_watched(url, token, accept, timeout, on_chunk, max_bytes, deadline
         with _open(req, timeout=timeout) as r:
             return _read_body(r, on_chunk, max_bytes, deadline, watch)
     except urllib.error.HTTPError as e:
-        if e.code == 403:
+        if e.code in (403, 429):
             rate_limit_msg = _rate_limit_message(e, token=token)
             if rate_limit_msg is not None:
                 raise RateLimitedError(rate_limit_msg) from e
@@ -382,7 +383,7 @@ def _gh_raw(repo, path, token, ref, timeout=_CONNECT_TIMEOUT, on_chunk=None,
     deck source's manifest, so it is quoted: a '?' or '#' in it stays part of the path.
     """
     url = (f"https://api.github.com/repos/{repo}/contents/{quote(path, safe='/')}"
-           f"?ref={ref}")
+           f"?ref={quote(ref, safe='')}")
     return _http_get(url, token=token, accept="application/vnd.github.raw",
                      timeout=timeout, on_chunk=on_chunk, max_bytes=max_bytes)
 
@@ -415,8 +416,10 @@ def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT, token=None):
     server error (5xx), and retrying either just doubles the wait on an already-dead
     connection.
     """
-    url = f"https://api.github.com/repos/{ANKI_REPO}/contents/{path}?ref={ref}"
-    raw_url = f"https://raw.githubusercontent.com/{ANKI_REPO}/{ref}/{path}"
+    url = (f"https://api.github.com/repos/{ANKI_REPO}/contents/{path}"
+           f"?ref={quote(ref, safe='')}")
+    raw_url = (f"https://raw.githubusercontent.com/{ANKI_REPO}/"
+               f"{quote(ref, safe='/')}/{path}")
     if token:
         try:
             return _http_get(url, token=token, accept="application/vnd.github.raw",
