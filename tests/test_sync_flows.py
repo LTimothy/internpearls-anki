@@ -4632,7 +4632,7 @@ def test_save_json_leaves_the_old_file_intact_when_the_write_fails(tmp_path, mon
     def blow_up(*_a, **_k):
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr("json.dump", blow_up)
+    monkeypatch.setattr("json.dumps", blow_up)
     try:
         config._save_json(path, {"deck": "v2"})
     except RuntimeError:

@@ -1644,15 +1644,8 @@ def _write_feedback_digest(text, entries):
     path = os.path.join(folder, stem + ".txt")
     counts = {"notes": sum(1 for e in entries if (e.get("note") or "").strip()),
               "decisions": sum(1 for e in entries if e.get("decision"))}
-    fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf8", newline="") as fh:
-            fh.write(text)
-        _save_json(os.path.join(folder, stem + ".json"), counts)
-        config.replace_file(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+    _save_json(os.path.join(folder, stem + ".json"), counts)
+    config.atomic_write(path, text)
     return folder
 
 
@@ -2306,14 +2299,7 @@ def _save_feedback_file(text):
     if not path:
         return
     try:
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf8", newline="") as fh:
-                fh.write(text)
-            config.replace_file(tmp, path)
-        finally:
-            if os.path.exists(tmp):
-                os.remove(tmp)
+        config.atomic_write(path, text)
     except Exception as exc:
         _warn(f"Could not save feedback: {exc}", textFormat="plain")
         return

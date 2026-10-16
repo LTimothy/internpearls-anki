@@ -5,7 +5,6 @@ import json
 import os
 import re
 import shutil
-import tempfile
 
 from . import config
 
@@ -22,20 +21,6 @@ def draft_path():
 
 def _image_folder(path):
     return os.path.join(os.path.dirname(path), "ai_draft_images")
-
-
-def _write(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
-            fh.flush()
-            os.fsync(fh.fileno())
-        config.replace_file(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
 
 
 def save(path, state, image_data, scratch):
@@ -66,7 +51,7 @@ def save(path, state, image_data, scratch):
             asset = hashlib.sha256(data).hexdigest() + "." + ext
             dest = os.path.join(folder, asset)
             if not os.path.isfile(dest):
-                _write(dest, data)
+                config.atomic_write(dest, data)
             used.add(asset)
             files[name] = asset
     for i, per in state["image_data"].items():
@@ -83,13 +68,13 @@ def save(path, state, image_data, scratch):
                 name = hashlib.sha256(data).hexdigest() + "." + ext
                 dest = os.path.join(folder, name)
                 if not os.path.isfile(dest):
-                    _write(dest, data)
+                    config.atomic_write(dest, data)
                 used.add(name)
                 item["asset"] = name
             images[i].append(item)
     state["image_data"] = images
     state["scratch_files"] = files
-    _write(path, json.dumps(state, ensure_ascii=False, indent=2).encode("utf8"))
+    config.atomic_write(path, json.dumps(state, ensure_ascii=False, indent=2).encode("utf8"))
     if os.path.isdir(folder):
         for name in os.listdir(folder):
             if name not in used:
@@ -240,7 +225,7 @@ def _read_asset(path, name):
 
 def restore_images(state, scratch):
     for name, data in state.pop("file_data").items():
-        _write(os.path.join(scratch, name), data)
+        config.atomic_write(os.path.join(scratch, name), data)
     for i, per in state["image_data"].items():
         for j, result in enumerate(per):
             if result["state"] != "ok":
@@ -249,7 +234,7 @@ def restore_images(state, scratch):
             if result["kind"] in ("attached", "file"):
                 name = result["name"]
             path = os.path.join(scratch, name)
-            _write(path, result["bytes"])
+            config.atomic_write(path, result["bytes"])
             result["path"] = path
 
 

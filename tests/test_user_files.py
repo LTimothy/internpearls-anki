@@ -156,3 +156,20 @@ def test_empty_protected_fields_falls_back_to_notes(anki, raw):
     from internpearls import config
     anki.mw._config["protected_fields"] = raw
     assert config._cfg()["protected"] == ["Notes"]
+
+
+def test_atomic_write_replaces_and_leaves_no_temp_on_failure(tmp_path, monkeypatch):
+    from internpearls import config
+    target = tmp_path / "sub" / "f.json"
+    config.atomic_write(str(target), "one")
+    assert target.read_text(encoding="utf8") == "one"
+    config.atomic_write(str(target), b"two")
+    assert target.read_bytes() == b"two"
+
+    def fail(a, b):
+        raise OSError("disk full")
+    monkeypatch.setattr(config, "replace_file", fail)
+    with pytest.raises(OSError):
+        config.atomic_write(str(target), "three")
+    assert target.read_bytes() == b"two"
+    assert [p.name for p in target.parent.iterdir()] == ["f.json"]

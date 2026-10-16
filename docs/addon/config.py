@@ -361,29 +361,25 @@ def _load_json(path, default, strict=False):
         return default
 
 
-def _save_json(path, data):
-    """Write JSON atomically: serialize into a temp file in the same directory, then
-    os.replace it over the target.
+def atomic_write(path, data):
+    """Write `data` (str as UTF-8, or bytes) to `path` so a reader sees the old file or
+    the whole new one, even after a crash or a force quit.
 
     A plain open(path, "w") truncates before writing, so anything that interrupts the
     write (a crash, a full disk, Anki being force-quit mid-sync) leaves a truncated or
-    empty file where installed.json or the feedback log used to be. os.replace is
-    atomic on every platform Anki runs on, so a reader only ever sees the old file or
-    the complete new one.
+    empty file. The data goes to a temp file in the same directory, is fsynced, and
+    os.replace swaps it in, which is atomic on every platform Anki runs on.
 
     The target's directory is created first: mkstemp raises FileNotFoundError outright
     if it's missing, which would turn a single absent directory into a crash on every
     state write this add-on makes.
     """
-    path = _collection_state_path(path)
-    if path is None:
-        return
     dirname = os.path.dirname(path) or "."
     os.makedirs(dirname, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf8") as fh:
-            json.dump(data, fh, indent=2)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data.encode("utf8") if isinstance(data, str) else data)
             fh.flush()
             os.fsync(fh.fileno())
         replace_file(tmp, path)
@@ -393,6 +389,14 @@ def _save_json(path, data):
         except OSError:
             pass
         raise
+
+
+def _save_json(path, data):
+    """Write JSON atomically (see atomic_write)."""
+    path = _collection_state_path(path)
+    if path is None:
+        return
+    atomic_write(path, json.dumps(data, indent=2))
 
 
 def load_declined():
@@ -521,16 +525,4 @@ def save_user_skill(text):
         except FileNotFoundError:
             pass
         return
-    dirname = os.path.dirname(USER_SKILL) or "."
-    os.makedirs(dirname, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf8") as fh:
-            fh.write(text)
-        replace_file(tmp, USER_SKILL)
-    except Exception:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+    atomic_write(USER_SKILL, text)
