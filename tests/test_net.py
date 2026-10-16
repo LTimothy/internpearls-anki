@@ -838,3 +838,42 @@ def test_a_token_with_stray_whitespace_is_stripped_before_the_header(monkeypatch
     _urlopen(monkeypatch, _Response(b"{}"), capture=seen)
     net._http_get("http://example.invalid", token="ghp_SECRET\n")
     assert seen[0][0].get_header("Authorization") == "Bearer ghp_SECRET"
+
+
+def test_update_check_reads_version_json_at_the_latest_release_tag(monkeypatch):
+    from internpearls import net, updates
+    urls = []
+
+    def fake_get(url, **kw):
+        urls.append(url)
+        if url.endswith("/releases/latest"):
+            return b'{"tag_name": "v9.9.9"}'
+        return b'{"version": "9.9.9"}'
+    monkeypatch.setattr(net, "_http_get", fake_get)
+    info = updates._fetch_addon_version_info(token="")
+    assert info["version"] == "9.9.9" and info["_ref"] == "v9.9.9"
+    assert any("version.json?ref=v9.9.9" in u for u in urls)
+    assert not any("ref=main" in u for u in urls)
+
+
+def test_package_download_uses_the_given_tag(monkeypatch):
+    from internpearls import net, updates
+    urls = []
+    monkeypatch.setattr(net, "_http_get", lambda url, **kw: urls.append(url) or b"PK")
+    with pytest.raises(Exception):
+        updates._download_addon_package(token="", expected="9.9.9", ref="v9.9.9")
+    assert any("internpearls.ankiaddon?ref=v9.9.9" in u for u in urls)
+
+
+def test_latest_release_tag_retries_without_a_refused_token(monkeypatch):
+    from internpearls import net
+    calls = []
+
+    def fake_get(url, token=None, **kw):
+        calls.append(token)
+        if token:
+            raise net.HttpStatusError("bad credentials", 401)
+        return b'{"tag_name": "v1.2.3"}'
+    monkeypatch.setattr(net, "_http_get", fake_get)
+    assert net._latest_release_tag(token="bad") == "v1.2.3"
+    assert calls == ["bad", None]

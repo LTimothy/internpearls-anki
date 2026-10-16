@@ -17,7 +17,8 @@ from aqt.utils import openLink
 
 from .config import ADDON_VERSION, ANKI_REPO, STATE, _cfg, _load_json
 from .logic import version_at_least
-from .net import _BG_TIMEOUT, _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_public_raw
+from .net import (_BG_TIMEOUT, _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_public_raw,
+                  _latest_release_tag)
 from .ui import _ask, _info, _safe, _warn, ProgressCancelled, run_with_progress
 
 # The "Check for add-on updates" QAction, set once by __init__.py right after building
@@ -55,7 +56,7 @@ def _refresh_update_action_label(latest):
 
 
 def _fetch_addon_version_info(timeout=_CONNECT_TIMEOUT, token=None):
-    """Fetch and parse the public add-on repo's version.json via the Contents API (see
+    """Fetch and parse version.json at the latest release's tag via the Contents API (see
     _gh_public_raw for why not the raw CDN link). Raises on any failure.
 
     Single source of truth for this fetch so the manual "Check for add-on updates"
@@ -69,7 +70,10 @@ def _fetch_addon_version_info(timeout=_CONNECT_TIMEOUT, token=None):
     where touching mw.addonManager isn't safe; callers that own the main thread read
     the config themselves and pass the value in.
     """
-    return json.loads(_gh_public_raw("version.json", timeout=timeout, token=token))
+    ref = _latest_release_tag(token=token, timeout=timeout)
+    info = json.loads(_gh_public_raw("version.json", ref=ref, timeout=timeout,
+                                     token=token))
+    return {**info, "_ref": ref}
 
 
 def _package_version(path):
@@ -80,7 +84,8 @@ def _package_version(path):
     return m.group(1) if m else None
 
 
-def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT, token=None, expected=None):
+def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT, token=None, expected=None,
+                            ref="main"):
     """Download the current .ankiaddon package to a temp file and return its path.
 
     mkstemp rather than a fixed name in the shared temp directory: this file is handed
@@ -97,7 +102,8 @@ def _download_addon_package(timeout=_DOWNLOAD_TIMEOUT, token=None, expected=None
     minutes after a new one, and installing that would report an update that didn't
     happen.
     """
-    data = _gh_public_raw("internpearls.ankiaddon", timeout=timeout, token=token)
+    data = _gh_public_raw("internpearls.ankiaddon", ref=ref, timeout=timeout,
+                          token=token)
     fd, path = tempfile.mkstemp(prefix="internpearls-", suffix=".ankiaddon")
     try:
         with os.fdopen(fd, "wb") as fh:
@@ -144,7 +150,8 @@ def _addon_update_work(auto_update, token=None):
     if auto_update and latest and not version_at_least(ADDON_VERSION, latest):
         try:
             package_path = _download_addon_package(timeout=_DOWNLOAD_TIMEOUT,
-                                                   token=token, expected=latest)
+                                                   token=token, expected=latest,
+                                                   ref=info["_ref"])
         except Exception:
             print(traceback.format_exc())
     return {"info": info, "package_path": package_path}
@@ -192,7 +199,8 @@ def check_updates():
         return
     try:
         _install_package(_download_addon_package(
-            token=token, expected=latest["version"]))
+            token=token, expected=latest["version"],
+            ref=latest["_ref"]))
         _info("Updated. Please restart Anki.")
     except Exception as e:
         _warn(f"Auto-install failed ({html.escape(str(e), quote=False)}).<br>"

@@ -8,6 +8,7 @@ downloads — reached only after first contact already proved we're online — g
 generous timeout so a big deck on a slow link isn't cut off mid-transfer.
 """
 import http.client
+import json
 import re
 import socket
 import threading
@@ -386,6 +387,21 @@ def _gh_raw(repo, path, token, ref, timeout=_CONNECT_TIMEOUT, on_chunk=None,
            f"?ref={quote(ref, safe='')}")
     return _http_get(url, token=token, accept="application/vnd.github.raw",
                      timeout=timeout, on_chunk=on_chunk, max_bytes=max_bytes)
+
+
+def _latest_release_tag(token=None, timeout=_CONNECT_TIMEOUT):
+    """The newest published release's tag. A release exists only after CI passed, so
+    updates read from it rather than from main."""
+    url = f"https://api.github.com/repos/{ANKI_REPO}/releases/latest"
+    accept = "application/vnd.github+json"
+    if token:
+        try:
+            return json.loads(_http_get(url, token=token, accept=accept,
+                                        timeout=timeout))["tag_name"]
+        except HttpStatusError as e:
+            if e.code not in (401, 403, 404):
+                raise
+    return json.loads(_http_get(url, accept=accept, timeout=timeout))["tag_name"]
 
 
 def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT, token=None):

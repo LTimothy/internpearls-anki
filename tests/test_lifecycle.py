@@ -339,9 +339,9 @@ def test_backup_full_collection_still_warns_when_the_backup_fails(anki, monkeypa
 def _offer_update(monkeypatch, tmp_path, package):
     from internpearls import updates
     monkeypatch.setattr(updates, "_fetch_addon_version_info",
-                        lambda timeout=None, token=None: {"version": "99.0.0"})
+                        lambda timeout=None, token=None: {"version": "99.0.0", "_ref": "v99.0.0"})
     monkeypatch.setattr(updates, "_download_addon_package",
-                        lambda timeout=None, token=None, expected=None: package)
+                        lambda timeout=None, token=None, expected=None, ref="main": package)
 
 
 def test_self_update_reports_an_install_anki_refused(anki, monkeypatch, tmp_path):
