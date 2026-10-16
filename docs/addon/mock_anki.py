@@ -475,9 +475,9 @@ def _read_apkg(path):
             con = sqlite3.connect(os.path.join(d, "collection.anki2"))
             try:
                 rows = con.execute(
-                    "select id, guid, flds, tags, mid from notes").fetchall()
+                    "select id, guid, flds, tags, mid, mod from notes").fetchall()
             except sqlite3.OperationalError:
-                rows = [(nid, g, f, t, None) for nid, g, f, t in con.execute(
+                rows = [(nid, g, f, t, None, 0) for nid, g, f, t in con.execute(
                     "select id, guid, flds, coalesce(tags, '') from notes")]
             models, deck_by_nid = {}, {}
             try:
@@ -958,7 +958,9 @@ class MockCollection:
         self.add_custom_undo_entry("Import")
         self._register_models(models_by_mid)
         by_guid = {n.guid: n for n in self._notes.values()}
-        for nid, guid, flds, tags, mid in rows:
+        log = types.SimpleNamespace(new=[], updated=[], duplicate=[], conflicting=[])
+        entry = lambda n: types.SimpleNamespace(id=types.SimpleNamespace(nid=n.id))
+        for nid, guid, flds, tags, mid, mod in rows:
             values = flds.split(FS)
             model = (self.models.by_name(models_by_mid[mid]["name"])
                      if mid in models_by_mid else self.models.all()[0])
@@ -967,9 +969,19 @@ class MockCollection:
             if existing:
                 if options["update_notes"] == 2:
                     continue
-                existing.fields = list(values)[:len(existing._names)] + \
+                fields = list(values)[:len(existing._names)] + \
                     [""] * max(0, len(existing._names) - len(values))
+                if (fields == list(existing.fields) and tags.split() == list(existing.tags)
+                        and mod and mod == existing.mod):
+                    # Anki skips a note identical down to its mod; the add-on's
+                    # scratch package never is (it lowers an equal mod by one).
+                    log.duplicate.append(entry(existing))
+                    continue
+                existing.fields = fields
+                if mod:
+                    existing.mod = mod   # Anki keeps the package's own mod
                 existing.tags = tags.split()
+                log.updated.append(entry(existing))
                 self._record_write()
                 self._generate_cloze_cards(existing)
                 if deck and not existing.deck:
@@ -978,10 +990,12 @@ class MockCollection:
                 # add_note files it through decks.id(), which registers the deck and
                 # every ancestor of it, same as real Anki.
                 note = self.add_note(guid, values, tags.split(), model, deck)
+                log.new.append(entry(note))
                 if options["with_scheduling"] and nid in scheduling:
                     card = self._cards[note._card_ids[0]]
                     for key, value in scheduling[nid].items():
                         setattr(card, key, value)
+        return types.SimpleNamespace(log=log)
 
     def _content_signature(self):
         notes = sorted((nid, n.guid, tuple(n.fields), tuple(n.tags), n.model["name"])

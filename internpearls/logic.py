@@ -1783,6 +1783,16 @@ def stored_field_hashes(hashes, stored, wrote):
     return out
 
 
+def changed_since(hashes, before):
+    """The learner guids in `hashes` ({guid: {"#<field>": hash}}) with a field whose text
+    differs from `before` ({guid: {field: value}}, read ahead of the import; a missing
+    field reads as empty), or that `before` lacks. Tags and the source-guid key don't count."""
+    return {guid for guid, fields in hashes.items()
+            if guid not in before or any(
+                note_fields_hash([before[guid].get(k[len(HASH_KEY):]) or ""]) != v
+                for k, v in fields.items() if k != HASH_KEY)}
+
+
 _RENAMED_MEDIA = re.compile(r"-[0-9a-f]{40}(\.[A-Za-z0-9]+)")
 
 

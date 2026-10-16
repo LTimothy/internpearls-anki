@@ -3678,3 +3678,15 @@ def test_find_kept_edits_marks_edited_fields_the_deck_also_changed():
                                 {"mine": {"Back", "Why"}}, shipped)
     assert out == {1: {"Back": "Y"}}   # Why: the deck did not change it
     assert isinstance(out[1]["Back"], logic.KeptEdit) and out[1]["Back"].guid == "mine"
+
+
+def test_changed_since_flags_only_notes_whose_fields_differ():
+    from internpearls import logic
+    h = logic.note_fields_hash
+    hashes = {"same": {"#Front": h(["a"]), "#Back": h(["b"]), "#": "src"},
+              "edited": {"#Front": h(["a"]), "#Back": h(["new"])},
+              "added": {"#Front": h(["a"]), "#Why": h(["w"])},
+              "fresh": {"#Front": h(["a"])}}
+    before = {"same": {"Front": "a", "Back": "b"}, "edited": {"Front": "a", "Back": "old"},
+              "added": {"Front": "a"}}
+    assert logic.changed_since(hashes, before) == {"edited", "added", "fresh"}

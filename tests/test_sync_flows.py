@@ -528,6 +528,35 @@ def test_import_single_records_field_hashes_and_mods(anki, tmp_path):
     assert int(entry["##mod"]) >= t0
 
 
+def test_edit_synced_in_after_an_unwritten_update_is_still_a_hand_edit(anki, tmp_path):
+    from internpearls import sync
+    anki.col.add_note("g1", _fields("Front one"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", back="S"), TAGS)], None)}))
+    _sync(anki)
+    long_ago = int(time.time()) - 3600      # the v1 sync was an hour ago
+    anki.col.note_by_guid("g1").mod = long_ago
+    sync._save_json(sync.SHIPPED, {**sync._load_shipped(),
+                                   "g1": {**sync._load_shipped()["g1"], "##mod": str(long_ago)}})
+    edit_time = int(time.time()) - 60       # made on the phone a minute ago
+    # v2 leaves g1 unchanged, so the import does not write it.
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="S"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)}))
+    _sync(anki)
+    # AnkiWeb now brings in the phone edit, carrying its older mod.
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "PHONE EDIT"
+    anki.col.update_note(note)
+    note.mod = edit_time
+    # v3 changes a different, unprotected field on g1.
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v3", [("g1", _fields("Front one", back="S", dosing="2 mg"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)}))
+    _sync(anki)
+    assert anki.col.note_by_guid("g1")["Back"] == "PHONE EDIT"
+
+
 def _hand_edited_then_imported(anki, tmp_path, shipped_back):
     anki.col.add_note("g1", _fields("Front one"), [TAGS], deck=DECK)
     _configure(anki, _write_source(tmp_path, {

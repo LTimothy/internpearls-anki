@@ -48,7 +48,7 @@ from .config import (ADDON_VERSION, DECK_CACHE, DUPLICATE_TAG_LEAF, INSTALLED,
                      _load_json, _save_json, collection_key, load_declined, load_deck_skill,
                      replace_file, save_declined, save_deck_skill, save_later_seen)
 from .logic import (APKG_MAX_BYTES, HASH_KEY, MOD_KEY, apkg_deck_names, apkg_note_details, apkg_notes,
-                    change_notes_for, safe_source_path,
+                    change_notes_for, changed_since, safe_source_path,
                     source_label_for, group_change_notes, sort_source_groups,
                     declined_drop, declined_guids,
                     decks_to_update, feedback_entries, merge_saved_feedback,
@@ -920,8 +920,8 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     baseline = _load_shipped()
     # Hand edits are kept like preserved fields for this import only; the declared
     # per_note alone still feeds _capture_shipped, so they never gain a text baseline.
-    edited = [e for e in _hand_edits(cfg, per_note,
-                                     _existing_guid_to_fields(cfg["scope_tag"]), baseline)
+    before = _existing_guid_to_fields(cfg["scope_tag"])
+    edited = [e for e in _hand_edits(cfg, per_note, before, baseline)
               if (e[0], e[1]) not in take_deck]
     snap = _snapshot(cfg["protected"], cfg["scope_tag"],
                      with_edits_protected(per_note, ((g, f) for g, f, _h, _v in edited)))
@@ -1066,10 +1066,13 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             # After the import, not before: the extra cloze cards only exist once the
             # cloze markup has actually landed on the note.
             seed_converted_siblings(changed_nids)
-            # Anki keeps the package's own mod on an updated note, so anchor on this
-            # import's start.
+            # Anki keeps the package's own mod on an updated note, so anchor a note
+            # whose text this import changed on its start. One it rewrote identically
+            # keeps its mod, or an edit synced in later would read as a rollback.
+            changed = changed_since(hashes, before)
             for guid, mod in _note_mods(hashes).items():
-                deck_shipped[guid][MOD_KEY] = str(max(mod, started))
+                deck_shipped[guid][MOD_KEY] = str(max(mod, started) if guid in changed
+                                                  else mod)
             mw.col.merge_undo_entries(conversion_undo)
             _update_undo_steps[_undo_key(conversion_undo)] = (
                 d["name"], prior_installed.get(d["name"]),
@@ -3055,8 +3058,8 @@ def import_single():
     _ensure_notetypes()
     tpl = _template_changes(src)
     baseline = _load_shipped()
-    edited = _hand_edits(cfg, per_note, _existing_guid_to_fields(cfg["scope_tag"]),
-                         baseline)
+    before = _existing_guid_to_fields(cfg["scope_tag"])
+    edited = _hand_edits(cfg, per_note, before, baseline)
     snap = _snapshot(cfg["protected"], cfg["scope_tag"],
                      with_edits_protected(per_note, ((g, f) for g, f, _h, _v in edited)))
     tag_snap = _snapshot_tags(cfg["scope_tag"])
@@ -3100,8 +3103,9 @@ def import_single():
             if prior is not None and guid in shipped:
                 shipped[guid][HASH_KEY + f] = prior
         seed_converted_siblings(changed_nids)
+        changed = changed_since(hashes, before)
         for guid, mod in _note_mods(hashes).items():
-            shipped[guid][MOD_KEY] = str(max(mod, started))
+            shipped[guid][MOD_KEY] = str(max(mod, started) if guid in changed else mod)
         mw.col.merge_undo_entries(undo)
     except Exception:
         mw.col.merge_undo_entries(undo)
