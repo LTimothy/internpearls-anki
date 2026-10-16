@@ -3757,3 +3757,23 @@ def test_the_scope_offer_keeps_the_backup_deck_when_the_tag_is_declined(anki):
     assert "<b>Cardio</b>" in texts and "Big_Deck" not in texts
     assert anki.mw._config["export_deck"] == "Cardio"
     assert "scope_tag" not in anki.mw._config
+
+
+def test_manage_decks_opens_with_an_unreadable_declined_file(anki, tmp_path):
+    from internpearls import config, dialogs
+    anki.mw._config = {"decks_dir": _write_source(tmp_path)}
+    path = config._collection_state_path(config.DECLINED)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf8") as fh:
+        fh.write('{"g1": {"stat')
+    seen = {}
+
+    def respond(p):
+        if p["kind"] != "dialog":
+            return {}
+        seen["button"] = find(p["tree"], t="button", label="Later and declined cards")
+        save = find(p["tree"], t="button", label="Save")
+        return {"events": [{"id": save["id"], "click": True}]}
+
+    drive(anki, dialogs.manage_decks, respond)
+    assert seen["button"]

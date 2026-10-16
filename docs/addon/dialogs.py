@@ -20,7 +20,7 @@ from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      EXAMPLE_DECK_NAME, EXAMPLE_REPO,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED,
                      NIGHT_MODE_DIM_PERCENT_CEILING, NIGHT_MODE_DIM_PERCENT_FLOOR,
-                     STATE, TARGET_FIELDS, _cfg, _load_json, _typed_value,
+                     STATE, TARGET_FIELDS, CorruptStateError, _cfg, _load_json, _typed_value,
                      load_declined, save_declined)
 from .logic import (deck_status, manifest_scope_suggestion, night_mode_dim_factor,
                     parse_fields, plural, version_at_least)
@@ -619,7 +619,10 @@ class _DeckManagerDialog(QDialog):
 
     @staticmethod
     def _declined_label():
-        n = len(load_declined())
+        try:
+            n = len(load_declined())
+        except CorruptStateError:
+            n = 0
         return f"Later and declined cards ({n})" if n else "Later and declined cards"
 
     def _open_declined(self):
