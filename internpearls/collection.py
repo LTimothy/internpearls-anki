@@ -2006,16 +2006,6 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
     return count
 
 
-def _home_deck_name(col, note):
-    """The deck a note's card actually lives in, resolved through `odid` when it's
-    sitting in a filtered deck. A note with no cards (shouldn't happen; guards
-    against a stray unlinked note) reads as ''."""
-    cids = note.card_ids()
-    if not cids:
-        return ""
-    return col.decks.name(_home_did(col.get_card(cids[0]))) or ""
-
-
 def deck_search(deck_name):
     """`deck:"..."` for one deck name, with the characters Anki's search parser
     would otherwise read as syntax escaped. An underscore matches any single
@@ -2034,7 +2024,7 @@ def note_rows(col, scope_tag=None, deck_name=None):
     collection). `text` is the note's first two fields, joined by a space, since that's
     what the duplicate scan compares. `deck_name` in each row is the note's home deck,
     resolved through `odid` for a card currently sitting in a filtered deck (see
-    `_home_deck_name`), which is also how a deck-scoped selection is filtered: a plain
+    `_home_did`), which is also how a deck-scoped selection is filtered: a plain
     `deck:"X"` search already resolves a filtered deck's cards to their original deck.
     """
     if scope_tag:
@@ -2044,14 +2034,7 @@ def note_rows(col, scope_tag=None, deck_name=None):
     else:
         search = ""
     nids = None if search == "" else set(col.find_notes(search))
-    if getattr(col.db, "all", None):
-        return _note_rows_sql(col, nids)
-    rows = []
-    for nid in (col.find_notes("") if nids is None else sorted(nids)):
-        note = col.get_note(nid)
-        text = " ".join(note.fields[:2])
-        rows.append((nid, text, _home_deck_name(col, note), note.note_type()["name"]))
-    return rows
+    return _note_rows_sql(col, nids)
 
 
 def _note_rows_sql(col, nids):

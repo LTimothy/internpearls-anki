@@ -1,5 +1,6 @@
 import pytest
 
+from internpearls import collection
 from internpearls.collection import note_rows, suspend_notes, unsuspend_notes
 from internpearls.config import add_dupes_ignored, _cfg
 
@@ -74,10 +75,15 @@ def test_add_dupes_ignored_sanitizes_existing_values(anki, value, expected):
     assert anki.mw._config == {"dupes_ignored": expected, "scope_tag": "Custom"}
 
 
+def _home_deck_name(col, note):
+    cids = note.card_ids()
+    if not cids:
+        return ""
+    return col.decks.name(collection._home_did(col.get_card(cids[0]))) or ""
+
+
 def test_note_rows_sql_path_matches_the_per_note_path(anki):
-    """The one-query loader and the per-note loader read the same tuples, so a
-    collection whose db lacks `all` (the fallback) and a real one agree."""
-    from internpearls import collection
+    """The one-query loader and a per-note oracle read the same tuples."""
     col = anki.mw.col
     col.add_note("g1", ["Front one", "Back one"], ["InternPearls"], deck="Intern Custom")
     col.add_note("g2", ["Front two", "Back two"], ["Other"], deck="Example Shared Deck")
@@ -88,7 +94,7 @@ def test_note_rows_sql_path_matches_the_per_note_path(anki):
     for nid in sorted(nids):
         note = col.get_note(nid)
         slow.append((nid, " ".join(note.fields[:2]),
-                     collection._home_deck_name(col, note), note.note_type()["name"]))
+                     _home_deck_name(col, note), note.note_type()["name"]))
     assert fast == slow
     assert collection.note_rows(col, scope_tag="InternPearls") == [fast[0]]
     assert collection.note_rows(col, deck_name="Example Shared Deck") == [fast[1]]
