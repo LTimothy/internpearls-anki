@@ -141,3 +141,18 @@ def test_save_json_fsyncs_before_replacing(anki, monkeypatch):
     monkeypatch.setattr(config.os, "fsync", lambda fd: (calls.append(fd), real_fsync(fd)))
     config.save_declined({})
     assert calls
+
+
+@pytest.mark.parametrize("raw", ["", "   "])
+def test_blank_scope_tag_falls_back_to_default(anki, raw):
+    from internpearls import config
+    anki.mw._config["scope_tag"] = raw
+    assert config._cfg()["scope_tag"] == "InternPearls"
+    assert config.source_identity()[3] == "InternPearls"
+
+
+@pytest.mark.parametrize("raw", [[], ["  "], [""]])
+def test_empty_protected_fields_falls_back_to_notes(anki, raw):
+    from internpearls import config
+    anki.mw._config["protected_fields"] = raw
+    assert config._cfg()["protected"] == ["Notes"]

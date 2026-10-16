@@ -188,10 +188,15 @@ def _typed_value(value, default):
 
 def _string_list(value, default):
     if isinstance(value, list):
-        return [item for item in value if isinstance(item, str)]
-    if isinstance(value, str) and value:
-        return [value]
+        items = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        return items or default
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
     return default
+
+
+def _scope_tag(value):
+    return _typed_value(value, "InternPearls").strip() or "InternPearls"
 
 
 def _cfg():
@@ -199,7 +204,7 @@ def _cfg():
     backend = _typed_value(c.get("ai_backend"), "")
     return {
         "protected":   _string_list(c.get("protected_fields"), ["Notes"]),
-        "scope_tag":   _typed_value(c.get("scope_tag"), "InternPearls"),
+        "scope_tag":   _scope_tag(c.get("scope_tag")),
         "decks_dir":   _typed_value(c.get("decks_dir"), ""),
         "gh_repo":     _typed_value(c.get("github_decks_repo"), ""),
         "gh_ref":      _typed_value(c.get("github_ref"), "main"),
@@ -257,7 +262,7 @@ def source_identity():
     return (_typed_value(conf.get("github_decks_repo"), ""),
             _typed_value(conf.get("github_ref"), "main"),
             _typed_value(conf.get("decks_dir"), ""),
-            _typed_value(conf.get("scope_tag"), "InternPearls"))
+            _scope_tag(conf.get("scope_tag")))
 
 
 def collection_key():

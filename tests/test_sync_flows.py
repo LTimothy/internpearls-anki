@@ -3897,6 +3897,15 @@ def test_remove_empty_cards_leaves_other_peoples_notes_alone(anki):
     assert len(anki.col.note_by_guid("theirs")._card_ids) == 2   # untouched
 
 
+def test_blank_scope_tag_keeps_remove_empty_cards_inside_the_default_tag(anki):
+    from internpearls import collection, config
+    other = _existing_cloze(anki, "elsewhere", "the {{c1::first}} only",
+                            deck="Other Deck", ords=[0, 1])
+    other.tags = ["SomeoneElse"]
+    anki.mw._config["scope_tag"] = ""
+    assert not collection.find_empty_cards(config._cfg()["scope_tag"])[0]
+
+
 def test_remove_empty_cards_never_deletes_a_note_whose_cards_are_all_empty(anki):
     from internpearls import collection
     # No deletions at all, so every card is empty: removing them would take the note

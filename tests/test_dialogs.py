@@ -1247,9 +1247,9 @@ def test_config_reads_a_non_finite_number_as_its_default(anki, bad):
 ])
 @pytest.mark.parametrize("value, expected", [
     ("Notes", ["Notes"]),
-    (["Notes", 5, False, None, {}, ["Other"], ""], ["Notes", ""]),
+    (["Notes", 5, False, None, {}, ["Other"], ""], ["Notes"]),
     (["Notes", "Other"], ["Notes", "Other"]),
-    ([], []),
+    ([], None),
     (5, None), (False, None), (None, None), ({}, None), ("", None),
 ])
 def test_config_reads_string_lists(anki, key, result_key, default, value, expected):
@@ -1306,6 +1306,8 @@ def test_config_reads_only_string_values(anki, key, result_key, default, value):
 
     anki.mw._config = {key: value, "ai_cli_path": "/example/cli"}
     expected = value if isinstance(value, str) else default
+    if key == "scope_tag":
+        expected = expected.strip() or default
     assert config._cfg()[result_key] == expected
 
 
@@ -1319,6 +1321,8 @@ def test_source_identity_reads_only_string_values(anki, key, index, default, val
 
     anki.mw._config = {key: value}
     expected = value if isinstance(value, str) else default
+    if key == "scope_tag":
+        expected = expected.strip() or default
     identity = config.source_identity()
     assert identity[index] == expected
     hash(identity)
