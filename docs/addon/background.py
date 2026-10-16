@@ -35,7 +35,8 @@ from .sync import (_cached_fetch, _content_backup_decks, _fetch_manifest, _is_lo
                    _live_cards_loader, _reconcile_pending, _refresh_reconcile_action_label,
                    _run_sync, local_manifest, undone_updates)
 from .ui import _bg_safe, manual_sync_in_progress
-from .updates import _addon_update_work, _install_package, _refresh_update_action_label
+from .updates import (_addon_update_work, _install_package,
+                      _refresh_update_action_label, _remove_quietly)
 
 
 def _run_in_background(work, on_done):
@@ -110,7 +111,11 @@ def _check_addon_updates_background():
                 tooltip(f"Intern Pearls: couldn't install v{latest_text} automatically "
                        f"({html.escape(str(e), quote=False)}). "
                        "Try Advanced → Check for add-on updates.", period=8000, parent=mw)
+            finally:
+                _remove_quietly(result["package_path"])
         else:
+            if result["package_path"]:
+                _remove_quietly(result["package_path"])
             # Either a plain notify, or auto-update was requested but the package
             # didn't download — either way, tell the user a newer version exists rather
             # than doing nothing.

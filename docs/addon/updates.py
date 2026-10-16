@@ -176,6 +176,13 @@ def _install_package(path):
             errmsg, "Anki refused to install the download"))
 
 
+def _remove_quietly(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 @_safe
 def check_updates():
     """Compare our version to version.json in the public add-on repo; offer to update."""
@@ -197,12 +204,25 @@ def check_updates():
                 f"(you have v{ADDON_VERSION}). Download and install now?",
                 yes_label="Install now", no_label="Not now"):
         return
-    try:
-        _install_package(_download_addon_package(
-            token=token, expected=latest["version"],
-            ref=latest["_ref"]))
-        _info("Updated. Please restart Anki.")
-    except Exception as e:
+    def _fallback(e):
         _warn(f"Auto-install failed ({html.escape(str(e), quote=False)}).<br>"
               "Opening the download page instead.")
         openLink(f"https://github.com/{ANKI_REPO}")
+
+    try:
+        path = run_with_progress(
+            "Downloading the update",
+            lambda: _download_addon_package(token=token, expected=latest["version"],
+                                            ref=latest["_ref"]))
+    except ProgressCancelled:
+        return
+    except Exception as e:
+        _fallback(e)
+        return
+    try:
+        _install_package(path)
+        _info("Updated. Please restart Anki.")
+    except Exception as e:
+        _fallback(e)
+    finally:
+        _remove_quietly(path)

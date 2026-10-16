@@ -247,3 +247,50 @@ def test_native_progress_uses_worker(anki, monkeypatch):
     assert len(handles) == 1
     assert threads == [handles[0].ident]
     assert threads[0] != main_thread
+
+
+def _stub_install(monkeypatch, pkg):
+    from internpearls import updates
+    monkeypatch.setattr(updates, "_fetch_addon_version_info",
+                        lambda **kw: {"version": "99.0.0", "_ref": "v99.0.0"})
+    monkeypatch.setattr(updates, "_download_addon_package", lambda **kw: str(pkg))
+    monkeypatch.setattr(updates, "_install_package", lambda path: None)
+
+
+def test_install_now_downloads_through_the_progress_runner(anki, monkeypatch):
+    from internpearls import updates
+    labels = []
+    real = updates.run_with_progress
+    monkeypatch.setattr(updates, "run_with_progress",
+                        lambda label, fn: labels.append(label) or real(label, fn))
+    _stub_install(monkeypatch, "/nonexistent")
+    anki.gui.answers.append(True)
+    updates.check_updates()
+    assert any("download" in label.lower() for label in labels)
+
+
+def test_install_removes_the_downloaded_package(anki, monkeypatch, tmp_path):
+    from internpearls import updates
+    pkg = tmp_path / "x.ankiaddon"
+    pkg.write_bytes(b"PK")
+    _stub_install(monkeypatch, pkg)
+    anki.gui.answers.append(True)
+    updates.check_updates()
+    assert not pkg.exists()
+
+
+@pytest.mark.parametrize("action", ["notify", "install", "fail"])
+def test_background_update_removes_the_downloaded_package(anki, monkeypatch, tmp_path, action):
+    from internpearls import background
+    pkg = tmp_path / "x.ankiaddon"
+    pkg.write_bytes(b"PK")
+    anki.mw._config = {"notify_addon_updates": True, "auto_update_addon": action != "notify"}
+    monkeypatch.setattr(background, "_addon_update_work", lambda *a: {
+        "info": {"version": "99.0.0"}, "package_path": str(pkg)})
+
+    def install(path):
+        if action == "fail":
+            raise RuntimeError("cannot install")
+    monkeypatch.setattr(background, "_install_package", install)
+    background._check_addon_updates_background()
+    assert not pkg.exists()
