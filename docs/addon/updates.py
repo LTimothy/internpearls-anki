@@ -183,9 +183,29 @@ def _remove_quietly(path):
         pass
 
 
+_installed_version = None
+
+
+def mark_installed(version):
+    global _installed_version
+    _installed_version = str(version)
+
+
+def lazy_guard():
+    """True, after telling the learner, when an update was installed this session:
+    new files must not load beside the old ones still in memory."""
+    if _installed_version is None:
+        return False
+    _info("Restart Anki to finish updating Intern Pearls Deck Tools to "
+          f"v{html.escape(_installed_version, quote=False)}.")
+    return True
+
+
 @_safe
 def check_updates():
     """Compare our version to version.json in the public add-on repo; offer to update."""
+    if lazy_guard():
+        return
     token = _cfg()["gh_token"]
     try:
         latest = run_with_progress(
@@ -221,6 +241,7 @@ def check_updates():
         return
     try:
         _install_package(path)
+        mark_installed(latest["version"])
         _info("Updated. Please restart Anki.")
     except Exception as e:
         _fallback(e)

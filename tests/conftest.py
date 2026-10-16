@@ -74,6 +74,7 @@ def anki(tmp_path, monkeypatch):
     import internpearls.updates as updates
     import aqt.qt as aqt_qt
 
+    updates._installed_version = None
     aqt_qt.QProgressDialog.cancel_after = {}   # a prior test's cancel hook must not leak in
     _mock.mw.col = mock_anki.MockCollection()
     _mock.mw._config = {}

@@ -942,3 +942,32 @@ def test_failed_restore_reports_the_database_error(anki, tmp_path):
 
     assert anki.gui.warnings == ["Import failed: file is not a database"]
     assert not anki.gui.infos
+
+
+def test_after_an_install_the_lazy_guard_asks_for_a_restart(anki):
+    from internpearls import updates
+    updates.mark_installed("99.0.0")
+    try:
+        assert updates.lazy_guard() is True
+        assert any("restart" in m.lower() for m in anki.gui.infos)
+    finally:
+        updates._installed_version = None
+
+
+def test_lazy_guard_is_silent_before_any_install(anki):
+    from internpearls import updates
+    assert updates.lazy_guard() is False
+
+
+def test_check_updates_after_an_install_says_restart(anki, monkeypatch):
+    from internpearls import updates
+    fetched = []
+    monkeypatch.setattr(updates, "_fetch_addon_version_info",
+                        lambda **kw: fetched.append(1) or {"version": "99.0.0"})
+    updates.mark_installed("99.0.0")
+    try:
+        updates.check_updates()
+        assert not fetched
+        assert any("restart" in m.lower() for m in anki.gui.infos)
+    finally:
+        updates._installed_version = None

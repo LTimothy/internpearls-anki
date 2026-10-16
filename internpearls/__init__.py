@@ -41,6 +41,9 @@ from .updates import register_update_action
 
 @_safe
 def _lazy(module, name):
+    from .updates import lazy_guard
+    if lazy_guard():
+        return
     return getattr(import_module("." + module, __package__), name)()
 
 
