@@ -3054,7 +3054,11 @@ def import_single():
         return
     _ensure_notetypes()
     tpl = _template_changes(src)
-    snap = _snapshot(cfg["protected"], cfg["scope_tag"], per_note)
+    baseline = _load_shipped()
+    edited = _hand_edits(cfg, per_note, _existing_guid_to_fields(cfg["scope_tag"]),
+                         baseline)
+    snap = _snapshot(cfg["protected"], cfg["scope_tag"],
+                     with_edits_protected(per_note, ((g, f) for g, f, _h, _v in edited)))
     tag_snap = _snapshot_tags(cfg["scope_tag"])
     # After the snapshot and before the import, the order _run_sync uses: on the right
     # note type the import matches by GUID and updates in place, and a snapshot taken
@@ -3081,7 +3085,6 @@ def import_single():
         for guid in forked_guids:
             snap.pop(guid, None)
             tag_snap.pop(guid, None)
-        baseline = _load_shipped()
         # Restore before any later bookkeeping or presentation can fail.
         try:
             hashes = _package_hashes(src, declined, expected_conflicts, package_matched,
@@ -3090,8 +3093,12 @@ def import_single():
                 _capture_shipped(cfg["protected"], cfg["scope_tag"], touched, per_note),
                 baseline, hashes, touched)
         finally:
-            restored, _ = _restore(snap, baseline, touched)
+            restored, collisions = _restore(snap, baseline, touched)
             _restore_tags(tag_snap, cfg["scope_tag"], touched)
+        for guid, f in collisions:
+            prior = baseline.get(guid, {}).get(HASH_KEY + f)
+            if prior is not None and guid in shipped:
+                shipped[guid][HASH_KEY + f] = prior
         seed_converted_siblings(changed_nids)
         for guid, mod in _note_mods(hashes).items():
             shipped[guid][MOD_KEY] = str(max(mod, started))

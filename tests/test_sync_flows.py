@@ -528,6 +528,36 @@ def test_import_single_records_field_hashes_and_mods(anki, tmp_path):
     assert int(entry["##mod"]) >= t0
 
 
+def _hand_edited_then_imported(anki, tmp_path, shipped_back):
+    anki.col.add_note("g1", _fields("Front one"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one", back="S"), TAGS)], None)}))
+    _sync(anki)
+    note = anki.col.note_by_guid("g1")
+    note["Back"] = "MY EDIT"
+    anki.col.update_note(note)
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("g1", _fields("Front one", back=shipped_back), TAGS)], deck=DECK)
+    anki.gui.file_picks = [src]
+    anki.gui.answers.append(True)          # Import now
+
+
+def test_import_single_keeps_a_hand_edit_and_its_record(anki, tmp_path):
+    from internpearls import logic, sync
+    _hand_edited_then_imported(anki, tmp_path, "S")
+    sync.import_single()
+    assert anki.col.note_by_guid("g1")["Back"] == "MY EDIT"
+    assert sync._load_shipped()["g1"]["#Back"] == logic.note_fields_hash(["S"])
+
+
+def test_import_single_collision_keeps_the_prior_hash(anki, tmp_path):
+    from internpearls import logic, sync
+    _hand_edited_then_imported(anki, tmp_path, "DECK V2")
+    sync.import_single()
+    assert anki.col.note_by_guid("g1")["Back"] == "MY EDIT"
+    assert sync._load_shipped()["g1"]["#Back"] == logic.note_fields_hash(["S"])
+
+
 def test_preserved_field_the_learner_never_touched_still_receives_updates(anki, tmp_path):
     """The point of preserving a field the learner can edit: protecting Dosing must not
     mean freezing it. First sync establishes what the source shipped; the second one is
