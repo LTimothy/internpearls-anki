@@ -3055,6 +3055,24 @@ def test_resume_reconciles_partial_import_with_the_collection(anki, monkeypatch,
     assert {n["Front"] for n in anki.col._notes.values()} == {"q", "Second question"}
 
 
+def test_revise_all_after_a_partial_import_keeps_what_was_imported(anki, monkeypatch):
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="two_cards")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    anki.col.fail_add_note_after(2)
+    dlg._do_import()
+    assert dlg.session.imported == {0}
+    imported_notes = dict(dlg.session.imported_notes)
+
+    dlg._revise_all()
+    dlg._wait_for_worker(timeout=15)
+
+    assert dlg.session.imported == {0}
+    assert dlg.session.imported_notes == imported_notes
+    assert dlg.session.updated == set()
+    assert len(anki.col._notes) == 1
+
+
 def test_partial_import_saves_note_id_and_guid(anki, monkeypatch):
     dlg = _three_card_draft(anki, monkeypatch)
     anki.col.fail_add_note_after(2)

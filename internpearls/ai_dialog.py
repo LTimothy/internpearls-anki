@@ -58,6 +58,12 @@ SOFT_SOURCE_LIMIT = 25000
 # this cadence, the same as the generation worker's own poll below.
 _IMG_POLL_MS = 200
 
+_CARD_CONTENT_KEYS = ("note_type", "fields", "tags", "images")
+
+
+def _same_card(a, b):
+    return all(a.get(k) == b.get(k) for k in _CARD_CONTENT_KEYS)
+
 # The Advanced grid's own row labels (_GenerateDialog._build_advanced), named
 # once so the column-width measurement and each row's own _advanced_label
 # call can never drift apart from what the other actually shows.
@@ -2463,6 +2469,7 @@ class _GenerateDialog(QDialog):
         # against yet); same_shape is False either for that first draft or for
         # a genuine reply-shape mismatch.
         prev_cards, prev_included = s.cards, s.included
+        prev_imported, prev_imported_notes = set(s.imported), dict(s.imported_notes)
         self._reset_card_state()
         is_revision = bool(prev_cards)
         same_shape = is_revision and len(cards) == len(prev_cards)
@@ -2470,8 +2477,13 @@ class _GenerateDialog(QDialog):
 
         if same_shape:
             s.updated = {i for i in range(len(cards))
-                        if prev_cards[i] != cards[i]}
+                        if not _same_card(prev_cards[i], cards[i])}
+            s.imported = {i for i in prev_imported if i not in s.updated}
+            s.imported_notes = {i: v for i, v in prev_imported_notes.items()
+                                if i in s.imported}
         elif is_revision:
+            # s.imported stays empty: can't tell which new card was imported
+            # (the exact-front duplicate check still blocks a second import).
             # Can't tell which (if any) of the new cards match the old ones, so
             # nothing is claimed "kept verbatim": see _rebuild_review's header.
             s.updated = set(range(len(cards)))
