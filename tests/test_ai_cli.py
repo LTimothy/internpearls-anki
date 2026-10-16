@@ -650,6 +650,45 @@ def test_build_argv_codex_judge_is_read_only_without_search(monkeypatch):
     assert "--search" not in argv
 
 
+def test_build_argv_codex_judge_turns_off_the_shell(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "judge", "/tmp/s", [])
+    after_exec = argv[argv.index("exec") + 1:]
+    disabled = [after_exec[i + 1] for i, a in enumerate(after_exec) if a == "--disable"]
+    assert {"shell_tool", "unified_exec"} <= set(disabled)
+
+
+def test_codex_cannot_judge_without_the_disable_flag(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag",
+                        lambda path, flag, **kw: flag != "--disable")
+    assert not ai_cli.judge_capable("codex", "/usr/bin/codex")
+    with pytest.raises(ai_cli.GenerationError):
+        ai_cli.build_argv("codex", "/usr/bin/codex", "judge", "/tmp/s", [])
+
+
+@pytest.mark.parametrize("mode", ["quick", "thorough", "judge"])
+def test_build_argv_claude_never_saves_the_session(monkeypatch, mode):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, _ = ai_cli.build_argv("claude", "/usr/bin/claude", mode, "/tmp/s", [])
+    assert "--no-session-persistence" in argv
+
+
+@pytest.mark.parametrize("mode", ["quick", "thorough", "judge"])
+def test_build_argv_codex_never_saves_the_session(monkeypatch, mode):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda path, flag, **kw: True)
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", mode, "/tmp/s", [])
+    assert "--ephemeral" in argv[argv.index("exec") + 1:]
+
+
+def test_session_flags_are_skipped_when_unsupported(monkeypatch):
+    monkeypatch.setattr(ai_cli, "supports_flag",
+                        lambda path, flag, **kw: flag not in ("--no-session-persistence",
+                                                              "--ephemeral"))
+    claude, _ = ai_cli.build_argv("claude", "/usr/bin/claude", "quick", "/tmp/s", [])
+    codex, _ = ai_cli.build_argv("codex", "/usr/bin/codex", "quick", "/tmp/s", [])
+    assert "--no-session-persistence" not in claude and "--ephemeral" not in codex
+
+
 _CODEX_SANDBOX_OVERRIDES = ("sandbox_workspace_write.exclude_tmpdir_env_var=true",
                             "sandbox_workspace_write.exclude_slash_tmp=true",
                             "sandbox_workspace_write.network_access=false")

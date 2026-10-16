@@ -178,12 +178,17 @@ def image_capable(kind):
     return _IMAGE_CAPABLE.get(kind, False)
 
 
+_CODEX_SHELL_FEATURES = ("shell_tool", "unified_exec")
+
+
 def judge_capable(kind, path):
     """Whether `kind` can judge duplicates with no tools: the pairs include card text
-    from other decks. agy cannot turn its tools off, and a codex that cannot skip its
-    own config file would load the user's MCP servers."""
-    return kind == "claude" or (kind == "codex" and supports_flag(
-        path, "--ignore-user-config", subcommand="exec"))
+    from other decks. agy cannot turn its tools off, and codex must be able to skip its
+    own config file (the user's MCP servers) and switch its shell off."""
+    return kind == "claude" or (
+        kind == "codex"
+        and supports_flag(path, "--ignore-user-config", subcommand="exec")
+        and supports_flag(path, "--disable", subcommand="exec"))
 
 
 def judge_backend(detected):
@@ -636,6 +641,8 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
         # No --mcp-config alongside it, so no MCP server loads at all.
         if supports_flag(path, "--strict-mcp-config"):
             argv += ["--strict-mcp-config"]
+        if supports_flag(path, "--no-session-persistence"):
+            argv += ["--no-session-persistence"]
         if mode == "judge":
             return argv + ["--tools", ""], True
         tools = []
@@ -691,6 +698,11 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
         # Drops the user's MCP servers and settings; an older codex lacks it.
         if supports_flag(path, "--ignore-user-config", subcommand="exec"):
             argv += ["--ignore-user-config"]
+        if supports_flag(path, "--ephemeral", subcommand="exec"):
+            argv += ["--ephemeral"]
+        if mode == "judge":
+            for feature in _CODEX_SHELL_FEATURES:
+                argv += ["--disable", feature]
         if model and supports_flag(path, "--model", subcommand="exec"):
             argv += ["--model", model]
         for p in _image_args(scratch, image_paths):
