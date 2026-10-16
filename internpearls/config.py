@@ -319,6 +319,14 @@ def _collection_state_path(path):
     return scoped
 
 
+class CorruptStateError(RuntimeError):
+    """A state file whose loss would undo the learner's decisions failed to parse."""
+
+
+def _must_parse(path):
+    return path in (DECLINED, SHIPPED)
+
+
 def _load_json(path, default, strict=False):
     """Read a JSON file, falling back to `default` when it isn't there.
 
@@ -328,6 +336,7 @@ def _load_json(path, default, strict=False):
     under strict. It is off by default, so every existing caller behaves exactly as it
     did: a missing or unreadable installed.json still reads as "nothing installed yet".
     """
+    orig_path = path
     path = _collection_state_path(path)
     if path is None:
         return default
@@ -336,9 +345,14 @@ def _load_json(path, default, strict=False):
             return json.load(fh)
     except FileNotFoundError:
         return default
-    except Exception:
+    except Exception as e:
         if strict:
             raise
+        if _must_parse(orig_path):
+            raise CorruptStateError(
+                f"{os.path.basename(path)} in the add-on's user_files folder can't be "
+                "read. Restore it from a backup of that folder, or delete it to start "
+                "over (your Never/Later choices and hand-edit records are in it).") from e
         return default
 
 
@@ -365,6 +379,8 @@ def _save_json(path, data):
     try:
         with os.fdopen(fd, "w", encoding="utf8") as fh:
             json.dump(data, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
         replace_file(tmp, path)
     except Exception:
         try:

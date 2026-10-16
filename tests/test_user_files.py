@@ -99,3 +99,45 @@ def test_persistent_state_is_isolated_without_requesting_anki(tmp_path):
     assert tmp_path in path.parents
     config._save_json(str(path), {"isolated": True})
     assert config._load_json(str(path), {}) == {"isolated": True}
+
+
+def test_corrupt_declined_file_refuses_rather_than_reading_empty(anki):
+    from internpearls import config
+    config.save_declined({"g1": {"state": "never", "front": "x", "deck": "D",
+                                 "decided": 1, "hash": "h"}})
+    path = config._collection_state_path(config.DECLINED)
+    with open(path, "w", encoding="utf8") as fh:
+        fh.write('{"g1": {"state": "nev')
+    with pytest.raises(config.CorruptStateError) as caught:
+        config.load_declined()
+    assert "declined" in str(caught.value).lower()
+    # The bad file is left in place for the learner to restore or remove.
+    assert open(path, encoding="utf8").read().startswith('{"g1"')
+
+
+def test_corrupt_shipped_file_refuses_rather_than_reading_empty(anki):
+    from internpearls import config, sync
+    path = config._collection_state_path(config.SHIPPED)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf8") as fh:
+        fh.write('{"g1": {"#Back": ')
+    with pytest.raises(config.CorruptStateError):
+        sync._load_shipped()
+
+
+def test_other_state_files_still_read_corrupt_as_default(anki):
+    from internpearls import config
+    path = config._collection_state_path(config.INSTALLED)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf8") as fh:
+        fh.write("{not json")
+    assert config._load_json(config.INSTALLED, {}) == {}
+
+
+def test_save_json_fsyncs_before_replacing(anki, monkeypatch):
+    from internpearls import config
+    calls = []
+    real_fsync = config.os.fsync
+    monkeypatch.setattr(config.os, "fsync", lambda fd: (calls.append(fd), real_fsync(fd)))
+    config.save_declined({})
+    assert calls

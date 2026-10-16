@@ -769,8 +769,9 @@ def _fork_import_as_new(changes, scope_tag):
 
 
 def _load_shipped():
-    """shipped_fields.json as {guid: {field: text}}. A malformed file or entry reads as
-    no baseline, which keeps the learner's value."""
+    """shipped_fields.json as {guid: {field: text}}. A malformed entry reads as no
+    baseline, which keeps the learner's value; an unparseable file raises
+    CorruptStateError."""
     raw = _load_json(SHIPPED, {})
     if not isinstance(raw, dict):
         return {}
