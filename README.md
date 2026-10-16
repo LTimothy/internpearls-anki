@@ -93,13 +93,13 @@ Keys for automatic sync, Night Mode dimming, AI card generation and the duplicat
 - Fix note types: adds missing fields to the managed note types. Every sync runs it.
 - Backup, Restore and Export intern pearls deck: work on `export_deck`, with scheduling. Restore puts the file's content into matching cards and keeps their scheduling. It backs up first, is one Edit > Undo step, and the restored decks are offered again on your next update.
 - Backup full collection and Restore full collection: Anki's own backups. A full restore offers every managed deck again on your next update.
-- Check for add-on updates: compares your version with the repo's `version.json` and offers a newer one. Without a token, GitHub allows 60 checks an hour per IP address. A token set in Manage decks raises that to 5,000.
+- Check for add-on updates: compares your version with the latest published release and offers a newer one. Install now downloads in the background, can be cancelled, and asks for a restart when it finishes. Without a token, GitHub allows 60 checks an hour per IP address. A token set in Manage decks raises that to 5,000.
 
 ### Experimental
 
 - Generate cards (AI): drafts cards from pasted text, images or PDFs through an AI coding-assistant CLI you have already installed and signed into (Claude Code, Codex CLI or Antigravity CLI). The add-on stores no API key or credential. The three are not sandboxed the same way: Claude Code runs with its tools restricted, Codex CLI can read files on your computer but writes only to its scratch folder, with no shell network and, where your Codex supports it, without your own Codex config, and Antigravity CLI mostly relies on its own defaults. The AI Backends window says this per backend, and shows whether each CLI was found, is not responding or was not found. Drafts come back as rows you can edit, fact-check, include or skip. Fields are sanitised, likely duplicates are flagged, and pictures come from a cited web source, your attachments or a drawn diagram, never an AI-generated image. The add-on downloads web pictures itself, over https only, and refuses private or local addresses. Imported cards go to `export_deck::Generated` with fresh GUIDs that no sync touches, in one undoable step. An unfinished draft is saved, without its attachments, and offered next time.
 - Night mode dimming: dims bright images, or whole card and deck screens, by 0 to 90% while Anki is in Night Mode.
-- Scan for duplicates: finds cards elsewhere in your collection that restate one of your managed cards in other words. It runs locally. You can suspend either card, keep both or ignore the pair, and all of these are reversible. Judge with AI sends each pair's text, without ids or scheduling, to your AI assistant, which gets no tools or web access for it. It needs Claude Code, or a Codex CLI recent enough to skip your own Codex config.
+- Scan for duplicates: finds cards elsewhere in your collection that restate one of your managed cards in other words. It runs locally. You can suspend either card, keep both or ignore the pair, and all of these are reversible. Judge with AI sends each pair's text, without ids or scheduling, to your AI assistant, which gets no tools or web access for it. It needs Claude Code, or a Codex CLI recent enough to skip your own Codex config and turn its shell off. Neither keeps a session history.
 
 ### Settings
 
@@ -211,4 +211,4 @@ Versions follow semver: PATCH for a fix or internal change, MINOR for a new feat
 
 To release, bump `ADDON_VERSION` in `internpearls/config.py` and `version` in `version.json` together, add a `CHANGELOG.md` entry, run `./build.sh`, commit, and push a `vX.Y.Z` tag. The release workflow runs both test suites, checks the tag against `version.json` and attaches the committed `.ankiaddon`. `tests/test_release_integrity.py` checks the same locally, except the tag.
 
-Self-update reads `version.json` and `internpearls.ankiaddon` from `main` through the GitHub contents API, so the release page does not affect what people receive.
+Self-update reads `version.json` and `internpearls.ankiaddon` at the latest published release's tag through the GitHub contents API, so a commit on `main` reaches people only once a release is published.

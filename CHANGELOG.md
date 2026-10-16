@@ -3,6 +3,23 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.86.0
+
+- An unreadable Never, Later or hand-edit state file now stops the run with a plain
+  message instead of being treated as empty.
+- A blank scope tag or protected-field list in config falls back to the defaults.
+- Import a single deck keeps your hand edits, as Update my decks does.
+- Edits synced in from another device are no longer mistaken for a rollback.
+- A GitHub rate limit (429) is reported as one, and a token with stray spaces still works.
+- The add-on updates itself only from the latest published release.
+- Install now downloads in the background, can be cancelled, and the downloaded
+  package is deleted after install.
+- After an update installs, the menu items and the update check ask for a restart.
+- Judge with AI runs Codex with its shell turned off, and Claude and Codex runs keep
+  no session history.
+- Revise all after a partial import keeps the imported cards marked.
+- Check facts keeps the valid verdicts when one entry is malformed.
+
 ## v0.85.1
 
 - Night mode dimming set to whole screens no longer shrinks a background image from
