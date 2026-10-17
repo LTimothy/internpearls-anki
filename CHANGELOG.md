@@ -3,6 +3,10 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.86.1
+
+- When Update my decks can't preview a deck, the retry prompt now says why.
+
 ## v0.86.0
 
 - An unreadable Never, Later or hand-edit state file now stops the run with a plain
