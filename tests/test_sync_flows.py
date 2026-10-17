@@ -5156,6 +5156,7 @@ def test_update_retry_previews_only_failed_decks_and_lists_their_cards(
     assert "couldn't preview" not in texts
     assert anki.gui.ask_buttons[0] == ("Retry preview", "Skip for now")
     assert anki.gui.ask_defaults[0] == "Retry preview"
+    assert "The source could not be reached" in anki.gui.asks[0]
     assert anki.col.note_by_guid("g1")["Front"] == "Front one"
     assert sync._load_json(sync.INSTALLED, {}) == {DECK: "v1", NEW_DECK: "v1"}
 

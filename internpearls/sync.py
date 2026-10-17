@@ -1838,6 +1838,10 @@ def _is_local(entry):
             and os.path.exists(entry))
 
 
+# Why each deck's last preview failed, so the retry prompt can say it.
+_preview_errors = {}
+
+
 def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fields=None,
                              per_note=None, edited=None):
     """Download every pending deck and match it against the collection, so the
@@ -1870,6 +1874,7 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
     it matched.
     """
     preview, downloaded = {}, {}
+    _preview_errors.clear()
     baseline = _load_shipped()
     with cancellable_progress("Checking for updates", len(todo)) as step:
         for i, d in enumerate(todo, 1):
@@ -1911,6 +1916,7 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
                 # has (or, before the retry below existed, refuse to import it at all).
                 downloaded.setdefault(d["name"], e)
                 preview[d["name"]] = None
+                _preview_errors[d["name"]] = str(e) or type(e).__name__
     return preview, downloaded, False
 
 
@@ -2207,7 +2213,10 @@ def update_decks():
             failed = [d for d in todo if preview[d["name"]] is None]
             if not failed:
                 break
-            names = "".join(f"<p>{_text(d['name'].split('::')[-1])}</p>" for d in failed)
+            names = "".join(
+                f"<p>{_text(d['name'].split('::')[-1])}: "
+                f"{_text(_preview_errors.get(d['name'], 'unknown error'))}</p>"
+                for d in failed)
             one = len(failed) == 1
             retry = _ask(
                 ("This deck could not be previewed:" if one
