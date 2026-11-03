@@ -3,6 +3,13 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.87.0
+
+- Night mode dimming can run only between two hours you pick, such as 21:00 to 7:00.
+- Experimental > Dim in Night Mode turns dimming on or off at once, on screens
+  already open. Turning it on or off in the dimming window or the add-on config
+  also applies at once.
+
 ## v0.86.1
 
 - When Update my decks can't preview a deck, the retry prompt now says why.
