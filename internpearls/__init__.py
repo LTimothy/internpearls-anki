@@ -32,7 +32,9 @@ from aqt import gui_hooks, mw
 from aqt.qt import QAction, QMenu
 
 from .background import _schedule_background_checks
-from .nightmode import dim_images_in_night_mode, dim_webviews_in_night_mode
+from .config import ADDON_PACKAGE
+from .nightmode import (apply_dimming, dim_images_in_night_mode, dim_webviews_in_night_mode,
+                        register_toggle_action)
 from .review import flush_update_notes
 from .sync import clear_undo_steps, register_reconcile_action, restore_pending_after_undo
 from .ui import _safe
@@ -108,6 +110,7 @@ def _menu():
     exp = menu.addMenu("Experimental")
     add(exp, "Generate cards (AI)", "ai_dialog", "generate_cards")
     add(exp, "Night mode dimming", "dialogs", "open_night_mode_dimming")
+    register_toggle_action(add(exp, "Dim in Night Mode", "nightmode", "toggle_dimming"))
     add(exp, "Scan for duplicates", "dupes_dialog", "open_duplicate_scan")
     menu.addSeparator()
     add(menu, "Settings", "dialogs", "open_settings")
@@ -121,6 +124,7 @@ def _menu():
 
 gui_hooks.card_will_show.append(dim_images_in_night_mode)
 gui_hooks.webview_will_set_content.append(dim_webviews_in_night_mode)
+mw.addonManager.setConfigUpdatedAction(ADDON_PACKAGE, lambda _conf: apply_dimming())
 gui_hooks.state_did_undo.append(restore_pending_after_undo)
 gui_hooks.profile_will_close.append(flush_update_notes)
 gui_hooks.profile_will_close.append(clear_undo_steps)

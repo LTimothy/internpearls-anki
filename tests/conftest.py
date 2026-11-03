@@ -79,6 +79,7 @@ def anki(tmp_path, monkeypatch):
     _mock.mw.col = mock_anki.MockCollection()
     _mock.mw._config = {}
     _mock.mw.reset_count = 0
+    sys.modules["aqt.webview"].AnkiWebView.open_views.clear()
     _mock.mw.update_undo_actions()   # re-sync actionUndo to the fresh, empty collection
     _mock.gui.interactive = False
     _mock.gui.escape_asks = False

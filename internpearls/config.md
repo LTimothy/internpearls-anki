@@ -110,8 +110,9 @@ never writes back here.
 
 ## dim_images_night_mode
 
-Dim bright pictures while Anki is in Night Mode, in every deck. Applies at once.
-Defaults to `false`. Edit in Experimental > Night mode dimming.
+Turn Night mode dimming on, in every deck, while Anki's theme is dark. Applies at
+once. Defaults to `false`. Edit in Experimental > Night mode dimming, or flip it with
+Experimental > Dim in Night Mode.
 
 ## dim_images_night_mode_percent
 
@@ -123,6 +124,12 @@ mode dimming.
 `"images"` dims bright pictures only. `"content"` dims everything Anki draws in a web
 view (cards, deck list, overview, editor) but not menus or dialogs. Applies when a
 screen next loads. Defaults to `"images"`. Edit in Experimental > Night mode dimming.
+
+## dim_night_mode_scheduled, dim_night_mode_from, dim_night_mode_to
+
+With `dim_night_mode_scheduled` on, dim only from hour `dim_night_mode_from` up to hour
+`dim_night_mode_to` (0 to 23, local time, wrapping past midnight). Defaults to `false`,
+`21` and `7`; equal hours mean all day. Applies within a minute. Edit in Experimental > Night mode dimming.
 
 ## dupes_threshold
 

@@ -236,7 +236,7 @@ def test_real_menu_structure():
         "Check for add-on updates"]
     exp_labels = [n["label"] for n in submenus["Experimental"]["items"] if n["t"] == "item"]
     assert exp_labels == ["Generate cards (AI)", "Night mode dimming",
-                         "Scan for duplicates"]
+                         "Dim in Night Mode", "Scan for duplicates"]
     # primary items above the first separator, Settings/About below the last
     assert tree[2]["t"] == "sep" and tree[-3]["t"] == "sep"
 
@@ -1339,6 +1339,8 @@ def test_config_preserves_well_formed_values(anki):
         "auto_update_addon": True, "auto_sync_decks": True,
         "auto_sync_interval_minutes": 30, "dim_images_night_mode": True,
         "dim_images_night_mode_percent": 45, "dim_night_mode_scope": "content",
+        "dim_night_mode_scheduled": True, "dim_night_mode_from": 22,
+        "dim_night_mode_to": 6,
         "ai_backend": "codex",
         "ai_cli_path": {"claude": "", "codex": "/example/cli", "agy": ""},
         "ai_backend_enabled": {"claude": False, "codex": True, "agy": False},
@@ -1548,6 +1550,48 @@ def test_night_mode_dimming_confirmation_describes_saved_scope(anki):
         return {}
 
     drive(anki, dialogs.open_night_mode_dimming, respond_images)
+
+
+def test_night_mode_dimming_saves_hours_and_applies_live(anki):
+    from aqt.webview import AnkiWebView
+    from internpearls import dialogs
+
+    anki.gui.interactive = True
+    view = AnkiWebView()
+
+    def respond(p):
+        if p["kind"] == "dialog":
+            dim = find(p["tree"], t="check", label="Dim in Night Mode")
+            only = find(p["tree"], t="check", label="Only between")
+            hours = [n for n in walk(p["tree"]) if n.get("t") == "spin"
+                     and n.get("suffix") == ":00"]
+            assert [h["value"] for h in hours] == [21, 7]
+            save = find(p["tree"], t="button", label="Save")
+            return {"events": [{"id": dim["id"], "value": True},
+                               {"id": only["id"], "value": True},
+                               {"id": hours[0]["id"], "value": 22},
+                               {"id": hours[1]["id"], "value": 6},
+                               {"id": save["id"], "click": True}]}
+        assert "between 22:00 and 6:00" in p["text"]
+        return {}
+
+    drive(anki, dialogs.open_night_mode_dimming, respond)
+    cfg = anki.mw._config
+    assert (cfg["dim_night_mode_scheduled"], cfg["dim_night_mode_from"],
+            cfg["dim_night_mode_to"]) == (True, 22, 6)
+    assert view.evals[-1] == "window.ipDim&&ipDim.set(true,true,22,6)"
+
+
+def test_night_mode_dimming_hours_follow_both_checkboxes(anki):
+    from internpearls import dialogs
+    dlg = dialogs._NightModeDimmingDialog(anki.mw, False, 30, "images")
+    assert not dlg._scheduled_cb.isEnabled() and not dlg._from_spin.isEnabled()
+    dlg._enabled_cb.setChecked(True)
+    assert dlg._scheduled_cb.isEnabled() and not dlg._from_spin.isEnabled()
+    dlg._scheduled_cb.setChecked(True)
+    assert dlg._from_spin.isEnabled() and dlg._to_spin.isEnabled()
+    dlg._enabled_cb.setChecked(False)
+    assert not dlg._to_spin.isEnabled()
 
 
 def test_night_mode_dimming_confirmation_when_off(anki):

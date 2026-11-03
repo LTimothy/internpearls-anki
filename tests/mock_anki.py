@@ -3057,10 +3057,23 @@ class QAction:
         self.wid = _new_persistent_wid(self)
         self._label = label
         self._enabled = True
+        self._checkable = False
+        self._checked = False
         self.triggered = Signal()
 
     def setMenuRole(self, r):
         pass
+
+    def setCheckable(self, v):
+        self._checkable = bool(v)
+
+    def setChecked(self, v):
+        # Real Qt ignores setChecked on an action that is not checkable.
+        if self._checkable:
+            self._checked = bool(v)
+
+    def isChecked(self):
+        return self._checked
 
     def setText(self, t):
         self._label = t
@@ -3123,7 +3136,10 @@ class MockMW:
             getConfig=lambda pkg: dict(self._config),
             writeConfig=lambda pkg, cfg: (self._config.clear(),
                                           self._config.update(cfg)),
-            install=self._install_addon, installed=[])
+            install=self._install_addon, installed=[],
+            config_updated={},
+            setConfigUpdatedAction=lambda pkg, fn:
+                self.addonManager.config_updated.__setitem__(pkg, fn))
         self.progress = types.SimpleNamespace(
             start=lambda **kw: None, update=lambda **kw: None,
             finish=lambda: None)
@@ -3684,6 +3700,18 @@ def install():
         def setText(text):
             gui.clipboard.append(text)
 
+    class _AnkiWebView:
+        """aqt.webview.AnkiWebView: tracked while open so QApplication.allWidgets()
+        can find it, recording every eval() it is sent."""
+        open_views = []
+
+        def __init__(self):
+            self.evals = []
+            _AnkiWebView.open_views.append(self)
+
+        def eval(self, js):
+            self.evals.append(js)
+
     class _QApplication:
         # Every test here runs "inside Anki", where a QApplication always
         # exists: so instance() is live by default. A test that wants to
@@ -3698,6 +3726,10 @@ def install():
         @staticmethod
         def focusWidget():
             return QWidget._focused
+
+        @staticmethod
+        def allWidgets():
+            return list(_AnkiWebView.open_views)
 
         @staticmethod
         def setOverrideCursor(cursor):
@@ -3859,6 +3891,8 @@ def install():
                       ("QVBoxLayout", QVBoxLayout), ("QWidget", QWidget)):
         setattr(aqt_qt, name, obj)
 
+    aqt_webview = types.ModuleType("aqt.webview")
+    aqt_webview.AnkiWebView = _AnkiWebView
     aqt_utils = types.ModuleType("aqt.utils")
     aqt_utils.showInfo = gui.info
     aqt_utils.showWarning = gui.warn
@@ -3921,6 +3955,7 @@ def install():
     sys.modules["aqt"] = aqt
     sys.modules["aqt.qt"] = aqt_qt
     sys.modules["aqt.utils"] = aqt_utils
+    sys.modules["aqt.webview"] = aqt_webview
     sys.modules.pop("aqt.operations", None)
     sys.modules["anki"] = anki
     sys.modules["anki.collection"] = anki_collection

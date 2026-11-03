@@ -20,10 +20,12 @@ from .config import (ADDON_PACKAGE, ADDON_VERSION, ANKI_REPO, APP_NAME,
                      EXAMPLE_DECK_NAME, EXAMPLE_REPO,
                      EXAMPLE_SCOPE_TAG, EXPORT_DECK, INSTALLED,
                      NIGHT_MODE_DIM_PERCENT_CEILING, NIGHT_MODE_DIM_PERCENT_FLOOR,
+                     NIGHT_MODE_FROM_DEFAULT, NIGHT_MODE_TO_DEFAULT,
                      STATE, TARGET_FIELDS, CorruptStateError, _cfg, _load_json, _typed_value,
                      load_declined, save_declined)
 from .logic import (deck_status, manifest_scope_suggestion, night_mode_dim_factor,
                     parse_fields, plural, version_at_least)
+from .nightmode import apply_dimming
 from .palette import DARK, LIGHT, colors
 from .review import append_rows, build_list_body
 from .sync import _fetch_manifest, update_decks
@@ -1301,10 +1303,9 @@ class _NightModeDimPreview(QWidget):
 # What each scope actually does, one hint per radio. Kept out of the dialog so the
 # label can reserve room for the taller of the two before either is chosen.
 _SCOPE_HINTS = {
-    "images": "Dims bright images on cards only, from the next card.",
+    "images": "Dims bright images on cards only.",
     "content": ("Dims cards and deck screens alike: the deck list, the overview, "
-                "and the editor, plus every card. Not the menu bar or dialogs. "
-                "Takes effect the next time a screen loads."),
+                "and the editor, plus every card. Not the menu bar or dialogs."),
 }
 
 
@@ -1349,7 +1350,8 @@ class _NightModeDimmingDialog(QDialog):
     mode, and never to the menu bar or dialogs.
     """
 
-    def __init__(self, parent, enabled, percent, scope):
+    def __init__(self, parent, enabled, percent, scope, scheduled=False,
+                 from_hour=NIGHT_MODE_FROM_DEFAULT, to_hour=NIGHT_MODE_TO_DEFAULT):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME}: Night mode dimming")
         self.setMinimumWidth(420)
@@ -1395,14 +1397,33 @@ class _NightModeDimmingDialog(QDialog):
         percent_row.addStretch()
         outer.addLayout(percent_row)
 
+        hours_row = QHBoxLayout()
+        self._scheduled_cb = QCheckBox("Only between")
+        self._scheduled_cb.setChecked(scheduled)
+        self._from_spin = QSpinBox()
+        self._to_spin = QSpinBox()
+        for spin, hour in ((self._from_spin, from_hour), (self._to_spin, to_hour)):
+            spin.setRange(0, 23)
+            spin.setValue(hour)
+            spin.setSuffix(":00")
+        hours_row.addWidget(self._scheduled_cb)
+        hours_row.addWidget(self._from_spin)
+        hours_row.addWidget(QLabel("and"))
+        hours_row.addWidget(self._to_spin)
+        hours_row.addStretch()
+        outer.addLayout(hours_row)
+        self._enabled_cb.toggled.connect(lambda *_: self._refresh_hours())
+        self._scheduled_cb.toggled.connect(lambda *_: self._refresh_hours())
+        self._refresh_hours()
+
         self._preview = _NightModeDimPreview(percent)
         self._percent_spin.valueChanged.connect(self._preview.setPercent)
         outer.addWidget(self._preview)
 
         outer.addWidget(hint_label(
             "Higher dims more; 0 leaves it unchanged. Applies to every deck in your "
-            "collection, not just Intern Pearls ones, and only while Anki itself is "
-            "in Night Mode: never in Day mode."))
+            "collection, only while Anki's theme is dark. The on/off switch and hours "
+            "apply at once; the amount and scope from the next screen that loads."))
 
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -1410,6 +1431,12 @@ class _NightModeDimmingDialog(QDialog):
         save.clicked.connect(self.accept)
         bb.rejected.connect(self.reject)
         outer.addWidget(bb)
+
+    def _refresh_hours(self):
+        self._scheduled_cb.setEnabled(self._enabled_cb.isChecked())
+        on = self._enabled_cb.isChecked() and self._scheduled_cb.isChecked()
+        self._from_spin.setEnabled(on)
+        self._to_spin.setEnabled(on)
 
     def _refresh_scope_hint(self):
         self._scope_hint.setText(
@@ -1421,6 +1448,9 @@ class _NightModeDimmingDialog(QDialog):
             "dim_images_night_mode_percent": self._percent_spin.value(),
             "dim_night_mode_scope": ("content" if self._scope_content.isChecked()
                                      else "images"),
+            "dim_night_mode_scheduled": self._scheduled_cb.isChecked(),
+            "dim_night_mode_from": self._from_spin.value(),
+            "dim_night_mode_to": self._to_spin.value(),
         }
 
 
@@ -1430,7 +1460,9 @@ def open_night_mode_dimming():
     cfg = _cfg()
     dlg = _NightModeDimmingDialog(mw, cfg["dim_images_night_mode"],
                                   cfg["dim_images_night_mode_percent"],
-                                  cfg["dim_night_mode_scope"])
+                                  cfg["dim_night_mode_scope"],
+                                  cfg["dim_night_mode_scheduled"],
+                                  cfg["dim_night_mode_from"], cfg["dim_night_mode_to"])
     saved = bool(dlg.exec())
     values = dlg.values()
     dlg.deleteLater()   # its controls are read above; see ui._ask_scrollable
@@ -1440,14 +1472,16 @@ def open_night_mode_dimming():
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
     conf.update(values)
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
+    apply_dimming()
 
     if values["dim_images_night_mode"]:
-        if values["dim_night_mode_scope"] == "content":
-            dim_line = (f"Cards and deck screens are dimmed {values['dim_images_night_mode_percent']}% "
-                       "in Night Mode, from the next screen that loads.")
-        else:
-            dim_line = (f"Bright images are dimmed {values['dim_images_night_mode_percent']}% "
-                       "in Night Mode.")
+        what = ("Cards and deck screens are" if values["dim_night_mode_scope"] == "content"
+                else "Bright images are")
+        when = (f" between {values['dim_night_mode_from']}:00 and "
+                f"{values['dim_night_mode_to']}:00"
+                if values["dim_night_mode_scheduled"] else "")
+        dim_line = (f"{what} dimmed {values['dim_images_night_mode_percent']}% in Night "
+                    f"Mode{when}. A new amount or scope shows on the next screen that loads.")
     else:
         dim_line = "Night mode dimming is off."
     _info(f"Night mode dimming saved.<br><br>{dim_line}")

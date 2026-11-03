@@ -82,19 +82,20 @@ def _night_mode_image_rule(factor):
     """The bright-image dimming rule itself, given an already-computed brightness
     factor. Dims rather than inverts, since a full color invert looks wrong on a real
     photo mixed into an otherwise diagram-heavy deck."""
-    return ("<style>.nightMode img {{ filter: brightness({b:g}) contrast(0.92); "
-           "}}</style>").format(b=factor)
+    return ("<style>html.ip-dim .nightMode img {{ filter: brightness({b:g}) "
+           "contrast(0.92); }}</style>").format(b=factor)
 
 
 NIGHT_MODE_SCOPES = ("images", "content")
 
 
-def night_mode_css(enabled, percent, scope="images"):
+def night_mode_css(percent, scope="images"):
     """The one CSS source for Night mode dimming. "images" dims bright images
     only (the original behaviour); "content" dims the whole web view,
     which is every card, the deck list, the overview, and the editor. Anki adds
     the night mode classes only in Night Mode, so neither rule ever applies in
-    Day mode. Unknown scope, or disabled, is no CSS at all. "content" filters
+    Day mode. Both also need the ip-dim class night_mode_dim_script sets, which
+    carries the on/off switch and the hours. Unknown scope is no CSS. "content" filters
     html, not body: a filter on body would pin other add-ons' position: fixed
     backgrounds to the card box.
 
@@ -102,12 +103,41 @@ def night_mode_css(enabled, percent, scope="images"):
     wrapped `<style>...</style>` block, since the card hook appends it straight
     onto card HTML, while "content" comes back as bare CSS, since the web view
     hook wraps it into the page head itself."""
-    if not enabled or scope not in NIGHT_MODE_SCOPES:
+    if scope not in NIGHT_MODE_SCOPES:
         return ""
     factor = night_mode_dim_factor(percent)
     if scope == "content":
-        return f"html.night-mode {{ filter: brightness({factor:.2f}); }}"
+        return f"html.night-mode.ip-dim {{ filter: brightness({factor:.2f}); }}"
     return _night_mode_image_rule(factor)
+
+
+def clamp_hour(hour, default):
+    """A configured hour of the day, 0-23; anything else is `default`."""
+    try:
+        h = int(hour)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return h if 0 <= h <= 23 else default
+
+
+def night_mode_dim_args(on, scheduled, start_hour, end_hour):
+    """The arguments ipDim.set takes, as JS source."""
+    return (f"{'true' if on else 'false'},{'true' if scheduled else 'false'},"
+            f"{int(start_hour)},{int(end_hour)}")
+
+
+def night_mode_dim_script(args):
+    """Head script that sets the ip-dim class the dimming rules need. With the
+    schedule on, only from start_hour up to end_hour (wrapping past midnight;
+    equal hours mean all day), rechecked every minute. ipDim.set lets the
+    add-on flip a screen that is already open."""
+    return ("<script>window.ipDim={set:function(on,sched,from,to){"
+            "ipDim.v={on:on,sched:sched,from:from,to:to};ipDim.apply()},"
+            "apply:function(){var v=ipDim.v,h=new Date().getHours(),"
+            "inHours=!v.sched||v.from===v.to||(v.from<v.to?h>=v.from&&h<v.to:"
+            "h>=v.from||h<v.to);"
+            "document.documentElement.classList.toggle('ip-dim',v.on&&inHours)}};"
+            f"ipDim.set({args});setInterval(ipDim.apply,60000);</script>")
 
 
 def night_mode_image_css(enabled, percent=30):
@@ -123,7 +153,7 @@ def night_mode_image_css(enabled, percent=30):
     30, is the fixed dim level this replaced (a flat brightness(0.7)), so leaving the
     percentage untouched keeps today's exact appearance.
     """
-    return night_mode_css(enabled, percent, "images")
+    return night_mode_css(percent, "images") if enabled else ""
 
 
 def version_tuple(v):

@@ -2197,21 +2197,88 @@ def test_night_mode_image_css_clamps_an_out_of_range_percent():
 
 # ------------------------------------------------------- night mode css scopes
 def test_night_mode_css_images_scope_matches_legacy():
-    assert logic.night_mode_css(True, 30, "images") == logic.night_mode_image_css(True, 30)
+    assert logic.night_mode_css(30, "images") == logic.night_mode_image_css(True, 30)
 
 
 def test_night_mode_css_content_scope_filters_root_not_body():
     # A filter on body pins other add-ons' position: fixed backgrounds to the card box.
-    css = logic.night_mode_css(True, 40, "content")
-    assert css.startswith("html.night-mode {")
+    css = logic.night_mode_css(40, "content")
+    assert css.startswith("html.night-mode.ip-dim {")
     assert "body" not in css
     assert "brightness(0.60)" in css
     assert "img" not in css
 
 
-def test_night_mode_css_disabled_or_unknown_scope_is_empty():
-    assert logic.night_mode_css(False, 40, "content") == ""
-    assert logic.night_mode_css(True, 40, "everything") == ""
+def test_night_mode_css_rules_need_the_ip_dim_class():
+    assert "html.ip-dim .nightMode img" in logic.night_mode_css(30, "images")
+    assert "html.night-mode.ip-dim" in logic.night_mode_css(30, "content")
+
+
+def test_night_mode_css_unknown_scope_is_empty():
+    assert logic.night_mode_css(40, "everything") == ""
+
+
+def test_clamp_hour():
+    assert logic.clamp_hour(0, 21) == 0
+    assert logic.clamp_hour(23, 21) == 23
+    assert logic.clamp_hour("7", 21) == 7
+    for bad in (24, -1, None, "x", float("inf")):
+        assert logic.clamp_hour(bad, 21) == 21
+
+
+def test_night_mode_dim_args():
+    assert logic.night_mode_dim_args(True, False, 21, 7) == "true,false,21,7"
+    assert logic.night_mode_dim_args(False, True, 0, 23) == "false,true,0,23"
+
+
+def _run_dim_script(args, hour):
+    """Run the head script under node with a stub clock and document, returning
+    whether it set the ip-dim class."""
+    import shutil, subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    script = logic.night_mode_dim_script(args)
+    assert script.startswith("<script>") and script.endswith("</script>")
+    js = ("var on=false,window=globalThis;"
+          "globalThis.document={documentElement:{classList:{toggle:function(c,v){"
+          "if(c==='ip-dim')on=v}}}};"
+          f"globalThis.Date=function(){{return {{getHours:function(){{return {hour}}}}}}};"
+          "globalThis.setInterval=function(){};"
+          + script[len("<script>"):-len("</script>")] +
+          ";process.stdout.write(String(on))")
+    out = subprocess.run([node, "-e", js], capture_output=True, text=True, check=True)
+    return out.stdout == "true"
+
+
+@pytest.mark.parametrize("args,hour,dimmed", [
+    ("true,false,21,7", 12, True),     # no schedule: all day
+    ("false,false,21,7", 23, False),   # switched off
+    ("true,true,21,7", 21, True),      # wraps past midnight
+    ("true,true,21,7", 3, True),
+    ("true,true,21,7", 7, False),      # end hour is exclusive
+    ("true,true,21,7", 12, False),
+    ("true,true,9,17", 12, True),      # same-day window
+    ("true,true,9,17", 18, False),
+    ("true,true,5,5", 14, True),       # equal hours: all day
+    ("false,true,21,7", 23, False),
+])
+def test_night_mode_dim_script_hours(args, hour, dimmed):
+    assert _run_dim_script(args, hour) is dimmed
+
+
+def test_night_mode_dim_script_set_flips_a_loaded_page():
+    import shutil, subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    body = logic.night_mode_dim_script("false,false,21,7")[len("<script>"):-len("</script>")]
+    js = ("var on=null,window=globalThis;"
+          "globalThis.document={documentElement:{classList:{toggle:function(c,v){on=v}}}};"
+          "globalThis.setInterval=function(){};" + body +
+          ";var a=on;ipDim.set(true,false,21,7);process.stdout.write(a+','+on)")
+    out = subprocess.run([node, "-e", js], capture_output=True, text=True, check=True)
+    assert out.stdout == "false,true"
 
 
 def test_night_mode_scopes_constant():

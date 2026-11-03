@@ -12,7 +12,7 @@ import time
 from aqt import mw
 
 from .dupes import DEFAULT_THRESHOLD as DUPES_DEFAULT_THRESHOLD
-from .logic import (clamp_interval_minutes, clamp_night_mode_dim_percent,
+from .logic import (clamp_hour, clamp_interval_minutes, clamp_night_mode_dim_percent,
                     migrate_declined, skill_version, strip_hidden)
 
 ADDON_VERSION = "0.86.1"   # MAJOR.MINOR.PATCH, see README "Versioning"
@@ -105,6 +105,10 @@ NIGHT_MODE_DIM_PERCENT_CEILING = 90
 # web view body instead. An unrecognized or missing value falls back to "images" rather
 # than raising, same as every other _cfg() key.
 NIGHT_MODE_SCOPE_DEFAULT = "images"
+
+# The optional "only between" hours, local time.
+NIGHT_MODE_FROM_DEFAULT = 21
+NIGHT_MODE_TO_DEFAULT = 7
 
 # One-time migration: earlier versions wrote this next to __init__.py, so an add-on
 # update would have already wiped it. Move it over if it's still there from a
@@ -226,6 +230,10 @@ def _cfg():
         "dim_night_mode_scope": (c.get("dim_night_mode_scope")
                                  if c.get("dim_night_mode_scope") in ("images", "content")
                                  else NIGHT_MODE_SCOPE_DEFAULT),
+        "dim_night_mode_scheduled": _typed_value(c.get("dim_night_mode_scheduled"), False),
+        "dim_night_mode_from": clamp_hour(c.get("dim_night_mode_from"),
+                                          NIGHT_MODE_FROM_DEFAULT),
+        "dim_night_mode_to": clamp_hour(c.get("dim_night_mode_to"), NIGHT_MODE_TO_DEFAULT),
         "ai_backend":            backend,
         "ai_cli_path":           _cli_path_map(c.get("ai_cli_path"), backend),
         "ai_backend_enabled":    _ai_bool_map(c.get("ai_backend_enabled")),
