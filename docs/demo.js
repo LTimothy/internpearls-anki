@@ -1118,7 +1118,7 @@ function buildMenu(tree) {
         addItems(node.items, submenu);
         item.appendChild(submenu);
         item.addEventListener("click", (event) => {
-          if (event.target.closest(".submenu")) return;
+          if (submenu.contains(event.target)) return;
           item.classList.toggle("open");
           event.stopPropagation();
         });

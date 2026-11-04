@@ -26,8 +26,8 @@ async function openDemo(page, width = 1280) {
 
 async function runMenuItem(page, label, submenu = null) {
   await page.locator("#ipMenuBtn").click();
-  if (submenu) {
-    await page.locator("#ipMenu .hasSub", { hasText: submenu }).click();
+  for (const name of [submenu].flat().filter(Boolean)) {
+    await page.locator("#ipMenu .hasSub", { hasText: name }).last().click();
   }
   await page.getByRole("button", { name: label, exact: true }).click();
 }
@@ -266,19 +266,14 @@ test("keyboard", async ({ page }) => {
   await page.locator("#dbtns").getByRole("button", { name: "OK" }).click();
   await expect(page.locator("#ipMenuBtn")).toBeFocused();
 
-  await runMenuItem(page, "Night mode dimming", "Experimental");
+  await runMenuItem(page, "Adjust", ["Experimental", "Night mode dimming"]);
   dialog = await waitForDialog(page);
-  const enabled = dialog.getByRole("checkbox", { name: "Dim in Night Mode" });
-  if (!(await enabled.isChecked())) {
-    await enabled.press("Space");
-    await expect(enabled).toBeChecked();
-  }
   const firstRadio = dialog.getByRole("radio", { name: "Bright images only" });
   await expect(firstRadio).toBeEnabled();
   await firstRadio.focus();
   await firstRadio.press("ArrowDown");
   await expect(dialog.getByRole("radio", {
-    name: "Everything on cards and deck screens",
+    name: "Everything on cards and deck screens (not menus or dialogs)",
   })).toBeChecked();
   await page.keyboard.press("Escape");
   await expect(page.locator("#overlay")).not.toHaveClass(/show/);

@@ -3123,8 +3123,12 @@ class QMenu:
 
 
 def trigger_action(wid):
-    """Fire a recorded menu action by widget id — the real function runs."""
-    _persistent[wid].triggered.emit()
+    """Fire a recorded menu action by widget id; the real function runs. Like Qt,
+    a checkable action flips its check first."""
+    action = _persistent[wid]
+    if action._checkable:
+        action._checked = not action._checked
+    action.triggered.emit(action._checked)
 
 
 # ============================== mw / modules ==============================

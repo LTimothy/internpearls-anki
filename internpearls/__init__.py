@@ -109,8 +109,9 @@ def _menu():
     # groups.
     exp = menu.addMenu("Experimental")
     add(exp, "Generate cards (AI)", "ai_dialog", "generate_cards")
-    add(exp, "Night mode dimming", "dialogs", "open_night_mode_dimming")
-    register_toggle_action(add(exp, "Dim in Night Mode", "nightmode", "toggle_dimming"))
+    night = exp.addMenu("Night mode dimming")
+    register_toggle_action(add(night, "On", "nightmode", "toggle_dimming"))
+    add(night, "Adjust", "dialogs", "open_night_mode_dimming")
     add(exp, "Scan for duplicates", "dupes_dialog", "open_duplicate_scan")
     menu.addSeparator()
     add(menu, "Settings", "dialogs", "open_settings")

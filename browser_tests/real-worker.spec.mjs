@@ -658,30 +658,27 @@ test("a second action queued behind an in-flight response is not dropped", async
   // availability was folded into the identity signature the replay check compares,
   // so the queued action read as targeting a different widget and was discarded.
   await openRealDemo(page);
-  const dimming = await menuActionId(page, /dimming/i);
-  expect(dimming).not.toBeNull();
+  const adjust = await menuActionId(page, /^Adjust$/);
+  expect(adjust).not.toBeNull();
 
   const result = await page.evaluate(async (menuId) => {
     await window.demo.runFlow(menuId);
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    const radios = () => Array.from(
-      document.querySelectorAll('#overlay input[type="radio"]'),
-    ).map((input) => `${input.dataset.wid}=${input.checked}`);
-    const before = radios();
+    const fromHour = () => document.querySelectorAll("#overlay input.dspin")[1];
+    const before = { value: fromHour().value, disabled: fromHour().disabled };
     const check = document.querySelector('#overlay input[type="checkbox"]');
-    const second = document.querySelectorAll('#overlay input[type="radio"]')[1];
+    const target = fromHour().dataset.wid;
     // Issued back to back, so the second is queued while the first is in flight.
     const first = window.demo.dispatch([
       { type: "toggle", id: check.dataset.wid, checked: true }]);
     const queued = window.demo.dispatch([
-      { type: "toggle", id: second.dataset.wid, checked: true }]);
+      { type: "edit-text", id: target, value: "22",
+        selection_start: 2, selection_end: 2, composing: false }]);
     await Promise.all([first.catch(() => {}), queued.catch(() => {})]);
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    return { before, after: radios(), target: second.dataset.wid };
-  }, dimming);
+    return { before, after: fromHour().value };
+  }, adjust);
 
-  expect(result.before).toContain(`${result.target}=false`);
-  expect(result.after).toContain(`${result.target}=true`);
-  // The group stayed exclusive rather than ending with both sides checked.
-  expect(result.after.filter((entry) => entry.endsWith("=true"))).toHaveLength(1);
+  expect(result.before).toEqual({ value: "21", disabled: true });
+  expect(result.after).toBe("22");
 });

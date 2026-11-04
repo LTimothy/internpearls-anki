@@ -58,7 +58,7 @@ def test_toggle_flips_config_menu_check_and_open_web_views(anki):
     from aqt.webview import AnkiWebView
     from internpearls import nightmode
     _cfg_with(anki, dim_images_night_mode=False)
-    action = QAction("Dim in Night Mode")
+    action = QAction("On")
     nightmode.register_toggle_action(action)
     assert action.isChecked() is False
     view = AnkiWebView()
@@ -112,7 +112,7 @@ def test_menu_check_reverts_when_the_toggle_never_ran(anki):
     from aqt.qt import QAction
     from internpearls import nightmode
     _cfg_with(anki, dim_images_night_mode=False)
-    action = QAction("Dim in Night Mode")
+    action = QAction("On")
     nightmode.register_toggle_action(action)
     action.setChecked(True)     # what Qt does before emitting triggered
     action.triggered.emit(True)

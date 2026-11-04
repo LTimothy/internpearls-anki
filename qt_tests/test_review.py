@@ -100,7 +100,7 @@ def test_settings_roundtrips_a_week_and_labels_focus_their_spinboxes():
     assert interval_label.buddy() is interval
     assert interval.accessibleName() == "Check every"
 
-    dimming = dialogs._NightModeDimmingDialog(None, True, 30, "images")
+    dimming = dialogs._NightModeDimmingDialog(None, 30, "images")
     percent = dimming._percent_spin
     percent_label = next(label for label in dimming.findChildren(QLabel)
                          if label.text() == "Dim by")

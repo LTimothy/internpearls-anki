@@ -61,7 +61,7 @@ def apply_dimming():
 
 
 def toggle_dimming():
-    """Experimental > Dim in Night Mode."""
+    """Experimental > Night mode dimming > On."""
     conf = mw.addonManager.getConfig(ADDON_PACKAGE) or {}
     conf["dim_images_night_mode"] = not _cfg()["dim_images_night_mode"]
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)

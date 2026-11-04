@@ -97,7 +97,7 @@ def test_the_preview_holds_still_when_the_scope_changes():
         f"the preview moved from {before} to {after} when the scope changed")
 
 
-def test_content_scope_hint_names_deck_screens(shot):
+def test_content_scope_radio_names_what_it_skips(shot):
     harness.bootstrap()
     s = shot("night-mode-dimming", scope="content")
-    assert "deck screens" in s.dialog._scope_hint.text()
+    assert "not menus or dialogs" in s.dialog._scope_content.text()
