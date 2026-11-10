@@ -3,6 +3,11 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.88.2
+
+- A deck no longer fails with "note-type conflicts" when its cards sit on a note
+  type Anki renamed with a short code after the name, such as "-1a020".
+
 ## v0.88.1
 
 - Applying a new card look no longer fails with "Field not found" when a note
