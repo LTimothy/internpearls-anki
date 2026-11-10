@@ -25,7 +25,7 @@ from . import ai_logic
 from .config import (DECK_BACKUPS_KEEP, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_TAG_LEAF,
                      SHIPPED, TARGET_FIELDS, _USER_FILES, _cfg, _collection_state_path,
                      _load_json, _save_json)
-from .logic import (HASH_KEY, apkg_deck_names, apkg_models, apkg_note_types, apkg_notes,
+from .logic import (HASH_KEY, apkg_deck_names, apkg_model_fields, apkg_models, apkg_note_types, apkg_notes,
                     cards_lost_in_conversion, changed_templates, check_apkg_limits,
                     copy_apkg_checked, declined_drop,
                     empty_cards_dialog_rows, fields_to_carry_over, manifest_decks_for,
@@ -72,7 +72,11 @@ def _template_changes(src):
     incoming = {n: s for n, s in apkg_models(src).items() if n in TARGET_FIELDS}
     existing = {m["name"]: model_shape(m) for m in mw.col.models.all()
                 if m["name"] in TARGET_FIELDS}
-    return {n: incoming[n] for n in changed_templates(incoming, existing)}
+    # The field names ride along: a new template may name a field this collection's
+    # note type has never been given.
+    fields = apkg_model_fields(src)
+    return {n: dict(incoming[n], flds=fields[n])
+            for n in changed_templates(incoming, existing)}
 
 
 def _apply_template_changes(changes):
@@ -89,6 +93,10 @@ def _apply_template_changes(changes):
         inc = changes.get(m["name"])
         if not inc:
             continue
+        have = {f["name"] for f in m["flds"]}
+        for fname in inc.get("flds", ()):
+            if fname not in have:   # Anki rejects a template naming a missing field
+                mm.add_field(m, mm.new_field(fname))
         m["css"] = inc["css"]
         by_name = {name: (qfmt, afmt) for name, qfmt, afmt in inc["tmpls"]}
         for t in m["tmpls"]:

@@ -343,6 +343,15 @@ class _Models:
                     n._resize(n.fields)
 
     def update_dict(self, model):
+        # Anki refuses to save a template that names a field the note type lacks.
+        have = {f['name'] for f in model['flds']} | {
+            'FrontSide', 'Tags', 'Type', 'Deck', 'Subdeck', 'Card', 'CardFlag'}
+        for number, t in enumerate(model['tmpls'], 1):
+            for ref in re.findall(r'\{\{[#^/]?([^}]+)\}\}', t['qfmt'] + t['afmt']):
+                if ref.split(':')[-1].strip() not in have:
+                    raise Exception(
+                        f"Card template {number} in note type '{model['name']}' has a "
+                        f"problem. Field '{ref.split(':')[-1].strip()}' not found.")
         old = next(m for m in self._models if m['id'] == model['id'])
         if old is not model:
             names = [f['name'] for f in model['flds']]

@@ -1093,6 +1093,17 @@ def apkg_models(path):
     return {m["name"]: model_shape(m) for m in json.loads(models_json).values()}
 
 
+def apkg_model_fields(path):
+    """{notetype_name: [field name, ...]} for the .apkg at `path` (legacy format, as
+    apkg_models)."""
+    with _apkg_db(path) as (con, newer):
+        if newer:
+            raise RuntimeError(NEWER_APKG_ERROR)
+        models_json = con.execute("select models from col").fetchone()[0]
+    return {m["name"]: [f["name"] for f in m.get("flds", [])]
+            for m in json.loads(models_json).values()}
+
+
 def model_shape(m):
     """Reduce a note-type dict (apkg JSON or mw.col.models form — same keys) to just
     what determines how cards LOOK: CSS plus each template's question/answer HTML.

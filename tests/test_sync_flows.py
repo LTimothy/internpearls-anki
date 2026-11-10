@@ -1419,6 +1419,25 @@ def test_template_change_applied_when_user_says_yes(anki, tmp_path):
     assert any("schema" in a or "full sync" in a for a in anki.gui.asks)
 
 
+def test_a_new_look_brings_the_fields_its_templates_name(anki, tmp_path):
+    from internpearls import collection
+    folder = _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], make_model())})
+    _configure(anki, folder)
+    _sync(anki)
+    # A note type no imported note reached still gets the look, and so the field.
+    apkg = str(tmp_path / "next.apkg")
+    make_apkg(apkg, [("g2", _fields("Front two") + ["s"], TAGS)],
+              make_model(fields=list(mock_anki.BASIC_FIELDS) + ["Source"],
+                         afmt="{{Back}}{{#Source}}{{Source}}{{/Source}}"))
+
+    collection._apply_template_changes(collection._template_changes(apkg))
+
+    model = anki.col.models.all()[0]
+    assert [f["name"] for f in model["flds"]][-1] == "Source"
+    assert "{{Source}}" in model["tmpls"][0]["afmt"]
+
+
 def test_template_change_declined_keeps_look_but_imports_content(anki, tmp_path):
     from internpearls import sync
     old_css = anki.col.models.all()[0]["css"]
