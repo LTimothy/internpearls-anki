@@ -3,6 +3,12 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.88.1
+
+- Applying a new card look no longer fails with "Field not found" when a note
+  type is missing a field the new look uses. The field is added first.
+- Every deck progress bar moves by cards, not only the one in Update my decks.
+
 ## v0.88.0
 
 - Update my decks applies each deck faster in a large collection.
