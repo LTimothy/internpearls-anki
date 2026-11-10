@@ -1399,6 +1399,17 @@ def migrate_declined(registry):
     return changed
 
 
+def card_progress(decks):
+    """([cards ahead of each deck], total cards), for a progress bar that moves by
+    cards instead of by decks. A deck with no usable `cards` count weighs one."""
+    starts, total = [], 0
+    for d in decks:
+        starts.append(total)
+        n = d.get("cards")
+        total += n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else 1
+    return starts, total
+
+
 def later_status(entry, incoming_hash):
     """What a returning held card's row needs to know about its history, as the detail
     keys the review screen reads: `later_wait` (the row starts at Later: a noted card

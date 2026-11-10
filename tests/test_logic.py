@@ -3757,3 +3757,12 @@ def test_changed_since_flags_only_notes_whose_fields_differ():
     before = {"same": {"Front": "a", "Back": "b"}, "edited": {"Front": "a", "Back": "old"},
               "added": {"Front": "a"}}
     assert logic.changed_since(hashes, before) == {"edited", "added", "fresh"}
+
+
+def test_card_progress_weighs_each_deck_by_its_cards():
+    from internpearls.logic import card_progress
+    assert card_progress([{"cards": 898}, {"cards": 4}, {"cards": 30}]) == ([0, 898, 902], 932)
+    # No usable count still moves the bar by one.
+    assert card_progress([{}, {"cards": "12"}, {"cards": 0}, {"cards": True}]) == (
+        [0, 1, 2, 3], 4)
+    assert card_progress([]) == ([], 0)

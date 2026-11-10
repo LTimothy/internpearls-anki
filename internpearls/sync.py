@@ -48,6 +48,7 @@ from .config import (ADDON_VERSION, DECK_CACHE, DUPLICATE_TAG_LEAF, INSTALLED,
                      _load_json, _save_json, collection_key, load_declined, load_deck_skill,
                      replace_file, save_declined, save_deck_skill, save_later_seen)
 from .logic import (APKG_MAX_BYTES, HASH_KEY, MOD_KEY, apkg_deck_names, apkg_note_details, apkg_notes,
+                    card_progress,
                     change_notes_for, changed_since, safe_source_path,
                     source_label_for, group_change_notes, sort_source_groups,
                     declined_drop, declined_guids,
@@ -2805,7 +2806,8 @@ def update_decks():
     if todo:
         # A cancellable progress window while each deck imports: the preview step
         # above already covered the download itself.
-        with cancellable_progress("Updating decks", len(todo)) as step:
+        starts, total = card_progress(todo)
+        with cancellable_progress("Updating decks", total) as step:
             def _already_fetched(d):
                 # Reuses _preview_content_changes' download above instead of fetching
                 # every deck a second time, the same pattern background.py's auto-sync
@@ -2831,7 +2833,9 @@ def update_decks():
             (results, restored, tpl_changes, _deferred, cancelled, collisions,
              converted) = _run_sync(
                 cfg, manifest, _already_fetched, todo,
-                on_progress=lambda i, n, name: step(i, f"Applying {name} ({i} of {n})"),
+                # step() shows one less than it is given.
+                on_progress=lambda i, n, name: step(starts[i - 1] + 1,
+                                                    f"Applying {name} ({i} of {n})"),
                 convert_notetypes=convert, undisclosed_conversions=undisclosed,
                 take_deck=take_deck)
             # An edit the learner just gave up is not worth sending.
