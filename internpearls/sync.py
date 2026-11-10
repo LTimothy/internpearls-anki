@@ -510,10 +510,12 @@ def sync_decks():
     # background poll), and a multi-deck sync on a slow link otherwise looks like a
     # hang with no way out. step.pump goes to the fetch so Cancel is answered during a
     # download too, not only in the gap between two decks.
-    with cancellable_progress("Syncing decks", len(todo)) as step:
+    starts, total = card_progress(todo)
+    with cancellable_progress("Syncing decks", total) as step:
         results, restored, tpl_changes, _, cancelled, collisions, converted = _run_sync(
             cfg, manifest, lambda d: fetch(d, on_chunk=step.pump), todo,
-            on_progress=lambda i, n, name: step(i, f"Syncing {name} ({i} of {n})"))
+            on_progress=lambda i, n, name: step(starts[i - 1] + 1,
+                                                f"Syncing {name} ({i} of {n})"))
     _offer_template_changes(tpl_changes)
     backup_line = (
         "A pre-sync backup of the Intern Pearls deck was saved; use "
@@ -602,9 +604,11 @@ def _record_current_hashes(cfg, manifest, fetch, installed, todo, reg):
     if not decks:
         return
     updated = {}
-    with cancellable_progress("Recording your decks' current text", len(decks)) as step:
+    starts, total = card_progress([d for d, _ in decks])
+    with cancellable_progress("Recording your decks' current text", total) as step:
         for i, (d, mine) in enumerate(decks, 1):
-            if not step(i, f"Recording {d['name'].split('::')[-1]} ({i} of {len(decks)})"):
+            if not step(starts[i - 1] + 1,
+                        f"Recording {d['name'].split('::')[-1]} ({i} of {len(decks)})"):
                 break
             try:
                 src = _cached_fetch(fetch, d, on_chunk=step.pump)
@@ -1188,10 +1192,11 @@ def _retry_failed_downloads(fetch, todo, downloaded):
     missing = [d for d in todo if not _is_local(downloaded.get(d["name"]))]
     if not missing:
         return False
-    with cancellable_progress("Downloading decks", len(missing)) as step:
+    starts, total = card_progress(missing)
+    with cancellable_progress("Downloading decks", total) as step:
         for i, d in enumerate(missing, 1):
             short = d["name"].split("::")[-1]
-            if not step(i, f"Downloading {short} ({i} of {len(missing)})"):
+            if not step(starts[i - 1] + 1, f"Downloading {short} ({i} of {len(missing)})"):
                 return True
             try:
                 downloaded[d["name"]] = _cached_fetch(fetch, d, on_chunk=step.pump)
@@ -1285,11 +1290,11 @@ def _live_cards_loader(manifest, fetch=None, local=None):
                 elif fetch is not None:
                     to_fetch.append(d)
             if to_fetch:
-                with cancellable_progress("Checking your current decks",
-                                          len(to_fetch)) as step:
+                starts, total = card_progress(to_fetch)
+                with cancellable_progress("Checking your current decks", total) as step:
                     for i, d in enumerate(to_fetch, 1):
                         short = d["name"].split("::")[-1]
-                        if not step(i, f"Reading {short} ({i} of {len(to_fetch)})"):
+                        if not step(starts[i - 1] + 1, f"Reading {short} ({i} of {len(to_fetch)})"):
                             break
                         try:
                             read(_cached_fetch(fetch, d, on_chunk=step.pump))
@@ -1877,10 +1882,11 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
     preview, downloaded = {}, {}
     _preview_errors.clear()
     baseline = _load_shipped()
-    with cancellable_progress("Checking for updates", len(todo)) as step:
+    starts, total = card_progress(todo)
+    with cancellable_progress("Checking for updates", total) as step:
         for i, d in enumerate(todo, 1):
             short = d["name"].split("::")[-1]
-            if not step(i, f"Checking {short} ({i} of {len(todo)})"):
+            if not step(starts[i - 1] + 1, f"Checking {short} ({i} of {len(todo)})"):
                 return preview, downloaded, True
             try:
                 # step.pump keeps Cancel live during the download itself, not just
