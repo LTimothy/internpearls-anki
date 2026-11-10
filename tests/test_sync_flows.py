@@ -7805,8 +7805,8 @@ def test_holding_leaves_a_waiting_later_rows_entry_alone(anki, tmp_path, monkeyp
     assert "1 card left for later" in _all_text(trees[-1])
 
 
-def test_a_migrated_row_left_at_later_loses_the_flag_after_the_run(anki, tmp_path,
-                                                                   monkeypatch):
+def test_a_migrated_row_left_at_later_keeps_waiting_after_the_run(anki, tmp_path,
+                                                                  monkeypatch):
     from internpearls import config
     deck = _source_with_two_new_cards(anki, tmp_path)
     config.save_declined({"guid-new-b": _held(deck, migrated=True)})
@@ -7814,7 +7814,24 @@ def test_a_migrated_row_left_at_later_loses_the_flag_after_the_run(anki, tmp_pat
 
     _update(anki)
 
-    assert config.load_declined()["guid-new-b"] == _held(deck)
+    assert config.load_declined()["guid-new-b"] == _held(deck, wait=True)
+
+
+def test_an_old_skip_left_alone_twice_is_never_imported(anki, tmp_path):
+    """The real screen, two plain Updates: the second must not import the old Skip
+    or repeat the migration line."""
+    from internpearls import config
+    deck = _source_with_two_new_cards(anki, tmp_path)
+    config.save_declined({"guid-new-b": {
+        "state": "skip", "front": "front b", "deck": deck, "decided": "2026-08-01",
+        "hash": "stale-hash-value1"}})
+
+    _update(anki)
+    trees = _update(anki)
+
+    assert "front b" not in _fronts(anki)
+    assert config.load_declined()["guid-new-b"]["state"] == "held"
+    assert "Skip is now Later" not in " ".join(_all_text(trees[0]))
 
 
 def test_a_migrated_row_set_to_import_is_reported_as_imported_after_all(
@@ -7846,6 +7863,7 @@ def test_an_untouched_migrated_skip_is_not_imported_and_stays_later(anki, tmp_pa
     assert "front b" not in _fronts(anki) and "front a" in _fronts(anki)
     entry = config.load_declined()["guid-new-b"]
     assert entry["state"] == "held" and "migrated" not in entry
+    assert entry["wait"] is True
     texts = _all_text(trees[0])
     assert CHIPS["held"] in texts
     assert ("Skip is now Later. 1 card you skipped earlier is below, still set to "

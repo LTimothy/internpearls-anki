@@ -2712,7 +2712,8 @@ def update_decks():
     for guid in released:
         reg.pop(guid, None)
         # A migrated entry was a Skip, whose flip back to Import was always reported.
-        if (guid in row_kind and _prior_entry(guid).get("migrated")
+        if (guid in row_kind
+                and (_prior_entry(guid).get("migrated") or _prior_entry(guid).get("wait"))
                 and (row_kind[guid] == "new" or guid in touched)):
             run_decisions[guid] = "imported after all"
     # A released hold may have been the only reason its deck was still pending; drop
@@ -2723,11 +2724,13 @@ def update_decks():
         invalidate_installed(released_decks)
     for guid in hold_now:
         reg[guid] = _registry_entry(guid, "held")
-    # The learner has now seen the "Skip is now Later" line for these rows.
+    # The learner has now seen the "Skip is now Later" line for these rows. An old
+    # Skip left alone keeps waiting at Later rather than returning at Import.
     for guid in row_kind:
         entry = reg.get(guid)
-        if isinstance(entry, dict) and entry.get("state") == "held":
-            entry.pop("migrated", None)
+        if (isinstance(entry, dict) and entry.get("state") == "held"
+                and entry.pop("migrated", None)):
+            entry["wait"] = True
     save_declined(reg)
     n_later = len(set(later) | set(hold_now))
     held_note = (f"{plural(n_later, 'card')} left for later. "

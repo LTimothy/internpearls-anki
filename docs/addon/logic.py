@@ -1402,7 +1402,7 @@ def migrate_declined(registry):
 def later_status(entry, incoming_hash):
     """What a returning held card's row needs to know about its history, as the detail
     keys the review screen reads: `later_wait` (the row starts at Later: a noted card
-    whose content has not changed, or a migrated one), `later_note` and
+    whose content has not changed, or an old Skip, `migrated` or `wait`), `later_note` and
     `later_note_status` ("not_updated" or "updated") for a noted card, and
     `later_migrated`. {} for anything that is not a held entry."""
     if not isinstance(entry, dict) or entry.get("state") != "held":
@@ -1416,7 +1416,8 @@ def later_status(entry, incoming_hash):
         out["later_note_status"] = "not_updated" if unchanged else "updated"
     if entry.get("migrated"):
         out["later_migrated"] = True
-    if (out.get("later_note_status") == "not_updated") or entry.get("migrated"):
+    if (out.get("later_note_status") == "not_updated" or entry.get("migrated")
+            or entry.get("wait")):
         out["later_wait"] = True
     return out
 
@@ -2527,7 +2528,14 @@ def _decline_snapshot_lines(registry, excluded=()):
                 segments.append(ascii_text(f"{date or 'undated'}: ") + " ".join(guids))
             lines.append(f"    {display_names[deck]} ({count}), {'; '.join(segments)}")
     if later:
-        lines.append(f"  {plural(later, 'card')} left for later")
+        # The ones a plain Update never imports: an old Skip or a noted card.
+        waiting = [e for e in held_entries(registry).values()
+                   if e.get("deck") not in set(excluded or ())
+                   and (e.get("wait") or e.get("migrated") or e.get("note"))]
+        since = min((str(e["decided"]) for e in waiting if e.get("decided")), default="")
+        stuck = (f", {len(waiting)} waiting at Later" + (f" since {since}" if since else "")
+                 ) if waiting else ""
+        lines.append(f"  {plural(later, 'card')} left for later{ascii_text(stuck)}")
     return lines
 
 

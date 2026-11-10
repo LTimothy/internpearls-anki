@@ -86,6 +86,10 @@ def test_later_status_migrated_waits_whatever_the_hash():
         "later_wait": True, "later_migrated": True}
 
 
+def test_later_status_waiting_entry_waits_without_the_migration_cue():
+    assert logic.later_status(_entry(wait=True), "other") == {"later_wait": True}
+
+
 def test_later_status_migrated_with_a_note_carries_both():
     out = logic.later_status(_entry(migrated=True, note="n"), "h2")
     assert out == {"later_wait": True, "later_migrated": True, "later_note": "n",
@@ -284,3 +288,10 @@ def test_manifest_retired_guids_reads_the_ledger_and_tolerates_junk():
         {"retired": {"A": {"g1": {"reason": "x"}}, "B": ["g2", 7], "C": None}}) == {"g1", "g2"}
     for bad in (None, {}, {"retired": ["g"]}, {"retired": "g"}, "manifest"):
         assert logic.manifest_retired_guids(bad) == set(), bad
+
+
+def test_digest_count_line_says_how_many_wait_at_later_and_since_when():
+    text = _digest({"g1": _entry("held"), "g2": _entry("held", wait=True),
+                    "g3": _entry("held", note="n", decided="2026-08-01"),
+                    "g4": _entry("held", migrated=True)})
+    assert "  4 cards left for later, 3 waiting at Later since 2026-08-01\n" in text + "\n"
