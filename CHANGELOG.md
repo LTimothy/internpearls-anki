@@ -3,6 +3,13 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.87.2
+
+- A card you skipped before Later existed stays at Later on every update until you
+  change it. A plain Update no longer imports it.
+- The feedback digest's Later line also says how many cards are waiting at Later and
+  since when.
+
 ## v0.87.1
 
 - Night mode dimming is one Experimental submenu: On turns it on or off, Adjust
