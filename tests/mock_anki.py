@@ -434,6 +434,10 @@ class _Db:
             assert not args, args
             return [(n.guid, n.model["id"], FS.join(n.fields))
                     for n in sorted(self._col._notes.values(), key=lambda n: n.id)]
+        if query == "select guid, id from notes order by id desc":
+            assert not args, args
+            return [(n.guid, n.id)
+                    for n in sorted(self._col._notes.values(), key=lambda n: -n.id)]
         if query == "select guid, mod from notes":
             assert not args, args
             return [(n.guid, n.mod)

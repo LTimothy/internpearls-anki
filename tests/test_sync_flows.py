@@ -10350,3 +10350,25 @@ def test_import_deck_refuses_before_writing_when_shipped_state_is_unreadable(
     assert not anki.col.imports
     assert _load_json(INSTALLED, {}) == {DECK: "v1"}
     assert "can't be read" in anki.gui.warnings[-1]
+
+
+def test_applying_a_deck_never_looks_a_guid_up_one_note_at_a_time(anki, tmp_path):
+    """Anki keeps no index on guid, so a lookup per note scans the whole collection
+    once for every card in the deck."""
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    _sync(anki)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v2", [("g1", _fields("Front one", back="New back"), TAGS),
+                      ("g2", _fields("Front two"), TAGS)], None)}))
+    db = anki.mw.col.db
+    plain = db.scalar
+
+    def scalar(query, *args):
+        assert "where guid" not in query, query
+        return plain(query, *args)
+    db.scalar = scalar
+
+    _sync(anki)
+
+    assert {n.guid for n in anki.mw.col._notes.values()} == {"g1", "g2"}

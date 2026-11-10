@@ -443,10 +443,11 @@ def _restore_tags(snap, scope_tag, touched):
     importer overwrites a matched note's tags with the package's). Returns the count."""
     markers = [f"{scope_tag}::{RETIRED_TAG_LEAF}", f"{scope_tag}::{DUPLICATE_TAG_LEAF}"]
     restored = 0
+    nids = _guid_to_nid()
     for guid in touched:
         if guid not in snap:
             continue
-        nid = mw.col.db.scalar("select id from notes where guid = ?", guid)
+        nid = nids.get(guid)
         if not nid:
             continue
         note = mw.col.get_note(nid)
@@ -530,6 +531,7 @@ def _restore(snap, baseline=None, touched=None):
     """
     baseline = baseline or {}
     restored, collisions = 0, []
+    nids = _guid_to_nid()
     for guid, saved in snap.items():
         if touched is not None and guid not in touched:
             # Nothing imported over this note, so none of its fields were overwritten:
@@ -537,7 +539,7 @@ def _restore(snap, baseline=None, touched=None):
             # report a conflict against an update that never happened. This is what
             # made a card in a deck that had no update at all read as a collision.
             continue
-        nid = mw.col.db.scalar("select id from notes where guid = ?", guid)
+        nid = nids.get(guid)
         if not nid:
             continue
         note = mw.col.get_note(nid)
@@ -693,6 +695,12 @@ def _existing_guid_to_nid(scope_tag):
     to go from a retired card's GUID (what the ledger lists) back to the learner's note
     to archive it."""
     return {guid: nid for nid, guid, *_rest in _scoped_notes(scope_tag)}
+
+
+def _guid_to_nid():
+    """{guid: note id} for the whole collection in one query. Anki keeps no index on
+    guid, so asking per note scans the table each time. Lowest id wins on a repeat."""
+    return dict(mw.col.db.all("select guid, id from notes order by id desc"))
 
 
 def _note_mods(guids):
@@ -1310,12 +1318,13 @@ def _prepare_import_notetypes(con, allow_field_additions=True):
     by_name = {m['name']: m for m in existing.values()}
     plans = []
     changed = set()
+    nids = _guid_to_nid()
     for rid, guid, mid, fields in con.execute("select id, guid, mid, flds from notes"):
         source = incoming[str(mid)]
         family = source['name'].rstrip('+')
         if family not in TARGET_FIELDS:
             continue
-        nid = mw.col.db.scalar("select id from notes where guid = ?", guid)
+        nid = nids.get(guid)
         local = mw.col.get_note(nid) if nid else None
         if local is not None and getattr(local, 'mod', None) is not None:
             # Anki skips equal modification timestamps even with ALWAYS. Changing
@@ -1403,8 +1412,9 @@ def _apply_deck(src, aliases, existing_fronts, declined=frozenset(),
     # Anki matches GUIDs globally, not just within our scope. Fail this deck before
     # import rather than silently writing an excluded note that was not backed up.
     scoped = set(getattr(existing_fronts, "guids", existing_fronts.values()))
+    nids = _guid_to_nid()
     for _rid, _fields, guid in apkg_notes(src):
-        if guid not in scoped and mw.col.db.scalar("select id from notes where guid = ?", guid):
+        if guid not in scoped and guid in nids:
             raise ValueError("This package matches a note outside the managed scope; "
                              "no cards from this deck were imported.")
     drop, touched, in_place, as_new = declined_drop(src, remap, existing_fronts, declined,
