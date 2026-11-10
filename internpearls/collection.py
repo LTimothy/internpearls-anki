@@ -25,7 +25,8 @@ from . import ai_logic
 from .config import (DECK_BACKUPS_KEEP, DUPLICATE_TAG_LEAF, INSTALLED, RETIRED_TAG_LEAF,
                      SHIPPED, TARGET_FIELDS, _USER_FILES, _cfg, _collection_state_path,
                      _load_json, _save_json)
-from .logic import (HASH_KEY, apkg_deck_names, apkg_model_fields, apkg_models, apkg_note_types, apkg_notes,
+from .logic import (HASH_KEY, apkg_deck_names, apkg_model_fields, apkg_models,
+                    apkg_note_types, apkg_notes, base_notetype_name,
                     cards_lost_in_conversion, changed_templates, check_apkg_limits,
                     copy_apkg_checked, declined_drop,
                     empty_cards_dialog_rows, fields_to_carry_over, manifest_decks_for,
@@ -1329,7 +1330,7 @@ def _prepare_import_notetypes(con, allow_field_additions=True):
     nids = _guid_to_nid()
     for rid, guid, mid, fields in con.execute("select id, guid, mid, flds from notes"):
         source = incoming[str(mid)]
-        family = source['name'].rstrip('+')
+        family = base_notetype_name(source['name'])
         if family not in TARGET_FIELDS:
             continue
         nid = nids.get(guid)
@@ -1347,7 +1348,7 @@ def _prepare_import_notetypes(con, allow_field_additions=True):
         target = local.note_type() if local else existing.get(mid, by_name.get(family))
         if target is None:
             continue
-        if target['name'].rstrip('+') != family:
+        if base_notetype_name(target['name']) != family:
             # Different-family conversions require the existing consent flow.
             continue
         if (source.get('type', 0) != target.get('type', 0)

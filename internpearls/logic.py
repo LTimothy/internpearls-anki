@@ -1011,8 +1011,11 @@ def base_notetype_name(name):
     Measured on a real collection: 595 of 625 notes sat on a suffixed variant and only 30
     on the bare name, so treating a suffix as somebody else's note type would skip
     virtually every card that needs converting.
+
+    Anki's legacy save instead appends "-" and five hex digits to a note type saved
+    under a name another one holds, so that suffix is stripped as well.
     """
-    return (name or "").rstrip("+") or (name or "")
+    return re.sub(r"(?:\++|-[0-9a-f]{5})+$", "", name or "") or (name or "")
 
 
 def plan_notetype_changes(incoming_types, existing_types, managed):

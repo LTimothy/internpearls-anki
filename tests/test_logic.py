@@ -1643,6 +1643,16 @@ def test_apkg_models_reads_name_css_templates(tmp_path):
     }}
 
 
+def test_base_notetype_name_strips_both_of_ankis_collision_suffixes():
+    base = "Study Deck - Basic"
+    for name in (base, base + "+++", base + "-1a2b3", base + "-1a2b3++"):
+        assert logic.base_notetype_name(name) == base
+    # Not a collision suffix: wrong length, or not hex.
+    assert logic.base_notetype_name(base + "-notes") == base + "-notes"
+    assert logic.base_notetype_name(base + "-12ab") == base + "-12ab"
+    assert logic.base_notetype_name("+") == "+"
+
+
 def test_model_shape_ignores_incidental_keys():
     # ids, mod times, and field lists must not make two otherwise-identical models
     # "differ" — fields are _ensure_notetypes' job, not the template comparison's.
