@@ -3,6 +3,12 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.88.0
+
+- Update my decks applies each deck faster in a large collection.
+- The Update my decks progress bar moves by cards, so a large deck no longer
+  counts the same as a small one.
+
 ## v0.87.2
 
 - A card you skipped before Later existed stays at Later on every update until you
