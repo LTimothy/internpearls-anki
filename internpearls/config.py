@@ -20,7 +20,7 @@ ADDON_VERSION = "0.89.0"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # deck-repo side bumps its manifest `schema` only for a breaking shape change (see its
 # own notes); when it does, an add-on release that understands the new shape must bump
 # this in lockstep BEFORE that manifest ships, so an older, still-installed add-on
-# refuses to sync against it instead of guessing. Today's manifest schema is 3, and this
+# refuses to sync against it instead of guessing. Schema 4 adds per-deck `media`; this
 # add-on release understands it; bump this again in lockstep the next time the deck-repo
 # side bumps schema.
 SUPPORTED_MANIFEST_SCHEMA = 4

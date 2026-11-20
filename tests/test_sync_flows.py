@@ -10093,9 +10093,9 @@ def _count_fetches(monkeypatch, sync):
     calls = []
     real = sync._cached_fetch
 
-    def spy(fetch, d, on_chunk=None):
+    def spy(fetch, d, on_chunk=None, **kw):
         calls.append(d["name"])
-        return real(fetch, d, on_chunk=on_chunk)
+        return real(fetch, d, on_chunk=on_chunk, **kw)
     monkeypatch.setattr(sync, "_cached_fetch", spy)
     return calls
 

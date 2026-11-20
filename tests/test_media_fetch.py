@@ -188,3 +188,33 @@ def test_prune_media_cache_keeps_listed_hashes(anki, cache):
     (cache / "stray.part").write_bytes(b"")
     sync._prune_media_cache({"schema": 4, "decks": [{"media": _entries(x=X)}]})
     assert sorted(p.name for p in cache.iterdir()) == sorted([_sha(X), "stray.part"])
+
+
+def test_readers_can_skip_image_downloads(anki, tmp_path, monkeypatch, cache):
+    from internpearls import sync
+    deck, fetch, requested = _github(tmp_path, monkeypatch, _entries(x=X),
+                                     {"media/x.png": X})
+    path = sync._cached_fetch(fetch, deck, with_media=False)
+    assert requested == ["decks/deck.apkg"]
+    assert _index(path) == {}
+    assert not cache.exists()
+
+
+def test_prune_ignores_a_malformed_hash(anki, cache):
+    from internpearls import sync
+    cache.mkdir()
+    (cache / _sha(X)).write_bytes(X)
+    sync._prune_media_cache({"decks": [{"media": {"x.png": {"sha256": []}}},
+                                       {"media": _entries(x=X)}]})
+    assert (cache / _sha(X)).exists()
+
+
+def test_a_manifest_this_addon_cannot_read_leaves_the_cache_alone(
+        anki, tmp_path, monkeypatch, cache):
+    from internpearls import sync
+    cache.mkdir()
+    (cache / _sha(X)).write_bytes(X)
+    manifest = {"schema": 99, "decks": []}
+    monkeypatch.setattr(sync, "_gh_raw", lambda *a, **k: json.dumps(manifest).encode())
+    sync._fetch_manifest(dict(sync._cfg(), gh_repo="example/decks"))
+    assert (cache / _sha(X)).exists()

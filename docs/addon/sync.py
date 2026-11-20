@@ -306,11 +306,14 @@ def _ensure_media(entries, read):
 
 def _prune_media_cache(manifest):
     """Drop cached images no deck in `manifest` lists any more."""
+    if manifest_needs_newer_addon(manifest, SUPPORTED_MANIFEST_SCHEMA):
+        return
     keep = set()
     for d in manifest.get("decks") or ():
         media = d.get("media") if isinstance(d, dict) else None
         if isinstance(media, dict):
-            keep.update(e.get("sha256") for e in media.values() if isinstance(e, dict))
+            keep.update(e["sha256"] for e in media.values()
+                        if isinstance(e, dict) and isinstance(e.get("sha256"), str))
     try:
         names = os.listdir(MEDIA_CACHE)
     except OSError:
@@ -384,7 +387,7 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
             raise RuntimeError(f"the manifest.json in {cfg['gh_repo']} is empty")
         _require_manifest_object(manifest, cfg["gh_repo"])
 
-        def fetch(d, on_chunk=None, max_bytes=APKG_MAX_BYTES):
+        def fetch(d, on_chunk=None, max_bytes=APKG_MAX_BYTES, with_media=True):
             validate_media_entries(d.get("media"))
             path = safe_source_path(d["apkg"])
             data = _gh_raw(cfg["gh_repo"], path, cfg["gh_token"], cfg["gh_ref"],
@@ -398,7 +401,7 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
                                cfg["gh_ref"], timeout=download_timeout,
                                on_chunk=on_chunk, max_bytes=MEDIA_FILE_MAX_BYTES)
 
-            return _with_media(d, apkg, key, read)
+            return _with_media(d, apkg, key, read) if with_media else apkg
 
         fetch.source_key = ("github", cfg["gh_repo"], cfg["gh_ref"])
         _prune_media_cache(manifest)
@@ -429,7 +432,7 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
             raise RuntimeError(f"the manifest.json in {folder} is empty")
         _require_manifest_object(manifest, folder)
 
-        def fetch(d, on_chunk=None, max_bytes=None):
+        def fetch(d, on_chunk=None, max_bytes=None, with_media=True):
             validate_media_entries(d.get("media"))
             apkg = _local_source_file(folder, d["apkg"])
 
@@ -440,6 +443,8 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
                 with open(local, "rb") as fh:
                     return fh.read()
 
+            if not with_media:
+                return apkg
             return _with_media(d, apkg, f"{os.path.realpath(folder)}/{d['apkg']}", read)
 
         fetch.source_key = ("folder", os.path.realpath(folder))
@@ -719,7 +724,7 @@ def _record_current_hashes(cfg, manifest, fetch, installed, todo, reg):
                         f"Recording {d['name'].split('::')[-1]} ({i} of {len(decks)})"):
                 break
             try:
-                src = _cached_fetch(fetch, d, on_chunk=step.pump)
+                src = _cached_fetch(fetch, d, on_chunk=step.pump, with_media=False)
                 *_, matched = remap_cards(src, _existing_front_to_guid(scope),
                                           manifest.get("front_aliases", {}))
                 hashes = shipped_field_hashes(apkg_note_details(src), matched,
@@ -1405,7 +1410,8 @@ def _live_cards_loader(manifest, fetch=None, local=None):
                         if not step(starts[i - 1] + 1, f"Reading {short} ({i} of {len(to_fetch)})"):
                             break
                         try:
-                            read(_cached_fetch(fetch, d, on_chunk=step.pump))
+                            read(_cached_fetch(fetch, d, on_chunk=step.pump,
+                                               with_media=False))
                         except DownloadCancelled:
                             break
                         except Exception:
@@ -1931,11 +1937,19 @@ def clean_up_duplicates():
 _apkg_cache = {}
 
 
-def _cached_fetch(fetch, d, on_chunk=None):
+def _cached_fetch(fetch, d, on_chunk=None, with_media=True):
+    """`with_media=False` is for callers that only read notes, so they never wait on
+    image downloads; a full fetch already made serves them too."""
     key = (getattr(fetch, "source_key", fetch), d["name"], d.get("apkg"), d.get("version"))
-    hit = _apkg_cache.get(key)
-    if hit and os.path.exists(hit):
-        return hit
+    for k in ((key,) if with_media else (key, key + ("bare",))):
+        hit = _apkg_cache.get(k)
+        if hit and os.path.exists(hit):
+            return hit
+    if not with_media:
+        key += ("bare",)
+        path = fetch(d, on_chunk=on_chunk, with_media=False)
+        _apkg_cache[key] = path
+        return path
     path = fetch(d, on_chunk=on_chunk)
     _apkg_cache[key] = path
     return path
