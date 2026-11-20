@@ -23,7 +23,7 @@ ADDON_VERSION = "0.88.2"   # MAJOR.MINOR.PATCH, see README "Versioning"
 # refuses to sync against it instead of guessing. Today's manifest schema is 3, and this
 # add-on release understands it; bump this again in lockstep the next time the deck-repo
 # side bumps schema.
-SUPPORTED_MANIFEST_SCHEMA = 3
+SUPPORTED_MANIFEST_SCHEMA = 4
 ANKI_REPO = "LTimothy/internpearls-anki"   # public add-on repo (used for self-update)
 APP_NAME = "Intern Pearls"   # every dialog's title bar, so it never just says "Anki"
 EXPORT_DECK = "Intern Pearls::Intern Custom"   # the deck Export Intern Pearls deck scopes to
@@ -81,6 +81,9 @@ LATER_SEEN = os.path.join(_USER_FILES, "later_seen.json")
 # Per-session dirs of downloaded decks; kept out of the system temp dir, which an
 # AI backend's sandbox may be able to write.
 DECK_CACHE = os.path.join(_USER_FILES, "deck_cache")
+# Deck images by content hash, so an unchanged picture is never downloaded twice.
+MEDIA_CACHE = os.path.join(_USER_FILES, "media_cache")
+MEDIA_FILE_MAX_BYTES = 20 * 1024 * 1024
 
 AUTO_SYNC_INTERVAL_FLOOR_MIN = 1     # refuse to poll more often than this, however configured
 AUTO_SYNC_INTERVAL_DEFAULT_MIN = 15  # used when the setting is missing or unreadable

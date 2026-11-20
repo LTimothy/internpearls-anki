@@ -43,13 +43,15 @@ from .collection import (NoteTypeFieldsRequired, _NoteTypeCache, _apply_deck,
                          carry_scheduling_forward, decks_holding,
                          installed_matching_collection, invalidate_installed)
 from .config import (ADDON_VERSION, DECK_CACHE, DUPLICATE_TAG_LEAF, INSTALLED,
+                     MEDIA_CACHE, MEDIA_FILE_MAX_BYTES,
                      RETIRED_DECK_LEAF,
                      RECORDED_TEXT, RETIRED_TAG_LEAF, SHIPPED, SUPPORTED_MANIFEST_SCHEMA, _cfg,
                      _load_json, _save_json, collection_key, load_declined, load_deck_skill,
                      replace_file, save_declined, save_deck_skill, save_later_seen)
 from .logic import (APKG_MAX_BYTES, HASH_KEY, MOD_KEY, apkg_deck_names, apkg_note_details, apkg_notes,
                     card_progress,
-                    change_notes_for, changed_since, safe_source_path,
+                    change_notes_for, changed_since, inject_apkg_media,
+                    safe_source_path, validate_media_entries,
                     source_label_for, group_change_notes, sort_source_groups,
                     declined_drop, declined_guids,
                     decks_to_update, feedback_entries, merge_saved_feedback,
@@ -258,6 +260,92 @@ def _source_warning(e):
           "your GitHub token or local folder.")
 
 
+def _cached_media(sha):
+    """The cached file for `sha`, or None if absent or no longer matching."""
+    path = os.path.join(MEDIA_CACHE, sha)
+    try:
+        with open(path, "rb") as fh:
+            if hashlib.sha256(fh.read()).hexdigest() == sha:
+                return path
+    except OSError:
+        pass
+    return None
+
+
+def _ensure_media(entries, read):
+    """{filename: cached path} for every image in `entries`, downloading only misses.
+
+    `read(path)` returns one image's bytes from the source. A file that doesn't match
+    its checksum is refused and never cached, so the deck waits for the next run.
+    """
+    out = {}
+    for name, entry in entries.items():
+        sha = entry["sha256"]
+        hit = _cached_media(sha)
+        if hit is None:
+            data = read(entry["path"])
+            if hashlib.sha256(data).hexdigest() != sha:
+                raise RuntimeError("an image for this deck didn't match its "
+                                   f"checksum: {name}")
+            os.makedirs(MEDIA_CACHE, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=MEDIA_CACHE, suffix=".part")
+            try:
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(data)
+                hit = os.path.join(MEDIA_CACHE, sha)
+                replace_file(tmp, hit)
+            except Exception:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+        out[name] = hit
+    return out
+
+
+def _prune_media_cache(manifest):
+    """Drop cached images no deck in `manifest` lists any more."""
+    keep = set()
+    for d in manifest.get("decks") or ():
+        media = d.get("media") if isinstance(d, dict) else None
+        if isinstance(media, dict):
+            keep.update(e.get("sha256") for e in media.values() if isinstance(e, dict))
+    try:
+        names = os.listdir(MEDIA_CACHE)
+    except OSError:
+        return
+    for name in names:
+        # Only finished files: a .part may be another fetch's download in progress.
+        if name not in keep and re.fullmatch(r"[0-9a-f]{64}", name):
+            try:
+                os.remove(os.path.join(MEDIA_CACHE, name))
+            except OSError:
+                pass
+
+
+def _with_media(d, apkg, scratch_key, read):
+    """`apkg` with the deck's listed images put back in, as a scratch file; `apkg`
+    itself when the deck lists none."""
+    entries = validate_media_entries(d.get("media"))
+    if not entries:
+        return apkg
+    files = _ensure_media(entries, read)
+    fd, tmp = tempfile.mkstemp(dir=_scratch(), suffix=".part")
+    os.close(fd)
+    try:
+        inject_apkg_media(apkg, tmp, files)
+        path = _scratch_path(scratch_key + "+media", d.get("version"))
+        replace_file(tmp, path)
+        return path
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TIMEOUT):
     """Return (manifest, fetch_apkg, source_label) where fetch_apkg(deck, on_chunk=None)
     returns a local .apkg path.
@@ -297,14 +385,23 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
         _require_manifest_object(manifest, cfg["gh_repo"])
 
         def fetch(d, on_chunk=None, max_bytes=APKG_MAX_BYTES):
+            validate_media_entries(d.get("media"))
             path = safe_source_path(d["apkg"])
             data = _gh_raw(cfg["gh_repo"], path, cfg["gh_token"], cfg["gh_ref"],
                            timeout=download_timeout, on_chunk=on_chunk,
                            max_bytes=max_bytes)
-            return _write_scratch(f"{cfg['gh_repo']}@{cfg['gh_ref']}/{path}",
-                                  data, d.get("version"))
+            key = f"{cfg['gh_repo']}@{cfg['gh_ref']}/{path}"
+            apkg = _write_scratch(key, data, d.get("version"))
+
+            def read(p):
+                return _gh_raw(cfg["gh_repo"], safe_source_path(p), cfg["gh_token"],
+                               cfg["gh_ref"], timeout=download_timeout,
+                               on_chunk=on_chunk, max_bytes=MEDIA_FILE_MAX_BYTES)
+
+            return _with_media(d, apkg, key, read)
 
         fetch.source_key = ("github", cfg["gh_repo"], cfg["gh_ref"])
+        _prune_media_cache(manifest)
         return manifest, fetch, "GitHub"
 
     if cfg["decks_dir"]:
@@ -333,9 +430,20 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
         _require_manifest_object(manifest, folder)
 
         def fetch(d, on_chunk=None, max_bytes=None):
-            return _local_source_file(folder, d["apkg"])
+            validate_media_entries(d.get("media"))
+            apkg = _local_source_file(folder, d["apkg"])
+
+            def read(p):
+                local = _local_source_file(folder, p)
+                if os.path.getsize(local) > MEDIA_FILE_MAX_BYTES:
+                    raise RuntimeError(f"the image {p} in {folder} is too large")
+                with open(local, "rb") as fh:
+                    return fh.read()
+
+            return _with_media(d, apkg, f"{os.path.realpath(folder)}/{d['apkg']}", read)
 
         fetch.source_key = ("folder", os.path.realpath(folder))
+        _prune_media_cache(manifest)
         return manifest, fetch, "local folder"
 
     return None, None, None
