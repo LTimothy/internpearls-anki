@@ -3776,3 +3776,63 @@ def test_card_progress_weighs_each_deck_by_its_cards():
     assert card_progress([{}, {"cards": "12"}, {"cards": 0}, {"cards": True}]) == (
         [0, 1, 2, 3], 4)
     assert card_progress([]) == ([], 0)
+
+
+_H = "a" * 64
+
+
+@pytest.mark.parametrize("bad", [
+    {"../x.png": {"path": "media/x.png", "sha256": _H}},
+    {"a/b.png": {"path": "media/b.png", "sha256": _H}},
+    {"a\\b.png": {"path": "media/b.png", "sha256": _H}},
+    {"": {"path": "media/b.png", "sha256": _H}},
+    {"x.png": {"path": "/etc/x.png", "sha256": _H}},
+    {"x.png": {"path": "media/../../x.png", "sha256": _H}},
+    {"x.png": {"path": "media/x.png", "sha256": "XYZ"}},
+    {"x.png": {"path": "media/x.png", "sha256": "A" * 64}},
+    {"x.png": "media/x.png"},
+    ["x.png"],
+])
+def test_validate_media_entries_rejects(bad):
+    with pytest.raises(RuntimeError):
+        logic.validate_media_entries(bad)
+
+
+def test_validate_media_entries_accepts_and_defaults():
+    ok = {"x.png": {"path": "media/sub/x.png", "sha256": _H}}
+    assert logic.validate_media_entries(ok) == ok
+    assert logic.validate_media_entries(None) == {}
+    assert logic.validate_media_entries({}) == {}
+
+
+def _bare_apkg(path):
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("collection.anki2", b"db")
+        z.writestr("media", "{}")
+
+
+def test_inject_apkg_media_round_trips(tmp_path):
+    src, mid, out = tmp_path / "a.apkg", tmp_path / "b.apkg", tmp_path / "c.apkg"
+    _bare_apkg(src)
+    x, y = tmp_path / "x.png", tmp_path / "y.png"
+    x.write_bytes(b"img-x")
+    y.write_bytes(b"img-y")
+    logic.inject_apkg_media(str(src), str(mid), {"x.png": str(x)})
+    assert logic.apkg_media_index(str(mid)) == {"x.png": "0"}
+    logic.inject_apkg_media(str(mid), str(out), {"y.png": str(y)})
+    index = logic.apkg_media_index(str(out))
+    assert set(index) == {"x.png", "y.png"}
+    with zipfile.ZipFile(out) as z:
+        assert z.read(index["x.png"]) == b"img-x"
+        assert z.read(index["y.png"]) == b"img-y"
+        assert z.read("collection.anki2") == b"db"
+    assert logic.apkg_media_index(str(src)) == {}
+
+
+def test_inject_apkg_media_rejects_a_non_object_index(tmp_path):
+    src = tmp_path / "a.apkg"
+    with zipfile.ZipFile(src, "w") as z:
+        z.writestr("collection.anki2", b"db")
+        z.writestr("media", "[]")
+    with pytest.raises(RuntimeError):
+        logic.inject_apkg_media(str(src), str(tmp_path / "b.apkg"), {})

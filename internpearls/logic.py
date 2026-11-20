@@ -886,6 +886,61 @@ def apkg_media_index(path):
     return {name: member for member, name in entries.items() if isinstance(name, str)}
 
 
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def validate_media_entries(media):
+    """A deck's manifest `media` map, checked: {filename: {"path", "sha256"}}.
+
+    The filename is what a card's <img> names, so it must be a bare name; the path must
+    stay inside the source. Anything else raises RuntimeError before a byte is fetched.
+    """
+    if media is None:
+        return {}
+    if not isinstance(media, dict):
+        raise RuntimeError("the manifest lists a deck's images in a shape this add-on "
+                           "doesn't recognize")
+    out = {}
+    for name, entry in media.items():
+        if (not isinstance(name, str) or not name or name in (".", "..")
+                or any(c in name for c in "/\\\0")):
+            raise RuntimeError(f"the manifest names an image {name!r} that isn't a "
+                               "plain file name")
+        if (not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str)
+                or not _SHA256.fullmatch(entry["sha256"])):
+            raise RuntimeError(f"the manifest entry for the image {name!r} is incomplete")
+        safe_source_path(entry.get("path"))
+        out[name] = {"path": entry["path"], "sha256": entry["sha256"]}
+    return out
+
+
+def inject_apkg_media(src, dest, files):
+    """Write `src` to `dest` with `files` ({filename: local path}) added as media.
+
+    Members already in `src` are copied as they are; each new picture gets the next free
+    number in the legacy JSON "media" index, which is the layout genanki writes.
+    """
+    with zipfile.ZipFile(src) as zin:
+        names = zin.namelist()
+        index = json.loads(zin.read("media").decode("utf8")) if "media" in names else {}
+        if not isinstance(index, dict):
+            raise RuntimeError("this deck's picture index is damaged, so its images "
+                               "couldn't be added")
+        taken = {int(k) for k in index if str(k).isdigit()}
+        n = max(taken, default=-1) + 1
+        with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zout:
+            for info in zin.infolist():
+                if info.filename != "media":
+                    with zin.open(info) as fin, zout.open(info, "w",
+                                                          force_zip64=True) as fout:
+                        shutil.copyfileobj(fin, fout, 1024 * 1024)
+            for name, local in files.items():
+                zout.write(local, str(n), compress_type=zipfile.ZIP_STORED)
+                index[str(n)] = name
+                n += 1
+            zout.writestr("media", json.dumps(index))
+
+
 def extract_apkg_media(path, index, names, dest):
     """Extract just the named pictures out of an .apkg into `dest`.
 
