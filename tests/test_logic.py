@@ -3836,3 +3836,11 @@ def test_inject_apkg_media_rejects_a_non_object_index(tmp_path):
         z.writestr("media", "[]")
     with pytest.raises(RuntimeError):
         logic.inject_apkg_media(str(src), str(tmp_path / "b.apkg"), {})
+
+
+def test_schema_4_manifest_is_readable_and_5_is_not():
+    from internpearls.config import SUPPORTED_MANIFEST_SCHEMA
+    assert SUPPORTED_MANIFEST_SCHEMA == 4
+    assert logic.manifest_needs_newer_addon({"schema": 3}, SUPPORTED_MANIFEST_SCHEMA) is False
+    assert logic.manifest_needs_newer_addon({"schema": 4}, SUPPORTED_MANIFEST_SCHEMA) is False
+    assert logic.manifest_needs_newer_addon({"schema": 5}, SUPPORTED_MANIFEST_SCHEMA) is True

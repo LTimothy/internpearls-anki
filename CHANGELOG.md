@@ -3,6 +3,11 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.89.0
+
+- Deck images download on their own and are kept in a cache, so a deck
+  update downloads only the cards and any new images.
+
 ## v0.88.2
 
 - A deck no longer fails with "note-type conflicts" when its cards sit on a note

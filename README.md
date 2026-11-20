@@ -174,6 +174,7 @@ With your own tooling, put a `manifest.json` in a GitHub repo (public or private
 - `decks`: `name` is the Anki deck name, `apkg` the path from the root, `version` any string that changes when the deck changes, and `cards` an optional count. `spec` is informational.
 - `scope_tag`, `export_deck`: the values you recommend to subscribers. A `scope_tag` already on a subscriber's notes needs their explicit yes.
 - `front_aliases` (`{current front: previous front}`) and `superseded_fronts` (`{old front: current front}`): renamed fronts, so a card matched by text survives a reword.
+- `media` (schema 4, optional per deck): `{filename: {path, sha256}}` for images kept outside the `.apkg`. The add-on downloads each one, checks its hash, keeps it in a cache so an unchanged image is fetched once, and adds it to the package before importing.
 - Stable GUIDs matter most. Derive each GUID from an explicit per-card id, not the front, and fronts can change freely.
 - Optional ledgers for Reconcile my decks: `retired` (`{deck: {guid: {identity, reason, superseded_by}}}`) and `deck_moves` (`{guid: {from, to, front}}`, full deck paths).
 - Optional extras: `change_notes` (`{guid: [{on, kind, note}]}`), `note_sources` (`{guid: label}`), `note_protected_fields` (`{guid: [field]}`) and `skill` (`{path, version}`, card-writing instructions the AI feature can use with the subscriber's consent).
