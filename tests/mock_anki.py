@@ -569,6 +569,13 @@ class MockMedia:
         self._files[fname] = data
         return fname
 
+    def dir(self):
+        return getattr(self, "_dir", None)
+
+    def set_dir(self, path):
+        """Test hook: the media folder dir() reports, None by default."""
+        self._dir = path
+
     def add_file(self, path):
         with open(path, "rb") as fh:
             return self.write_data(os.path.basename(path), fh.read())

@@ -499,7 +499,9 @@ def cancellable_progress(title, total, cancel_text="Cancel"):
     """
     dlg = QProgressDialog(title, cancel_text, 0, total, mw)
     dlg.setMinimumWidth(420)
-    label = QLabel(title)
+    # Line 1 says where the run is, line 2 any download under way; the empty second
+    # line keeps the window the same height either way.
+    label = QLabel(f"{title}\n")
     label.setTextFormat(Qt.TextFormat.PlainText)
     dlg.setLabel(label)
     dlg.setWindowTitle(APP_NAME)
@@ -509,6 +511,7 @@ def cancellable_progress(title, total, cancel_text="Cancel"):
     dlg.setValue(0)
 
     share = [0, 1]   # where the current step starts, and how many units it owns
+    line = [title]
 
     def pump(_bytes_so_far=None):
         QApplication.processEvents()
@@ -523,12 +526,13 @@ def cancellable_progress(title, total, cancel_text="Cancel"):
             dlg.setValue(share[0] + (share[1] - 1) * min(done, of) // of)
         if text:
             # Not setLabelText: tests count those calls as steps.
-            label.setText(f"{title}\n{text}")
+            label.setText(f"{line[0]}\n{text}")
         return pump()
 
     def step(i, text, span=1):
         share[:] = [i - 1, max(1, span)]
-        dlg.setLabelText(f"{title}\n{text}")
+        line[0] = text
+        dlg.setLabelText(f"{text}\n")
         dlg.setValue(i - 1)
         return pump()
 

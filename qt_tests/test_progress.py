@@ -103,7 +103,7 @@ def test_the_progress_window_label_shows_markup_literally():
         step(1, text)
         label = dlg.findChild(QLabel)
         assert label.textFormat() == Qt.TextFormat.PlainText
-        assert label.text() == f"Syncing decks\n{text}"
+        assert label.text() == f"{text}\n"
 
 
 def test_the_pump_reports_cancel_without_advancing_the_bar():
@@ -362,9 +362,11 @@ def test_part_moves_the_bar_within_one_decks_share_and_names_the_work():
     with _progress(total=10) as (step, dlg):
         step(5, "Checking Pharmacology (2 of 2)", span=6)
         assert dlg.value() == 4
-        assert step.pump.part(1, 2, "Pharmacology images (1 of 2)") is True
+        assert step.pump.part(1, 2, "Downloading images: 1 of 2") is True
         assert dlg.value() == 6
-        assert dlg.findChild(QLabel).text() == "Syncing decks\nPharmacology images (1 of 2)"
+        assert dlg.findChild(QLabel).text() == (
+            "Checking Pharmacology (2 of 2)\nDownloading images: 1 of 2"), (
+            "the deck line stays on top while its pictures download")
         step.pump.part(2, 2)
         assert dlg.value() == 9, "the last part stays short of the maximum"
         assert dlg.isVisible()
@@ -377,3 +379,9 @@ def test_the_cancel_button_can_say_what_it_will_do():
     from aqt.qt import QPushButton
     with _progress(cancel_text="Stop after this deck") as (_step, dlg):
         assert [b.text() for b in dlg.findChildren(QPushButton)] == ["Stop after this deck"]
+
+
+def test_the_window_opens_on_its_title_with_room_for_a_detail_line():
+    from aqt.qt import QLabel
+    with _progress(title="Checking for updates") as (_step, dlg):
+        assert dlg.findChild(QLabel).text() == "Checking for updates\n"

@@ -240,7 +240,7 @@ def test_image_progress_ticks_once_per_image(anki, tmp_path, monkeypatch, cache)
     pump.part = lambda done, of, label=None: ticks.append((done, of, label)) or True
     fetch(deck, on_chunk=pump)
     assert [(d, o) for d, o, _ in ticks] == [(1, 2), (2, 2)]
-    assert ticks[-1][2] == "Pharm images (2 of 2)"
+    assert ticks[-1][2] == "Downloading images: 2 of 2"
 
 
 def test_cancel_during_images_stops_the_fetch(anki, tmp_path, monkeypatch, cache):
@@ -258,3 +258,45 @@ def test_cancel_during_images_stops_the_fetch(anki, tmp_path, monkeypatch, cache
 def test_each_deck_owns_its_cards_share_of_the_bar():
     from internpearls import sync
     assert [sync._share([0, 1, 5], 6, i) for i in (1, 2, 3)] == [1, 4, 1]
+
+
+def _ticking():
+    ticks = []
+
+    def pump(_n=None):
+        return True
+    pump.part = lambda done, of, label=None: ticks.append((done, of)) or True
+    return pump, ticks
+
+
+def test_progress_counts_only_images_that_download(anki, tmp_path, monkeypatch, cache):
+    cache.mkdir()
+    (cache / _sha(X)).write_bytes(X)
+    deck, fetch, _ = _github(tmp_path, monkeypatch, _entries(x=X, y=Y), {"media/y.png": Y})
+    pump, ticks = _ticking()
+    fetch(deck, on_chunk=pump)
+    assert ticks == [(1, 1)]
+
+
+def test_images_already_in_anki_are_not_downloaded(anki, tmp_path, monkeypatch, cache):
+    media = tmp_path / "collection.media"
+    media.mkdir()
+    (media / "x.png").write_bytes(X)
+    (media / "y.png").write_bytes(b"an older picture")
+    deck, fetch, requested = _github(tmp_path, monkeypatch, _entries(x=X, y=Y, z=X + Y),
+                                     {"media/y.png": Y, "media/z.png": X + Y})
+    fetch.media_dir = str(media)
+    path = fetch(deck)
+    assert sorted(requested) == ["decks/deck.apkg", "media/y.png", "media/z.png"]
+    assert set(_index(path)) == {"x.png", "y.png", "z.png"}
+    assert not (cache / _sha(X)).exists(), "a picture Anki already has is not copied"
+
+
+def test_update_tells_fetch_where_anki_keeps_pictures(anki, tmp_path, monkeypatch, cache):
+    from internpearls import sync
+    media = tmp_path / "collection.media"
+    media.mkdir()
+    anki.col.media.set_dir(str(media))
+    _configure(anki, str(_local_source(tmp_path, {"x.png": X})))
+    _, fetch, _ = sync._fetch_manifest_gated(sync._cfg())
+    assert fetch.media_dir == str(media)

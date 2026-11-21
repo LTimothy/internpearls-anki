@@ -260,9 +260,9 @@ def _source_warning(e):
           "your GitHub token or local folder.")
 
 
-def _cached_media(sha):
-    """The cached file for `sha`, or None if absent or no longer matching."""
-    path = os.path.join(MEDIA_CACHE, sha)
+def _cached_media(sha, path=None):
+    """`path` (default: the cache file for `sha`) if it holds exactly `sha`, else None."""
+    path = path or os.path.join(MEDIA_CACHE, sha)
     try:
         with open(path, "rb") as fh:
             if hashlib.sha256(fh.read()).hexdigest() == sha:
@@ -272,36 +272,44 @@ def _cached_media(sha):
     return None
 
 
-def _ensure_media(entries, read, on_file=None):
-    """{filename: cached path} for every image in `entries`, downloading only misses.
+def _ensure_media(entries, read, on_file=None, media_dir=None):
+    """{filename: local path} for every image in `entries`, downloading only misses.
 
-    `read(path)` returns one image's bytes from the source. A file that doesn't match
-    its checksum is refused and never cached, so the deck waits for the next run.
+    A picture already in Anki's media folder (`media_dir`) with the same bytes is used
+    where it is, then the cache, then the source. `read(path)` returns one image's
+    bytes from the source; `on_file(k, n)` ticks once per download. A file that
+    doesn't match its checksum is refused and never cached, so the deck waits for the
+    next run.
     """
-    out = {}
-    for n, (name, entry) in enumerate(entries.items(), 1):
+    out, missing = {}, []
+    for name, entry in entries.items():
         sha = entry["sha256"]
-        hit = _cached_media(sha)
-        if hit is None:
-            data = read(entry["path"])
-            if hashlib.sha256(data).hexdigest() != sha:
-                raise RuntimeError("an image for this deck didn't match its "
-                                   f"checksum: {name}")
-            os.makedirs(MEDIA_CACHE, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=MEDIA_CACHE, suffix=".part")
+        hit = (media_dir and _cached_media(sha, os.path.join(media_dir, name))
+               or _cached_media(sha))
+        if hit:
+            out[name] = hit
+        else:
+            missing.append((name, entry))
+    for k, (name, entry) in enumerate(missing, 1):
+        sha = entry["sha256"]
+        data = read(entry["path"])
+        if hashlib.sha256(data).hexdigest() != sha:
+            raise RuntimeError("an image for this deck didn't match its "
+                               f"checksum: {name}")
+        os.makedirs(MEDIA_CACHE, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=MEDIA_CACHE, suffix=".part")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            out[name] = os.path.join(MEDIA_CACHE, sha)
+            replace_file(tmp, out[name])
+        except Exception:
             try:
-                with os.fdopen(fd, "wb") as fh:
-                    fh.write(data)
-                hit = os.path.join(MEDIA_CACHE, sha)
-                replace_file(tmp, hit)
-            except Exception:
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
-                raise
-        out[name] = hit
-        if on_file is not None and not on_file(n, len(entries)):
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+        if on_file is not None and not on_file(k, len(missing)):
             raise DownloadCancelled()
     return out
 
@@ -329,15 +337,14 @@ def _prune_media_cache(manifest):
                 pass
 
 
-def _with_media(d, apkg, scratch_key, read, part=None):
+def _with_media(d, apkg, scratch_key, read, part=None, media_dir=None):
     """`apkg` with the deck's listed images put back in, as a scratch file; `apkg`
     itself when the deck lists none."""
     entries = validate_media_entries(d.get("media"))
     if not entries:
         return apkg
-    short = d["name"].split("::")[-1]
-    on_file = part and (lambda n, of: part(n, of, f"{short} images ({n} of {of})"))
-    files = _ensure_media(entries, read, on_file)
+    on_file = part and (lambda n, of: part(n, of, f"Downloading images: {n} of {of}"))
+    files = _ensure_media(entries, read, on_file, media_dir)
     fd, tmp = tempfile.mkstemp(dir=_scratch(), suffix=".part")
     os.close(fd)
     try:
@@ -408,7 +415,8 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
 
             if not with_media:
                 return apkg
-            return _with_media(d, apkg, key, read, getattr(on_chunk, "part", None))
+            return _with_media(d, apkg, key, read, getattr(on_chunk, "part", None),
+                               getattr(fetch, "media_dir", None))
 
         fetch.source_key = ("github", cfg["gh_repo"], cfg["gh_ref"])
         _prune_media_cache(manifest)
@@ -453,7 +461,8 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
             if not with_media:
                 return apkg
             return _with_media(d, apkg, f"{os.path.realpath(folder)}/{d['apkg']}", read,
-                               getattr(on_chunk, "part", None))
+                               getattr(on_chunk, "part", None),
+                               getattr(fetch, "media_dir", None))
 
         fetch.source_key = ("folder", os.path.realpath(folder))
         _prune_media_cache(manifest)
@@ -502,7 +511,16 @@ def _fetch_manifest_gated(cfg):
             "here has been touched."
         )
         return None
+    # Read here, on the main thread: fetch runs where the collection must not be used.
+    fetch.media_dir = _collection_media_dir()
     return manifest, fetch, source
+
+
+def _collection_media_dir():
+    try:
+        return mw.col.media.dir()
+    except Exception:
+        return None
 
 
 def _check_deck_skill(cfg, manifest, fetch):
