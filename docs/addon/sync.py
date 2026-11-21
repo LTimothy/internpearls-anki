@@ -272,14 +272,14 @@ def _cached_media(sha):
     return None
 
 
-def _ensure_media(entries, read):
+def _ensure_media(entries, read, on_file=None):
     """{filename: cached path} for every image in `entries`, downloading only misses.
 
     `read(path)` returns one image's bytes from the source. A file that doesn't match
     its checksum is refused and never cached, so the deck waits for the next run.
     """
     out = {}
-    for name, entry in entries.items():
+    for n, (name, entry) in enumerate(entries.items(), 1):
         sha = entry["sha256"]
         hit = _cached_media(sha)
         if hit is None:
@@ -301,6 +301,8 @@ def _ensure_media(entries, read):
                     pass
                 raise
         out[name] = hit
+        if on_file is not None:
+            on_file(n, len(entries))
     return out
 
 
@@ -327,13 +329,15 @@ def _prune_media_cache(manifest):
                 pass
 
 
-def _with_media(d, apkg, scratch_key, read):
+def _with_media(d, apkg, scratch_key, read, part=None):
     """`apkg` with the deck's listed images put back in, as a scratch file; `apkg`
     itself when the deck lists none."""
     entries = validate_media_entries(d.get("media"))
     if not entries:
         return apkg
-    files = _ensure_media(entries, read)
+    short = d["name"].split("::")[-1]
+    on_file = part and (lambda n, of: part(n, of, f"{short} images ({n} of {of})"))
+    files = _ensure_media(entries, read, on_file)
     fd, tmp = tempfile.mkstemp(dir=_scratch(), suffix=".part")
     os.close(fd)
     try:
@@ -387,21 +391,24 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
             raise RuntimeError(f"the manifest.json in {cfg['gh_repo']} is empty")
         _require_manifest_object(manifest, cfg["gh_repo"])
 
-        def fetch(d, on_chunk=None, max_bytes=APKG_MAX_BYTES, with_media=True):
+        def fetch(d, on_chunk=None, max_bytes=APKG_MAX_BYTES, with_media=True, apkg=None):
             validate_media_entries(d.get("media"))
             path = safe_source_path(d["apkg"])
-            data = _gh_raw(cfg["gh_repo"], path, cfg["gh_token"], cfg["gh_ref"],
-                           timeout=download_timeout, on_chunk=on_chunk,
-                           max_bytes=max_bytes)
             key = f"{cfg['gh_repo']}@{cfg['gh_ref']}/{path}"
-            apkg = _write_scratch(key, data, d.get("version"))
+            if apkg is None:
+                data = _gh_raw(cfg["gh_repo"], path, cfg["gh_token"], cfg["gh_ref"],
+                               timeout=download_timeout, on_chunk=on_chunk,
+                               max_bytes=max_bytes)
+                apkg = _write_scratch(key, data, d.get("version"))
 
             def read(p):
                 return _gh_raw(cfg["gh_repo"], safe_source_path(p), cfg["gh_token"],
                                cfg["gh_ref"], timeout=download_timeout,
                                on_chunk=on_chunk, max_bytes=MEDIA_FILE_MAX_BYTES)
 
-            return _with_media(d, apkg, key, read) if with_media else apkg
+            if not with_media:
+                return apkg
+            return _with_media(d, apkg, key, read, getattr(on_chunk, "part", None))
 
         fetch.source_key = ("github", cfg["gh_repo"], cfg["gh_ref"])
         _prune_media_cache(manifest)
@@ -432,9 +439,9 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
             raise RuntimeError(f"the manifest.json in {folder} is empty")
         _require_manifest_object(manifest, folder)
 
-        def fetch(d, on_chunk=None, max_bytes=None, with_media=True):
+        def fetch(d, on_chunk=None, max_bytes=None, with_media=True, apkg=None):
             validate_media_entries(d.get("media"))
-            apkg = _local_source_file(folder, d["apkg"])
+            apkg = apkg or _local_source_file(folder, d["apkg"])
 
             def read(p):
                 local = _local_source_file(folder, p)
@@ -445,7 +452,8 @@ def _fetch_manifest(cfg, timeout=_CONNECT_TIMEOUT, download_timeout=_DOWNLOAD_TI
 
             if not with_media:
                 return apkg
-            return _with_media(d, apkg, f"{os.path.realpath(folder)}/{d['apkg']}", read)
+            return _with_media(d, apkg, f"{os.path.realpath(folder)}/{d['apkg']}", read,
+                               getattr(on_chunk, "part", None))
 
         fetch.source_key = ("folder", os.path.realpath(folder))
         _prune_media_cache(manifest)
@@ -628,7 +636,8 @@ def sync_decks():
         results, restored, tpl_changes, _, cancelled, collisions, converted = _run_sync(
             cfg, manifest, lambda d: fetch(d, on_chunk=step.pump), todo,
             on_progress=lambda i, n, name: step(starts[i - 1] + 1,
-                                                f"Syncing {name} ({i} of {n})"))
+                                                f"Syncing {name} ({i} of {n})",
+                                                span=_share(starts, total, i)))
     _offer_template_changes(tpl_changes)
     backup_line = (
         "A pre-sync backup of the Intern Pearls deck was saved; use "
@@ -716,20 +725,22 @@ def _record_current_hashes(cfg, manifest, fetch, installed, todo, reg):
             decks.append((d, mine))
     if not decks:
         return
-    updated = {}
+    updated, cancelled = {}, False
+    fronts = _existing_front_to_guid(scope)
     starts, total = card_progress([d for d, _ in decks])
     with cancellable_progress("Recording your decks' current text", total) as step:
         for i, (d, mine) in enumerate(decks, 1):
             if not step(starts[i - 1] + 1,
                         f"Recording {d['name'].split('::')[-1]} ({i} of {len(decks)})"):
+                cancelled = True
                 break
             try:
                 src = _cached_fetch(fetch, d, on_chunk=step.pump, with_media=False)
-                *_, matched = remap_cards(src, _existing_front_to_guid(scope),
-                                          manifest.get("front_aliases", {}))
+                *_, matched = remap_cards(src, fronts, manifest.get("front_aliases", {}))
                 hashes = shipped_field_hashes(apkg_note_details(src), matched,
                                               skip=declined)
             except DownloadCancelled:
+                cancelled = True
                 break
             except Exception:
                 continue    # this deck is recorded on a later run
@@ -740,6 +751,7 @@ def _record_current_hashes(cfg, manifest, fetch, installed, todo, reg):
     if updated:
         _save_json(SHIPPED, {**_load_shipped(), **updated})
     _save_json(RECORDED_TEXT, done)
+    return cancelled
 
 
 def _adopted_items(edits):
@@ -1309,7 +1321,8 @@ def _retry_failed_downloads(fetch, todo, downloaded):
     with cancellable_progress("Downloading decks", total) as step:
         for i, d in enumerate(missing, 1):
             short = d["name"].split("::")[-1]
-            if not step(starts[i - 1] + 1, f"Downloading {short} ({i} of {len(missing)})"):
+            if not step(starts[i - 1] + 1, f"Downloading {short} ({i} of {len(missing)})",
+                        span=_share(starts, total, i)):
                 return True
             try:
                 downloaded[d["name"]] = _cached_fetch(fetch, d, on_chunk=step.pump)
@@ -1407,13 +1420,15 @@ def _live_cards_loader(manifest, fetch=None, local=None):
                 with cancellable_progress("Checking your current decks", total) as step:
                     for i, d in enumerate(to_fetch, 1):
                         short = d["name"].split("::")[-1]
+                        # Cancel ends the run: a partial read would let a still-shipped
+                        # card look retired.
                         if not step(starts[i - 1] + 1, f"Reading {short} ({i} of {len(to_fetch)})"):
-                            break
+                            raise ProgressCancelled()
                         try:
                             read(_cached_fetch(fetch, d, on_chunk=step.pump,
                                                with_media=False))
                         except DownloadCancelled:
-                            break
+                            raise ProgressCancelled() from None
                         except Exception:
                             pass
             cache.append((guids, fronts))
@@ -1703,8 +1718,11 @@ def reconcile_decks():
         return
 
     live_cards = _live_cards_loader(manifest, fetch)
-    existing_nids, fresh, already, moves, retired_deck, tag, stranded = _reconcile_pending(
-        manifest, cfg, live_cards)
+    try:
+        existing_nids, fresh, already, moves, retired_deck, tag, stranded = (
+            _reconcile_pending(manifest, cfg, live_cards))
+    except ProgressCancelled:
+        return
     if not fresh and not moves and not stranded:
         _refresh_reconcile_action_label(0)
         if already:
@@ -1937,6 +1955,11 @@ def clean_up_duplicates():
 _apkg_cache = {}
 
 
+def _share(starts, total, i):
+    """How much of the bar the i-th (1-based) deck owns, for its images to fill."""
+    return (starts + [total])[i] - starts[i - 1]
+
+
 def _cached_fetch(fetch, d, on_chunk=None, with_media=True):
     """`with_media=False` is for callers that only read notes, so they never wait on
     image downloads; a full fetch already made serves them too."""
@@ -1950,7 +1973,11 @@ def _cached_fetch(fetch, d, on_chunk=None, with_media=True):
         path = fetch(d, on_chunk=on_chunk, with_media=False)
         _apkg_cache[key] = path
         return path
-    path = fetch(d, on_chunk=on_chunk)
+    bare = _apkg_cache.get(key + ("bare",))
+    if bare and os.path.exists(bare):
+        path = fetch(d, on_chunk=on_chunk, apkg=bare)
+    else:
+        path = fetch(d, on_chunk=on_chunk)
     _apkg_cache[key] = path
     return path
 
@@ -2008,7 +2035,8 @@ def _preview_content_changes(fetch, todo, existing_fronts, aliases, existing_fie
     with cancellable_progress("Checking for updates", total) as step:
         for i, d in enumerate(todo, 1):
             short = d["name"].split("::")[-1]
-            if not step(starts[i - 1] + 1, f"Checking {short} ({i} of {len(todo)})"):
+            if not step(starts[i - 1] + 1, f"Checking {short} ({i} of {len(todo)})",
+                        span=_share(starts, total, i)):
                 return preview, downloaded, True
             try:
                 # step.pump keeps Cancel live during the download itself, not just
@@ -2308,10 +2336,16 @@ def update_decks():
     installed = installed_matching_collection(_load_json(INSTALLED, {}), cfg["scope_tag"])
     todo = decks_to_update(manifest, installed, cfg["excluded"],
                            held=held_deck_names(reg))
-    _record_current_hashes(cfg, manifest, fetch, installed, todo, reg)
+    if _record_current_hashes(cfg, manifest, fetch, installed, todo, reg):
+        _info(NOTHING_CHANGED)
+        return
     live_cards = _live_cards_loader(manifest, fetch)
-    existing_nids, fresh, _already, moves, retired_deck, tag, stranded = _reconcile_pending(
-        manifest, cfg, live_cards)
+    try:
+        existing_nids, fresh, _already, moves, retired_deck, tag, stranded = (
+            _reconcile_pending(manifest, cfg, live_cards))
+    except ProgressCancelled:
+        _info(NOTHING_CHANGED)
+        return
 
     if not todo and not fresh and not moves and not stranded:
         _refresh_reconcile_action_label(0)
@@ -2935,7 +2969,8 @@ def update_decks():
         # A cancellable progress window while each deck imports: the preview step
         # above already covered the download itself.
         starts, total = card_progress(todo)
-        with cancellable_progress("Updating decks", total) as step:
+        with cancellable_progress("Updating decks", total,
+                                  cancel_text="Stop after this deck") as step:
             def _already_fetched(d):
                 # Reuses _preview_content_changes' download above instead of fetching
                 # every deck a second time, the same pattern background.py's auto-sync
@@ -2963,7 +2998,8 @@ def update_decks():
                 cfg, manifest, _already_fetched, todo,
                 # step() shows one less than it is given.
                 on_progress=lambda i, n, name: step(starts[i - 1] + 1,
-                                                    f"Applying {name} ({i} of {n})"),
+                                                    f"Applying {name} ({i} of {n})",
+                                                    span=_share(starts, total, i)),
                 convert_notetypes=convert, undisclosed_conversions=undisclosed,
                 take_deck=take_deck)
             # An edit the learner just gave up is not worth sending.
@@ -3043,7 +3079,10 @@ def update_decks():
         fronts_now = _existing_front_to_guid(cfg["scope_tag"])
         pairs = find_stranded_pairs(superseded, fronts_now)
         if pairs:
-            pairs = find_stranded_pairs(superseded, fronts_now, *live_cards())
+            try:
+                pairs = find_stranded_pairs(superseded, fronts_now, *live_cards())
+            except ProgressCancelled:
+                pairs = []      # merged on a later run, once every deck has been read
         stranded = [p for p in pairs
             if p["guid"] in existing_nids and p["successor_guid"] in existing_nids
             and p["guid"] not in skipped_retired_guids

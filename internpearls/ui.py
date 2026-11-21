@@ -466,7 +466,7 @@ def _bg_safe(fn):
 
 
 @contextmanager
-def cancellable_progress(title, total):
+def cancellable_progress(title, total, cancel_text="Cancel"):
     """A determinate, cancellable progress dialog for a loop of `total` steps.
 
     `mw.progress.start()`/`.update()` is Anki's simple busy-indicator API: no
@@ -497,7 +497,8 @@ def cancellable_progress(title, total):
     clicked: this dialog is WindowModal and parented to `mw`, which blocks input to the
     main window and everything under it for as long as it is up.
     """
-    dlg = QProgressDialog(title, "Cancel", 0, total, mw)
+    dlg = QProgressDialog(title, cancel_text, 0, total, mw)
+    dlg.setMinimumWidth(420)
     label = QLabel(title)
     label.setTextFormat(Qt.TextFormat.PlainText)
     dlg.setLabel(label)
@@ -507,15 +508,28 @@ def cancellable_progress(title, total):
     dlg.setAutoClose(True)
     dlg.setValue(0)
 
+    share = [0, 1]   # where the current step starts, and how many units it owns
+
     def pump(_bytes_so_far=None):
         QApplication.processEvents()
         return not dlg.wasCanceled()
 
-    def step(i, label):
-        dlg.setLabelText(label)
+    def part(done, of, text=None):
+        # Stopping one short of the step's share keeps the bar off the maximum, which
+        # would reset the dialog and clear Cancel.
+        if of:
+            dlg.setValue(share[0] + (share[1] - 1) * min(done, of) // of)
+        if text:
+            label.setText(f"{title}\n{text}")
+        return pump()
+
+    def step(i, text, span=1):
+        share[:] = [i - 1, max(1, span)]
+        dlg.setLabelText(f"{title}\n{text}")
         dlg.setValue(i - 1)
         return pump()
 
+    pump.part = part
     step.pump = pump
 
     try:

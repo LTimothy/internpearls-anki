@@ -218,3 +218,26 @@ def test_a_manifest_this_addon_cannot_read_leaves_the_cache_alone(
     monkeypatch.setattr(sync, "_gh_raw", lambda *a, **k: json.dumps(manifest).encode())
     sync._fetch_manifest(dict(sync._cfg(), gh_repo="example/decks"))
     assert (cache / _sha(X)).exists()
+
+
+def test_a_full_fetch_reuses_the_bare_download(anki, tmp_path, monkeypatch, cache):
+    from internpearls import sync
+    deck, fetch, requested = _github(tmp_path, monkeypatch, _entries(x=X),
+                                     {"media/x.png": X})
+    sync._cached_fetch(fetch, deck, with_media=False)
+    path = sync._cached_fetch(fetch, deck)
+    assert requested == ["decks/deck.apkg", "media/x.png"]
+    assert set(_index(path)) == {"x.png"}
+
+
+def test_image_progress_ticks_once_per_image(anki, tmp_path, monkeypatch, cache):
+    deck, fetch, _ = _github(tmp_path, monkeypatch, _entries(x=X, y=Y),
+                             {"media/x.png": X, "media/y.png": Y})
+    ticks = []
+
+    def pump(_n=None):
+        return True
+    pump.part = lambda done, of, label=None: ticks.append((done, of, label)) or True
+    fetch(deck, on_chunk=pump)
+    assert [(d, o) for d, o, _ in ticks] == [(1, 2), (2, 2)]
+    assert ticks[-1][2] == "Pharm images (2 of 2)"

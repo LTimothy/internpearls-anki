@@ -10391,3 +10391,40 @@ def test_applying_a_deck_never_looks_a_guid_up_one_note_at_a_time(anki, tmp_path
     _sync(anki)
 
     assert {n.guid for n in anki.mw.col._notes.values()} == {"g1", "g2"}
+
+
+def test_cancel_while_checking_current_decks_stops_the_live_card_read(anki, tmp_path):
+    from internpearls import sync
+    from internpearls.ui import ProgressCancelled
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    manifest, fetch, _ = sync._fetch_manifest(sync._cfg())
+    from aqt.qt import QProgressDialog
+    QProgressDialog.cancel_after = {"Checking your current decks": 0}
+    with pytest.raises(ProgressCancelled):
+        sync._live_cards_loader(manifest, fetch)()
+
+
+def test_cancel_before_the_confirmation_changes_nothing(anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    from internpearls.review import NOTHING_CHANGED
+    from internpearls.ui import ProgressCancelled
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+
+    def cancelled(*a, **k):
+        raise ProgressCancelled()
+    monkeypatch.setattr(sync, "_reconcile_pending", cancelled)
+    sync.update_decks()
+    assert anki.gui.infos[-1] == NOTHING_CHANGED
+    assert not anki.col.imports
+
+
+def test_cancel_while_recording_ends_the_update(anki, tmp_path, monkeypatch):
+    from internpearls import sync
+    from internpearls.review import NOTHING_CHANGED
+    monkeypatch.setattr(sync, "_record_current_hashes", lambda *a, **k: True)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    sync.update_decks()
+    assert anki.gui.infos[-1] == NOTHING_CHANGED

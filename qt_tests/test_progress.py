@@ -53,7 +53,7 @@ def _post_mouse_click(widget, pos):
 
 
 @contextlib.contextmanager
-def _progress(title="Syncing decks", total=2):
+def _progress(title="Syncing decks", total=2, **kw):
     """cancellable_progress with a real widget standing in for mw.
 
     A real widget parent lets this check exercise window modality. Restored
@@ -67,7 +67,7 @@ def _progress(title="Syncing decks", total=2):
     original = ui.mw
     ui.mw = parent
     try:
-        with ui.cancellable_progress(title, total) as step:
+        with ui.cancellable_progress(title, total, **kw) as step:
             app.processEvents()
             # The visible one: a progress window from an earlier test in this file can
             # still be in the list, closed but not yet destroyed, and asking questions of
@@ -103,7 +103,7 @@ def test_the_progress_window_label_shows_markup_literally():
         step(1, text)
         label = dlg.findChild(QLabel)
         assert label.textFormat() == Qt.TextFormat.PlainText
-        assert label.text() == text
+        assert label.text() == f"Syncing decks\n{text}"
 
 
 def test_the_pump_reports_cancel_without_advancing_the_bar():
@@ -350,3 +350,29 @@ def test_destroying_the_parent_abandons_a_blocked_fetch(monkeypatch):
         if not sip.isdeleted(parent):
             parent.deleteLater()
         app.processEvents()
+
+
+def test_the_window_is_wide_enough_for_the_bar_to_read():
+    with _progress() as (_step, dlg):
+        assert dlg.width() >= 420
+
+
+def test_part_moves_the_bar_within_one_decks_share_and_names_the_work():
+    from aqt.qt import QLabel
+    with _progress(total=10) as (step, dlg):
+        step(5, "Checking Pharmacology (2 of 2)", span=6)
+        assert dlg.value() == 4
+        assert step.pump.part(1, 2, "Pharmacology images (1 of 2)") is True
+        assert dlg.value() == 6
+        assert dlg.findChild(QLabel).text() == "Syncing decks\nPharmacology images (1 of 2)"
+        step.pump.part(2, 2)
+        assert dlg.value() == 9, "the last part stays short of the maximum"
+        assert dlg.isVisible()
+        dlg.cancel()
+        assert step.pump.part(2, 2) is False
+
+
+def test_the_cancel_button_can_say_what_it_will_do():
+    from aqt.qt import QPushButton
+    with _progress(cancel_text="Stop after this deck") as (_step, dlg):
+        assert [b.text() for b in dlg.findChildren(QPushButton)] == ["Stop after this deck"]

@@ -3855,6 +3855,9 @@ def install():
         def setAutoClose(self, b):
             pass
 
+        def setMinimumWidth(self, w):
+            pass
+
         def setLabel(self, label):
             self._label_widget = label
 
