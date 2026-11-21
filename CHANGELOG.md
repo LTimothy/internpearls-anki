@@ -3,6 +3,13 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.89.2
+
+- Pictures already in your collection are used as they are, so updates
+  download only pictures you don't have yet.
+- The progress window keeps the deck count on top and shows a second line
+  while pictures download.
+
 ## v0.89.1
 
 - Progress windows say which step they are on and keep moving while a deck's
