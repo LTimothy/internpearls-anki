@@ -1,14 +1,11 @@
 """The update screen's card rows, the end-of-run summary, and the feedback digest.
 
-Its own module rather than part of dialogs.py because dialogs.py imports sync.py (for
-Manage decks' manifest fetch and the Update my decks action), and this is built *from*
-sync.py's update flow, so living in dialogs.py would close that import into a cycle.
+Separate from dialogs.py to avoid an import cycle: dialogs.py imports sync.py, and
+sync.py's update flow builds this.
 
-Presentation only, in both directions: it reads note fields that sync.py already pulled
-out of a downloaded .apkg, and hands back what the learner typed. It also reads the
-collection's own media folder, to render the learner's side of a changed-field
-comparison from a picture the learner already has. Card notes and feedback digests
-are saved under user_files/; collection media is read only. It touches no network.
+Presentation only: it reads note fields sync.py pulled from a downloaded .apkg and
+returns what the learner typed. Card notes and feedback digests are saved under
+user_files/; collection media is read only. No network.
 """
 import datetime
 import hashlib
@@ -39,74 +36,47 @@ from .widgets import (CARET_GAP, CARET_W, FilterBar, StreamingList, chip_cell,
                       chip_column_width, decision_cell, row_text_indent,
                       section_header, simple_row)
 
-# The learner's own annotation space, left empty by every spec on purpose. Showing it
-# would be a blank row on every single card.
+# The learner's own annotation space, empty in every spec.
 _SKIP_FIELDS = {"Notes"}
 
-# Fields with their own dedicated treatment below rather than being read as generic
-# prompt/answer content: Why gets the green rule, Dosing gets its label, Tag becomes
-# the row's dim header text, and Image is named rather than rendered (see
-# field_preview_text) and folded into the primary or answer line instead of shown on
-# its own (see _image_text).
+# Fields with their own treatment rather than generic prompt/answer content.
 _STRUCTURAL_FIELDS = {"Why", "Dosing", "Tag", "Image"}
 
-# How tall a build_list_body confirmation opens. Each of them lists one Advanced
-# action's worth of rows, so they start shorter than Update my decks, whose list covers
-# everything pending at once and takes ui._ask_with_widget's own taller default. A
-# floor, not a fixed height: a longer list still grows the dialog and then scrolls
-# inside it. Lives here rather than in sync.py because collection.py builds one of
-# these confirmations too and cannot import sync.py (sync.py imports it).
+# Minimum opening height of a build_list_body confirmation; a longer list grows the
+# dialog, then scrolls. Here rather than in sync.py because collection.py needs it and
+# cannot import sync.py.
 _CONFIRM_HEIGHT = 380
 
-# A change group bigger than this folds behind its own header: the shared note is the
-# whole explanation, and thirty rows of it is scroll rather than information. Above
-# three on purpose, so the demo's three-member history fixture still renders its
-# members (browser_tests/parity.spec.mjs).
+# A change group bigger than this folds behind its header. Above three so the demo's
+# three-member fixture still renders its members (browser_tests/parity.spec.mjs).
 _GROUP_COLLAPSE_MIN = 5
 
-# How many member fronts a folded group names under its header, so the box says what
-# is inside it before anyone opens it.
+# How many member fronts a folded group names under its header.
 _GROUP_PREVIEW = 3
 
-# How far a group's members sit in from its note: the note's 3px bar and 8px padding,
-# so a member's caret starts under the note's text.
+# A group's member indent: the note's 3px bar plus 8px padding.
 _GROUP_MEMBER_INDENT = 11
 
-# Matches the deck's own CSS so review looks like study: the same green why rule,
-# grey dosing block, and blue cloze fill. Every colour below is asked for by role from
-# palette.colors(), which picks the light or dark set from Anki's own theme at the
-# moment it is called, rather than being decided once at import.
 
 def _preview_style():
-    """Every label that can hold card HTML carries this, so a <table> or a <ul> in a
-    field reads as the grid or the list the card author wrote rather than as a run-on
-    line. Qt's rich text takes a <style> block with class and element selectors, but
-    only a subset of CSS, so this stays to borders, padding and colour.
+    """The <style> block every label holding card HTML carries, matching the deck's CSS.
+    Qt rich text takes only a subset of CSS, so this stays to borders, padding and
+    colour.
 
-    A function rather than a module constant: its colours come from the palette, which
-    is chosen from Anki's theme at the moment this is called, not fixed once at import.
+    A function, not a constant: palette colours follow Anki's theme at call time.
 
-    The `a` rule mirrors internpearls.ui._ask_scrollable's own link_style: Qt paints an
-    anchor in its own built-in link colour, never in anything set on the widget, so
-    without a rule here an anchor hiding in unescaped card content (a front, a Why
-    field) would render in a colour that doesn't track the theme. Combined with every
-    caller of `_rich_label` below also closing off `setOpenExternalLinks`, a link in
-    that content reads as inert, on-theme text rather than something clickable.
+    The `a` rule is needed because Qt paints an anchor in its built-in link colour,
+    ignoring the widget's.
     """
     c = colors()
     return (
         "<style>"
         f".cloze {{ color: {c['accent']}; font-weight: 600; }}"
-        # The group number rides in the deletion's own colour rather than a new one, so it
-        # reads as part of that blank and adds no colour to the theme problem. Only the
-        # weight is dropped: it is a marker, not content. Deliberately NOT given a smaller
-        # font size on top of the <sup> tag's own reduction: rendered offscreen at a 13px
-        # base, "font-size: small" inside a <sup> came out an unreadable smudge, which no
-        # amount of squinting at the markup would have shown. Render it before resizing it.
+        # The group number takes the deletion's colour at normal weight. No font-size on
+        # top of <sup>: it renders unreadably small.
         " .cn { font-weight: 400; }"
-        # The hint half of a deletion is the prompt, not the fact, so it is set apart
-        # from the answer's blue rather than sharing it: same role `th` takes in a
-        # table here, a label beside the content it introduces.
+        # A deletion's hint is the prompt, not the fact, so it is dim rather than the
+        # answer's blue.
         f" .ch {{ color: {c['dim']}; }}"
         " table { border-collapse: collapse; margin: 4px 0; }"
         f" th, td {{ border: 1px solid {c['cell_rule']}; padding: 2px 7px; }}"
@@ -119,14 +89,12 @@ def _preview_style():
 _CARET_CLOSED = "▸"
 _CARET_OPEN = "▾"
 
-# The row body's usable width at the dialog's 660px minimum. A picture wider than this
-# is scaled down to it; a smaller one is left alone rather than blown up.
+# The row body's usable width at the dialog's 660px minimum. Wider pictures scale down
+# to it; smaller ones are left alone.
 _IMAGE_MAX_W = 540
 
-# Kept alive for as long as this module is loaded because a QLabel reads the path in
-# the returned HTML after `_svg_thumbnail` itself has returned. A flat hash of the
-# absolute source path makes one stable, collision-free thumbnail per collection-media
-# file without deep directory trees or writes beside the source.
+# Kept alive while the module is loaded: a QLabel reads the thumbnail path after
+# `_svg_thumbnail` returns. Thumbnails are named by a hash of the absolute source path.
 _SVG_THUMBNAIL_DIR = None
 
 
@@ -140,17 +108,13 @@ def _svg_thumbnail_path(svg_path):
 
 
 def _svg_thumbnail(svg_path):
-    """Rasterize a drawn SVG to a PNG thumbnail, its background painted white by the
-    add-on rather than trusted to the SVG's own markup or to Qt's SVG image plugin:
-    QImage(path) sizes a root with no absolute width/height against a default
-    viewport, not the SVG's own viewBox, which is what used to leave a white square
-    in one corner with the drawing spilling past it (svg_to_media normalizes the
-    file itself for the same reason, but this covers a file that predates that fix).
+    """Rasterize an SVG to a PNG thumbnail on a white background. QImage(path) sizes a
+    root with no absolute width/height against a default viewport rather than the
+    viewBox, so the add-on renders it itself.
 
     Returns a PNG path under the add-on's private temporary directory, or None if
-    PyQt6.QtSvg isn't available or the file doesn't parse as SVG; the caller falls
-    back to the plain QImage(local_path) path either way. Collection media is read
-    only: a same-named sibling is never created or replaced.
+    PyQt6.QtSvg isn't available or the file doesn't parse as SVG. Collection media is
+    read only: nothing is written beside the source.
     """
     try:
         from PyQt6.QtCore import Qt as _Qt
@@ -176,12 +140,8 @@ def _svg_thumbnail(svg_path):
 
 
 def _image_tag(local_path):
-    """One extracted picture as an <img> Qt's rich text can paint, capped to the row.
-
-    The natural width is read from the file rather than assumed, since Qt scales to
-    whatever `width` says and a fixed value would enlarge a small diagram as readily as
-    it shrinks a large one. A file Qt cannot decode returns None, so the caller keeps
-    naming it instead of painting a broken image.
+    """One extracted picture as an <img> for Qt rich text, scaled down to the row width
+    but never enlarged. None when Qt cannot decode the file.
     """
     if local_path.lower().endswith(".svg"):
         thumb = _svg_thumbnail(local_path)
@@ -196,10 +156,8 @@ def _image_tag(local_path):
 
 
 def _media_resolver(apkg_path, index, dest):
-    """A field_preview_html resolver bound to one deck, extracting as it is asked.
-
-    Nothing comes out of the archive until a row is actually opened, and each picture is
-    resolved once per dialog however many fields reference it.
+    """A field_preview_html resolver bound to one deck. Extracts lazily, once per
+    picture per dialog.
     """
     cache = {}
 
@@ -214,11 +172,8 @@ def _media_resolver(apkg_path, index, dest):
 
 def build_resolvers(sources):
     """Per-deck picture resolvers for `sources` ({deck_name: .apkg path}), and the
-    TemporaryDirectory they extract into.
-
-    Used by the update screen (build_update_body) to extract a card's picture the first
-    time its row expands. The caller must call the returned directory's .cleanup() once
-    the screen it feeds has closed.
+    TemporaryDirectory they extract into. The caller must call the directory's
+    .cleanup() once the screen has closed.
     """
     media_dir = tempfile.TemporaryDirectory()
     resolvers = {}
@@ -232,15 +187,11 @@ def build_resolvers(sources):
 
 def pending_entries(boxes, flags, index, carried):
     """{guid: {note, deck, front}} for everything currently flagged: every box that
-    currently holds text, plus any flag with no box here at all.
+    holds text, plus any flag with no box here.
 
-    Kept separate from build_update_body so what gets written to disk mid-session is
-    decided in exactly one place. `carried` is load_saved_feedback()'s own record, read
-    once by the caller: the fallback for a flagged guid that has neither a box nor an
-    `index` entry here, a note left over from an earlier session about a card whose
-    deck already imported last run and so isn't shown at all this time. Rebuilding its
-    deck/front from `index` alone would write the bare GUID in as the front instead of
-    the name the earlier session actually saved.
+    `carried` is load_saved_feedback()'s record: the deck/front fallback for a flagged
+    guid with neither a box nor an `index` entry, such as a note from an earlier session
+    on a card not shown this time.
     """
     entries = {g: {"note": t, "deck": index.get(g, ("", ""))[0],
                    "front": index.get(g, ("", g))[1]}
@@ -256,8 +207,7 @@ def pending_entries(boxes, flags, index, carried):
 
 
 class _ClickableLabel(QLabel):
-    """A QLabel that also toggles its row open, so the click target is the text a
-    reader is already looking at, not just the small caret next to it."""
+    """A QLabel that toggles its row open when clicked."""
 
     def __init__(self, text, on_click):
         super().__init__(text)
@@ -297,24 +247,14 @@ def _content_fields(detail):
 
 
 def _changed_field_names(detail):
-    """The fields this card would rewrite, in the note type's own order.
-
-    Ordered off the note type rather than off the `was` map so two cards of the same
-    type always list their changes the same way round.
-    """
+    """The fields this card would rewrite, in the note type's field order."""
     was = detail.get("was") or {}
     return [n for n, _ in detail.get("fields", []) if n in was]
 
 
 def _image_text(detail, resolved=frozenset()):
-    """The card's Image field, named rather than rendered (field_preview_text again:
-    naming rather than painting is what lets a collapsed row skip extraction). `resolved`
-    is the filenames the picture strip above has already painted successfully; any of
-    them drop out of the name here, so a picture that rendered once does not also sit in
-    the answer as a chip naming it. A name whose resolution failed stays, since the chip
-    is exactly the fallback a broken or missing picture needs. Empty when the note type
-    has no Image field, the card doesn't use one, or every picture it names already
-    painted.
+    """The card's Image field, named rather than rendered. Filenames in `resolved`,
+    which the picture strip already painted, drop out. Empty when no name is left.
     """
     value = _field(detail, "Image")
     text = plain_text(value)
@@ -326,13 +266,9 @@ def _image_text(detail, resolved=frozenset()):
 
 
 def _primary_field(detail):
-    """The (name, value) of the note type's primary content field: a cloze's Text, or
-    otherwise the first field `_content_fields` keeps (Front for a basic note, Prompt
-    for an image note). None when a note type somehow has no content field at all.
-
-    Shared between `_primary_html`, which renders it, and `_primary_images`, which
-    looks for pictures inline in it, so the note-type branching that picks it out
-    lives in exactly one place rather than twice.
+    """The (name, value) of the note type's primary content field: a cloze's Text,
+    otherwise the first field `_content_fields` keeps. None when the note type has no
+    content field.
     """
     if _is_cloze(detail):
         return ("Text", _field(detail, "Text"))
@@ -341,17 +277,11 @@ def _primary_field(detail):
 
 
 def _primary_html(detail):
-    """The card's collapsed-row line, always its primary line whatever the note type:
-    a cloze note's text with its deletions filled in (the fact under review lives in
-    the deletions, so it's shown rather than blanked), otherwise the prompt field. For
-    an image note the picture is the question itself, so its name is folded in here
-    too: without it, a generic prompt gives no way to tell which image it's about.
+    """The collapsed row's line: a cloze's text with its deletions filled in, otherwise
+    the prompt field. An image note's picture name is folded in.
 
-    A cloze field is run through field_preview_html before cloze_filled_html, since a
-    real cloze Text field carries its own HTML (a table, inline images, br, entities).
-    field_preview_html keeps the structure and names any inline image, without touching
-    {{c1::...}} markup, so cloze_filled_html fills the deletions into markup that is
-    already safe and must not be escaped a second time.
+    A cloze field goes through field_preview_html before cloze_filled_html; the result
+    is already safe and must not be escaped again.
     """
     primary = _primary_field(detail)
     text = field_preview_html(primary[1]) if primary else ""
@@ -365,21 +295,12 @@ def _primary_html(detail):
 
 
 def _answer_html(detail, resolved=frozenset(), image_html=None):
-    """The card's answer, shown only once its row is expanded. A cloze note has no
-    answer text of its own here, since cloze_filled_html already put the answer on the
-    collapsed line, but its optional Image field (separate from any image inline in
-    Text) still needs naming somewhere, so it goes here too. A non-image note's
-    optional Image field (a basic card with a picture on its back, say) is named and
-    folded in here, alongside the answer it illustrates.
+    """The card's answer, shown once its row is expanded. A cloze has no answer text
+    here (its answer is on the collapsed line), but its Image field is still named here.
 
-    `resolved` passes straight through to `_image_text`: once the picture strip above
-    has actually painted a filename, this stops naming it too, so an opened row never
-    shows the same picture and a chip for it both. `image_html` passes straight through
-    to `field_preview_html` for the answer field itself, so a picture inline in the
-    answer's own text (not just its Image field) renders in place too. Both are left at
-    their defaults (nothing resolved, no resolver) at build time, before anything has
-    been extracted; `_reveal_images` calls this again, once, with both filled in, once a
-    row's pictures are actually resolved.
+    `resolved` passes to `_image_text`; `image_html` passes to `field_preview_html` so a
+    picture inline in the answer renders in place. Both default to nothing at build
+    time; `_reveal_images` calls this again with both filled in.
     """
     if _is_cloze(detail):
         image_text = _image_text(detail, resolved)
@@ -395,12 +316,7 @@ def _answer_html(detail, resolved=frozenset(), image_html=None):
 
 def _primary_images(detail):
     """The pictures the collapsed line can only name: the Image field, plus any inline
-    in the primary field itself.
-
-    An image note's whole question is its picture and a cloze can carry one inside its
-    Text, so without this the one note type that is entirely about pictures would be the
-    one that never showed them. Fields rendered in the body resolve their own images in
-    place instead, so nothing appears twice.
+    in the primary field. Fields rendered in the body resolve their own images in place.
     """
     primary = _primary_field(detail)
     primary_value = primary[1] if primary else ""
@@ -409,16 +325,8 @@ def _primary_images(detail):
 
 
 def _row_html(detail):
-    """A collapsed row's whole line: the card's tag when it has one, then its primary
-    line.
-
-    One rich-text paragraph rather than a tag widget beside a text widget. Two widgets
-    start each row's text at a different x depending on whether that card happens to
-    carry a tag, and wrap it against the tag's edge instead of the row's.
-
-    The kind is deliberately not here: a chip is one of a fixed set of four and belongs
-    in its own column (widgets.chip_cell), while a tag is free text that reads as a
-    lead-in to this card's own line.
+    """A collapsed row's line: the card's tag when it has one, then its primary line.
+    One rich-text paragraph, so every row's text starts at the same x, tagged or not.
     """
     primary = _primary_html(detail)
     tag_text = field_preview_text(_field(detail, "Tag"))
@@ -429,12 +337,9 @@ def _row_html(detail):
 
 
 def _rich_label(text):
-    """A QLabel for a block of card or confirmation HTML, closed to external links by
-    default: every caller here interpolates content straight out of the collection
-    (a field, a deck name, a retired card's identity), never escaped, so an anchor
-    hiding in it must not be able to launch the system browser on a click. Matches
-    internpearls.ui._ask_scrollable's own default for the same reason; see that
-    function's docstring.
+    """A QLabel for card or confirmation HTML, closed to external links: callers
+    interpolate unescaped collection content, so an anchor in it must not open the
+    browser.
     """
     lbl = QLabel(_preview_style() + text)
     lbl.setWordWrap(True)
@@ -444,23 +349,15 @@ def _rich_label(text):
 
 
 def _plain_prose(value):
-    """Whether a field value is plain prose `merged_word_diff` can be shown for: text
-    carrying no tags, no cloze braces, and no math markup. Splitting any of those on
-    spaces would tear the markup apart mid-token, so a field carrying them keeps the
-    verbatim rendering instead. Entities pass, since they render as themselves on
-    either side of a diff."""
+    """Whether a field value is plain prose `merged_word_diff` can show: no tags, cloze
+    braces or math markup, which splitting on spaces would tear apart. Entities pass.
+    """
     return bool(value) and "<" not in value and "{{" not in value and "\\" not in value
 
 
 def _diff_html(segments):
     """`merged_word_diff`'s segments as one rich-text line: dropped words struck
-    through, added words carried on the UPDATED chip's own colour pair, unchanged
-    words left to the line's dim base colour. One line that states the whole change,
-    instead of two near-identical paragraphs the reader has to compare word by word.
-
-    Strikethrough is the same convention a Never row already uses: text the learner
-    will not have. The chip pair for additions ties them to the UPDATED marker at the
-    row's head, and is a background/foreground pairing the palette already guarantees.
+    through, added words in the UPDATED chip's colour pair, unchanged words dim.
     """
     c = colors()
     parts = []
@@ -476,22 +373,9 @@ def _diff_html(segments):
 
 
 def _blank_changes_html(removed, added, hints=()):
-    """A cloze change that left the sentence's words alone said outright, naming the
-    moved blanks and re-hinted deletions in bold. The filled words themselves did not
-    change, so repeating the whole sentence would show a difference nowhere in it;
-    which words are blanked, and what each one is hinted as, IS the change.
-
-    A hint edit reaches here because both versions fill to the same sentence, and it
-    has to be named for the same reason a moved blank does: the header line above
-    shows the new hint, but nothing on the row would say it is what moved. Without it
-    a hint-only edit fell through to the regrouped line below and described a change
-    that had not happened.
-
-    Bold rather than the cloze blue the answers used to carry: accent is also the
-    colour of every clickable link in this body (Add note, Show yours), and a blue
-    word that answers no click is an affordance lie. Inside the revealed old version
-    the blue spans stay, since there they are card content rendered as the card
-    renders it, not words in a summary line.
+    """A cloze change that left the sentence's words alone, as a line naming the moved
+    blanks and re-hinted deletions in bold. Bold rather than cloze blue because accent
+    is also the link colour in this body.
     """
     def named(answers):
         return ", ".join(f"<b>{a}</b>" for a in answers)
@@ -512,14 +396,9 @@ def _blank_changes_html(removed, added, hints=()):
     return " &middot; ".join(parts) or "the blanks were regrouped into different cards"
 
 
-# The floor under a change's difflib-style similarity (word_diff_ratio) for the
-# word-diff rendering: below it, the change reads as a rewrite and takes the summary
-# line instead. 0.75 rather than difflib's conventional 0.6, because the bound that
-# matters here is how much of the MERGED line ends up marked: at 0.6 similarity about
-# 57% of the rendered line is struck or highlighted (markup outweighing message, the
-# exact wall this floor exists to stop), while 0.75 caps it near 40%. Both design
-# reviews asked for a majority-marked line to be unreachable, and this one constant
-# is that guarantee.
+# Minimum word_diff_ratio for the word-diff rendering; below it the change reads as a
+# rewrite and takes the summary line. 0.75 keeps the marked share of the merged line
+# near 40% (at 0.6 it is about 57%).
 _DIFF_MIN_SIMILARITY = 0.75
 
 
@@ -529,15 +408,12 @@ def _inline_change_html(detail, name, old, new):
 
     - a field that used to be empty says so ("was empty");
     - a cloze Text whose words survived but whose blanks or hints moved names what
-      moved (`cloze_answer_changes`, `cloze_hint_changes`), instead of reprinting the
-      sentence;
+      moved (`cloze_answer_changes`, `cloze_hint_changes`);
     - plain prose on both sides renders as a single word-level diff (`_diff_html`),
       while the versions stay mostly the same text (`word_diff_ratio`).
 
-    Everything else is a replacement rather than an edit: a rewritten paragraph, a
-    restructured table, a swapped picture, a reworded cloze. None of those can be
-    shown as one honest line, so they return None and the caller builds the widget
-    that summarizes the change and holds the old version behind a click.
+    Everything else (a rewritten paragraph, a restructured table, a swapped picture,
+    a reworded cloze) returns None.
     """
     label = f"<b>{html.escape(name)}</b>&nbsp;&nbsp;"
     if not old:
@@ -555,14 +431,10 @@ def _inline_change_html(detail, name, old, new):
 
 
 def _rewrite_summary(old, new):
-    """The receipt line's verb phrase for a replaced field: what happened and how
-    much, without showing any of the changed text.
-
-    "rewritten" carries the similarity verdict that routed the change here; the
-    word-count delta is the only magnitude fact a glance needs, and it is appended
-    only when the length genuinely moved (by a quarter or more), so a same-size
-    rewrite stays one word. A field whose visible text vanished says "cleared", and
-    one with no visible text to count (a swapped picture) says "replaced".
+    """The receipt line's verb phrase for a replaced field: "rewritten", plus the
+    word-count change when the length moved by a quarter or more. "cleared" when the
+    visible text vanished, "replaced" when there is no visible text to count (a swapped
+    picture).
     """
     old_words = len(plain_text(old).split())
     new_words = len(plain_text(new).split())
@@ -590,23 +462,14 @@ def _old_version_html(detail, name, old, image_html):
 
 def _rewrite_row(detail, name, old, new, card_label, receipt=None, whose="yours",
                  choice=None, image_html=None):
-    """A rewritten field as a one-line receipt with the old version behind a click:
-    "Why  rewritten, shortened (104 → 66 words)   Show yours".
+    """A rewritten field as a one-line receipt with the old version behind a click: "Why
+    rewritten, shortened (104 → 66 words)   Show yours".
 
-    The design both independent reviews converged on. The new version is already the
-    card rendered above, so for the reader deciding Apply the old text is reference
-    material, not content: the summary line is everything the reader needs at a glance,
-    and the reader weighing Keep yours pays one click (the same flat-link idiom as Add
-    note, worded in the decision button's own vocabulary) to see what "yours" says.
+    The reveal is the old field verbatim behind a muted left rule, built on the first
+    click.
 
-    The reveal is the old field verbatim and unmarked, behind a muted left rule that
-    mirrors the green why rule's shape: same structural device, different palette
-    role, so ruled block reads as "a whole explanation" and the colour says which
-    era it belongs to. Built lazily on the first click, so a 50-row batch pays for
-    one short label and one flat button per rewritten field and decodes nothing.
-
-    `receipt` and `whose` word the row for the case where `old` is not the learner's:
-    a field they edited, which the import keeps, offers the deck's text behind "Show the
+    `receipt` and `whose` word the row for the case where `old` is not the learner's: a
+    field they edited, which the import keeps, offers the deck's text behind "Show the
     deck's". `choice`, a (set, key) pair, adds the "Use the deck's version" link inside
     that reveal, toggling `key` in the set; the receipt then says the deck's version is
     taken while the card above, rendered from the learner's text, stays as it is.
@@ -626,16 +489,13 @@ def _rewrite_row(detail, name, old, new, card_label, receipt=None, whose="yours"
     receipt = receipt or _rewrite_summary(old, new)
     summary = _rich_label(f"<b>{html.escape(name)}</b>&nbsp;&nbsp;{receipt}")
     summary.setStyleSheet(f"color: {colors()['dim']};")
-    # A one-line receipt by design, so it must not wrap: a word-wrapped QLabel asks
-    # the layout for a "reasonable" width rather than its full text, and with the
-    # link beside it the phrase folded onto three short lines in an all-but-empty row.
+    # One line by design: a word-wrapped QLabel asks the layout for less than its full
+    # text width and folds.
     summary.setWordWrap(False)
     hlay.addWidget(summary, 0)
     link = link_button(f"Show {whose}")
-    # Collapsed to its text height, the same styling that keeps the caret compact:
-    # without border and padding rules a flat button still carries the platform's
-    # native button metrics (32px on macOS), which stretched every receipt line to
-    # double its text and read as a band of dead space between the rows.
+    # Without border and padding rules a flat button keeps the platform's native button
+    # height (32px on macOS).
     link.setStyleSheet(link.styleSheet() +
                       "QPushButton { border: none; padding: 0; }")
     link.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -646,8 +506,8 @@ def _rewrite_row(detail, name, old, new, card_label, receipt=None, whose="yours"
     old_label = _rich_label("")
     old_label.setVisible(False)
     c = colors()
-    # The border: none reset is load-bearing, same as the why rule: Qt ignores a lone
-    # border-left on a QLabel unless the shorthand is set first.
+    # `border: none` first: Qt ignores a lone border-left on a QLabel unless the
+    # shorthand is set.
     old_label.setStyleSheet(f"border: none; border-left: 3px solid {c['muted']};"
                             f" padding-left: 8px; color: {c['dim']};")
     lay.addWidget(old_label)
@@ -679,16 +539,13 @@ def _rewrite_row(detail, name, old, new, card_label, receipt=None, whose="yours"
         lay.addWidget(use)
 
     def _name_link(showing):
-        # Named for the card, like the caret and the decision buttons: a list of
-        # forty links all called "Show yours" says nothing about which card's old
-        # version any one of them opens.
+        # Named for the card, so a list of links doesn't all read "Show yours".
         verb = f"Hide {whose}" if showing else f"Show {whose}"
         link.setText(verb)
         link.setAccessibleName(f"{verb}: {card_label}")
 
-    # An explicit built flag rather than "is the label still empty": _rich_label
-    # seeds every label with the preview <style> block, so its text is never empty
-    # and an emptiness check would skip the build forever.
+    # An explicit built flag: _rich_label seeds every label with the <style> block, so
+    # an emptiness check would never fire.
     built = []
 
     def _toggle(_checked=False):
@@ -737,8 +594,7 @@ def _change_row(detail, name, card_label, take_deck=None, resolve=None):
 
 
 def _changes_heading():
-    """The small heading over the What changed group, so the dim lines under it read
-    as one comparison block rather than as more of the card."""
+    """The small heading over the What changed group."""
     label = QLabel("What changed")
     label.setStyleSheet(f"color: {colors()['dim']}; font-size: 12px;"
                         " font-weight: 600; margin-top: 4px;")
@@ -767,14 +623,11 @@ def _change_note_html(note):
 
 
 def _change_note_row(note, indent):
-    """One `change_notes` entry as a row under the card header: a 3px accent bar (the
-    same idiom as the Why rule, but in `updated_bg` rather than `why`) and the note's
-    own text, in the row's text column so it reads as part of that card.
+    """One `change_notes` entry as a row under the card header: a 3px accent bar and the
+    note's text, in the row's text column.
 
-    Built on `muted_label` for its word-wrap and its base colour, with the stylesheet
-    replaced rather than appended: Qt silently ignores a lone border-left on a QLabel
-    unless the border shorthand is reset first (the same fix the Why rule in
-    `_card_row` carries), so the reset has to come before border-left in this string.
+    The stylesheet replaces muted_label's rather than appending: Qt ignores a lone
+    border-left on a QLabel unless the border shorthand is reset first.
     """
     row = QWidget()
     lay = QHBoxLayout(row)
@@ -783,11 +636,8 @@ def _change_note_row(note, indent):
     label = muted_label(_change_note_html(note))
     label.setTextFormat(Qt.TextFormat.RichText)
     c = colors()
-    # The bar is decorative and deliberately quiet; the text carries the meaning, in
-    # the measured `muted`/`dim` roles. `updated_bg` is borrowed here for its tie to
-    # the UPDATED chip, not for its own contrast against the window.
-    # Reviewer feedback reads at full strength: it is the reader's own words and the
-    # reason the change exists. A maintainer's note and older feedback stay muted.
+    # Feedback reads at full strength; a maintainer's note and older feedback stay
+    # muted.
     voice = (note.get("kind") == "feedback" and not note.get("historical"))
     colour = "" if voice else f" color: {c['muted']};"
     label.setStyleSheet(f"border: none; border-left: 3px solid {c['updated_bg']};"
@@ -797,11 +647,9 @@ def _change_note_row(note, indent):
 
 
 def _folds(item):
-    """Whether a ("group_note", note, card_count) header folds its members away.
-
-    A group driven by reviewer feedback never folds, however big: those are the changes
-    the reader asked for, so they are the cards most worth checking, and a fold is
-    exactly what let them go through unseen."""
+    """Whether a ("group_note", note, card_count) header folds its members away. A group
+    driven by reviewer feedback never folds: those are the cards most worth checking.
+    """
     if item[0] != "group_note" or (item[2] if len(item) > 2 else 0) < _GROUP_COLLAPSE_MIN:
         return False
     return (item[1] or {}).get("kind") != "feedback"
@@ -876,8 +724,8 @@ def _group_title(members):
     return ", ".join(parts)
 
 
-# A group's one decision, offered only when every card in it is the same kind, and
-# never Never: turning a dozen cards down for good is a decision to make one at a time.
+# A group's one decision, offered only when every card in it is the same kind. Never is
+# left out: that is decided one card at a time.
 _GROUP_OPTIONS = {"new": [("import", "Import all"), ("held", "Later all")],
                   "changed": [("apply", "Apply all"), ("keep", "Keep all yours"),
                               ("held", "Later all")]}
@@ -906,8 +754,8 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
 
     group = QFrame()
     group.setObjectName("changeGroup")
-    # Scoped to the frame's own name: a bare border rule would cascade into every
-    # label inside it and draw a box around each line.
+    # Scoped to the frame's name: a bare border rule would cascade into every label
+    # inside it.
     group.setStyleSheet(f"QFrame#changeGroup {{ border: 1px solid {c['panel_rule']};"
                         " border-radius: 6px; }")
     group_lay = QVBoxLayout(group)
@@ -1007,16 +855,10 @@ def _group_note_row(note, card_count, members=(), build_row=None, ctx=None):
 
 
 def _retired_row(identity, reason, chips):
-    """A retired ledger entry's row: its identity through `simple_row`, and, when the
-    ledger recorded one, its reason as a second, muted line beneath, in the same
-    unquoted italic style a maintainer's change note renders in (`_change_note_html`).
-
-    A separate label stacked under the row rather than folded into its own primary
-    text with a `<br>`: keeps the identity readable as its own line for anything that
-    reads a row's text (a screen reader, or a test asserting on a specific label), and
-    lines the reason up under the row's own text column via `row_text_indent` rather
-    than the row's left edge. Non-expanding, like the row itself: this is one more
-    line, not a disclosure.
+    """A retired ledger entry's row: its identity through `simple_row` and, when the
+    ledger recorded a reason, a second muted line beneath in the maintainer-note style
+    (`_change_note_html`). The reason is its own label, indented by `row_text_indent`,
+    so the identity stays readable as one line. Non-expanding.
     """
     row = simple_row("retired", identity, chips=chips)
     if not reason:
@@ -1038,19 +880,11 @@ def _retired_row(identity, reason, chips):
 
 
 def _chip_with_source(detail, chips):
-    """The row's chip column, with the deck source's where-this-came-from label as a
-    small tag directly under the chip when the card carries one.
+    """The row's chip column, with the deck source's `card_source` label as small tags
+    under the chip, one per whitespace-separated reference.
 
-    Under the chip rather than as a line in the text column, where it used to sit: a
-    reference number in the flow of the card's own words read as part of the card,
-    weirdly placed under whichever line happened to be above it. The chip column is
-    already the row's metadata gutter (NEW, UPDATED), and a question ID is the same
-    kind of fact about the card, so it stacks there and the text column stays purely
-    the card. One tag per whitespace-separated reference, so a card drawn from two
-    questions reads as two small lines rather than one overflowing the column.
-
-    The string is the deck source's, rendered as plain text: never parsed here, and
-    never read as markup, since it arrives from a fetched manifest.
+    The string comes from a fetched manifest, so it is rendered as plain text, never
+    markup.
     """
     cell = chip_cell(_row_chip(detail), chips)
     label = (detail.get("card_source") or "").strip()
@@ -1068,17 +902,13 @@ def _chip_with_source(detail, chips):
         tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tag.setStyleSheet(f"color: {dim}; font-size: 11px;")
         lay.addWidget(tag)
-    # The chip column's own fixed width, so a tag can never widen the gutter and
-    # push every row's text out of line.
+    # Fixed width, so a tag cannot widen the gutter and misalign the rows.
     wrap.setFixedWidth(chip_column_width(chips))
     return wrap
 
 
 def _collection_image(name):
     """One of the learner's own media files as an <img>, or None when it is not there.
-
-    The learner's side of a comparison comes out of the collection, not out of the
-    .apkg, so its pictures are already on disk and need no extraction.
     """
     try:
         folder = mw.col.media.dir()
@@ -1091,13 +921,9 @@ def _collection_image(name):
 
 
 _NEW_OPTIONS = [("import", "Import"), ("held", "Later"), ("never", "Never")]
-# The changed row's options mirror the new row's, and "frozen" is Never's
-# counterpart here. It is a state of its own rather than "never" reused, because the two
-# mean different things once the card is in the learner's collection and the Declined
-# cards screen has to be able to say which is which: Never imported, against a card the
-# learner keeps whose updates they have turned off. The button says Never on both
-# kinds; what it turns down is whatever that row is offering, and the caption on the
-# click spells that out.
+# "frozen" is Never's counterpart on a changed row, kept as its own state so the
+# Declined cards screen can tell a card never imported from a card kept with its updates
+# turned off. The button says Never on both kinds.
 _CHANGED_OPTIONS = [("apply", "Apply"), ("keep", "Keep yours"), ("held", "Later"),
                     ("frozen", "Never")]
 _DEFAULT_DECISION = {"new": "import", "changed": "apply"}
@@ -1105,17 +931,14 @@ _DEFAULT_DECISION = {"new": "import", "changed": "apply"}
 _DECLINE_CAPTION = {
     "keep": ("Your card stays as it is. A change is offered again only when this "
              "card's source content changes, or any time from Manage decks → Later and declined cards."),
-    # No "offered again" clause on purpose: unlike Keep, this one is not a
-    # not-this-time. Manage decks → Later and declined cards is the only way back.
-    # Saying so keeps it from reading as the same soft decision with a different label.
+    # No "offered again" clause: Manage decks → Later and declined cards is the only way
+    # back.
     "frozen": ("Your card stays as it is, and changes to it won't be offered again. "
                "Undo from Manage decks → Later and declined cards."),
 }
 
-# Nothing is transmitted from here: a note is folded into the digest at the end of the
-# run, copied to the clipboard, and pasted by the reader. The placeholder used
-# to say it was sent to the deck author, which is the one thing it is not, and asked
-# what was wrong with the card, on a box the neutral Add note link opens too.
+# Nothing is transmitted from here: a note goes into the end-of-run digest, which the
+# reader copies and pastes.
 _FEEDBACK_PLACEHOLDER = ("Anything to pass on about this card? You'll get a copy at the "
                          "end to paste and send.")
 
@@ -1131,9 +954,8 @@ def _later_caption(kind, detail=None):
             "With a note, it waits until the card is updated.")
 
 
-# Every decision that turns a card down, which is every decision worth offering the
-# note box for on the spot. Later is not one: it defers the card rather than judging
-# it, so it asks nothing, and the row's Add note link is still there.
+# Decisions that turn a card down, and so offer the note box on the spot. Later defers
+# rather than judges, so it is not one.
 _TURNED_DOWN = frozenset({"keep", "never", "frozen"})
 
 _DECLINE_CHIP = {"keep": "kept", "frozen": "kept", "held": "held"}
@@ -1143,48 +965,35 @@ _LATER_NOTE_HINT = {"not_updated": "Not updated yet", "updated": "Updated since 
 
 
 def _row_chip(detail):
-    """The one chip a card row wears.
-
-    A re-offered decline shows that decline rather than its kind: LATER / KEPT YOURS
-    says what was already decided about the row. Stacking the decline beside the row's
-    kind (and an UPDATED on a card changed since) cost up to three fixed-width columns
-    plus the decision control, which at the dialog's own 660px floor left the card's own
-    words about 150px: the exact crush the wider dialog had just undone, on the rows most
-    worth reading. The hint line under the header says what the extra chips would have,
-    naming the decline the card changed since.
+    """The one chip a card row wears. A re-offered decline shows that decline (LATER /
+    KEPT YOURS) rather than its kind, so the row keeps a single chip column; the hint
+    line under the header says the rest.
     """
     return _DECLINE_CHIP.get(detail.get("declined_state")) or detail.get("kind")
 
 
 def _card_label(detail):
-    """The card's own short name, for a control that would otherwise announce itself
-    by its bare verb. Same helper every row that names a card already uses, at a length
-    that reads as a label rather than as the card."""
+    """The card's short name, for a control that would otherwise be labelled by a bare
+    verb.
+    """
     return note_display_label([v for _, v in detail.get("fields", [])], max_len=60)
 
 
 def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=None,
               on_open=None, register=None, on_box=None, take_deck=None):
-    """One card as a single row: a caret, its one chip column (see `_row_chip`), its
-    tag if it has one, and its primary line. Clicking the row (the caret or the line
-    itself) reveals the answer, the why behind a green left rule, and dosing when
-    present. A "new" or "changed" row also carries a segmented decision control
-    (widgets.decision_cell) at the right of its header, defaulting to Import/Apply;
-    choosing Keep or Never reveals a feedback box for what the learner makes of it
-    (Later does not: it is a deferral), and Never collapses the row with a
-    struck-through primary line. Any row whose box is closed, a re-offered decline
-    included, can open that same box with its own quiet "Add note" link, at the end of
-    the expanded body, so feedback is never gated behind a decline; it costs the same
-    click as reading the card would.
+    """One card as a single row: a caret, its chip column (see `_row_chip`), its tag if
+    it has one, and its primary line. Clicking the row reveals the answer, the why, and
+    dosing when present. A "new" or "changed" row also carries a segmented decision
+    control (widgets.decision_cell), defaulting to Import/Apply; choosing Keep or Never
+    reveals a feedback box, and Never collapses the row with a struck-through primary
+    line. Any row whose box is closed offers an "Add note" link at the end of the
+    expanded body.
 
-    Pictures are named until that first expand and rendered from then on. Extraction is
-    what opening a row pays for, so a long list stays cheap to scroll and a review nobody
-    opens costs nothing at all.
+    Pictures are named until the first expand and extracted then.
 
-    A `card_source` label renders as a small tag under the row's chip (see
-    `_chip_with_source`), and any `change_notes` entries render directly under the
-    header, visible whether the row is collapsed or open: the deck source's own
-    account of why the card changed (see `_change_note_row`).
+    A `card_source` label renders under the row's chip (see `_chip_with_source`), and
+    `change_notes` entries render under the header whether the row is collapsed or open
+    (see `_change_note_row`).
     """
     guid = detail["guid"]
     kind = detail.get("kind")
@@ -1198,24 +1007,15 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
 
     body = QWidget()
     caret = QPushButton(_CARET_CLOSED)
-    # Labels whose field can hold a picture, each with the field value that produced it,
-    # so the first expand can re-render exactly those and leave the rest alone. The
-    # answer label isn't one of these: it has its own composed rendering (folding an
-    # Image field's chip in alongside its own text), so `_reveal_images` re-renders it
-    # once, directly through `_answer_html`, rather than through this generic list.
+    # Labels whose field can hold a picture, each with its field value, for the first
+    # expand to re-render. The answer label is re-rendered separately by
+    # `_reveal_images` through `_answer_html`.
     rerender = []
-    # The What changed group needs no rerender list of its own any more: its inline
-    # lines are text-only by construction (the plain-prose gate), and a rewrite's old
-    # version, the one place a picture can appear, is rendered at reveal-click time
-    # (see _rewrite_row), which is even later than the first expand.
+    # The What changed group needs no rerender: its inline lines are text only, and a
+    # rewrite's old version renders at reveal time (see _rewrite_row).
     revealed = []
-    # The rows _change_note_row builds for this card, kept local so
-    # _apply_decision_visuals can hide them under Never and restore them if the
-    # decision moves off Never again; they don't exist yet the first time that
-    # function runs, but a predeclined "never" never reaches this row at all
-    # (sync.py drops it before it's built), so the initial call has nothing to hide.
-    # The card_source tag is not one of them: it lives in the chip column and stays
-    # visible under Never, since it names the card the struck line is about.
+    # This card's _change_note_row rows, kept so _apply_decision_visuals can hide them
+    # under Never and restore them after. The card_source tag stays visible under Never.
     note_rows = []
 
     def _reveal_images():
@@ -1239,16 +1039,12 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
             answer_label.setVisible(bool(new_answer_html))
 
     def _name_caret(expanded):
-        """What the caret is called to anyone not reading the glyph: a screen reader
-        announced it as "▸", and a hovering reader got nothing at all. Kept in step with
-        the direction it points, since that is the only other thing saying which way it
-        will go, and carrying the card's own name, since a list of three hundred carets
-        all called "Show card" says nothing about which card any one of them opens.
+        """Name the caret for screen readers and hover, in step with the direction it
+        points.
         """
         verb = "Hide card" if expanded else "Show card"
-        # The card's name goes to the accessible name and not to the tooltip: a reader
-        # hovering this glyph already has the row's own front an inch to its right,
-        # while a screen reader moving between carets has nothing else at all.
+        # The card's name goes in the accessible name only: a hovering reader already
+        # sees the row's front.
         caret.setAccessibleName(f"{verb}: {card_label}")
         caret.setToolTip(verb)
 
@@ -1268,30 +1064,22 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     hlay.setSpacing(CARET_GAP)
 
     caret.setFlat(True)
-    # Unconstrained, this is a real push button at its platform minimum (~80px on
-    # macOS) around a 6px glyph, which is a wide dead gutter down the whole list.
+    # Unconstrained, the button takes its platform minimum width (~80px on macOS).
     caret.setFixedWidth(CARET_W)
-    # Stronger and heavier than the dim text beside it, at the same width: this glyph is
-    # the only thing on the row saying it opens, and it used to read as punctuation.
-    # Contrast and weight are the whole lever here. A wider gutter would move every
-    # column on the screen, and a larger glyph would outshout the card it belongs to.
+    # Heavier and stronger than the dim text beside it: the glyph is the only sign the
+    # row opens.
     caret.setStyleSheet(f"border: none; padding: 0; font-weight: 600;"
                         f" color: {colors()['caret']};")
     caret.setCursor(Qt.CursorShape.PointingHandCursor)
-    # Left in the tab order deliberately, one stop per row and all. ClickFocus would cut
-    # a 300-row list down to no tab stops at all, but the row's own label is a QLabel and
-    # takes no focus, so it would also leave no way to open a card from the keyboard.
+    # Kept in the tab order: the row's label is a QLabel and takes no focus, so the
+    # caret is the only keyboard way to open a card.
     caret.clicked.connect(_toggle)
     _name_caret(False)
     hlay.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
 
-    # Every column this row draws in front of its primary label, collected rather than
-    # counted twice: the expanded body indents by exactly these (see `indent` below),
-    # so a column added here can never leave the body hanging left of its own line.
-    # Top-aligned like the caret: the chip marks the row, so it belongs beside the
-    # first line of a wrapping one rather than centred against the whole block. The
-    # decline keys `_row_chip` reads are only ever set by the caller that already knows
-    # about the decline registry; nothing here writes them.
+    # Every column drawn in front of the primary label; the expanded body indents by
+    # exactly these (see `indent` below). Top-aligned, so the chip sits beside the first
+    # line of a wrapping row.
     declined_state = detail.get("declined_state")
     changed_since_decline = bool(detail.get("changed_since_decline"))
     leading = [_chip_with_source(detail, chips)]
@@ -1305,8 +1093,8 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     primary.setCursor(Qt.CursorShape.PointingHandCursor)
     hlay.addWidget(primary, 1)
 
-    # In the text column, like the note lines above: the caption and box are about the
-    # card. Hidden while both are, so a row without them gains no spacing.
+    # In the text column. Hidden while both caption and box are, so a row without them
+    # gains no spacing.
     decision = QWidget()
     dlay = QVBoxLayout(decision)
     dlay.setContentsMargins(indent, 0, 0, 0)
@@ -1364,12 +1152,9 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
             caption.setText(text)
         if caption is not None:
             caption.setVisible(bool(text))
-        # Sticky once there's something to lose (a saved flag or typed-but-unsaved
-        # text), but a decline back to default with nothing written in it closes
-        # again, restoring the quiet Add note affordance rather than leaving an
-        # empty box parked open. `clicked` is what keeps that rule true of a decline
-        # the row opened already carrying: declining here and now is a moment worth
-        # offering the box for, while a decline made in an earlier run is not.
+        # The box stays open once there is a saved flag or typed text; a return to the
+        # default with nothing written closes it. `clicked` limits opening the box to a
+        # decline made now, not one the row arrived with.
         has_note = bool(flags.get(guid)) or (box is not None
                                            and bool(box.toPlainText().strip()))
         show_box = has_note or (state in _TURNED_DOWN and clicked)
@@ -1378,13 +1163,10 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         if box is not None:
             box.setVisible(show_box)
         decision.setVisible(bool(text) or show_box)
-        # Offered whenever the box is closed, whatever the row decided: a re-offered
-        # decline is not a default row, and gating this on the default left exactly
-        # those rows with no way to write a note at all.
+        # Offered whenever the box is closed, whatever the row decided, so a re-offered
+        # decline can still take a note.
         add_note.setVisible(not show_box)
-        # Struck through only for Never, which is a card the learner will not have. A
-        # frozen row keeps a card the learner does have, so striking it would say the
-        # opposite of what happened.
+        # Struck through only for Never. A frozen row keeps a card the learner has.
         gone = state == "never"
         font = primary.font()
         font.setStrikeOut(gone)
@@ -1397,16 +1179,12 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
             caret.setText(_CARET_CLOSED)
             _name_caret(False)
         # The box lives outside the body, so a Never row keeps it on screen while
-        # collapsing everything else. That is the whole reason Never can be offered a
-        # note at all: the row folds away and the one thing left is the question of
-        # why. It used to hide the box and the link both, which made the loudest
-        # decision in the dialog the only silent one.
+        # everything else collapses.
 
     if kind in _DEFAULT_DECISION:
         options = _NEW_OPTIONS if kind == "new" else _CHANGED_OPTIONS
-        # A predeclined detail's `decisions` entry is seeded by build_update_body,
-        # before any row (this one included) is ever built, so it just reads back
-        # here like any other decision.
+        # A predeclined detail's `decisions` entry is seeded by build_update_body before
+        # any row is built.
         initial = decisions.get(guid, default)
 
         def _decide(state, clicked):
@@ -1424,8 +1202,8 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         cell = decision_cell(options, initial, _on_change, card_label)
         hlay.addWidget(cell, 0, Qt.AlignmentFlag.AlignTop)
         if register is not None:
-            # A group's own decision reaches a built row through here. Not a click on
-            # this row, so it opens no note box on each of a dozen cards.
+            # A group's decision reaches a built row through here. It is not a click on
+            # this row, so it opens no note box.
             register(guid, lambda state: (cell.set_state(state), _decide(state, False)))
         hlay.addWidget(never_note, 0, Qt.AlignmentFlag.AlignTop)
         _apply_decision_visuals(initial)
@@ -1437,8 +1215,7 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
         note_rows.append(note_row)
         outer.addWidget(note_row)
 
-    # In the row's own text column, like the body below it: these lines are about the
-    # card, and drawn from the row's left edge they started left of even the caret.
+    # In the row's text column, like the body below.
     hints = []
     if changed_since_decline and declined_state != "held":
         hints.append(muted_label("Changed since you kept yours. Worth another look."))
@@ -1462,10 +1239,8 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
 
     body.setVisible(False)
     blay = QVBoxLayout(body)
-    # Every column in front of the primary label, so an expanded body lines up under
-    # the line it belongs to rather than under the caret or the chip. Counted from
-    # `leading` above rather than assumed to be one chip: a second column in front of
-    # the label leaves every body hanging a chip-width left of its own text.
+    # Indented by every column in front of the primary label, counted from `leading`, so
+    # the body lines up under its own line.
     blay.setContentsMargins(indent, 2, 0, 2)
     blay.setSpacing(4)
 
@@ -1473,9 +1248,8 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     images.setVisible(False)
     blay.addWidget(images)
 
-    # Declared here, ahead of the conditional that may or may not create it, so
-    # `_reveal_images` (a closure defined earlier in this function, called later) always
-    # finds a bound name to check rather than raising on a card with no answer block.
+    # Bound before the conditional so `_reveal_images` always finds the name, even on a
+    # card with no answer block.
     answer_label = None
     answer_html = _answer_html(shown)
     if answer_html:
@@ -1487,42 +1261,34 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
     if why_html:
         why_label = _rich_label(why_html)
         why_colour = colors()["why"]
-        # The `border: none` reset is load-bearing: Qt ignores a lone border-left on a
-        # QLabel unless the shorthand is set first, so without it the padding applies
-        # and the rule itself silently never paints.
+        # `border: none` first: Qt ignores a lone border-left on a QLabel unless the
+        # shorthand is set.
         why_label.setStyleSheet(f"border: none; border-left: 3px solid {why_colour};"
                                 f" padding-left: 8px; color: {why_colour};")
         blay.addWidget(why_label)
         rerender.append((why_label, why_value))
 
-    # Dosing is deliberately left out of rerender: it is a citation, never a picture,
-    # and re-rendering it from field_preview_html would drop the "Dosing" label prefix.
+    # Dosing stays out of rerender: it never holds a picture, and re-rendering would
+    # drop the "Dosing" label prefix.
     dosing_html = field_preview_html(_field(shown, "Dosing"))
     if dosing_html:
         dosing_label = _rich_label(f"<b>Dosing</b> &nbsp;{dosing_html}")
         c = colors()
-        # A hardcoded background needs a hardcoded foreground with it: text colour
-        # otherwise comes from the platform palette, which flips white under Night
-        # Mode while this block stays light. See "Colors" in README.md.
+        # A hardcoded background needs a hardcoded foreground: platform text colour
+        # flips under Night Mode. See "Colors" in README.md.
         dosing_label.setStyleSheet(f"background: {c['dosing_bg']}; color: {c['dosing_fg']};"
                                    f" padding: 6px; border-radius: 4px;")
         blay.addWidget(dosing_label)
 
-    # Everything this update rewrites, as one quiet group after the card rather than a
-    # `was` line wedged under each block. Interleaved, the body read as an alternation
-    # of card and ghost (why, then old why; note, then old text) and never as either
-    # one whole; this way the card above reads clean, and the group below states each
-    # field's delta once, in the note type's own field order. Field-name labels are
-    # what map a line back to its block, doing the job adjacency used to do.
+    # Everything this update rewrites, as one group after the card, in the note type's
+    # field order. Field-name labels map each line back to its block.
     changed_names = _changed_field_names(detail)
     if changed_names:
         blay.addWidget(_changes_heading())
         for name in changed_names:
             blay.addWidget(_change_row(detail, name, card_label, take_deck, resolve))
 
-    # Last in the body, past every field block: reading down to it is the same click
-    # that opens the card at all, which is what keeps this quiet rather than a header
-    # column competing with the decision control for attention.
+    # Last in the body, past every field block.
     if kind in _DEFAULT_DECISION:
         blay.addWidget(add_note)
 
@@ -1532,15 +1298,9 @@ def _card_row(detail, flags, boxes, decisions, on_decide, resolve=None, chips=No
 
 
 def _chip_kinds(items):
-    """The chip kinds a list can actually paint, read off the rows it was handed.
-
-    Both item vocabularies at once (build_list_body's ("row", kind, ...) and
-    build_update_body's card/retired/moved rows), since both hand their answer to the
-    same chip_cell. A screen's column is measured against this rather than against
-    every chip the add-on has, so Sync decks, Reconcile and Manage decks stop reserving
-    room for a decline chip none of them can ever show (see widgets.chip_column_width).
-    Derived rather than declared by each caller: the rows are already in hand, and a
-    declared set is one more thing to keep in step with what a screen actually builds.
+    """The chip kinds a list can paint, read off its rows, for
+    widgets.chip_column_width. Handles both item vocabularies: build_list_body's ("row",
+    kind, ...) and build_update_body's card/retired/moved rows.
     """
     kinds = []
     for item in items:
@@ -1567,13 +1327,8 @@ def flush_update_notes():
 
 
 def save_feedback(entries):
-    """Write the in-progress notes to user_files/, or clear the file when there are none.
-
-    Called as the learner types rather than only when the dialog closes. Everything
-    else a run does can be reproduced by clicking Update again; what the learner wrote
-    about a card cannot, so it is the one thing that must survive a crash, a force
-    quit, or an error thrown three dialogs later. Kept next to the other persistent
-    state, so an add-on update does not wipe it.
+    """Write the in-progress notes to user_files/, or clear the file when there are
+    none. Called as the learner types, so notes survive a crash.
     """
     if entries:
         _save_json(FEEDBACK, entries)
@@ -1719,76 +1474,46 @@ def build_update_body(items, sources, flags, new_index, decisions,
                       top_html, status_line, safety_html, touched=None, opened=None,
                       on_review=None, take_deck=None):
     """The Update my decks screen's body: fixed summary text, the streaming list of
-    pending new and changed cards plus any retired or relocated ones, then the
-    status line and the safety note below it. `internpearls.ui._ask_with_widget`
-    wraps whatever this returns with the dialog's title and its Update/Cancel buttons,
-    the same as any other confirmation.
+    pending new and changed cards plus any retired or relocated ones, then the status
+    line and the safety note. `internpearls.ui._ask_with_widget` wraps it with the
+    dialog's title and buttons.
 
-    `items` is a mix of ("header", text), ("note", html), ("sep",), ("deck", deck_short,
-    counts), ("card", deck_name, detail), ("retired", identity) or ("retired", identity,
-    reason), ("moved", front, dest_deck_short), and ("group_note", note, card_count)
-    entries, one per row, built by sync.py from every deck's new and changed cards
-    (_gather_pending_items) and from the retired/relocated cards it finds pending
-    (_retired_moved_items), folded through group_change_notes (see `_grouped_rows` in
-    sync.py). The first three are the shapes build_list_body takes too, and are drawn
-    by the same builder: a header groups a run of rows, a note is the sentence
-    introducing one, and a sep draws the hairline
-    between two rows. A "deck" row is the per-deck summary that opens the list, in a
-    section of its own where nothing is ever chipped and nothing ever expands, so it
-    declines the caret and chip columns (see simple_row) and its deck names share a left
-    edge with the heading directly above them. Alignment is decided per section, by
-    whether anything in that section is chipped, which is why the card sections below
-    keep the columns their own unchipped rows would otherwise not need. A "retired" or
-    "moved" row renders through widgets.simple_row rather than `_card_row`: single-line
-    and never expanding, since a retired or relocated card is known only by its front
-    (or identity) and a deck, with nothing more to read out of the collection for it. A
-    ledger retirement's own reason (its 3rd element, when present) renders as a second,
-    muted line under the identity, unquoted, the way a card's own change note renders; a
-    stranded-pair row has no reason of its own and stays one line. A "group_note" row is
-    one shared change note rendered once, over the member rows beneath it, through the
-    same accent-barred style a single card's own note already uses (`_change_note_row`);
-    each member card's own matching entry is already dropped from its `change_notes`
-    before this screen ever sees it, so the note is not shown twice. A group of at least
-    `_GROUP_COLLAPSE_MIN` cards folds behind its header, with a toggle to reveal its
-    members (`_group_note_row`); a smaller group renders every member open, as before.
-    `sources` is
-    {deck_name: .apkg path}, threaded straight into build_resolvers so a row's picture
-    extracts from the same already-downloaded file this screen read the rest of the
-    card from.
+    `items` entries, one per row, built by sync.py (see `_grouped_rows`):
 
-    `flags`/`new_index` are the {guid: note}/{guid: (deck, front)} maps update_decks()
-    already carries through the run. A row's box writes into `flags` live, on every
-    keystroke, since there is no separate closing moment: the rows sit on the
-    confirmation itself. `decisions` is the matching live map for a row's segmented
-    control, {guid: state}; a row writes into it the same way, sparsely (a guid absent
-    from the dict means that row's default, Import or Apply).
+      ("header", text), ("note", html), ("sep",)   as in build_list_body
+      ("deck", deck_short, counts)       a per-deck summary row, without the caret and
+                                         chip columns
+      ("card", deck_name, detail)        a card, through `_card_row`
+      ("retired", identity[, reason])    one line, plus a muted reason line when given
+      ("moved", front, dest_deck_short)  one line
+      ("group_note", note, card_count)   a shared change note over the member rows
+                                         beneath it; a group of at least
+                                         `_GROUP_COLLAPSE_MIN` cards can fold behind it
 
-    `status_line()` is called fresh on every keystroke and every decision change to
-    recompute the line shown below the list (flag counts, decision tallies, whatever
-    the caller wants there); `safety_html` is fixed.
+    `sources` is {deck_name: .apkg path}, passed to build_resolvers.
+
+    `flags`/`new_index` are {guid: note}/{guid: (deck, front)}. A row's box writes into
+    `flags` on every keystroke. `decisions` is the live {guid: state} map for the
+    decision controls; an absent guid means the row's default (Import or Apply).
+
+    `status_line()` is called on every keystroke and decision change to recompute the
+    line below the list; `safety_html` is fixed.
 
     `touched`, when given, collects every guid whose decision control the learner
-    actually clicked this run, even a click that lands back on the row's own default or
-    reaffirms the state it was already showing. update_decks() reads this back after
-    the dialog closes to tell an active re-decline (which should refresh the stored
-    hash) and an active un-decline on a kind-flipped row (which should remove the
-    entry) apart from a row simply left as the confirmation seeded it.
+    clicked this run, even a click that lands on the state already shown, so
+    update_decks() can tell an active re-decline or un-decline from a row left as seeded.
 
     `opened` collects every guid whose row the learner expanded, and `on_review()`
-    runs after each expand and each decision click, so a caller can keep "hold for
-    later" counting only the rows nobody has looked at.
+    runs after each expand and each decision click.
 
-    From `FILTER_MIN_CARDS` card rows up, a FilterBar sits above the list. Picking a
-    filter or typing a search rebuilds the stream from `filter_update_items`; the
-    decisions, flags and touched set stay put, and rows are rebuilt from them.
+    From `FILTER_MIN_CARDS` card rows up, a FilterBar sits above the list. Filtering
+    rebuilds the stream from `filter_update_items`; decisions, flags and the touched
+    set stay put.
 
     Returns (widget, boxes, flush). `boxes` is {guid: QPlainTextEdit}, populated only
-    when a built row carries a note or opens its editor. Built rows without a box
-    have no note.
-    `flush()` stops the debounce save timer, writes one final
-    unconditional copy of what's flagged to disk, and releases the temporary directory
-    pictures were extracted into; the caller runs it once, right after the dialog this
-    body sits in has closed.
+    when a built row carries a note or opens its editor. `flush()` stops the debounce
+    save timer, writes a final copy of what's flagged to disk, and releases the
+    temporary picture directory; the caller runs it once, after the dialog has closed.
     """
     resolvers, media_dir = build_resolvers(sources)
     boxes = {}
@@ -1796,15 +1521,12 @@ def build_update_body(items, sources, flags, new_index, decisions,
     touched = touched if touched is not None else set()
     opened = opened if opened is not None else set()
 
-    # A predeclined card's `decisions` entry has to exist before any row is ever
-    # built, not just once its own row happens to render: StreamingList only builds
-    # the first batch up front and the rest on scroll, so seeding this inside
-    # _card_row would leave a predeclined card past the first batch permanently
-    # missing from the dict a caller reads back. One pass over `items` costs nothing
-    # (no widgets), and only ever writes a state that row's own control can actually
-    # express, so a value the control couldn't show never silently reaches the
-    # persisted dict either. A Later card returns at its default unless it is waiting
-    # (`later_wait`: an old Skip, or a noted card not updated yet).
+    # Seed every predeclined card's `decisions` entry here, before any row is built:
+    # StreamingList builds rows past the first batch only on scroll, so seeding in
+    # _card_row would leave them missing from the dict the caller reads back. Only a
+    # state the row's control can express is written. A Later card returns at its
+    # default unless it is waiting (`later_wait`: an old Skip, or a noted card not
+    # updated yet).
     migrated = 0
     for item in items:
         if item[0] != "card":
@@ -1829,19 +1551,14 @@ def build_update_body(items, sources, flags, new_index, decisions,
     lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(8)
 
-    # Skipped entirely when there is nothing to say. Now that the per-deck summary is
-    # the list's own first section, a routine update often has no fixed text above the
-    # list at all, and an empty label still claims a line's height plus the layout's
-    # spacing, which reads as the list having been nudged down for no reason.
+    # Skipped when empty: an empty label still takes a line's height plus spacing.
     if top_html:
         lay.addWidget(_rich_label(top_html))
     if migrated:
         lay.addWidget(muted_label(later_migration_line(migrated)))
 
-    # The safety note is standing reassurance, not this run's news, so it renders as
-    # small print: at body size it was the tallest block on the screen, taking height
-    # the list itself is here for. The status line above it keeps the body size, since
-    # it reports what the learner just did.
+    # The safety note is standing reassurance, so it renders as small print; the status
+    # line keeps body size.
     safety_html = (f"<span style='color: {colors()['muted']}; font-size: 11px;'>"
                    f"{safety_html}</span>")
     bottom = _rich_label(status_line() + safety_html)
@@ -2039,9 +1756,7 @@ def _list_row(item, card_columns=True, chips=None):
         return section_header(item[1])
     if item[0] == "note":
         label = _rich_label(item[1])
-        # The same top margin section_header carries, for the same reason: a note opens
-        # a group, and without it a group's first line sits as close to the last row of
-        # the group above as to its own rows.
+        # The same top margin section_header carries: a note opens a group.
         label.setStyleSheet("margin-top: 14px;")
         return label
     if item[0] == "sep":
@@ -2063,15 +1778,11 @@ def append_rows(items, rows):
 
 def build_list_body(items, top_html="", bottom_html="", card_columns=True):
     """A confirmation whose body is a list of rows: fixed text above it, the streaming
-    list itself, fixed text below. `internpearls.ui._ask_with_widget` wraps whatever
-    this returns with the dialog's title and its buttons, the same as build_update_body.
+    list itself, fixed text below. `internpearls.ui._ask_with_widget` wraps it with the
+    dialog's title and buttons.
 
-    Sync decks and Reconcile my decks build from this. Neither shows a card that opens
-    into more, so neither needs `_card_row`, the feedback boxes or the picture
-    resolvers build_update_body threads through. What they do need is the same rows,
-    the same hairlines and the same streaming as the screen they each run half of, so
-    they share the list rather than each hand-rolling a container that would drift from
-    it.
+    Sync decks and Reconcile my decks build from this: the update screen's rows,
+    hairlines and streaming, without `_card_row`, feedback boxes or picture resolvers.
 
     `items` entries:
 
@@ -2081,14 +1792,10 @@ def build_list_body(items, top_html="", bottom_html="", card_columns=True):
       ("row", kind, primary, trailing)    one row, marked by `kind` (widgets.CHIPS),
                                           or by nothing when `kind` is None
 
-    `card_columns` is the caret-and-chip-column decision widgets.simple_row documents,
-    made once for the whole list because it is a decision about the screen rather than
-    about any one row. A mixed list (Sync decks marks a deck NEW or UPDATED, Reconcile
-    marks a card RETIRED or MOVED) keeps the columns, so its chipped and unchipped rows
-    read as one column of text. A list where every row is the same sort of thing has
-    nothing to line up against, so it declines them and starts flush with the heading
-    above it: Clean up duplicates and Remove empty cards each list one kind of card and
-    pass False.
+    `card_columns` is the caret-and-chip-column choice widgets.simple_row documents,
+    made once for the whole list. A list mixing chipped and unchipped rows keeps the
+    columns so its text lines up; a list of one kind of row (Clean up duplicates,
+    Remove empty cards) passes False and starts flush with the heading.
     """
     body = QWidget()
     lay = QVBoxLayout(body)
@@ -2105,17 +1812,12 @@ def build_list_body(items, top_html="", bottom_html="", card_columns=True):
 
 
 def _summary_block(title, items):
-    """The run's own outcome as widgets: its headline at the dialog's largest size, then
-    one row or paragraph per item in the same vocabulary build_list_body takes.
+    """The run's outcome as widgets: its headline at the dialog's largest size, then one
+    row or paragraph per item in build_list_body's vocabulary. Rows take no caret or
+    chip columns (see widgets.simple_row).
 
-    The rows carry no chip and nothing here expands, so they decline the caret and chip
-    columns (see widgets.simple_row): with nothing on this screen to line up against,
-    reserving them would float every outcome line to the right of the heading above it
-    and the backup line below it.
-
-    Not a StreamingList: every caller's item count is bounded by how many decks the run
-    touched, so there is no long list to build lazily, and both callers want this block
-    to size to its own content inside whatever scroll area they put it in.
+    Not a StreamingList: the item count is bounded by the decks the run touched, and
+    callers want the block sized to its content.
     """
     summary = QWidget()
     slay = QVBoxLayout(summary)
@@ -2128,11 +1830,9 @@ def _summary_block(title, items):
 
 
 def _scrolled(widget, max_height):
-    """`widget` in a frameless scroll area that stops growing at `max_height`.
-
-    Sized Preferred rather than the QScrollArea default of Expanding, for the reason
-    ui._ask_scrollable spells out: Expanding claims every pixel of leftover height, so a
-    two-line summary would be stretched to the full cap with blank space inside it.
+    """`widget` in a frameless scroll area that stops growing at `max_height`. Sized
+    Preferred, not QScrollArea's default Expanding, which would stretch a short summary
+    to the full cap.
     """
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
@@ -2144,63 +1844,39 @@ def _scrolled(widget, max_height):
 
 
 def show_result(title, items):
-    """The end of a run with nothing flagged: the summary on its own, acknowledged and
-    closed.
-
-    A real dialog rather than the _info box this used to be, for the same reason
-    ui._ask_scrollable exists: a message box has no scroll area, so a run reporting a
-    deck per line plus a list of collided cards just grew the box, and a long enough one
-    put its own OK button past the bottom of the screen. It also means the one thing the
-    reader is being told about the run reads in the row vocabulary the confirmation the
-    reader just answered was built from, instead of as a `<ul>` dropped into a label.
+    """The end of a run with nothing flagged: the summary on its own, in a scrollable
+    dialog so a long report cannot push OK off the screen.
     """
     body = QWidget()
     lay = QVBoxLayout(body)
     lay.setContentsMargins(0, 0, 0, 0)
     lay.addWidget(_scrolled(_summary_block(title, items), 420))
-    # Leftover height collects here, below the summary and above the button, rather
-    # than being spread through the gaps between the rows.
+    # Leftover height collects here, below the summary and above the button.
     lay.addStretch()
     _ask_with_widget(body, yes_label="OK", no_label=None, min_width=460, min_height=0)
 
 
-# What a run that stopped before it changed anything says, so the two places that can
-# happen (cancelling the preview download, and cancelling the retry after the
-# confirmation) say it the same way rather than one of them saying nothing at all.
+# What a run that stopped before changing anything says, shared by every place that can
+# happen.
 NOTHING_CHANGED = "Update cancelled, nothing was changed."
 
 
 def show_result_with_feedback(title, items, entries, nothing_note="",
                               standing_declines=None, excluded=(), edits=()):
-    """The end of a run, as one dialog instead of two.
+    """The end of a run as one dialog: the summary on top, the feedback digest below.
 
-    Return whether the shown digest was archived, or True when there was no digest.
+    Returns whether the shown digest was archived, or True when there was no digest.
 
-    A completion summary and a feedback digest used to arrive as separate boxes, back
-    to back, at the exact point in the run where the reader is most done paying
-    attention: the summary lands first, gets dismissed, and the digest, the one thing
-    the reader cannot reproduce by running the update again, appears behind it looking
-    like yet another popup. They are one dialog now, summary on top, digest below it.
-
-    `title` is the run's own headline ("Update complete (source: X)" or "Update stopped
-    early (source: X)"); `items` is everything below it in build_list_body's own
-    vocabulary, so an outcome per deck reads as a row, the preserved-field and collision
-    notes read as paragraphs, and the cards a collision names read as rows of their own.
-
-    Degrades in both directions on purpose: a run with no flagged cards is the summary
-    alone, and a digest with no summary (the learner backed out of the update but still
-    wrote notes) is the digest on its own.
+    `title` is the run's headline; `items` is everything below it in build_list_body's
+    vocabulary. A run with no flagged cards shows the summary alone, and a digest with
+    no summary shows alone too.
 
     `standing_declines` is the current sparse decline registry to append to any digest;
     it does not make a digest appear when the run has no entries of its own. Its Later
     count leaves out cards in the `excluded` decks.
 
-    `nothing_note` is the one sentence to show when there is neither: a run that
-    stopped with nothing to summarize and nothing flagged used to return in silence,
-    so cancelling after clicking Update looked exactly like the click having done
-    nothing at all. A plain _info rather than the summary dialog, since a headline with
-    no rows under it is a sentence, not a summary. Left empty by a caller whose own
-    exit needs no announcing (declining the confirmation, where Cancel says it).
+    `nothing_note` is the sentence to show, as a plain _info, when there is neither
+    summary nor digest. Empty when the caller's exit needs no announcing.
     """
     if not entries:
         if title:
@@ -2214,12 +1890,8 @@ def show_result_with_feedback(title, items, entries, nothing_note="",
 
 
 def _digest_heading(entries, edits=()):
-    """What the digest is a digest of, counted as two separate things.
-
-    An entry carries a note, a decision, or both (logic.feedback_entries builds one for
-    a decision with nothing written on it too), and calling all of them flagged told a
-    reader who skipped two cards and flagged none that they had flagged two. Each half
-    is named only when it has something to count.
+    """What the digest holds, with notes and decisions counted separately. Each half is
+    named only when it has something to count.
     """
     flagged = sum(1 for e in entries if (e.get("note") or "").strip())
     decided = sum(1 for e in entries if e.get("decision"))
@@ -2237,26 +1909,14 @@ def _digest_count_heading(flagged, decided, edited=0):
 
 def offer_feedback_digest(parent, entries, title=None, items=(), standing_declines=None,
                           excluded=(), edits=()):
-    """Put the flagged-card summary on the clipboard and show it.
+    """Put the flagged-card summary on the clipboard and show it, so the learner sees
+    what will be pasted and can copy it again if the clipboard didn't take.
 
-    Return whether the shown digest was archived, or True when there was no digest.
+    Returns whether the shown digest was archived, or True when there was no digest.
 
-    Shown as well as copied, for two reasons: the learner sees exactly what's being
-    sent before it is sent, and a clipboard that silently didn't take (a mocked or
-    headless Qt) costs a manual select-and-copy instead of costing the learner the
-    notes they wrote. Read-only and scrollable rather than an _info box, since this
-    text is meant to be selected and can run past a message box's height with nothing
-    to grab. Monospaced and styled as a payload block, since it's indent-structured
-    plain text, not prose. Copy again is the recovery if something else lands on the
-    clipboard before the learner gets to paste.
-
-    `title`/`items` are the end-of-run summary, drawn by _summary_block in the same
-    title/row vocabulary the confirmation this dialog follows already uses. The optional
-    `standing_declines` registry makes the copied payload a current-state handoff rather
-    than only this run's delta. Left at
-    their defaults for a bare digest with no summary at all (the learner backed out of
-    the update but still flagged a card), which is why the whole block is skipped when
-    `title` is empty rather than rendered with a blank heading.
+    `title`/`items` are the end-of-run summary, drawn by _summary_block; the block is
+    skipped when `title` is empty. `standing_declines` appends the current decline
+    registry to the copied payload.
     """
     text = build_feedback_digest(entries, version=ADDON_VERSION,
                                  date=datetime.date.today().isoformat(),
@@ -2299,14 +1959,12 @@ def show_feedback_digest(parent, text, heading="Card feedback", title=None, item
     lay = QVBoxLayout(body)
     lay.setContentsMargins(0, 0, 0, 0)
     if title:
-        # The run's own outcome, at the dialog's largest size: it is what the whole
-        # screen is reporting. The flagged-card heading below is subordinate to it and
-        # says so by being smaller, which is the way round these two used to read.
+        # The run's outcome at the dialog's largest size; the flagged-card heading below
+        # is smaller.
         lay.addWidget(_scrolled(_summary_block(title, items), 200))
     lay.addWidget(section_header(heading))
     # Nothing here sends anything, and this is the last screen that can say so before
-    # the notes are cleared: "copied, ready to paste" left it possible to read the
-    # digest, close it, and assume the deck author now had it.
+    # the notes are cleared.
     hint = (
         "Nothing is sent automatically. This is on your clipboard: paste it into a "
         "message to the deck author, or save a file to attach."
@@ -2319,34 +1977,21 @@ def show_feedback_digest(parent, text, heading="Card feedback", title=None, item
     view = QPlainTextEdit(text)
     view.setReadOnly(True)
     view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-    # Every colour here is a palette reference, not a hex value, so the block follows
-    # Night Mode instead of fighting it. It used to hardcode a near-white background
-    # and leave the text to the palette, which is the v0.32.1 dosing-block bug exactly:
-    # measured at 1.34:1 in dark mode (light grey on near-white), so the one thing in
-    # this dialog the learner is meant to read was the one thing they could not.
-    # `base` is the background a text field already uses, so it still reads as a
-    # sunken payload block
-    # in both themes, and `text` on `base` is a pairing the platform guarantees.
+    # Palette references, not hex values, so the block follows Night Mode. `text` on
+    # `base` is a pairing the platform guarantees.
     view.setStyleSheet("QPlainTextEdit { background: palette(base);"
                        " color: palette(text); border: 1px solid palette(mid); }")
-    # Sized to its own content, up to the same 340px cap _ask_scrollable uses for a
-    # long body, rather than the plain `addWidget(view, 1)` stretch this used to carry:
-    # that stretch filled whatever height the dialog happened to be, so one short
-    # flagged card left most of the box a blank payload-coloured slab. A long digest
-    # still gets the full cap and scrolls internally past it.
+    # Sized to its content, up to the 340px cap _ask_scrollable uses; a longer digest
+    # scrolls.
     metrics = view.fontMetrics()
     line_count = text.count("\n") + 1
-    # The +4 covers rounding in Qt's own layout of the document inside the viewport;
-    # without it this estimate lands a couple of pixels short and triggers a scrollbar
-    # nobody needs.
+    # +4 covers rounding in Qt's document layout, which would otherwise show a needless
+    # scrollbar.
     content_height = int(line_count * metrics.lineSpacing()
                          + view.document().documentMargin() * 2 + view.frameWidth() * 2) + 4
     view.setFixedHeight(min(content_height, 340))
     lay.addWidget(view)
-    # Without this, a dialog opened taller than its now content-sized parts (a manual
-    # resize, or this add-on's own minimumHeight above) has nothing telling Qt where
-    # the surplus goes, so it spreads thin gaps between the title/hint/box instead of
-    # leaving one, below the content and above the buttons where it belongs.
+    # Surplus height collects here, below the content and above the buttons.
     lay.addStretch()
     _ask_with_widget(body, yes_label="Close", no_label=None,
                      title=f"{APP_NAME}: card feedback", min_width=520, min_height=380,

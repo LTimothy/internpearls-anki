@@ -1,23 +1,12 @@
 """Dialog wrappers, error-safety decorators, and shared widget styling.
 
-Thin wrappers so every dialog carries the "Intern Pearls" title (Anki's helpers
-default to the generic "Anki") and so anything longer than a message box can hold gets
-a real scroll area with its buttons outside it. Route any new dialog through these,
-not the raw aqt.utils calls, so a future addition here stays consistent automatically.
+Route every new dialog through these wrappers instead of raw aqt.utils calls, so it carries
+the "Intern Pearls" title and scrolls with its buttons outside the scroll area. A screen
+that lists cards, decks or settings builds rows and goes through _ask_with_widget.
 
-A screen that lists cards, decks or settings does not belong in any of these as text:
-it builds rows (widgets.simple_row, review.build_list_body) and comes back through
-_ask_with_widget. Nothing in the add-on renders an HTML bullet list any more.
-
-The interleave guard (`_manual_flow`, `manual_sync_in_progress`) lives here for a
-different reason: every menu action that writes the collection has to hold it, and
-those are split across sync.py and collection.py, which cannot share a guard of their
-own without a circular import.
-
-The label/button helpers at the bottom exist for the same reason: every dialog's
-headings, hints, and link-style buttons share one look defined here, instead of each
-dialog carrying its own copy of the stylesheet strings.
-"""
+Also holds the guard for interactive flows that write the collection (`_manual_flow`,
+`manual_sync_in_progress`), because sync.py and collection.py both need it and cannot share
+one without a circular import."""
 import functools
 import html
 import sys
@@ -36,37 +25,21 @@ from .palette import colors
 from .platform import new_work_request, platform, wait_for_mock_work
 
 
-# Depth of interactive flows that write the collection: the sync,
-# reconcile and import flows in sync.py, and the Advanced actions in collection.py that
-# import, restore, delete, or reconcile note types. The unattended auto-sync poll
-# checks it and skips its tick rather than interleaving, since both write the
-# collection and both persist installed.json, and the poll's apply half lands from a
-# worker thread's completion callback, which can fire while one of these flows is
-# sitting inside a modal dialog's own event loop.
-#
-# It lives here rather than in sync.py or collection.py because both of those need it
-# and sync.py imports collection.py, so a guard in either would be a circular import.
-# ui.py is imported by both, imports neither, and already owns the other decorator
-# every menu action wears (_safe).
+# Depth of interactive flows that write the collection. The auto-sync poll skips its tick
+# while this is non-zero, since its apply can land while a flow sits in a modal dialog's
+# event loop.
 _manual_flow_depth = 0
 
 
 def manual_sync_in_progress():
-    """Whether an interactive flow that writes the collection is running right now.
-
-    Read by background.py's poll, which stays quiet and retries on the next tick rather
-    than queueing behind this. A depth counter keeps nested flows guarded until the
-    outermost flow returns.
-    """
+    """Whether an interactive flow that writes the collection is running. A depth counter
+    keeps nested flows guarded until the outermost returns."""
     return _manual_flow_depth > 0
 
 
 def _manual_flow(fn):
-    """Hold `manual_sync_in_progress()` for the whole of an interactive flow.
-
-    Applied under @_safe so the guard is released even when the flow raises, which is the
-    one thing @_safe's own warning dialog would otherwise leave stuck on.
-    """
+    """Hold `manual_sync_in_progress()` for the whole of an interactive flow. Applied under
+    @_safe; the guard is released even when the flow raises."""
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         global _manual_flow_depth
@@ -91,25 +64,13 @@ def _warn(text, **kw):
 
 
 def _ask(text, yes_label=None, no_label=None, default_yes=False, **kw):
-    """A yes/no confirmation, with buttons that can name the action instead.
+    """A yes/no confirmation. Pass both labels to name the two actions instead of Yes/No.
 
-    Pass both labels for a question whose two answers cost different things ("Apply the
-    new look" / "Keep my current look"): a bare Yes/No there makes the reader scroll
-    back up to the question to work out what No means, which is the same reason
-    _ask_scrollable defaults to action-neutral labels rather than Yes/No.
-
-    The named-button question is a QMessageBox built here rather than Anki's own
-    askUserDialog, which gives every button AcceptRole: that leaves Escape and the
-    window's close box inert, so the dialog cannot be dismissed at all, and sets no
-    default, so Return activates whichever button was added first. On the questions
-    that matter here that first button is the one that consents to a schema change,
-    which is exactly the agreeing-by-not-reading this add-on refuses everywhere else.
-    Below, the declining answer carries RejectRole and is both the default and the
-    escape button, so Return, Escape and the close box all mean the safe answer and
-    only a deliberate click can consent. Pass `default_yes=True` when Return should
-    choose the affirming answer; Escape and closing still decline. Qt orders the two
-    by role, so the affirming action still sits where the running platform puts it.
-    """
+    The named-button form is a QMessageBox built here, not Anki's askUserDialog, which gives
+    every button AcceptRole, so Escape and the close box do nothing and Return picks the
+    first button. Here the declining answer has RejectRole and is the default and the escape
+    button, so Return, Escape and the close box all decline. `default_yes=True` makes Return
+    choose the affirming answer; Escape and closing still decline."""
     kw.setdefault("title", APP_NAME)
     if yes_label and no_label:
         box = QMessageBox(mw)
@@ -131,68 +92,31 @@ def _ask(text, yes_label=None, no_label=None, default_yes=False, **kw):
 def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=340,
                     extra_label=None, on_extra=None, checkbox=None, title=None,
                     open_external_links=False):
-    """Like _ask, but for content whose length isn't bounded by anything short. A plain
-    QMessageBox (what askUser/_ask use) has no scroll area, so long text just makes the
-    box taller, and once it's taller than the screen its Yes/No buttons end up
-    off-screen with no way to reach them, an unusable and undismissable dialog. This
-    scrolls the body in a fixed-height viewport instead, with the buttons pinned outside
-    it, so they're always reachable no matter how long the content is.
+    """Like _ask, but for long prose: the body scrolls in a fixed-height viewport with the
+    buttons pinned outside it. A screen that lists cards or decks uses _ask_with_widget
+    instead.
 
-    For prose. Every screen that lists cards or decks builds rows and goes through
-    _ask_with_widget below; About is the caller this one is left for, and its length is
-    exactly why it needs the scroll area.
+    yes_label/no_label default to "Continue"/"Cancel"; pass labels that name the action.
+    `no_label=None` drops the second button. `title` overrides the window title.
 
-    yes_label/no_label default to action-neutral "Continue"/"Cancel" rather than
-    "Yes"/"No": a caller with a specific action (e.g. "Archive & relocate") should
-    pass its own labels, since a generic Yes/No forces the reader back up to the
-    question to know what they're agreeing to.
+    `checkbox` is an optional {"label": ..., "checked": bool} dict, shown under the body and
+    written back in place when the dialog closes. Use it only for a decision subordinate to
+    this one.
 
-    `checkbox` is an optional {"label": ..., "checked": bool} dict, shown under the
-    body and written back in place when the dialog closes. It exists so a second
-    decision that used to interrupt the run with its own question can be made here,
-    while the reader is already deciding, instead of mid-flight three dialogs later.
-    Only for a decision that is genuinely subordinate to this one: a checkbox on a
-    confirmation is answered by the same click, so anything needing its own yes or no
-    still needs its own dialog.
+    `extra_label` adds a third button with ActionRole: clicking it runs `on_extra` and
+    leaves the dialog open. `on_extra` may return a string that replaces the body text, or a
+    `(body_text, button_label)` pair; None leaves that part alone.
 
-    `extra_label` adds a third button that does NOT answer the question. It carries
-    ActionRole, so clicking it leaves this dialog open, runs `on_extra`, and returns
-    the reader to the same undecided confirmation, which is the point: going to look
-    at something in more detail shouldn't cost you the decision you were making.
-    `on_extra` may return a plain string (replaces the body text; None leaves it
-    alone) or a `(body_text, button_label)` pair when the click also changes what the
-    button itself should say next (e.g. a toggle whose label names the action, not
-    the current state): either element may be None to leave that part alone.
-
-    `no_label=None` drops the second button entirely, for a caller with nothing to
-    decline, just long or richly formatted content to show in a scrollable, consistently
-    styled dialog with a single acknowledgement button (About uses this).
-
-    `title` overrides the window title beyond the plain APP_NAME every other caller
-    here is fine with, for a caller (About) whose title carries a suffix the way the
-    add-on's other standalone dialogs (Settings, Manage decks) do.
-
-    `open_external_links` defaults to off. This is the shared confirmation wrapper, and
-    several callers interpolate content that is not escaped: a card front, a
-    retired-card identity, a raw note field straight out of the collection. Before
-    Qt's anchor color was fixed, a link in that content rendered as inert text; leaving
-    external links on for every caller would make it clickable, launching the system
-    browser on whatever URL that unescaped content happened to contain. About is the
-    only caller with a link it actually wants opened (its own repository anchor), so it
-    passes `True` explicitly instead of this being the default for everyone.
-    """
+    `open_external_links` defaults to off because several callers interpolate unescaped
+    collection content, and a link in it must not open the browser."""
     dlg = QDialog(mw)
     dlg.setWindowTitle(title or APP_NAME)
     dlg.setMinimumWidth(460)
     lay = QVBoxLayout(dlg)
 
-    # Qt paints an <a href> anchor in its own built-in link colour, never in any colour
-    # set on the widget (its palette's Link role included: verified that setting it has
-    # no effect on what a QLabel's rich text actually paints), so an anchor in body text
-    # would otherwise stay the same shade on both themes and go unreadable on a dark
-    # window. A <style> block in the document itself is what Qt's rich text honours, so
-    # it's prepended here rather than left to each caller: every body this wrapper ever
-    # renders, About's link today or another dialog's tomorrow, gets it for free.
+    # Qt paints an <a href> anchor in its built-in link colour and ignores the palette's
+    # Link role. Rich text does honour a <style> block in the document, so one is prepended
+    # to every body.
     link_style = f"<style>a {{ color: {colors()['accent']}; }}</style>"
 
     def _rich(t):
@@ -200,9 +124,8 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
 
     body = QLabel(_rich(text))
     body.setWordWrap(True)
-    # setWidgetResizable(True) below stretches this label's box to fill the whole
-    # scroll viewport, and Qt vertically centres a label's text within its own box by
-    # default, so a short body would otherwise float with blank space above it.
+    # setWidgetResizable(True) stretches this label to the viewport, and Qt centres label
+    # text vertically by default.
     body.setAlignment(Qt.AlignmentFlag.AlignTop)
     body.setTextFormat(Qt.TextFormat.RichText)
     body.setOpenExternalLinks(open_external_links)
@@ -210,13 +133,8 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.Shape.NoFrame)
     scroll.setMaximumHeight(max_height)
-    # Preferred rather than the QScrollArea default of Expanding: Expanding claims any
-    # leftover height the dialog has beyond every widget's own natural size, which is
-    # exactly what stretched this scroll area to its full max_height cap even for a
-    # one-line body, leaving nothing to tell Qt where the *rest* of the leftover space
-    # (beyond that cap) should go, so it spread thinly above, inside, and below the
-    # scroll area instead. Preferred lets it size to its content and hands leftover
-    # space to the addStretch() below instead.
+    # Preferred, not the default Expanding, so the scroll area sizes to its content and
+    # leftover height goes to the addStretch() below.
     scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
     scroll.setWidget(body)
     lay.addWidget(scroll)
@@ -227,10 +145,7 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
         box.setChecked(bool(checkbox.get("checked")))
         lay.addWidget(box)
 
-    # Collects all leftover height here, between the content and the buttons, instead
-    # of Qt spreading it across every gap (see scroll's size policy above): a short
-    # confirmation now sits at the top of the dialog with its buttons pinned to the
-    # bottom, and a long one still scrolls within max_height with the buttons reachable.
+    # Collects leftover height between the content and the buttons.
     lay.addStretch()
 
     bb = QDialogButtonBox()
@@ -256,29 +171,19 @@ def _ask_scrollable(text, yes_label="Continue", no_label="Cancel", max_height=34
     answered = bool(dlg.exec())
     if box is not None:
         checkbox["checked"] = box.isChecked()
-    # Parenting to mw hands Qt ownership, so without this every dialog a session opens
-    # stays alive until Anki quits, card rows and decoded pictures included. Deferred
-    # deletion rather than WA_DeleteOnClose: close runs before exec() returns, so that
-    # attribute would free the checkbox above out from under the line that reads it.
+    # The dialog is parented to mw, so it lives until Anki quits unless deleted. Not
+    # WA_DeleteOnClose: close runs before exec() returns and would free the checkbox read
+    # above.
     dlg.deleteLater()
     return answered
 
 
 def _place_checkbox(dialog_layout, body, box):
-    """Put the checkbox with the sentence that explains it, not under the list.
+    """Insert the checkbox directly above the body's scroll area, under the fixed text that
+    explains it. A body with no scroll area gets it at the bottom of the dialog.
 
-    A body's list streams as many rows as the run has pending, so a checkbox added below
-    it can sit hundreds of rows past the paragraph above the list saying what ticking it
-    costs, and a reader who never scrolls back never meets the two together. Inserted
-    directly above the body's own scroll area instead, which puts it under whatever fixed
-    text the body opens with and on the same screen as it. A body with no scroll area to
-    sit above (a plain widget) keeps the old placement, at the bottom of the dialog.
-
-    The box lands under the LAST of that fixed text, so a caller writing more than one
-    paragraph there has to put the one this box answers last (see update_decks): a
-    checkbox sitting directly under a paragraph about something else reads as answering
-    that paragraph instead.
-    """
+    The box lands under the last of the fixed text, so a caller must put the paragraph it
+    answers last."""
     lay = body.layout() if hasattr(body, "layout") else None
     for i in range(lay.count() if lay is not None else 0):
         item = lay.itemAt(i)
@@ -291,38 +196,22 @@ def _place_checkbox(dialog_layout, body, box):
 def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=None,
                      title=None, min_width=560, min_height=520, on_close=None,
                      open_size=None, extra=None, actions=(), parent=None):
-    """Like _ask_scrollable, but the body is a caller-built widget rather than an HTML
-    string, for a screen whose content is more than one scrollable label can lay out
-    well: fixed summary text above a list that should take whatever height the resized
-    dialog leaves it, e.g. Update my decks' inline card list. The caller's widget owns
-    its own internal layout and scrolling; this only wraps it with the add-on's title,
-    the optional checkbox, and the Continue/Cancel buttons, on the same roles and the
-    same checkbox-state-written-back-in-place contract _ask_scrollable uses.
+    """Like _ask_scrollable, but the body is a caller-built widget that owns its layout and
+    scrolling. This adds the title, the optional checkbox (written back in place), and the
+    Continue/Cancel buttons.
 
-    `open_size` is the (width, height) the dialog opens at, clamped to the screen it
-    lands on so a laptop display never gets a dialog taller than itself; the minimums
-    above still hold and the dialog stays resizable either way. Left at None the dialog
-    opens at its minimums, which is right for a short confirmation; the update screen
-    passes a larger size because its list is the densest thing the add-on draws.
+    `open_size` is the (width, height) the dialog opens at, clamped to its screen. None
+    opens at the minimums.
 
-    `on_close` runs once the reader has answered, and it exists because of when: adding
-    `body` to this dialog's layout hands it to Qt, so when this function returns and
-    lets go of the dialog, Qt destroys the whole tree. A caller that needs to read its
-    own widgets one last time (Update my decks reads the notes typed into its cards, and
-    stops the timer that debounces saving them) cannot do it afterwards: every one of
-    those objects is freed C++ by then, and touching one raises "wrapped C/C++ object
-    has been deleted". Running here, while the dialog is still held, is the last moment
-    they exist. Note that the mock-Anki suite cannot catch a mistake of this shape,
-    since its widgets are plain Python objects with no C++ lifetime behind them.
+    `on_close` runs once the reader has answered, while the dialog is still alive. It is the
+    caller's last chance to read its widgets: Qt destroys them when this returns. The
+    mock-Anki suite cannot catch a mistake here, since its widgets have no C++ lifetime.
 
-    `extra`, when given, is {"label", "tooltip", "visible"} for one more accepting
-    button, added to the button box before the yes button (Qt places it by its action
-    role, so it may not sit next to Update on screen). While the dialog is open its
-    live button sits in extra["button"] so the caller can relabel or hide it; clicking
-    it sets extra["clicked"] and answers yes. The button entry is dropped again on
-    return. `actions` holds (label, callback) pairs for buttons that leave the
-    dialog open, such as Copy again.
-    """
+    `extra`, when given, is {"label", "tooltip", "visible"} for one more accepting button,
+    added before the yes button. While the dialog is open its live button is in
+    extra["button"]; clicking it sets extra["clicked"] and answers yes. The button entry is
+    dropped on return. `actions` holds (label, callback) pairs for buttons that leave the
+    dialog open."""
     dlg = QDialog(parent or mw)
     dlg.setWindowTitle(title or APP_NAME)
     dlg.setMinimumWidth(min_width)
@@ -372,8 +261,7 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
         checkbox["checked"] = box.isChecked()
     if on_close is not None:
         on_close()
-    # After on_close, never before: that callback is the caller's last read of its own
-    # widgets, and this is what frees them (see _ask_scrollable for why not sooner).
+    # After on_close, never before: this frees the widgets that callback reads.
     dlg.deleteLater()
     if extra is not None:
         extra.pop("button", None)
@@ -381,12 +269,8 @@ def _ask_with_widget(body, yes_label="Continue", no_label="Cancel", checkbox=Non
 
 
 def copy_to_clipboard(text):
-    """Put `text` on the system clipboard, returning True if it landed.
-
-    Best-effort on purpose: every caller shows the text itself as well, so a clipboard
-    that isn't there (a mocked or headless Qt, as in the Pyodide demo) costs the reader
-    a manual select-and-copy rather than costing them what they wrote.
-    """
+    """Put `text` on the system clipboard, returning True if it landed. Never raises: a
+    missing clipboard (mocked or headless Qt) returns False."""
     try:
         QApplication.clipboard().setText(text)
         return True
@@ -412,11 +296,8 @@ def _window_alive():
 
 
 def _safe(fn):
-    """Wrap a menu action so a bug here shows a plain warning dialog instead of
-    Anki's raw traceback box. The full traceback still goes to stdout (visible in
-    Anki's debug console) for anyone actually trying to fix it; the dialog only needs
-    enough for a user to describe what happened.
-    """
+    """Wrap a menu action so an exception shows a plain warning dialog instead of Anki's
+    traceback box. The full traceback goes to stdout."""
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try:
@@ -434,12 +315,8 @@ def _safe(fn):
 
 
 def _bg_safe(fn):
-    """Like `_safe`, but for calls that fire on their own (a startup check, a poll timer)
-    rather than from a menu click. A blocking warning dialog is fine for a menu action —
-    the user just clicked something and is looking at the screen — but popping one up
-    unprompted, possibly mid-review, is jarring. Background failures print to console
-    (same as `_safe`) and surface as a transient tooltip instead of a modal.
-    """
+    """Like `_safe`, but for calls that fire on their own (a startup check, a poll timer).
+    Failures print to the console and show a transient tooltip, not a modal."""
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try:
@@ -458,36 +335,19 @@ def _bg_safe(fn):
 
 @contextmanager
 def cancellable_progress(title, total, cancel_text="Cancel"):
-    """A determinate, cancellable progress dialog for a loop of `total` steps.
+    """A determinate, cancellable progress dialog for a loop of `total` steps. Uses a
+    QProgressDialog because `mw.progress` shows no percentage and never checks for a cancel.
 
-    `mw.progress.start()`/`.update()` is Anki's simple busy-indicator API: no
-    percentage, and nothing ever checks for a cancel, so a Cancel button (if one
-    even shows) does nothing. On a multi-deck update that's a real per-deck network
-    fetch, that reads as a hang with no way out — this is the one place in the
-    add-on where a single step can plausibly take a while. Bypasses `mw.progress`
-    for exactly that reason, in favor of a real `QProgressDialog`.
+    Yields `step(i, label)`: call it right before the i-th (1-based) unit of work. It
+    returns False if the user has clicked Cancel, and the caller must then stop before
+    starting that unit.
 
-    Yields `step(i, label)`: call it right before doing the i-th (1-based) unit of
-    work. Returns False if the user has clicked Cancel since the last call, in
-    which case the caller must stop *before* starting that unit of work — every
-    cancel point in this add-on sits between whole decks, never mid-import, so the
-    collection is always left in a consistent, already-backed-up state.
+    `step.pump()` repaints, processes pending clicks, and returns whether Cancel is still
+    un-clicked. It takes an ignored positional argument so it can be passed as
+    `net._http_get`'s `on_chunk`; a False return there aborts only the download in flight.
 
-    `step.pump()` is that same check without the step: it repaints and processes
-    pending clicks, then reports whether Cancel is still un-clicked. It takes an
-    ignored positional argument so it can be handed straight to `net._http_get`'s
-    `on_chunk`, which is the whole reason it exists. Between two steps sits one deck's
-    download, a single blocking read during which nothing repaints, so Cancel could be
-    clicked and never processed; on a one-deck run that made the button decorative.
-    Pumping from inside the read fixes that without moving any cancel point: a False
-    return there aborts only the in-flight *download* (net raises DownloadCancelled,
-    before that deck's import has begun), and the import boundary stays exactly where it
-    was, so "never abort partway through an import" still holds.
-
-    Pumping runs arbitrary queued events, so it is only safe while nothing else can be
-    clicked: this dialog is WindowModal and parented to `mw`, which blocks input to the
-    main window and everything under it for as long as it is up.
-    """
+    Pumping runs queued events, which is safe only because this dialog is WindowModal on
+    `mw` and blocks all other input."""
     dlg = QProgressDialog(title, cancel_text, 0, total, mw)
     dlg.setMinimumWidth(420)
     # Line 1 says where the run is, line 2 any download under way; the empty second
@@ -622,16 +482,9 @@ def section_label(text, top_margin=0):
 def section_rule():
     """The hairline between two sections of a form.
 
-    A real HLine rather than a border-top on the heading below it: Qt won't paint a lone
-    border on a plain container widget, and a selector-less stylesheet on a container
-    propagates into its children, which each then draw their own rule.
-
-    Carries `panel_rule`, the colour a bounded region of a dialog is drawn with, rather
-    than `row_rule`, which is the fainter hairline between two rows of one list. The
-    distinction is what each rule separates: rows of a list are still one thing, so their
-    divider stays quiet, while these sections are four unrelated decisions that happen to
-    share a window, so the line between them is the strongest thing saying so.
-    """
+    A real HLine, not a border-top on the next heading: Qt does not paint a lone border on a
+    plain container, and a selector-less stylesheet propagates into its children. Uses
+    `panel_rule`, which is stronger than the `row_rule` between rows of one list."""
     return _hairline("panel_rule")
 
 

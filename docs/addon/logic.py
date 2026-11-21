@@ -1,9 +1,7 @@
 """Pure logic for Intern Pearls Deck Tools.
 
-Nothing here imports aqt or anki, so it's testable with plain pytest, no Anki
-environment needed. If a function starts needing mw/col, it belongs in __init__.py
-instead, not here.
-"""
+Nothing here imports aqt or anki, so it runs under plain pytest. A function that needs mw or
+col belongs in another module."""
 import contextlib
 import difflib
 import hashlib
@@ -29,33 +27,18 @@ NEWER_APKG_ERROR = ('This .apkg uses Anki\'s newer export format. Re-export it w
 
 
 def plural(count, noun):
-    """A count and its noun, agreeing: "1 card", "3 cards", "0 cards".
-
-    Zero takes the plural, the way English does, so a line reads "restored on 0 cards"
-    rather than "0 card". Every noun this add-on counts (card, deck, note, review,
-    minute) pluralizes with a plain "s", so there is no irregular form to pass in; a
-    string needing one can take it up then rather than now.
-
-    Lives here, in the module with no Qt in it, so the wording every screen shares is
-    testable without one.
-    """
+    """A count and its noun, agreeing: "1 card", "3 cards", "0 cards". Only handles nouns
+    that take a plain "s"."""
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 def clamp_night_mode_dim_percent(percent, floor_percent=0, default_percent=30,
                                  ceiling_percent=90):
-    """Sanitize a configured/typed night-mode image-dim percentage: a missing or
-    non-numeric value falls back to `default_percent`; anything below `floor_percent`
-    (a negative brightening, or 0) is raised to the floor, and anything above
-    `ceiling_percent` is lowered to the ceiling: past that point an image reads as
-    blacked out rather than dimmed, which defeats the point of dimming it at all.
-    Mirrors clamp_interval_minutes's shape above.
+    """Sanitize a night-mode image-dim percentage: a missing or non-numeric value becomes
+    `default_percent`, and the result is clamped to `floor_percent`..`ceiling_percent`.
 
-    `int()` raises OverflowError rather than ValueError on a non-finite float
-    (`float("inf")`, which Python's own `json` module happily parses from a
-    hand-edited config despite that not being valid JSON), so that has to be caught
-    right alongside the more obvious bad-input cases or a stray Infinity in
-    config.json would raise out of every call to _cfg()."""
+    `int()` raises OverflowError, not ValueError, on a non-finite float, and `json` parses
+    Infinity from a hand-edited config, so both are caught."""
     try:
         p = int(percent)
     except (TypeError, ValueError, OverflowError):
@@ -64,15 +47,9 @@ def clamp_night_mode_dim_percent(percent, floor_percent=0, default_percent=30,
 
 
 def night_mode_dim_factor(percent):
-    """The 0..1 brightness multiplier night_mode_css's filter applies for a given dim
-    percent: 0 -> 1.0 (unchanged), the default 30 -> 0.7. Re-clamps percent, so a caller
-    passing a raw config value gets the factor the CSS uses.
-
-    Pulled out to its own function so the Experimental > Night mode dimming preview can
-    call the exact same arithmetic the real CSS rule uses, rather than reimplementing
-    it: two copies of "1 - percent/100" would be free to drift apart the next time
-    either one changes.
-    """
+    """The 0..1 brightness multiplier night_mode_css applies for a dim percent: 0 -> 1.0,
+    the default 30 -> 0.7. Clamps the percent first, so a raw config value is safe to pass.
+    The dimming preview uses it too."""
     percent = clamp_night_mode_dim_percent(percent)
     return round(1 - percent / 100, 2)
 
@@ -81,19 +58,13 @@ NIGHT_MODE_SCOPES = ("images", "content")
 
 
 def night_mode_css(percent, scope="images"):
-    """The one CSS source for Night mode dimming. "images" dims bright images
-    only (the original behaviour); "content" dims the whole web view,
-    which is every card, the deck list, the overview, and the editor. Anki adds
-    the night mode classes only in Night Mode, so neither rule ever applies in
-    Day mode. Both also need the ip-dim class night_mode_dim_script sets, which
-    carries the on/off switch and the hours. Unknown scope is no CSS. "content" filters
-    html, not body: a filter on body would pin other add-ons' position: fixed
-    backgrounds to the card box.
+    """The CSS for Night mode dimming. "images" dims images only; "content" dims the whole
+    web view. Unknown scope is no CSS. Both rules need Anki's night mode classes and the
+    ip-dim class night_mode_dim_script sets. "content" filters html, not body: a filter on
+    body would pin other add-ons' position: fixed backgrounds to the card box.
 
-    The two scopes return different shapes on purpose: "images" comes back as a
-    wrapped `<style>...</style>` block, since the card hook appends it straight
-    onto card HTML, while "content" comes back as bare CSS, since the web view
-    hook wraps it into the page head itself."""
+    "images" returns a wrapped `<style>` block, since the card hook appends it to card HTML;
+    "content" returns bare CSS, since the web view hook wraps it itself."""
     if scope not in NIGHT_MODE_SCOPES:
         return ""
     factor = night_mode_dim_factor(percent)
@@ -139,11 +110,8 @@ def version_tuple(v):
 
 
 def version_at_least(current, latest):
-    """True if `latest` is not newer than `current`.
-
-    Zero-pads the shorter tuple so "0.5" and "0.5.0" compare equal instead of one
-    looking shorter than (and therefore "less than") the other.
-    """
+    """True if `latest` is not newer than `current`. The shorter tuple is zero-padded, so
+    "0.5" equals "0.5.0"."""
     cur_n, latest_n = version_tuple(current), version_tuple(latest)
     width = max(len(cur_n), len(latest_n))
     cur_n = cur_n + (0,) * (width - len(cur_n))
@@ -152,17 +120,8 @@ def version_at_least(current, latest):
 
 
 def manifest_needs_newer_addon(manifest, supported_schema):
-    """True if this manifest's format is newer than this add-on version understands.
-
-    The deck-repo side writes a `schema` int into manifest.json, bumped only when the
-    manifest's shape changes in a way an older add-on can't safely read (see that
-    repo's own notes). Missing `schema` means an old manifest predating this field,
-    always readable, so it defaults to 1 (never newer than any real supported_schema).
-
-    A `schema` that isn't a plain int ("3", 2.0, None) counts as newer rather than
-    raising: a manifest this add-on can't even parse the version of is exactly the case
-    the "update the add-on" path exists for, and comparing it raises TypeError instead.
-    """
+    """True if this manifest's `schema` int is newer than this add-on understands. A missing
+    `schema` reads as 1. A `schema` that is not a plain int counts as newer."""
     if not manifest:
         return False
     schema = manifest.get("schema", 1)
@@ -172,16 +131,13 @@ def manifest_needs_newer_addon(manifest, supported_schema):
 
 
 def manifest_scope_suggestion(manifest, scope_tag, export_deck):
-    """(suggested scope_tag, suggested export_deck) worth offering, or None for each.
+    """(suggested scope_tag, suggested export_deck), each None when there is nothing to
+    offer.
 
-    A deck source's manifest may carry the author's own `scope_tag` and `export_deck`
-    (schema-additive; older add-ons ignore them), because both config values default
-    to the Intern Pearls deck's: without matching them, a subscriber to someone else's
-    deck gets no protected-fields snapshot and mis-scoped backups. A value is
-    suggested only when it's a non-empty string that differs from what's configured
-    now; the caller asks before applying anything. A scope tag is quoted into every
-    collection search, so one holding a quote, whitespace or `*` is never offered.
-    """
+    A manifest may carry the author's own `scope_tag` and `export_deck`. A value is
+    suggested only when it is a non-empty string that differs from the configured one; the
+    caller asks before applying it. A scope tag is quoted into every collection search, so
+    one holding a quote, whitespace or `*` is never offered."""
     def pick(key, current):
         v = (manifest or {}).get(key)
         return v if isinstance(v, str) and v and v != current else None
@@ -209,11 +165,8 @@ def scope_search(tag, exclude_tag=None):
 
 
 def parse_fields(text, default=("Notes",)):
-    """Parse the deck manager's comma-separated "preserved fields" box into a clean list.
-
-    Trims whitespace, drops empties, de-dupes (keeping order). Falls back to `default` if
-    nothing usable is left, so the annotation safety net can't be emptied by accident.
-    """
+    """Parse the comma-separated "preserved fields" box into a list: trimmed, empties
+    dropped, de-duplicated in order. Returns `default` if nothing usable is left."""
     out = []
     for f in (text or "").split(","):
         f = f.strip()
@@ -223,23 +176,14 @@ def parse_fields(text, default=("Notes",)):
 
 
 def decks_to_update(manifest, installed, excluded=None, held=None):
-    """Decks from the manifest whose version differs from what's already installed.
+    """Decks from the manifest whose version differs from what is installed.
 
-    `installed` is {deck_name: version_last_applied}. A deck missing from it is new; a
-    deck whose version changed needs re-sync; matching versions are skipped. `excluded`
-    is an optional collection of deck names the user has opted out of syncing (from the
-    deck manager, those are skipped regardless of version). `held` is deck names holding
-    cards the learner set aside with "hold for later"; those count as pending even at a
-    matching version, so the interactive run offers the held cards again. Auto-sync never
-    passes it. Shared by Sync (to know what to apply) and Preview sync (to report the
-    same set without touching the collection), so the two can never disagree about
-    what's pending.
+    `installed` is {deck_name: version_last_applied}; a deck missing from it is new.
+    `excluded` is deck names the user opted out of syncing. `held` is deck names holding
+    cards set aside with "hold for later"; those count as pending even at a matching
+    version. Auto-sync never passes it.
 
-    An entry missing `name` or `version`, or a non-dict entry, is skipped rather than
-    raising: without a name there is nothing to fetch or file cards under, and without a
-    version there is nothing to compare against installed.json. One malformed row must
-    not stop every other deck in the manifest from syncing.
-    """
+    A non-dict entry, or one missing `name` or `version`, is skipped."""
     excluded = set(excluded or ())
     held = set(held or ())
     out = []
@@ -255,16 +199,11 @@ def decks_to_update(manifest, installed, excluded=None, held=None):
 
 
 def deck_status(manifest, installed, excluded=None):
-    """One row per available deck for the deck-manager UI.
+    """One row per available deck for the deck manager: dicts with the deck's full `name`, a
+    short display label, its `cards` count, whether it is `enabled`, and a `state` of "new"
+    (never synced), "update" (a newer version is available) or "current".
 
-    Returns dicts with the deck's full `name`, a short display label, its `cards` count,
-    whether it's `enabled` (not opted out), and a `state` relative to the collection:
-    "new" (never synced), "update" (a newer version is available), or "current" (already
-    up to date). Pure so the manager dialog stays a thin rendering layer over it.
-
-    An entry missing `name`, or a non-dict entry, is skipped rather than raising, same as
-    `decks_to_update`: Manage decks must not crash on a manifest row Sync already tolerates.
-    """
+    A non-dict entry, or one missing `name`, is skipped."""
     excluded = set(excluded or ())
     rows = []
     for d in (manifest or {}).get("decks", []):
@@ -286,13 +225,9 @@ def deck_status(manifest, installed, excluded=None):
 
 
 def should_notify_update(current, latest, last_notified=None):
-    """Decide whether the startup check should surface an "update available" notice.
-
-    True only if `latest` is strictly newer than the installed `current` version AND we
-    haven't already notified about `latest` (or anything at least as new) — so each new
-    release nags at most once, even across restarts. A missing/blank `latest` (e.g. a
-    failed fetch) returns False. Pure so the nag policy is unit-tested, not guessed at.
-    """
+    """Whether the startup check should show an "update available" notice: True only if
+    `latest` is strictly newer than `current` and no notice for `latest` or anything newer
+    has been shown. A missing or blank `latest` returns False."""
     if not latest:
         return False
     if version_at_least(current, latest):          # current already >= latest
@@ -304,16 +239,10 @@ def should_notify_update(current, latest, last_notified=None):
 
 def clamp_interval_minutes(minutes, floor_minutes=1, default_minutes=15,
                            ceiling_minutes=7 * 24 * 60):
-    """Sanitize a configured poll interval: a missing or non-numeric value falls back to
-    `default_minutes`; anything below `floor_minutes` is raised to the floor so a typo
-    (or a 0) can't turn into a busy-poll loop against the deck source, and anything
-    above `ceiling_minutes` is lowered to the ceiling.
-
-    The ceiling matters as much as the floor: the result becomes a QTimer interval in
-    milliseconds, which is a C int, so a hand-edited value big enough to overflow it
-    raised out of the startup wiring and gave Anki's raw add-on error dialog on every
-    launch until config.json was fixed by hand.
-    """
+    """Sanitize a poll interval: a missing or non-numeric value becomes `default_minutes`,
+    and the result is clamped to `floor_minutes`..`ceiling_minutes`. The floor prevents a
+    busy poll; the ceiling keeps the QTimer interval, a C int of milliseconds, from
+    overflowing."""
     try:
         m = int(minutes)
     except (TypeError, ValueError, OverflowError):
@@ -322,19 +251,9 @@ def clamp_interval_minutes(minutes, floor_minutes=1, default_minutes=15,
 
 
 def decide_addon_update_action(current, latest, auto_update, notify, last_notified=None):
-    """Decide what the background add-on-update check should do.
-
-    Returns one of:
-      "none"        - current is already up to date, or nothing should happen.
-      "auto_update" - download and install the new version without asking.
-      "notify"      - surface a tooltip only, once per release.
-
-    Auto-update takes priority over notify when both are on, since actually installing
-    the update makes a plain notice redundant. Notify still respects the once-per-release
-    suppression via `should_notify_update`, so turning auto-update off doesn't bring back
-    a notice for a version already reported. Pure so this policy is unit-tested rather
-    than embedded inside code that also touches the network and the collection.
-    """
+    """What the background add-on-update check should do: "none" (up to date, or nothing to
+    do), "auto_update" (download and install without asking) or "notify" (show a tooltip,
+    once per release). Auto-update wins when both are on."""
     if not latest or version_at_least(current, latest):
         return "none"
     if auto_update:
@@ -345,36 +264,22 @@ def decide_addon_update_action(current, latest, auto_update, notify, last_notifi
 
 
 def find_deck_moves_needed(moves_ledger, existing_guid_to_deck, existing_front_to_guid=None):
-    """Which of the learner's cards need to move deck to match a pure reorg.
+    """Which of the learner's cards need to move deck to match a reorganised source.
 
-    `moves_ledger` is {guid: {from, to, front?}}: every note the deck repo has ever
-    relocated without changing its GUID (see build_all.py's deck_moves.json). `front`,
-    when present, is the note's current first field, used to find the learner's card
-    even when its GUID no longer matches the ledger's (see below).
-    `existing_guid_to_deck` is {guid: current deck name} for the learner's collection.
-    `existing_front_to_guid` is {first field: guid} for the learner's collection (optional).
+    `moves_ledger` is {guid: {from, to, front?}}: every note the deck source relocated
+    without changing its GUID. `existing_guid_to_deck` is {guid: current deck name} and
+    `existing_front_to_guid` is {first field: guid} (optional), both for the learner's
+    collection.
 
-    Normally a card is matched to a ledger entry by GUID. But a card whose deck source
-    changed its `id_seed` (say a deck's seed moving from v1 to v2) has a *different*
-    GUID in the learner's older collection than the one the ledger is keyed by, so a
-    pure GUID match misses it: the card sits stuck at `from` forever, its new deck
-    perpetually re-offered because installed_matching_collection never finds a card
-    under it. So when the ledger GUID isn't in the learner's collection, fall back to
-    matching by `front` (the same signal content-sync's remap_cards trusts; fronts are
-    unique across decks by build lint), and act on the learner's GUID for that front. An
-    older manifest without `front`, or a caller that passes no `existing_front_to_guid`,
-    simply keeps the GUID-only behavior.
+    A card is matched by GUID. When the ledger GUID is not in the collection (the learner's
+    GUID predates an `id_seed` change), it is matched by the entry's `front`, if both
+    `front` and `existing_front_to_guid` are present.
 
-    A move only applies if the learner's card is still sitting exactly where the deck
-    source last put it (`from`). If it's anywhere else (already at `to` because the
-    learner reconciled a previous move, or somewhere of their own choosing because they
-    filed it into a custom deck), leave it alone. This is what makes reconciling deck
-    moves both idempotent (nothing to do once it's there) and non-destructive of the
-    learner's own organization (a deliberate move away from `from` is never overwritten).
+    A move applies only if the card still sits at `from`. A card anywhere else is left
+    alone, which keeps this idempotent and preserves the learner's own filing.
 
-    Returns [{guid, from, to}] where `guid` is the learner's own note GUID (so
-    apply_deck_moves can find it), sorted by `to` then `from` for stable display.
-    """
+    Returns [{guid, from, to}] where `guid` is the learner's note GUID, sorted by `to` then
+    `from`."""
     out = []
     for guid, move in (moves_ledger or {}).items():
         existing_guid = guid if guid in existing_guid_to_deck else None
@@ -387,19 +292,11 @@ def find_deck_moves_needed(moves_ledger, existing_guid_to_deck, existing_front_t
 
 
 def fields_to_carry_over(saved, target_current):
-    """Which of a retired note's protected-field values to copy onto one of its
-    replacement notes.
+    """Which of a retired note's protected-field values to copy onto a replacement note.
 
-    `saved` is {field: value} read off the note being retired; `target_current` is
-    the same shape for the replacement. Never overwrites a field the replacement
-    already has text in — the learner may have already started annotating it, or a
-    previous partial run already carried a value over — so this only ever fills in
-    a field that's currently blank.
-
-    Matched case-insensitively: the predecessor and replacement note types can spell
-    the same field with different casing, and a case-sensitive lookup would read the
-    replacement's actual value as missing instead.
-    """
+    `saved` is {field: value} read off the retired note; `target_current` is the same shape
+    for the replacement. Only fills a field that is blank on the replacement. Field names
+    match case-insensitively, since the two note types can spell a field differently."""
     current_lower = {f.lower(): v for f, v in target_current.items()}
     return {f: v for f, v in saved.items()
             if v.strip() and not (current_lower.get(f.lower()) or "").strip()}
@@ -409,50 +306,22 @@ def find_retired_in_collection(retired_ledger, existing_guids, existing_front_to
                                live_guids=(), live_fronts=()):
     """The retired cards the learner still has in their collection.
 
-    When a deck splits, merges, or drops a card, the old card's GUID leaves the
-    canonical set but the learner's copy of it is never touched by a sync (sync only
-    ever adds the replacements), so it lingers in their reviews as a duplicate. The deck
-    repo records every such retirement in `retired.json`, shipped to us inside the
-    manifest.
+    `retired_ledger` is the manifest's {deck_name: {guid: {identity, reason, superseded_by,
+    ...}}}. `existing_guids` is the note GUIDs the learner has under the scope tag, and
+    `existing_front_to_guid` is {first field: guid} for the same notes (optional).
 
-    `retired_ledger` is that ledger: {deck_name: {guid: {identity, reason,
-    superseded_by, ...}}}. `existing_guids` is the set of note GUIDs the learner has
-    under the scope tag. `existing_front_to_guid` is {first field: guid} for those same
-    notes (optional).
+    A retired card is matched by GUID. When the ledger GUID is not in the collection, it is
+    matched by front text: the entry's `front` if recorded, else its `identity`. An image
+    note's identity is never a first field, so it stays GUID-only.
 
-    Normally a retired card is matched by GUID. But a learner whose copy predates the
-    identity the ledger is keyed by (the card was reworded between import and the GUID
-    freeze, or its deck source changed `id_seed`) holds a *different* GUID, so a pure
-    GUID match misses that copy and the retired card lingers in their reviews forever,
-    with nothing to signal it. So when the ledger GUID isn't in the learner's
-    collection, fall back to matching by front text (the same signal content-sync's
-    remap_cards trusts; fronts are unique across decks by build lint) and report the
-    learner's own GUID for it. The front compared is the entry's own `front` if the
-    ledger records one, else its `identity`, which for a basic or cloze note is exactly
-    the front. Two kinds of entry therefore keep GUID-only behaviour, both by simply not
-    matching rather than by matching something wrong: an image note (identity is
-    "image||answer", never a first field), and a card whose front was reworded under a
-    frozen `id` before it was retired (identity is the pre-reword wording). Recording
-    `front` at retirement time closes that second gap without another release here.
-
-    Returns one dict per retired card the learner still has, so the reconcile flow can
-    show and archive them:
-        {guid, source_guid, deck, identity, reason, superseded_by, replacements_present}
-    where `guid` is the learner's own note GUID. `source_guid` is this same entry's
-    ledger key, unchanged by the front fallback, so a caller looking something up in a
-    manifest map keyed the builder's way (note_protected_fields) has the guid that map
-    actually uses, not the learner's resolved one. `replacements_present` is how many of
-    `superseded_by` are already in the learner's collection, so the UI can distinguish
-    "replaced by cards you already have" from "sync first to get the replacements". It
-    stays a GUID-only count: a collection whose GUIDs have drifted reads 0 and gets the
-    advisory "sync first" note, which is a cosmetic miss, not a wrong archive. Sorted
-    by deck then identity for stable display. Pure: the caller supplies the collection
-    maps and does anything collection-touching (tag checks, the archive itself).
+    Returns one dict per retired card, sorted by deck then identity, with keys guid,
+    source_guid, deck, identity, reason, superseded_by and replacements_present. `guid` is
+    the learner's note GUID and `source_guid` is the ledger key, for lookups in maps keyed
+    the builder's way. `replacements_present` counts how many of `superseded_by` are in the
+    collection, by GUID only.
 
     `live_guids` and `live_fronts` are the guids and fronts of the cards in the current
-    packages. A learner note that matches either is a live card, whatever the ledger
-    says about its identity (a reseed keeps the front), and is never reported.
-    """
+    packages. A learner note that matches either is a live card and is never reported."""
     existing_guids = set(existing_guids)
     guid_front = {g: f for f, g in (existing_front_to_guid or {}).items()}
     live_guids, live_fronts = set(live_guids), set(live_fronts)
@@ -482,33 +351,19 @@ def find_retired_in_collection(retired_ledger, existing_guids, existing_front_to
 
 
 def find_stranded_pairs(superseded, existing_front_to_guid, live_guids=(), live_fronts=()):
-    """Pairs where the learner holds BOTH wordings of a card that was reworded once.
+    """Pairs where the learner holds both wordings of a reworded card: the old wording with
+    its review history and the current one imported beside it.
 
-    Rewording a front freezes the old wording as the note's `id`, which keeps the GUID
-    stable so the reword updates the learner's card in place. That works for anyone
-    whose GUID matches. For anyone whose GUID drifted first, the reword matched nothing
-    and imported as a second note, leaving the learner with the dead wording (carrying
-    whatever review history was built) sitting beside the live one (starting from
-    zero). Neither copy alone is right: the old one has the learner's progress but
-    stale content, the new one has current content but no progress.
-
-    `superseded` is the manifest's {superseded front: its replacement}, derived by the
-    deck source from those same `id` freezes, so the pairing is the deck author's own
-    declaration that the two wordings are one card rather than a guess made here.
+    `superseded` is the manifest's {superseded front: its replacement}.
     `existing_front_to_guid` is {first field: guid} for the learner's collection.
 
-    Only pairs where the learner holds both are returned. Holding just the old wording
-    is not a stranding: the import's own front matching merges it, which is the whole
-    point of that ladder, and acting here too would fight it. Returns
-    [{guid, front, successor_guid, successor_front}] sorted by front for stable display;
-    `guid` is the predecessor, the copy that gets emptied out and archived.
+    Only pairs where the learner holds both are returned; the import's front matching
+    handles a lone old wording. Returns [{guid, front, successor_guid, successor_front}]
+    sorted by front; `guid` is the predecessor, the copy that gets emptied and archived.
 
-    A chain of rewordings (A to B to C) pairs every older wording with the final one, so
-    progress flows to the wording that is current, whatever order the pairs are applied
-    in. A wording that leads into a cycle has no current successor and reports nothing.
-    A predecessor whose guid or front is in `live_guids`/`live_fronts` (the current
-    packages) is a live card and is never reported.
-    """
+    A chain of rewordings (A to B to C) pairs every older wording with the final one. A
+    wording that leads into a cycle reports nothing. A predecessor whose guid or front is in
+    `live_guids`/`live_fronts` is a live card and is never reported."""
     fronts = existing_front_to_guid or {}
     live_guids, live_fronts = set(live_guids), set(live_fronts)
     out = []
@@ -528,10 +383,8 @@ def find_stranded_pairs(superseded, existing_front_to_guid, live_guids=(), live_
     return out
 
 
-# What a deck package may be before anything in it is unpacked. Real packages run to about
-# 40 MB for a deck with pictures and about 200 MB and a thousand files for a whole
-# collection export with media, so these leave wide headroom and only stop a package no
-# deck needs: one that would fill the disk or memory on the main thread mid-sync.
+# Limits checked before a package is unpacked. Real packages run far below these; they only
+# stop one that would fill the disk or memory.
 APKG_MAX_BYTES = 512 * 1024 * 1024          # the .apkg file itself
 APKG_MAX_EXPANDED = 2 * 1024 * 1024 * 1024  # every member, unpacked
 APKG_MAX_MEMBER = 1024 * 1024 * 1024        # any one member, unpacked
@@ -552,17 +405,13 @@ def _size_text(n):
 
 
 def _zip_directory_size(path):
-    """(entry count, directory bytes) from the archive's end records, or None when there
-    is no end record (zipfile then reports the file as not a zip).
+    """(entry count, directory bytes) from the archive's end records, or None when there is
+    no end record.
 
-    Read the way zipfile reads them, so the numbers are the ones it will act on: the
-    32-bit end record at the very end when it is there, else the last one in the final
-    64 KB, and a zip64 record whenever a zip64 locator sits in front of it, whatever
-    the 32-bit fields say (a writer may saturate those). zipfile parses as many bytes of
-    directory as the record says, so the directory size is what bounds the work, and a
-    record that undercounts its entries can't hide a large one. Where a zip64 record
-    could be found two ways (next to its locator, or at the offset the locator names)
-    the larger reading wins."""
+    Read the way zipfile reads them: the 32-bit end record, and a zip64 record whenever a
+    zip64 locator sits in front of it, whatever the 32-bit fields say. The directory size is
+    what bounds zipfile's parsing work, so a record that undercounts its entries cannot hide
+    a large one. Where a zip64 record can be found two ways, the larger reading wins."""
     with open(path, "rb") as fh:
         fh.seek(0, os.SEEK_END)
         size = fh.tell()
@@ -598,13 +447,10 @@ def _zip_directory_size(path):
 def check_apkg_limits(path):
     """Refuse a package whose size or shape no deck needs, from its zip directory alone.
 
-    Raises PackageLimitError for excessive sizes or unsafe member names; a file that
-    isn't a zip at all raises zipfile.BadZipFile as before. The unpacked sizes are the
-    ones the directory declares.
-    zipfile never writes more than that for a member and checks its CRC, but Anki's own
-    importer reads the stream and ignores them, so a package handed to it directly goes
-    through copy_apkg_checked first.
-    """
+    Raises PackageLimitError for excessive sizes or unsafe member names, and
+    zipfile.BadZipFile for a file that is not a zip. The unpacked sizes are the ones the
+    directory declares. Anki's importer ignores those, so a package handed to it directly
+    goes through copy_apkg_checked first."""
     st = os.stat(path)
     if not stat.S_ISREG(st.st_mode):
         raise PackageLimitError("This .apkg isn't a regular file, so it wasn't opened.")
@@ -741,24 +587,13 @@ def skill_version(version):
 def _apkg_db(path):
     """Yield (open sqlite connection, is_newer_format) for an .apkg's real collection.
 
-    A package Anki exports today holds its data in a zstd-compressed collection.anki21b
-    and ships a near-empty collection.anki2 stub beside it, carrying one placeholder note
-    that reads "Please update to the latest Anki version". So the newer member has to
-    win, or every reader here sees that stub instead of the deck: the visible symptom is
-    an import that matches nothing, imports every card as new, and leaves the
-    protected-field restore with no matched note to restore onto.
+    A current export keeps its data in a zstd-compressed collection.anki21b beside a
+    placeholder collection.anki2, so the newest member present wins: .anki21b, then .anki21,
+    then .anki2. Decoding .anki21b needs zstandard; without it this raises
+    RuntimeError(NEWER_APKG_ERROR).
 
-    Older exports can likewise carry an operative collection.anki21 beside a
-    collection.anki2 compatibility copy, so .anki21 wins on that legacy path.
-
-    zstandard is not stdlib and Anki does not ship it, so on a modern package the
-    decode is impossible here and the reader stops with NEWER_APKG_ERROR: a loud
-    "re-export this file" beats a silent empty result.
-
-    The package's limits are checked first (check_apkg_limits), and a zstd member is
-    decoded no further than APKG_MAX_MEMBER, since its zip entry can't say how large
-    it decodes to.
-    """
+    The package's limits are checked first (check_apkg_limits), and a zstd member is decoded
+    no further than APKG_MAX_MEMBER."""
     check_apkg_limits(path)
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
@@ -792,13 +627,8 @@ def _apkg_db(path):
 
 
 def _apkg_notetypes(con, newer):
-    """{notetype id as str: (notetype name, [field name, ...])} from either format.
-
-    The legacy format keeps all of this in col.models as JSON. The newer schema leaves
-    that column empty and splits its content across real tables: `notetypes` holds the
-    name and `fields` holds one row per field, both as plain text columns, so a name and
-    its field list are recoverable without decoding the protobuf `config` blobs beside
-    them (which is where CSS and template HTML live, see apkg_models).
+    """{notetype id as str: (notetype name, [field name, ...])} from either format:
+    col.models JSON in the legacy one, the `notetypes` and `fields` tables in the newer one.
     """
     if newer:
         out = {str(ntid): (name, []) for ntid, name in
@@ -821,31 +651,17 @@ def _apkg_notetypes(con, newer):
 
 
 def apkg_notes(path):
-    """Return (note_id, fields, guid) for every note in an .apkg file, where `fields` is
-    the note's complete field list.
-
-    Every field rather than just the front, because matching and display want different
-    things from a note. Matching only ever keys on `fields[0]` (see remap_cards), but a
-    caller that shows the card to a person needs the rest: an image note's first field
-    is an <img> tag, not a prompt, so field zero alone renders as a broken image instead
-    of naming the card. note_display_label picks the right field out of the whole list.
-
-    Both on-disk formats carry the same plain `notes` table, so this reads real notes out
-    of a modern package as well as a legacy one.
-    """
+    """Return (note_id, fields, guid) for every note in an .apkg file, in either format.
+    `fields` is the note's complete field list; matching keys on `fields[0]` and
+    note_display_label picks the field to show."""
     with _apkg_db(path) as (con, _newer):
         return [(rid, flds.split(FS), guid) for rid, guid, flds in
                 con.execute("select id, guid, flds from notes")]
 
 
 def apkg_media_index(path):
-    """{media filename: zip member} for the pictures an .apkg carries.
-
-    An .apkg stores media as numbered blobs beside a JSON member called "media" mapping
-    each number back to the filename a card's <img> tag actually references. A deck with
-    no pictures, or one whose index will not parse, returns {} rather than raising: the
-    only caller falls back to naming the image, which is what it did before it could
-    resolve one at all.
+    """{media filename: zip member} for the pictures an .apkg carries, read from its JSON
+    "media" member. Returns {} for a deck with no pictures or an index that will not parse.
     """
     try:
         check_apkg_limits(path)
@@ -919,14 +735,9 @@ def inject_apkg_media(src, dest, files):
 
 
 def extract_apkg_media(path, index, names, dest):
-    """Extract just the named pictures out of an .apkg into `dest`.
-
-    Returns {filename: local path} for the ones that came out. Deliberately not the
-    whole archive: a deck can carry a couple of hundred images and a review that opens
-    two rows has no reason to pay for the others. A name absent from `index`, or a
-    member absent from the zip, is skipped rather than raised, so one stale reference in
-    one field cannot blank the row it sits in.
-    """
+    """Extract the named pictures from an .apkg into `dest`. Returns {filename: local path}
+    for the ones that came out. A name absent from `index`, or a member absent from the zip,
+    is skipped."""
     out = {}
     wanted = [n for n in dict.fromkeys(names) if n in index]
     if not wanted:
@@ -950,13 +761,8 @@ def extract_apkg_media(path, index, names, dest):
 
 
 def apkg_deck_names(path):
-    """Every Anki deck name inside an .apkg, in either on-disk format.
-
-    Newer files hold a zstd-compressed collection.anki21b whose decks table separates
-    path segments with \\x1f, and also ship a near-empty legacy collection.anki2 stub,
-    so the newer name has to win or the stub reads as an empty file. _apkg_db picks the
-    member and decodes it; only the decks table's own shape differs per format here.
-    """
+    """Every Anki deck name inside an .apkg, in either on-disk format. The newer format's
+    decks table separates path segments with the unit separator."""
     with _apkg_db(path) as (con, newer):
         if newer:
             rows = [r[0] for r in con.execute("select name from decks")]
@@ -985,24 +791,13 @@ def manifest_decks_for(deck_names, manifest_names):
 
 
 def apkg_note_details(path, rids=None):
-    """Return full, labeled field detail for notes in the .apkg at `path`, as a list of
-    {"rid", "guid", "notetype", "fields": [(field_name, value), ...]} in the .apkg's own
-    note order. `rids`, if given, limits the result to those note ids.
+    """Return labeled field detail for notes in the .apkg at `path`, as a list of {"rid",
+    "guid", "notetype", "fields": [(field_name, value), ...]} in the .apkg's note order, in
+    either format. `rids`, if given, limits the result to those note ids.
 
-    Separate from apkg_notes because it costs more and is wanted less often: this reads
-    the note types too, and only the review dialog needs it, only when the learner opens
-    it. The normal update path never pays for it.
-
-    Field names come from the .apkg's own `col.models` rather than from position,
-    because our note types don't agree on layout: index 1 is "Back" on a basic note but
-    "Prompt" on an image note, so a positional guess mislabels whole decks. A note whose
-    note type isn't described in this .apkg (or an .apkg carrying no models at all)
-    falls back to generic "Field N" labels instead of failing, since a plainly-labeled
-    preview is worth more to the learner than a raised exception.
-
-    A newer-format .apkg keeps the same information in its `notetypes` and `fields`
-    tables, so it labels just as precisely (_apkg_notetypes reads either).
-    """
+    Field names come from the .apkg's note types, since layouts differ by note type. A note
+    whose note type the .apkg does not describe gets generic "Field N" labels. Costs more
+    than apkg_notes, so only the review dialog calls it."""
     wanted = None if rids is None else set(rids)
     with _apkg_db(path) as (con, newer):
         names = _apkg_notetypes(con, newer)
@@ -1020,13 +815,8 @@ def apkg_note_details(path, rids=None):
 
 
 def apkg_note_types(path):
-    """{guid: notetype name} for every note in the .apkg.
-
-    Cheaper than apkg_note_details, which reads every field of every note to render a
-    review list; this joins notes to the note-type names alone, which is all the
-    note-type-change check needs on the sync path. Reads either on-disk format, since a
-    modern package names its note types in the `notetypes` table instead.
-    """
+    """{guid: notetype name} for every note in the .apkg, in either format. Cheaper than
+    apkg_note_details."""
     with _apkg_db(path) as (con, newer):
         names = {int(mid): n for mid, (n, _f) in _apkg_notetypes(con, newer).items()}
         return {guid: names.get(mid, "")
@@ -1034,42 +824,23 @@ def apkg_note_types(path):
 
 
 def base_notetype_name(name):
-    """A note type's name with Anki's collision suffix stripped.
-
-    Importing a note type whose name matches an existing one with different fields makes
-    Anki keep both and append "+" to the newcomer, so a collection that has re-imported a
-    deck across several field additions ends up holding "Study Deck - Basic",
-    "Study Deck - Basic+", "Study Deck - Basic++" and so on, every one of them ours.
-    Measured on a real collection: 595 of 625 notes sat on a suffixed variant and only 30
-    on the bare name, so treating a suffix as somebody else's note type would skip
-    virtually every card that needs converting.
-
-    Anki's legacy save instead appends "-" and five hex digits to a note type saved
-    under a name another one holds, so that suffix is stripped as well.
-    """
+    """A note type's name with Anki's collision suffixes stripped: the "+" Anki appends on
+    import to a same-named type with different fields (repeatable: "Basic++"), and the "-"
+    plus five hex digits its legacy save appends."""
     return re.sub(r"(?:\++|-[0-9a-f]{5})+$", "", name or "") or (name or "")
 
 
 def plan_notetype_changes(incoming_types, existing_types, managed):
-    """Which of the learner's notes have to change note type for this update to land on
-    them instead of beside them.
+    """Which of the learner's notes must change note type for this update to land on them:
+    Anki's importer will not move an existing note to a different note type.
 
-    Converting a Q&A card to a cloze changes its note type, and Anki's importer will not
-    move an existing note to a different one. Without this the incoming note imports
-    fresh and the learner keeps a stale duplicate holding all their history, which is
-    why such a conversion has always had to retire the old card and restart the new one
-    from zero.
+    Both arguments are keyed by the learner's note guid: `incoming_types` is what this
+    update would make each matched note and `existing_types` is what they are now. A change
+    is planned only when both names are in `managed`, so the learner's own note types are
+    never touched.
 
-    Both arguments are keyed by the learner's own note guid: `incoming_types` is what
-    this update would make each matched note (the caller resolves the .apkg's own guids
-    through remap_cards first, so a note matched by front counts too), `existing_types`
-    is what they are now. A change is planned only when both names are in `managed`, so
-    a learner's own note types are never touched and an unrecognised incoming type is
-    left alone.
-
-    Returns [{guid, old, new}] sorted by guid, for a caller that asks permission first:
-    Anki treats this as a schema change, meaning a one-time full AnkiWeb sync.
-    """
+    Returns [{guid, old, new}] sorted by guid. The caller asks permission first: Anki treats
+    this as a schema change, which forces a full AnkiWeb sync."""
     out = []
     for guid, new in (incoming_types or {}).items():
         old = (existing_types or {}).get(guid)
@@ -1108,19 +879,11 @@ def split_notetype_changes(changes):
 
 
 def apkg_models(path):
-    """Return {notetype_name: {"css": str, "tmpls": [(name, qfmt, afmt), ...]}} for
-    every note type carried by the .apkg at `path`.
+    """Return {notetype_name: {"css": str, "tmpls": [(name, qfmt, afmt), ...]}} for every
+    note type in the .apkg at `path`, from the legacy `col.models` JSON.
 
-    Reads the legacy `col.models` JSON column, the format genanki (and Anki's own
-    legacy exporter) writes.
-
-    This is the one reader a newer-format package cannot satisfy: its `notetypes` and
-    `templates` tables carry CSS and question/answer HTML inside protobuf-encoded blobs,
-    not text, and decoding those would mean a protobuf dependency for a comparison that
-    only decides whether to offer a template update. So a modern package raises with the
-    re-export instruction instead. Returning {} would read as "no templates differ" and
-    silently drop a card-design change on the floor.
-    """
+    A newer-format package raises with the re-export instruction: its templates sit in
+    protobuf blobs, and returning {} would read as "no templates differ"."""
     with _apkg_db(path) as (con, newer):
         if newer:
             raise RuntimeError(NEWER_APKG_ERROR)
@@ -1140,11 +903,8 @@ def apkg_model_fields(path):
 
 
 def model_shape(m):
-    """Reduce a note-type dict (apkg JSON or mw.col.models form — same keys) to just
-    what determines how cards LOOK: CSS plus each template's question/answer HTML.
-    Both sides of a template comparison go through this so they can't disagree on
-    incidental keys (ids, mod times, field lists — fields are _ensure_notetypes' job).
-    """
+    """Reduce a note-type dict (apkg JSON or mw.col.models form) to what determines how
+    cards look: CSS plus each template's question/answer HTML."""
     return {
         "css": m.get("css", ""),
         "tmpls": [(t.get("name", ""), t.get("qfmt", ""), t.get("afmt", ""))
@@ -1154,18 +914,14 @@ def model_shape(m):
 
 def changed_templates(incoming, existing):
     """Note-type names present in both mappings whose template HTML or CSS differ.
-
-    `incoming`/`existing` are {name: model_shape(...)}. A note type only the .apkg has
-    isn't a template *change* (the import creates it as-is), so it's skipped.
-    """
+    `incoming`/`existing` are {name: model_shape(...)}."""
     return [name for name, shape in incoming.items()
             if name in existing and existing[name] != shape]
 
 
 def note_fields_hash(fields):
-    """A short stable digest of a note's field values, for the declined-card
-    registry's changed-since-you-declined cue. 16 hex chars is plenty: collisions
-    only ever cost one missing cue, never a wrong import."""
+    """A short stable digest of a note's field values, for the declined-card registry. 16
+    hex chars: a collision only costs one missing changed-since cue."""
     return hashlib.sha256(FS.join(fields).encode("utf8")).hexdigest()[:16]
 
 
@@ -1204,37 +960,20 @@ def change_notes_for(manifest_notes, guid, fields):
 
 
 def group_change_notes(details, retired):
-    """Group pending cards and retired rows that belong to the same real-world change,
-    so an update screen can show one explanation over the rows it caused instead of a
-    caption repeated on each.
+    """Group pending cards and retired rows that belong to the same change, so an update
+    screen can show one explanation over the rows it caused.
 
-    `details` is a list of dicts, each carrying a `guid` and, optionally, a
-    `change_notes` list in `change_notes_for`'s own shape ({kind, note, on, hash}).
-    `retired` is a list of dicts, each carrying `superseded_by` (a list of guids) and
-    whatever else the caller wants carried through untouched (identity, reason, ...).
+    `details` is a list of dicts, each with a `guid` and optionally a `change_notes` list in
+    `change_notes_for`'s shape ({kind, note, on, hash}). `retired` is a list of dicts, each
+    with `superseded_by` (a list of guids).
 
-    Two things join a set, both already in the data:
+    Cards join a group by carrying an identical (kind, note, on) entry; only a card's first
+    matching entry is used. A retired row joins the group of any card it names in
+    `superseded_by`, merging groups if it names cards in several. A retired row naming no
+    card in this batch starts a group of its own with no note.
 
-    - Two cards carrying an identical (kind, note, on) entry: a deck source can stamp
-      the same recorded line on every card one piece of feedback drove, and that is one
-      change, not several. Only a card's first matching entry is used to find or start
-      its group; a second, unshared note on the same card (a feedback/maintainer
-      pairing) is left in `change_notes` for the caller to render on the card itself.
-    - A retired row naming one or more of these cards in `superseded_by`: the retired
-      card and its replacement(s) are the same change. A retired row naming several
-      cards already in different groups merges those groups into one, so a card split
-      into two survivors still reads as one change with two children.
-
-    A retired row naming no card present in this batch (retired in one update, its
-    replacement shipped in a later one) is not silently dropped: it starts a group of
-    its own, carrying no note, so it still renders alone with its own reason.
-
-    Returns [{"note": entry-or-None, "members": [row, ...]}], in the order each group
-    was first started. A group's `members` mixes `details` and `retired` entries, in
-    the order they were added; a group of one, the ordinary case, carries whatever that
-    single row already renders on its own, and it is the caller's choice what wrapping
-    (if any) a bigger group deserves. Pure: no Anki, no I/O.
-    """
+    Returns [{"note": entry-or-None, "members": [row, ...]}] in the order each group was
+    first started."""
     details = [d for d in (details or []) if isinstance(d, dict) and d.get("guid")]
     retired = [r for r in (retired or []) if isinstance(r, dict)]
 
@@ -1313,19 +1052,9 @@ def sort_source_groups(groups):
 
 
 def source_label_for(manifest_sources, guid):
-    """A deck source's own short label for where a card came from, e.g. `[T10Q2]`, or
-    "" when it ships none.
-
-    Opaque on purpose. The string is built by whoever publishes the deck, out of
-    whatever a card's provenance means for that deck, without assuming a bank-specific
-    shape. Display sorting compares digit runs numerically. Unlike a change note it carries no claim about why the card
-    changed, so it needs no hash gate: it is derived from the same build as the
-    content it sits next to.
-
-    Anything that is not a plain string is dropped rather than rendered, and a
-    runaway label is clipped, since one bad entry in a fetched manifest must not
-    break a row or push everything else off it.
-    """
+    """A deck source's own short label for where a card came from, e.g. `[T10Q2]`, or ""
+    when it ships none. The label is opaque text. Anything that is not a plain string is
+    dropped, and a long label is clipped."""
     if not isinstance(manifest_sources, dict):
         return ""
     label = manifest_sources.get(guid)
@@ -1338,15 +1067,13 @@ def source_label_for(manifest_sources, guid):
 def prune_declined(reg, retired_guids, seen, manifest_decks):
     """Drop registry entries that are moot, and re-file the ones whose card moved.
 
-    An entry is moot when its note was retired upstream, or when its guid is in no
-    package of the manifest. `seen` is {deck: guids} for the decks actually read this
-    run (a package's own guids plus the learner guids they matched), and absence is only
-    judged once every deck in `manifest_decks` was read, because a card the source moved
-    to a deck this run did not read is still there. An entry whose card turns up in a
-    different deck than the one recorded follows it. A hand-edited entry that isn't even
-    a dict is left alone unless its guid is retired: there's no "deck" to check it
-    against, and a bad entry must degrade gracefully rather than crash a sync. Mutates
-    `reg`; returns whether anything changed."""
+    An entry is moot when its note was retired upstream, or when its guid is in no package
+    of the manifest. `seen` is {deck: guids} for the decks read this run (a package's own
+    guids plus the learner guids they matched). Absence is judged only once every deck in
+    `manifest_decks` was read, because a card the source moved to an unread deck is still
+    there. An entry whose card turns up in a different deck follows it. An entry that is not
+    a dict is left alone unless its guid is retired. Mutates `reg`; returns whether anything
+    changed."""
     complete = set(manifest_decks) <= set(seen)
     changed = False
     for g in list(reg):
@@ -1369,15 +1096,9 @@ def prune_declined(reg, retired_guids, seen, manifest_decks):
 
 
 def declined_guids(registry):
-    """Every guid a standing decline suppresses: every key of the registry, whatever
-    state its entry holds.
-
-    The single definition of "declined", so the import, the preview counts and the
-    note-type-conversion plan can't disagree about which cards are in it. Membership
-    alone is what declined_drop tests, so a hand-edited entry whose value isn't even a
-    dict still suppresses its card, and anything that counts or plans around a decline
-    has to read it the same way rather than filtering on `state`.
-    """
+    """Every guid a standing decline suppresses: every key of the registry, whatever its
+    entry holds. Membership alone decides, so an entry whose value is not a dict still
+    suppresses its card; do not filter on `state`."""
     return set(registry or {})
 
 
@@ -1433,9 +1154,9 @@ def manifest_retired_guids(manifest):
 
 
 def migrate_declined(registry):
-    """Turn every old "skip" entry into a held one flagged `migrated`, in place, so the
-    first run after the change returns those cards at Later rather than Import. Returns
-    whether anything changed; a second call changes nothing."""
+    """Turn every old "skip" entry into a held one flagged `migrated`, in place, so those
+    cards return at Later. Returns whether anything changed; a second call changes nothing.
+    """
     changed = False
     for entry in (registry.values() if isinstance(registry, dict) else ()):
         if isinstance(entry, dict) and entry.get("state") == "skip":
@@ -1488,8 +1209,8 @@ def later_count(registry, excluded, retired=()):
 
 
 def later_migration_line(n):
-    """The update screen's one line over a list holding `n` rows that were Skips
-    before Later replaced them, or "" when there are none."""
+    """The update screen's one line over a list holding `n` rows migrated from Skip, or ""
+    when there are none."""
     if not n:
         return ""
     return (f"Skip is now Later. {plural(n, 'card')} you skipped earlier "
@@ -1503,7 +1224,7 @@ def later_nudge_due(count, last_seen):
 
 
 # The standing declines a row's control can show, by row kind. A registry state outside
-# these (an old Keep on a card that now arrives as new) is not a decision the row carries.
+# these is not a decision the row carries.
 _ROW_DECLINES = {"new": ("never",), "changed": ("keep", "frozen")}
 
 
@@ -1701,23 +1422,17 @@ def declined_drop(src, remap, existing_fronts, declined, in_place, as_new):
 
 
 def write_personalized(src, remap, out, drop=frozenset(), prepare_notetypes=None):
-    """Copy the .apkg at `src` to `out`, rewriting note GUIDs per `remap` and dropping declined notes.
+    """Copy the .apkg at `src` to `out`, rewriting note GUIDs per `remap` and dropping
+    declined notes.
 
-    `remap` is {note_id: new_guid}. Notes not in `remap` are left untouched.
-    `drop` is a set of note ids to remove entirely, notes and their cards rows both;
-    a drop always wins over a remap for the same id.
-    `prepare_notetypes`, when provided, receives the scratch SQLite connection
-    after those edits, before commit. It never receives the original archive.
+    `remap` is {note_id: new_guid}; other notes are untouched. `drop` is a set of note ids
+    to remove, notes and their cards rows both; a drop wins over a remap for the same id.
+    `prepare_notetypes`, when provided, receives the scratch SQLite connection after those
+    edits, before commit. It never receives the original archive.
 
-    Legacy format only, preferring collection.anki21 over its collection.anki2
-    compatibility copy. It refuses a newer format rather than doing nothing quietly.
-    Anki reads a modern package's collection.anki21b, so rewriting a legacy member beside
-    it would apply no guid at all while every caller went on reporting the matched counts
-    remap_cards computed: every front-matched card would import as a duplicate and the
-    learner's history would stay on the copy they already had. Writing the anki21b back
-    needs zstd compression, which nothing here has, so the honest answer is the re-export
-    instruction.
-    """
+    Legacy format only, preferring collection.anki21 over collection.anki2. Raises on a
+    newer-format package: Anki would read its collection.anki21b and ignore a rewritten
+    legacy member."""
     check_apkg_limits(src)
     with tempfile.TemporaryDirectory() as d:
         with zipfile.ZipFile(src) as z:
@@ -1760,35 +1475,23 @@ def remap_cards(src, existing_fronts, aliases):
     """Match each note in the .apkg at `src` to one of the learner's existing cards.
 
     Matching order, strongest signal first:
+
       1. GUID: the incoming note's GUID already belongs to one of the learner's cards.
-         This is the durable path: deck specs give every card an explicit stable `id`,
-         so a reworded front no longer changes the GUID and needs no alias at all.
       2. Recorded source: the learner's card last synced as this incoming GUID
-         (`existing_fronts.sources`, kept in shipped_fields.json). Survives a front
-         the learner reworded.
-      3. Front text: the learner's card currently shows this exact front
-         (`existing_fronts` is {front_text: guid}). Covers collections whose GUIDs
-         predate stable ids.
-      4. `aliases` ({current_front: previous_front}): the learner's card still shows
-         the one prior wording of a renamed front.
-    Each tier runs over the whole package before the next, and a learner GUID is claimed
-    by one incoming note only: a note whose text match is already taken imports as new,
-    since a visible duplicate beats a card that silently never arrives.
+         (`existing_fronts.sources`). Survives a front the learner reworded.
+      3. Front text: the learner's card shows this exact front (`existing_fronts` is
+         {front_text: guid}).
+      4. `aliases` ({current_front: previous_front}): the learner's card still shows the
+         prior wording of a renamed front.
 
-    Returns (remap, in_place, as_new, new_notes, matched): `remap` is {note_id: guid} for
-    notes whose GUID needs rewriting to match an existing card, `in_place`/`as_new` are
-    counts for the confirmation dialogs. A GUID match needs no rewrite, so it never lands
-    in `remap`.
+    Each tier runs over the whole package before the next, and a learner GUID is claimed by
+    one incoming note only: a note whose text match is already taken imports as new.
 
-    `new_notes` is [(note_id, fields, guid), ...] for the notes that will import as new,
-    in the .apkg's own order, and `as_new` is exactly its length. `matched` is the
-    complement, [(note_id, apkg_guid, existing_guid), ...], where existing_guid is the
-    .apkg's own guid on a GUID match. Both are returned from here rather than re-derived
-    by a second function so the matching ladder above stays the single source of truth
-    about what "new" and "already existing" mean: a separate implementation would
-    eventually disagree with this one, and the visible symptom would be a preview that
-    lies to the learner about which cards are about to appear or change.
-    """
+    Returns (remap, in_place, as_new, new_notes, matched). `remap` is {note_id: guid} for
+    notes whose GUID needs rewriting; a GUID match needs none. `in_place` and `as_new` are
+    counts. `new_notes` is [(note_id, fields, guid), ...] for the notes that will import as
+    new, in the .apkg's order. `matched` is [(note_id, apkg_guid, existing_guid), ...] for
+    the rest."""
     notes = apkg_notes(src)
     existing_guids = set(getattr(existing_fronts, "guids", existing_fronts.values()))
     resolved = {i: guid for i, (_rid, _fields, guid) in enumerate(notes)
@@ -1825,11 +1528,7 @@ def remap_cards(src, existing_fronts, aliases):
 
 def protected_for(guid, configured, per_note):
     """Field names to preserve on one note: the configured global list plus any the deck
-    source has declared the learner's own on this card.
-
-    Per-note entries are what let one figure on one card survive a sync without freezing
-    that field across every card that has one.
-    """
+    source declares protected on this card."""
     return set(configured) | set((per_note or {}).get(guid) or ())
 
 
@@ -2023,12 +1722,7 @@ def merge_learner_tags(before, imported, scope_tag, markers=()):
 
 def per_note_for_package(per_note, matched):
     """Re-key {builder guid: [field]} onto the guids the learner's own notes carry.
-
-    `matched` is remap_cards' own list of (rid, package guid, existing guid). A note the
-    learner holds under a drifted guid is matched by front text, so a declaration keyed by
-    the builder's guid would otherwise never be found. find_retired_in_collection solves
-    the same problem the same way for the retired ledger.
-    """
+    `matched` is remap_cards' list of (rid, package guid, existing guid)."""
     if not per_note:
         return {}
     out = {}
@@ -2043,41 +1737,21 @@ def find_changed_notes(matched, details, existing_fields, protected=(), per_note
                        baseline=None):
     """Which already-matched notes this .apkg would rewrite, and what they say now.
 
-    `matched` is remap_cards' own pair list, so this never re-decides what counts as
-    matched. `details` is apkg_note_details' labeled output for the same .apkg,
-    `existing_fields` is {guid: {field name: value}} for the learner's notes.
+    `matched` is remap_cards' pair list, `details` is apkg_note_details' output for the same
+    .apkg, and `existing_fields` is {guid: {field name: value}} for the learner's notes.
 
-    Returns {note_id: {field name: current value}}, carrying only the fields that
-    actually differ, so a caller can show what a card says today next to what it is
-    about to say.
+    Returns {note_id: {field name: current value}} with only the fields that differ. Fields
+    are compared by name, never by position.
 
-    Compared by field name, never by position: index 1 is Back on a basic note and
-    Prompt on an image note, so a positional comparison would report whole decks as
-    changed. A field named in `protected` follows collection._restore's own rule, so
-    the preview and the import agree: the import's value stands, and is shown here,
-    when the learner's field still equals what `baseline` ({guid: {field: value}}) says
-    the source last shipped. With no text baseline for it, a hash baseline decides, and
-    with neither, the field stands when it is blank.
-    Otherwise the restore puts the learner's value back, and nothing is shown. A field the learner's note type
-    does not have is skipped too: the import's own note-type step adds a genuinely
-    missing field, and until it does there is no existing value to show.
-
-    `protected` is matched case-insensitively, the way collection.py's _note_field
-    resolves the same free-text names when it snapshots and restores them. The box is
-    free text and the real field names are capitalised, so an exact match here meant a
-    typed "notes" listed the field as about to change while the restore quietly put it
-    back: the preview and the safety net disagreeing about the same setting.
-
-    `per_note` is threaded through the same way and for the same reason: a field the
-    deck source declares protected only on this note (see protected_for) must skip here
-    too, or the preview promises a change the sync then refuses to make.
-    """
+    A field in `protected` or `per_note` (see protected_for) follows collection._restore's
+    rule, so the preview and the import agree: it is shown only when the import's value will
+    stand, which is when the learner's field still equals what `baseline` ({guid: {field:
+    value}}) says the source last shipped. With no text baseline a hash baseline decides,
+    and with neither the field stands when it is blank. `protected` matches
+    case-insensitively. A field the learner's note type does not have is skipped."""
     by_rid = {d.get("rid"): d for d in details}
     out = {}
-    # protected_for's per-note lookup is only worth redoing per note when there is a
-    # per-note map to consult; otherwise every note shares the same global skip set,
-    # and rebuilding it per note was 4000 set constructions on a 4000-note package
-    # instead of one.
+    # With no per-note map every note shares one skip set, so it is built once.
     fallback_skip = None if per_note else {str(p).lower() for p in protected}
     for rid, _apkg_guid, existing_guid in matched:
         detail = by_rid.get(rid)
@@ -2147,10 +1821,8 @@ _IMG_SRC_RE = re.compile(r"""<img[^>]*\bsrc\s*=\s*["']([^"']+)["']""", re.I)
 
 
 def plain_text(field):
-    """The visible text of one card field: HTML tags stripped, entities decoded,
-    whitespace collapsed. Tags become a space rather than nothing, so text either side
-    of a block tag doesn't run together into one word.
-    """
+    """The visible text of one card field: HTML tags stripped, entities decoded, whitespace
+    collapsed. A tag becomes a space, so text either side of a block tag stays separate."""
     return re.sub(r"\s+", " ", html.unescape(_TAG_RE.sub(" ", field or ""))).strip()
 
 
@@ -2160,15 +1832,8 @@ def truncate(text, max_len):
 
 
 def note_display_label(fields, max_len=90):
-    """A short, human-readable label for a note, for dialogs that list its card.
-
-    Uses the first field whose visible text (HTML stripped, entities decoded) is
-    non-empty, so a normal card shows its front and an image card whose first field is
-    just an `<img>` falls through to its prompt field. If every field is non-text (a
-    pure image card with no prompt), returns the first image's filename, so the line
-    still says which card it is instead of rendering as a broken image. Plain text
-    only, never raw HTML; long labels are truncated.
-    """
+    """A short plain-text label for a note, for dialogs that list its card: the first field
+    with visible text, else the first image's filename. Long labels are truncated."""
     for field in fields or []:
         text = plain_text(field)
         if text:
@@ -2186,33 +1851,15 @@ _CLOZE_RE = re.compile(r"\{\{c(\d+)::([^{}]*?)(?:::([^{}]*?))?\}\}", re.S)
 def cloze_filled_html(text, escape=True, mark_groups=None):
     """A cloze field as HTML with every deletion showing its answer.
 
-    Review is for confirming the fact is right, and for a cloze the fact lives in the
-    deletions, so they are filled rather than blanked. The hint half of
-    {{c1::answer::hint}} follows its answer in brackets, the way Anki itself shows a
-    hint while the answer is still blanked: it is the wording the learner reads on the
-    question side, so a card whose hint is wrong is a card that reads wrong, and a
-    review that dropped it showed nothing to check. It is styled apart from the answer
-    (`.ch`, not `.cloze`) because it is the prompt rather than the fact. An empty hint
-    ({{c1::answer::}}) is left off rather than rendered as empty brackets.
+    The hint of {{c1::answer::hint}} follows its answer in brackets, styled `.ch`; an empty
+    hint is left off. The field is escaped first and the spans injected after. A deletion
+    whose answer contains a brace is left as raw markup.
 
-    The field is escaped first and the spans injected after: the other order escapes
-    the spans themselves into visible markup. The
-    deletion regex excludes braces from the answer, so a well-formed deletion whose
-    answer contains a literal brace renders raw instead of filling; that degrades to
-    visible markup rather than silently corrupting the card, which is the acceptable
-    direction.
+    `escape=False` is for a field that has already been through field_preview_html, which
+    returns real markup.
 
-    `escape=False` is for a field that has already been through field_preview_html,
-    which returns real markup: escaping again would turn that field's own tags into
-    visible text, which is the whole defect that function exists to fix.
-
-    Deletions that share a number are one card, so a note with two or more groups is
-    really two or more cards sharing a field, and filling every deletion in one colour
-    hides where a card ends. Each one therefore carries its group number as a small
-    superscript. Default (`mark_groups=None`) adds them only when the field has more
-    than one group, since labelling every blank "c1" on a single-card note is noise
-    for a distinction that isn't there. Pass True or False to force it either way.
-    """
+    `mark_groups` adds each deletion's group number as a superscript. None adds them only
+    when the field has more than one group; True or False forces it."""
     text = html.escape(text or "") if escape else (text or "")
     if mark_groups is None:
         mark_groups = len({m.group(1) for m in _CLOZE_RE.finditer(text)}) > 1
@@ -2226,20 +1873,12 @@ def cloze_filled_html(text, escape=True, mark_groups=None):
 
 
 def merged_word_diff(old, new):
-    """Both versions of a changed plain-text field as one word-level sequence:
-    [(op, text)] segments in reading order, op one of "equal", "removed", "added".
+    """Both versions of a changed plain-text field as one word-level sequence: [(op, text)]
+    segments in reading order, op one of "equal", "removed", "added". Whitespace is
+    normalized to single spaces.
 
-    This is what lets the update screen show a change as a single line instead of two
-    near-identical paragraphs the reader has to compare by eye. Word-level rather than
-    character-level because a card edit is words: a dropped clause, a corrected value,
-    a rewording. Whitespace is normalized to single spaces, which is how the rendered
-    field reads anyway.
-
-    Plain text only, by contract: the caller gates on the field carrying no markup,
-    since splitting HTML on spaces would tear tags apart. Junk detection is off; a
-    field is a few dozen words and difflib's popularity heuristic exists for inputs
-    orders of magnitude longer, where it can silently degrade a diff this short.
-    """
+    Plain text only: the caller must check the field carries no markup. difflib's junk
+    heuristic is off, since it can degrade a diff this short."""
     a, b = (old or "").split(), (new or "").split()
     out = []
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
@@ -2254,15 +1893,9 @@ def merged_word_diff(old, new):
 
 
 def word_diff_ratio(segments):
-    """How much of a merged_word_diff is unchanged text, as difflib's own 0..1 ratio
-    (2 * matched words / total words on both sides).
-
-    What the caller gates readability on: a small edit renders beautifully as one
-    marked-up line, but the same treatment on a rewritten paragraph is a wall of
-    struck and highlighted text that is harder to read than either version alone.
-    The ratio says which of those a change is. Empty-on-both-sides reads as 1.0,
-    since there is nothing to mark either way.
-    """
+    """How much of a merged_word_diff is unchanged text, as difflib's 0..1 ratio (2 *
+    matched words / total words on both sides). Callers use it to decide whether an inline
+    diff is readable. Empty on both sides is 1.0."""
     equal = sum(len(text.split()) for op, text in segments if op == "equal")
     changed = sum(len(text.split()) for op, text in segments if op != "equal")
     total = 2 * equal + changed
@@ -2270,21 +1903,12 @@ def word_diff_ratio(segments):
 
 
 def cloze_answer_changes(old, new):
-    """Which deletions moved between two versions of a cloze Text field:
-    (no_longer_blanked, newly_blanked) answer texts, or None when the surrounding
-    words changed too.
+    """Which deletions moved between two versions of a cloze Text field: (no_longer_blanked,
+    newly_blanked) answer texts, or None when the surrounding words changed too. Both lists
+    empty means the deletions were only regrouped.
 
-    The filled renderings of a blanks-only change are word-for-word identical, so a
-    text diff of them shows nothing and a verbatim old copy repeats the whole sentence
-    for one moved blank. Naming the moved blanks is the change itself. None means the
-    sentence was also reworded, where only showing the full old version is honest;
-    the caller falls back to that. Both lists empty means the deletions were only
-    regrouped (same answers, different numbering), which changes how the note splits
-    into cards but blanks nothing new.
-
-    Answers are compared as multisets, so a sentence blanking the same word twice
-    reports a change only when a copy actually appears or disappears.
-    """
+    Answers are compared as multisets, so a sentence blanking the same word twice reports a
+    change only when a copy appears or disappears."""
     def fill(text):
         return plain_text(_CLOZE_RE.sub(lambda m: m.group(2), text or ""))
 
@@ -2308,20 +1932,12 @@ def cloze_answer_changes(old, new):
 
 
 def cloze_hint_changes(old, new):
-    """Which deletions' hints moved between two versions of a cloze Text field:
-    [(answer, before, after)] for every deletion whose hint was added, reworded or
-    dropped, with "" on whichever side has none.
+    """Which deletions' hints moved between two versions of a cloze Text field: [(answer,
+    before, after)] for every deletion whose hint was added, reworded or dropped, with "" on
+    whichever side has none.
 
-    The hint is what the learner reads while the answer is still blanked, so editing
-    one changes the card even though both versions fill to word-for-word the same
-    sentence. Without this, `cloze_answer_changes` sees an identical set of answers and
-    the row reports a regrouping that never happened.
-
-    Deletions pair by answer text in order of appearance, since by the time this is
-    asked the filled words already match on both sides. An answer only one version has
-    was blanked or unblanked rather than re-hinted, which is `cloze_answer_changes`'s
-    to report, so it is skipped here rather than counted twice.
-    """
+    Deletions pair by answer text in order of appearance. An answer only one version has is
+    cloze_answer_changes's to report and is skipped here."""
     def hints(text):
         out = {}
         for m in _CLOZE_RE.finditer(text or ""):
@@ -2337,16 +1953,9 @@ def cloze_hint_changes(old, new):
 
 
 def field_preview_text(value):
-    """One card field as plain text for the review list, with any images named rather
-    than rendered.
-
-    The review dialog reads fields straight out of the .apkg and never extracts its
-    media, so an <img> tag in there points at a file that isn't on disk yet: rendering
-    it would paint a broken image. Naming the file instead tells the reader the card
-    has a picture, which is what they actually need to know at review time. A field
-    holding both text and an image reports both, since dropping either would misrepresent
-    the card.
-    """
+    """One card field as plain text for the review list, with images named instead of
+    rendered, since the .apkg's media is not on disk. A field holding both text and an image
+    reports both."""
     text = plain_text(render_math_spans(value, tags=False))
     names = [os.path.basename(src) for src in _IMG_SRC_RE.findall(value or "")]
     if not names:
@@ -2355,10 +1964,8 @@ def field_preview_text(value):
     return f"{text} {tag}" if text else tag
 
 
-# The structure a card field actually uses, restricted to what a QLabel's rich text can
-# render. A comparison is written as a <table> and a set of causes as a <ul> precisely
-# because the shape carries the meaning, so flattening those to a run-on line loses the
-# card. Anything outside this set has its tag dropped and its text kept.
+# The tags a card field uses that a QLabel's rich text can render. Any other tag is dropped
+# and its text kept.
 _PREVIEW_TAGS = frozenset({
     "b", "strong", "i", "em", "u", "s", "sub", "sup", "small", "span", "font",
     "br", "p", "div", "hr",
@@ -2366,9 +1973,7 @@ _PREVIEW_TAGS = frozenset({
     "table", "thead", "tbody", "tfoot", "tr", "th", "td",
 })
 
-# Attributes worth keeping: the ones carrying layout the tag can't express on its own.
-# Everything else goes, so nothing a field happens to carry (ids, classes, handlers,
-# stray Anki editor markup) reaches the dialog.
+# Layout attributes worth keeping. Everything else is dropped.
 _PREVIEW_ATTRS = frozenset({"colspan", "rowspan", "align", "valign", "style"})
 
 _IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
@@ -2399,20 +2004,13 @@ def _clean_tag(match):
 
 
 def field_image_names(value):
-    """Every picture a field references, as bare filenames in document order.
-
-    The dialog needs the list before it renders, so it can extract exactly those files
-    and nothing else.
-    """
+    """Every picture a field references, as bare filenames in document order."""
     return list(dict.fromkeys(
         os.path.basename(src) for src in _IMG_SRC_RE.findall(value or "")))
 
 
-# MathJax spans in a card field (\( ... \) inline, \[ ... \] block) are typeset by
-# Anki's reviewer, but a QLabel has no MathJax engine, so the raw markup reaches the
-# review dialog as literal backslashes. These render the handful of constructs the
-# decks actually write (\text, \frac, sub/superscripts, a few symbol macros) as
-# ordinary text: not typesetting, just readable.
+# A QLabel has no MathJax engine, so these render the constructs the decks write (\text,
+# \frac, sub/superscripts, a few symbol macros) as ordinary text.
 _MATH_SPAN_RE = re.compile(r"\\\[(.+?)\\\]|\\\((.+?)\\\)", re.DOTALL)
 _MATH_SPACING_RE = re.compile(r"\\[,;:!]|\\quad\b|\\qquad\b")
 _MATH_TEXT_RE = re.compile(r"\\text\s*\{([^{}]*)\}")
@@ -2466,25 +2064,13 @@ def render_math_spans(value, tags=True):
 
 
 def field_preview_html(value, image_html=None):
-    """One card field as HTML the review dialog can render.
-
-    field_preview_text's plain-text answer is right for the feedback digest and for a
-    one-line label, and wrong for the dialog itself: a card back written as a <table>
-    or a <ul> arrives as an unreadable run-on line, so the reader judges a card the
-    learner has never actually seen. Real feedback came back that way ("just jumbled text to me")
-    on cards whose only problem was that the preview flattened them.
-
-    So structure is kept and everything else is dropped: script and style blocks go
-    entirely, and any tag outside _PREVIEW_TAGS loses the tag but keeps its text.
-    Attributes are filtered rather than passed through, so the output is a small, known
-    subset rather than whatever a field happens to contain.
+    """One card field as HTML the review dialog can render. Structure is kept: script and
+    style blocks are removed, a tag outside _PREVIEW_TAGS loses the tag but keeps its text,
+    and attributes are filtered to _PREVIEW_ATTRS.
 
     `image_html`, when given, is called with one picture's bare filename and returns the
-    markup to put in that <img>'s place, or None to decline. Without it, or on a decline,
-    an <img> becomes "[image: name]" the same way field_preview_text names it: the caller
-    that has not extracted the .apkg's media would otherwise paint a broken image, which
-    is every caller except the dialog once a row is opened.
-    """
+    markup to put in that <img>'s place, or None to decline. Without it, or on a decline, an
+    <img> becomes "[image: name]"."""
     if not value:
         return ""
 
@@ -2630,31 +2216,19 @@ def build_feedback_digest(entries, version="", date="", standing_declines=None,
                           excluded=(), edits=()):
     """Render flagged-card feedback as plain text, ready to paste into a message.
 
-    `entries` is a list of {"deck", "front", "guid", "note"}, grouped here by deck in
-    first-seen order. Plain text rather than HTML or JSON on purpose: this gets pasted
-    into an ordinary text thread, so it has to survive being read by a person with no
-    tooling. Deck headings use the leaf name, since the full "Intern Pearls::Intern
-    Custom::" path is noise in a message.
-
-    The guid line is what makes this worth more than the learner describing a card from
-    memory: it names the exact spec note, so the fix doesn't start with hunting for
-    which card the learner meant. A flagged card's front is HTML, so it goes through
-    plain_text on the way out; notes are plain text already and only have their
+    `entries` is a list of {"deck", "front", "guid", "note"}, grouped by deck in first-seen
+    order under the deck's leaf name. Fronts go through plain_text; notes only have their
     whitespace folded.
 
-    `standing_declines`, when supplied, is the current declined-card registry. It is
-    rendered after the run's entries as a complete state snapshot, with GUIDs grouped
-    by deck and decision date on one line per deck per state. Content hashes stay out
-    because they are sync bookkeeping rather than a learner decision. Later cards in
-    the `excluded` decks are left out of its count line.
+    `standing_declines`, when supplied, is the current declined-card registry, rendered
+    after the entries as a state snapshot: GUIDs grouped by deck and decision date, one line
+    per deck per state, without content hashes. Later cards in the `excluded` decks are left
+    out of its count line.
 
-    `edits` are the learner's own hand edits, written after the entries as a readable
-    line plus exact JSON so the deck repo can apply them; they never make a digest on
-    their own.
+    `edits` are the learner's own hand edits, written after the entries as a readable line
+    plus exact JSON; they never make a digest on their own.
 
-    Returns "" for no entries, so a caller can treat empty as "nothing to send" without
-    a separate check.
-    """
+    Returns "" for no entries."""
     if not entries:
         return ""
     header = "Intern Pearls card feedback"
@@ -2711,20 +2285,12 @@ def _edit_lines(edits):
 
 
 def duplicate_dialog_rows(groups):
-    """Heading and rows for the Clean up duplicates confirmation, from
-    find_duplicate_groups output.
+    """Heading and rows for the Clean up duplicates confirmation, from find_duplicate_groups
+    output.
 
-    Each row leads with the card's readable label (the note's precomputed 'label',
-    see collection._existing_notes_summary; escaped here since it's data), then says which
-    copy is kept and which is archived. When every copy sits in the same deck it reads
-    as a copy count rather than repeating that deck name twice.
-
-    Returns (heading, [{"label", "detail"}]) rather than one block of HTML, because the
-    confirmation draws each row as a widget. This module is pure Python by contract (no
-    aqt/anki import, unit-testable with no Anki install), so it can build neither the
-    widget nor the theme colour the detail is drawn in; the caller, which already knows
-    both, does that.
-    """
+    Returns (heading, [{"label", "detail"}]). Each row has the card's label (escaped here)
+    and says which copy is kept and which is archived. Copies in the same deck read as a
+    copy count."""
     lines = []
     for g in groups:
         label = html.escape(g["keep"].get("label") or g["front"])
@@ -2757,24 +2323,11 @@ def duplicate_dialog_rows(groups):
 def select_empty_cards(report_notes, scoped_nids):
     """Split an empty-cards report down to the cards this add-on is willing to remove.
 
-    An empty card is one whose template renders nothing, which for a cloze note means a
-    card for a deletion number the note's text no longer contains (Anki shows it in
-    review as "No cloze 3 found on card"). They appear when a deck source regroups a
-    live cloze into fewer deletions: an import rewrites a matched note's fields but
-    never removes its cards, so the surplus cards stay behind with nothing to render.
+    Only notes in `scoped_nids` (the learner's notes under the scope tag) are considered. A
+    note whose cards are all empty is never removed, only reported, since removing them
+    would delete the note.
 
-    Two filters, both load-bearing:
-
-    - Only notes in `scoped_nids` (the learner's notes under the configured scope tag).
-      Anki's own report covers the whole collection, and other people's decks are not
-      ours to clean up.
-    - A note whose cards are ALL empty is never touched, only reported. That is the one
-      case where removing the cards would take the note and its content with it, and it
-      means something is wrong upstream (a note with no deletions at all), not that
-      there is a card to tidy away.
-
-    Returns (removable, skipped), each a list of {"nid", "card_ids"}.
-    """
+    Returns (removable, skipped), each a list of {"nid", "card_ids"}."""
     removable, skipped = [], []
     for n in report_notes:
         if n["nid"] not in scoped_nids:
@@ -2786,16 +2339,8 @@ def select_empty_cards(report_notes, scoped_nids):
 
 def empty_cards_dialog_rows(rows, skipped=0):
     """Heading, rows and closing note for the Remove empty cards confirmation, from
-    collection.find_empty_cards.
-
-    Each row names the card the way the rest of the add-on labels one, and carries the
-    deletion numbers that went missing, since "c3, c4" is what the learner actually sees
-    on the dead card in review.
-
-    Returns (heading, [{"label", "gone"}], tail), structured for the same reason
-    duplicate_dialog_rows is: the confirmation draws a widget per row, and this module
-    stays free of both Qt and the live theme.
-    """
+    collection.find_empty_cards. Returns (heading, [{"label", "gone"}], tail); `gone` is the
+    deletion numbers that went missing."""
     lines = []
     for r in rows:
         lines.append({"label": html.escape(r.get("label") or ""),
@@ -2818,15 +2363,11 @@ def empty_cards_dialog_rows(rows, skipped=0):
 def feedback_entries(flags, index, decisions=None):
     """The flagged cards as digest entries: [{deck, front, guid, note}].
 
-    `flags` is {guid: the learner's note}; `index` is {guid: (deck, front)}, which is
-    what turns a GUID into something a person can read. A flag whose GUID isn't in the
-    index is dropped rather than shown as a bare GUID: it means we no longer know which
-    card the learner meant, and a line naming no card is not something anyone can act on.
+    `flags` is {guid: the learner's note}; `index` is {guid: (deck, front)}. A flag whose
+    GUID is not in the index is dropped.
 
-    `decisions`, when given, is {guid: reader-facing state} ("kept yours"/"kept yours,
-    no more updates"/"never"/"imported after all") for a decision made this run; a guid
-    present there but with no note still gets an entry (empty "note"), carrying the
-    "decision" key the digest renders.
+    `decisions`, when given, is {guid: reader-facing state} for a decision made this run; a
+    guid there with no note still gets an entry (empty "note") carrying the "decision" key.
     """
     decisions = decisions or {}
     out = []
@@ -2840,16 +2381,9 @@ def feedback_entries(flags, index, decisions=None):
 
 
 def merge_saved_feedback(saved, flags, index):
-    """Fold notes recovered from disk into this run's flags and card index, in place.
-
-    A saved note is only restored for a card this run hasn't already collected a note
-    on: what the learner just typed is newer than what a previous run left behind, so
-    the live value wins on a conflict. The index gets the saved deck/front for every restored
-    card, since the card may well not be in this run at all (its deck already imported
-    last time), and without a name it would be dropped from the digest.
-
-    Returns the number of notes restored, so the caller can say so.
-    """
+    """Fold notes recovered from disk into this run's flags and card index, in place. A note
+    already collected this run wins over a saved one. The index gets the saved deck/front
+    for every restored card. Returns the number of notes restored."""
     restored = 0
     for guid, entry in (saved or {}).items():
         if not isinstance(entry, dict) or not isinstance(entry.get("note"), str):

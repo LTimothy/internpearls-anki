@@ -61,14 +61,12 @@ def _ensure_notetypes():
 
 
 def _template_changes(src):
-    """Managed note types whose card templates or CSS differ between the .apkg at
-    `src` and this collection. Returns {name: incoming model_shape}.
+    """Managed note types whose card templates or CSS differ between the .apkg at `src`
+    and this collection. Returns {name: incoming model_shape}.
 
-    This exists because imports run with merge_notetypes=False (see _import_apkg): a
-    template change in a rebuilt deck never propagates on its own, so sync detects it
-    here and asks, instead of silently shipping cards that render with the old look.
-    Only note types in TARGET_FIELDS are checked — a learner's own types are not our
-    business.
+    Imports run with merge_notetypes=False (see _import_apkg), so a template change
+    never propagates on its own; sync detects it here and asks. Only note types in
+    TARGET_FIELDS are checked.
     """
     incoming = {n: s for n, s in apkg_models(src).items() if n in TARGET_FIELDS}
     existing = {m["name"]: model_shape(m) for m in mw.col.models.all()
@@ -144,16 +142,12 @@ def _export_deck_to(path, deck_name):
     deck_id = mw.col.decks.id_for_name(deck_name)
     if deck_id is None:
         raise RuntimeError(f"Couldn't find the {deck_name} deck in this collection.")
-    # legacy=True on purpose. A modern package holds its collection in a zstd-compressed
-    # member, and zstandard is not stdlib and Anki does not ship it, so every reader in
-    # this add-on (logic._apkg_db, and everything built on it) refuses one. A backup
-    # written in that format is therefore unreadable to the very code meant to use it:
-    # import_deck's scoped invalidation always falls back to clearing everything, and
-    # Import single deck can't take one at all. The legacy format costs some file size
-    # and reads everywhere.
-    # Set field by field, guarded, the way _import_apkg sets its own: these are
-    # protobuf message fields, and a build that has dropped or renamed one raises on a
-    # constructor keyword, taking the whole backup with it rather than the one option.
+    # legacy=True: a modern package holds its collection in a zstd-compressed member,
+    # which no reader in this add-on can open (zstandard is not stdlib and Anki does not
+    # ship it), so import_deck and Import single deck could not use such a backup.
+    #
+    # Set field by field, guarded: these are protobuf fields, and a build that dropped
+    # or renamed one would raise on a constructor keyword.
     opts = ExportAnkiPackageOptions()
     for attr, val in (("with_scheduling", True), ("with_deck_configs", True),
                       ("with_media", True), ("legacy", True)):
@@ -166,23 +160,16 @@ def _export_deck_to(path, deck_name):
 
 
 # Every automatic deck backup's filename starts with this, so a prune can tell its own
-# files from anything else sitting in the folder (an export someone dropped there).
+# files from anything else in the folder.
 _BACKUP_PREFIX = "Intern Pearls "
 
 
 def _backup_label(label):
     """A deck name reduced to something a filename can hold, or "" for no label.
 
-    Deck names nest with "::" and can carry anything else the learner types, including
-    a path separator, so the raw name is not a filename. Collapsed to letters, digits,
-    spaces, dots, dashes and underscores, then given a short hash of the RAW name.
-
-    The hash is what actually keeps two roots apart, exactly as it does in
-    sync._scratch_path: sanitizing alone maps distinct names onto one label ("A/B" and
-    "A:B" both become "A_B", and two names of nothing but non-ASCII both become the
-    same run of underscores). Two roots sharing a label share a filename, so the
-    same-second backups a multi-root run takes overwrite each other while the run
-    reports both covered, and the two roots then prune as a single bucket.
+    Collapsed to letters, digits, spaces, dots, dashes and underscores, then given a
+    short hash of the raw name. The hash keeps apart names that sanitize alike ("A/B"
+    and "A:B"), which would otherwise share a filename and a prune bucket.
     """
     if not label:
         return ""
@@ -203,40 +190,26 @@ def _label_of_backup(fname):
 def _in_backup_group(found, label):
     """Whether a backup already in the folder prunes with `label`'s.
 
-    An exact match is the normal answer. A file written before labels carried a hash
-    has only the sanitized deck name, so it matches no current label at all and would
-    sit in the folder forever; it prunes with the label whose own sanitized name it is,
-    which is the bucket that would have written it. Two labels that sanitize alike both
-    claim such a file, which is the same ambiguity those older filenames already had,
-    and it bounds them either way.
-
-    Compared against the label with its hash removed rather than by prefix: a current
-    label is "<sanitized name> <hash>", so a plain startswith let the roots "Foo" and
-    "Foo Bar" share a bucket ("Foo Bar <hash>" starts with "Foo "). The older file then
-    counted in Foo Bar's prune too and, being the oldest there, was evicted early.
+    Normally an exact match. A file whose label has no hash (an older format) prunes
+    with the label whose sanitized name it is. Compared against the label with its hash
+    removed, not by prefix, so the roots "Foo" and "Foo Bar" never share a bucket.
     """
     return found == label or (bool(found) and label.rsplit(" ", 1)[0] == found)
 
 
 def _backup_deck(deck_name, label=None, keep=None):
-    """Write a timestamped deck backup, pruning old ones.
+    """Write a timestamped .apkg backup of `deck_name` (with history), pruning old ones.
+    Returns the backup's path, or None if it failed (e.g. the deck doesn't exist yet,
+    which is normal on a first sync).
 
-    This is the fast, targeted counterpart to _backup_collection(): a self-contained
-    .apkg of just `deck_name` (with history), not the whole profile. Returns the
-    backup's path on success, None if it failed (e.g. the deck doesn't exist in this
-    collection yet, which is normal on someone's very first sync).
-
-    Every backup carries its full deck identity (sanitized and hashed) and a unique
-    suffix. Even two manual runs in the same second cannot overwrite each other.
+    Every backup carries its deck identity (sanitized and hashed) and a unique suffix,
+    so two runs in the same second cannot overwrite each other.
 
     `keep` is a backup file that must survive this call's prune: the one a restore is
-    about to import, which is otherwise the oldest and first to go.
+    about to import.
 
-    Pruning keeps DECK_BACKUPS_KEEP per label rather than per folder. Ten unlabelled
-    backups plus one run over three roots is fourteen files, and a folder-wide prune
-    would evict either the other roots' history or, on a big enough run, files this very
-    call just wrote, so the newest backup of a deck could be missing the moment it was
-    needed.
+    Pruning keeps DECK_BACKUPS_KEEP per label, not per folder, so a run over several
+    roots cannot evict another root's history or its own new files.
     """
     folder = _deck_backup_folder()
     deterministic_token = getattr(platform(), "deterministic_token", None)
@@ -286,13 +259,10 @@ def _baseline_path(backup):
 def _backup_targets(deck_name, decks):
     """Which deck(s) a pre-sync backup has to cover for a run touching `decks`.
 
-    `deck_name` (the configured export_deck) covers the ordinary case and stays the
-    answer whenever every deck this run touches sits under it, which keeps the backup as
-    small and fast as it has always been. A run reaching outside it (a source that files
-    decks somewhere else, a relocation moving a card out from under it) gets each
-    touched deck's top-level deck instead, since exporting that covers every subdeck
-    below it. `decks` of None means the caller doesn't know or doesn't need to narrow it,
-    and gets `deck_name` alone.
+    `deck_name` (the configured export_deck) is the answer whenever every touched deck
+    sits under it. A run reaching outside it gets each touched deck's top-level deck
+    instead, since exporting that covers every subdeck. `decks` of None gets `deck_name`
+    alone.
     """
     decks = [d for d in (decks or []) if d]
     if not decks or all(d == deck_name or d.startswith(deck_name + "::") for d in decks):
@@ -307,23 +277,16 @@ def _backup_targets(deck_name, decks):
 
 def _pre_sync_backup_or_confirm_skip(deck_name, decks=None, scope_tag=None, keep=None):
     """Back up before Sync/Import touch the collection, or ask to proceed if it can't.
+    Deck-scoped, not whole-collection.
 
-    Defaults to the fast, deck-scoped backup rather than a whole-collection one, since
-    that's what most syncs actually need protection against. A full collection backup
-    is still one click away under Advanced whenever extra protection is wanted.
+    `decks` is the deck names this run will change, which the backup is scoped from (see
+    _backup_targets). `keep` is a backup file the prune must leave alone.
 
-    `decks` is the deck names this run will actually change, which is what the backup is
-    scoped from (see _backup_targets). It used to always be export_deck's subtree alone,
-    so a run touching anything outside that got a backup covering none of it while every
-    confirmation promised one. `keep` is a backup file the prune must leave alone.
-
-    Returns (proceed, backed_up): proceed=True with backed_up=False means either there
-    was nothing at all to back up (a first sync, where the collection holds none of this
-    add-on's cards yet) or the user chose to continue without one, so callers must not
-    tell the user a backup was saved in that case. `scope_tag` is what separates those
-    two: a collection that already holds cards under it has something to lose, so a run
-    that can't back any of it up asks rather than proceeding silently against a
-    confirmation that promised a backup.
+    Returns (proceed, backed_up). proceed=True with backed_up=False means either there
+    was nothing to back up (a first sync) or the user chose to continue without one, so
+    callers must not say a backup was saved. `scope_tag` separates those two: when the
+    collection already holds cards under it and none can be backed up, this asks rather
+    than proceeding silently.
     """
     targets = [d for d in _backup_targets(deck_name, decks)
                if mw.col.decks.id_for_name(d) is not None]
@@ -332,11 +295,7 @@ def _pre_sync_backup_or_confirm_skip(deck_name, decks=None, scope_tag=None, keep
         failed = [d for d, path in saved.items() if not path]
         if not failed:
             return True, True
-        # Named, both halves. A run over several roots that backed up two of three has
-        # something to restore from and something it doesn't, and answering that with a
-        # flat "couldn't create an automatic backup" (then, at the end, "no pre-sync
-        # backup was taken") is wrong in both directions: it hides the cover that does
-        # exist and hides which deck is the one without it.
+        # Name both halves: which decks were backed up and which were not.
         covered = [d for d, path in saved.items() if path]
         covered_text = ", ".join(html.escape(str(d), quote=False) for d in covered)
         failed_text = ", ".join(html.escape(str(d), quote=False) for d in failed)
@@ -358,18 +317,12 @@ def _pre_sync_backup_or_confirm_skip(deck_name, decks=None, scope_tag=None, keep
 
 
 def _pre_sync_backup_or_skip_silently(deck_name, decks=None, scope_tag=None):
-    """Background counterpart to `_pre_sync_backup_or_confirm_skip`: never blocks with a
-    dialog. If a backup is needed and fails, the safe default is to abort the auto-sync
-    rather than import unprotected — there's no one watching to answer a prompt, so the
-    background path must never proceed without the safety net the interactive path asks
-    permission to skip.
+    """Background counterpart to `_pre_sync_backup_or_confirm_skip`: never shows a
+    dialog. If a needed backup fails, the auto-sync aborts rather than importing
+    unprotected; the next poll retries.
 
-    `decks` is scoped exactly as the interactive path scopes it (see _backup_targets):
-    an unattended sync imports whatever the manifest lists, so backing up only
-    export_deck left a deck filed outside it changed with no backup covering it at all.
-    Any target that can't be backed up aborts the whole tick rather than importing the
-    rest, which is the same fail-closed answer this has always given for the one deck it
-    used to cover: the next poll retries, and a manual Sync decks can ask.
+    `decks` is scoped as on the interactive path (see _backup_targets). Any target that
+    can't be backed up aborts the whole tick.
 
     Returns "ok" to proceed, "no-deck" when cards exist but no deck holding them does
     yet, or "failed" when a backup couldn't be written.
@@ -388,12 +341,9 @@ def _pre_sync_backup_or_skip_silently(deck_name, decks=None, scope_tag=None):
 
 # ----------------------------------------------------------------- notes snapshot
 def _note_field(note, name):
-    """The note's actual field name matching `name`, or None.
-
-    Case-insensitive on purpose. The preserved-fields box is free text, the real names
-    are capitalised (Front, Back, Why, Image, Tag, Dosing, Notes), and an exact-match
-    lookup meant typing "dosing" silently protected nothing at all: no error, no
-    warning, just annotations quietly overwritten on the next sync.
+    """The note's actual field name matching `name`, or None. Case-insensitive: the
+    preserved-fields box is free text, and a missed match would silently protect
+    nothing.
     """
     if name in note:
         return name
@@ -418,13 +368,11 @@ def _snapshot(protected, scope_tag, per_note=None):
 
 def _snapshot_fields(guid, fields):
     """Current values of the named fields on one note, keyed by the note's own field
-    name, blanks included, same as _snapshot's own per-note loop.
+    name, blanks included.
 
-    For topping up a snapshot already taken: a note matched by front only reveals which
-    guid it lives under once its package has been fetched and matched, so its per-note
-    declared fields (see per_note_for_package) can only be read at that later point,
-    one note at a time, rather than in the single collection-wide pass _snapshot makes
-    up front.
+    For topping up a snapshot already taken: a note matched by front reveals its guid
+    only once its package is fetched, so its per-note declared fields (see
+    per_note_for_package) are read then.
     """
     nid = mw.col.db.scalar("select id from notes where guid = ?", guid)
     if not nid:
@@ -469,14 +417,12 @@ def _restore_tags(snap, scope_tag, touched):
 
 
 def _capture_shipped(protected, scope_tag, touched, per_note=None):
-    """What the deck source's own values are, read straight after an import and before
-    anything is restored, which is the one moment the collection holds them.
+    """The deck source's own values, read straight after an import and before anything
+    is restored: the one moment the collection holds them.
 
-    Limited to `touched` (the guids an import actually wrote this run) because a note in
-    a deck that didn't update still holds the learner's restored value, and recording
-    that as "what we shipped" would make their own edit look like ours next time, so the
-    following sync would overwrite it. That is the exact failure this baseline exists to
-    prevent, so it must not create it.
+    Limited to `touched` (the guids this import wrote). A note outside it still holds
+    the learner's restored value, and recording that as shipped would let the next sync
+    overwrite their edit.
     """
     if not touched:
         return {}
@@ -505,48 +451,32 @@ def _capture_shipped(protected, scope_tag, touched, per_note=None):
 
 def _restore(snap, baseline=None, touched=None):
     """Put the learner's own annotations back after an import, but only the ones that
-    are actually theirs.
-
-    Anki's importer overwrites every field on a matched note, so without this the
-    learner's annotations are wiped on every sync. Restoring unconditionally is the
-    blunt version of that fix, and it has a cost: a preserved field can never receive a
-    correction from the deck source again, which is why preserving anything beyond an
-    always-empty-by-design Notes field used to mean freezing it forever.
+    are theirs. Anki's importer overwrites every field on a matched note.
 
     `baseline` ({guid: {field: value}}, what the source last shipped for that note)
-    makes it a three-way merge instead. If the learner's pre-import value still equals
-    what was last shipped, they never touched it, so the freshly imported value is
-    allowed to stand. If it differs, the field is theirs and gets restored. Comparing
-    against the INCOMING value can't distinguish those two cases: "the learner edited
-    it" and "the deck author changed it" both read as a difference, which is why the
-    baseline is kept.
+    makes this a three-way merge. If the learner's pre-import value equals what was last
+    shipped, they never touched it and the imported value stands. If it differs, the
+    field is theirs and is restored.
 
-    With no baseline for a note (the first sync after this shipped, or a note the
-    source has never written) the old always-restore behaviour applies, so the
-    conservative direction is the default and an upgrade never loses an annotation.
-    A blank is the exception: without a baseline it can't be told from a field nobody
-    has written yet, so the source's value stands. With one, a blank where the source
-    shipped text is the learner's own deletion and is kept like any other edit. A field
-    with no text baseline but a recorded hash is judged against the hash instead.
+    With no baseline for a note, every non-blank value is restored. A blank is the
+    exception: without a baseline it can't be told from a field nobody has written, so
+    the source's value stands. With one, a blank where the source shipped text is the
+    learner's own deletion and is kept. A field with no text baseline but a recorded
+    hash is judged against the hash.
 
-    `touched` is the guids this run's import actually wrote. Notes outside it are
-    skipped entirely: an import that never ran over a note cannot have overwritten
-    anything on it, so there is nothing to restore and nothing to conflict with.
+    `touched` is the guids this run's import wrote. Notes outside it are skipped:
+    nothing was overwritten on them.
 
-    Returns (restored, collisions), where a collision is a field the learner edited AND
-    the source changed since that baseline: the learner's own edit wins, and the count
-    lets the caller offer to send those back rather than let the two versions drift
-    apart unnoticed.
+    Returns (restored, collisions). A collision is a field the learner edited and the
+    source changed since the baseline; the learner's edit wins.
     """
     baseline = baseline or {}
     restored, collisions = 0, []
     nids = _guid_to_nid()
     for guid, saved in snap.items():
         if touched is not None and guid not in touched:
-            # Nothing imported over this note, so none of its fields were overwritten:
-            # there is nothing to put back, and comparing it to the baseline would
-            # report a conflict against an update that never happened. This is what
-            # made a card in a deck that had no update at all read as a collision.
+            # Nothing imported over this note, so there is nothing to put back, and
+            # comparing it to the baseline would report a false conflict.
             continue
         nid = nids.get(guid)
         if not nid:
@@ -560,10 +490,8 @@ def _restore(snap, baseline=None, touched=None):
             if not learner_owns(was_shipped, f, v):
                 continue          # untouched by the learner; let the source's update stand
             if source_changed(was_shipped, f, note[f]) and note[f] != v:
-                # Only when the two versions actually differ. An update that changed a
-                # field to exactly what the learner had already written is agreement,
-                # not a conflict, and reporting it asked the learner to go and reconcile
-                # two identical wordings.
+                # Only when the two versions differ: an update matching what the learner
+                # already wrote is not a conflict.
                 collisions.append((guid, f))
             if note[f] != v:
                 note[f] = v
@@ -583,16 +511,11 @@ def _import_apkg(path, with_scheduling=False):
     from anki.collection import ImportAnkiPackageRequest, ImportAnkiPackageOptions
     check_apkg_limits(path)
     opts = ImportAnkiPackageOptions()
-    # merge_notetypes=False on purpose. Merging note types on import rewrites the
-    # collection's note types, which bumps Anki's *schema* modification time — and any
-    # schema bump forces AnkiWeb into a one-way full sync ("upload from local") on the
-    # learner's very next sync, instead of a normal incremental one. That's the friction
-    # the learner hit. We reconcile note types the idempotent way instead: _ensure_notetypes()
-    # runs before every import and only touches the schema when it genuinely adds a
-    # missing field (a real one-time event), so steady-state syncs leave the schema alone
-    # and AnkiWeb stays incremental. Trade-off: template/CSS changes in a rebuilt deck no
-    # longer propagate to existing note types automatically — run Advanced → Fix note
-    # types (or accept one full sync) if a card template itself needs updating.
+    # merge_notetypes=False: merging rewrites the collection's note types, which bumps
+    # the schema and forces a one-way full AnkiWeb sync. _ensure_notetypes() runs before
+    # every import instead and touches the schema only to add a missing field.
+    # Template/CSS changes therefore do not propagate on import (see _template_changes).
+    #
     # Both sync and backup restoration intentionally replace older source content.
     # IF_NEWER silently skips notes edited locally (including our own conversion).
     opts.update_notes = 1  # ImportAnkiPackageUpdateCondition.ALWAYS
@@ -619,9 +542,9 @@ def scope_note_count(scope_tag):
 
 def _scoped_notes(scope_tag, exclude_tag=None):
     """`[(nid, guid, mid, fields, cards)]` for every note under the scope tag, in
-    find_notes order, `cards` being `[(home did, reps)]` in card_ids() order. One query
-    instead of a get_note, card_ids and get_card per note, which on a real collection
-    froze the main thread on every auto-sync check."""
+    find_notes order, `cards` being `[(home did, reps)]` in card_ids() order. One query:
+    per-note lookups are too slow for the main thread.
+    """
     search = scope_search(scope_tag, exclude_tag)
     nids = mw.col.find_notes(search)
     if not nids:
@@ -691,11 +614,8 @@ def existing_front_map(scope_tag):
 
 
 def _existing_guid_to_fields(scope_tag):
-    """{note guid: {field name: value}} for every note under the scope tag.
-
-    Change detection needs the learner's side of the comparison by name, not by
-    position, so this zips each note's values against its own note type's field names
-    rather than assuming every note type agrees on an order.
+    """{note guid: {field name: value}} for every note under the scope tag, each note's
+    values zipped against its own note type's field names.
     """
     names = {}
     out = {}
@@ -707,9 +627,7 @@ def _existing_guid_to_fields(scope_tag):
 
 
 def _existing_guid_to_nid(scope_tag):
-    """{note guid: note id} for every card under the scope tag. The reconcile flow needs
-    to go from a retired card's GUID (what the ledger lists) back to the learner's note
-    to archive it."""
+    """{note guid: note id} for every note under the scope tag."""
     return {guid: nid for nid, guid, *_rest in _scoped_notes(scope_tag)}
 
 
@@ -753,10 +671,9 @@ def _deck_names():
 
 
 def _existing_guid_to_deck(scope_tag):
-    """{note guid: current deck name} for every note under the scope tag, keyed off
-    its first card's deck (all cards of a note normally share one deck). The deck-move
-    step needs this to tell "still where the source last filed it" (safe to relocate)
-    from "the learner has moved or customized it themself" (leave it alone)."""
+    """{note guid: current deck name} for every note under the scope tag, keyed off its
+    first card's deck (all cards of a note normally share one deck).
+    """
     deck_name = _deck_names()
     return {guid: deck_name(cards[0][0])
             for _nid, guid, _mid, _fields, cards in _scoped_notes(scope_tag) if cards}
@@ -767,9 +684,8 @@ def _existing_notes_summary(scope_tag, exclude_tag=None):
     the raw material find_duplicate_groups groups into duplicate candidates. `front` is
     the raw first field (the grouping key); `label` is a readable version for dialogs.
 
-    `exclude_tag`, if given, is added as a search exclusion so a note a previous
-    duplicate-cleanup run already archived (see sync.clean_up_duplicates) is never
-    considered again, making a repeat run idempotent on what it already handled.
+    `exclude_tag`, if given, is added as a search exclusion, so a note an earlier
+    duplicate cleanup archived is not considered again.
     """
     deck_name = _deck_names()
     models = {}
@@ -794,38 +710,16 @@ def _existing_notes_summary(scope_tag, exclude_tag=None):
 def installed_matching_collection(installed, scope_tag):
     """Reconcile installed.json against what's actually in the collection.
 
-    installed.json lives in user_files/, entirely outside the collection file, so it
-    survives things that don't touch it — most notably restoring an Anki collection
-    backup, which rolls mw.col back to an earlier snapshot without touching this
-    add-on's own bookkeeping. After that, installed.json can still claim a deck is
-    synced when the collection no longer has any of its cards, so Sync decks, Check
-    what will sync, and the Manage decks deck rows would all wrongly read "up to
-    date" for it — nothing looks pending because nothing was ever compared against the
-    collection itself. A first version of this check only detected a *total* wipe
-    (every synced note gone at once) and missed the common case: a revert that only
-    rolls back part of the collection, leaving some Intern Pearls decks intact and
-    others gone. This checks per deck instead: a deck stays "installed" only if the
-    collection currently has at least one note under scope_tag actually sitting in an
-    Anki deck of that exact name; otherwise it's dropped, so a normal sync re-detects
-    and re-applies it.
+    installed.json lives in user_files/, outside the collection, so restoring a
+    collection backup can leave it claiming a deck is synced when its cards are gone. A
+    deck stays installed only if at least one note under scope_tag sits in the
+    manifest's deck name or any subdeck under it; otherwise it is dropped, so a normal
+    sync re-applies it.
 
-    "An Anki deck of that exact name" means the manifest's deck name itself OR any
-    subdeck under it — a deck spec's `deck_name` is routinely just the parent path,
-    with cards actually filed into `deck_name::<subdeck>` (every spec with a
-    `subdecks` list works this way; the example deck does too). A first version of
-    this required an exact match, which meant it never recognized ANY subdeck-based
-    deck as present and treated every one of them as pending on every check, forever
-    — a real, silent regression, not the intended behavior.
-
-    Trade-off worth knowing: this can also false-positive (call a deck "missing" when
-    it isn't) in two narrow, self-correcting cases — a deck mid-reorg where Sync
-    decks has updated content but "Reconcile my decks" hasn't yet relocated the
-    learner's existing cards to the new deck name (apply_deck_moves does that, not
-    Sync), and a card the learner has manually filed into a deck of their own outside
-    the spec's hierarchy entirely. Both just cause a harmless redundant re-sync of
-    that one deck (0 new, N kept in place) rather than any data loss, which is the
-    failure mode actually worth avoiding here — a false "needs sync" self-corrects;
-    a false "up to date" hides a real problem silently.
+    This can call a present deck missing in two cases: a reorg where Reconcile my decks
+    has not yet moved the cards to the new deck name, and a card the learner filed
+    outside the spec's hierarchy. Both cost one redundant re-sync of that deck and no
+    data.
     """
     present = set(_existing_guid_to_deck(scope_tag).values())
 
@@ -836,13 +730,9 @@ def installed_matching_collection(installed, scope_tag):
 
 
 def decks_holding(guids, existing_guid_to_nid):
-    """The decks the given notes' cards are actually sitting in right now.
-
-    What a pre-run backup has to cover is where a card IS, not where a ledger says it
-    was filed: a learner who reorganizes their own collection moves a card out from under
-    the deck the retirement ledger recorded, and archiving or rewriting it there would
-    then happen in a deck no backup covered. Unknown guids are simply absent from the
-    result, so the caller can fall back to whatever it does know.
+    """The decks the given notes' cards are sitting in right now, which is what a
+    pre-run backup has to cover: the learner may have moved a card out of the deck a
+    ledger recorded. Unknown guids are absent from the result.
     """
     out = []
     for guid in guids:
@@ -857,14 +747,12 @@ def decks_holding(guids, existing_guid_to_nid):
 
 
 def apply_deck_moves(moves, existing_guid_to_nid):
-    """Relocate a learner's cards to match a pure deck reorg (a topic deck
-    moving under a new parent deck, say) without touching content or scheduling.
+    """Relocate a learner's cards to match a pure deck reorg without touching content or
+    scheduling.
 
-    `moves` is the already-filtered list from find_deck_moves_needed — every entry
-    is a card confirmed to still be sitting exactly where the source last put it.
-    Just like archive_notes, this is schema-neutral (set_deck only), so it never
-    forces an AnkiWeb full sync, and it's trivially reversible by hand (drag the
-    card back). Returns the number of notes moved.
+    `moves` is the filtered list from find_deck_moves_needed: every entry is a card
+    still sitting where the source last put it. Schema-neutral (set_deck only), so it
+    never forces an AnkiWeb full sync. Returns the number of notes moved.
     """
     n = 0
     for m in moves:
@@ -880,24 +768,18 @@ def apply_deck_moves(moves, existing_guid_to_nid):
 
 def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields, per_note=None):
     """Before a retired note is archived, copy the learner's protected-field text (e.g.
-    Notes) onto its replacement(s) so a personal annotation isn't stranded on a card
-    that's about to be suspended out of review.
+    Notes) onto its replacement(s).
 
     `retired` is the fresh (not-yet-archived) entries from find_retired_in_collection,
     each with `guid` and `superseded_by`, and, when the caller has one, `source_guid`.
-    Only fills a replacement's field if it's currently blank (fields_to_carry_over), so
-    this never overwrites something the learner's already written on the new card, and
-    copies to every replacement they already have (a symmetric split has no single
-    "primary" to prefer). Returns the number of replacement notes updated.
+    Only fills a replacement's field if it's currently blank (fields_to_carry_over), and
+    copies to every replacement the learner already has. Returns the number of
+    replacement notes updated.
 
-    Looks up `per_note` twice per pair, once for the predecessor and once for each
-    replacement: a field the deck source declares protected only on the successor would
-    otherwise never be read here, since the predecessor's list is a different note's
-    declaration. `per_note` is keyed by the guid the deck source assigns, so the
-    predecessor's own lookup uses `source_guid` when the entry carries one (the ledger's
-    own key, unaffected by find_retired_in_collection's front fallback); a caller with
-    no such guid to offer (a stranded-pair merge, which has no source ledger entry at
-    all) falls back to `guid`, matching today's behaviour.
+    `per_note` is keyed by the guid the deck source assigns and is looked up for the
+    predecessor and for each replacement, so a field declared protected only on the
+    successor is still carried. The predecessor's lookup uses `source_guid` when the
+    entry carries one, else `guid`.
     """
     n = 0
     for r in retired:
@@ -929,9 +811,8 @@ def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields,
             if not to_write:
                 continue
             for f, v in to_write.items():
-                # `f` is the predecessor's own field name; the replacement's note type
-                # can spell it differently (casing), so resolve the actual write target
-                # rather than assuming the name matches verbatim.
+                # The replacement's note type can spell the field differently (casing),
+                # so resolve the actual write target.
                 tf = _note_field(target_note, f)
                 if tf is None:
                     continue
@@ -946,11 +827,8 @@ def archive_notes(nids, retired_deck, tag):
 
     Moves every card of each note to `retired_deck` (created if absent), suspends those
     cards, and tags the notes with `tag` so a later reconcile run recognizes them as
-    already handled. Every step is a normal, incremental Anki operation — moving decks,
-    suspending, and tagging do NOT bump the collection's schema modification time, so
-    this never forces the one-way AnkiWeb full sync a note-type change would (the same
-    reason imports use merge_notetypes=False). Fully reversible by hand: unsuspend a
-    card, or move it back out of the Retired deck. Returns the number of notes archived.
+    handled. None of these bump the schema, so this never forces a full AnkiWeb sync.
+    Returns the number of notes archived.
     """
     nids = list(nids)
     if not nids:
@@ -964,14 +842,12 @@ def archive_notes(nids, retired_deck, tag):
     return len(nids)
 
 
-# The scheduling a card carries: what SM-2/FSRS reads to decide when it comes back, plus
-# the counters the learner sees. Deliberately not the deck (`did`) or the note's fields,
-# so carrying this forward moves their progress without moving their organization.
+# The scheduling a card carries. Not the deck (`did`) or the note's fields, so carrying
+# it forward moves progress without moving organization.
 _SCHED_FIELDS = ("type", "queue", "due", "ivl", "factor", "reps", "lapses")
 
-# FSRS schedules from the card's memory state, not from ivl/factor, so a card seeded
-# with an interval but no memory state is inconsistent under it: the number says one
-# thing and the scheduler computes another. These travel with the interval.
+# FSRS schedules from the card's memory state, not ivl/factor, so these travel with the
+# interval.
 _FSRS_FIELDS = ("desired_retention", "decay", "last_review_time")
 
 
@@ -982,15 +858,10 @@ def _home_due(card):
 
 def _copy_memory_state(parent, card, scale):
     """Copy the parent's FSRS memory state onto `card`, its stability times `scale`.
+    Stability is the FSRS counterpart of the interval and scales with it; difficulty
+    carries over unchanged.
 
-    Stability is roughly the interval at which the learner still recalls the card at
-    their desired retention, so it is the FSRS-side counterpart of the interval and
-    scales with it: a seeded sibling at half interval takes half, a merged card taking
-    over the same history takes it whole. Copying the interval alone would leave FSRS recomputing from
-    a memory state the card never had. Difficulty carries over unchanged: how hard the
-    material is does not depend on which blank is asking about it.
-
-    A no-op on a collection not using FSRS, where memory_state is simply absent.
+    A no-op on a collection not using FSRS, where memory_state is absent.
     """
     state = getattr(parent, "memory_state", None)
     if state is None:
@@ -1002,30 +873,24 @@ def _copy_memory_state(parent, card, scale):
             copy.stability = max(0.5, state.stability * scale)
         card.memory_state = copy
     except Exception:
-        # Never let a scheduler detail break the conversion itself; the card still
-        # carries the seeded interval, which is what the older scheduler reads.
+        # A scheduler detail must not break the conversion; the card still carries the
+        # seeded interval.
         pass
 
 
 def carry_scheduling_forward(pairs, existing_guid_to_nid):
     """Move a stranded predecessor's review history onto its live successor.
 
-    `pairs` is find_stranded_pairs' output. For each, the predecessor's cards are copied
-    onto the successor's by ordinal, so a cloze whose deletions were renumbered only
-    moves the ordinals that still line up rather than smearing card 1's schedule across
-    all of them.
+    `pairs` is find_stranded_pairs' output. The predecessor's cards are copied onto the
+    successor's by ordinal, so a renumbered cloze only moves the ordinals that still
+    line up.
 
-    Two guards keep this from ever costing the learner's progress. A successor card is
-    only written when it has FEWER reps than the predecessor, so a card they have
-    already been studying is never rolled back to an older schedule, and a re-run is a
-    no-op. And
-    nothing is cleared from the predecessor: it keeps its own scheduling and is archived
-    afterwards, so the worst case is a duplicated schedule on a suspended card, which is
-    recoverable by hand, rather than history that no card holds any more.
+    A successor card is written only when it has fewer reps than the predecessor, so a
+    studied card is never rolled back and a re-run is a no-op. Nothing is cleared from
+    the predecessor.
 
-    Like archiving, every write here is an ordinary card update: no note types, no
-    fields, no schema bump, so it does not force the one-way AnkiWeb full sync. Returns
-    the number of successor cards updated.
+    Every write is an ordinary card update with no schema bump. Returns the number of
+    successor cards updated.
     """
     moved = 0
     for p in pairs:
@@ -1095,11 +960,8 @@ def _field_map(old_model, new_model):
     """new_fields for change_notetype_of_notes: one entry per field of the NEW note
     type, holding that field's index in the OLD one, or -1 to discard.
 
-    Matched by NAME, not position. Anki's own default is positional, which for
-    Basic to Cloze would drop Front into Text by luck and then slide Back into Why,
-    Why into Image and so on, quietly shifting every remaining field by one. Front maps
-    to Text explicitly because they are the same thing under two names; everything else
-    (Why, Image, Dosing, Notes) lines up by name, and Back and Tag have nowhere to go.
+    Matched by name, not position: Anki's positional default would shift fields between
+    Basic and Cloze. Front maps to Text explicitly; Back and Tag have nowhere to go.
     """
     old = [f["name"] for f in old_model["flds"]]
     idx = {name: i for i, name in enumerate(old)}
@@ -1113,22 +975,13 @@ def _field_map(old_model, new_model):
 def seed_converted_siblings(nids):
     """Give the extra cards a conversion generates the parent card's standing.
 
-    Turning one question-and-answer card into a cloze with four blanks produces four
-    cards. Anki carries the original's scheduling onto the first and creates the rest
-    as brand new, which is right when the blanks are new material and wrong here: the
-    learner has been retrieving these same facts off the parent card for months, and
-    across a whole deck it would drop a four-figure new-card queue on them, which is the
-    workload problem this reformatting is meant to reduce.
+    Anki carries the original's scheduling onto the first card and creates the rest as
+    new. A sibling instead inherits the parent's ease, counters and standing at half its
+    interval (floored at a day): the learner already knows the facts, but recalling one
+    blank cold is harder than the parent's test.
 
-    So a sibling inherits the parent's ease, counters and standing, at HALF its
-    interval (floored at a day). Half rather than whole because producing one blank
-    cold is a harder retrieval than recognising the paragraph the parent tested, so its
-    interval is evidence about the fact set rather than about that blank. Halving keeps
-    the card out of the new queue while still bringing it back soon enough to prove
-    itself, and one failed review resets it properly either way.
-
-    Only cards with no reviews of their own are touched, so this never overwrites real
-    history and re-running is a no-op. Returns the number of cards seeded.
+    Only cards with no reviews of their own are touched, so re-running is a no-op.
+    Returns the number of cards seeded.
     """
     seeded = 0
     for nid in nids:
@@ -1153,19 +1006,15 @@ def seed_converted_siblings(nids):
 def change_note_types(changes):
     """Move the learner's notes onto the note type this update ships for them.
 
-    Runs BEFORE the import: once a note is on the right type, Anki's importer matches it
-    by GUID and updates it in place, so the conversion keeps the card and its whole
-    review history instead of adding a second one beside it.
+    Runs before the import: once a note is on the right type, the importer matches it by
+    GUID and updates it in place, keeping the card and its review history.
 
-    This is the one operation here that DOES bump the collection's schema (Anki's own
-    Change Notetype dialog gates on confirm_schema_modification for the same reason), so
-    the caller must have consented to the one-time full AnkiWeb sync first, exactly as
-    it does for a template change.
+    This bumps the collection's schema, so the caller must have consented to the
+    one-time full AnkiWeb sync first.
 
     Returns the note ids converted, for the caller to hand to seed_converted_siblings
-    AFTER the import: at this point the note still holds its old question-and-answer
-    text, so the extra cloze cards do not exist yet and there is nothing to seed. They
-    appear only once the import writes the cloze markup in.
+    after the import: the extra cloze cards exist only once the import writes the cloze
+    markup.
     """
     if not changes:
         return []
@@ -1179,9 +1028,8 @@ def change_note_types(changes):
         old_model = mw.col.models.by_name(old_name)
         new_model = mw.col.models.by_name(new_name)
         if not old_model or not new_model:
-            # A target this collection doesn't hold yet is the caller's to notice
-            # before consenting (see missing_notetype_targets); this stays as the
-            # backstop, so nothing here can convert onto a note type that isn't there.
+            # Backstop: a missing target is the caller's to notice before consenting
+            # (see missing_notetype_targets).
             continue
         nids = [nid for nid in (mw.col.db.scalar(
             "select id from notes where guid = ?", g) for g in guids) if nid]
@@ -1260,13 +1108,10 @@ def fork_note_identities(changes):
 def missing_notetype_targets(changes):
     """The note types `changes` would convert onto that this collection doesn't have.
 
-    change_note_types can only move a note onto a note type that already exists, and
-    the import that would create one runs after it. Left unchecked, those pairs were a
-    bare `continue`: nothing converted, nothing counted, nothing said, and the deck
-    recorded as installed at that version, so the conversion was never offered again.
-    A caller that finds anything here holds that deck's version back instead and says
-    so; the import it still runs is what adds the missing note type, so the next run
-    converts and matches.
+    change_note_types can only move a note onto an existing note type, and the import
+    that would create one runs after it. A caller that finds anything here holds that
+    deck's version back and says so; the import adds the missing note type, so the next
+    run converts.
     """
     return sorted({c["new"] for c in changes if not mw.col.models.by_name(c["new"])})
 
@@ -1275,20 +1120,14 @@ def notetype_changes(src, existing_fronts, aliases, scope_tag, declined,
                      existing_types=None):
     """Note-type changes this .apkg would need on the learner's own notes.
 
-    Resolves the .apkg's guids through the same matching ladder the import uses, so a
-    note matched by front counts, then compares types. Returns plan_notetype_changes'
-    list, each change carrying `drops` (cards the conversion would delete); empty when
-    nothing needs converting, which is the normal case.
+    Resolves the .apkg's guids through the same matching ladder the import uses, then
+    compares types. Returns plan_notetype_changes' list, each change carrying `drops`
+    (cards the conversion would delete); empty when nothing needs converting.
 
-    `declined` is logic.declined_guids' set, and a match is left out of the plan
-    entirely. A conversion is only worth anything because the import right after it
-    writes the new format's content onto the converted note, and a declined note is
-    dropped from that import (logic.declined_drop), so converting one moved the
-    learner's note to a fill-in-the-blank type holding no blanks. Both identities are
-    tested, the package's own guid and the guid it would be remapped to, exactly the
-    pair declined_drop tests, so a decline can't be bypassed through either. It is a
-    required argument rather than a defaulted one so a fourth caller has to decide about
-    it instead of quietly planning a conversion for a card the learner turned away.
+    `declined` is logic.declined_guids' set; a match is left out of the plan, since a
+    declined note is dropped from the import (logic.declined_drop) and would be
+    converted without receiving the new content. Both the package's guid and the guid it
+    would be remapped to are tested. Required, so every caller decides about it.
     """
     remap, _in_place, _as_new, _new, _matched = remap_cards(src, existing_fronts, aliases)
     incoming = apkg_note_types(src)
@@ -1349,12 +1188,10 @@ def _prepare_import_notetypes(con, allow_field_additions=True):
         nid = nids.get(guid)
         local = mw.col.get_note(nid) if nid else None
         if local is not None and getattr(local, 'mod', None) is not None:
-            # Anki skips equal modification timestamps even with ALWAYS. Changing
-            # only this scratch timestamp lets same-second source edits update too.
-            # It also keeps matched notes out of log.duplicate, which _apply_deck
-            # leaves out of `touched`: without it a first sync over identical notes
-            # records no shipped baseline. Pinned by
-            # run_identical_first_sync_baseline_contract in
+            # Anki skips equal modification timestamps even with ALWAYS. Lowering this
+            # scratch timestamp lets same-second source edits update, and keeps matched
+            # notes out of log.duplicate, which _apply_deck leaves out of `touched`.
+            # Pinned by run_identical_first_sync_baseline_contract in
             # tests/real_anki_audit_contracts.py.
             con.execute("update notes set mod=mod-1 where id=? and mod=?",
                         (rid, local.mod))
@@ -1441,12 +1278,9 @@ def _apply_deck(src, aliases, existing_fronts, declined=frozenset(),
                              "no cards from this deck were imported.")
     drop, touched, in_place, as_new = declined_drop(src, remap, existing_fronts, declined,
                                                      in_place, as_new)
-    # A unique name in the system temp directory, rather than a fixed one derived from
-    # `src` (two runs can otherwise write and import through the same path, and on a
-    # shared machine that path is predictable enough to be pre-created as a symlink) or
-    # one beside `src` itself. For a local-folder source `src` is the learner's own
-    # configured folder, which may be a read-only share, and is theirs rather than ours
-    # to leave a file in if the import raises before the cleanup below.
+    # A unique name in the system temp directory: a fixed path derived from `src` could
+    # collide between runs or be pre-created as a symlink, and `src`'s own folder may be
+    # read-only and is the learner's.
     out = platform().allocate_temporary_file(
         platform_owner_id(mw), "sync-import", ".sync.apkg")
     try:
@@ -1496,13 +1330,10 @@ def _apply_deck(src, aliases, existing_fronts, declined=frozenset(),
 def invalidate_installed(names=None):
     """Drop the add-on's record of which deck versions are applied.
 
-    installed.json is the only record of what was last applied, and it lives in
-    user_files/, outside the collection, so a restore rolls the cards back while
-    leaving it claiming the newest version. Its usual safety net only checks whether
-    a deck still has cards, which a rollback to older content passes, so the restore
-    itself is the only reliable signal. `names` limits the drop to those decks; None
-    clears everything. Re-imports match by GUID, so the cost of re-offering a deck
-    that did not actually change is bandwidth, never history.
+    installed.json lives in user_files/, outside the collection, so a restore rolls the
+    cards back while it still claims the newest version. `names` limits the drop to
+    those decks; None clears everything. Re-imports match by GUID, so re-offering an
+    unchanged deck costs bandwidth, never history.
     """
     if names is None:
         _save_json(INSTALLED, {})
@@ -1517,17 +1348,15 @@ def invalidate_installed(names=None):
 @_safe
 @_manual_flow
 def restore_from_backup():
-    """Revert the whole collection to a pre-sync (or any other) backup.
+    """Revert the whole collection to a backup.
 
-    This is Anki's own backup restore, unscoped: it replaces every deck and note in the
-    profile, not just the ones this add-on manages, since that's what a real collection
-    backup contains. Anki asks for confirmation and reloads the profile itself.
+    This is Anki's own restore: it replaces every deck and note in the profile, asks for
+    confirmation, and reloads the profile itself.
 
-    The interleave guard covers this dialog and the installed.json clear beneath it, so
-    an auto-sync tick can't land between the two. It cannot cover Anki's own restore,
-    which happens after this returns; nothing here can, and the poll's own `mw.col is
-    None` check is what holds during the profile reload. installed.json is cleared only
-    if the restore goes ahead.
+    The interleave guard covers this dialog and the installed.json clear, so an
+    auto-sync tick can't land between the two. Anki's restore runs after this returns;
+    the poll's `mw.col is None` check holds during the profile reload. installed.json is
+    cleared only if the restore goes ahead.
     """
     if not _ask(
         "This opens Anki's own backup picker so you can revert your whole collection "
@@ -1547,13 +1376,8 @@ def restore_from_backup():
 
 @_safe
 def export_deck():
-    """Export just the Intern Pearls deck as a shareable, self-contained .apkg.
-
-    Unlike a backup (meant to undo a mistake and never opened otherwise), this prompts
-    for where to save and is meant to be kept or handed to someone else: a standalone
-    copy of just cfg["export_deck"], with scheduling, deck options, and media all
-    included, the same as picking that deck in Anki's own File > Export > Anki Deck
-    Package dialog with every checkbox on.
+    """Export cfg["export_deck"] as a self-contained .apkg with scheduling, deck options
+    and media, to a location the user picks.
     """
     deck_name = _cfg()["export_deck"]
     fname = f"Intern Pearls {datetime.date.today().isoformat()}.apkg"
@@ -1576,12 +1400,9 @@ def export_deck():
 @_safe
 @_manual_flow
 def import_deck():
-    """Bring an exported/backed-up Intern Pearls .apkg back into this collection.
-
-    The file already carries this collection's own note GUIDs (it was made by Export
-    Intern Pearls deck or an automatic pre-sync backup), so Anki's importer matches
-    everything by GUID directly: no front-text personalization needed the way Sync and
-    Import single deck need it for a spec-authored deck from someone else's collection.
+    """Bring an exported or backed-up Intern Pearls .apkg back into this collection. The
+    file carries this collection's own note GUIDs, so the importer matches by GUID with
+    no front-text matching.
     """
     from .sync import RESTORE_UNDO_NAME, _restore_undo_steps, _undo_key
     src = getFile(mw, "Choose an Intern Pearls .apkg", cb=None,
@@ -1639,16 +1460,11 @@ def import_deck():
             os.remove(checked)
         except OSError:
             pass
-    # The imported file holds older cards than the source does, so whatever it restored
-    # has to be re-offered. Scope that to the decks actually in the file, falling back to
-    # all of them if it cannot be read: a redundant re-offer is recoverable, a missed one
-    # silently leaves stale cards looking current. installed.json's own keys are the
-    # manifest names last applied, so no fetch is needed here. An empty match (names or
-    # None) also clears everything rather than nothing: if the decks were renamed before
-    # this backup was taken, the file's deck names won't map to anything current, yet the
-    # import did roll back a tracked deck, so clearing all is correct here, not merely a
-    # conservative fallback. Done before the baseline reset, so a failure there can't
-    # leave restored cards reading as current.
+    # The imported file holds older cards than the source, so what it restored has to be
+    # re-offered: drop the installed record for the decks in the file, or for all decks
+    # if the file cannot be read or none of its deck names match (they may have been
+    # renamed since). Done before the baseline reset, so a failure there can't leave
+    # restored cards reading as current.
     installed = _load_json(INSTALLED, {})
     installed = installed if isinstance(installed, dict) else {}
     deck_names = []
@@ -1738,9 +1554,7 @@ def _reset_baseline(src, log=None, shipped=None):
 
 @_safe
 def backup_deck_now():
-    """Manual, on-demand version of the deck-scoped backup Sync/Import take for you
-    automatically. Useful right before poking at cards yourself outside the add-on.
-    """
+    """Manual version of the deck-scoped backup Sync/Import take automatically."""
     deck_name = _cfg()["export_deck"]
     path = _backup_deck(deck_name)
     if not path:
@@ -1753,10 +1567,7 @@ def backup_deck_now():
 
 @_safe
 def backup_collection_now():
-    """Manual, on-demand whole-collection backup, the same kind Sync used to take
-    automatically before every sync. Kept available for anyone who wants that broader
-    protection on top of the faster, deck-scoped default.
-    """
+    """Manual whole-collection backup."""
     folder, written = _backup_collection()
     if not folder:
         _warn("Couldn't create a collection backup.")
@@ -1772,11 +1583,9 @@ def backup_collection_now():
 @_safe
 @_manual_flow
 def update_notetypes():
-    """Add any missing managed field to the collection's note types.
-
-    Guarded like the other collection-writing menu actions: adding a field bumps the
-    collection schema, and an auto-sync tick landing on top of that is the interleave
-    the flag exists to prevent.
+    """Add any missing managed field to the collection's note types. Guarded like the
+    other collection-writing menu actions: adding a field bumps the schema, and an
+    auto-sync tick must not interleave with it.
     """
     added = _ensure_notetypes()
     if not added:
@@ -1790,13 +1599,8 @@ def update_notetypes():
 def find_empty_cards(scope_tag):
     """Empty cards on the learner's own notes: (rows, skipped_count).
 
-    Asks Anki for its own empty-cards report rather than deciding what "empty" means
-    here. That report is a backend render of every card in the collection, so it stays
-    right as note types and templates change, and it is the same source Anki's own
-    Tools / Empty Cards acts on. Everything after it is narrowing: select_empty_cards
-    keeps only notes under the scope tag and refuses any note whose every card is
-    empty, then each surviving row gets the label and the deletion numbers the
-    confirmation needs.
+    Uses Anki's own empty-cards report, then select_empty_cards keeps only notes under
+    the scope tag and refuses any note whose every card is empty.
 
     `ords` are 1-based to match what the learner reads on the dead card ("No cloze 3
     found on card" is ord 2 internally).
@@ -1823,18 +1627,12 @@ def find_empty_cards(scope_tag):
 @_manual_flow
 def remove_empty_cards():
     """Remove the empty cards on the learner's own notes, after showing exactly which.
-
-    The one place this add-on deletes anything, and it is deliberately narrow. An empty
-    card holds no content: its note keeps every field, and the card itself renders as
-    "No cloze 3 found on card" because the blank it was generated for is gone. Archiving
-    one the way a retired card is archived would leave a dead card sitting in a Retired
-    deck forever, which is the thing the learner was already suspending by hand.
+    The one place this add-on deletes anything.
 
     Three guards, in order: the note must be the learner's own (scope tag), the note
-    must keep at least one real card (select_empty_cards refuses the rest, so no note
-    can be orphaned into deletion), and the learner sees and confirms every card first.
-    The usual automatic backup runs before anything is touched, so an unwanted run is
-    recoverable.
+    must keep at least one real card (select_empty_cards refuses the rest), and the
+    learner sees and confirms every card first. The usual automatic backup runs before
+    anything is touched.
     """
     cfg = _cfg()
     rows, skipped = find_empty_cards(cfg["scope_tag"])
@@ -1850,11 +1648,8 @@ def remove_empty_cards():
     safety = ("Only the empty cards are removed; the notes themselves, and "
               "every card that still shows something, are left exactly as they are. A "
               "backup is taken automatically before anything changes.")
-    # One kind of row throughout, so nothing is chipped and nothing lines up against a
-    # chip: the caret and chip columns are declined (see widgets.simple_row). The
-    # missing deletion numbers are short and read down the list rather than with the
-    # card's own name, which is exactly what the trailing column is for. Uncapped,
-    # since the rows stream inside a scroll area with the buttons outside it.
+    # One kind of row throughout, so the caret and chip columns are declined (see
+    # widgets.simple_row).
     heading, lines, tail = empty_cards_dialog_rows(rows, skipped)
     items = []
     append_rows(items, [("row", None, line["label"], line["gone"]) for line in lines])
@@ -1865,22 +1660,16 @@ def remove_empty_cards():
         yes_label=f"Remove {plural(n_cards, 'card')}", min_height=_CONFIRM_HEIGHT
     ):
         return
-    # Scoped from where the affected cards actually sit. The report above is Anki's own,
-    # narrowed by tag rather than by deck, so an empty card the learner has filed
-    # outside export_deck is still deleted, and a backup of export_deck alone covered
-    # none of it while the confirmation promised one.
+    # Backup scoped from where the affected cards sit: the report is narrowed by tag,
+    # not deck, so a card may be outside export_deck.
     affected = {mw.col.get_note(r["nid"]).guid: r["nid"] for r in rows}
     proceed, backed_up = _pre_sync_backup_or_confirm_skip(
         cfg["export_deck"], decks_holding(list(affected), affected), cfg["scope_tag"])
     if not proceed:
         return
-    # Asked again after the confirmation, not reused from before it. The report above
-    # was computed before a modal dialog the reader can sit in for as long as they like,
-    # and an import landing in the meantime (an auto-sync tick, an undo) can give one of
-    # these cards real content back. Acting on the stale list would then delete a card
-    # that now shows something, which is the one thing this add-on must never do. Only
-    # cards on BOTH lists are removed, so nothing new is deleted without having been
-    # shown either.
+    # Asked again after the confirmation: an import or undo during the modal dialog can
+    # give a card content back. Only cards on both lists are removed, so nothing is
+    # deleted that was not shown.
     still_empty = {cid for r in find_empty_cards(cfg["scope_tag"])[0]
                    for cid in r["card_ids"]}
     cids = [cid for r in rows for cid in r["card_ids"] if cid in still_empty]
@@ -1919,40 +1708,30 @@ class PartialImport(Exception):
 def add_generated_notes(cards, media, deck_name, scope_tag):
     """Write accepted AI-generated cards into `deck_name` as one undoable operation.
 
-    Media contract (the other half lives in the review dialog that calls this): by the
-    time a card reaches here, every attached:/url:/svg:/file: image it references has already
-    been resolved to bytes by that dialog, and the filenames it chose for THAT card are
-    listed in card["_media_files"], in render order. `media` is {filename: bytes} for
-    every such file across the whole accepted batch. This function only writes those
-    bytes into the collection's media folder and turns each card's _media_files into
-    `<img src="...">` tags appended to its Image field (or its primary field, for a
-    note type with none), each followed by its credit line from card["_media_credits"]
-    (parallel to _media_files). A card's card["_sources"] become a "Sources:" line
-    appended to its Why field, else Back, else Back Extra. It never resolves or
-    fetches an image itself.
+    Media contract: the calling review dialog has already resolved every image a card
+    references to bytes. card["_media_files"] lists that card's filenames in render
+    order, and `media` is {filename: bytes} for the whole batch. This writes those bytes
+    into the collection's media folder and appends an `<img src="...">` per file to the
+    card's Image field (or its primary field, for a note type with none), each followed
+    by its credit line from card["_media_credits"] (parallel to _media_files). A card's
+    card["_sources"] become a "Sources:" line appended to its Why field, else Back, else
+    Back Extra. It never resolves or fetches an image itself.
 
-    "Basic" and "Cloze" resolve through ai_logic.find_core_notetype, so a collection
-    whose stock types carry translated names takes them too: each field is written
-    under the name that type gives it.
+    "Basic" and "Cloze" resolve through ai_logic.find_core_notetype, so stock types with
+    translated names work too.
 
-    Every note gets a fresh iplocal- GUID (ai_logic.generated_guid()), so it can never
-    match (and a later deck sync's remap_cards/_reconcile_pending can never touch)
-    a real synced card. Nothing here reads or modifies an existing note; this only adds.
+    Every note gets a fresh iplocal- GUID (ai_logic.generated_guid()), so it never
+    matches a synced card. Existing notes are not read or modified.
 
-    Raises RuntimeError, before writing anything (media or notes), if a card names a
-    note type outside _GENERATED_ALLOWED_TYPES or one absent from this collection, or
-    has an empty primary field and no picture: an atomic check, so that failure mode never leaves anything behind. Returns the
-    number of notes added; 0 for an empty `cards`. Each written card gets
-    `_imported_note` with the note's id and guid.
+    Raises RuntimeError before writing anything if a card names a note type outside
+    _GENERATED_ALLOWED_TYPES or one absent from this collection, or has an empty primary
+    field and no picture. Returns the number of notes added; 0 for an empty `cards`.
+    Each written card gets `_imported_note` with the note's id and guid.
 
-    A failure part-way through the actual writes (a media write erroring, a backend
-    add_note call failing) is NOT rolled back (Anki gives no cheap way to undo mid
-    write), so a partial import is possible here. What's guaranteed instead: whatever
-    already landed, media and notes alike, is still exactly one undo step, so the
-    caller (or the user, with Ctrl+Z) can always get back to a clean collection in one
-    move. A failure after at least one note landed raises PartialImport (the original
-    error as its __cause__) naming which cards were written; a failure before that
-    propagates unchanged. This function never swallows an error.
+    A failure during the writes is not rolled back, but whatever landed, media and notes
+    alike, is one undo step. A failure after at least one note landed raises
+    PartialImport (the original error as its __cause__) naming which cards were written;
+    a failure before that propagates unchanged.
     """
     cards = list(cards or [])
     if not cards:
@@ -2048,11 +1827,10 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
 
 
 def deck_search(deck_name):
-    """`deck:"..."` for one deck name, with the characters Anki's search parser
-    would otherwise read as syntax escaped. An underscore matches any single
-    character there and an asterisk any run, so an unescaped `Step_2 Pearls`
-    also selects `Step 2 Pearls`, and a deck name may legally contain a quote,
-    which would end the term early and make the whole query unparseable."""
+    """`deck:"..."` for one deck name, with the characters Anki's search parser reads as
+    syntax escaped: an underscore matches any single character, an asterisk any run, and
+    a quote would end the term early.
+    """
     escaped = deck_name
     for ch in ("\\", '"', "*", "_"):
         escaped = escaped.replace(ch, "\\" + ch)
@@ -2107,9 +1885,9 @@ def _model_name(col, nid, mid):
 
 
 def suspend_notes(col, note_ids):
-    """Suspend every card of every note in `note_ids`, through the collection's own
-    scheduler API only (never a direct SQL write, so this is undone from Anki's own
-    Browse exactly like any other suspend)."""
+    """Suspend every card of every note in `note_ids` through the scheduler API, never
+    direct SQL, so Anki can undo it.
+    """
     cids = [cid for nid in note_ids for cid in col.get_note(nid).card_ids()]
     if cids:
         col.sched.suspend_cards(cids)

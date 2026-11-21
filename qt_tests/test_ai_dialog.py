@@ -1521,13 +1521,11 @@ def test_review_correction_states_render_in_light_and_dark(tmp_path):
         harness.apply_theme("light")
 
 
-def test_escape_during_image_resolution_goes_back_instead_of_blocking_the_cards(
+def test_escape_during_image_resolution_keeps_the_draft_with_pictures_to_retry(
         monkeypatch, tmp_path):
-    """Cancelling the image phase used to poison the draft rather than abort
-    it: only the cancel flag was set, so the worker ran on marking every image
-    it hadn't reached as a failure, and those committed as real ones. The
-    cards carrying them all blocked on the review page, and image_data is
-    only ever populated once, so they could never resolve again."""
+    """Escape during the image phase keeps the finished cards and marks each picture
+    the run did not resolve for Retry, rather than committing the worker's partial
+    failures."""
     import time
     import mock_anki
     mock, _ = harness.bootstrap()
@@ -1580,8 +1578,9 @@ def test_escape_during_image_resolution_goes_back_instead_of_blocking_the_cards(
     dlg._poll_image_worker()
     app.processEvents()
 
-    assert dlg.stack.currentWidget() is dlg.input_page
-    assert dlg.session.image_data == {}
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert len(dlg.session.cards) == 4
+    assert all("Retry" in dlg.session.image_data[i][0]["error"] for i in range(4))
     dlg.deleteLater()
 
 

@@ -1,16 +1,8 @@
-"""The shared row and list vocabulary: a chip, a section heading, a one-line row, and
-a list that builds itself in batches instead of all at once.
+"""Shared row and list widgets: a chip, a section heading, a one-line row, and a list that
+builds its rows in batches.
 
-Extracted out of review.py, where this vocabulary used to live trapped behind that
-module's own import boundary (review.py can't be imported by anything sync.py already
-imports, see its own module docstring). Nothing here touches a network or the
-collection, so this module is safe for any screen to import, including ones sync.py
-itself will eventually build.
-
-May import config, logic, palette, platform and ui. Must NOT import sync, dialogs
-or review: that's the boundary that keeps this module out of the same import cycle
-review.py was built to dodge.
-"""
+May import config, logic, palette, platform and ui. Must not import sync, dialogs or review,
+which would create an import cycle."""
 from contextlib import contextmanager
 
 from aqt.qt import (QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
@@ -20,137 +12,66 @@ from .palette import colors
 from .platform import new_work_request, platform, platform_owner_id
 from .ui import _FocusButton, hint_label, section_label
 
-# The chip labels. Their colours come from the palette, so only the wording lives here.
-# "changed" reads UPDATED rather than CHANGED to match the wording review.py's rows
-# already shipped; renaming the label now would be a cosmetic change no task asked for.
-# "kept" marks a decline decision review.py already carried out; it reuses the retired
-# role below rather than a colour of its own: it reads as "set aside", though a kept
-# card is re-offered when its source changes while a retired one never returns.
-# "held" marks a card left for later; it borrows updated's attention role rather than
-# retired's, since it comes back on the next run.
+# Chip labels by kind. Colours come from the palette through _ROLES.
 CHIPS = {"new": "NEW", "changed": "UPDATED", "retired": "RETIRED", "moved": "MOVED",
          "kept": "KEPT YOURS", "held": "LATER",
-         # The AI wizard's review row kinds (ai_dialog.py). Wording only, mapped
-         # onto the existing role pairs below rather than a colour of their own: a
-         # blocked check reads DECLINE, a warning reads UPDATED (attention, not yet
-         # a stop), a clean card reads ACCEPT, and a card a revision changed reads
-         # UPDATED's own word for that idea.
+         # Review row kinds for the AI wizard (ai_dialog.py).
          "blocked": "BLOCKED", "warn": "WARNING", "ok": "OK", "revised": "REVISED",
          "imported": "IMPORTED",
-         # The AI Backends window's row kinds (ai_setup.py): what the detection
-         # pass found for one assistant, and which one the wizard will use. This
-         # is the window's own vocabulary rather than a card's, so these get their
-         # own words, mapped onto the existing role pairs below.
+         # Row kinds for the AI Backends window (ai_setup.py).
          "found": "FOUND", "notfound": "NOT FOUND",
          "notresponding": "NOT RESPONDING", "ignored": "IGNORED",
          "preferred": "PREFERRED",
-         # The AI wizard's input-page row kinds (ai_dialog._build_input). Its
-         # own words rather than the detection window's: a backend a learner
-         # has not set up yet is not a detection result, and the depth the
-         # assistant settled on is a decision about this run, not a verdict on
-         # anything. AUTO/THOROUGH/QUICK are the three answers one row gives.
+         # Input-page row kinds for the AI wizard.
          "ready": "READY", "notsetup": "NOT SET UP",
          "auto": "AUTO", "thorough": "THOROUGH", "quick": "QUICK",
          "deck": "DECK", "skills": "SKILLS",
-         # The AI wizard's progress-row kinds (ai_dialog._build_progress): which
-         # stage a live generation is in. Its own words, same reason the input
-         # page's row kinds above are their own: a stage isn't a detection
-         # result or a decision either, it's just where the run currently is.
+         # Progress-row kinds for the AI wizard: the stage a run is in.
          "drafting": "DRAFTING", "verifying": "VERIFYING",
          "reviewing": "REVIEWING", "working": "WORKING",
          "checking": "CHECKING"}
 
-# A chip's palette role prefix, keyed by its kind. Not a 1:1 string match: "changed"
-# reuses the existing "updated_bg"/"updated_fg" pair rather than a "changed_bg" this
-# repo has never had, since the wording and the role were named independently back
-# when only review.py's two markers existed. The wizard's four kinds are the same
-# reuse: "blocked" on decline, "warn" and "revised" on updated, "ok" on accept:
-# see the AI wizard review section of the UX review for why no new palette entry
-# is needed for any of them.
+# A chip's palette role prefix by kind. Kinds share roles: "changed" uses the "updated"
+# pair.
 _ROLES = {"new": "new", "changed": "updated", "retired": "retired", "moved": "moved",
           "kept": "retired", "held": "updated",
           "blocked": "decline", "warn": "updated", "ok": "accept", "revised": "updated",
           "imported": "accept",
-          # A found assistant is a clean result (accept), one that is installed but
-          # will not answer is the same "attention, not yet a stop" as a warning
-          # (updated), one that is not there at all reads as a decline, and one the
-          # reader has set aside reuses retired the way kept already does.
-          # "preferred" borrows new, the one role that reads as a marker rather
-          # than a verdict: it says which row the settings below belong to.
           "found": "accept", "notfound": "decline", "notresponding": "updated",
           "ignored": "retired", "preferred": "new",
-          # A ready backend is a clean result (accept) and one that is not set
-          # up yet reads as a decline, the same pairing the detection window
-          # already uses. The three depth answers borrow "new", the role that
-          # reads as a marker rather than a verdict, since none of them is
-          # good or bad news. DECK and SKILLS are labels on rows that never
-          # change: they name what a row is about, so they take the quietest
-          # role there is rather than colouring a decision nobody made.
           "ready": "accept", "notsetup": "decline",
           "auto": "new", "thorough": "new", "quick": "new",
           "deck": "retired", "skills": "retired",
-          # A run's current stage is a marker, not a verdict, the same reason
-          # the depth answers above borrow "new" rather than a role of their
-          # own: none of drafting/verifying/reviewing/working is good or bad
-          # news, it's just where the run is right now.
           "drafting": "new", "verifying": "new",
           "reviewing": "new", "working": "new", "checking": "new"}
 
-# Everything about a pill except its two colours: the shape and the type size, shared
-# between the real pill and the probe that measures it, so the measurement can never
-# describe a pill nobody paints.
+# A pill's shape and type size, shared by the real pill and the probe that measures it.
 _CHIP_STYLE = ("border-radius: 3px; padding: 1px 6px; font-size: 11px;"
                " font-weight: 600;")
 
-# chip_column_width()'s answer per chip set, measured once each. Deliberately not
-# computed at import: these modules are imported before a QApplication exists, and font
-# metrics before that point are meaningless.
+# chip_column_width() results per chip set. Not computed at import: font metrics need a
+# QApplication.
 _CHIP_W = {}
 
-# The caret column, and the gap between every column in a row's header. A card row
-# draws its expander in that column (review._card_row); a row that cannot expand
-# reserves it and leaves it empty. Sizes live here rather than in review.py because
-# both row builders lay out against them and widgets.py is the one of the two either
-# may import.
+# The caret column width and the gap between columns in a row's header. Both row builders
+# lay out against them.
 CARET_W = 14
 CARET_GAP = 6
 
-# field_inset()'s disabled-widget fallback, cached per class: a fresh, enabled
-# (checked, for a checkable class) probe's own inset, measured once each. See
-# align_field_column's docstring for why a settings grid's fixed label column
-# lines up every field's geometry but not what gets painted inside it.
+# field_inset()'s fallback for disabled widgets, cached per class.
 _FIELD_INSET = {}
 
 
 def _visual_inset(widget, at=None):
-    """How many pixels right of `widget`'s own left edge the running style actually
-    starts painting, found by grabbing `widget` and scanning for the first run of
-    pixels that aren't the plain window background (a run of one can be a single
-    blended antialiasing pixel; two in a row is real paint).
+    """Pixels from `widget`'s left edge to where the running style starts painting, read
+    from a grab of the widget. QStyle's subControlRect and subElementRect are unreliable for
+    this under macOS's native style.
 
-    QStyle's own subControlRect/subElementRect answers can't be trusted for this:
-    under macOS's native style, CC_ComboBox's SC_ComboBoxFrame subcontrol reports a
-    null rect for a QComboBox, and SE_PushButtonContents/SE_LineEditContents both
-    answer a text content margin, not where the bezel itself starts. Reading back
-    what the style actually painted is the only way to see it.
+    Scans `widget`'s middle row, or the row level with `at` when given, for the first two
+    adjacent pixels that differ from the window background. Scanning the full width also
+    catches an offset the layout adds in front of the leading control.
 
-    Scans `widget`'s own middle row by default. `at`, when given, is some other
-    widget inside `widget` to scan level with instead: a field container can hold
-    more than one child at different heights (the Advanced grid's note-type column
-    is a whole stack of checkboxes), and the container's own vertical middle can
-    land between two of them, or on a disabled one whose indicator is drawn too
-    close to the background to register as paint at all. Scanning `widget`'s own
-    full width from x=0 rather than just the leading control's also catches an
-    offset the leading control's own bezel can't see by itself: a free-text Model
-    field's line edit sits a few pixels right of `widget`'s left edge because it
-    shares a layout with a hidden QComboBox sibling that still reserves that
-    combo's own focus-ring margin, which only shows up by scanning the field as a
-    whole.
-
-    Imports QPalette lazily: the fake Qt tests/ installs has no QPalette at all
-    (nothing there ever paints), so this can only be resolved once real Qt is
-    running, the same reason harness.plain() imports ai_dialog lazily.
-    """
+    QPalette is imported lazily because the fake Qt in tests/ has none."""
     from aqt.qt import QPalette
     pix = widget.grab()
     img = pix.toImage()
@@ -176,27 +97,12 @@ def _visual_inset(widget, at=None):
 
 
 def field_inset(container, leading):
-    """How far right of `container`'s own left edge the running style actually
-    starts painting `container`'s content, scanned level with `leading` (the
-    control inside `container` that actually draws that field's left edge).
+    """Pixels from `container`'s left edge to where the running style starts painting its
+    content, scanned level with `leading`, the control that draws the field's left edge.
 
-    Measures `container` itself, scanned at `leading`'s own row, when `leading`
-    is enabled: that is the true answer for this particular field, position
-    within its own layout included, not just `leading`'s own bezel in isolation.
-
-    Falls back to a fresh, enabled (and, for a checkable class, checked) probe of
-    `leading`'s own class, cached per class, when `leading` is disabled: a
-    disabled "sync your decks first" note-type checkbox's indicator is drawn at
-    low enough contrast against the window that a live scan can miss it entirely
-    and measure "no inset" for a control that has one, the same reason the
-    checkbox probe in ai_dialog.py's own `_checkbox_column_width` polishes before
-    measuring rather than trusting an unstyled sizeHint.
-
-    0 when `container` can't be grabbed at all: tests/ builds every screen this
-    runs from against a fake Qt (mock_anki.QWidget has no grab(), no palette(),
-    and a resize() that takes two ints rather than a QSize) that never paints
-    anything, so there is nothing here to measure and nothing to compensate for.
-    """
+    A disabled `leading` paints too faintly to scan, so its class is measured from a fresh
+    enabled (and checked, if checkable) probe, cached per class. Returns 0 when `container`
+    cannot be grabbed, as under the fake Qt in tests/."""
     if not hasattr(container, "grab"):
         return 0
     if leading.isEnabled():
@@ -214,13 +120,8 @@ def field_inset(container, leading):
 
 
 def field_slot(widget):
-    """Wrap a bare leaf field (one grid's own field column has nothing else to put
-    beside it: Effort's combo, the wizard's deck combo) in a thin box with its own
-    zero-margin layout, so `align_field_column` has a left margin to adjust. Every
-    other field in these grids already sits in a box of its own (Executable path's
-    line edit plus its Browse button, the Advanced grid's count spinbox plus its
-    hint) and reuses that box's own layout instead of getting wrapped again.
-    """
+    """Wrap a bare field in a box with a zero-margin layout, so `align_field_column` has a
+    left margin to adjust. A field already in a box of its own does not need it."""
     slot = QWidget()
     lay = QHBoxLayout(slot)
     lay.setContentsMargins(0, 0, 0, 0)
@@ -230,47 +131,19 @@ def field_slot(widget):
 
 
 def align_field_column(rows):
-    """Nudge whichever of a settings grid's field-column containers the running
-    style insets less than the column's most-inset member right by the
-    difference, so every field's drawn left edge lands on one x instead of just
-    its geometry's.
+    """Add left margin to a settings grid's field containers so every field's painted left
+    edge lands on the same x as the most-inset one. Native styles inset controls differently
+    (a macOS QComboBox paints about 4px inside its geometry); Fusion insets nothing, so this
+    is a no-op there.
 
-    ai_setup._SettingsPanel and ai_dialog._build_advanced both lay their controls
-    into a QGridLayout with a fixed label column, which lines up every field's
-    geometry but not what gets painted inside it: measured on macOS, a QComboBox's
-    native bezel starts about 4px right of its own geometry (space macOS reserves
-    for a focus ring it only draws when the control is actually focused), while a
-    QLineEdit's or QPushButton's bezel starts flush with its geometry, so a text
-    field and a combo box in the same column read as two different left edges even
-    though QGridLayout placed them at the same x. Fusion (offscreen, what the qt
-    test suite runs under) insets nothing, so every field measures 0 there and this
-    is a no-op: the geometry an offscreen exact-equality check already asserts on
-    is untouched.
+    `rows` is `[(container, leading), ...]`: `container` is the widget in the grid's field
+    column (wrap a bare leaf with `field_slot` first) and `leading` is the control inside it
+    that draws the field's left edge. Safe to call again when a leading control changes:
+    margins are reset to 0 before measuring.
 
-    `rows` is `[(container, leading), ...]`: `container` is the widget actually
-    placed in the grid's field column (wrap a bare leaf with `field_slot` first,
-    so it has a layout this can set a margin on), and `leading` is whichever
-    control inside it actually draws that field's left edge (the container itself
-    for a bare leaf; the visible one of two alternatives for a field that swaps
-    between them, e.g. a Model field's combo vs. its free-text line edit). Safe to
-    call more than once as a field's own leading control changes: every
-    container's left margin is reset to 0 and its layout re-activated before
-    anything is measured, so a second call always measures each field's own
-    intrinsic inset rather than the first call's already-compensated one (which
-    would otherwise read as needing less margin than it really does, since part
-    of its own inset is now sitting in the margin the first call just gave it).
-
-    Applying a margin is itself measured and corrected, not trusted at face
-    value: a QRadioButton or QCheckBox as a layout's first item, under macOS's
-    native style, ends up only about half of a requested left margin right of
-    where it started (verified: asking for a 4px margin moves one 2px, asking
-    for 10px moves it 8px), a style-specific layout-spacing quirk neither this
-    function nor its caller needs to understand to correct for.
-
-    A no-op outright against the fake Qt tests/ installs: mock_anki's own
-    QHBoxLayout/QVBoxLayout has no contentsMargins() getter at all (nothing
-    there ever paints, so nothing there has ever needed one).
-    """
+    The applied margin is measured and corrected, since a native style can move a control
+    less than the margin asked for. Does nothing under the fake Qt in tests/, whose layouts
+    have no contentsMargins()."""
     if not rows or not hasattr(rows[0][0], "grab"):
         return
     for container, _leading in rows:
@@ -289,10 +162,8 @@ def align_field_column(rows):
             continue
         lay = container.layout()
         applied = 0
-        # A handful of correction passes is plenty: the shortfall seen in
-        # practice is a near-constant few pixels, not a wild nonlinearity, so
-        # this converges in one or two passes and the cap only guards against
-        # a style whose quirk this hasn't been measured against.
+        # The shortfall is a few near-constant pixels, so this converges in a pass or two;
+        # the cap guards against an unmeasured style.
         for _ in range(5):
             m = lay.contentsMargins()
             lay.setContentsMargins(applied, m.top(), m.right(), m.bottom())
@@ -304,24 +175,11 @@ def align_field_column(rows):
 
 
 def chip_column_width(kinds=None):
-    """The width of the chip column, which is also the width of every pill in it.
+    """The width of the chip column, which is also the width of every pill in it: the widest
+    label at the running platform's font.
 
-    Measured off the widest label at the running platform's own font rather than
-    hardcoded, since the same words come out at different widths on macOS and on CI,
-    and a fixed pixel value would only ever be right on one of them.
-
-    Widening the narrower pills to match the widest is what makes the column read as
-    one: pills of their own natural widths inside a fixed gutter still leave as many
-    different right edges down the list.
-
-    `kinds` is the chips the screen being laid out can actually show, and measuring
-    against those rather than against every chip in the add-on is what keeps one
-    screen's longest word out of another's gutter: KEPT YOURS is half again as wide as
-    NEW, and measuring it into Sync decks, Reconcile and Manage decks widened every
-    pill and every indent on three screens that can never show a decline at all. Left
-    at None it measures every kind, which is what the one screen carrying all of them
-    wants. Cached per set, since a screen's set is the same on every open.
-    """
+    `kinds` is the chips the screen can show, so one screen's longest word does not widen
+    another's column. None measures every kind. Cached per set."""
     key = tuple(kinds) if kinds is not None else tuple(CHIPS)
     if key not in _CHIP_W:
         widest = 0
@@ -340,44 +198,22 @@ def chip_column_width(kinds=None):
 
 
 def row_text_indent(chip_columns=1, kinds=None):
-    """How far a row's primary text sits from the row's own left edge: the caret
-    column, then a chip column and its gap for each column the row draws in front of
-    its primary label.
-
-    What a card row's expanded body indents by, so its answer lines up under the line
-    it belongs to rather than under the caret. Read from the same sizes `simple_row`
-    lays out below, so the two row builders cannot drift apart, and counted from the
-    caller's own leading columns rather than assumed to be one: a row that grows a
-    second column in front of its text and leaves this alone hangs its whole body a
-    chip-width left of the line it belongs to.
-    """
+    """How far a row's primary text sits from the row's left edge: the caret column, then a
+    chip column and its gap for each column drawn in front of the primary label. A card
+    row's expanded body indents by this."""
     return CARET_W + CARET_GAP + chip_columns * (chip_column_width(kinds) + CARET_GAP)
 
 
 def chip_cell(kind, kinds=None):
-    """A row's kind as a pill, in a fixed-width column of its own.
+    """A row's kind as a pill in a fixed-width column.
 
-    The container is what is fixed-width, and a `kind` not in CHIPS (including None)
-    gets an empty one rather than nothing at all, so an unchipped row reserves the same
-    gutter and its text starts at the same x as every other row's. Without that, one
-    list runs its primary text out from five different left edges depending on which
-    word each row's chip happens to be, which reads as ragged prose rather than a
-    column.
+    A `kind` not in CHIPS (including None) gets an empty container of the same width, so
+    every row's text starts at the same x. The pill is a QLabel because Qt's rich text drops
+    `border-radius` and `padding` on an inline span. A background is always set with its own
+    foreground, since palette text colour flips under Night Mode and a fixed background does
+    not.
 
-    A real widget rather than the inline `<span>` this used to be, because Qt's
-    rich-text engine silently drops both `border-radius` and `padding` on an inline
-    span: measured, a span carrying either one comes out at exactly the width of a span
-    carrying neither. The same declarations on a QLabel round and pad correctly. So
-    alignment and shape are the same fix, not two.
-
-    A background always needs its own foreground alongside it, since plain text colour
-    comes from the platform palette and a hardcoded background does not flip with it
-    under Night Mode.
-
-    `kinds` is the screen's own chip set, passed straight to chip_column_width: every
-    cell in one list has to be measured against the same set or the column stops being
-    a column.
-    """
+    `kinds` goes to chip_column_width; every cell in one list must use the same set."""
     width = chip_column_width(kinds)
     cell = QWidget()
     cell.setFixedWidth(width)
@@ -399,21 +235,16 @@ def chip_cell(kind, kinds=None):
 
 
 def decision_cell(options, state, on_change, card_label=""):
-    """A row's decision as a compact segmented control: one checkable button per
-    option, exactly one checked. Selected colour says what the choice does: accept
-    roles for Import/Apply, updated for Later/Keep, decline for Never.
+    """A row's decision as a compact segmented control: one checkable button per option,
+    exactly one checked. Selected colour says what the choice does: accept roles for
+    Import/Apply, updated for Later/Keep, decline for Never.
 
-    `card_label` names the card these buttons decide about, for anyone not reading the
-    row they sit on: a 300-row list otherwise announces hundreds of controls called
-    nothing but "Import", with no way to tell which card any of them belongs to.
+    `card_label` names the card these buttons decide about, for a reader who cannot see the
+    row they sit on.
 
-    Painted as one rounded group rather than a row of separate buttons: only the
-    outer corners round (the first button's left, the last button's right), and
-    every button after the first drops its own left border so the shared edge
-    between two buttons is drawn once, not twice. `_HEIGHT` is fixed so a selected
-    button's bold weight can't nudge that one button taller than its unselected
-    neighbours.
-    """
+    Only the outer corners round, and every button after the first drops its left border so
+    a shared edge is drawn once. `_HEIGHT` is fixed so a selected button's bold weight
+    cannot make it taller."""
     _SELECTED_ROLE = {"import": "accept", "apply": "accept",
                       "held": "updated", "keep": "updated",
                       "never": "decline", "frozen": "decline"}
@@ -469,15 +300,8 @@ def decision_cell(options, state, on_change, card_label=""):
 
 
 def section_header(text):
-    """A bold heading atop a group of rows, e.g. a deck name grouping its cards.
-
-    top_margin matches the spacing review.py already uses between one deck's rows and
-    the next section's heading, so a screen built on this module lines up with the one
-    it was extracted from.
-
-    Plain text: a heading is a deck name or a sentence, never markup, and a deck name
-    is the source's own string.
-    """
+    """A bold heading above a group of rows, such as a deck name. Rendered as plain text,
+    since a deck name is the source's own string."""
     label = section_label(text, top_margin=14)
     label.setTextFormat(Qt.TextFormat.PlainText)
     return label
@@ -485,36 +309,18 @@ def section_header(text):
 
 def simple_row(chip_kind, primary_html, trailing_html="", card_columns=True,
                chips=None):
-    """One line: an optional chip, the primary content, and optional trailing text.
-    No caret, no expansion: for a screen where the row itself is the whole content
-    rather than a summary that opens into more.
+    """One line: an optional chip, the primary content, and optional trailing text. No caret
+    and no expansion.
 
-    `card_columns` reserves the two columns a card row carries in front of its own
-    text (the caret column, then chip_cell's fixed-width chip column), whether or not
-    this row has anything to put in either, so a retired card's row and a new card's
-    row can stand under one deck heading and read as one list rather than two.
+    `card_columns` reserves the caret and chip columns a card row has, so this row lines up
+    with card rows in the same section. Pass False for a section with nothing to line up
+    against. Decide it per section; do not infer it from `chip_kind` being None.
 
-    Both columns exist purely to line up against something, so a section holding
-    nothing to line up against passes False and starts its text at the row's left edge,
-    flush with the heading above it and whatever reads below. That is a decision about
-    the section, not about the row: do NOT infer it from `chip_kind` being None
-    instead. The update screen's card sections keep the columns for their own unchipped
-    rows, since a chipped row sits beside them; its per-deck summary is a section of
-    its own where nothing is ever chipped and nothing ever expands, so that one
-    declines them even though rows further down the same screen do not.
+    `chips` is the chip kinds the screen can show, passed to chip_cell. Every row in one
+    list must be given the same set.
 
-    `chips` is the chip kinds this row's own screen can show, passed to chip_cell so
-    the column is measured against those rather than against every chip the add-on has
-    (see chip_column_width). Every row in one list must be given the same set.
-
-    Top-aligned, so a chip beside a wrapping primary sits against its first line rather
-    than floating halfway down it. `trailing_html` is a second, non-wrapping label in
-    muted text off to the row's right (a count, a destination) rather than folded into
-    the same paragraph, since it is secondary information the reader compares across
-    rows rather than reads inline with the primary text. The row carries a right margin
-    of its own so that label stops short of whatever frame the list is drawn inside
-    rather than running its glyphs up against the border line.
-    """
+    `trailing_html` is a separate non-wrapping muted label at the row's right. The row is
+    top-aligned, so a chip sits against the first line of a wrapping primary."""
     row = QWidget()
     lay = QHBoxLayout(row)
     lay.setContentsMargins(CARET_W + CARET_GAP if card_columns else 0, 5, CARET_GAP, 6)
@@ -539,9 +345,8 @@ def simple_row(chip_kind, primary_html, trailing_html="", card_columns=True,
 
 class _Page(QWidget):
     """One batch of StreamingList rows that reports a plain height instead of a
-    height-for-width. Wrapped labels otherwise make every layout pass ask every visible
-    row for its height, so each batch revealed cost more than the last. The height is
-    asked of the page's own layout at the list's width, and asked again when that
+    height-for-width, so a layout pass does not ask every visible row for its height. The
+    height comes from the page's layout at the list's width and is asked again when the
     width changes."""
 
     def __init__(self):
@@ -572,28 +377,13 @@ class _Page(QWidget):
 
 
 class StreamingList(QScrollArea):
-    """A scroll area that builds its rows in batches instead of all at once.
+    """A scroll area that builds its rows in batches: the first `batch` up front, the next
+    when the reader scrolls near the bottom or enlarges the viewport, so a long list opens
+    in about the time one batch costs.
 
-    Measured offscreen, building a card row costs about half a millisecond, so building
-    a first sync of about 3,000 cards up front is over a second of dead time with no
-    feedback before the dialog even appears, and far more once the rows are laid out. Building only the first `batch` rows up front, and
-    the next batch only once the reader has actually scrolled near the bottom, is what
-    turns that multi-second freeze into a screen that opens in roughly the time one
-    batch costs, whatever is still pending.
-
-    `build_row(item)` builds one row's widget; it is called once per item, in order,
-    the first time that item's batch is built. `shown()`/`total()` report progress for
-    a caller that wants to show it. `fill_all()` is for a test, or a caller that
-    genuinely needs every row built (e.g. before printing the whole list), and is safe
-    to call on an already-exhausted list: it does nothing rather than rebuilding.
-
-    Batching is driven by scrolling and by resizing: growing the viewport past what is
-    already built produces no scroll at all, since the scrollbar's range collapses to
-    zero and `valueChanged` never fires again, so a resize refills to the bottom of the
-    viewport too (a confirmation that silently listed 50 of 300 cards for anyone who
-    enlarged the dialog before scrolling). Both build a batch at a time rather than
-    everything, so the property this class exists for holds whichever fires.
-    """
+    `build_row(item)` builds one row's widget and is called once per item, in order.
+    `shown()` and `total()` report progress. `fill_all()` builds every remaining row and
+    does nothing on a full list."""
 
     def __init__(self, build_row, items, batch=50):
         super().__init__()
@@ -603,16 +393,12 @@ class StreamingList(QScrollArea):
         self._shown = 0
         self._built = 0
         self._generation = 0
-        # One page widget per batch of rows. Rows are built into a page while it is
-        # hidden and the page is shown once: showing a row inside an already visible
-        # list re-lays-out every visible row, so revealing rows one at a time cost a
-        # little more with each batch and stalled long lists.
+        # One page widget per batch. Rows are built into a hidden page that is shown once:
+        # showing a row inside a visible list lays out every visible row again.
         self._pages = []
 
-        # Rows live in their own inner container with its own layout, kept separate
-        # from the stretch below it. Appending only ever touches the rows layout, so
-        # the stretch this container sits above in the outer layout never needs to be
-        # found, removed, and re-added: it simply never moves.
+        # Rows have their own container and layout, so appending never touches the stretch
+        # below.
         self._rows_container = QWidget()
         self._rows_layout = QVBoxLayout(self._rows_container)
         self._rows_layout.setContentsMargins(0, 0, 0, 0)
@@ -620,10 +406,8 @@ class StreamingList(QScrollArea):
 
         body = QWidget()
         outer = QVBoxLayout(body)
-        # A real right gutter, because rows used to run flush to the viewport's last
-        # pixel: a decision cell's rounded right corner sat under the frame line, which
-        # on macOS read as the buttons being cut off, and the overlay scrollbar drew on
-        # top of whatever a row put there (a count, a Never button).
+        # Right gutter, so a row's last control clears the frame line and the overlay
+        # scrollbar.
         outer.setContentsMargins(0, 0, 10, 0)
         outer.setSpacing(0)
         outer.addWidget(self._rows_container)
@@ -644,14 +428,9 @@ class StreamingList(QScrollArea):
         bar.actionTriggered.connect(self._scroll_action)
         bar.rangeChanged.connect(self._range_changed)
 
-        # Idle prefetch. Building a 50-row batch at the moment the reader scrolls to
-        # the boundary is a visible hitch, so once the viewport is filled a bounded
-        # lookahead is built a few rows at a time while the reader keeps reading.
-        # Prefetched rows wait in a hidden page until the scroll path reveals it: a
-        # hidden page adds nothing to the layout, so the content height (and with it
-        # the scrollbar) only moves when the reader scrolls, not on every tick. The pace is
-        # deliberately slow, and a tick is skipped while the reader is scrolling, so
-        # building never competes with reading; revealing an already-built row is cheap.
+        # Idle prefetch: once the viewport is filled, build a bounded lookahead a few rows
+        # at a time. Prefetched rows wait in a hidden page, so the scrollbar only moves when
+        # the reader scrolls. A tick is skipped while the reader is scrolling.
         self._prefetching = False
         self._idle = platform().create_timer(
             platform_owner_id(self), self._idle_extend, self.IDLE_DELAY_MS,
@@ -816,13 +595,8 @@ class StreamingList(QScrollArea):
             self._fill_viewport()
 
     def resizeEvent(self, event):
-        """Refill after Qt has given this list its real height.
-
-        Fires on the first layout (the viewport is 0-tall while __init__ runs, so the
-        one batch built there is a guess) and again on every enlargement, which is the
-        case the scroll handler above cannot see at all: growing the dialog past the
-        built rows leaves nothing to scroll, so `valueChanged` never fires again.
-        """
+        """Refill once Qt has given this list its real height. The viewport is 0-tall during
+        __init__, and enlarging past the built rows produces no scroll event."""
         super().resizeEvent(event)
         previous, self._view_size = self._view_size, (self.width(), self.height())
         self._fill_viewport()
@@ -833,12 +607,9 @@ class StreamingList(QScrollArea):
     def _fill_viewport(self):
         """Build batches until the rows are taller than the viewport or run out.
 
-        Measured off the rows' own sizeHint rather than the scrollbar's range: the range
-        is only recomputed on Qt's own layout pass, so inside this loop it still reports
-        the height from before the batch just appended, and the loop would build
-        everything. A wrapping row's sizeHint is its unwrapped height, so this can
-        overshoot the viewport by a row or two.
-        """
+        Measures the rows' sizeHint, since the scrollbar's range is stale until Qt's next
+        layout pass. A wrapping row's sizeHint is its unwrapped height, so this can
+        overshoot by a row or two."""
         while (self._shown < self.total() and self._rows_container.sizeHint().height()
                <= self.viewport().height()):
             self._extend()
