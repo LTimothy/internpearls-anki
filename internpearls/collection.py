@@ -975,6 +975,11 @@ _SCHED_FIELDS = ("type", "queue", "due", "ivl", "factor", "reps", "lapses")
 _FSRS_FIELDS = ("desired_retention", "decay", "last_review_time")
 
 
+def _home_due(card):
+    """A card's real due: one in a filtered deck holds a placeholder in `due`."""
+    return getattr(card, "odue", 0) or getattr(card, "due", 0)
+
+
 def _copy_memory_state(parent, card, scale):
     """Copy the parent's FSRS memory state onto `card`, its stability times `scale`.
 
@@ -1040,6 +1045,7 @@ def carry_scheduling_forward(pairs, existing_guid_to_nid):
             for f in _SCHED_FIELDS + _FSRS_FIELDS:
                 if hasattr(card, f):
                     setattr(dst, f, getattr(card, f))
+            dst.due = _home_due(card)
             # The same card's history, so the memory state travels whole.
             _copy_memory_state(card, dst, 1)
             mw.col.update_card(dst)
@@ -1137,7 +1143,7 @@ def seed_converted_siblings(nids):
                 if hasattr(parent, f):
                     setattr(card, f, getattr(parent, f))
             card.ivl = max(1, getattr(parent, "ivl", 0) // 2)
-            card.due = getattr(parent, "due", 0)
+            card.due = _home_due(parent)
             _copy_memory_state(parent, card, 0.5)
             mw.col.update_card(card)
             seeded += 1
@@ -1670,7 +1676,14 @@ def import_deck():
         invalidate_installed()
     _reset_baseline(src, log, shipped)
     mw.reset()
-    _info(f"Imported <code>{html.escape(str(os.path.basename(src)), quote=False)}</code>.")
+    name = html.escape(str(os.path.basename(src)), quote=False)
+    skipped = len(getattr(log, "conflicting", None) or ())
+    if skipped:
+        _warn(f"Imported <code>{name}</code>, but Anki left {plural(skipped, 'card')} "
+              "as they are now: their note type changed after this backup was made. "
+              "To undo that change instead, use Edit → Undo.")
+        return
+    _info(f"Imported <code>{name}</code>.")
 
 
 def _restore_decks(src):

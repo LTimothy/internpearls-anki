@@ -961,11 +961,14 @@ def _undo_key(counter):
     return weakref.ref(col), weakref.ref(db), counter
 
 
+IMPORT_UNDO_NAME = "Intern Pearls deck import"
+
+
 def restore_pending_after_undo(changes):
     """Put installed versions and shipped baselines back after an update or restore."""
     try:
         key = _undo_key(getattr(changes, "counter", None))
-        if getattr(changes, "operation", None) == RESTORE_UNDO_NAME:
+        if getattr(changes, "operation", None) in (RESTORE_UNDO_NAME, IMPORT_UNDO_NAME):
             step = _restore_undo_steps.pop(key, None)
             if step is None:
                 return
@@ -1229,6 +1232,9 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 {guid: baseline.get(guid) for guid in deck_shipped}, d.get("version"))
             conversion_undo = None
             shipped.update(deck_shipped)
+            # Saved per deck, merged into what is on disk: a crash before the next deck
+            # must not leave this one's text looking like the learner's own edits.
+            _save_json(SHIPPED, {**_load_shipped(), **deck_shipped})
             restored += deck_restored
             collisions.extend(deck_collisions)
             converted += len(changed_nids)
@@ -1248,6 +1254,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                     "finish moving your existing cards to the new format.")
                 continue
             applied[d["name"]] = d["version"]
+            _save_json(INSTALLED, {**_load_json(INSTALLED, {}), d["name"]: d["version"]})
             results.append(f"✓ <b>{name}</b>: {in_place} kept history, {as_new} new")
         except DownloadCancelled:
             # The learner clicked Cancel while this deck was still downloading, so
@@ -1268,12 +1275,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 results.append(f"• <b>{name}</b>: {_text(e)}")
             else:
                 results.append(f"✗ <b>{name}</b>: {_text(e)}")
-    # Merged into whatever is on disk now, not written back wholesale: a caller's own
-    # view of installed.json is taken before the fetch phase, which can be minutes old
-    # by the time a multi-deck run gets here, and saving that as-is would revert any
-    # version another sync recorded in the meantime.
-    if shipped:
-        _save_json(SHIPPED, {**_load_shipped(), **shipped})
+    # Merged into what is on disk, so a version another sync recorded meanwhile stays.
     _save_json(INSTALLED, {**_load_json(INSTALLED, {}), **applied})
     # Registry housekeeping runs last, inside its own guard, so a hand-edited registry
     # the per-entry hardening can't cover never fails a run whose decks already applied.
@@ -3281,7 +3283,7 @@ def import_single():
     # first survives whatever the conversion's own field map does. Nothing is asked
     # when the target type is absent, since there would be nothing to convert onto and
     # the import is what creates it.
-    undo = mw.col.add_custom_undo_entry("Intern Pearls deck import")
+    undo = mw.col.add_custom_undo_entry(IMPORT_UNDO_NAME)
     try:
         forked = []
         changed_nids = ([] if missing else _offer_notetype_changes(
@@ -3325,7 +3327,10 @@ def import_single():
         mw.col.undo()
         raise
     if shipped:
-        _save_json(SHIPPED, {**_load_shipped(), **shipped})
+        prior = _load_shipped()
+        _restore_undo_steps[_undo_key(undo)] = (
+            {}, {guid: (guid in prior, prior.get(guid)) for guid in shipped})
+        _save_json(SHIPPED, {**prior, **shipped})
     mw.reset()
     _offer_template_changes(tpl)
     fields_line = (f" Kept your own edits on {plural(restored, 'card')}."

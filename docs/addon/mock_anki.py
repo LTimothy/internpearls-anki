@@ -742,7 +742,7 @@ class MockCollection:
             id=cid, nid=note.id, did=did, queue=0, reps=0, ord=0,
             type=0, due=0, ivl=0, factor=0, lapses=0,
             memory_state=None, desired_retention=None, decay=None,
-            last_review_time=None, odid=0)
+            last_review_time=None, odid=0, odue=0)
         note._card_ids.append(cid)
         self._generate_cloze_cards(note)
         # Real Anki gives every add its own undo entry; merge_undo_entries is what
@@ -771,7 +771,7 @@ class MockCollection:
             id=cid, nid=note.id, did=did, queue=0, reps=0, ord=0,
             type=0, due=0, ivl=0, factor=0, lapses=0,
             memory_state=None, desired_retention=None, decay=None,
-            last_review_time=None, odid=0)
+            last_review_time=None, odid=0, odue=0)
         note._card_ids.append(cid)
         self._record_write(2)
         return note
@@ -988,6 +988,12 @@ class MockCollection:
             existing = by_guid.get(guid)
             if existing:
                 if options["update_notes"] == 2:
+                    continue
+                if (mid in models_by_mid
+                        and existing.model["name"] != models_by_mid[mid]["name"]):
+                    # Real Anki refuses to update a note onto a different note type
+                    # when merge_notetypes is off.
+                    log.conflicting.append(entry(existing))
                     continue
                 fields = list(values)[:len(existing._names)] + \
                     [""] * max(0, len(existing._names) - len(values))

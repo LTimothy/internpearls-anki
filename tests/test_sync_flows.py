@@ -809,6 +809,10 @@ def test_a_run_stopped_before_the_next_deck_has_restored_every_deck_already_impo
     assert note["Back"] == "v2"
     assert note["Notes"] == "my annotation g1"
     assert "leech" in note.tags
+    first = next(d for d in todo if d["name"] != OTHER)
+    assert sync._load_json(sync.INSTALLED, {}).get(first["name"]) == first["version"], (
+        "a deck that finished is recorded before the next one starts")
+    assert any(k.startswith(sync.HASH_KEY) for k in sync._load_shipped().get("g1", {}))
 
 
 @pytest.mark.parametrize("payload", [5, ["x"], {"g1": 5}, {"g1": {"Notes": 5}}, None])
@@ -10444,3 +10448,20 @@ def test_recording_reports_a_cancel(anki, tmp_path):
     installed = {DECK: "v1"}
     assert sync._record_current_hashes(sync._cfg(), manifest, fetch, installed, [],
                                        sync.load_declined()) is True
+
+
+def test_undoing_import_single_puts_the_baselines_back(anki, tmp_path):
+    from internpearls import sync
+    anki.col.add_note("pkg", _fields("Front one", back="old back"), [TAGS], deck=DECK)
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("pkg", _fields("Front one", back="old back"), TAGS)], None)}))
+    before = {"pkg": {"Notes": "", "#Back": "earlier"}}
+    sync._save_json(sync.SHIPPED, before)
+    src = str(tmp_path / "hand.apkg")
+    make_apkg(src, [("pkg", _fields("Front one", back="new back"), TAGS)], deck=DECK)
+    anki.gui.file_picks = [src]
+    anki.gui.answers.append(True)
+    sync.import_single()
+    assert sync._load_shipped() != before
+    sync.restore_pending_after_undo(anki.col.undo())
+    assert sync._load_shipped() == before

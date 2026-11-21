@@ -982,3 +982,17 @@ def test_check_updates_after_an_install_says_restart(anki, monkeypatch):
         assert any("restart" in m.lower() for m in anki.gui.infos)
     finally:
         updates._installed_version = None
+
+
+def test_restore_warns_about_cards_anki_would_not_restore(anki, tmp_path):
+    from internpearls import collection
+    anki.col.add_note("g1", _fields("Front"), TAGS.split(), deck=DECK)
+    src = collection._backup_deck(DECK)
+    note = anki.col.note_by_guid("g1")
+    note.model = dict(note.model, name="Cloze (moved)", id=note.model["id"] + 1)
+    anki.gui.file_picks.append(src)
+    anki.gui.answers.append(True)
+
+    collection.import_deck()
+
+    assert anki.gui.warnings and "1 card" in anki.gui.warnings[-1]

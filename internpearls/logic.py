@@ -2878,7 +2878,9 @@ def merge_saved_feedback(saved, flags, index):
     """
     restored = 0
     for guid, entry in (saved or {}).items():
-        note = (entry or {}).get("note", "").strip()
+        if not isinstance(entry, dict) or not isinstance(entry.get("note"), str):
+            continue
+        note = entry["note"].strip()
         if not note or guid in flags:
             continue
         flags[guid] = note

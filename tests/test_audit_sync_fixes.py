@@ -829,3 +829,35 @@ def test_auto_sync_does_not_back_up_for_a_deck_that_failed_to_download(
         background._auto_sync_check()
     assert _backups() == 0
     assert sum('failed' in t for t in anki.gui.tooltips) <= 1
+
+
+def _in_filtered_deck(anki, guid, reps=5):
+    import types
+    card = anki.col._cards[anki.col.note_by_guid(guid).card_ids()[0]]
+    card.reps, card.type, card.queue, card.ivl = reps, 2, 2, 30
+    card.due, card.odue, card.odid = -100000, 812, 7
+    return card
+
+
+def test_carried_scheduling_uses_the_home_due_of_a_card_in_a_filtered_deck(anki):
+    from internpearls import collection
+    a = anki.col.add_note('a', _fields('Old wording'), [TAGS], deck=DECK)
+    b = anki.col.add_note('b', _fields('New wording'), [TAGS], deck=DECK)
+    _in_filtered_deck(anki, 'a')
+    collection.carry_scheduling_forward(
+        [{'guid': 'a', 'successor_guid': 'b'}], {'a': a.id, 'b': b.id})
+    assert anki.col._cards[b.card_ids()[0]].due == 812
+
+
+def test_seeded_siblings_use_the_home_due_of_a_parent_in_a_filtered_deck(anki):
+    import types
+    from internpearls import collection
+    note = anki.col.add_note('c', _fields('Cloze'), [TAGS], deck=DECK)
+    _in_filtered_deck(anki, 'c')
+    sibling = types.SimpleNamespace(**{**vars(anki.col._cards[note.card_ids()[0]]),
+                                       'id': 999, 'ord': 1, 'reps': 0, 'due': 0,
+                                       'odue': 0, 'odid': 0})
+    anki.col._cards[999] = sibling
+    note._card_ids.append(999)
+    collection.seed_converted_siblings([note.id])
+    assert anki.col._cards[999].due == 812

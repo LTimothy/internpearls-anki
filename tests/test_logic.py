@@ -3845,3 +3845,11 @@ def test_schema_4_manifest_is_readable_and_5_is_not():
     assert logic.manifest_needs_newer_addon({"schema": 3}, SUPPORTED_MANIFEST_SCHEMA) is False
     assert logic.manifest_needs_newer_addon({"schema": 4}, SUPPORTED_MANIFEST_SCHEMA) is False
     assert logic.manifest_needs_newer_addon({"schema": 5}, SUPPORTED_MANIFEST_SCHEMA) is True
+
+
+@pytest.mark.parametrize("entry", ["oops", {"note": None}, {"note": 5}, None])
+def test_merge_saved_feedback_skips_a_malformed_entry(entry):
+    flags, index = {}, {}
+    saved = {"bad": entry, "ok": {"note": "fix this", "deck": "D", "front": "F"}}
+    assert logic.merge_saved_feedback(saved, flags, index) == 1
+    assert flags == {"ok": "fix this"}
