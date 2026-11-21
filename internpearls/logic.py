@@ -903,7 +903,7 @@ def validate_media_entries(media):
     out = {}
     for name, entry in media.items():
         if (not isinstance(name, str) or not name or name in (".", "..")
-                or any(c in name for c in "/\\\0")):
+                or any(c in name for c in "/\\:\0")):
             raise RuntimeError(f"the manifest names an image {name!r} that isn't a "
                                "plain file name")
         if (not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str)

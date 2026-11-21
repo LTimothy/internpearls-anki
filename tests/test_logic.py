@@ -3785,6 +3785,7 @@ _H = "a" * 64
     {"../x.png": {"path": "media/x.png", "sha256": _H}},
     {"a/b.png": {"path": "media/b.png", "sha256": _H}},
     {"a\\b.png": {"path": "media/b.png", "sha256": _H}},
+    {"C:x.png": {"path": "media/x.png", "sha256": _H}},
     {"": {"path": "media/b.png", "sha256": _H}},
     {"x.png": {"path": "/etc/x.png", "sha256": _H}},
     {"x.png": {"path": "media/../../x.png", "sha256": _H}},

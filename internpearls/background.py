@@ -31,7 +31,8 @@ from .logic import (clamp_interval_minutes, decide_addon_update_action,
                     manifest_needs_newer_addon, manifest_retired_guids, plural)
 from .net import _BG_TIMEOUT, _DOWNLOAD_TIMEOUT
 from .platform import new_work_request, platform, wait_for_mock_work
-from .sync import (_cached_fetch, _content_backup_decks, _fetch_manifest, _is_local,
+from .sync import (_cached_fetch, _collection_media_dir, _content_backup_decks,
+                   _fetch_manifest, _is_local,
                    _live_cards_loader, _reconcile_pending, _refresh_reconcile_action_label,
                    _run_sync, local_manifest, undone_updates)
 from .ui import _bg_safe, manual_sync_in_progress
@@ -214,6 +215,7 @@ def _auto_sync_check():
     try:
         installed = installed_matching_collection(_load_json(INSTALLED, {}),
                                                   cfg["scope_tag"])
+        media_dir = _collection_media_dir()
     except Exception:
         _auto_sync_in_progress = False   # nothing downstream will clear it from here
         raise
@@ -229,6 +231,7 @@ def _auto_sync_check():
             cfg, timeout=_BG_TIMEOUT, download_timeout=_DOWNLOAD_TIMEOUT)
         if not manifest:
             return None
+        fetch.media_dir = media_dir
         if manifest_needs_newer_addon(manifest, SUPPORTED_MANIFEST_SCHEMA):
             return {"schema_blocked": manifest.get("schema")}
         # Decks already held back this session are dropped here, before any of the work

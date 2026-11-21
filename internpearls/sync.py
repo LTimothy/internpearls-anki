@@ -264,6 +264,8 @@ def _cached_media(sha, path=None):
     """`path` (default: the cache file for `sha`) if it holds exactly `sha`, else None."""
     path = path or os.path.join(MEDIA_CACHE, sha)
     try:
+        if os.path.getsize(path) > MEDIA_FILE_MAX_BYTES:
+            return None
         with open(path, "rb") as fh:
             if hashlib.sha256(fh.read()).hexdigest() == sha:
                 return path
@@ -511,7 +513,7 @@ def _fetch_manifest_gated(cfg):
             "here has been touched."
         )
         return None
-    # Read here, on the main thread: fetch runs where the collection must not be used.
+    # _fetch_manifest ran off the main thread, so the collection is read here.
     fetch.media_dir = _collection_media_dir()
     return manifest, fetch, source
 

@@ -385,3 +385,12 @@ def test_the_window_opens_on_its_title_with_room_for_a_detail_line():
     from aqt.qt import QLabel
     with _progress(title="Checking for updates") as (_step, dlg):
         assert dlg.findChild(QLabel).text() == "Checking for updates\n"
+
+
+def test_the_next_deck_clears_the_picture_line():
+    from aqt.qt import QLabel
+    with _progress(total=10) as (step, dlg):
+        step(1, "Checking Pharmacology (1 of 2)", span=5)
+        step.pump.part(1, 2, "Downloading images: 1 of 2")
+        step(6, "Checking Renal (2 of 2)")
+        assert dlg.findChild(QLabel).text() == "Checking Renal (2 of 2)\n"

@@ -300,3 +300,44 @@ def test_update_tells_fetch_where_anki_keeps_pictures(anki, tmp_path, monkeypatc
     _configure(anki, str(_local_source(tmp_path, {"x.png": X})))
     _, fetch, _ = sync._fetch_manifest_gated(sync._cfg())
     assert fetch.media_dir == str(media)
+
+
+def test_auto_sync_also_uses_pictures_already_in_anki(anki, tmp_path, monkeypatch, cache):
+    from internpearls import background, sync
+    media = tmp_path / "collection.media"
+    media.mkdir()
+    anki.col.media.set_dir(str(media))
+    _configure(anki, str(_local_source(tmp_path, {"x.png": X})))
+    anki.mw._config["auto_sync_decks"] = True
+    seen = []
+    real = sync._fetch_manifest
+
+    def spy(*a, **k):
+        manifest, fetch, source = real(*a, **k)
+        seen.append(fetch)
+        return manifest, fetch, source
+    monkeypatch.setattr(background, "_fetch_manifest", spy)
+    monkeypatch.setattr(background, "_run_in_background", lambda work, done: done(work()))
+    background._auto_sync_check()
+    assert seen and seen[0].media_dir == str(media)
+
+
+def test_a_picture_used_from_anki_carries_its_own_bytes(anki, tmp_path, monkeypatch, cache):
+    import zipfile
+    media = tmp_path / "collection.media"
+    media.mkdir()
+    (media / "x.png").write_bytes(X)
+    deck, fetch, _ = _github(tmp_path, monkeypatch, _entries(x=X), {})
+    fetch.media_dir = str(media)
+    path = fetch(deck)
+    with zipfile.ZipFile(path) as z:
+        assert z.read(_index(path)["x.png"]) == X
+
+
+def test_an_oversized_file_in_anki_is_not_read(anki, tmp_path, monkeypatch, cache):
+    from internpearls import sync
+    media = tmp_path / "collection.media"
+    media.mkdir()
+    (media / "x.png").write_bytes(X)
+    monkeypatch.setattr(sync, "MEDIA_FILE_MAX_BYTES", 3)
+    assert sync._cached_media(_sha(X), str(media / "x.png")) is None
