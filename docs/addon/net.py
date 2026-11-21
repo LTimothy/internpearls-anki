@@ -405,51 +405,23 @@ def _latest_release_tag(token=None, timeout=_CONNECT_TIMEOUT):
 
 
 def _gh_public_raw(path, ref="main", timeout=_CONNECT_TIMEOUT, token=None):
-    """Raw bytes of a file in the public add-on repo. Tries, in order: the Contents
-    API with `token` (when the learner has one configured), the Contents API with no
-    token, then raw.githubusercontent.com if the API is rate limited.
+    """Raw bytes of a file in the public add-on repo through the Contents API, never
+    the raw CDN, which can serve a stale file after a release.
 
-    The Contents API is preferred over raw.githubusercontent.com because that CDN is
-    served through a cache that can lag well behind a push. Confirmed directly: right
-    after pushing a new version.json, the Contents API reflected it immediately, while
-    the raw CDN link for the same file and branch still served the previous content
-    more than two minutes later. That gap is exactly why "Check for add-on updates"
-    once failed to see a version that had already been pushed.
-
-    No token is required, since this repo is public, but the API's unauthenticated
-    limit is a shared 60 requests per hour per IP, easily used up by the launch-time
-    update check and the deck auto-sync poll running on their own. A learner's own
-    token (read scope on any repo is enough) raises that to 5,000 per hour, so it's
-    tried first when configured. A token that can't read this public repo at all, say a
-    fine-grained token scoped to other repos, is retried without it rather than failing
-    outright, so a bad token never leaves this check worse off than having none. If
-    both attempts are rate limited rather than refused, the raw CDN is the last resort:
-    no API quota to run out, at the cost of the CDN's own lag, which version.json's
-    "download" field already documents for a person opening it by hand.
-
-    Only an auth-shaped failure (401/403/404) on the token attempt is worth retrying
-    without the token: dropping it can't fix an unreachable host (TransportError) or a
-    server error (5xx), and retrying either just doubles the wait on an already-dead
-    connection.
+    The learner's token, when set, is tried first for its larger rate limit; a token
+    that can't read this repo (401/403/404) is retried without it rather than failing.
+    Anything else, a rate limit included, raises.
     """
     url = (f"https://api.github.com/repos/{ANKI_REPO}/contents/{path}"
            f"?ref={quote(ref, safe='')}")
-    raw_url = (f"https://raw.githubusercontent.com/{ANKI_REPO}/"
-               f"{quote(ref, safe='/')}/{path}")
     if token:
         try:
             return _http_get(url, token=token, accept="application/vnd.github.raw",
                              timeout=timeout)
-        except RateLimitedError:
-            return _http_get(raw_url, timeout=timeout)
         except HttpStatusError as e:
             if e.code not in (401, 403, 404):
                 raise
-            # a token that can't read this repo; fall through and retry without it
-    try:
-        return _http_get(url, accept="application/vnd.github.raw", timeout=timeout)
-    except RateLimitedError:
-        return _http_get(raw_url, timeout=timeout)
+    return _http_get(url, accept="application/vnd.github.raw", timeout=timeout)
 
 
 # Raster only: SVG is an active format, and one downloaded from an arbitrary URL is

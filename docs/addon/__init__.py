@@ -18,7 +18,7 @@ This file is only the menu and startup wiring. The work lives in focused modules
 
 - logic.py       pure Python (no aqt/anki imports), unit-tested with plain pytest
 - config.py      constants, config access, persistent state under user_files/
-- ui.py          dialog wrappers (_info/_warn/_ask/_prompt), _safe/_bg_safe, styling
+- ui.py          dialog wrappers (_info/_warn/_ask), _safe/_bg_safe, styling
 - net.py         HTTP + GitHub contents-API fetches, the timeout policy
 - collection.py  everything that touches mw.col: backups, snapshot/restore, imports
 - sync.py        the sync flows (Sync decks, Import single deck, source resolution)

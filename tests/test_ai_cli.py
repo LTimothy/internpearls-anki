@@ -981,13 +981,6 @@ def test_backends_carry_model_hint_for_the_ui():
         assert "model_hint" in info and info["model_hint"]
 
 
-def test_image_capable_table():
-    # All three read an attached image: agy does it with view_file against the
-    # scratch dir build_argv hands it as --add-dir.
-    for kind in ("claude", "codex", "agy"):
-        assert ai_cli.image_capable(kind)
-
-
 def test_web_capable_table():
     assert ai_cli.web_capable("claude")
     assert ai_cli.web_capable("agy")

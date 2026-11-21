@@ -64,10 +64,9 @@ def clamp_night_mode_dim_percent(percent, floor_percent=0, default_percent=30,
 
 
 def night_mode_dim_factor(percent):
-    """The 0..1 brightness multiplier night_mode_image_css's filter applies for a given
-    dim percent: 0 -> 1.0 (unchanged), the default 30 -> 0.7. Re-clamps percent the same
-    way night_mode_image_css does, so a caller passing a raw config value gets the same
-    factor the CSS would use for it.
+    """The 0..1 brightness multiplier night_mode_css's filter applies for a given dim
+    percent: 0 -> 1.0 (unchanged), the default 30 -> 0.7. Re-clamps percent, so a caller
+    passing a raw config value gets the factor the CSS uses.
 
     Pulled out to its own function so the Experimental > Night mode dimming preview can
     call the exact same arithmetic the real CSS rule uses, rather than reimplementing
@@ -76,14 +75,6 @@ def night_mode_dim_factor(percent):
     """
     percent = clamp_night_mode_dim_percent(percent)
     return round(1 - percent / 100, 2)
-
-
-def _night_mode_image_rule(factor):
-    """The bright-image dimming rule itself, given an already-computed brightness
-    factor. Dims rather than inverts, since a full color invert looks wrong on a real
-    photo mixed into an otherwise diagram-heavy deck."""
-    return ("<style>html.ip-dim .nightMode img {{ filter: brightness({b:g}) "
-           "contrast(0.92); }}</style>").format(b=factor)
 
 
 NIGHT_MODE_SCOPES = ("images", "content")
@@ -108,7 +99,9 @@ def night_mode_css(percent, scope="images"):
     factor = night_mode_dim_factor(percent)
     if scope == "content":
         return f"html.night-mode.ip-dim {{ filter: brightness({factor:.2f}); }}"
-    return _night_mode_image_rule(factor)
+    # Dims rather than inverts: an inverted photo looks wrong among diagrams.
+    return ("<style>html.ip-dim .nightMode img {{ filter: brightness({b:g}) "
+            "contrast(0.92); }}</style>").format(b=factor)
 
 
 def clamp_hour(hour, default):
@@ -138,22 +131,6 @@ def night_mode_dim_script(args):
             "h>=v.from||h<v.to);"
             "document.documentElement.classList.toggle('ip-dim',v.on&&inHours)}};"
             f"ipDim.set({args});setInterval(ipDim.apply,60000);</script>")
-
-
-def night_mode_image_css(enabled, percent=30):
-    """CSS that dims bright white-background images while Anki's Night Mode is on.
-
-    Anki's own Night Mode already adds a "nightMode" class to the card body, so this
-    only needs to define the rule; the browser applies it only when that class is
-    present. Dims rather than inverts, since a full color invert looks wrong on a
-    real photo mixed into an otherwise diagram-heavy deck.
-
-    `percent` is how much dimmer, 0-90 (see clamp_night_mode_dim_percent: this also
-    re-clamps, so a caller can pass a raw config value straight through). The default,
-    30, is the fixed dim level this replaced (a flat brightness(0.7)), so leaving the
-    percentage untouched keeps today's exact appearance.
-    """
-    return night_mode_css(percent, "images") if enabled else ""
 
 
 def version_tuple(v):

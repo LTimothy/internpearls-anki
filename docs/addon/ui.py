@@ -29,7 +29,7 @@ from aqt import mw
 from aqt.qt import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QEventLoop, QFrame,
                     QLabel, QMessageBox, QProgressDialog, QPushButton, QScrollArea,
                     QSizePolicy, Qt, QVBoxLayout)
-from aqt.utils import askUser, getText, showInfo, showWarning, tooltip
+from aqt.utils import askUser, showInfo, showWarning, tooltip
 
 from .config import APP_NAME
 from .palette import colors
@@ -393,15 +393,6 @@ def copy_to_clipboard(text):
     except Exception:
         print(traceback.format_exc())
         return False
-
-
-def _prompt(text, **kw):
-    """A single-line text prompt. Returns the entered text, or None if cancelled:
-    unlike aqt.utils.getText's raw (text, ok) tuple, so a caller can write
-    `if new is None: return` instead of unpacking at every call site."""
-    kw.setdefault("title", APP_NAME)
-    value, ok = getText(text, **kw)
-    return value if ok else None
 
 
 def _window_alive():

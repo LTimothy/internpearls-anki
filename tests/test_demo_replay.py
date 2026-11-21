@@ -312,6 +312,7 @@ def test_suspended_work_cannot_finish_or_erase_its_journal(anki):
 
 
 def test_typed_actions_answer_production_confirmation_and_prompt(anki):
+    from aqt.utils import getText
     from internpearls import ui
 
     runner = mock_anki.Runner(anki)
@@ -319,8 +320,8 @@ def test_typed_actions_answer_production_confirmation_and_prompt(anki):
     def flow():
         if not ui._ask("Apply the change?", yes_label="Apply", no_label="Keep"):
             return
-        value = ui._prompt("Label", default="")
-        if value is not None:
+        value, ok = getText("Label", default="")
+        if ok:
             anki.mw._config["answer"] = value
 
     confirmation = runner.start_protocol(flow, epoch=13)

@@ -39,7 +39,7 @@ the menu and startup wiring.
 
 ## Conventions
 
-- Dialogs go through the `_info`, `_warn`, `_ask` and `_prompt` wrappers in
+- Dialogs go through the `_info`, `_warn` and `_ask` wrappers in
   `internpearls/ui.py`, never raw `aqt.utils` calls.
 - Menu items use sentence case ("Import single deck") with no trailing
   ellipsis.

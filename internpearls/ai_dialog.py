@@ -2173,7 +2173,7 @@ class _GenerateDialog(QDialog):
                                     if extra_text else "")),
                 note_types=s.note_types, field_map=FIELD_MAP, count=s.count,
                 instructions=s.instructions,
-                attachments=image_names if ai_cli.image_capable(s.backend) else [],
+                attachments=image_names,
                 cards=s.cards if revision else None,
                 feedback=self.feedback_box.toPlainText() if revision else "",
                 notes=s.notes if revision else None,
@@ -2193,8 +2193,7 @@ class _GenerateDialog(QDialog):
         self.activity_feed.clear()
         self._gen_done = False
         self._t0 = platform().monotonic()
-        image_paths = ([os.path.join(s.scratch, n) for n in image_names]
-                       if ai_cli.image_capable(s.backend) else [])
+        image_paths = [os.path.join(s.scratch, n) for n in image_names]
         gen_cfg = _cfg()
 
         def work(context):

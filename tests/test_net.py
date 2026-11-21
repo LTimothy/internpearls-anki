@@ -228,55 +228,19 @@ def test_gh_public_raw_propagates_a_server_error_on_the_token_attempt_without_re
     assert len(calls) == 1
 
 
-def test_gh_public_raw_chains_through_token_then_rate_limit_then_cdn(monkeypatch):
-    """The full three-hop path in one test: a token that can't read this repo falls
-    through to an unauthenticated retry, which is itself rate limited, so the raw CDN
-    is the last resort. The tests above each prove one link; this proves the chain."""
+def test_gh_public_raw_never_falls_back_to_the_raw_cdn(monkeypatch):
+    """A rate limit surfaces as the error it is: the raw CDN can serve a stale file."""
     from internpearls import net
     seen = []
 
     def fake(req, timeout=None):
-        seen.append((req.full_url, req.get_header("Authorization")))
-        if req.get_header("Authorization"):
-            raise _http_error(403)  # auth-shaped: this token can't read this repo
-        if "api.github.com" in req.full_url:
-            raise _http_error(403, headers={"X-RateLimit-Remaining": "0"})
-        return _Response(b"cdn bytes")
+        seen.append(req.full_url)
+        raise _http_error(403, headers={"X-RateLimit-Remaining": "0"})
 
     monkeypatch.setattr(net, "_open", fake)
-    data = net._gh_public_raw("version.json", ref="main", token="badtoken")
-    assert data == b"cdn bytes"
-    assert seen == [
-        ("https://api.github.com/repos/LTimothy/internpearls-anki/contents/"
-         "version.json?ref=main", "Bearer badtoken"),
-        ("https://api.github.com/repos/LTimothy/internpearls-anki/contents/"
-         "version.json?ref=main", None),
-        ("https://raw.githubusercontent.com/LTimothy/internpearls-anki/main/"
-         "version.json", None),
-    ]
-
-
-def test_gh_public_raw_falls_back_to_the_raw_cdn_when_rate_limited(monkeypatch):
-    """The API's own quota is out; the raw CDN needs no token and no quota, so it's the
-    last resort rather than a failed check."""
-    from internpearls import net
-    seen_urls = []
-
-    def fake(req, timeout=None):
-        seen_urls.append(req.full_url)
-        if "api.github.com" in req.full_url:
-            raise _http_error(403, headers={"X-RateLimit-Remaining": "0"})
-        return _Response(b"cdn bytes")
-
-    monkeypatch.setattr(net, "_open", fake)
-    data = net._gh_public_raw("version.json", ref="main")
-    assert data == b"cdn bytes"
-    assert seen_urls == [
-        "https://api.github.com/repos/LTimothy/internpearls-anki/contents/"
-        "version.json?ref=main",
-        "https://raw.githubusercontent.com/LTimothy/internpearls-anki/main/"
-        "version.json",
-    ]
+    with pytest.raises(net.RateLimitedError):
+        net._gh_public_raw("version.json", ref="main", token="t0ken")
+    assert not any("raw.githubusercontent.com" in u for u in seen)
 
 
 def test_the_update_check_passes_the_configured_token(monkeypatch, anki):
@@ -294,8 +258,14 @@ def test_the_update_check_passes_the_configured_token(monkeypatch, anki):
         return b'{"version": "0.1.0"}'
 
     monkeypatch.setattr(updates, "_gh_public_raw", fake_public_raw)
+
+    def fake_tag(token=None, timeout=None):
+        seen["tag"] = token
+        return "v0.1.0"
+
+    monkeypatch.setattr(updates, "_latest_release_tag", fake_tag)
     updates.check_updates()
-    assert seen["token"] == "learner-token"
+    assert seen["token"] == "learner-token" and seen["tag"] == "learner-token"
 
     seen.clear()
     updates._fetch_addon_version_info(token=updates._cfg()["gh_token"])
@@ -824,12 +794,6 @@ def test_a_ref_with_a_hash_stays_in_the_query(monkeypatch):
     seen.clear()
     net._gh_public_raw("version.json", ref="a#b")
     assert seen[0].endswith("?ref=a%23b")
-    seen.clear()
-    monkeypatch.setattr(net, "_http_get", lambda url, **kw: (
-        seen.append(url), (_ for _ in ()).throw(net.RateLimitedError("x")))[1]
-        if "api.github" in url else seen.append(url) or b"x")
-    net._gh_public_raw("version.json", ref="rel/v1#2")
-    assert seen[-1].endswith("/rel/v1%232/version.json")
 
 
 def test_a_token_with_stray_whitespace_is_stripped_before_the_header(monkeypatch):

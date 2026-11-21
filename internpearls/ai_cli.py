@@ -138,15 +138,6 @@ _CAP_S = {"quick": 900, "thorough": 1800, "judge": 600}
 # judge reads card text from other decks in the prompt and only replies, so it runs
 # tool-free; mode pickers show only BACKENDS' "modes", never this one.
 _MAX_TURNS = {"quick": 6, "thorough": 15, "judge": 2}
-# Image-input support per backend. All three read an attached image: agy does
-# it headlessly with view_file against the scratch dir build_argv passes as
-# --add-dir, verified against agy 1.1.24.
-_IMAGE_CAPABLE = {"claude": True, "codex": True, "agy": True}
-
-# Whether a backend can reach the web: claude's build_argv allowlists WebSearch and
-# WebFetch, agy runs under its own approval defaults which include web access, and
-# codex has its own web search behind the top-level --search flag (see web_capable).
-_WEB_CAPABLE = {"claude": True, "codex": True, "agy": True}
 
 
 class GenerationError(RuntimeError):
@@ -170,10 +161,6 @@ class EmptyReply(GenerationError):
 
 class GenerationCancelled(RuntimeError):
     pass
-
-
-def image_capable(kind):
-    return _IMAGE_CAPABLE.get(kind, False)
 
 
 _CODEX_SHELL_FEATURES = ("shell_tool", "unified_exec")
@@ -205,11 +192,11 @@ def judge_backend(detected):
 
 
 def web_capable(kind, path=None):
-    """`path`, when given, answers for the installed binary: a codex without
-    --search has no web search to turn on."""
+    """Every backend can reach the web (claude's WebSearch/WebFetch, agy's defaults,
+    codex's --search), except a codex at `path` without --search."""
     if kind == "codex" and path is not None and not supports_flag(path, "--search"):
         return False
-    return _WEB_CAPABLE.get(kind, False)
+    return kind in BACKENDS
 
 
 def find_cli(kind, override=""):
@@ -794,20 +781,8 @@ def _body_needles(text, include_windows=False):
     return needles
 
 
-def _prompt_needles(prompt):
-    """Short excerpts of the whole `prompt` (see _body_needles) to scan
-    stdout/stderr lines against. A CLI that echoes the prompt back into a
-    stream event (a transcript-style `user_input` event, say) would
-    otherwise put the learner's pasted material, and the active skills,
-    straight into ai_last_run.log even though the argv itself is elided.
-    Kept as the whole-prompt case alongside `_redact_needles`, which also
-    covers a CLI that echoes only a piece of the prompt (the source text
-    buried mid-prompt, say) rather than the prompt as a whole."""
-    return _body_needles(prompt)
-
-
 def _redact_needles(prompt, redact_texts=()):
-    """The needles for one run: `_prompt_needles(prompt)` plus, for each
+    """The needles for one run: `_body_needles(prompt)` plus, for each
     non-empty text in `redact_texts` (the learner's own source material,
     focus text, and saved rules, as opposed to the full prompt those sit
     inside), the wider needle set from `_body_needles(..., include_windows=
@@ -816,7 +791,7 @@ def _redact_needles(prompt, redact_texts=()):
     and schema boilerplate, so a CLI that echoes only that material back (a
     transcript-style event carrying just the task content, the realistic
     shape) would match none of the whole-prompt needles alone."""
-    needles = list(_prompt_needles(prompt))
+    needles = list(_body_needles(prompt))
     for text in redact_texts:
         if not text or not text.strip():
             continue
@@ -885,7 +860,7 @@ def _write_run_log(log_path, argv, prompt, lines, err_text, returncode,
     raises: a failure to write this side-channel file must not turn a real
     generation result (success or failure) into a different error.
 
-    `needles`, from _prompt_needles, redacts any stdout/stderr line that
+    `needles`, from _redact_needles, redacts any stdout/stderr line that
     echoes the prompt (see _redact_line); the argv itself is elided
     separately by _elided_argv since it holds the whole prompt as one
     argument rather than a line that might merely contain it.

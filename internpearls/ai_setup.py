@@ -297,8 +297,7 @@ class _BackendRow(QWidget):
         caps_lay = QHBoxLayout(caps)
         caps_lay.setContentsMargins(0, 0, 0, 0)
         caps_lay.setSpacing(CARET_GAP)
-        if ai_cli.image_capable(kind):
-            caps_lay.addWidget(_capability_pill("image attach: supported", "accept"))
+        caps_lay.addWidget(_capability_pill("image attach: supported", "accept"))
         free_tier = meta["free_tier"]
         if free_tier == "throttled":
             caps_lay.addWidget(_capability_pill("free tier, throttled", "new"))

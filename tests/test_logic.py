@@ -2173,41 +2173,26 @@ def test_night_mode_dim_factor_at_default_matches_the_pre_existing_fixed_dim_lev
 
 
 # ------------------------------------------------------- night mode image css
-def test_night_mode_image_css_enabled_returns_dimming_rule():
-    """No percent passed: the default (30) must render the exact fixed dim level
-    every build applied before the percentage became configurable, so an existing
-    dim_images_night_mode=True install keeps today's look untouched."""
-    css = logic.night_mode_image_css(True)
-    assert ".nightMode img" in css
-    assert "brightness(0.7)" in css
-    assert "contrast(0.92)" in css
-    assert css.startswith("<style>") and css.endswith("</style>")
-
-
-def test_night_mode_image_css_disabled_returns_empty_string():
-    # percent is irrelevant while disabled: must still short-circuit to "".
-    assert logic.night_mode_image_css(False) == ""
-    assert logic.night_mode_image_css(False, percent=90) == ""
-
-
-def test_night_mode_image_css_honors_a_custom_percent():
-    assert "brightness(0.5)" in logic.night_mode_image_css(True, percent=50)
-    assert "brightness(0.9)" in logic.night_mode_image_css(True, percent=10)
+def test_night_mode_css_images_honors_a_custom_percent():
+    assert "brightness(0.5)" in logic.night_mode_css(50, "images")
+    assert "brightness(0.9)" in logic.night_mode_css(10, "images")
     # contrast is not part of the user-facing knob, only brightness is
-    assert "contrast(0.92)" in logic.night_mode_image_css(True, percent=50)
+    assert "contrast(0.92)" in logic.night_mode_css(50, "images")
 
 
-def test_night_mode_image_css_clamps_an_out_of_range_percent():
+def test_night_mode_css_images_clamps_an_out_of_range_percent():
     # 0 leaves the image unchanged; anything above the ceiling (90) is capped there
     # rather than reading as blacked out.
-    assert "brightness(1)" in logic.night_mode_image_css(True, percent=0)
-    assert "brightness(0.1)" in logic.night_mode_image_css(True, percent=100)
-    assert "brightness(1)" in logic.night_mode_image_css(True, percent=-10)
+    assert "brightness(1)" in logic.night_mode_css(0, "images")
+    assert "brightness(0.1)" in logic.night_mode_css(100, "images")
+    assert "brightness(1)" in logic.night_mode_css(-10, "images")
 
 
 # ------------------------------------------------------- night mode css scopes
-def test_night_mode_css_images_scope_matches_legacy():
-    assert logic.night_mode_css(30, "images") == logic.night_mode_image_css(True, 30)
+def test_night_mode_css_images_scope_dims_images_under_ip_dim():
+    css = logic.night_mode_css(30, "images")
+    assert css.startswith("<style>html.ip-dim .nightMode img {")
+    assert "brightness(0.7)" in css
 
 
 def test_night_mode_css_content_scope_filters_root_not_body():

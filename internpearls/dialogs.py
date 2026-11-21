@@ -1221,7 +1221,7 @@ def _sample_card_image():
 
 
 def _dimmed_sample_image(percent):
-    """The sample image with the exact per-pixel transform night_mode_image_css's CSS
+    """The sample image with the exact per-pixel transform night_mode_css's CSS
     `filter: brightness(...)` applies in a real card: each channel multiplied by
     night_mode_dim_factor(percent), the same function that rule calls, so this preview
     can never show a different dim than Night Mode actually renders.
