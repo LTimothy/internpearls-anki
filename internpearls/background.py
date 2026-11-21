@@ -140,11 +140,12 @@ class _Memory:
     purpose: a restart is allowed to remind once more."""
 
     def __init__(self):
-        # (deck, version) held back for a template or note-type change. A deferred
-        # deck stays pending, so without this every poll re-downloaded and re-backed-up
-        # to reach the same decision. Keyed by version so a mid-session fix is not
-        # skipped along with the version that was deferred.
+        # (deck, version) this session held back, or applied without it then reading as
+        # installed (a template change, cards under an old deck name). Such a deck
+        # stays pending, and retrying it every poll re-imported and re-backed-up.
         self.deferred = set()
+        # (deck, version) whose download failure was already announced.
+        self.failed_notified = set()
         # (deck, version) already announced as needing a manual sync.
         self.tpl_notified = set()
         # Manifest schemas already announced as needing an add-on update.
@@ -331,6 +332,15 @@ def _auto_sync_check():
         memory.reconcile_notified = pending
 
         todo = [d for d in result["todo"] if d["name"] not in live["excluded"]]
+        failed = [d for d in todo if not _is_local(result["downloaded"].get(d["name"]))]
+        todo = [d for d in todo if d not in failed]
+        failed_new = [(d["name"], d.get("version")) for d in failed
+                      if (d["name"], d.get("version")) not in memory.failed_notified]
+        if failed_new:
+            memory.failed_notified.update(failed_new)
+            tooltip(f"Intern Pearls: couldn't download {plural(len(failed_new), 'deck')}"
+                    " for auto-sync. Run Update my decks for details.",
+                    period=6000, parent=mw)
         if not todo:
             return   # nothing to sync this poll
         # Re-checked immediately before applying, not only at the top of the poll: this
@@ -390,6 +400,11 @@ def _auto_sync_check():
                         if (n, v) not in memory.tpl_notified]
         memory.tpl_notified.update(deferred_keys)
         memory.deferred.update(deferred_keys)
+        # A deck that still reads as not installed after this import (its cards sit
+        # under an old deck name, or it has none) would be imported again every poll.
+        now = installed_matching_collection(_load_json(INSTALLED, {}), live["scope_tag"])
+        memory.deferred.update((d["name"], d.get("version")) for d in todo
+                               if now.get(d["name"]) != d.get("version"))
         if not (ok or fail or deferred_new):
             return
         msg = (f"Intern Pearls: auto-synced {plural(ok, 'deck')} "

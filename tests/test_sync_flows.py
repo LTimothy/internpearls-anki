@@ -3626,7 +3626,7 @@ def test_clean_up_duplicates_archives_the_copy_with_fewer_reviews(anki, tmp_path
     old_deck = "Intern Pearls::Intern Custom::Example Topic"
     new_deck = "Intern Pearls::Intern Custom::Example Group::Example Topic"
     old_note = _existing_card(anki, "old", "same front text", deck=old_deck)
-    _existing_card(anki, "new", "same front text", deck=new_deck)
+    new_nid = _existing_card(anki, "new", "same front text", deck=new_deck).id
     anki.col._cards[old_note.card_ids()[0]].reps = 3   # this one was actually studied
     folder = _write_duplicate_source(tmp_path, new_deck)
     _configure(anki, folder)
@@ -3636,11 +3636,12 @@ def test_clean_up_duplicates_archives_the_copy_with_fewer_reviews(anki, tmp_path
     # Fresh lookups by guid throughout, not note/cid references captured before drive():
     # the Runner's replay deepcopies mw.col on every pass, so a reference from before
     # drive() points at an orphaned pre-replay collection, not the one actually mutated.
-    lost_cid = anki.col.note_by_guid("new").card_ids()[0]
+    lost_cid = anki.col.get_note(new_nid).card_ids()[0]
     assert anki.col._cards[lost_cid].queue == -1     # suspended
     assert anki.col._cards[lost_cid].did == anki.col.decks.id_for_name(
         "Intern Pearls::Intern Custom::Retired")
-    assert f"{SCOPE}::retired-duplicate" in anki.col.note_by_guid("new").tags
+    assert f"{SCOPE}::retired-duplicate" in anki.col.get_note(new_nid).tags
+    assert anki.col.get_note(new_nid).guid != "new", "the archived copy frees the GUID"
     kept_cid = anki.col.note_by_guid("old").card_ids()[0]
     assert anki.col._cards[kept_cid].queue == 0       # kept copy untouched
     assert any("Archived <b>1 duplicate card</b>" in i for i in anki.gui.infos)
@@ -3706,7 +3707,7 @@ def test_clean_up_duplicates_breaks_a_zero_review_tie_by_canonical_deck(anki, tm
     from internpearls import sync
     old_deck = "Intern Pearls::Intern Custom::Example Topic"
     new_deck = "Intern Pearls::Intern Custom::Example Group::Example Topic"
-    _existing_card(anki, "old", "same front text", deck=old_deck)
+    old_nid = _existing_card(anki, "old", "same front text", deck=old_deck).id
     _existing_card(anki, "new", "same front text", deck=new_deck)
     folder = _write_duplicate_source(tmp_path, new_deck)
     _configure(anki, folder)
@@ -3716,7 +3717,7 @@ def test_clean_up_duplicates_breaks_a_zero_review_tie_by_canonical_deck(anki, tm
     # Fresh lookups by guid, same reason as the test above.
     kept_cid = anki.col.note_by_guid("new").card_ids()[0]
     assert anki.col._cards[kept_cid].queue == 0
-    lost_cid = anki.col.note_by_guid("old").card_ids()[0]
+    lost_cid = anki.col.get_note(old_nid).card_ids()[0]
     assert anki.col._cards[lost_cid].queue == -1
 
 

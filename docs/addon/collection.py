@@ -646,6 +646,13 @@ def _existing_front_to_guid(scope_tag):
         out.guids.add(guid)
         front = fields[0]
         if front in out and out[front] != guid:
+            # A generated card is never matched by sync, so it yields to a synced one
+            # rather than making the front ambiguous.
+            if ai_logic.is_generated_guid(guid):
+                continue
+            if ai_logic.is_generated_guid(out[front]):
+                out[front] = guid
+                continue
             ambiguous.add(front)
         else:
             out[front] = guid

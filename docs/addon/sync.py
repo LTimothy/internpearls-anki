@@ -1951,6 +1951,9 @@ def clean_up_duplicates():
                                           manifest.get("note_protected_fields", {}))
     n_archived = archive_notes([a["nid"] for g in groups for a in g["archive"]],
                                retired_deck, tag)
+    # Free each archived copy's GUID, or the next update matches it instead of the
+    # kept card.
+    fork_note_identities([{"guid": a["guid"]} for g in groups for a in g["archive"]])
     mw.reset()
     backup_line = ("" if backed_up else
                    "<br><br>(No backup was taken this time: nothing to back up yet, or "

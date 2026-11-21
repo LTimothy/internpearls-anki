@@ -776,3 +776,56 @@ def test_saved_feedback_is_cleared_for_its_own_collection_only(anki, tmp_path):
     assert review.load_saved_feedback() == {}
     _profile(anki, tmp_path, 'profile-a')
     assert list(review.load_saved_feedback()) == ['a']
+
+
+def _backups():
+    import os
+    from internpearls import collection
+    folder = collection._deck_backup_folder()
+    return len(os.listdir(folder)) if os.path.isdir(folder) else 0
+
+
+def test_after_duplicate_cleanup_updates_reach_the_kept_card(anki, tmp_path):
+    from internpearls import sync
+    from test_sync_flows import _click_duplicate_button, _sync, drive
+    h = anki.col.add_note('H', _fields('same front', back='old back'), [TAGS], deck=DECK)
+    anki.col.add_note('G', _fields('same front', back='old back'), [TAGS], deck=DECK)
+    anki.col._cards[h.card_ids()[0]].reps = 9
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ('v1', [('G', _fields('same front', back='old back'), TAGS)], None)}))
+    drive(anki, sync.clean_up_duplicates, _click_duplicate_button(accept=True))
+    anki.gui.interactive = False
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ('v2', [('G', _fields('same front', back='CORRECTED back'), TAGS)], None)}))
+    _sync(anki)
+    assert anki.col.note_by_guid('H')['Back'] == 'CORRECTED back'
+
+
+def test_auto_sync_applies_a_moved_deck_once_per_session(anki, tmp_path):
+    from internpearls import background, sync
+    old, new = DECK, 'Intern Pearls::Intern Custom::Group::Pharm'
+    anki.col.add_note('g1', _fields('Front one'), [TAGS], deck=old)
+    folder = _write_source(tmp_path, {
+        new: ('v2', [('g1', _fields('Front one', back='b2'), TAGS)], None)})
+    anki.mw._config = {'decks_dir': folder, 'auto_sync_decks': True}
+    sync._save_json(sync.INSTALLED, {old: 'v1'})
+    for _ in range(3):
+        background._auto_sync_check()
+    assert len(anki.col.imports) == 1
+    assert _backups() <= 1
+
+
+def test_auto_sync_does_not_back_up_for_a_deck_that_failed_to_download(
+        anki, tmp_path, monkeypatch):
+    from internpearls import background, sync
+    anki.col.add_note('k1', _fields('Other'), [TAGS], deck='Intern Pearls::Intern Custom::Other')
+    folder = _write_source(tmp_path, {DECK: ('v1', [('g1', _fields('Front one'), TAGS)], None)})
+    anki.mw._config = {'decks_dir': folder, 'auto_sync_decks': True}
+
+    def broken(*a, **k):
+        raise RuntimeError('an image for this deck did not match its checksum')
+    monkeypatch.setattr(background, '_cached_fetch', broken)
+    for _ in range(3):
+        background._auto_sync_check()
+    assert _backups() == 0
+    assert sum('failed' in t for t in anki.gui.tooltips) <= 1
