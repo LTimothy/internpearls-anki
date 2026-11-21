@@ -2443,7 +2443,8 @@ class _GenerateDialog(QDialog):
             self._finish_check(res)
             return
         cards, errors = ai_logic.parse_cards_json(res["text"], s.note_types, FIELD_MAP)
-        if errors and cards:
+        # A revision keeps the retry: dropping a card there breaks positional matching.
+        if errors and cards and not self._last_revision:
             _warn(f"{plural(len(errors), 'card')} from the assistant could not be used "
                   "and were left out:\n" + "\n".join(errors[:5]), textFormat="plain")
             errors = []

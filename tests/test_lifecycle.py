@@ -1025,3 +1025,38 @@ def test_the_addon_does_not_install_over_itself_while_work_is_running(
     with pytest.raises(RuntimeError, match="try again"):
         updates._install_package("/tmp/x.ankiaddon")
     assert calls == []
+
+
+def test_dropping_the_token_applies_the_tokenless_poll_floor_at_once(anki, monkeypatch):
+    from internpearls import background, config, dialogs
+    anki.mw._config = {"github_decks_repo": "example/decks", "github_token": "tok",
+                       "auto_sync_decks": True, "auto_sync_interval_minutes": 1}
+    background._restart_auto_sync_timer(1)
+    monkeypatch.setattr(dialogs, "_SourceChoiceDialog",
+                        type("C", (), {"__init__": lambda self, p: None,
+                                       "exec": lambda self: None, "choice": "github",
+                                       "deleteLater": lambda self: None}))
+    monkeypatch.setattr(dialogs, "_github_source_form",
+                        lambda repo, token: ("example/decks", "", True))
+    monkeypatch.setattr(dialogs, "run_with_progress",
+                        lambda label, fn: (_ for _ in ()).throw(RuntimeError("offline")))
+    try:
+        dialogs.configure_source()
+        assert background._auto_sync_timer.started == 5 * 60 * 1000
+    finally:
+        background._stop_auto_sync_timer()
+
+
+def test_a_manual_update_during_a_sync_says_try_again_without_downloading(
+        anki, monkeypatch, tmp_path):
+    from internpearls import background, updates
+    _offer_update(monkeypatch, tmp_path, str(tmp_path / "unused.ankiaddon"))
+    downloads = []
+    monkeypatch.setattr(updates, "_download_addon_package",
+                        lambda **kw: downloads.append(kw))
+    monkeypatch.setattr(background, "_auto_sync_in_progress", True)
+    anki.gui.answers.append(True)
+    updates.check_updates()
+    assert downloads == []
+    assert any("try again in a minute" in i for i in anki.gui.infos)
+    assert not anki.gui.warnings

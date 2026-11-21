@@ -166,13 +166,17 @@ _INSTALL_ERRORS = {
 }
 
 
+def _busy():
+    from . import background   # imports this module
+    return manual_sync_in_progress() or background._auto_sync_in_progress
+
+
 def _install_package(path):
     """Install a downloaded package, raising when Anki refuses it. install() reports a
     refusal by returning an error rather than raising, and leaves the installed
     version in place. Refused while other work may be writing user_files, which the
     installer moves aside."""
-    from . import background   # imports this module
-    if manual_sync_in_progress() or background._auto_sync_in_progress:
+    if _busy():
         raise RuntimeError("other Intern Pearls work is running, try again in a minute")
     result = mw.addonManager.install(path)
     errmsg = getattr(result, "errmsg", None)
@@ -228,6 +232,10 @@ def check_updates():
     if not _ask(f"Update available: v{html.escape(str(latest['version']), quote=False)} "
                 f"(you have v{ADDON_VERSION}). Download and install now?",
                 yes_label="Install now", no_label="Not now"):
+        return
+    if _busy():
+        _info("Intern Pearls is syncing right now, so the update can't install yet. "
+              "Please try again in a minute.")
         return
     def _fallback(e):
         _warn(f"Auto-install failed ({html.escape(str(e), quote=False)}).<br>"

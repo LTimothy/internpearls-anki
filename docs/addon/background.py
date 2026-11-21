@@ -379,10 +379,7 @@ def _auto_sync_check():
         memory.backup_failure_notified = False
 
         def _already_fetched(d):
-            v = result["downloaded"][d["name"]]
-            if isinstance(v, Exception):
-                raise v
-            return v
+            return result["downloaded"][d["name"]]
 
         results, restored, _, deferred, _, collisions, _ = _run_sync(
             live, result["manifest"], _already_fetched,

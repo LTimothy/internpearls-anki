@@ -182,6 +182,10 @@ def _note_texts(nid):
     return front, back
 
 
+def _esc(text):
+    return html.escape(text or "", quote=False)
+
+
 def _breakable(text):
     """`text` with line-break opportunities (zero-width spaces) after each "::" and
     inside any long unbroken run, so a deck path or a pasted token wraps in a row's
@@ -211,7 +215,7 @@ def _delivery(fn):
         except Exception as error:
             print(traceback.format_exc())
             try:
-                self.summary_label.setText(f"Something went wrong: {html.escape(str(error) or '', quote=False)}")
+                self.summary_label.setText(f"Something went wrong: {_esc(str(error))}")
             except Exception:
                 pass
             return None
@@ -560,7 +564,7 @@ class _DuplicateScanDialog(QDialog):
 
     def _finish_scan(self):
         if self._scan_error:
-            self.summary_label.setText(f"Scan failed: {html.escape(str(self._scan_error) or '', quote=False)}")
+            self.summary_label.setText(f"Scan failed: {_esc(str(self._scan_error))}")
             return
         ignored = set(_cfg()["dupes_ignored"])
         self._pairs = []
@@ -625,7 +629,7 @@ class _DuplicateScanDialog(QDialog):
         warn = None
         if unmatched:
             c = colors()
-            names = "; ".join(f"No deck matches '{html.escape(e or '', quote=False)}'" for e in unmatched)
+            names = "; ".join(f"No deck matches '{_esc(e)}'" for e in unmatched)
             warn = f"<span style='color:{c['warning']};'>{names}</span>"
         return info, warn
 
@@ -645,7 +649,7 @@ class _DuplicateScanDialog(QDialog):
                 (self.left_combo, "Cards this add-on manages", self._left_count),
                 (self.right_combo, "Everything else", self._right_count)):
             if count < 50:
-                notes.append(f"{html.escape(self._side_label(combo, default) or '', quote=False)} has only {count} "
+                notes.append(f"{_esc(self._side_label(combo, default))} has only {count} "
                             f"card{'s' if count != 1 else ''}; pick a deck to compare "
                             "against")
         return notes
@@ -772,16 +776,16 @@ class _DuplicateScanDialog(QDialog):
         shares_html = ""
         if pair.get("shares"):
             shares_html = (f"<br><span style='color:{c['muted']};'>shares: "
-                          f"{html.escape(', '.join(pair['shares']) or '', quote=False)}</span>")
+                          f"{_esc(', '.join(pair['shares']))}</span>")
         differs_html = ""
         if pair.get("differs"):
             differs_html = (f"<br><span style='color:{c['muted']};'>"
-                            f"{html.escape(pair['differs'] or '', quote=False)}</span>")
+                            f"{_esc(pair['differs'])}</span>")
         primary = QLabel(
-            f"<b>ours:</b> {html.escape(_breakable(left_front) or '', quote=False)}<br>"
-            f"<span style='color:{c['muted']};'>theirs: {html.escape(_breakable(right_front) or '', quote=False)}"
-            f" ({html.escape(_breakable(pair['right'][2]) or '', quote=False)}, "
-            f"{html.escape(_breakable(pair['right'][3]) or '', quote=False)})</span>"
+            f"<b>ours:</b> {_esc(_breakable(left_front))}<br>"
+            f"<span style='color:{c['muted']};'>theirs: {_esc(_breakable(right_front))}"
+            f" ({_esc(_breakable(pair['right'][2]))}, "
+            f"{_esc(_breakable(pair['right'][3]))})</span>"
             f"{shares_html}{differs_html}")
         primary.setToolTip(plain_tooltip(f"ours: {left_front}\ntheirs: {right_front} "
                                         f"({pair['right'][2]}, {pair['right'][3]})"))
@@ -849,9 +853,9 @@ class _DuplicateScanDialog(QDialog):
 
         blay = QVBoxLayout(body)
         blay.setContentsMargins(_row_text_indent(), 0, 0, 0)
-        ours_answer = QLabel(f"<b>ours answer:</b> {html.escape(left_back or '', quote=False)}")
+        ours_answer = QLabel(f"<b>ours answer:</b> {_esc(left_back)}")
         ours_answer.setWordWrap(True)
-        theirs_answer = QLabel(f"<b>theirs answer:</b> {html.escape(right_back or '', quote=False)}")
+        theirs_answer = QLabel(f"<b>theirs answer:</b> {_esc(right_back)}")
         theirs_answer.setWordWrap(True)
         blay.addWidget(ours_answer)
         blay.addWidget(theirs_answer)
@@ -1079,7 +1083,7 @@ class _DuplicateScanDialog(QDialog):
             if not verdicts:
                 reason = errors[0] if errors else "no usable verdicts returned"
         if reason:
-            self._judge_summary = (f"AI judging failed ({html.escape(reason or '', quote=False)}). "
+            self._judge_summary = (f"AI judging failed ({_esc(reason)}). "
                                    "Your candidates are unchanged; Judge with AI tries again.")
             self.summary_label.setText(self._summary_text())
             return

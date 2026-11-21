@@ -2030,7 +2030,7 @@ def test_claude_running_out_of_turns_is_a_named_error():
     line = _json.dumps({"type": "result", "subtype": "error_max_turns",
                        "is_error": True, "num_turns": 15})
     evt = ai_logic.parse_stream_event("claude", line)
-    assert evt["type"] == "error" and "ran out of turns" in evt["text"]
+    assert evt["type"] == "error" and evt["text"] == "The assistant ran out of turns. Try fewer cards."
 
 
 @pytest.mark.parametrize("url", ["http://192.168.1.1/apply?reboot=1", "https://localhost/x",
@@ -2042,3 +2042,9 @@ def test_sources_line_drops_links_a_field_would_drop(url):
 
 def test_a_literal_less_than_survives_tag_stripping():
     assert ai_logic._norm_front("MAP <b><65</b> or >100") == "map <65 or >100"
+
+
+def test_a_sources_list_before_the_cards_is_not_mistaken_for_them():
+    text = 'Sources: [{"title": "Miller", "url": "https://example.org"}]\n' + GOOD
+    cards, errors = ai_logic.parse_cards_json(text, ALLOWED, FIELD_MAP)
+    assert errors == [] and len(cards) == 2

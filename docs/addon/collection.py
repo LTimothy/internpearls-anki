@@ -853,7 +853,9 @@ _FSRS_FIELDS = ("desired_retention", "decay", "last_review_time")
 
 def _home_due(card):
     """A card's real due: one in a filtered deck holds a placeholder in `due`."""
-    return getattr(card, "odue", 0) or getattr(card, "due", 0)
+    if getattr(card, "odid", 0):
+        return getattr(card, "odue", 0) or getattr(card, "due", 0)
+    return getattr(card, "due", 0)
 
 
 def _copy_memory_state(parent, card, scale):
@@ -1496,8 +1498,7 @@ def import_deck():
     skipped = len(getattr(log, "conflicting", None) or ())
     if skipped:
         _warn(f"Imported <code>{name}</code>, but Anki left {plural(skipped, 'card')} "
-              "as they are now: their note type changed after this backup was made. "
-              "To undo that change instead, use Edit → Undo.")
+              "as they are now: their note type changed after this backup was made.")
         return
     _info(f"Imported <code>{name}</code>.")
 

@@ -103,7 +103,7 @@ Keys for automatic sync, Night Mode dimming, AI card generation and the duplicat
 
 ### Settings
 
-- Sync decks automatically when updates are available: off by default. Checks the source in the background (every 15 minutes by default, from 1 minute to a week) and applies changed decks after a backup. It never applies a template or format change, which would force a full AnkiWeb sync; those are held back for a manual run. It never archives or moves cards.
+- Sync decks automatically when updates are available: off by default. Checks the source in the background (every 15 minutes by default, from 1 minute to a week; at least 5 minutes for a GitHub source without a token) and applies changed decks after a backup. It never applies a template or format change, which would force a full AnkiWeb sync; those are held back for a manual run. It never archives or moves cards.
 - Notify me when a new add-on version is out: on by default.
 - Install add-on updates automatically: off by default. A restart loads the new version.
 

@@ -267,6 +267,9 @@ def configure_source():
     mw.addonManager.writeConfig(ADDON_PACKAGE, conf)
 
     cfg = _cfg()
+    if cfg["auto_sync_decks"]:
+        # A token change moves the tokenless polling floor.
+        _restart_auto_sync_timer(cfg["auto_sync_interval_minutes"])
     try:
         manifest, _, source = run_with_progress(
             "Checking the deck source", lambda: _fetch_manifest(cfg))

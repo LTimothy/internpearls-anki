@@ -3466,3 +3466,23 @@ def test_check_reply_with_no_usable_verdict_retries_once(anki, monkeypatch):
     dlg._finish_check(bad)
     assert len(calls) == 1
     assert "still could not be used" in anki.gui.warnings[-1]
+
+
+def test_a_revision_with_one_bad_card_retries_instead_of_dropping_it(anki, monkeypatch):
+    import json
+    dlg = _ready_dialog(anki, monkeypatch, cli_mode="two_cards")
+    dlg._start_generation()
+    dlg._wait_for_worker(timeout=15)
+    before = list(dlg.session.cards)
+    assert before
+    dlg._last_revision = True
+    calls = []
+    monkeypatch.setattr(dlg, "_start_generation",
+                        lambda revision=False, extra_error=None: calls.append(extra_error))
+    bad = json.dumps([{"note_type": "Fancy", "fields": {"Front": "x"}}]
+                     + [{"note_type": c["note_type"], "fields": c["fields"]} for c in before])
+    dlg._worker_error = None
+    dlg._worker_result = {"text": bad, "tokens": 1, "duration_s": 0.1}
+    dlg._finish_generation()
+    assert calls and any("Fancy" in e for e in calls[0])
+    assert dlg.session.cards == before

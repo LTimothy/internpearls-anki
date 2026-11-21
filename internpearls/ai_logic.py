@@ -165,15 +165,17 @@ def _first_card_list(text):
     if m:
         return json.loads(m.group(1))
     decoder, text = json.JSONDecoder(), text or ""
-    for i, ch in enumerate(text):
-        if ch not in "[{":
-            continue
+    # Capped: each attempt can read to the end of the reply.
+    starts = [i for i, ch in enumerate(text) if ch in "[{"][:64]
+    for i in starts:
         try:
             data = decoder.raw_decode(text, i)[0]
         except ValueError:
             continue
+        if isinstance(data, dict) and isinstance(data.get("cards"), list):
+            return data
         if (isinstance(data, list) and data and all(isinstance(x, dict) for x in data)
-                or isinstance(data, dict) and isinstance(data.get("cards"), list)):
+                and any("note_type" in x for x in data)):
             return data
     return json.loads(_find_json(text))
 
@@ -1035,8 +1037,8 @@ def parse_stream_event(kind, line):
             subtype = d.get("subtype")
             if isinstance(subtype, str) and subtype.startswith("error_"):
                 return {"type": "error", "text": (
-                    "The assistant ran out of turns before writing the cards. Try "
-                    "fewer cards or Quick mode." if subtype == "error_max_turns" else
+                    "The assistant ran out of turns. Try fewer cards."
+                    if subtype == "error_max_turns" else
                     f"The assistant stopped early ({subtype}).")}
             if "result" not in d:
                 return None  # not a real result line, nothing to report

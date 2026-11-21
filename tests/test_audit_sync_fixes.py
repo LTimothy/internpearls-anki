@@ -828,7 +828,7 @@ def test_auto_sync_does_not_back_up_for_a_deck_that_failed_to_download(
     for _ in range(3):
         background._auto_sync_check()
     assert _backups() == 0
-    assert sum('failed' in t for t in anki.gui.tooltips) <= 1
+    assert sum("couldn't download" in t for t in anki.gui.tooltips) == 1
 
 
 def _in_filtered_deck(anki, guid, reps=5):
@@ -861,3 +861,10 @@ def test_seeded_siblings_use_the_home_due_of_a_parent_in_a_filtered_deck(anki):
     note._card_ids.append(999)
     collection.seed_converted_siblings([note.id])
     assert anki.col._cards[999].due == 812
+
+
+def test_home_due_trusts_odue_only_inside_a_filtered_deck():
+    import types
+    from internpearls import collection
+    assert collection._home_due(types.SimpleNamespace(due=100, odue=5, odid=0)) == 100
+    assert collection._home_due(types.SimpleNamespace(due=-100000, odue=812, odid=7)) == 812

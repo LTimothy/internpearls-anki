@@ -10465,3 +10465,18 @@ def test_undoing_import_single_puts_the_baselines_back(anki, tmp_path):
     assert sync._load_shipped() != before
     sync.restore_pending_after_undo(anki.col.undo())
     assert sync._load_shipped() == before
+
+
+def test_undoing_duplicate_cleanup_restores_every_archived_copy_at_once(anki, tmp_path):
+    from internpearls import sync
+    old_deck = "Intern Pearls::Intern Custom::Example Topic"
+    new_deck = "Intern Pearls::Intern Custom::Example Group::Example Topic"
+    for i in range(3):
+        _existing_card(anki, f"old{i}", f"duplicated card {i}", deck=old_deck)
+        _existing_card(anki, f"new{i}", f"duplicated card {i}", deck=new_deck)
+    _configure(anki, _write_duplicate_source(tmp_path, new_deck))
+    drive(anki, sync.clean_up_duplicates, _click_duplicate_button(accept=True))
+    anki.col.undo()
+    assert {n.guid for n in anki.col._notes.values()} == {
+        f"{p}{i}" for p in ("old", "new") for i in range(3)}
+    assert not any("retired-duplicate" in t for n in anki.col._notes.values() for t in n.tags)

@@ -1003,7 +1003,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
     declined = declined_guids(reg)
     seen = {}
     results, tpl_changes, deferred = [], {}, []
-    shipped, restored, collisions = {}, 0, []
+    restored, collisions = 0, []
     # This run's per-deck versions, the only thing written back: the save below merges
     # them into whatever installed.json holds at that moment.
     applied = {}
@@ -1134,7 +1134,6 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
                 d["name"], prior_installed.get(d["name"]),
                 {guid: baseline.get(guid) for guid in deck_shipped}, d.get("version"))
             conversion_undo = None
-            shipped.update(deck_shipped)
             # Saved per deck, merged into what is on disk: a crash before the next deck
             # must not leave this one's text looking like the learner's own edits.
             _save_json(SHIPPED, {**_load_shipped(), **deck_shipped})
@@ -1758,6 +1757,7 @@ def clean_up_duplicates():
                for g in groups for a in g["archive"]]
     existing_guid_to_nid = {n["guid"]: n["nid"] for g in groups
                             for n in [g["keep"], *g["archive"]]}
+    undo = mw.col.add_custom_undo_entry("Archive duplicates")
     carried = carry_over_protected_fields(retired, existing_guid_to_nid, cfg["protected"],
                                           manifest.get("note_protected_fields", {}))
     n_archived = archive_notes([a["nid"] for g in groups for a in g["archive"]],
@@ -1765,6 +1765,7 @@ def clean_up_duplicates():
     # Free each archived copy's GUID, or the next update matches it instead of the
     # kept card.
     fork_note_identities([{"guid": a["guid"]} for g in groups for a in g["archive"]])
+    mw.col.merge_undo_entries(undo)
     mw.reset()
     backup_line = ("" if backed_up else
                    "<br><br>(No backup was taken this time: nothing to back up yet, or "
