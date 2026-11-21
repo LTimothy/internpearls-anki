@@ -517,9 +517,12 @@ def cancellable_progress(title, total, cancel_text="Cancel"):
     def part(done, of, text=None):
         # Stopping one short of the step's share keeps the bar off the maximum, which
         # would reset the dialog and clear Cancel.
+        if dlg.wasCanceled():
+            return False    # setValue would show the cancelled window again
         if of:
             dlg.setValue(share[0] + (share[1] - 1) * min(done, of) // of)
         if text:
+            # Not setLabelText: tests count those calls as steps.
             label.setText(f"{title}\n{text}")
         return pump()
 

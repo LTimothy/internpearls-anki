@@ -241,3 +241,20 @@ def test_image_progress_ticks_once_per_image(anki, tmp_path, monkeypatch, cache)
     fetch(deck, on_chunk=pump)
     assert [(d, o) for d, o, _ in ticks] == [(1, 2), (2, 2)]
     assert ticks[-1][2] == "Pharm images (2 of 2)"
+
+
+def test_cancel_during_images_stops_the_fetch(anki, tmp_path, monkeypatch, cache):
+    from internpearls.net import DownloadCancelled
+    deck, fetch, _ = _github(tmp_path, monkeypatch, _entries(x=X, y=Y),
+                             {"media/x.png": X, "media/y.png": Y})
+
+    def pump(_n=None):
+        return True
+    pump.part = lambda done, of, label=None: False
+    with pytest.raises(DownloadCancelled):
+        fetch(deck, on_chunk=pump)
+
+
+def test_each_deck_owns_its_cards_share_of_the_bar():
+    from internpearls import sync
+    assert [sync._share([0, 1, 5], 6, i) for i in (1, 2, 3)] == [1, 4, 1]

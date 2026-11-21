@@ -301,8 +301,8 @@ def _ensure_media(entries, read, on_file=None):
                     pass
                 raise
         out[name] = hit
-        if on_file is not None:
-            on_file(n, len(entries))
+        if on_file is not None and not on_file(n, len(entries)):
+            raise DownloadCancelled()
     return out
 
 
@@ -2986,7 +2986,14 @@ def update_decks():
                 # the same check _cached_fetch makes before trusting its own entry.
                 v = downloaded.get(d["name"])
                 return v if _is_local(v) else _cached_fetch(fetch, d,
-                                                            on_chunk=step.pump)
+                                                            on_chunk=_finish_deck)
+
+            # "Stop after this deck": a retry finishes its download once started.
+            def _finish_deck(_n=None):
+                step.pump()
+                return True
+            _finish_deck.part = lambda done, of, text=None: step.pump.part(
+                done, of, text) or True
 
             # Taking the deck's version only means something on a card that applies.
             take_deck -= {(v.guid, n) for item in items if item[0] == "card"

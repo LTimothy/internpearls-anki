@@ -370,6 +370,7 @@ def test_part_moves_the_bar_within_one_decks_share_and_names_the_work():
         assert dlg.isVisible()
         dlg.cancel()
         assert step.pump.part(2, 2) is False
+        assert not dlg.isVisible(), "a tick after Cancel must not bring the window back"
 
 
 def test_the_cancel_button_can_say_what_it_will_do():

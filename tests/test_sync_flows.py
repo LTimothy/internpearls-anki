@@ -10428,3 +10428,18 @@ def test_cancel_while_recording_ends_the_update(anki, tmp_path, monkeypatch):
         DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
     sync.update_decks()
     assert anki.gui.infos[-1] == NOTHING_CHANGED
+
+
+def test_recording_reports_a_cancel(anki, tmp_path):
+    from internpearls import sync
+    from aqt.qt import QProgressDialog
+    _configure(anki, _write_source(tmp_path, {
+        DECK: ("v1", [("g1", _fields("Front one"), TAGS)], None)}))
+    _update(anki)
+    sync._save_json(sync.RECORDED_TEXT, {})
+    sync._save_json(sync.SHIPPED, {})
+    manifest, fetch, _ = sync._fetch_manifest(sync._cfg())
+    QProgressDialog.cancel_after = {"Recording your decks' current text": 0}
+    installed = {DECK: "v1"}
+    assert sync._record_current_hashes(sync._cfg(), manifest, fetch, installed, [],
+                                       sync.load_declined()) is True
