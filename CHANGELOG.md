@@ -3,6 +3,24 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.89.3
+
+- After Clean up duplicates, deck updates reach the card you kept, not the
+  archived copy.
+- Auto-sync no longer imports and backs up the same deck every few minutes, and
+  a deck that fails to download is reported once instead of on every check.
+- Each deck's progress is saved as it finishes, so stopping partway keeps it.
+- Restoring a backup says when Anki left cards whose note type changed.
+- Moved scheduling uses a card's real due date when it sits in a filtered deck.
+- Undoing Import single deck also undoes what it recorded.
+- AI cards: cancelling while pictures load keeps the draft with a Retry on each
+  picture, one bad card no longer discards the rest, running out of turns says
+  so, Codex runs without its shell where supported, and source links follow
+  the same rules as card links.
+- Without a GitHub token, automatic checks run at most every five minutes.
+- The add-on doesn't install an update while a sync is running.
+- The Not reviewed filter leaves out cards you opened.
+
 ## v0.89.2
 
 - Pictures already in your collection are used as they are, so updates
