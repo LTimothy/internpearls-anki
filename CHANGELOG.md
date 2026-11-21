@@ -3,6 +3,14 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.89.1
+
+- Progress windows say which step they are on and keep moving while a deck's
+  images download.
+- A deck read earlier in the same update is not downloaded again.
+- Cancel while checking your decks ends the update. Once decks are being
+  applied, the button reads Stop after this deck.
+
 ## v0.89.0
 
 - Deck images download on their own and are kept in a cache, so a deck
