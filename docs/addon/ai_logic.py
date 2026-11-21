@@ -158,13 +158,33 @@ def _image_entry(im):
             "attribution": str(im.get("attribution", ""))}
 
 
+def _first_card_list(text):
+    """The reply's card list: a fenced block, else the first JSON value starting at
+    a '[' or '{' that holds cards, so prose like "Sources: [1]" around it is ignored."""
+    m = _FENCE_RE.search(text or "")
+    if m:
+        return json.loads(m.group(1))
+    decoder, text = json.JSONDecoder(), text or ""
+    for i, ch in enumerate(text):
+        if ch not in "[{":
+            continue
+        try:
+            data = decoder.raw_decode(text, i)[0]
+        except ValueError:
+            continue
+        if (isinstance(data, list) and data and all(isinstance(x, dict) for x in data)
+                or isinstance(data, dict) and isinstance(data.get("cards"), list)):
+            return data
+    return json.loads(_find_json(text))
+
+
 def parse_cards_json(text, allowed_types, field_map):
-    """Parse a model reply into card dicts. Returns (cards, errors); any error
-    empties cards, so a caller never imports a half-valid batch silently. A bad
-    image source is not an error here: it fails that card's image at review."""
+    """Parse a model reply into card dicts. Returns (cards, errors): the valid cards,
+    and one error per card that was dropped. A bad image source is not an error here:
+    it fails that card's image at review."""
     errors = []
     try:
-        data = json.loads(_find_json(text))
+        data = _first_card_list(text)
     except Exception as e:
         return [], [f"reply was not valid JSON: {e}"]
     if isinstance(data, dict) and isinstance(data.get("cards"), list):
@@ -210,7 +230,7 @@ def parse_cards_json(text, allowed_types, field_map):
             "images": [_image_entry(im) for im in images],
             "rationale": str(raw.get("rationale", "")),
         })
-    return ([], errors) if errors else (cards, [])
+    return cards, errors
 
 
 def _plain(html):
@@ -233,12 +253,12 @@ def image_credit_html(attribution):
 
 
 def sources_html(sources):
-    """A "Sources:" line of links for an imported card ("" when no source has an
-    http(s) address). Titles and addresses are escaped."""
+    """A "Sources:" line of links for an imported card ("" when no source passes the
+    link rule fields use). Titles and addresses are escaped."""
     links = []
     for src in sources or []:
         url = str(src.get("url", ""))
-        if not url.lower().startswith(("http://", "https://")):
+        if not _safe_href(url):
             continue
         title = str(src.get("title") or url)
         links.append(f'<a href="{_html.escape(url, quote=True)}">{_html.escape(title)}</a>')
@@ -788,7 +808,7 @@ def parse_verdicts_json(text, n_cards, field_map, web=True):
             if not isinstance(src, dict):
                 continue
             url = str(src.get("url", ""))
-            if not url.lower().startswith(("http://", "https://")):
+            if not _safe_href(url):
                 continue
             sources.append({"title": str(src.get("title") or url), "url": url})
         note = note.strip()
@@ -1012,6 +1032,12 @@ def parse_stream_event(kind, line):
     t = d.get("type")
     if kind == "claude":
         if t == "result":
+            subtype = d.get("subtype")
+            if isinstance(subtype, str) and subtype.startswith("error_"):
+                return {"type": "error", "text": (
+                    "The assistant ran out of turns before writing the cards. Try "
+                    "fewer cards or Quick mode." if subtype == "error_max_turns" else
+                    f"The assistant stopped early ({subtype}).")}
             if "result" not in d:
                 return None  # not a real result line, nothing to report
             text = d.get("result") or ""
@@ -1178,15 +1204,12 @@ def record_usage(reg, kind, tokens, now):
     return reg
 
 
-def usage_line(reg, kind, now, free_tier=False):
+def usage_line(reg, kind, now):
     runs = [r for r in _usage_runs(reg, kind) if now - r["ts"] <= _WINDOW_S]
     today = [r for r in runs if now - r["ts"] <= 86400]
     tokens = sum(r["tokens"] for r in today)
-    line = (f"Today via this add-on: {len(today)} runs, "
+    return (f"Today via this add-on: {len(today)} runs, "
             f"~{round(tokens / 1000)}k tokens")
-    if free_tier:
-        line += f" ({len(today)} runs today on the free tier)"
-    return line
 
 
 DURATION_WINDOW = 10   # last N runs kept per backend+mode

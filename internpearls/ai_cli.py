@@ -5,8 +5,8 @@ No aqt imports: callers hand in paths and callbacks, so this stays testable
 with a fake CLI script. The security posture lives in build_argv: no backend
 ever gets shell access; thorough mode allowlists a small set of file and web
 tools, confined to the scratch folder (claude: --restricted plus an
-allowlist; codex: an OS sandbox that reads anywhere but writes only to the
-scratch cwd, with no shell network); quick stays
+allowlist; codex: its shell switched off where supported, and an OS sandbox
+that writes only to the scratch cwd); quick stays
 tool-free except claude's Read, scoped to the scratch dir, when images are
 attached (that is how it views them). judge (the duplicate scan's verdicts) gets
 no tools at all, and claude never loads the user's MCP servers.
@@ -67,9 +67,9 @@ BACKENDS = {
                               "messages a day; more on Go, Plus, or Pro)",
               "free_tier": "capped",
               "install_url": "https://github.com/openai/codex",
-              "safety": "Can read any file you can, writes only to the "
-                       "scratch folder (Thorough), no shell network; web search "
-                       "on and your Codex config file skipped if supported",
+              "safety": "Shell turned off if supported, writes only to the "
+                       "scratch folder (Thorough); web search on and your Codex "
+                       "config file skipped if supported",
               # No forced default here: --model is only passed when the user sets
               # one (see build_argv), and only when supports_flag confirms this
               # codex actually documents it (probed as `codex exec --help`, where
@@ -83,13 +83,11 @@ BACKENDS = {
                             "blank to use codex's default model",
               "modes": {
                   "thorough": "Thorough: asked to draft, verify online with "
-                              "Codex's web search, then self-review; commands "
-                              "can read any file you can and write only in the "
-                              "scratch folder (1 to 3 min)",
+                              "Codex's web search, then self-review; it writes "
+                              "only in the scratch folder (1 to 3 min)",
                   "quick": "Quick draft: asked for a single pass with no "
                           "verification, but it may search the web for card "
-                          "images; commands can read any file you can and "
-                          "write nothing (15 s to 1 min)"}},
+                          "images; it writes nothing (15 s to 1 min)"}},
     "agy": {"label": "Antigravity CLI", "exe": "agy",
             "subscription": "Google account (free tier, throttled)",
             "free_tier": "throttled",
@@ -700,7 +698,9 @@ def build_argv(kind, path, mode, scratch, image_paths, model="", effort="",
             argv += ["--ignore-user-config"]
         if supports_flag(path, "--ephemeral", subcommand="exec"):
             argv += ["--ephemeral"]
-        if mode == "judge":
+        # No shell in any mode: an attached document is untrusted text, and with a
+        # shell plus web search it could have codex read a private file and send it.
+        if mode == "judge" or supports_flag(path, "--disable", subcommand="exec"):
             for feature in _CODEX_SHELL_FEATURES:
                 argv += ["--disable", feature]
         if model and supports_flag(path, "--model", subcommand="exec"):

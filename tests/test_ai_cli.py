@@ -722,8 +722,8 @@ def test_build_argv_codex_keeps_user_config_flag_off_when_unsupported(monkeypatc
 def test_codex_safety_text_does_not_claim_reads_are_confined():
     safety = ai_cli.BACKENDS["codex"]["safety"].lower()
     assert "commands and writes confined" not in safety
-    assert "read any file" in safety
-    assert "network" in safety
+    assert "read" not in safety, "reads are never claimed to be confined"
+    assert "shell turned off" in safety
     assert "config file" in safety
     assert "config file" not in ai_cli.BACKENDS["codex"]["model_hint"]
 
@@ -1180,10 +1180,10 @@ def test_codex_argv_sandbox_differs_by_mode_and_text_matches():
     modes = ai_cli.BACKENDS["codex"]["modes"]
     for text in modes.values():
         assert "verifies facts online" not in text.lower()
-    assert "write only in the scratch folder" in modes["thorough"].lower()
-    assert "write nothing" in modes["quick"].lower()
+    assert "writes only in the scratch folder" in modes["thorough"].lower()
+    assert "writes nothing" in modes["quick"].lower()
     for text in modes.values():
-        assert "read any file" in text.lower()
+        assert "can read" not in text.lower(), "reads are never claimed either way"
 
 
 def test_agy_argv_is_mode_invariant_so_quick_must_not_claim_no_web_access():
@@ -1773,3 +1773,11 @@ def test_windows_codex_gets_attachment_names_safe_for_a_launcher(monkeypatch, tm
     assert images == ["figure-1a2b.png", "attached-image-1.png"]
     assert (scratch / "attached-image-1.png").read_bytes() == b"\x89PNG odd"
     assert not any("%" in a or "&" in a for a in argv)
+
+
+@pytest.mark.parametrize("mode", ["quick", "thorough"])
+def test_build_argv_codex_generation_turns_off_the_shell_when_it_can(monkeypatch, mode):
+    monkeypatch.setattr(ai_cli, "supports_flag", lambda *a, **k: True)
+    argv, _ = ai_cli.build_argv("codex", "/usr/bin/codex", mode, "/tmp/s", [])
+    disabled = [argv[i + 1] for i, a in enumerate(argv) if a == "--disable"]
+    assert {"shell_tool", "unified_exec"} <= set(disabled)

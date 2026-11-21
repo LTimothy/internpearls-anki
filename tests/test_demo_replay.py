@@ -991,7 +991,7 @@ def test_production_usage_display_uses_replay_wall_clock(anki, monkeypatch):
     seen = []
     monkeypatch.setattr(
         ai_logic, "usage_line",
-        lambda _reg, _backend, now, free_tier=False: seen.append(now) or "usage")
+        lambda _reg, _backend, now: seen.append(now) or "usage")
     replay = ReplayPlatform(now_ms=1250)
 
     with use_platform(replay):

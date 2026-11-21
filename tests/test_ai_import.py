@@ -193,13 +193,13 @@ def test_sources_are_appended_to_the_why_field(anki):
     card = _card("Q1")
     card["fields"]["Why"] = "Because."
     card["_sources"] = [{"title": "Guideline <b>2024</b>", "url": "https://example.com/a?x=1&y=2"},
-                        {"title": "Second", "url": "http://example.org/b"}]
+                        {"title": "Second", "url": "https://example.org/b"}]
     collection.add_generated_notes([card], media={}, deck_name=DECK, scope_tag=SCOPE)
     note = next(iter(anki.col._notes.values()))
     assert note["Why"] == (
         'Because.<div style="font-size:small;opacity:.7">Sources: '
         '<a href="https://example.com/a?x=1&amp;y=2">Guideline &lt;b&gt;2024&lt;/b&gt;</a>, '
-        '<a href="http://example.org/b">Second</a></div>')
+        '<a href="https://example.org/b">Second</a></div>')
 
 
 def test_sources_with_an_unsafe_url_are_left_out(anki):

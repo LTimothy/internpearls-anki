@@ -1301,7 +1301,11 @@ def test_cancel_during_image_resolution_leaves_without_waiting_for_the_download(
 
     dlg._cancel_generation()
     dlg._img_timer.fire()
-    assert dlg.stack.currentWidget() is dlg.input_page
+    # The finished draft stays reachable, its picture marked for a retry.
+    assert dlg.stack.currentWidget() is dlg.review_page
+    assert dlg.session.image_data[0][0]["state"] == "error"
+    assert "Retry" in dlg.session.image_data[0][0]["error"]
+    assert dlg.session.included == [False]
     assert dlg._img_worker.is_alive()   # the download is still stuck
 
     release.set()
@@ -2215,7 +2219,7 @@ def test_depth_row_names_what_each_backend_actually_does(anki, monkeypatch):
     codex_text = dlg.depth_row.text()
 
     assert claude_text != codex_text
-    assert "write only in the scratch folder" in codex_text.lower()
+    assert "writes only in the scratch folder" in codex_text.lower()
     assert "verify" in codex_text and "online" in codex_text
 
 

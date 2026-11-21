@@ -328,6 +328,19 @@ def _resolve_one_image(im, scratch):
         return err
 
 
+def _mark_unresolved(s):
+    """Fill `s.image_data` for cards with none: local pictures resolve now, web ones
+    wait for a Retry."""
+    for i, card in enumerate(s.cards):
+        if i not in s.image_data and card["images"]:
+            s.image_data[i] = [
+                _resolve_with_thumb(im, s.scratch, i, j)
+                if im["source"].startswith(("file:", "attached:", "svg:"))
+                else {"state": "error", "kind": "url",
+                      "error": "Image resolution did not finish. Retry this image."}
+                for j, im in enumerate(card["images"])]
+
+
 def _resolve_with_thumb(im, scratch, i, j, cancelled=lambda: False):
     """_resolve_one_image, plus a thumbnail file for a picture that only exists in
     memory (a download or a drawn figure), so Qt has a path to load it from. A run
@@ -954,14 +967,7 @@ class _GenerateDialog(QDialog):
                                            s.imported_notes[i]["guid"]) is not None}
         s.imported_notes = {i: identity for i, identity in s.imported_notes.items()
                             if i in s.imported}
-        for i, card in enumerate(s.cards):
-            if i not in s.image_data and card["images"]:
-                s.image_data[i] = [
-                    _resolve_with_thumb(im, s.scratch, i, j)
-                    if im["source"].startswith(("file:", "attached:", "svg:"))
-                    else {"state": "error", "kind": "url",
-                          "error": "Image resolution did not finish. Retry this image."}
-                    for j, im in enumerate(card["images"])]
+        _mark_unresolved(s)
         s.checks = ai_logic.mechanical_checks(
             s.cards, collection.existing_front_map(_cfg()["scope_tag"]),
             _image_errors(s))
@@ -1801,8 +1807,7 @@ class _GenerateDialog(QDialog):
         self.quick_hint.setText(wording["modes"]["quick"])
         reg = load_ai_usage()
         self.usage_row.setText(ai_logic.usage_line(
-            reg, s.backend, now=platform().wall_now().timestamp(),
-            free_tier=(s.backend == "agy")))
+            reg, s.backend, now=platform().wall_now().timestamp()))
 
     def _test_backend_connection(self):
         s = self.session
@@ -2334,13 +2339,11 @@ class _GenerateDialog(QDialog):
         self._finish_generation()
 
     def _abandon_image_phase(self):
-        """Cancelling during image resolution goes back the way cancelling the
-        CLI phase does, rather than committing what the worker filled in. The
-        worker marks every image it didn't get to as a failure, and those read
-        on the review page as real ones: the cards carrying them all block, and
-        session.image_data is only ever populated once, so a draft that took
-        this path could never resolve those images again."""
-        self._return_to_input_or_review()
+        """The cards are already in the draft, so land on review with every picture
+        the run did not resolve marked for Retry."""
+        self.session.image_data = {}
+        _mark_unresolved(self.session)
+        self._apply_review_state()
 
     def _cancel_generation(self):
         if hasattr(self, "_worker"):
@@ -2444,6 +2447,10 @@ class _GenerateDialog(QDialog):
             self._finish_check(res)
             return
         cards, errors = ai_logic.parse_cards_json(res["text"], s.note_types, FIELD_MAP)
+        if errors and cards:
+            _warn(f"{plural(len(errors), 'card')} from the assistant could not be used "
+                  "and were left out:\n" + "\n".join(errors[:5]), textFormat="plain")
+            errors = []
         if errors:
             if not self._retried_json:
                 self._retried_json = True

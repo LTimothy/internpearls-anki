@@ -792,10 +792,10 @@ def test_usage_rolling_window_and_line():
     assert "this add-on" in line
 
 
-def test_usage_line_free_tier_counts_runs():
+def test_usage_line_counts_runs_without_claiming_a_tier():
     reg = ai_logic.record_usage({}, "agy", 3000, now=500)
-    assert "runs today" in ai_logic.usage_line(reg, "agy", now=600,
-                                               free_tier=True)
+    line = ai_logic.usage_line(reg, "agy", now=600)
+    assert "1 runs" in line and "free tier" not in line
 
 
 def test_usage_state_corrupt_file_degrades_to_no_history():
@@ -2012,3 +2012,29 @@ def test_checking_a_draft_against_a_large_collection_stays_bounded():
     start = time.monotonic()
     ai_logic.near_duplicates(drafts, dupes.build_index(rows))
     assert time.monotonic() - start < 10.0
+
+
+def test_parse_ignores_trailing_and_leading_brackets_in_prose():
+    for text in (GOOD + "\nSources: [1] [2]", "Here are [2] cards:\n" + GOOD):
+        cards, errors = ai_logic.parse_cards_json(text, ALLOWED, FIELD_MAP)
+        assert errors == [] and len(cards) == 2
+
+
+def test_parse_keeps_the_good_cards_when_one_is_bad():
+    mixed = GOOD[:-1].rstrip() + ',\n {"note_type": "Fancy", "fields": {"Front": "x"}}\n]'
+    cards, errors = ai_logic.parse_cards_json(mixed, ALLOWED, FIELD_MAP)
+    assert len(cards) == 2 and any("Fancy" in e for e in errors)
+
+
+def test_claude_running_out_of_turns_is_a_named_error():
+    line = _json.dumps({"type": "result", "subtype": "error_max_turns",
+                       "is_error": True, "num_turns": 15})
+    evt = ai_logic.parse_stream_event("claude", line)
+    assert evt["type"] == "error" and "ran out of turns" in evt["text"]
+
+
+@pytest.mark.parametrize("url", ["http://192.168.1.1/apply?reboot=1", "https://localhost/x",
+                                 "https://10.0.0.1/", "http://example.com/plain-http"])
+def test_sources_line_drops_links_a_field_would_drop(url):
+    assert ai_logic.sources_html([{"title": "UpToDate", "url": url}]) == ""
+    assert ai_logic.sources_html([{"title": "Ok", "url": "https://example.org/a"}])
