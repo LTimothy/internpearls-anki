@@ -25,7 +25,7 @@ GENERATED_TAG_LEAF = "Generated"
 GENERATED_DECK_LEAF = "Generated"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.S)
-_TAG_RE = re.compile(r"<[^>]+>")
+_TAG_RE = dupes._TAG_RE
 _CLOZE_OK_RE = re.compile(r"\{\{c\d+::[^{}]+?\}\}")
 _CLOZE_OPEN_RE = re.compile(r"\{\{c\d+")
 # A hotlinked picture typed into a field instead of listed under "images": it would

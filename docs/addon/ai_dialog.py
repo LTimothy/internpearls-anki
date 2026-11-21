@@ -34,10 +34,10 @@ from .ai_fetch import fetch_card_image
 from .palette import colors
 from .platform import new_work_request, platform, platform_owner_id
 from .review import (_CARET_CLOSED, _CARET_OPEN, _ClickableLabel, _image_tag,
-                     _preview_style, _rich_label, _separator)
+                     _preview_style, _rich_label)
 from .ui import (_ask, _ask_scrollable, _info, _manual_flow, _safe, _warn,
-                 hint_label, link_button, muted_label, section_label, section_rule,
-                 title_label, tooltip)
+                 hint_label, link_button, muted_label, row_rule, section_label,
+                 section_rule, title_label, tooltip)
 from .widgets import (CARET_GAP, CARET_W, align_field_column, chip_cell,
                       chip_column_width, decision_cell, field_slot,
                       row_text_indent)
@@ -611,15 +611,12 @@ def _phase_chip(phase_text, check=False):
     return "working"
 
 
-_TAG_RE = re.compile(r"<[^>]+>")
-
-
 def _plain(markup):
     """A rich-text label's words with its markup taken out: what a row says,
     rather than how it is marked up. Rows carry HTML so one line can hold a bold
     noun and a muted detail, and a caller asking what the row says should not
     have to know that."""
-    return html.unescape(_TAG_RE.sub("", markup or "")).strip()
+    return html.unescape(ai_logic._TAG_RE.sub("", markup or "")).strip()
 
 
 def _muted(text):
@@ -2763,7 +2760,7 @@ class _GenerateDialog(QDialog):
         self._row_widgets, self._row_bodies, self._row_carets = {}, {}, {}
         for i, card in enumerate(s.cards):
             if i:
-                self.cards_lay.addWidget(_separator())
+                self.cards_lay.addWidget(row_rule())
             self.cards_lay.addWidget(self._build_review_row(i, card))
         self.cards_lay.addStretch()   # keeps a short list pinned to the top, not floating
         self._update_review_summary()

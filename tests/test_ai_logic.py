@@ -2038,3 +2038,7 @@ def test_claude_running_out_of_turns_is_a_named_error():
 def test_sources_line_drops_links_a_field_would_drop(url):
     assert ai_logic.sources_html([{"title": "UpToDate", "url": url}]) == ""
     assert ai_logic.sources_html([{"title": "Ok", "url": "https://example.org/a"}])
+
+
+def test_a_literal_less_than_survives_tag_stripping():
+    assert ai_logic._norm_front("MAP <b><65</b> or >100") == "map <65 or >100"

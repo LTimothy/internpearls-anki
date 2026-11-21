@@ -10,6 +10,7 @@ the same way: one CLI call on a background thread, a busy line with elapsed time
 than the AI wizard's own activity feed, since reusing that feed's session-driven state
 machine here would be a rewrite of this screen for a single optional button.
 """
+import html
 import functools
 import re
 import shutil
@@ -30,7 +31,7 @@ from .logic import field_preview_text, plain_text, scope_search
 from .palette import colors
 from .platform import new_work_request, platform, platform_owner_id
 from .ui import (_manual_flow, _safe, copy_to_clipboard, hint_label, link_button,
-                 plain_tooltip, section_label, title_label)
+                 plain_tooltip, row_rule, section_label, title_label)
 from .widgets import CARET_GAP, CARET_W, StreamingList
 
 # This dialog's own chip vocabulary. Unlike widgets.CHIPS, a candidate's label carries
@@ -153,15 +154,6 @@ def _row_text_indent():
     return CARET_W + CARET_GAP + _chip_column_width() + CARET_GAP
 
 
-def _row_rule():
-    line = QFrame()
-    line.setFrameShape(QFrame.Shape.HLine)
-    line.setFrameShadow(QFrame.Shadow.Plain)
-    line.setFixedHeight(1)
-    line.setStyleSheet(f"color: {colors()['row_rule']};")
-    return line
-
-
 _GONE = "(note deleted)"
 
 
@@ -188,10 +180,6 @@ def _note_texts(nid):
                       if field_preview_text(f).strip()), "")
     back = plain_text(fields[1]) if len(fields) > 1 else ""
     return front, back
-
-
-def _esc(text):
-    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _breakable(text):
@@ -223,7 +211,7 @@ def _delivery(fn):
         except Exception as error:
             print(traceback.format_exc())
             try:
-                self.summary_label.setText(f"Something went wrong: {_esc(str(error))}")
+                self.summary_label.setText(f"Something went wrong: {html.escape(str(error) or '', quote=False)}")
             except Exception:
                 pass
             return None
@@ -572,7 +560,7 @@ class _DuplicateScanDialog(QDialog):
 
     def _finish_scan(self):
         if self._scan_error:
-            self.summary_label.setText(f"Scan failed: {_esc(str(self._scan_error))}")
+            self.summary_label.setText(f"Scan failed: {html.escape(str(self._scan_error) or '', quote=False)}")
             return
         ignored = set(_cfg()["dupes_ignored"])
         self._pairs = []
@@ -637,7 +625,7 @@ class _DuplicateScanDialog(QDialog):
         warn = None
         if unmatched:
             c = colors()
-            names = "; ".join(f"No deck matches '{_esc(e)}'" for e in unmatched)
+            names = "; ".join(f"No deck matches '{html.escape(e or '', quote=False)}'" for e in unmatched)
             warn = f"<span style='color:{c['warning']};'>{names}</span>"
         return info, warn
 
@@ -657,7 +645,7 @@ class _DuplicateScanDialog(QDialog):
                 (self.left_combo, "Cards this add-on manages", self._left_count),
                 (self.right_combo, "Everything else", self._right_count)):
             if count < 50:
-                notes.append(f"{_esc(self._side_label(combo, default))} has only {count} "
+                notes.append(f"{html.escape(self._side_label(combo, default) or '', quote=False)} has only {count} "
                             f"card{'s' if count != 1 else ''}; pick a deck to compare "
                             "against")
         return notes
@@ -707,7 +695,7 @@ class _DuplicateScanDialog(QDialog):
         if item[0] == "fold":
             return _link(f"Judged different ({item[1]})", self._toggle_fold,
                          align_left=True)
-        return _row_rule()
+        return row_rule()
 
     def _rebuild_list(self):
         """Rebuild after the scan or the list's grouping changes."""
@@ -784,16 +772,16 @@ class _DuplicateScanDialog(QDialog):
         shares_html = ""
         if pair.get("shares"):
             shares_html = (f"<br><span style='color:{c['muted']};'>shares: "
-                          f"{_esc(', '.join(pair['shares']))}</span>")
+                          f"{html.escape(', '.join(pair['shares']) or '', quote=False)}</span>")
         differs_html = ""
         if pair.get("differs"):
             differs_html = (f"<br><span style='color:{c['muted']};'>"
-                            f"{_esc(pair['differs'])}</span>")
+                            f"{html.escape(pair['differs'] or '', quote=False)}</span>")
         primary = QLabel(
-            f"<b>ours:</b> {_esc(_breakable(left_front))}<br>"
-            f"<span style='color:{c['muted']};'>theirs: {_esc(_breakable(right_front))}"
-            f" ({_esc(_breakable(pair['right'][2]))}, "
-            f"{_esc(_breakable(pair['right'][3]))})</span>"
+            f"<b>ours:</b> {html.escape(_breakable(left_front) or '', quote=False)}<br>"
+            f"<span style='color:{c['muted']};'>theirs: {html.escape(_breakable(right_front) or '', quote=False)}"
+            f" ({html.escape(_breakable(pair['right'][2]) or '', quote=False)}, "
+            f"{html.escape(_breakable(pair['right'][3]) or '', quote=False)})</span>"
             f"{shares_html}{differs_html}")
         primary.setToolTip(plain_tooltip(f"ours: {left_front}\ntheirs: {right_front} "
                                         f"({pair['right'][2]}, {pair['right'][3]})"))
@@ -861,9 +849,9 @@ class _DuplicateScanDialog(QDialog):
 
         blay = QVBoxLayout(body)
         blay.setContentsMargins(_row_text_indent(), 0, 0, 0)
-        ours_answer = QLabel(f"<b>ours answer:</b> {_esc(left_back)}")
+        ours_answer = QLabel(f"<b>ours answer:</b> {html.escape(left_back or '', quote=False)}")
         ours_answer.setWordWrap(True)
-        theirs_answer = QLabel(f"<b>theirs answer:</b> {_esc(right_back)}")
+        theirs_answer = QLabel(f"<b>theirs answer:</b> {html.escape(right_back or '', quote=False)}")
         theirs_answer.setWordWrap(True)
         blay.addWidget(ours_answer)
         blay.addWidget(theirs_answer)
@@ -1091,7 +1079,7 @@ class _DuplicateScanDialog(QDialog):
             if not verdicts:
                 reason = errors[0] if errors else "no usable verdicts returned"
         if reason:
-            self._judge_summary = (f"AI judging failed ({_esc(reason)}). "
+            self._judge_summary = (f"AI judging failed ({html.escape(reason or '', quote=False)}). "
                                    "Your candidates are unchanged; Judge with AI tries again.")
             self.summary_label.setText(self._summary_text())
             return

@@ -34,7 +34,7 @@ from .logic import (FILTER_MIN_CARDS, FILTER_MODES, KeptEdit, apkg_media_index,
                     word_diff_ratio)
 from .palette import colors
 from .ui import (_ask_with_widget, _info, _safe, _warn, copy_to_clipboard, hint_label, link_button,
-                 muted_label, title_label)
+                 muted_label, row_rule, title_label)
 from .widgets import (CARET_GAP, CARET_W, FilterBar, StreamingList, chip_cell,
                       chip_column_width, decision_cell, row_text_indent,
                       section_header, simple_row)
@@ -1090,21 +1090,6 @@ def _collection_image(name):
     return _image_tag(local) if os.path.exists(local) else None
 
 
-def _separator():
-    """The hairline between two cards.
-
-    A real HLine, not a border-bottom on the row: Qt won't paint a lone border-bottom
-    on a plain container widget, and a selector-less stylesheet on the row propagates
-    into its children, which each draw their own rule.
-    """
-    line = QFrame()
-    line.setFrameShape(QFrame.Shape.HLine)
-    line.setFrameShadow(QFrame.Shadow.Plain)
-    line.setFixedHeight(1)
-    line.setStyleSheet(f"color: {colors()['row_rule']};")
-    return line
-
-
 _NEW_OPTIONS = [("import", "Import"), ("held", "Later"), ("never", "Never")]
 # The changed row's options mirror the new row's, and "frozen" is Never's
 # counterpart here. It is a state of its own rather than "never" reused, because the two
@@ -1717,7 +1702,7 @@ def open_recent_feedback():
                   f"{plural(digest['notes'], 'note')}, {plural(digest['decisions'], 'decision')}")
         label = f"{when.day} {when.strftime('%b %Y, %H:%M')} · {counts}"
         if i:
-            rlay.addWidget(_separator())
+            rlay.addWidget(row_rule())
         row = simple_row(None, html.escape(label), card_columns=False)
         row.layout().addWidget(link_button(
             "Show", lambda checked=False, d=digest: show_feedback_digest(
@@ -1976,7 +1961,7 @@ def build_update_body(items, sources, flags, new_index, decisions,
         total = count_cards(items)
         if total >= FILTER_MIN_CARDS:
             def _refilter(mode, query):
-                shown = filter_update_items(folded, mode, query, touched)
+                shown = filter_update_items(folded, mode, query, touched | opened)
                 # The rows being replaced take their boxes, setters and group
                 # listeners with them; flags and decisions hold what they showed.
                 boxes.clear()
@@ -2060,7 +2045,7 @@ def _list_row(item, card_columns=True, chips=None):
         label.setStyleSheet("margin-top: 14px;")
         return label
     if item[0] == "sep":
-        return _separator()
+        return row_rule()
     _, kind, primary_html, trailing_html = item
     return simple_row(kind, primary_html, trailing_html, card_columns=card_columns,
                       chips=chips)

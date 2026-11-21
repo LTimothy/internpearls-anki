@@ -3541,7 +3541,7 @@ def test_unopened_line_counts_a_row_seeded_at_later_as_decided(anki):
     assert "1 already decided" in unopened_line(kinds, set(), (), reg)
 
 
-def _filter_body(n_new=12, n_changed=12, group=0, group_kind=None):
+def _filter_body(n_new=12, n_changed=12, group=0, group_kind=None, opened=None):
     """An update body over `n_new` new and `n_changed` changed cards, plus a folded
     group of `group` cards (alternating kinds unless `group_kind` fixes one)."""
     from internpearls import review
@@ -3566,7 +3566,7 @@ def _filter_body(n_new=12, n_changed=12, group=0, group_kind=None):
                 fields=[("Front", f"Grouped card {i}?"), ("Back", "A")]))]
     decisions, touched = {}, set()
     body, _boxes, _flush = review.build_update_body(
-        items, {}, {}, {}, decisions, "", lambda: "", "", touched)
+        items, {}, {}, {}, decisions, "", lambda: "", "", touched, opened=opened)
     return body, decisions, touched
 
 
@@ -3787,3 +3787,15 @@ def test_manage_decks_opens_with_an_unreadable_declined_file(anki, tmp_path):
 
     drive(anki, dialogs.manage_decks, respond)
     assert seen["button"]
+
+
+def test_not_reviewed_leaves_out_rows_the_learner_opened(anki):
+    from internpearls import review
+    opened = set()
+    body, _decisions, _touched = _filter_body(12, 12, opened=opened)
+    bar = _bar(body)
+    next(w for w in _walk_widgets(body) if isinstance(w, mock_anki.QPushButton)
+         and w.text() == review._CARET_CLOSED).click()
+    assert len(opened) == 1
+    bar.options.buttons["unreviewed"].click()
+    assert _count_line(bar) == "Showing 23 of 24 cards"

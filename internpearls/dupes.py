@@ -24,7 +24,9 @@ STOP_WORDS = frozenset({
 _CLOZE_RE = re.compile(r"\{\{c\d+::(.*?)(?:::.*?)?\}\}", re.S)
 _SOUND_RE = re.compile(r"\[sound:[^\]]*\]", re.I)
 _IMAGE_REF_RE = re.compile(r"\[image:[^\]]*\]", re.I)
-_TAG_RE = re.compile(r"<[^>]+>")
+# A real tag, comment or declaration: "<" then a name, "/", "!" or "?". A "<" followed by
+# anything else ("MAP <65", "1 < 2") is a literal and survives.
+_TAG_RE = re.compile(r"<!--.*?-->|</?[A-Za-z][^>]*>|<[!?][^>]*>", re.S)
 _TOKEN_RE = re.compile(r"[^\W_]+")
 _CJK_RE = re.compile("[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]+")
 _NEGATION_WORDS = frozenset({"not", "no", "never", "without", "cannot"})

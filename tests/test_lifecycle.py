@@ -996,3 +996,32 @@ def test_restore_warns_about_cards_anki_would_not_restore(anki, tmp_path):
     collection.import_deck()
 
     assert anki.gui.warnings and "1 card" in anki.gui.warnings[-1]
+
+
+@pytest.mark.parametrize("token,expected", [("", 5), ("tok", 1)])
+def test_a_tokenless_github_source_polls_no_more_than_every_five_minutes(
+        anki, token, expected):
+    from internpearls import background
+    anki.mw._config = {"github_decks_repo": "example/decks", "github_token": token}
+    background._restart_auto_sync_timer(1)
+    try:
+        assert background._auto_sync_timer.started == expected * 60 * 1000
+    finally:
+        background._stop_auto_sync_timer()
+
+
+@pytest.mark.parametrize("busy", ["manual", "work"])
+def test_the_addon_does_not_install_over_itself_while_work_is_running(
+        anki, monkeypatch, busy):
+    from internpearls import background, ui, updates
+    calls = []
+    monkeypatch.setattr(anki.mw, "addonManager",
+                        type("M", (), {"install": lambda self, p: calls.append(p)})(),
+                        raising=False)
+    if busy == "manual":
+        monkeypatch.setattr(ui, "_manual_flow_depth", 1)
+    else:
+        monkeypatch.setattr(background, "_auto_sync_in_progress", True)
+    with pytest.raises(RuntimeError, match="try again"):
+        updates._install_package("/tmp/x.ankiaddon")
+    assert calls == []

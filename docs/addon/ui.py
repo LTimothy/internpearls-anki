@@ -641,11 +641,20 @@ def section_rule():
     divider stays quiet, while these sections are four unrelated decisions that happen to
     share a window, so the line between them is the strongest thing saying so.
     """
+    return _hairline("panel_rule")
+
+
+def row_rule():
+    """The faint hairline between two rows of one list."""
+    return _hairline("row_rule")
+
+
+def _hairline(role):
     line = QFrame()
     line.setFrameShape(QFrame.Shape.HLine)
     line.setFrameShadow(QFrame.Shadow.Plain)
     line.setFixedHeight(1)
-    line.setStyleSheet(f"color: {colors()['panel_rule']};")
+    line.setStyleSheet(f"color: {colors()[role]};")
     return line
 
 

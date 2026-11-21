@@ -448,15 +448,16 @@ def _stop_auto_sync_timer():
 
 def _restart_auto_sync_timer(minutes):
     """(Re)start the repeating poll at `minutes`, floored so it can't be configured into
-    a busy-loop and capped so it can't overflow QTimer's own C int. GitHub load at this
-    cadence is trivial: one small manifest.json request per interval, well under even
-    the unauthenticated 60-requests-per-hour limit at the one-minute floor, let alone
-    the 5000-per-hour a token gets.
-    """
+    a busy-loop and capped so it can't overflow QTimer's own C int. Each poll is one
+    GitHub request; without a token GitHub allows 60 an hour for the whole machine, so
+    a tokenless GitHub source polls at most every 5 minutes."""
     _stop_auto_sync_timer()
     global _auto_sync_timer
+    cfg = _cfg()
+    floor = (5 if cfg["gh_repo"] and not cfg["gh_token"]
+             else AUTO_SYNC_INTERVAL_FLOOR_MIN)
     interval_ms = clamp_interval_minutes(
-        minutes, AUTO_SYNC_INTERVAL_FLOOR_MIN, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
+        minutes, floor, AUTO_SYNC_INTERVAL_DEFAULT_MIN,
         AUTO_SYNC_INTERVAL_CEILING_MIN) * 60 * 1000
     _auto_sync_timer = QTimer(mw)
     _auto_sync_timer.timeout.connect(_auto_sync_check)

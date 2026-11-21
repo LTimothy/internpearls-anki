@@ -739,7 +739,7 @@ def test_a_marked_up_changes_revealed_old_text_keeps_its_structure():
 
 def test_separator_is_an_hline_carrying_the_rule_colour():
     from internpearls import palette
-    node = review._separator().node()
+    node = review.row_rule().node()
     assert node["t"] == "hline"
     assert palette.colors()["row_rule"] in node["style"]
 

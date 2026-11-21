@@ -19,7 +19,8 @@ from .config import ADDON_VERSION, ANKI_REPO, STATE, _cfg, _load_json
 from .logic import version_at_least
 from .net import (_BG_TIMEOUT, _CONNECT_TIMEOUT, _DOWNLOAD_TIMEOUT, _gh_public_raw,
                   _latest_release_tag)
-from .ui import _ask, _info, _safe, _warn, ProgressCancelled, run_with_progress
+from .ui import (_ask, _info, _safe, _warn, ProgressCancelled, manual_sync_in_progress,
+                 run_with_progress)
 
 # The "Check for add-on updates" QAction, set once by __init__.py right after building
 # the menu. Mutated from here and from background.py's startup check so a known
@@ -168,7 +169,11 @@ _INSTALL_ERRORS = {
 def _install_package(path):
     """Install a downloaded package, raising when Anki refuses it. install() reports a
     refusal by returning an error rather than raising, and leaves the installed
-    version in place."""
+    version in place. Refused while other work may be writing user_files, which the
+    installer moves aside."""
+    from . import background   # imports this module
+    if manual_sync_in_progress() or background._auto_sync_in_progress:
+        raise RuntimeError("other Intern Pearls work is running, try again in a minute")
     result = mw.addonManager.install(path)
     errmsg = getattr(result, "errmsg", None)
     if errmsg:
