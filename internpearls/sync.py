@@ -870,6 +870,16 @@ _restore_undo_steps = {}
 undone_updates = set()
 
 
+def _undo_step(target):
+    """Undo one grouped step. If Anki already dropped it, undo nothing: the newest
+    step would then be some other action."""
+    try:
+        mw.col.merge_undo_entries(target)
+    except Exception:
+        return
+    mw.col.undo()
+
+
 def clear_undo_steps():
     _update_undo_steps.clear()
     _restore_undo_steps.clear()
@@ -1165,8 +1175,7 @@ def _run_sync(cfg, manifest, fetch, todo, on_progress=None,
             if conversion_undo is not None:
                 # Conversion and package import are undoable backend operations.
                 # Roll back this deck's group, never an unrelated prior action.
-                mw.col.merge_undo_entries(conversion_undo)
-                mw.col.undo()
+                _undo_step(conversion_undo)
                 existing_fronts = _existing_front_to_guid(cfg["scope_tag"])
             if isinstance(e, NoteTypeFieldsRequired):
                 deferred.append(d["name"])
@@ -2934,8 +2943,7 @@ def import_single():
             shipped[guid][MOD_KEY] = str(max(mod, started) if guid in changed else mod)
         mw.col.merge_undo_entries(undo)
     except Exception:
-        mw.col.merge_undo_entries(undo)
-        mw.col.undo()
+        _undo_step(undo)
         raise
     if shipped:
         prior = _load_shipped()

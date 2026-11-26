@@ -349,3 +349,12 @@ def test_sources_land_on_the_second_field_of_a_cloze_named_type_with_another_nam
     note = next(iter(anki.col._notes.values()))
     assert note.model is cloze
     assert note["Extra"].startswith("more<div") and "example.com" in note["Extra"]
+
+
+def test_add_generated_notes_over_thirty_cards_stays_one_undo_step(anki):
+    # Anki keeps 30 undo steps; the batch's own step must survive 40 adds.
+    cards = [_card(f"Q{i}") for i in range(40)]
+    assert collection.add_generated_notes(cards, media={}, deck_name=DECK,
+                                          scope_tag=SCOPE) == 40
+    anki.col.undo()
+    assert not anki.col._notes

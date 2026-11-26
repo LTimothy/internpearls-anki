@@ -654,14 +654,19 @@ class MockCollection:
             raise Exception("reopen() called with open db")
         self.db = _Db(self)
 
+    def _push_undo(self, entry):
+        # Real Anki keeps only the last 30 steps (rslib UNDO_LIMIT), dropping the oldest.
+        self._undo_counter += 1
+        entry["counter"] = self._undo_counter
+        self._undo_entries.append(entry)
+        del self._undo_entries[:-30]
+        return self._undo_counter
+
     def add_custom_undo_entry(self, name):
         import copy
-        self._undo_counter += 1
-        self._undo_entries.append({"name": name, "notes": [], "cards": [],
-                                   "counter": self._undo_counter,
-                                   "snapshot": copy.deepcopy((self._notes, self._cards)),
-                                   "mod": self.mod})
-        return self._undo_counter
+        return self._push_undo({"name": name, "notes": [], "cards": [],
+                                "snapshot": copy.deepcopy((self._notes, self._cards)),
+                                "mod": self.mod})
 
     def merge_undo_entries(self, target):
         index = next((i for i, e in enumerate(self._undo_entries)
@@ -748,10 +753,8 @@ class MockCollection:
         # Real Anki gives every add its own undo entry; merge_undo_entries is what
         # collapses a run of them into one. Modelling that faithfully is what makes a
         # missing merge observable in a test rather than silently equivalent.
-        self._undo_counter += 1
-        self._undo_entries.append(
-            {"name": "Add Note", "notes": [note.id], "cards": list(note._card_ids),
-             "counter": self._undo_counter})
+        self._push_undo({"name": "Add Note", "notes": [note.id],
+                         "cards": list(note._card_ids)})
         self._record_write(1 + len(note._card_ids))
         return types.SimpleNamespace(note_id=note.id)
 
@@ -931,12 +934,21 @@ class MockCollection:
         # The namespace is already mutated in place, so this records the call rather
         # than applying it: in real Anki this is what persists the change, and a test
         # that only reads the namespace back would pass even if it were never called.
-        self.updated_cards.append(card.nid)
-        self._record_write()
+        self.update_cards([card])
+
+    def update_cards(self, cards):
+        self.updated_cards.extend(card.nid for card in cards)
+        self._record_write(len(cards))
+        self._push_undo({"name": "Update Card", "notes": [], "cards": []})
 
     def update_note(self, note):
-        self._touch(note)
-        self._record_write()
+        self.update_notes([note])
+
+    def update_notes(self, notes):
+        for note in notes:
+            self._touch(note)
+        self._record_write(len(notes))
+        self._push_undo({"name": "Update Note", "notes": [], "cards": []})
 
     def _register_models(self, models_by_mid):
         for m in models_by_mid.values():

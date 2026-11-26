@@ -399,7 +399,7 @@ def _restore_tags(snap, scope_tag, touched):
     """Put back the tags an import replaced that the source does not manage (Anki's
     importer overwrites a matched note's tags with the package's). Returns the count."""
     markers = [f"{scope_tag}::{RETIRED_TAG_LEAF}", f"{scope_tag}::{DUPLICATE_TAG_LEAF}"]
-    restored = 0
+    notes = []
     nids = _guid_to_nid()
     for guid in touched:
         if guid not in snap:
@@ -411,9 +411,11 @@ def _restore_tags(snap, scope_tag, touched):
         merged = merge_learner_tags(snap[guid], note.tags, scope_tag, markers)
         if sorted(t.lower() for t in merged) != sorted(t.lower() for t in note.tags):
             note.tags = merged
-            mw.col.update_note(note)
-            restored += 1
-    return restored
+            notes.append(note)
+    # One write, one undo step: Anki keeps only 30, and the caller merges them.
+    if notes:
+        mw.col.update_notes(notes)
+    return len(notes)
 
 
 def _capture_shipped(protected, scope_tag, touched, per_note=None):
@@ -471,7 +473,7 @@ def _restore(snap, baseline=None, touched=None):
     source changed since the baseline; the learner's edit wins.
     """
     baseline = baseline or {}
-    restored, collisions = 0, []
+    notes, collisions = [], []
     nids = _guid_to_nid()
     for guid, saved in snap.items():
         if touched is not None and guid not in touched:
@@ -497,9 +499,10 @@ def _restore(snap, baseline=None, touched=None):
                 note[f] = v
                 changed = True
         if changed:
-            mw.col.update_note(note)
-            restored += 1
-    return restored, collisions
+            notes.append(note)
+    if notes:
+        mw.col.update_notes(notes)
+    return len(notes), collisions
 
 
 # -------------------------------------------------------------------- apkg helpers
@@ -781,7 +784,7 @@ def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields,
     successor is still carried. The predecessor's lookup uses `source_guid` when the
     entry carries one, else `guid`.
     """
-    n = 0
+    written = {}
     for r in retired:
         old_nid = existing_guid_to_nid.get(r["guid"])
         if old_nid is None:
@@ -800,7 +803,7 @@ def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields,
             target_nid = existing_guid_to_nid.get(target_guid)
             if target_nid is None:
                 continue
-            target_note = mw.col.get_note(target_nid)
+            target_note = written.get(target_nid) or mw.col.get_note(target_nid)
             replacement_fields = protected_for(target_guid, protected_fields, per_note)
             current = {}
             for name in replacement_fields:
@@ -817,9 +820,10 @@ def carry_over_protected_fields(retired, existing_guid_to_nid, protected_fields,
                 if tf is None:
                     continue
                 target_note[tf] = v
-            mw.col.update_note(target_note)
-            n += 1
-    return n
+            written[target_nid] = target_note
+    if written:
+        mw.col.update_notes(list(written.values()))
+    return len(written)
 
 
 def archive_notes(nids, retired_deck, tag):
@@ -894,7 +898,7 @@ def carry_scheduling_forward(pairs, existing_guid_to_nid):
     Every write is an ordinary card update with no schema bump. Returns the number of
     successor cards updated.
     """
-    moved = 0
+    written = {}
     for p in pairs:
         old_nid = existing_guid_to_nid.get(p["guid"])
         new_nid = existing_guid_to_nid.get(p["successor_guid"])
@@ -905,7 +909,7 @@ def carry_scheduling_forward(pairs, existing_guid_to_nid):
             card = mw.col.get_card(cid)
             src[getattr(card, "ord", 0)] = card
         for cid in mw.col.get_note(new_nid).card_ids():
-            dst = mw.col.get_card(cid)
+            dst = written.get(cid) or mw.col.get_card(cid)
             card = src.get(getattr(dst, "ord", 0))
             if card is None or getattr(dst, "reps", 0) >= getattr(card, "reps", 0):
                 continue
@@ -915,9 +919,10 @@ def carry_scheduling_forward(pairs, existing_guid_to_nid):
             dst.due = _home_due(card)
             # The same card's history, so the memory state travels whole.
             _copy_memory_state(card, dst, 1)
-            mw.col.update_card(dst)
-            moved += 1
-    return moved
+            written[cid] = dst
+    if written:
+        mw.col.update_cards(list(written.values()))
+    return len(written)
 
 
 def _collection_read_key():
@@ -985,7 +990,7 @@ def seed_converted_siblings(nids):
     Only cards with no reviews of their own are touched, so re-running is a no-op.
     Returns the number of cards seeded.
     """
-    seeded = 0
+    seeded = []
     for nid in nids:
         cards = [mw.col.get_card(cid) for cid in mw.col.get_note(nid).card_ids()]
         parent = max(cards, key=lambda c: getattr(c, "reps", 0))
@@ -1000,9 +1005,10 @@ def seed_converted_siblings(nids):
             card.ivl = max(1, getattr(parent, "ivl", 0) // 2)
             card.due = _home_due(parent)
             _copy_memory_state(parent, card, 0.5)
-            mw.col.update_card(card)
-            seeded += 1
-    return seeded
+            seeded.append(card)
+    if seeded:
+        mw.col.update_cards(seeded)
+    return len(seeded)
 
 
 def change_note_types(changes):
@@ -1088,7 +1094,7 @@ def fork_note_identities(changes):
     its preservation snapshot: after the fork, that GUID belongs to the new source
     note and must not inherit fields saved from the learner's local copy.
     """
-    forked = set()
+    forked, notes, taken = set(), [], set()
     for change in changes:
         old_guid = change["guid"]
         if old_guid in forked:
@@ -1099,11 +1105,15 @@ def fork_note_identities(changes):
         note = mw.col.get_note(nid)
         while True:
             local_guid = ai_logic.generated_guid()
-            if not mw.col.db.scalar("select id from notes where guid = ?", local_guid):
+            if (local_guid not in taken and not mw.col.db.scalar(
+                    "select id from notes where guid = ?", local_guid)):
                 break
         note.guid = local_guid
-        mw.col.update_note(note)
+        taken.add(local_guid)
+        notes.append(note)
         forked.add(old_guid)
+    if notes:
+        mw.col.update_notes(notes)
     return forked
 
 
@@ -1814,6 +1824,8 @@ def add_generated_notes(cards, media, deck_name, scope_tag):
             note.guid = ai_logic.generated_guid()
             note.tags = list(card.get("tags", [])) + [tag]
             col.add_note(note, did)
+            # Anki keeps 30 undo steps; fold each add in before the target is evicted.
+            col.merge_undo_entries(undo_target)
             card["_imported_note"] = {"id": note.id, "guid": note.guid}
             count += 1
             landed.append(pos)

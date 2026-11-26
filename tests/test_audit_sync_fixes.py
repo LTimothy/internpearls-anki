@@ -868,3 +868,21 @@ def test_home_due_trusts_odue_only_inside_a_filtered_deck():
     from internpearls import collection
     assert collection._home_due(types.SimpleNamespace(due=100, odue=5, odid=0)) == 100
     assert collection._home_due(types.SimpleNamespace(due=-100000, odue=812, odid=7)) == 812
+
+
+def test_deck_restoring_many_notes_fits_one_undo_step(anki, tmp_path):
+    # Anki keeps 30 undo steps; one write per restored note used to evict the deck's
+    # own step and fail the merge with "target undo op not found".
+    from internpearls import sync
+    guids = [f'g{i}' for i in range(40)]
+    for g in guids:
+        anki.col.add_note(g, _fields(f'Q {g}', notes=f'mine {g}'), [TAGS, 'my_tag'],
+                          deck=DECK)
+    cfg, manifest, fetch = source(anki, tmp_path, [
+        (g, _fields(f'Q {g}', back='new'), TAGS) for g in guids])
+    sync._run_sync(cfg, manifest, fetch, manifest['decks'])
+    for g in guids:
+        note = anki.col.note_by_guid(g)
+        assert note['Notes'] == f'mine {g}' and note['Back'] == 'new'
+        assert 'my_tag' in note.tags
+    assert sync._load_json(sync.INSTALLED, {}).get(DECK) == 'v2'
