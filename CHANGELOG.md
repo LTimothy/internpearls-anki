@@ -3,6 +3,12 @@
 All notable changes to Intern Pearls Deck Tools. Versions follow the semver rules in
 this repo's `README.md` ("Versioning"). Restart Anki after installing any update.
 
+## v0.89.4
+
+- Updating a deck where many of your own edits are kept no longer fails with
+  "target undo op not found". The same fix covers Import single deck, Clean up
+  duplicates and adding more than 30 AI cards at once.
+
 ## v0.89.3
 
 - After Clean up duplicates, deck updates reach the card you kept, not the
